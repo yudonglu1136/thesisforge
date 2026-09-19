@@ -1,9 +1,142 @@
 # Bilingual Coverage Audit
 
+### 2026-09-12: Guru consensus read guide (local only)
+
+EN/ZH now names the page as holdings and consensus, defines consensus as shared
+holdings rather than unanimous conviction, and explains each Guru's reported-book
+weight versus the all-reporting-Guru holder count. The matrix summary header
+explicitly scopes counts to all reporting Gurus in the selected quarter, not the
+selected columns. Tap/hover help covers row/column reading, disclosed share changes,
+missing entries and fund-asset limitations. No data, filters or study charts changed.
+527 Flutter tests, analyzer, bilingual audit, Ontology gates and both web builds
+pass. Browser checked desktop and mobile layouts. No production deployment.
+
+### 2026-09-12: Portfolio YTD, Position / Income and hover (local only)
+
+EN/ZH covers YTD/data-year/partial-baseline labels, Position / Income and its
+secondary grouping controls, dividend/bond/cash/substitute-income categories,
+dated report coverage, positive-receipt versus net-income limitations, missing
+history setup guidance, empty states, hover readouts and privacy-safe tooltips.
+526 Flutter tests, the analyzer, bilingual audit, Ontology gates, 56 focused
+portfolio backend tests, 41 transport/performance regressions and both builds
+pass. See `docs/portfolio-income-ytd-2026-09-12.md`. No production deployment.
+
+### 2026-09-11: English Guru holdings matrix with retained study (local only)
+
+Implemented the selected screenshot as an English-first Guru page, while keeping
+the original study shortlist, turnover/CAGR and turnover/Sharpe plots, all-profile
+directory and chart/portrait inspection linkage. All new interface text also has
+ZH translations: quarter/search/selection, concentration, weight/change modes,
+pagination, source groups, valuation handoff, errors, unknown holdings and source
+coverage. Canonical manager/company names remain unchanged. The same dated
+disclosure APIs supply the matrix; no financial values from the mock were copied.
+
+479 Flutter tests pass, including 12 new matrix/composition tests and 16 retained
+study tests. Analyzer, i18n audit, ontology verification/tests, 19 focused read-model
+tests, production build and local preview build pass. Browser verification covers
+English at 1487x1058, 1280x720 and 390x844, Chinese at 390x844, actual historical
+filing/stock navigation, filters and comparison linkage. No production deployment,
+follow action, strategy run, or source-database mutation is part of this change.
+See the 2026-09-11 acceptance section in `design-qa.md`.
+
+### 2026-09-10: Discover / Guru study — selected Option 3 (local only)
+
+EN/ZH covers the three-manager shortlist, inspecting/comparing states, period,
+turnover/method/Sharpe filters, picker/search, quarter handoff, following, errors,
+missing comparisons, and explicit simulation/turnover methodology. Original
+manager names and CAGR/Sharpe identifiers remain canonical. Existing portraits
+are reused; no financial values or source histories are fabricated.
+
+453 full Flutter tests passed, including 13 focused study tests, late-response
+invalidation, EN/ZH at 390px and 150% text. Analyzer, i18n audit, release preview
+build and 63 focused Node tests passed. Browser checks cover both languages,
+390x844 / 1280x720 / 1487x1058, chart selection, max-three limit, actual 2026-Q1
+Li Lu holdings and the exact GOOGL research handoff. See the scoped Option 3
+section in `design-qa.md`. This does not certify production or Strategy Lab.
+
+### 2026-09-10: Prefilled private worksheets and account memory (local only)
+
+EN/ZH covers sourced analyst starting assumptions, recovery/illustrative-default
+disclosures, auto-save/pending/failure/retry/conflict states, source-change
+restoration and preservation of legacy QA versions outside automatic defaults.
+See `docs/personal-valuation-memory-2026-09-10.md`. No production deployment.
+
 Date: 2026-08-30
 Scope: Flutter application, standalone Ontology explorer, dynamic API labels, desktop and mobile layouts.
 
+### 2026-09-10: Independent personal valuation (local only)
+
+EN/ZH covers blank five-year user hypotheses for eligible earnings-only snapshots,
+illustrative Ke/g disclosure, historical negative FCF, copy-first-year controls,
+automatic recalculation, fixed before/after comparison and private saved versions.
+411 full Flutter tests, 111 investment backend tests, analyzer, i18n audit and
+release build passed. Actual AMZN edit flow checked in both languages at 390x844
+and desktop. See `docs/personal-valuation-independent-2026-09-10.md` for model limits.
+
+### 2026-09-10: Account-first Home (local only)
+
+Home now shows the owner's broker portfolio, with explicit report dates, account
+value, cash/borrowing, NAV history, daily versus cumulative Winners / Losers,
+actual holdings and links to valuation/risk. EN/ZH covers missing-history states,
+IBKR report requirements, range controls, owner-source errors and cumulative-P&L
+fallback disclosure. No live/today claim is made for the one-date local snapshot.
+All 408 Flutter tests passed; 8 Home tests include 390px EN/ZH at 120% text.
+Analyzer, i18n audit, release build and 53 focused backend tests passed.
+See `docs/personal-home-2026-09-10.md` for the data-quality boundary.
+
+### 2026-09-10: Owner portfolio / Risk & SPY (local only)
+
+EN/ZH copy covers private-source labels, report-vs-research dates, broker NAV,
+marked leverage/negative cash/options warnings, simulated-vs-actual performance,
+weighted SPY model comparisons, coverage/exclusions, growth/drawdown chart,
+risk-free controls, formulas and masked IBKR connection onboarding. Company
+tickers and standard financial acronyms remain canonical. The local owner copy
+does not expose the legacy sample account through its account-management link.
+
+19 focused portfolio widget tests passed, including EN/ZH at 390px with 150%
+text. Full Flutter suite: 398 passed. Analyzer, i18n literal audit and release
+preview build passed. API and browser acceptance use the verified owner report;
+no claim of actual-account return history or production deployment is made.
+Details: `docs/portfolio-owner-risk-2026-09-10.md`.
+
+### 2026-09-10: Discover / Fundamentals workbench (local preview)
+
+Replaced the sparse revenue-only list with four explicit research questions,
+dated current/prior financial comparisons, counter-evidence prompts, eight-quarter
+history, and precise valuation/financials handoff. EN/ZH includes definitions,
+coverage, null/error/retry states, price comparison, filters, pagination and return
+actions. Source company names, tickers and fiscal-period identifiers stay original.
+Mobile uses two-column question tiles and a separate selected-company pane with
+auto-scroll and a return action. Canonical stock marks are reused.
+
+Eight new widget tests, 386 full Flutter tests and 129 related Node tests passed;
+analyzer and i18n audit clean. Phone testing covers EN/ZH and 120% text. Browser
+checks include the actual NVDA panel in both languages, desktop comparison,
+and valuation round trip preserving the selected research screen. Local only.
+
+### 2026-09-10: Discover / Value Flow (local preview)
+
+Replaced the terminal-only placeholder with a native eight-stage AI value-chain explorer, exact company comparison, published valuation/quarterly evidence, and existing Guru avatars. EN/ZH copy covers all stage/role translations, loading/error/empty/missing states, filters, sort, coverage definitions and research-return controls. Original company/manager names and source identifiers remain source-original. Mobile Discover tabs wrap into two readable rows; company selection scrolls to evidence and offers a return-to-comparison action. Existing white MRVL/AMZN marks use a contrasting backdrop only in this surface.
+
+Eight focused Flutter tests (including EN/ZH at 390px and 150% text); full Flutter suite 378 passed. Analyzer and bilingual audit passed. Browser acceptance includes desktop EN/ZH, mobile EN/ZH, stage change, global search, below-model filter, exact PLTR valuation navigation at 2026-08-28, preserved search on return, and mobile AMD detail. Dated API checks cover 2026-06-01 and 2026-08-28. No production release.
+
 ## Acceptance Contract
+
+2026-09-09 Personal Valuation local-preview addendum: horizontal five-year
+revenue/growth/parent-common-FCFE-margin worksheet, locked actuals, linked input
+semantics, input-validation explanations, private hypothesis notes, named
+immutable versions, save/reload states and post-DCF reconciliation. Financial
+comparison now uses a full-width read-only table with percentage-point deltas
+and observed historical percentile bars. English/Chinese tests cover desktop,
+tablet, phone and large text; source quotes, symbols and numeric units retain
+their original meaning. This is local backend persistence, not an AWS release.
+
+2026-09-09 Research local-preview addendum: bilingual company switch/watch controls,
+overview/model/financials/decision routes, dated range/report controls, latest changes,
+guidance context, holder links, countercase prompts, method/version boundaries and
+read-only decision states. Company/manager names, stored source quotes and model
+formulas remain source-original. Both languages are covered at desktop/tablet/phone
+sizes in `test/investment_research_test.dart`; this is not a production release.
 
 2026-09-05 addendum: first-time visitors now default to English. Explicit
 Chinese is represented as `lang=zh`, including legacy Ontology redirects.
@@ -23,6 +156,74 @@ viewport-override capability did not change its top-level window dimensions.
 - Desktop and 390px mobile layouts must expose a usable language control without overflow.
 
 ## Coverage Ledger
+
+### 2026-09-10: Strategy Leverage replaces fourth-step Hedge (local)
+
+- EN/ZH leverage presets/slider, fixed4% funding assumption, exposure examples,
+  cash offset, disclosure reset, leverage risk, financing summary/ledger, chart
+  legend, legacy-rule migration notice and nonpositive-equity failure state.
+- 1x remains the default; saved leverage is owner-scoped. Options data and old
+  hedge records are retained, but the new builder does not submit hedge rules.
+- Full Flutter400 tests, focused backend51 tests, analyzer, bilingual audit and
+  release build pass. Includes390px/150% text in both languages. Historical real
+  data smoke and calculation definitions: `docs/strategy-leverage-2026-09-10.md`.
+- Local only; not a production language or data-coverage release.
+
+### 2026-09-10: Strategy Lab (local preview)
+
+- EN/ZH coverage for Guru picker, Top N, price-premium filter, cash/redistribution,
+  KMLM/DBMF allocation, date range/costs, explicit run/save, loading/retry, private
+  saved versions, dirty results and blocked source states.
+- Daily growth/drawdown legend and values, selected-range statistics, exposure
+  strip, dated rebalance audit, exact-stock valuation navigation and original
+  disclosure methodology are translated. Manager/ETF/company identifiers stay
+  canonical. Historical source inputs remain separate from workspace research.
+- Widget tests: desktop and 390×844 EN/ZH with 1.5× text; real browser mobile
+  checks both languages, no error logs. Analyzer, bilingual audit and full
+  370-test Flutter suite pass. This is not a deployed production release.
+
+### 2026-09-09: Research company picker (local preview)
+
+- Replaced the ticker-only modal with company-name/ticker search, canonical stock
+  logos, current/recent labels, model dates, immediate exact-symbol selection,
+  keyboard navigation and explicit loading/error/empty/retry states.
+- English/Chinese controls and dismiss labels; current issuer names remain
+  source-original. Directory is cutoff-filtered, not a recommendation or a
+  certification of model quality. Recent items are session-local successful views.
+- Phone layout, large text with keyboard insets, unchanged cutoff and unsaved
+  scenario guards tested. Browser EN/ZH checks at 390×844 and desktop at 1487×1058.
+- Local preview only; no user scenario writes and no production release.
+
+### 2026-09-09: Discover research explorer (local preview)
+
+Four rule-based collections, discovery filters/sorts, model coverage states,
+evidence preview and return navigation use the shared bilingual helpers.
+Fundamentals adds translated thresholds, search/reset and economic caveats.
+Existing company names, ticker identifiers and official evidence retain their
+source language. New widget coverage tests English and Chinese at 1487×1058,
+1280×720 and 390×844. This entry is local verification, not production release.
+
+### 2026-09-08: Confirmed connected workbench (current local Home)
+
+- The confirmed reference is `exec-82f085f7-6688-4bf4-84f2-fb3909ae6757.png`; the editorial option below was mapped incorrectly and rejected. Home now links investor → filing → common-share holding → research and valuation.
+- Bilingual controls cover the investor menu, filing/accession menu, search dialog, value/position tabs, position metric switches, source dialog, missing PIT versus transient error, and mobile Investor/Holdings/Research steps. Legal issuer/manager names, tickers and source URLs stay canonical.
+- 208 Flutter tests (76 workflow) and 33 backend workflow tests passed. The existing repository literal audit passes; it does not scan every new part file, so populated widget tests and browser EN/ZH checks supply the new workbench coverage.
+- 390×844 browser checks include Gavin/ALAB missing-research and position states, MSFT curve/metrics, Chinese saved actions and primary CTA. Compact desktop checked at 1280×720; wide reference at 1487×1058. Evidence in `output/home-workbench-20260908/` and current `design-qa.md`.
+- Local implementation only. This does not certify full issuer coverage, production authentication or a deployed language release.
+
+### 2026-09-08: Historical editorial Home (incorrectly mapped option; superseded)
+
+- Replaced tutorial-like Home cards with a bilingual, source-backed filing brief: selected manager, current/prior disclosed shares, claim coverage caveats, and independent valuation example.
+- Dynamic quarter labels, manager/example menus, loading/error/retry, disclosure/price/model dates, saved actions and compact tabs use the existing language helpers. Corporate-action language is explicitly translated; missing extraction is never labelled as zero/new buying.
+- Full suite: 202 Flutter tests (70 workflow), 33 backend workflow tests. Full static analysis, bilingual audit and final private build passed. Browser checked English and Chinese at 390×844, including lower holding actions and saved-research labels.
+- Actual comparison and mobile evidence: current editorial section in `design-qa.md`, screenshots 22–28 under `output/home-redesign-20260908/`. Local preview only; no production language release.
+
+### 2026-09-08: Home first-use redesign (local only)
+
+- Home now presents dated Guru holdings and a separately labelled valuation example before saved-research state. All new copy, search, date controls, compact switches, unavailable / retry states and rule warnings use the existing language helpers.
+- Explicitly selected the workflow action formatter for saved Watch / Pass / Invest records; a name collision with the terminal formatter had left the initial Chinese footer untranslated. Final browser evidence shows 观察 / 放弃 / 投资.
+- Added 12 Home regressions, including English / Chinese at 1487×1058, 1280×720 and 390×844. Final full Flutter suite: 195 passed; backend workflow suite: 33 passed. Targeted analysis and local web release build passed.
+- Browser evidence under `output/home-redesign-20260908/` includes both languages, compact switching and a scrolled Chinese saved-research state. This is not a production language release or a new full Ontology audit.
 
 ### 2026-09-06: Admin last-sign-in portfolio cohorts (local only)
 
@@ -111,6 +312,205 @@ viewport-override capability did not change its top-level window dimensions.
 | Quarterly crowding and activity cards had no bilingual drill-down state | Added a responsive Market Lens with translated tabs, metrics, explanations, caveats, search, manager evidence, empty states, and navigation actions; desktop and 390x844 widget tests guard both layouts. |
 
 ## Automated Gates
+
+### 2026-09-09 quarterly earnings research
+
+Added a localized fiscal-quarter selector, previous/next controls, recap,
+guidance/Q&A tabs, source actions, missing-coverage/error/retry states and
+explicit latest-versus-selected-quarter labels. Stored English/Chinese Q&A
+is reused without online translation; missing translations are labeled as
+source-language excerpts. Eight new Flutter tests cover bilingual 1280px and
+390px workflows and race/error handling. Real browser checked English and
+Chinese phone views, including expanded answers. Full Flutter suite: 297 pass;
+analyzer and i18n audit pass. Local preview only; source coverage limitations
+are recorded in `docs/research-earnings-calls-2026-09-09.md`.
+
+### 2026-09-09 disclosed holder redesign
+
+The Research overview and detailed ownership evidence now reuse existing
+Guru portraits. The searchable roster, reported share counts/book weights,
+selected disclosure, SEC action, Guru history navigation, decision attribution
+and missing-data copy are bilingual. Widget flows cover English/Chinese at
+1720, 1280, 1024 and 390px. Real-browser English and Chinese 390×844 detail
+captures show no horizontal overflow. `npm run audit:i18n` and the full
+289-test Flutter suite pass. This is local verification, not a deployment.
+
+### 2026-09-09 personal terminal-edit repair
+
+Ke/g bounds and invalid-input recovery now appear beside the editor in both
+languages. Recalculating, timeout, request failure and retry copy use `w`/`label`;
+invalid input never falls through to an English-only API error or workspace
+reload. Terminal value, discounted terminal value, explicit PV, terminal share,
+currency units and formula explanation are localized. Bilingual 390px regression
+tests verify field focus, input preservation and valid-value recovery.
+
+### 2026-09-09 four Discover research lenses
+
+Localized card actions, distinct research questions/table columns, manager-side
+rosters, reported share/weight/date labels, financial before/after comparisons,
+revision endpoints, diligence caveats, missing-data states and Research/Valuation
+actions through the existing `w(en, zh)` helper. Canonical manager names and
+issuer identities remain source-original. Twenty-eight focused tests include all
+four lenses at 1487, 1280 and 390px in English and Chinese. Real-browser English
+and Chinese phone rosters and English phone growth table are visually verified.
+The bilingual audit passes. Local preview only; no production release.
+
+### 2026-09-09 horizontal quarterly research book
+
+Replaced the hidden quarter dropdown with direct-select horizontal fiscal-quarter
+cards, exact dated revenue/FCF previews, year jump, latest and strip-navigation
+controls. Three reading stages, a compact financial comparison, model/diligence
+panel, guidance/Q&A tabs and explicit valuation handoff use `w(en, zh)` throughout.
+Original source excerpts and verified stored translations are preserved. Fourteen
+focused tests cover desktop/phone EN/ZH, 1.5× text, cutoff identity, selection,
+request races and no-write navigation; all 343 Flutter tests pass. Real browser
+verified EN/ZH phone quarters and Q&A controls. Analyzer and i18n audit pass.
+Local preview only; no production publication or backend/data changes.
+
+### 2026-09-09 portfolio × valuation × Guru integration
+
+Account-state, summary, currency grouping, positions, model-contribution,
+concentration, stress, manager comparison, private-source and methodology copy
+uses paired English/Chinese strings in `investment_portfolio.dart`. Raw issuer
+and manager names remain source-original. Fourteen focused widget tests cover
+all tabs in both languages at 390px and 1.5× text, exact drill-down actions,
+request races, errors and private-source states. Full Flutter suite: 357 passed.
+Real-account populated acceptance is pending; the development identity must not
+be passed off as the user's online account. No production release in this turn.
+
+### 2026-09-10 Strategy step-four Hedge
+
+Hedge now sits after CTA, without a separate navigation tab. Type, coverage,
+available duration, capital, risk assumptions, proxy warnings and output tables
+use paired EN/ZH strings in `investment_strategy_hedge.dart`. Raw OCC identifiers
+and issuer names remain source-original. The full Flutter suite passed 393 tests,
+including step-four EN/ZH 390px layouts at 150% text, private rule saves, local
+cache response races and explicit unhedged historical-curve labeling. Analyzer
+and i18n audit passed. Local preview only; no production release.
+
+### 2026-09-10 Discover steady-value screen
+
+The third collection now screens sustained eight-quarter model-value progress,
+not a large latest revision. Collection labels, stable-first sorting, threshold
+chips, metric cards, quarter selector, exact value table, comparability rules and
+replay/corporate-action caveats use EN/ZH strings in `investment_explorer.dart`,
+`investment_discover_lenses.dart` and `investment_value_trend.dart`. Source ticker
+names and fiscal labels remain original. Four-lens tests cover both languages
+at desktop and 390px widths. See `docs/discover-steady-value-2026-09-10.md` for
+metric formulas and read-only source QA. No production release.
+
+### 2026-09-10 Growing-business quality controls
+
+Growth-only, durable-ROIC and cash-backed presets; numeric thresholds; annual
+window and passing-year selectors; optional cash/profit factors; coverage
+funnel; annual evidence table; and pre-tax/denominator limitations use paired
+EN/ZH strings in `investment_growth_quality.dart` and the Discover lens/list.
+Issuer names and source identifiers remain original. Targeted tests cover both
+languages, decimal/invalid input handling and desktop/390px research workflows.
+Native browser checked real annual data and Chinese mobile controls. See
+`docs/discover-growth-quality-2026-09-10.md`. Local preview only.
+
+### 2026-09-10 Combined Fundamentals shortlist
+
+Growth/profitability/cash-flow/ROIC controls, ALL/ANY logic, custom thresholds,
+pass/missing reasons and Valuation/Financials/Guru-quarter navigation now use
+paired EN/ZH copy. Manager identities/avatars and exact source dates are retained.
+Reporting-quarter, historical-extract and unverified share-change limitations
+are bilingual. New widget tests exercise both languages at 390px/120% text,
+with in-session company and quarter restoration. See
+`docs/fundamental-shortlist-2026-09-10.md`. Local preview only.
+
+### 2026-09-10 Strategy filing-history boundary
+
+The strategy failure surface now separates a pre-disclosure start from an
+insufficient Top-N extract. EN/ZH copy states the first stored public date and
+that dates were not changed; it no longer suggests reducing Top N to create
+nonexistent historical filings. Paired copy, widget regression, analyze and
+bilingual audit pass. No change to the strategy's economics or saved rules.
+
+### 2026-09-11 Strategy full investment and historical holdings
+
+The explicit eligible-subset full-investment policy, fixed CTA allocation,
+zero-eligible blocker, concentration warning, snapshot navigation, allocation /
+exposure distinction, excluded-book reasons and historical/public dates have
+paired EN/ZH strings. Historical stock rows retain company logos and canonical
+Guru portraits/names. Existing saved cash policies are not silently rewritten.
+Frontend tests cover both languages at 390px and 150% text size, including
+snapshot arrows, exclusion expansion and research navigation. Full Flutter
+suite: 456 passing; analyze and bilingual literal audit pass. See
+`docs/strategy-full-investment-2026-09-11.md`. Local preview only.
+
+### 2026-09-11 Guru directory and linked portraits
+
+Added paired EN/ZH directory headers, shared-search guidance, four sort modes,
+comparison controls, selected-state labels, missing-simulation messages, plot /
+directory counts and chart return links. All 29 catalog managers remain
+browsable; 28 have comparable chart data at the verified cutoff. No absent
+return is displayed as zero. The exact-quarter holdings entry stays bilingual.
+Six layout variants cover 390/1000/1223px in both languages, with 150% mobile
+text; 16 focused tests and all 459 Flutter tests pass. Actual browser portrait,
+quarter and linked-chart behavior checked at desktop and 390px widths. See
+`docs/guru-directory-2026-09-11.md`. Local preview only; no backend metric changes.
+
+### 2026-09-11 Home history and P&L repair
+
+Added paired EN/ZH NAV / realized P&L / P&L estimate chart controls, range-aware
+amounts, selected-date details, explicit estimate/source boundaries, FIFO
+ranking and revised IBKR history guidance. 11 focused Home tests and 462 full
+Flutter tests passed, including 390px EN/ZH at 120% text. Actual private owner
+history, not fixtures, backs local preview acceptance. See
+`docs/portfolio-history-repair-2026-09-11.md`.
+
+### 2026-09-11 One-click portfolio privacy
+
+Home and connected Portfolio share bilingual privacy controls, retained browser
+preference, percentage-only NAV / P&L curves and rankings, clear denominator
+captions, unavailable-rate states, storage failure feedback, and a protected
+research-notes shelf. Amounts, units and account labels are masked; rates and
+weights remain visible. Twelve new tests include EN/ZH at 390px and 150% text;
+all 491 Flutter tests, analyze, bilingual audit and build checks pass. See
+`docs/portfolio-privacy-2026-09-11.md`. Local preview only.
+
+### 2026-09-11 Owner holdings: valuation + Guru activity
+
+Home and Portfolio holdings now share bilingual disclosed-quarter Guru activity:
+holder counts, additions/new positions, reductions/exits, named portrait lists,
+weights, share-change rates, filing dates and exact filing drilldowns. Partial,
+unknown, no-match and security-conflict states are translated; manager names
+remain official proper nouns. Valuation/financial navigation and amount privacy
+remain intact. Focused 390px EN/ZH tests at 150% text scale and all 494 Flutter
+tests pass. See `docs/portfolio-guru-integration-2026-09-11.md`.
+
+### 2026-09-11 Backtest snapshots and filtering evidence
+
+Added an always-visible results snapshot selector, Holdings & filters inspector,
+paired EN/ZH exclusion reasons, decision prices/dates, saved-run premium limits,
+redistribution explanations, source filings and separate unavailable-Guru counts.
+Date browsing does not run/save or relabel historical evidence with current
+controls. Mobile EN/ZH at 150% text is covered. See
+`docs/strategy-snapshot-inspector-2026-09-11.md`. Local preview only.
+
+### 2026-09-11 Strategy mix: independent factor configuration
+
+Added paired EN/ZH factor switches, threshold inputs, observation/passing-year
+selectors, enabled-factor ranking, Top N, empty-selection protection and saved-run
+rule summaries. The existing four factors can be added/removed independently,
+including single-factor strategies. Focused strategy widget tests cover English
+and Chinese at 390px / 150% text; 35 tests pass, along with the bilingual audit.
+See `docs/strategy-equity-mix-2026-09-11.md`. Local preview only.
+
+### 2026-09-11 Independent CTA configuration
+
+Paired EN/ZH CTA modes, calendar frequencies, editable trigger stages, minimum
+target, tranche size, cooldown, validation, apply/cancel, completed-run CTA
+weight chart, trade reasons and snapshot links. The dialog explicitly preserves
+LanguageScope across its route. The 39 focused strategy widget tests pass,
+including 390px / 150% text in both languages; targeted analysis and bilingual
+audit pass. See `docs/strategy-cta-rules-2026-09-11.md`. Local preview only.
+
+Final regression: full Flutter analysis and all 509 Flutter tests pass. Browser
+verification exercised the English configuration, real backtest, CTA-weight
+chart and event-to-snapshot link, then the Chinese snapshot and modal.
 
 Run before release:
 

@@ -1,6 +1,7 @@
 import { gurus, manager13fPublicProxyAllowed } from "./gurus.js";
 import { load13fHoldingHistory, loadGuruDashboard } from "./secClient.js";
 import { loadPriceSeries } from "./marketData.js";
+import { factOsEnabled } from "./factRepository.js";
 import {
   adjustedClosePriceMap,
   filingExecutionDecision,
@@ -1831,7 +1832,11 @@ async function loadDisclosureBacktest(
     ? firstDisclosureDate || yearsAgoDate(end, 5)
     : yearsAgoDate(end, window.years);
   const transactions = allTransactions.filter((row) => row.publicDate >= start && row.publicDate <= end);
-  const spySeries = await loadPriceSeries("SPY", { start, end });
+  const spySeries = await loadPriceSeries("SPY", {
+    start,
+    end,
+    priceType: "TOTAL_RETURN_ADJUSTED_CLOSE"
+  });
   const spyPoints = (spySeries.points || []).filter((point) => point.date >= start && point.date <= end);
 
   if (transactions.length < 2 || spyPoints.length < 30) {
@@ -1885,7 +1890,11 @@ async function loadDisclosureBacktest(
     priceConcurrency,
     async (ticker) => {
       try {
-        const series = await loadPriceSeries(ticker, { start, end });
+        const series = await loadPriceSeries(ticker, {
+          start,
+          end,
+          priceType: "TOTAL_RETURN_ADJUSTED_CLOSE"
+        });
         priceMaps.set(ticker, priceMap(series.points || []));
       } catch {
         priceMaps.set(ticker, new Map());
@@ -2129,6 +2138,33 @@ export async function loadGuruBacktest(
   const guru = gurus.find((item) => item.id === guruId);
   if (!guru) throw new Error(`Guru not found: ${guruId}`);
 
+  if (factOsEnabled()) {
+    // SF3 quarter-end positions are not filing-time observations. A PIT copy
+    // backtest needs the actual public-availability timestamp, so fail closed
+    // and never let a legacy cached curve masquerade as canonical history.
+    return {
+      generatedAt: new Date().toISOString(),
+      status: "pit_unavailable",
+      guru: { id: guru.id, name: guru.name, type: guru.type, thesisTag: guru.thesisTag },
+      source: "sharadar_fact_os",
+      years,
+      series: [],
+      quarterly: [],
+      equity: [],
+      rebalances: [],
+      quarterContributions: [],
+      tag: { label: "Historical disclosure timing unavailable", tone: "muted" },
+      method: {
+        years: window.methodYears,
+        benchmark: "SPY",
+        reason: "SF3 does not publish actual filing availability timestamps. A quarter end is not a knowledge date."
+      },
+      summary: {},
+      cache: { status: "local-only" },
+      message: "Historical holdings are available, but a point-in-time copy backtest requires verified disclosure timestamps. No old cached return curve is substituted."
+    };
+  }
+
   if (guru.type === "congress") {
     return loadDisclosureBacktest(guru, window, {
       refresh,
@@ -2227,6 +2263,7 @@ export async function loadGuruBacktest(
   const spySeries = await loadPriceSeries("SPY", {
     start,
     end,
+    priceType: "TOTAL_RETURN_ADJUSTED_CLOSE",
     requireAdjusted: true,
     requireFullRange: true
   });
@@ -2360,6 +2397,7 @@ export async function loadGuruBacktest(
         const series = await loadPriceSeries(ticker, {
           start: activeWindow.start,
           end: activeWindow.end,
+          priceType: "TOTAL_RETURN_ADJUSTED_CLOSE",
           requireAdjusted: true,
           expectedTradingDates: activeTradingDatesForPriceWindow(
             tradingDates,

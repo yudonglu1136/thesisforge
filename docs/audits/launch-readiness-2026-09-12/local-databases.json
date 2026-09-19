@@ -1,0 +1,5630 @@
+{
+  "capturedAt": "2026-09-12T12:20:32.673Z",
+  "readOnly": true,
+  "databases": [
+    {
+      "label": "serving_runtime",
+      "exists": true,
+      "bytes": 2994876416,
+      "mode": "600",
+      "modifiedAt": "2026-09-11T09:13:03.067Z",
+      "walBytes": 0,
+      "journal": {
+        "journal_mode": "wal"
+      },
+      "pageCount": {
+        "page_count": 731171
+      },
+      "freePages": {
+        "freelist_count": 297
+      },
+      "schemaSha256": "9810fb1130f48bf51638ad00b0f8788e578f714e47fd6de5848af9d4f640356e",
+      "integrity": [
+        {
+          "integrity_check": "ok"
+        }
+      ],
+      "foreignKeyViolations": 0,
+      "tables": [
+        {
+          "name": "background_job_runs",
+          "rows": 13,
+          "columns": [
+            {
+              "name": "job_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "started_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "finished_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "status",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_background_job_runs_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "cache_revisions",
+          "rows": 9,
+          "columns": [
+            {
+              "name": "scope",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "revision",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_cache_revisions_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "dashboard_snapshots",
+          "rows": 1,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_dashboard_snapshots_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "dbmf_snapshots",
+          "rows": 1,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "latest_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_dbmf_snapshots_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "dividend_events",
+          "rows": 57,
+          "columns": [
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "company_name",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "ex_date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "pay_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "record_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "declaration_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "amount",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "status",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source",
+              "type": "TEXT",
+              "required": true,
+              "pk": 3
+            },
+            {
+              "name": "source_label",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "logo_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "updated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "idx_dividend_events_ticker_ex_date",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_dividend_events_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "guru_assets",
+          "rows": 38,
+          "columns": [
+            {
+              "name": "guru_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "asset_type",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "url",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "local_path",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "style",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "prompt",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_guru_assets_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "guru_backtest_proxies",
+          "rows": 49,
+          "columns": [
+            {
+              "name": "guru_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "years",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "start_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "end_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "method_version",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_guru_backtest_proxies_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "guru_backtests",
+          "rows": 78,
+          "columns": [
+            {
+              "name": "guru_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "years",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "start_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "end_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_guru_backtests_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "guru_exposure_snapshots",
+          "rows": 29,
+          "columns": [
+            {
+              "name": "guru_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_guru_exposure_snapshots_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "guru_snapshots",
+          "rows": 38,
+          "columns": [
+            {
+              "name": "guru_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "cik",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "type",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_guru_snapshots_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "investment_quality_annual",
+          "rows": 13688,
+          "columns": [
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "source_ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "fiscal_year",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "report_period",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "available_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "dimension",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "roic",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "operating_margin",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "fcf_margin",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "cash_conversion",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "raw_roic",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "ebit",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "invested_capital_avg",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "revenue",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "operating_income",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "cfo",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "capex",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "net_income",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "issues_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_hash",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "investment_quality_pit",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_investment_quality_annual_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "investment_quality_metadata",
+          "rows": 7,
+          "columns": [
+            {
+              "name": "key",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "value",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_investment_quality_metadata_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "portfolio_nav_points",
+          "rows": 17,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "nav",
+              "type": "REAL",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "cash",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "updated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "idx_portfolio_nav_points_account_date",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_portfolio_nav_points_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "price_points",
+          "rows": 4461535,
+          "columns": [
+            {
+              "name": "symbol",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "open",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "high",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "low",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "close",
+              "type": "REAL",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "volume",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "updated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "adjusted_close",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_price_points_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "price_repair_audits",
+          "rows": 1,
+          "columns": [
+            {
+              "name": "audit_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "created_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "provider",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "reason",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "row_count",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "symbols_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "dates_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_sha256",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "snapshot_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_reference",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "operator",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "policy",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "affected_gurus_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "rows_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "before_rows_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_price_repair_audits_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "price_series_import_audits",
+          "rows": 181,
+          "columns": [
+            {
+              "name": "audit_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "created_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "provider",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "reason",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "snapshot_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "snapshot_state",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_reference",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "operator",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "policy",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "affected_gurus_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "symbol",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "interval_start",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "interval_end",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "before_rows_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "rows_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "row_count",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_sha256",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_price_series_import_audits_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "price_series_import_batch_audits",
+          "rows": 8,
+          "columns": [
+            {
+              "name": "batch_audit_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "created_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "records_sha256",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "release_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_volume_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_snapshot_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "encrypted_snapshot_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "operator",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "child_audit_ids_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "series_manifest_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "refresh_targets_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "expectations_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "group_count",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "row_count",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "imported_row_count",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_price_series_import_batch_audits_2",
+              "unique": true
+            },
+            {
+              "name": "sqlite_autoindex_price_series_import_batch_audits_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "ticker_assets",
+          "rows": 8,
+          "columns": [
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "company_name",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "logo_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "logo_domain",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "logo_source",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "updated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_ticker_assets_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_pit_financials",
+          "rows": 65038,
+          "columns": [
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "source_ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "fiscal_period",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "fiscal_year",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "fiscal_quarter",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "dimension",
+              "type": "TEXT",
+              "required": true,
+              "pk": 3
+            },
+            {
+              "name": "available_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "report_period",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "imported_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "idx_valuation_pit_financials_ticker_available",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_valuation_pit_financials_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_pit_guidance",
+          "rows": 85312,
+          "columns": [
+            {
+              "name": "source_database",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "source_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "fiscal_period",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "observed_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "metric_name",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "amount",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "unit",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "growth_yoy",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "growth_qoq",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "margin_pct",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "value_text",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "quality_status",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "confidence",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "speaker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "evidence_excerpt",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "imported_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "idx_valuation_pit_guidance_ticker_period",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_valuation_pit_guidance_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_pit_model_runs",
+          "rows": 31953,
+          "columns": [
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "fiscal_period",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "model_version",
+              "type": "TEXT",
+              "required": true,
+              "pk": 3
+            },
+            {
+              "name": "as_of_date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "financial_available_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "guidance_max_observed_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "input_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "output_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "idx_valuation_pit_model_runs_ticker_asof",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_valuation_pit_model_runs_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_pit_price_observations",
+          "rows": 31636,
+          "columns": [
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "fiscal_period",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "model_version",
+              "type": "TEXT",
+              "required": true,
+              "pk": 3
+            },
+            {
+              "name": "price_symbol",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "price_date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "close",
+              "type": "REAL",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "quote_currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "imported_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "idx_valuation_pit_price_observations_symbol_date",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_valuation_pit_price_observations_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_pit_source_metadata",
+          "rows": 31,
+          "columns": [
+            {
+              "name": "key",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "value",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "imported_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_valuation_pit_source_metadata_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_podcast_insights",
+          "rows": 23,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "observed_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "channel",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "video_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "video_title",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "video_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "speaker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "theme",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "stance",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "horizon",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "confidence",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "relevance_score",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "summary",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "summary_zh",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "evidence_excerpt",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "evidence_excerpt_zh",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "idx_valuation_podcast_insights_ticker_observed_at",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_valuation_podcast_insights_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_snapshots",
+          "rows": 1,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_valuation_snapshots_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_ticker_snapshots",
+          "rows": 533,
+          "columns": [
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_valuation_ticker_snapshots_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        }
+      ],
+      "facts": {
+        "price_points_range": {
+          "first": "2000-08-10",
+          "last": "2026-09-10"
+        },
+        "valuation_pit_model_runs_range": {
+          "first": "2010-01-06",
+          "last": "2026-08-27"
+        }
+      }
+    },
+    {
+      "label": "strategy",
+      "exists": true,
+      "bytes": 4411990016,
+      "mode": "600",
+      "modifiedAt": "2026-09-11T09:13:02.196Z",
+      "walBytes": 0,
+      "journal": {
+        "journal_mode": "delete"
+      },
+      "pageCount": {
+        "page_count": 1077146
+      },
+      "freePages": {
+        "freelist_count": 0
+      },
+      "schemaSha256": "cefadaba507b934a60b8db61484af52ad02cb54dd68b52a937467568a0deaae7",
+      "integrity": [
+        {
+          "integrity_check": "ok"
+        }
+      ],
+      "foreignKeyViolations": 0,
+      "tables": [
+        {
+          "name": "corporate_actions",
+          "rows": 10,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "cusip",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "action_type",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "effective_date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "cash_per_share",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "successor_ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "conversion_ratio",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "evidence_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_corporate_actions_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "source_documents",
+              "from": "source_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "coverage_issues",
+          "rows": 120001,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "category",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "severity",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "manager_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "filing_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "reason",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "evidence_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "issue_lookup",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_coverage_issues_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "filings",
+              "from": "filing_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "document_holdings",
+          "rows": 230722,
+          "columns": [
+            {
+              "name": "document_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "ordinal",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "cusip",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "issuer",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "security_title",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "amount_type",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "put_call",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "amount",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "reported_value",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "value_multiplier",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "claim_type",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_document_holdings_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "source_documents",
+              "from": "document_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "etf_catalog",
+          "rows": 2,
+          "columns": [
+            {
+              "name": "symbol",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "inception",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "first_date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "last_date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "series_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "points_hash",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "downloaded_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_etf_catalog_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "price_series",
+              "from": "series_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "filing_holdings",
+          "rows": 192592,
+          "columns": [
+            {
+              "name": "filing_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "ordinal",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "cusip",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "reported_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "issuer",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "security_title",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "amount_type",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "put_call",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "reported_shares",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "value_usd",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "reported_ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "claim_type",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "classification_status",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "classification_reason",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "holding_claims",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_filing_holdings_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "filings",
+              "from": "filing_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "filing_manifest",
+          "rows": 1177,
+          "columns": [
+            {
+              "name": "manager_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "accession",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "cik",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "form",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "report_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "public_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "document_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "document_hash",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "selected_count",
+              "type": "INTEGER",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "reported_count",
+              "type": "INTEGER",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_filing_manifest_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "source_documents",
+              "from": "source_id",
+              "to": "id"
+            },
+            {
+              "table": "managers",
+              "from": "manager_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "filings",
+          "rows": 1131,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "manager_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "accession",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "report_date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "public_date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "form",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "cik",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "book_scope",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "classification_status",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "expected_position_count",
+              "type": "INTEGER",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "row_count",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "selected_value_usd",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "common_value_usd",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_hash",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "filing_dates",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_filings_2",
+              "unique": true
+            },
+            {
+              "name": "sqlite_autoindex_filings_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "source_documents",
+              "from": "source_id",
+              "to": "id"
+            },
+            {
+              "table": "managers",
+              "from": "manager_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "financial_metrics",
+          "rows": 780456,
+          "columns": [
+            {
+              "name": "record_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "metric",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "value",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "unit",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "lineage_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_financial_metrics_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "financial_records",
+              "from": "record_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "financial_records",
+          "rows": 65038,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "fiscal_period",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "fiscal_year",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "fiscal_quarter",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "dimension",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "available_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "report_period",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "quality_status",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_record_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "raw_payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "financial_dates",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_financial_records_2",
+              "unique": true
+            },
+            {
+              "name": "sqlite_autoindex_financial_records_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "guidance_events",
+          "rows": 85312,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "source_database",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_event_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "fiscal_period",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "observed_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "metric",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "amount",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "unit",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "growth_yoy",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "growth_qoq",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "margin_pct",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "quality_status",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "confidence",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "speaker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "evidence_excerpt",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "raw_payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "guidance_dates",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_guidance_events_2",
+              "unique": true
+            },
+            {
+              "name": "sqlite_autoindex_guidance_events_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "holding_resolutions",
+          "rows": 192592,
+          "columns": [
+            {
+              "name": "filing_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "ordinal",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "price_symbol",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "status",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "resolution_source",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "resolution_version",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_holding_resolutions_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "filing_holdings",
+              "from": "filing_id",
+              "to": "filing_id"
+            },
+            {
+              "table": "filing_holdings",
+              "from": "ordinal",
+              "to": "ordinal"
+            }
+          ]
+        },
+        {
+          "name": "manager_entities",
+          "rows": 34,
+          "columns": [
+            {
+              "name": "manager_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "cik",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "entity_role",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "review_status",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_manager_entities_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "managers",
+              "from": "manager_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "managers",
+          "rows": 29,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "display_name",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "entity_name",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "simulation_enabled",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "identity_status",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "identity_reason",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "evidence_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_managers_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "source_documents",
+              "from": "source_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "model_price_evidence",
+          "rows": 31636,
+          "columns": [
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "fiscal_period",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "model_version",
+              "type": "TEXT",
+              "required": true,
+              "pk": 3
+            },
+            {
+              "name": "price_symbol",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "price_date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "close",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "quote_currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_label",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_model_price_evidence_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "price_observations",
+          "rows": 5435057,
+          "columns": [
+            {
+              "name": "series_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "open",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "high",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "low",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "close",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "adjusted_close",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "volume",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "observed_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "quality_status",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_price_observations_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "price_series",
+              "from": "series_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "price_series",
+          "rows": 4909,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "symbol",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "provider",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_label",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "storage_kind",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "close_basis",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "return_basis",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "quote_currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "status",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "price_series_symbol",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_price_series_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "source_documents",
+              "from": "source_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "security_identifiers",
+          "rows": 2363,
+          "columns": [
+            {
+              "name": "cusip",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "status",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "evidence_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_security_identifiers_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "source_documents",
+              "from": "source_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "source_documents",
+          "rows": 5330,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "kind",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "locator",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "sha256",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "content",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "stored_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_source_documents_2",
+              "unique": true
+            },
+            {
+              "name": "sqlite_autoindex_source_documents_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_metrics",
+          "rows": 1565706,
+          "columns": [
+            {
+              "name": "node_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "section",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "metric",
+              "type": "TEXT",
+              "required": true,
+              "pk": 3
+            },
+            {
+              "name": "value",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "unit",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_valuation_metrics_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "valuation_nodes",
+              "from": "node_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "valuation_nodes",
+          "rows": 31953,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "fiscal_period",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "model_version",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "as_of_date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "financial_available_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "guidance_available_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "fair_value",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "formula",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "quality_status",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "input_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "output_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "valuation_dates",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_valuation_nodes_2",
+              "unique": true
+            },
+            {
+              "name": "sqlite_autoindex_valuation_nodes_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "warehouse_meta",
+          "rows": 1,
+          "columns": [
+            {
+              "name": "id",
+              "type": "INTEGER",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "schema_version",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "cutoff",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "state",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "security_version",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "action_version",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "manifest_hash",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_counts_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [],
+          "foreignKeys": []
+        }
+      ],
+      "facts": {}
+    },
+    {
+      "label": "composition_prices",
+      "exists": true,
+      "bytes": 544612352,
+      "mode": "600",
+      "modifiedAt": "2026-09-11T11:50:20.728Z",
+      "walBytes": 0,
+      "journal": {
+        "journal_mode": "delete"
+      },
+      "pageCount": {
+        "page_count": 132962
+      },
+      "freePages": {
+        "freelist_count": 0
+      },
+      "schemaSha256": "dea28e45cf8399a3cdd3b7a379a6c8a2938ce0523ccc42ecc62c319da58a2c43",
+      "integrity": [
+        {
+          "integrity_check": "ok"
+        }
+      ],
+      "foreignKeyViolations": 0,
+      "tables": [
+        {
+          "name": "audit",
+          "rows": 1601,
+          "columns": [
+            {
+              "name": "symbol",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_audit_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "prices",
+          "rows": 4511582,
+          "columns": [
+            {
+              "name": "symbol",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 2
+            },
+            {
+              "name": "open",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "high",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "low",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "close",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "adjusted_close",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "volume",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "quality_status",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_prices_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "series",
+          "rows": 1581,
+          "columns": [
+            {
+              "name": "symbol",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "provider_symbol",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "first_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "last_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "row_count",
+              "type": "INTEGER",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_sha256",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "metadata_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "events_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "status",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_series_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "source_responses",
+          "rows": 2,
+          "columns": [
+            {
+              "name": "symbol",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "endpoint",
+              "type": "TEXT",
+              "required": false,
+              "pk": 2
+            },
+            {
+              "name": "sha256",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "content",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_source_responses_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        }
+      ],
+      "facts": {
+        "prices_range": {
+          "first": "2000-08-10",
+          "last": "2026-09-10"
+        }
+      }
+    },
+    {
+      "label": "user_research",
+      "exists": true,
+      "bytes": 4096,
+      "mode": "600",
+      "modifiedAt": "2026-09-08T07:24:16.154Z",
+      "walBytes": 2068272,
+      "journal": {
+        "journal_mode": "wal"
+      },
+      "pageCount": {
+        "page_count": 101
+      },
+      "freePages": {
+        "freelist_count": 0
+      },
+      "schemaSha256": "f3e43baf342d1ab6b8122b5c93f3934782600ade2dd581a0d4244aa7ecbc0c94",
+      "integrity": [
+        {
+          "integrity_check": "ok"
+        }
+      ],
+      "foreignKeyViolations": 0,
+      "tables": [
+        {
+          "name": "investment_events",
+          "rows": 67,
+          "columns": [
+            {
+              "name": "seq",
+              "type": "INTEGER",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "owner",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "kind",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "operation_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "request_hash",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "recorded_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_hash",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "investment_owner_kind",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_investment_events_2",
+              "unique": true
+            },
+            {
+              "name": "sqlite_autoindex_investment_events_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        }
+      ],
+      "facts": {
+        "eventOwners": 1,
+        "localDevEvents": 67,
+        "eventsByKind": [
+          {
+            "kind": "decision",
+            "n": 2,
+            "first": "2026-09-08T07:30:28.396Z",
+            "last": "2026-09-08T14:17:42.609Z"
+          },
+          {
+            "kind": "review",
+            "n": 3,
+            "first": "2026-09-08T07:31:29.669Z",
+            "last": "2026-09-08T14:24:55.578Z"
+          },
+          {
+            "kind": "scenario",
+            "n": 4,
+            "first": "2026-09-08T07:28:13.448Z",
+            "last": "2026-09-09T09:36:36.379Z"
+          },
+          {
+            "kind": "strategy",
+            "n": 5,
+            "first": "2026-09-08T11:53:05.900Z",
+            "last": "2026-09-08T15:10:02.681Z"
+          },
+          {
+            "kind": "valuation_draft",
+            "n": 50,
+            "first": "2026-09-10T21:37:24.256Z",
+            "last": "2026-09-11T17:55:27.562Z"
+          },
+          {
+            "kind": "watch",
+            "n": 2,
+            "first": "2026-09-08T18:34:09.715Z",
+            "last": "2026-09-10T12:00:53.860Z"
+          },
+          {
+            "kind": "watch_review",
+            "n": 1,
+            "first": "2026-09-08T18:36:34.547Z",
+            "last": "2026-09-08T18:36:34.547Z"
+          }
+        ],
+        "invalidJson": 0,
+        "invalidPayloadHash": 0,
+        "queryPlan": [
+          {
+            "id": 4,
+            "parent": 0,
+            "notused": 62,
+            "detail": "SEARCH investment_events USING INDEX sqlite_autoindex_investment_events_2 (owner=?)"
+          },
+          {
+            "id": 27,
+            "parent": 0,
+            "notused": 0,
+            "detail": "USE TEMP B-TREE FOR ORDER BY"
+          }
+        ]
+      }
+    },
+    {
+      "label": "owner_preview",
+      "exists": true,
+      "bytes": 262144,
+      "mode": "600",
+      "modifiedAt": "2026-09-12T06:30:06.572Z",
+      "walBytes": 0,
+      "journal": {
+        "journal_mode": "delete"
+      },
+      "pageCount": {
+        "page_count": 64
+      },
+      "freePages": {
+        "freelist_count": 0
+      },
+      "schemaSha256": "fec3d347ce1303db61e16574b16520c8b3990c78a90f2677e197e17b008f1d03",
+      "integrity": [
+        {
+          "integrity_check": "ok"
+        }
+      ],
+      "foreignKeyViolations": 0,
+      "tables": [
+        {
+          "name": "accounts",
+          "rows": 1,
+          "columns": [
+            {
+              "name": "id",
+              "type": "INTEGER",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "report_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "reported_nav",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "performance_basis",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [],
+          "foreignKeys": []
+        },
+        {
+          "name": "cash_flows",
+          "rows": 6,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "event_key",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "type",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "amount",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_cash_flows_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "accounts",
+              "from": "account_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "daily_mtm",
+          "rows": 0,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "instrument_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 3
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "name",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "asset_category",
+              "type": "TEXT",
+              "required": true,
+              "pk": 4
+            },
+            {
+              "name": "pnl",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_daily_mtm_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "accounts",
+              "from": "account_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "history_coverage",
+          "rows": 1,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "INTEGER",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "from_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "to_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "trade_status",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "cash_status",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "basis",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "income_status",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [],
+          "foreignKeys": [
+            {
+              "table": "accounts",
+              "from": "account_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "income_events",
+          "rows": 30,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "event_key",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "asset_category",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "category",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_amount",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "fx_rate",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "amount",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_income_events_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "accounts",
+              "from": "account_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "nav_observations",
+          "rows": 261,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "nav",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_nav_observations_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "accounts",
+              "from": "account_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "positions",
+          "rows": 14,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "ordinal",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "name",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "asset_category",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "quantity",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "price",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "local_value",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "fx_rate",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "multiplier",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "strike",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "expiry",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "cusip",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "isin",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "identity_basis",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "cost_basis_money",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_positions_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "accounts",
+              "from": "account_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "realized_pnl",
+          "rows": 837,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "event_key",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "name",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "asset_category",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "pnl",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_realized_pnl_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": [
+            {
+              "table": "accounts",
+              "from": "account_id",
+              "to": "id"
+            }
+          ]
+        },
+        {
+          "name": "snapshot",
+          "rows": 1,
+          "columns": [
+            {
+              "name": "id",
+              "type": "INTEGER",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "version",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "owner_hash",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "retrieved_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_sha256",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [],
+          "foreignKeys": []
+        }
+      ],
+      "facts": {}
+    },
+    {
+      "label": "bundled_runtime",
+      "exists": true,
+      "bytes": 200855552,
+      "mode": "644",
+      "modifiedAt": "2026-09-03T18:01:22.058Z",
+      "walBytes": 0,
+      "journal": {
+        "journal_mode": "wal"
+      },
+      "pageCount": {
+        "page_count": 49037
+      },
+      "freePages": {
+        "freelist_count": 0
+      },
+      "schemaSha256": "5f75ceb1b098da4b3301e803f0e9d9b0a9c28a948b227890f99cab86fe490cca",
+      "integrity": [
+        {
+          "integrity_check": "ok"
+        }
+      ],
+      "foreignKeyViolations": 0,
+      "tables": [
+        {
+          "name": "background_job_runs",
+          "rows": 4,
+          "columns": [
+            {
+              "name": "job_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "started_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "finished_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "status",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_background_job_runs_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "cache_revisions",
+          "rows": 9,
+          "columns": [
+            {
+              "name": "scope",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "revision",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_cache_revisions_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "dashboard_snapshots",
+          "rows": 1,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_dashboard_snapshots_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "dividend_events",
+          "rows": 53,
+          "columns": [
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "company_name",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "ex_date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "pay_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "record_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "declaration_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "amount",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "status",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source",
+              "type": "TEXT",
+              "required": true,
+              "pk": 3
+            },
+            {
+              "name": "source_label",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "logo_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "updated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "idx_dividend_events_ticker_ex_date",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_dividend_events_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "guru_assets",
+          "rows": 38,
+          "columns": [
+            {
+              "name": "guru_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "asset_type",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "url",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "local_path",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "style",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "prompt",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_guru_assets_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "guru_backtest_proxies",
+          "rows": 0,
+          "columns": [
+            {
+              "name": "guru_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "years",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "start_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "end_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "method_version",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_guru_backtest_proxies_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "guru_backtests",
+          "rows": 35,
+          "columns": [
+            {
+              "name": "guru_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "years",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "start_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "end_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_guru_backtests_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "guru_exposure_snapshots",
+          "rows": 1,
+          "columns": [
+            {
+              "name": "guru_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_guru_exposure_snapshots_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "guru_snapshots",
+          "rows": 2,
+          "columns": [
+            {
+              "name": "guru_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "cik",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "type",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_guru_snapshots_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "portfolio_nav_points",
+          "rows": 0,
+          "columns": [
+            {
+              "name": "account_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "nav",
+              "type": "REAL",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "cash",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source_date",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "updated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "idx_portfolio_nav_points_account_date",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_portfolio_nav_points_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "price_points",
+          "rows": 1489788,
+          "columns": [
+            {
+              "name": "symbol",
+              "type": "TEXT",
+              "required": true,
+              "pk": 1
+            },
+            {
+              "name": "date",
+              "type": "TEXT",
+              "required": true,
+              "pk": 2
+            },
+            {
+              "name": "open",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "high",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "low",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "close",
+              "type": "REAL",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "volume",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "source",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "updated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "adjusted_close",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_price_points_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "price_repair_audits",
+          "rows": 0,
+          "columns": [
+            {
+              "name": "audit_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "created_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "provider",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "reason",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "row_count",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "symbols_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "dates_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_sha256",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "snapshot_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_reference",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "operator",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "policy",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "affected_gurus_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "rows_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "before_rows_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_price_repair_audits_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "price_series_import_audits",
+          "rows": 0,
+          "columns": [
+            {
+              "name": "audit_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "created_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "provider",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "reason",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "snapshot_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "snapshot_state",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_reference",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "operator",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "policy",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "affected_gurus_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "symbol",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "interval_start",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "interval_end",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "before_rows_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "rows_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "row_count",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_sha256",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_price_series_import_audits_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "price_series_import_batch_audits",
+          "rows": 0,
+          "columns": [
+            {
+              "name": "batch_audit_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "created_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "records_sha256",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "release_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_volume_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "source_snapshot_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "encrypted_snapshot_id",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "operator",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "child_audit_ids_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "series_manifest_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "refresh_targets_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "expectations_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "group_count",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "row_count",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "imported_row_count",
+              "type": "INTEGER",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_price_series_import_batch_audits_2",
+              "unique": true
+            },
+            {
+              "name": "sqlite_autoindex_price_series_import_batch_audits_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "ticker_assets",
+          "rows": 6,
+          "columns": [
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "company_name",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "logo_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "logo_domain",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "logo_source",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "updated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_ticker_assets_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_podcast_insights",
+          "rows": 0,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "observed_at",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "channel",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "video_id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "video_title",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "video_url",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "speaker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "theme",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "stance",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "horizon",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "confidence",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "relevance_score",
+              "type": "REAL",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "summary",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "summary_zh",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "evidence_excerpt",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "evidence_excerpt_zh",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": false,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "idx_valuation_podcast_insights_ticker_observed_at",
+              "unique": false
+            },
+            {
+              "name": "sqlite_autoindex_valuation_podcast_insights_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_snapshots",
+          "rows": 0,
+          "columns": [
+            {
+              "name": "id",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_valuation_snapshots_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        },
+        {
+          "name": "valuation_ticker_snapshots",
+          "rows": 0,
+          "columns": [
+            {
+              "name": "ticker",
+              "type": "TEXT",
+              "required": false,
+              "pk": 1
+            },
+            {
+              "name": "generated_at",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            },
+            {
+              "name": "payload_json",
+              "type": "TEXT",
+              "required": true,
+              "pk": 0
+            }
+          ],
+          "indexes": [
+            {
+              "name": "sqlite_autoindex_valuation_ticker_snapshots_1",
+              "unique": true
+            }
+          ],
+          "foreignKeys": []
+        }
+      ],
+      "facts": {
+        "price_points_range": {
+          "first": "2001-05-15",
+          "last": "2026-09-03"
+        }
+      }
+    },
+    {
+      "label": "bundled_ontology",
+      "exists": true,
+      "bytes": 0,
+      "mode": "644",
+      "modifiedAt": "2026-08-30T20:36:29.736Z",
+      "walBytes": 0,
+      "journal": {
+        "journal_mode": "delete"
+      },
+      "pageCount": {
+        "page_count": 0
+      },
+      "freePages": {
+        "freelist_count": 0
+      },
+      "schemaSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "integrity": [
+        {
+          "integrity_check": "ok"
+        }
+      ],
+      "foreignKeyViolations": 0,
+      "tables": [],
+      "facts": {}
+    }
+  ]
+}

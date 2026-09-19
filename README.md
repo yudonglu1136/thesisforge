@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="web/icons/Icon-192.png" width="82" alt="Guru Intelligence app icon" />
-  <h1>Guru Intelligence</h1>
+  <img src="web/icons/Icon-192.png" width="82" alt="ThesisForge app icon" />
+  <h1>ThesisForge</h1>
   <p><strong>Point-in-time public-equity research and private portfolio intelligence.</strong></p>
   <p>
     Follow great investors, replay what the market knew, value companies from
@@ -26,7 +26,7 @@
 
 ## The Product
 
-Guru Intelligence is a buy-side research workspace built around a simple idea:
+ThesisForge is a buy-side research workspace built around a simple idea:
 every conclusion should be traceable to what was actually knowable at that
 moment.
 

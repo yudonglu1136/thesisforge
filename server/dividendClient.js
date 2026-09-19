@@ -17,6 +17,11 @@ import {
   londonMarketTicker,
   portfolioDisplayTicker
 } from "./tickerAliases.js";
+import {
+  factOsEnabled,
+  queryFactsBatch,
+  canonicalListingRequest
+} from "./factRepository.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const dividendJobId = "portfolio_dividend_calendar";
@@ -99,7 +104,7 @@ function parseNasdaqDate(value) {
   return Number.isNaN(parsed.getTime()) ? "" : isoDate(parsed);
 }
 
-function normalizeTickerInputs(items = []) {
+function normalizeTickerInputs(items = [], { canonical = false } = {}) {
   const byTicker = new Map();
   for (const item of items) {
     const rawTicker = typeof item === "string"
@@ -114,7 +119,12 @@ function normalizeTickerInputs(items = []) {
       : String(item?.companyName || item?.name || item?.description || normalizedRawTicker).trim();
     const currency = typeof item === "string" ? "USD" : String(item?.currency || "USD").trim() || "USD";
     const displayTicker = portfolioDisplayTicker(rawTicker, { currency, companyName });
-    const ticker = canonicalTicker(displayTicker || rawTicker) || normalizeTicker(displayTicker || rawTicker);
+    const listing = canonical
+      ? canonicalListingRequest(typeof item === "string" ? item : { ...item, ticker: rawTicker })
+      : null;
+    const ticker = canonical
+      ? listing.ticker
+      : canonicalTicker(displayTicker || rawTicker) || normalizeTicker(displayTicker || rawTicker);
     if (!ticker || ticker === "N/A" || ticker.startsWith("CASH")) continue;
     if (/option|^opt$|future|futures|cash|forex|currency/.test(assetClass)) continue;
     const quantity = typeof item === "string" ? 0 : safeHoldingQuantity(item);
@@ -132,6 +142,9 @@ function normalizeTickerInputs(items = []) {
     const existing = byTicker.get(ticker);
     byTicker.set(ticker, {
       ticker,
+      ...(canonical
+        ? { canonicalUnavailable: listing.unavailable || existing?.canonicalUnavailable || null }
+        : {}),
       companyName: companyName || existing?.companyName || ticker,
       quantity: Math.max(0, (existing?.quantity || 0) + Math.max(0, quantity)),
       price: price || existing?.price || 0,
@@ -572,6 +585,18 @@ export function readDividendCalendarForTickers(tickerInputs = [], {
   endDate = "",
   days = 0
 } = {}) {
+  if (factOsEnabled()) {
+    return {
+      events: [],
+      status: {
+        source: "sharadar_fact_os",
+        pointCount: 0,
+        startDate,
+        endDate,
+        message: "Use the asynchronous local Fact OS dividend reader."
+      }
+    };
+  }
   const tickerInfos = normalizeTickerInputs(tickerInputs);
   const effectiveEndDate = endDate || (
     days
@@ -591,6 +616,85 @@ export function readDividendCalendarForTickers(tickerInputs = [], {
       message: events.length
         ? `Stored dividend calendar: ${events.length} event(s), including paid history, declared events, and history-based estimates.`
         : "No stored dividend events yet. The backend refresh job will populate paid history, declared events, and history-based estimates."
+    }
+  };
+}
+
+export async function loadDividendCalendarForTickers(tickerInputs = [], options = {}) {
+  if (!factOsEnabled()) return readDividendCalendarForTickers(tickerInputs, options);
+  const infos = normalizeTickerInputs(tickerInputs, { canonical: true });
+  const startDate = options.startDate || defaultDividendReadStartDate();
+  const endDate = options.endDate || defaultDividendReadEndDate();
+  const events = [];
+  const unavailable = [];
+  const requested = infos.filter((info) => !info.canonicalUnavailable);
+  let results = [];
+  try {
+    if (requested.length) {
+      results = await queryFactsBatch(requested.map((info) => ({
+        method: "get_dividends",
+        args: [info.ticker, startDate, endDate]
+      })));
+    }
+  } catch (error) {
+    results = requested.map(() => ({
+      ok: false,
+      error: { code: error.code || "local_data_unavailable" }
+    }));
+  }
+  const byTicker = new Map(requested.map((info, index) => [info.ticker, results[index]]));
+  for (const info of infos) {
+    if (info.canonicalUnavailable) {
+      unavailable.push({ ticker: info.ticker, reason: info.canonicalUnavailable });
+      continue;
+    }
+    const result = byTicker.get(info.ticker);
+    if (!result?.ok) {
+      unavailable.push({
+        ticker: info.ticker,
+        reason: result?.error?.code || "local_data_unavailable"
+      });
+      continue;
+    }
+    for (const row of result.result || []) {
+      events.push({
+        id: `sharadar:${info.ticker}:${row.date}`,
+        ticker: info.ticker,
+        name: info.companyName,
+        companyName: info.companyName,
+        date: row.date,
+        exDate: row.date,
+        payDate: null,
+        paymentDate: null,
+        amount: row.value,
+        currency: "USD",
+        amountKind: "split_adjusted_per_share",
+        perShare: false,
+        status: "historical",
+        source: "sharadar_actions",
+        sourceLabel: "Sharadar corporate actions",
+        logoUrl: logoUrlForTicker(info.ticker),
+        provenance: row.provenance,
+        payload: {
+          amountBasis: row.basis,
+          paymentDateAvailable: false,
+          payoutEstimateAvailable: false
+        }
+      });
+    }
+  }
+  events.sort((left, right) =>
+    left.exDate.localeCompare(right.exDate) || left.ticker.localeCompare(right.ticker)
+  );
+  return {
+    events,
+    status: {
+      source: "sharadar_fact_os",
+      pointCount: events.length,
+      startDate,
+      endDate,
+      unavailable,
+      message: "Historical ex-dividends in split-adjusted USD per share. Payment dates and future payouts are not supplied; broker-reported income remains separate."
     }
   };
 }
@@ -647,6 +751,16 @@ function enrichStoredDividendEvent(event, tickerInfoByTicker) {
 }
 
 export async function refreshDividendCalendarForTickers(tickerInputs = [], options = {}) {
+  if (factOsEnabled()) {
+    const result = await loadDividendCalendarForTickers(tickerInputs, options);
+    return {
+      ...result,
+      eventCount: result.events.length,
+      refreshedAt: new Date().toISOString(),
+      source: "sharadar_fact_os",
+      message: "Read from the local canonical store. Run Fact OS sync separately to update upstream facts."
+    };
+  }
   if (refreshInFlight && !options.force) return refreshInFlight;
 
   refreshInFlight = (async () => {

@@ -1,0 +1,75 @@
+{
+  "capturedAt": "2026-09-12T12:29:54.125Z",
+  "results": [
+    {
+      "id": "prices",
+      "sql": "WITH s AS (SELECT symbol,max(date) latest FROM price_points GROUP BY symbol) SELECT count(*) symbols,sum(latest >= '2026-09-10') reached_cutoff,sum(latest < '2026-09-10') older,min(latest) earliest_last,max(latest) latest_last FROM s",
+      "rows": [
+        {
+          "symbols": 1598,
+          "reached_cutoff": 1517,
+          "older": 81,
+          "earliest_last": "2018-08-14",
+          "latest_last": "2026-09-10"
+        }
+      ]
+    },
+    {
+      "id": "financials",
+      "sql": "SELECT dimension,count(*) rows,count(DISTINCT ticker) tickers,max(available_at) latest_available,max(report_period) latest_report,sum(available_at > '2026-09-10') after_cutoff FROM valuation_pit_financials GROUP BY dimension",
+      "rows": [
+        {
+          "dimension": "ARQ",
+          "rows": 32458,
+          "tickers": 530,
+          "latest_available": "2026-08-27",
+          "latest_report": "2026-08-02",
+          "after_cutoff": 0
+        },
+        {
+          "dimension": "ART",
+          "rows": 32580,
+          "tickers": 532,
+          "latest_available": "2026-08-27",
+          "latest_report": "2026-08-02",
+          "after_cutoff": 0
+        }
+      ]
+    },
+    {
+      "id": "financialModelLineage",
+      "sql": "SELECT count(*) models,sum(financial_available_at > as_of_date) future_financial_input,sum(guidance_max_observed_at > as_of_date) future_guidance_input,max(as_of_date) last_model FROM valuation_pit_model_runs",
+      "rows": [
+        {
+          "models": 31953,
+          "future_financial_input": 0,
+          "future_guidance_input": 0,
+          "last_model": "2026-08-27"
+        }
+      ]
+    },
+    {
+      "id": "jsonValidity",
+      "sql": "SELECT 'financials' kind,count(*) invalid FROM valuation_pit_financials WHERE NOT json_valid(payload_json) UNION ALL SELECT 'model_input',count(*) FROM valuation_pit_model_runs WHERE NOT json_valid(input_json) UNION ALL SELECT 'model_output',count(*) FROM valuation_pit_model_runs WHERE NOT json_valid(output_json)",
+      "rows": [
+        {
+          "kind": "financials",
+          "invalid": 0
+        },
+        {
+          "kind": "model_input",
+          "invalid": 0
+        },
+        {
+          "kind": "model_output",
+          "invalid": 0
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "All-symbol historical population includes delisted instruments; older series are not automatically missing active-market quotes.",
+    "PIT date-order and JSON checks do not certify financial values, economic provenance or all historical source selections.",
+    "Date comparison uses stored date strings; records after the cutoff can be valid stored future snapshots if runtime selectors exclude them."
+  ]
+}

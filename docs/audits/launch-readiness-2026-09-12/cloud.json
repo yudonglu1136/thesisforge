@@ -1,0 +1,88 @@
+{
+  "capturedAt": "2026-09-12T12:29:58.970Z",
+  "region": "us-east-1",
+  "environment": {
+    "name": "guru-analysis-api-prod",
+    "status": "Ready",
+    "health": "Green",
+    "healthStatus": "Ok",
+    "version": "guru-admin-20260906-730dc21",
+    "updated": "2026-09-06T12:04:42.498000+00:00",
+    "platform": "Node.js 22 running on 64bit Amazon Linux 2023/6.11.1"
+  },
+  "config": [
+    {
+      "namespace": "aws:autoscaling:asg",
+      "key": "MaxSize",
+      "value": "1"
+    },
+    {
+      "namespace": "aws:autoscaling:asg",
+      "key": "MinSize",
+      "value": "1"
+    },
+    {
+      "namespace": "aws:autoscaling:launchconfiguration",
+      "key": "InstanceType",
+      "value": "t3.micro"
+    },
+    {
+      "namespace": "aws:elasticbeanstalk:application:environment",
+      "key": "API_AUTH_DEV_BYPASS",
+      "value": "false"
+    },
+    {
+      "namespace": "aws:elasticbeanstalk:application:environment",
+      "key": "GURU_BACKTEST_AUTO_REFRESH",
+      "value": "false"
+    },
+    {
+      "namespace": "aws:elasticbeanstalk:application:environment",
+      "key": "NODE_ENV",
+      "value": "production"
+    },
+    {
+      "namespace": "aws:elasticbeanstalk:application:environment",
+      "key": "SQLITE_DB_PATH",
+      "value": "/var/app/data/guru-analysis.sqlite"
+    },
+    {
+      "namespace": "aws:elasticbeanstalk:environment",
+      "key": "EnvironmentType",
+      "value": "SingleInstance"
+    }
+  ],
+  "instances": [
+    {
+      "type": "t3.small",
+      "launchTime": "2026-08-15T19:00:47+00:00",
+      "state": "running",
+      "volumeCount": 1,
+      "deleteOnTermination": [
+        true
+      ]
+    }
+  ],
+  "volumes": [
+    {
+      "sizeGiB": 30,
+      "type": "gp3",
+      "encrypted": false,
+      "state": "in-use"
+    }
+  ],
+  "loadBalancerCount": 0,
+  "snapshots": {
+    "count": 21,
+    "encryptedCount": 0,
+    "latest": "2026-09-06T12:01:42.376000+00:00"
+  },
+  "backupPlanCount": 0,
+  "dlmPolicyCount": 0,
+  "rds": [],
+  "limitations": [
+    "AWS Backup and DLM scope is us-east-1. No claim that S3 or cron backups do not exist.",
+    "Root-volume snapshots were filtered by the active volume IDs; copies under other volume IDs are not covered.",
+    "Production filesystem and SQL contents were not directly accessible through the current read-only host access."
+  ]
+}

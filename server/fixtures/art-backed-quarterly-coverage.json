@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "provenance": "Pruned actual DGE.L and FER financial row shapes, read-only baseline inspection on 2026-09-05. Null ARQ flows are preserved. The paired ART records explicitly carry trailing-twelve-month flows; this fixture does not represent an issuer review or permission to annualize ART.",
+  "rows": [
+    {
+      "ticker": "DGE.L", "source_ticker": "DEO", "fiscal_period": "2026-Q4", "dimension": "ARQ", "available_at": "2026-08-18",
+      "payload": { "revenue_m": null, "net_income_m": null, "cfo_m": null, "shares_m": 2432.397125, "sourceDimension": "ARQ", "sourceRecord": { "dimension": "ARQ", "metricsAreTrailingTwelveMonths": false, "sourceTicker": "DEO", "sharefactor": 0.25, "appliedShareFactor": 1, "shareCountBasis": "sharesbas" } }
+    },
+    {
+      "ticker": "DGE.L", "source_ticker": "DEO", "fiscal_period": "2026-Q4", "dimension": "ART", "available_at": "2026-08-18",
+      "payload": { "revenue_m": 19643, "net_income_m": 1737, "cfo_m": 4392, "shares_m": 2432.397125, "sourceDimension": "ART", "sourceRecord": { "dimension": "ART", "metricsAreTrailingTwelveMonths": true, "sourceTicker": "DEO", "sharefactor": 0.25, "appliedShareFactor": 1, "shareCountBasis": "sharesbas" } }
+    },
+    {
+      "ticker": "FER", "source_ticker": "FER", "fiscal_period": "2025-Q4", "dimension": "ARQ", "available_at": "2026-02-25",
+      "payload": { "revenue_m": null, "net_income_m": null, "cfo_m": null, "shares_m": 720.626181, "sourceDimension": "ARQ", "sourceRecord": { "dimension": "ARQ", "metricsAreTrailingTwelveMonths": false, "sourceTicker": "FER", "sharefactor": 1, "appliedShareFactor": 1, "shareCountBasis": "sharesbas" } }
+    },
+    {
+      "ticker": "FER", "source_ticker": "FER", "fiscal_period": "2025-Q4", "dimension": "ART", "available_at": "2026-02-25",
+      "payload": { "revenue_m": 11325.882353, "net_income_m": 1044.705882, "cfo_m": 2265.8823529411766, "shares_m": 720.626181, "sourceDimension": "ART", "sourceRecord": { "dimension": "ART", "metricsAreTrailingTwelveMonths": true, "sourceTicker": "FER", "sharefactor": 1, "appliedShareFactor": 1, "shareCountBasis": "sharesbas" } }
+    }
+  ]
+}

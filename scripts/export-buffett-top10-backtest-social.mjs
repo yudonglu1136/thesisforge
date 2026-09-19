@@ -68,7 +68,7 @@ const manifestOutput = path.join(outputDir, `${guruConfig.outputStem}-manifest.j
 const copyOutput = path.join(outputDir, `${guruConfig.outputStem}-copy-en.md`);
 const databasePath =
   process.env.BUFFETT_BACKTEST_DB ||
-  '/Users/yudonglu/Documents/fundamental-analysis/server/data/guru-analysis.sqlite';
+  '/Users/yudonglu/Documents/thesisforge/server/data/guru-analysis.sqlite';
 
 const assets = {
   mark: path.join(root, 'assets/branding/thesisforge-mark.png'),

@@ -1,4 +1,10 @@
 import runpy
+import json
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
@@ -6,6 +12,74 @@ MODULE = runpy.run_path("scripts/translate-valuation-qa-mlx.py")
 
 
 class TranslationNumericProtectionTests(unittest.TestCase):
+    def test_monetary_suffix_never_consumes_the_first_letter_of_the_next_word(self):
+        for source, expected in [
+            ("$50 to $100 to $200", ["50美元至100美元", "200美元"]),
+            ("$500,000 TAM per megawatt", ["50 万美元"]),
+            ("$15 million of sales and $20 margin", ["1500 万美元", "20美元"]),
+            ("$70 billion, $4B and $8m.", ["700 亿美元", "40 亿美元", "800 万美元"]),
+            ("$9 total and $5 market cap", ["9美元", "5美元"]),
+            ("a couple of $8 billions", ["80 亿美元"]),
+        ]:
+            with self.subTest(source=source):
+                _, values = MODULE["protect_numbers"](source)
+                self.assertEqual(values, expected)
+        protected, _ = MODULE["protect_numbers"]("$50 to $100; $500,000 TAM")
+        self.assertEqual(protected, "⟦N0⟧; ⟦N1⟧ TAM")
+        plural_protected, _ = MODULE["protect_numbers"]("a couple of $8 billions")
+        self.assertEqual(plural_protected, "a couple of ⟦N0⟧")
+
+    def test_shared_scale_money_ranges_are_atomic_without_changing_currency_or_owners(self):
+        for source, expected in [
+            ("$250 to 275 million", ["2.5 亿美元至2.75 亿美元"]),
+            ("$75-$100 million", ["7500 万美元至1 亿美元"]),
+            ("$5 million through $8 million", ["500 万美元至800 万美元"]),
+            ("between $1.66 and $1.68 billion", ["16.6 亿美元至16.8 亿美元"]),
+            ("$5 to €10 million", ["5美元", "1000 万欧元"]),
+            ("$5 million and $10 million", ["500 万美元", "1000 万美元"]),
+            ("$5 million versus $10 million", ["500 万美元", "1000 万美元"]),
+            ("raise by $5 to $10 million", ["5美元", "1000 万美元"]),
+            ("revenue $5 million to costs of $10 million", ["500 万美元", "1000 万美元"]),
+            ("2025 to $1.4 billion", ["2025", "14 亿美元"]),
+        ]:
+            with self.subTest(source=source):
+                _, values = MODULE["protect_numbers"](source)
+                self.assertEqual(values, expected)
+        parts = MODULE["split_numeric_spans"]("Revenue of $250 to 275 million next year.")
+        self.assertEqual([value for kind, value in parts if kind == "value"], ["2.5 亿美元至2.75 亿美元"])
+
+    def test_previous_numeric_generation_cannot_be_silently_resumed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); database = root / "qa.sqlite"
+            with sqlite3.connect(database) as db:
+                db.execute("CREATE TABLE valuation_ticker_snapshots(ticker TEXT, payload_json TEXT)")
+                db.execute("INSERT INTO valuation_ticker_snapshots VALUES(?,?)", ("TEST", json.dumps({"history": []})))
+            cache, audit = root / "cache.json", root / "audit.json"
+            cache.write_text(json.dumps({"Old source": "原文"}))
+            audit.write_text(json.dumps({"numericProtection": "deterministic-v5-segmented-span-reinsertion"}))
+            result = subprocess.run([sys.executable, "scripts/translate-valuation-qa-mlx.py", "--db", str(database),
+                "--cache", str(cache), "--audit", str(audit), "--dry-run"], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Numeric protection changed", result.stderr)
+
+    def test_domain_context_cannot_silently_reuse_cache_from_another_prompt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "qa.sqlite"
+            with sqlite3.connect(database) as db:
+                db.execute("CREATE TABLE valuation_ticker_snapshots(ticker TEXT, payload_json TEXT)")
+                db.execute("INSERT INTO valuation_ticker_snapshots VALUES(?,?)", ("TEST", json.dumps({"history": []})))
+            cache, audit = root / "cache.json", root / "audit.json"
+            cache.write_text(json.dumps({"Old source": "原文"}))
+            audit.write_text(json.dumps({"systemPromptSha256": "old-context"}))
+            before = (cache.read_bytes(), audit.read_bytes())
+            result = subprocess.run([sys.executable, "scripts/translate-valuation-qa-mlx.py",
+                "--db", str(database), "--cache", str(cache), "--audit", str(audit),
+                "--context", "Semiconductor interconnects", "--dry-run"], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("context changed", result.stderr)
+            self.assertEqual((cache.read_bytes(), audit.read_bytes()), before)
+
     def test_currency_scales_are_converted_deterministically(self):
         protect_numbers = MODULE["protect_numbers"]
         restore_numbers = MODULE["restore_numbers"]

@@ -1,0 +1,302 @@
+{
+  "mode": "apply",
+  "lossless": true,
+  "beforeBytes": 1157636,
+  "afterBytes": 1001130,
+  "files": [
+    {
+      "file": "alex-karp.png",
+      "beforeBytes": 35311,
+      "afterBytes": 31491,
+      "pixelsSha256": "dabc41a8b69fa50b639a26e44bc20044a6130744a3d4bc7220c8c975b9d5f983",
+      "changed": true
+    },
+    {
+      "file": "andreas-halvorsen.png",
+      "beforeBytes": 10709,
+      "afterBytes": 8516,
+      "pixelsSha256": "96f12a838335645916fbf22afd81336bae71f26c7f74b954c17fa323541ac143",
+      "changed": true
+    },
+    {
+      "file": "baillie-gifford.png",
+      "beforeBytes": 33381,
+      "afterBytes": 29246,
+      "pixelsSha256": "d915bf3a8bfdeefed6c8cc0c404f4710856d21527cb4bf0f8a7858c9c5149f04",
+      "changed": true
+    },
+    {
+      "file": "bill-ackman.png",
+      "beforeBytes": 32068,
+      "afterBytes": 27571,
+      "pixelsSha256": "0e0e3b7d710fbc12876416552e9b2d7b1fce4a10961a46db30c5966860f83184",
+      "changed": true
+    },
+    {
+      "file": "brad-gerstner.png",
+      "beforeBytes": 30948,
+      "afterBytes": 27092,
+      "pixelsSha256": "3ba1e7ef91a3a5c851f760620fdd9e575276902fced0db1966e2ad7e5247f2d3",
+      "changed": true
+    },
+    {
+      "file": "chamath-palihapitiya.png",
+      "beforeBytes": 33977,
+      "afterBytes": 29637,
+      "pixelsSha256": "2f7fe62fd4b2b467e6d51a085d7373a79801faab705496ecfde5bdbd10bcfb61",
+      "changed": true
+    },
+    {
+      "file": "chase-coleman.png",
+      "beforeBytes": 31799,
+      "afterBytes": 27861,
+      "pixelsSha256": "545b271ed3b4ba092c73cafdbdab97f331a718edb7a09f01c0ce5ae8c4930c0b",
+      "changed": true
+    },
+    {
+      "file": "chris-bloomstran.png",
+      "beforeBytes": 33342,
+      "afterBytes": 29111,
+      "pixelsSha256": "d944c8ea725e73b3f15efef49b78d8d3ce4cdff7a5bbafb9dd013f578b0bc427",
+      "changed": true
+    },
+    {
+      "file": "chris-hohn.png",
+      "beforeBytes": 10317,
+      "afterBytes": 8633,
+      "pixelsSha256": "b26dd62cfeceddbfd3d35090c41c94196022fff98714b37f9669df209de0e267",
+      "changed": true
+    },
+    {
+      "file": "chuck-akre.png",
+      "beforeBytes": 33160,
+      "afterBytes": 28742,
+      "pixelsSha256": "635d35faecd671e32a97338b106d6dd0d2bc7099e749e7aaa7966c845834633b",
+      "changed": true
+    },
+    {
+      "file": "dan-loeb.png",
+      "beforeBytes": 10846,
+      "afterBytes": 8752,
+      "pixelsSha256": "f8633273d8c5ce5cdcf9a7d5dee27177ad482953e17ca20564382d41d7ebdca7",
+      "changed": true
+    },
+    {
+      "file": "david-einhorn.png",
+      "beforeBytes": 10349,
+      "afterBytes": 8160,
+      "pixelsSha256": "eebe7e7c24b1a54e18f1e96b4e7f17668ab0b0eb4923061395a676c4eab130e7",
+      "changed": true
+    },
+    {
+      "file": "david-friedberg.png",
+      "beforeBytes": 32486,
+      "afterBytes": 27902,
+      "pixelsSha256": "2c5ab6fd3385eb96d4a3cb6beb5247af1b5f3b12ee2a556042806c44cabc4405",
+      "changed": true
+    },
+    {
+      "file": "david-sacks.png",
+      "beforeBytes": 32108,
+      "afterBytes": 27261,
+      "pixelsSha256": "3a390caf3ec61fa0254c762e5531a1592f3d1b23f8582d164b7b80baf0e88e09",
+      "changed": true
+    },
+    {
+      "file": "david-tepper.png",
+      "beforeBytes": 9459,
+      "afterBytes": 7608,
+      "pixelsSha256": "08bcd96e77426ce8ec111a39e553f0085659d70a29d0d5921e4d542ee3a2074b",
+      "changed": true
+    },
+    {
+      "file": "dennis-lynch.png",
+      "beforeBytes": 34086,
+      "afterBytes": 29660,
+      "pixelsSha256": "92e17923aeba6ff21d0f71b49cfd3257961334060090db8db6bb31a4ef20cf30",
+      "changed": true
+    },
+    {
+      "file": "dev-kantesaria.png",
+      "beforeBytes": 33637,
+      "afterBytes": 29152,
+      "pixelsSha256": "e27d8ef0ca5a557f1a276787dfb3eef317276b016079bc03a0ffd960f6d62fc0",
+      "changed": true
+    },
+    {
+      "file": "elon-musk.png",
+      "beforeBytes": 31722,
+      "afterBytes": 27223,
+      "pixelsSha256": "db96e9507635b15017a55a0b873855565d6dfbba33e60e2000e4dd80c97c44f1",
+      "changed": true
+    },
+    {
+      "file": "evan-mcgoff.png",
+      "beforeBytes": 29929,
+      "afterBytes": 25557,
+      "pixelsSha256": "ab952f64124bb461826b09879506b5870d91814f958a18c0c382674a43dd0f66",
+      "changed": true
+    },
+    {
+      "file": "gavin-baker.png",
+      "beforeBytes": 33761,
+      "afterBytes": 30281,
+      "pixelsSha256": "7becee33b3c8891e2492d5fab5b15a04bfecf17209f15aec34df0029af0ae14e",
+      "changed": true
+    },
+    {
+      "file": "george-soros.png",
+      "beforeBytes": 34054,
+      "afterBytes": 29772,
+      "pixelsSha256": "47466dbc8b5c36fbdfd4a65cfb377822e590bc580a0a24379a91040cb97703c3",
+      "changed": true
+    },
+    {
+      "file": "jeff-bezos.png",
+      "beforeBytes": 32065,
+      "afterBytes": 27324,
+      "pixelsSha256": "6c74d3b43f2b76a2c95c39194ae984bb8f5dca833a6ef5f24bc91d576e79ae03",
+      "changed": true
+    },
+    {
+      "file": "john-stamas.png",
+      "beforeBytes": 30361,
+      "afterBytes": 26021,
+      "pixelsSha256": "ce5ac591abe337096b51cb02c328a0554d69fc307c07a3b22c920cf934725c04",
+      "changed": true
+    },
+    {
+      "file": "li-lu.png",
+      "beforeBytes": 33523,
+      "afterBytes": 29168,
+      "pixelsSha256": "f2301b903cdd10c81fa8cf2c910a9b8d676799cdde03fcb49d8c13699b06cd77",
+      "changed": true
+    },
+    {
+      "file": "michael-cuggino.png",
+      "beforeBytes": 30456,
+      "afterBytes": 25948,
+      "pixelsSha256": "177ac0f2f6895b134fd6567f83aecbdf47471cde0e52c387e539fc2c4e457276",
+      "changed": true
+    },
+    {
+      "file": "mohnish-pabrai.png",
+      "beforeBytes": 10158,
+      "afterBytes": 8429,
+      "pixelsSha256": "679666ee89e09ca0c4874dd8f74227ee85040398575ea8e1e54b034632480f05",
+      "changed": true
+    },
+    {
+      "file": "nancy-pelosi.png",
+      "beforeBytes": 34132,
+      "afterBytes": 29956,
+      "pixelsSha256": "e266bbc6e30705e4bd0ca7270ed41edd7f16c6eda9445156f1df1a980986a106",
+      "changed": true
+    },
+    {
+      "file": "nelson-peltz.png",
+      "beforeBytes": 10029,
+      "afterBytes": 8055,
+      "pixelsSha256": "f5d87dafe3b581c333cf3de84aea99276d13ac932b1b3ad19f425693c9d84cc5",
+      "changed": true
+    },
+    {
+      "file": "nick-sleep-qais-zakaria.png",
+      "beforeBytes": 37166,
+      "afterBytes": 33586,
+      "pixelsSha256": "8128d98421aa7dadb68f33461c25f57dccdaa689dde9446f5726215ce6d277c2",
+      "changed": true
+    },
+    {
+      "file": "pat-dorsey.png",
+      "beforeBytes": 9865,
+      "afterBytes": 7737,
+      "pixelsSha256": "1279747deee1485209af5618fa18fda174ee2e8ca6d8d156136da48f138b783f",
+      "changed": true
+    },
+    {
+      "file": "peter-thiel.png",
+      "beforeBytes": 34063,
+      "afterBytes": 29448,
+      "pixelsSha256": "9b23ef707d20cd17f7ddb8fa9bf9f6343c2c9329bc2a166ed58b6920f52d47c3",
+      "changed": true
+    },
+    {
+      "file": "philippe-laffont.png",
+      "beforeBytes": 33311,
+      "afterBytes": 28836,
+      "pixelsSha256": "62446505c5f048f6da3ea336abb1ce2e00965f074a25a00c1ec6d2657d492bff",
+      "changed": true
+    },
+    {
+      "file": "reid-hoffman.png",
+      "beforeBytes": 33984,
+      "afterBytes": 29432,
+      "pixelsSha256": "69eba7573733d0511bdf29f734e6fba45597f9631821e7fdd876472b04901af1",
+      "changed": true
+    },
+    {
+      "file": "renaissance-technologies.png",
+      "beforeBytes": 10770,
+      "afterBytes": 9106,
+      "pixelsSha256": "a3e9ba03306fd2740f50291ccb67148fa2456ca7782e126ad226ac70b20e477f",
+      "changed": true
+    },
+    {
+      "file": "samantha-mclemore.png",
+      "beforeBytes": 34225,
+      "afterBytes": 30296,
+      "pixelsSha256": "1946bf2cb63a12f5d4550f13399f62ddc356dec70c31dd4721f3604859893d0d",
+      "changed": true
+    },
+    {
+      "file": "seth-klarman.png",
+      "beforeBytes": 10305,
+      "afterBytes": 8576,
+      "pixelsSha256": "3af085d0494d308e4df9d68d39bf3b986d9807071cae5869029a53749eae6c6b",
+      "changed": true
+    },
+    {
+      "file": "stan-moss.png",
+      "beforeBytes": 33101,
+      "afterBytes": 28642,
+      "pixelsSha256": "078f1e78994ec14750575f14db1c8dca2ff1087a95fbbbd8aeadc06c1ce39a53",
+      "changed": true
+    },
+    {
+      "file": "stanley-druckenmiller.png",
+      "beforeBytes": 31804,
+      "afterBytes": 28095,
+      "pixelsSha256": "953ce3b61085c3cf4773fc8025b038d684cc05bac4d97278eaf4308ed416be3b",
+      "changed": true
+    },
+    {
+      "file": "terry-smith.png",
+      "beforeBytes": 33567,
+      "afterBytes": 29084,
+      "pixelsSha256": "35def71cd219443c14d79372bb89f3a2a3e3c54f96a0c20a6fe0b8827aa660fc",
+      "changed": true
+    },
+    {
+      "file": "tom-gayner.png",
+      "beforeBytes": 33729,
+      "afterBytes": 29111,
+      "pixelsSha256": "75dd37863f120027398532c5f79ed7d38a0f90c50c407b161f26698a7e48e172",
+      "changed": true
+    },
+    {
+      "file": "warren-buffett.png",
+      "beforeBytes": 34583,
+      "afterBytes": 30498,
+      "pixelsSha256": "52b3fc883194ab6e052c0d975fa65ca683cb53308768dd70e1f1f5747464ab8d",
+      "changed": true
+    },
+    {
+      "file": "william-heard.png",
+      "beforeBytes": 28990,
+      "afterBytes": 24554,
+      "pixelsSha256": "eb3eaa2261d204f5feffbf45afb63c593f399b6be730954052437cfe841b363f",
+      "changed": true
+    }
+  ]
+}

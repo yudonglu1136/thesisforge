@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "scope": "Three original ARE transcript quotations from the v25 candidate, read-only source inspection. Range-width changes are research evidence, not per-share target levels.",
+  "cases": [
+    {
+      "original": {
+        "id": "dd6fc624b780d8ad7c20d9eb",
+        "ticker": "ARE",
+        "fiscal_period": "Q42019",
+        "observed_at": "2020-02-04",
+        "metric_name": "eps_guidance",
+        "speaker": "Dean Shigenaga — Co-President and CFO, Alexandria Real Estate Equities",
+        "source_url": "https://stockanalysis.com/stocks/are/transcripts/175231-q4-2019/",
+        "evidence_excerpt": "On guidance, we have reaffirmed our 2020 guidance for EPS and FFO per share as adjusted at a midpoint of $2.22 and $7.38, respectively."
+      },
+      "expected": {
+        "per_share_value": 2.22,
+        "amount": null,
+        "quality_status": "clear",
+        "guidance_scope": "full_year",
+        "guidance_target_year": 2020
+      },
+      "researchExpected": {
+        "per_share_value": 7.38,
+        "per_share_basis": "adjusted_ffo",
+        "included_in_valuation_inputs": false,
+        "amount": null
+      }
+    },
+    {
+      "original": {
+        "id": "093fef4bc565c5b32364ab7c",
+        "ticker": "ARE",
+        "fiscal_period": "Q32021",
+        "observed_at": "2021-10-26",
+        "metric_name": "eps_guidance",
+        "speaker": "Dean Shigenaga — President and CFO, Alexandria Real Estate Equities",
+        "source_url": "https://stockanalysis.com/stocks/are/transcripts/10251-q3-2021/",
+        "evidence_excerpt": "Turning to guidance, we updated our conservative guidance for 2021, including narrowing the range for EPS and FFO per share from a range of $0.08 to a range of $0.02 per share."
+      },
+      "expected": {
+        "per_share_value": null,
+        "amount": null,
+        "quality_status": "research_only_guidance_range_width",
+        "model_exclusion_reason": "guidance_range_width_not_level",
+        "guidance_subject": "non_company_or_non_periodic"
+      },
+      "researchExpected": {
+        "metric_name": "guidance_range_width",
+        "range_width_before": 0.08,
+        "range_width_after": 0.02,
+        "amount": null,
+        "per_share_value": null,
+        "included_in_valuation_inputs": false
+      }
+    },
+    {
+      "original": {
+        "id": "0474b8e94491642b5f6d687b",
+        "ticker": "ARE",
+        "fiscal_period": "Q32022",
+        "observed_at": "2022-10-25",
+        "metric_name": "eps_guidance",
+        "speaker": "Dean Shigenaga — President and CFO, Alexandria Real Estate Equities",
+        "source_url": "https://stockanalysis.com/stocks/are/transcripts/29322-q3-2022/",
+        "evidence_excerpt": "Lastly, on guidance, we updated our guidance for 2022 and narrowed the range for EPS and FFO per share from a range of $0.06 to a range of $0.02 per share."
+      },
+      "expected": {
+        "per_share_value": null,
+        "amount": null,
+        "quality_status": "research_only_guidance_range_width",
+        "model_exclusion_reason": "guidance_range_width_not_level",
+        "guidance_subject": "non_company_or_non_periodic"
+      },
+      "researchExpected": {
+        "metric_name": "guidance_range_width",
+        "range_width_before": 0.06,
+        "range_width_after": 0.02,
+        "amount": null,
+        "per_share_value": null,
+        "included_in_valuation_inputs": false
+      }
+    }
+  ]
+}

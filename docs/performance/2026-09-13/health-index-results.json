@@ -1,0 +1,68 @@
+{
+  "scope": "health_worker_only",
+  "date": "2026-09-13",
+  "runtime": {
+    "node": "v22.22.3",
+    "sqlite": "3.51.3",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "baselineRevision": "47973e1",
+  "samePhysicalSnapshot": true,
+  "inputs": {
+    "databaseBytes": 3228553216,
+    "databaseSha256": "857037fb93bd2137b4638226ae71298cdb51b299bf500d163239230595fb9200",
+    "runs": 3,
+    "samples": 60,
+    "concurrency": 20,
+    "auditsPerRun": 3,
+    "workerOldGenerationMb": 256,
+    "workerDeadlineMs": 8000,
+    "sqliteCacheKiB": 8192,
+    "sqliteMmapBytes": 0,
+    "asOf": "2026-09-12T21:00:00.000Z"
+  },
+  "beforeP95Ms": [
+    2964.67,
+    1061.12,
+    1165.96
+  ],
+  "afterP95Ms": [
+    218.59,
+    209.19,
+    221.21
+  ],
+  "beforeMedianP95Ms": 1165.96,
+  "afterMedianP95Ms": 218.59,
+  "improvementPct": 81.25,
+  "response": {
+    "bytes": 57461,
+    "gzipBytes": 5669,
+    "semanticSha256": "ac809bf247b98774b7c026dd37f538d277156c31a358d7f9e2e0a939a905133c",
+    "completeResponseSha256": "cbcb23e3c3049b6a42710549f891f1461ba0eb1d3f91cb38c049ca2de0b455a1",
+    "unchangedAcrossAll360Requests": true
+  },
+  "matrix": {
+    "expectedRows": 64,
+    "displayable": 0,
+    "failures": 64,
+    "gatesUnchanged": true
+  },
+  "tests": {
+    "backendPassed": 1263,
+    "backendFailed": 0,
+    "performancePassed": 53,
+    "performanceFailed": 0
+  },
+  "production": {
+    "indexesInstalled": false,
+    "deployed": false,
+    "postInstallTimingVerified": false,
+    "releaseStatus": "HOLD"
+  },
+  "limitations": [
+    "Health-only benchmark, not the separate seven-route check:performance release contract.",
+    "OS page-cache warming retained and reflected in per-run timings.",
+    "The fixture still fails data readiness; no failed or incompatible Guru curve was treated as healthy."
+  ]
+}

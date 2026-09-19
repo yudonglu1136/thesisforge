@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "items": [
+    {
+      "id": "launch-blockers",
+      "title": "现网业务健康与本机版本不满足发布条件",
+      "queries": [{
+        "id": "health-and-release",
+        "source": {
+          "label": "ThesisForge 运行状态与发行配置",
+          "files": [{"label":"http.json"},{"label":"cloud.json"},{"label":"observations.json"},{"label":"investmentRoutes.js"}],
+          "metricDefinitions": [{"label":"曲线就绪","definition":"现网要求的 28 位经理各有 5Y、10Y 结果；displayable 依现有严格或明确标注 proxy 的覆盖、版本与新鲜度门槛计算。"}],
+          "filters": ["环境：正式 www / apex / AWS API", "审计日期：2026-09-12"],
+          "caveats": ["55 条失败首因均为 stale；其中 28 条原始 strict 状态为 ready，不能把它们说成不存在。", "本机新版 production guard 尚未解除；本次没有部署或迁移。"],
+          "evidenceFlow": [{"kind":"validation","title":"健康与运行版本核对","detail":"公开 health 返回 503；Vercel 与 AWS 仍是 9 月 6 日的版本；新版源代码主动禁止生产启用。"}]
+        },
+        "columns": ["measure","value"],
+        "rows": [{"measure":"必需曲线数","value":56},{"measure":"可展示","value":1},{"measure":"严格结果就绪","value":0},{"measure":"proxy 就绪","value":1}]
+      }]
+    },
+    {
+      "id": "user-storage",
+      "title": "已有认证与用户文件库，但没有统一的托管用户业务层",
+      "queries": [{
+        "id":"user-database-inventory",
+        "source": {
+          "label":"Supabase 与用户存储代码",
+          "files":[{"label":"observations.json"},{"label":"local-databases.json"},{"label":"userPortfolioStore.js"},{"label":"investmentStore.js"}],
+          "metricDefinitions":[{"label":"用户业务存储","definition":"Supabase 中已有 27 个 Auth 账号，public 无业务表；现有组合连接和 NAV 使用每用户 SQLite，研究与策略编辑使用独立事件库。"}],
+          "caveats":["未直接读取生产用户 SQLite 内容；本机 67 个研究事件仅属于开发身份，不能自动迁给所有真实用户。"],
+          "evidenceFlow":[{"kind":"validation","title":"身份与数据域分离","detail":"只读核对 Auth 用户聚合、Postgres schema、现有 owner 隔离查询与本机事件哈希；未导出个人身份或组合金额。"}]
+        }
+      }]
+    },
+    {
+      "id":"security-and-recovery",
+      "title":"HTTP 回源与单机根盘是上线前的安全、恢复风险",
+      "queries":[{
+        "id":"cloud-storage-and-transport",
+        "source":{
+          "label":"Vercel / AWS 只读配置",
+          "files":[{"label":"cloud.json"},{"label":"observations.json"},{"label":"proxy.js"}],
+          "metricDefinitions":[{"label":"传输与持久化","definition":"正式 Vercel API 上游实为 HTTP；AWS 数据目录依赖唯一的未加密根卷，实例终止时该卷删除。"}],
+          "caveats":["已找到加密回滚快照和 S3 数据库备份，不能声称完全无备份；未验证其恢复能力或全部用户覆盖。", "未发现已经发生令牌泄露或数据丢失的证据。"],
+          "evidenceFlow":[{"kind":"validation","title":"配置与备份核验","detail":"核验非秘密上游配置、Authorization 转发逻辑、EBS 加密和删除属性；查询已知快照标签及备份前缀，未修改任何云资源。"}]
+        }
+      }]
+    },
+    {
+      "id":"financial-freshness",
+      "title":"更新价格没有同步更新 AVGO 的财报与模型",
+      "queries":[{
+        "id":"avgo-node-check",
+        "source":{
+          "label":"实际服务库与 SEC 披露",
+          "files":[{"label":"freshness.json"},{"label":"observations.json"}],
+          "links":[{"label":"Broadcom 2026-09-02 8-K","href":"https://www.sec.gov/Archives/edgar/data/1730168/000173016826000076/avgo-20260902.htm"}],
+          "metricDefinitions":[{"label":"财报节点日期","definition":"本机服务库 AVGO 最后报告期为 2026-05-03、模型日期为 2026-06-09；官方 9 月 2 日已披露截至 8 月 2 日的新季度结果。"}],
+          "caveats":["本次为来源更新审计，没有重算 AVGO 估值或改动既有用户假设。"]
+        },
+        "columns":["source","report_period","publication_or_available_date"],
+        "rows":[{"source":"本机 PIT 财报","report_period":"2026-05-03","publication_or_available_date":"2026-06-09"},{"source":"SEC 8-K 新季度","report_period":"2026-08-02","publication_or_available_date":"2026-09-02"}]
+      }]
+    },
+    {
+      "id":"performance-and-tests",
+      "title":"缓存有效，但首访与性能预算仍需修复",
+      "queries":[{
+        "id":"performance-measurements",
+        "source":{
+          "label":"本机只读接口采样与现有测试",
+          "files":[{"label":"preview-performance.json"},{"label":"observations.json"}],
+          "metricDefinitions":[{"label":"首个请求与缓存请求","definition":"Fundamentals 首个采样为 5,409ms，缓存后为 9–11ms；原始 JSON 约 2 MB，gzip 为 511,510 bytes。"}],
+          "filters":["本机：1 次首样、5 次顺序、20 次并发请求（并发度 5）"],
+          "caveats":["没有强制重启或清空全部缓存，不能作为独立冷启动基准。", "不是生产容量测试，也不是仓库规定的三轮 c20 完整性能放行；线上低 CPU 不证明高并发容量。"],
+          "evidenceFlow":[{"kind":"validation","title":"测试结果","detail":"后端 1472 项、Flutter 527 项通过，analyze 通过；性能测试 40 通过、1 失败，失败项为头像总量超过 1 MiB 预算。"}]
+        },
+        "columns":["check","passed","failed"],
+        "rows":[{"check":"Server tests","passed":1472,"failed":0},{"check":"Flutter tests","passed":527,"failed":0},{"check":"Performance tests","passed":40,"failed":1}]
+      }]
+    }
+  ]
+}

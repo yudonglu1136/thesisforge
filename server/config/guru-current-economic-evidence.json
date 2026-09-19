@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-09-05",
+  "financialCutoff": "2026-08-28",
+  "policy": "Current-date analyst scenarios only. These do not approve or replace historical models. All financial observations remain reported in issuer currency; sources must be available by the model date. No market price is a valuation input.",
+  "companies": {
+    "SPOT": {
+      "cik": "1639920", "periodEndDate": "2026-06-30", "financialAvailableDate": "2026-08-04", "fiscalPeriod": "2026-Q2", "reportingCurrency": "EUR", "quoteCurrency": "USD", "securityFactor": 1,
+      "sources": {
+        "fy2025": {"availableDate":"2026-02-10","url":"https://www.sec.gov/Archives/edgar/data/1639920/000162828026006874/ck0001639920-20251231.htm","locator":"Consolidated cash flows F-9; lease Note10; ordinary shares Note16"},
+        "h12026": {"availableDate":"2026-08-04","url":"https://www.sec.gov/Archives/edgar/data/1639920/000162828026052543/spot-20260630x6xk.htm","locator":"Cash flows p7; lease Note7; equity Note13; awards Note14; FCF reconciliation p37"},
+        "q12026": {"availableDate":"2026-04-28","url":"https://www.sec.gov/Archives/edgar/data/1639920/000162828026027951/spot-20260331x6xk.htm","locator":"Cash flows; equity Note13; FCF reconciliation"}
+      },
+      "periods": {
+        "fy2025":{"sourceId":"fy2025","coefficient":1,"cfoM":2933,"cashPpeM":61,"leasePrincipalM":73,"sbcM":247,"managementCapexM":61,"restrictedCashReleaseM":2},
+        "h12026":{"sourceId":"h12026","coefficient":1,"cfoM":1652,"cashPpeM":25,"leasePrincipalM":36,"sbcM":142,"managementCapexM":34,"restrictedCashReleaseM":3},
+        "h12025":{"sourceId":"h12026","coefficient":-1,"cfoM":1248,"cashPpeM":16,"leasePrincipalM":44,"sbcM":115,"managementCapexM":16,"restrictedCashReleaseM":2}
+      },
+      "shareObservations": [
+        {"periodEndDate":"2025-12-31","sourceId":"fy2025","issued":209485215,"treasury":3652688,"outstanding":205832527},
+        {"periodEndDate":"2026-03-31","sourceId":"q12026","issued":209741268,"treasury":4121207,"outstanding":205620061},
+        {"periodEndDate":"2026-06-30","sourceId":"h12026","issued":210241268,"treasury":4657063,"outstanding":205584205}
+      ],
+      "sourceTtm":{"revenueM":18113,"cfoM":3337,"capexM":70,"rawFcfM":3267,"providerSharesM":205.788241},
+      "sourceFx":{"currency":"USD","rateDate":"2026-08-04","unitsPerEur":1.1515},
+      "claims":{"sourceId":"h12026","exercisableOptions":2789877,"allOptions":4496814,"unvestedRsus":1456016,"cashSettledExchangeableNotesRemaining":0},
+      "conventions": {
+        "cash":"CFO already includes cash interest and tax. Deduct financing lease principal once. No separate debt deduction, cash addition, dividend addition, or buyback premium in parent FCFE.",
+        "sbc":"Recurring SBC is treated as a cash-equivalent compensation allowance; existing unvested awards are not additionally added to shares. Already-exercisable options have no remaining vesting cost and receive one full share per option as an explicit conservative claim bound, with no exercise proceeds. This is not treasury-stock-method diluted EPS.",
+        "capex":"Reported cash PPE is distinct from management capex. The unexplained EUR9m TTM difference is an analyst reconciliation reserve, not mislabeled cash capex. Restricted-cash releases are excluded from recurring FCFE. Removing the reserve is a separate sensitivity.",
+        "earnings":"No normalized-EPS or fair-value finance gains are used. No government/market claim is made for forecast growth or the discount rate."
+      },
+      "scenarios": {
+        "bear":{"growthRates":[0.05,0.05,0.04,0.03,0.02],"ke":0.11,"terminalGrowth":0.02},
+        "base":{"growthRates":[0.12,0.10,0.08,0.06,0.04],"ke":0.10,"terminalGrowth":0.025},
+        "bull":{"growthRates":[0.14,0.12,0.10,0.08,0.05],"ke":0.09,"terminalGrowth":0.03}
+      },
+      "assumptionRationale":"Explicit EUR nominal FCFE growth fades from 12% to 4% in the base case; 10% EUR equity hurdle and 2.5% terminal growth are analyst underwriting assumptions, not CAPM estimates or issuer guidance. Cash-equivalent compensation and leases remain in the growing cash-flow base. Five rolling forecast years start at the current valuation date; year-end discounting t=1..5, not historical fiscal-year relabeling."
+    },
+    "IOT": {
+      "cik":"1642896", "periodEndDate":"2026-05-02", "financialAvailableDate":"2026-06-09", "fiscalPeriod":"2027-Q1", "reportingCurrency":"USD", "quoteCurrency":"USD", "securityFactor":1,
+      "sources": {
+        "fy2026":{"availableDate":"2026-03-16","url":"https://www.sec.gov/Archives/edgar/data/1642896/000162828026018167/iot-20260131.htm","locator":"Cash flows p91; internal-use software Note6; stockholders equity p90"},
+        "q12027":{"availableDate":"2026-06-09","url":"https://www.sec.gov/Archives/edgar/data/1642896/000162828026041893/iot-20260502.htm","locator":"Balance sheet p5; equity p7; cash flows p8; investments Note3; capitalized software Note6; awards Note11"}
+      },
+      "periods": {
+        "fy2026":{"sourceId":"fy2026","coefficient":1,"cfoM":236.210,"cashPpeM":28.766,"sbcM":314.983,"capitalizedSbcM":8.9,"otherFinancingOutflowM":0.928},
+        "q12027":{"sourceId":"q12027","coefficient":1,"cfoM":81.413,"cashPpeM":8.236,"sbcM":77.471,"capitalizedSbcM":2.5,"otherFinancingOutflowM":0.097},
+        "q12026":{"sourceId":"q12027","coefficient":-1,"cfoM":52.612,"cashPpeM":6.920,"sbcM":77.079,"capitalizedSbcM":1.9,"otherFinancingOutflowM":0.378}
+      },
+      "shareObservations":[
+        {"periodEndDate":"2026-01-31","sourceId":"fy2026","issued":580715597,"treasury":0,"outstanding":580715597},
+        {"periodEndDate":"2025-05-03","sourceId":"q12027","issued":569335950,"treasury":0,"outstanding":569335950},
+        {"periodEndDate":"2026-05-02","sourceId":"q12027","issued":582710082,"treasury":0,"outstanding":582710082,"classA":370981108,"classB":211728974,"classC":0}
+      ],
+      "sourceTtm":{"revenueM":1730.595,"cfoM":265.011,"capexM":30.082,"rawFcfM":234.929,"providerSharesM":582.710082},
+      "balanceSheet":{"cashM":218.986,"shortTermSecuritiesM":585.333,"longTermSecuritiesM":477.072,"operatingLeaseLiabilitiesM":69.020,"financialBorrowingsM":0},
+      "claims":{"sourceId":"q12027","allOptions":5396988,"unvestedRsus":21744310,"esppPotentialShares":1015333},
+      "conventions": {
+        "cash":"After recurring SBC and capitalized SBC, the diagnostic cash result is negative. Other financing outflows are conservatively reserved in full, not falsely described as an exact lease-only split. This cash diagnostic is not a DCF base.",
+        "model":"EV/sales scenario only, never labeled DCF. No legal-award gain enters revenue. Operating cash and lease costs remain operating in the multiple convention; operating leases are shown but not deducted as financing debt again.",
+        "claims":"All issued A+B shares plus all outstanding options, RSUs and disclosed ESPP potential shares form a conservative full-delivery claim bound. No option proceeds, vesting forfeiture benefit, or second legacy-SBC value deduction. A separate 2% next-year NEW-grant dilution assumption does not represent already counted awards.",
+        "cashBridge":"Reserve all cash and equivalents for operations; add only separately identified marketable securities. Securities are issuer reported fair values, not income claims added twice."
+      },
+      "scenarios": {
+        "bear":{"revenueGrowth":0.15,"evSales":6,"newGrantDilution":0.02},
+        "base":{"revenueGrowth":0.25,"evSales":10,"newGrantDilution":0.02},
+        "bull":{"revenueGrowth":0.30,"evSales":14,"newGrantDilution":0.02}
+      },
+      "assumptionRationale":"15%-30% forward revenue growth brackets a slowdown from the reported 30.5% latest quarter; 6x/10x/14x NTM sales are explicit analyst valuation scenarios inside the implemented software profile range, not claimed observed peer medians. The base is a scenario anchor, not an independently triangulated DCF or promised return."
+    }
+  }
+}

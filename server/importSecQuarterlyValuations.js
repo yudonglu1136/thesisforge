@@ -5,6 +5,8 @@ import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { readTranscriptQaByTickerPeriod } from "./transcriptQaClient.js";
 import { sp500ValuationProfile } from "./sp500ValuationUniverse.js";
+import { guruValuationProfile } from "./guruValuationUniverse.js";
+import { prepareReviewedEconomicRows, applyReviewedEquityClaims } from "./reviewedEconomicInputs.js";
 
 const CURRENT_DB_PATH = process.env.SQLITE_DB_PATH || path.join(process.cwd(), "server/data/guru-analysis.sqlite");
 const YOUTUBE_DB_PATH = process.env.YOUTUBE_TRANSCRIPT_DB_PATH
@@ -2336,7 +2338,11 @@ const PROFILE_SETTINGS = {
 
 function profileForTicker(ticker) {
   const normalized = String(ticker || "").toUpperCase();
-  return VALUATION_PROFILES[normalized] || sp500ValuationProfile(normalized) || null;
+  return VALUATION_PROFILES[normalized] || sp500ValuationProfile(normalized) || guruValuationProfile(normalized) || null;
+}
+
+export function valuationProfileNames() {
+  return Object.keys(PROFILE_SETTINGS).sort();
 }
 
 export function hasExplicitValuationProfile(ticker) {
@@ -4107,6 +4113,8 @@ export function buildValuationRows({
   youtubeByPeriod,
   financialSource = {}
 }) {
+  quarterlyRows = prepareReviewedEconomicRows({ ticker, rows: quarterlyRows })
+    .filter((row) => !row.reviewedNonModelableReason);
   const sourceType = financialSource.sourceType || "sec_companyfacts_quarterly_model";
   const annualSourceType = financialSource.annualSourceType || "sec_companyfacts_annual_model";
   const sourceQuality = financialSource.sourceQuality || "sec-companyfacts-quarterly-financials";
@@ -4189,6 +4197,12 @@ export function buildValuationRows({
       crypto_asset_cost_m: ttmCryptoCost,
       crypto_asset_units: ttmCryptoUnits,
       fcf_after_capex_m: ttmFcf,
+      ...(row.reviewedEconomicInput ? {
+        reported_fcf_after_capex_m: row.reviewedEconomicInput.ttm.reportedFcfM,
+        reported_operating_financials: row.pitTrailingTwelveMonths.reported_operating_financials,
+        reported_balance_financials: row.pitTrailingTwelveMonths.reported_balance_financials,
+        economicCashFlowConvention: row.reviewedEconomicInput.ttm.convention
+      } : {}),
       gross_margin_pct: margin(ttmGrossProfit, ttmRevenue),
       operating_margin_pct: margin(ttmOperatingIncome, ttmRevenue),
       net_margin_pct: margin(ttmNetIncome, ttmRevenue),
@@ -4230,7 +4244,10 @@ export function buildValuationRows({
       normalized_revenue_growth_window: normalizedGrowthWindow,
       normalized_revenue_growth_sample_count: normalizedGrowthSampleCount
     };
-    const model = buildBuySideValuationModel({ ticker, row: modelRow, ttm, youtubeEvidence });
+    const model = applyReviewedEquityClaims(
+      buildBuySideValuationModel({ ticker, row: modelRow, ttm, youtubeEvidence }),
+      row.reviewedEconomicInput, sharesM
+    );
     if (!model || !(model.fairValue > 0)) return;
     const fairValue = model.fairValue;
     const targetPrice3Y = model.targetPrice3Y;
@@ -4295,7 +4312,14 @@ export function buildValuationRows({
           crypto_asset_fair_value_m: row.crypto_asset_fair_value_m,
           crypto_asset_cost_m: row.crypto_asset_cost_m,
           crypto_asset_units: row.crypto_asset_units,
-          fcf_after_capex_m: row.fcf_after_capex_m
+          fcf_after_capex_m: row.fcf_after_capex_m,
+          ...(row.reviewedEconomicInput ? {
+            reported_fcf_after_capex_m: row.reviewedEconomicInput.quarter.reportedFcfM,
+            reported_operating_financials: row.reported_operating_financials,
+            reported_balance_financials: row.reported_balance_financials,
+            reported_revenue_growth_pct: row.reported_revenue_growth_pct,
+            economicCashFlowConvention: row.reviewedEconomicInput.quarter.convention
+          } : {})
         },
         trailingTwelveMonths: ttm,
         trailingMetricBasis,
@@ -4321,7 +4345,10 @@ export function buildValuationRows({
           name: sourceName,
           modelVersion,
           record: row.sourceRecord || null,
-          trailingTwelveMonthsRecord: row.trailingTwelveMonthsSourceRecord || null
+          trailingTwelveMonthsRecord: row.trailingTwelveMonthsSourceRecord || null,
+          ...(row.reviewedEconomicInput ? {
+            trailingTwelveMonthsSources: row.pitTrailingTwelveMonths?.sources || {}
+          } : {})
         },
         secCompanyFacts: {
           cik: companyModel.cik,
@@ -4622,18 +4649,183 @@ function metricGuidanceSubject(metric) {
   ).trim().toLowerCase();
 }
 
+// Numerical PIT inputs require a dated, typed source contract. Research
+// retention and the legacy untyped display digest are deliberately separate.
+// This producer gate does not import or call the independent release auditor.
+function sourceGuidanceConsumptionDecision(metric, { requireTypedSource = false } = {}) {
+  if (!metric?.source_type) return requireTypedSource
+    ? { accepted: false, reason: "pit_source_identity_missing" }
+    : { accepted: true, reason: "legacy_untyped_research_digest" };
+  if (!["downloaded_online_earnings_transcript", "official_issuer_sec_filing", "official_issuer_results_release"].includes(metric.source_type)) {
+    return { accepted: false, reason: "pit_source_identity_unknown" };
+  }
+  const payload = parseJson(metric.payload_json, {});
+  const evidence = String(metric.evidence_excerpt || metric.value_text || metric.excerpt || "").trim();
+  const reject = (reason) => ({ accepted: false, reason });
+  if (metric.actual_or_guidance !== "guidance") return reject("source_not_designated_forward");
+  if (metric.quality_status !== "clear") return reject("source_quality_not_clear");
+  if (metric.model_exclusion_reason || payload.model_exclusion_reason || payload.extraction_review_required) {
+    return reject("source_has_unresolved_or_excluded_economics");
+  }
+  const scope = metricGuidanceScope(metric);
+  if (!["full_year", "annual", "fiscal_year", "quarter"].includes(scope)) {
+    return reject("source_target_period_unresolved");
+  }
+  if (!["company_total", "company_total_or_unspecified"].includes(metricGuidanceSubject(metric))) {
+    return reject("source_is_not_a_company_total_target");
+  }
+  const ownerPattern = {
+    revenue_guidance: /\b(?:revenues?|sales|total income)\b/gi,
+    revenue_growth: /\b(?:revenues?|sales|total income)\b/gi,
+    operating_income_guidance: /\b(?:operating (?:income|profit)|income from operations|(?:adjusted\s+)?ebit)\b/gi,
+    free_cash_flow_guidance: /\b(?:free cash flow|fcf)\b/gi
+  }[metric.metric_name];
+  // These are the fields consumed by the numerical valuation routes. Other
+  // typed research metrics remain available but cannot rescue a money target.
+  if (!ownerPattern) return { accepted: true, reason: "non_route_display_metric" };
+  const matches = [...evidence.matchAll(ownerPattern)];
+  const position = metric.metric_position ?? payload.metric_position;
+  const owner = Number.isInteger(position)
+    ? matches.find((match) => match.index === position)
+    : matches.length === 1 ? matches[0] : null;
+  if (!owner) return reject("source_metric_owner_unresolved");
+  const ownerIndex = matches.indexOf(owner);
+  const prefix = evidence.slice(0, owner.index);
+  const boundaries = [...prefix.matchAll(/[.;](?=\s+[A-Z]|$)|[;\n]/g)];
+  const start = Math.max(boundaries.at(-1)?.index + 1 || 0, owner.index - 300);
+  const end = matches[ownerIndex + 1]?.index ?? evidence.length;
+  const owned = evidence.slice(start, end);
+  const after = evidence.slice(owner.index + owner[0].length, end);
+  const before = evidence.slice(start, owner.index);
+  // The word revenue inside an expense-to-sales ratio is a denominator, not
+  // a forecast owner. A neighboring interest/tax amount cannot rescue it.
+  if (["revenue_guidance", "revenue_growth"].includes(metric.metric_name) &&
+      (/%\s+of\s+(?:(?:total|net)\s+)?$/i.test(before) ||
+       /\b(?:excluding|excludes|excluded)\s+[^,.;]{0,45}$/i.test(before) ||
+       /\b(?:client funds interest|Americas|EMEA|APAC|fee|travel)\s*$/i.test(before))) {
+    return reject("source_owned_metric_is_subset_or_ratio_denominator");
+  }
+  if (["revenue_guidance", "revenue_growth"].includes(metric.metric_name) &&
+      (/\b(?:drag|headwind|tailwind|impact|contribution)\s+(?:on|to|in)\s*$/i.test(before) ||
+       /\bbrand\s*$/i.test(before) ||
+       /^\s+for\s+(?:(?:the|our)\s+)?[A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*)?\s+business\b/.test(after) ||
+       /\b(?:run[- ]rate|annualized run rate|cumulative|incremental contribution|cost savings?)\b/i.test(owned))) {
+    return reject("source_owned_metric_is_component_or_non_periodic");
+  }
+  if (metric.metric_name === "operating_income_guidance" &&
+      (/^\s+(?:charges?|headwinds?|impacts?|drags?|declines?)\b/i.test(after) ||
+       /\b(?:drag|impact|headwind|charges?|negative impact)\b[^.;]{0,80}$/i.test(before) ||
+       /^\s+(?:to\s+be\s+)?down\b[^;]{0,80}\bfrom\b/i.test(after))) {
+    return reject("source_owned_metric_is_driver_not_income_level");
+  }
+  if (/\b(?:segment|division|commercial|government|international|subscription|product|services?|software|data[ -]center|cloud|advertising|digital|regional|domestic|consumer|enterprise|china|acquisition|acquired|same[- ]store|comparable(?:[- ]store)?)\s*$/i.test(before) ||
+      /^(?:\s+(?:for|of|from|in)\s+(?:the\s+|our\s+)?[^.;]{0,55}\b(?:segment|division|business unit|business area))\b/i.test(after)) {
+    return reject("source_owned_quote_is_segment_or_subset");
+  }
+  const quarter = /\bq[1-4]\b|\b(?:first|second|third|fourth|next|current|this)\s+quarter\b|\bfor the quarter\b/i;
+  const annual = /\b(?:full[- ]year|fiscal year|fiscal\s+(?:20)?\d{2}|annual|this year|for the year|fy\s*(?:20)?\d{2}|(?:guidance|outlook|for)\s+(?:fiscal\s+)?20\d{2}|20\d{2}\s+(?:(?:adjusted|net|total|revenue|sales|operating|income)\s+){0,5}(?:guidance|outlook))\b/i;
+  const previousSentence = evidence.slice(0, start).trim().replace(/[.;]\s*$/, "").split(/[.;](?=\s+[A-Z]|$)/).at(-1) || "";
+  const heading = /\b(?:guidance|outlook|forecast|expect(?:s)?|reaffirm|reiterat(?:ed|e))\b/i.test(previousSentence) ? previousSentence : "";
+  const periodText = `${heading}. ${owned}`;
+  const namedQuarter = [...periodText.matchAll(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+quarter\b/gi)].some((marker) =>
+    !/\b(?:compared (?:with|to)|versus|prior|previous|last)\b[^.;]{0,55}$/i.test(periodText.slice(Math.max(0, marker.index - 70), marker.index)));
+  const currentAnnualTable = /\bYear ended 31 December 20\d{2}\s*\|\s*(?:Updated )?guidance\b/i.test(periodText);
+  if (!(scope === "quarter" ? quarter.test(periodText) || namedQuarter : annual.test(periodText) || currentAnnualTable)) {
+    return reject("source_target_period_not_supported_by_owned_quote");
+  }
+  // A current revision can refer to a previously issued target. A historical
+  // comparison cannot gain forward status from a different owner's outlook.
+  const forward = /\b(?:guidance|outlook|expect(?:s)?|forecast(?:s)?|anticipat(?:e|es)|reaffirm(?:s|ed|ing)?|maintain(?:s|ed|ing)?|rais(?:e|ed|ing)|lower(?:ed|ing)?|updat(?:e|ed|ing)|reiterat(?:e|ed|ing)|will|plan(?:s)?|target(?:s)?)\b|\b(?:is|are) expected\s+(?:to|at|between)\b/i.test(owned) ||
+    Boolean(heading) && /\b(?:guidance|outlook)\b/i.test(heading) && !/\b(?:prior|previous|historical)\b/i.test(heading);
+  const historicalOwner = /^\s+(?:was|were|totaled|totalled|exceeded|reached|grew|increased|decreased|declined|came in at)\b/i.test(after) ||
+    /\b(?:delivered|achieved|generated|recorded)\s+(?:(?:record|net|total|strong)\s+)*$/i.test(before) ||
+    /\b(?:we|the company|the group|they)\s+reported\s+(?:(?:record|net|total|strong)\s+)*$/i.test(before) ||
+    /\breported\s+\$[\d.,]+\s+(?:billion|million)\s+in\s*$/i.test(before) ||
+    /\b(?:delivering|delivered)\s+(?:(?:strong|operational|organic|net|total)\s+)*$/i.test(before) && !/\b(?:expect|will|forecast|anticipate)\b/i.test(before) ||
+    /\bresults\s+that\s+included\s*$/i.test(before) ||
+    /\b(?:the company|we)\s+closed\s+the\s+(?:(?:first|second|third|fourth)\s+quarter|q[1-4])\s+with\s+(?:record\s+)?$/i.test(before);
+  // A beat of a previously issued range is an actual (or a beat amount), not
+  // the next forecast. Keep an explicit current forecast that compares itself
+  // with a prior range; do not let a different later owner supply that verb.
+  const directCurrentTarget = /\b(?:expect(?:s)?|forecast(?:s)?|anticipat(?:e|es)|will|target(?:s)?)\b/i.test(before) ||
+    /^\s+(?:is|are)\s+expected\b/i.test(after);
+  const historicalBeat = !directCurrentTarget &&
+    /\b(?:exceeded|exceeding|met|within|in line with)\b[^.;]{0,110}\b(?:guidance|target|expectations?)\b/i.test(owned);
+  const pastGuidance = /\b(?:previous|prior|original)\b[^.;]{0,45}\b(?:guidance|outlook)\b|\b(?:we|management)\s+(?:originally\s+)?(?:expected|anticipated|projected)\b/i.test(owned);
+  const currentRevision = /\b(?:now|current|updated|raising|raised|revised|reaffirm(?:ing|ed)?|maintain(?:ing|ed)?)\b/i.test(owned) ||
+    directCurrentTarget && !/\b(?:previous|prior|original|had expected)\b/i.test(before) &&
+    /\b(?:compared (?:with|to)|versus|exceeding)\s+(?:(?:our|the)\s+)?(?:previous|prior|original)\s+guidance\b/i.test(after);
+  if (!forward || historicalOwner || historicalBeat || pastGuidance && !currentRevision) return reject("source_owned_quote_is_not_forward");
+  return { accepted: true, reason: "owned_forward_periodic_company_target" };
+}
+
+function historicalFactMislabeledGuidance(metric) {
+  if (metric?.actual_or_guidance !== "guidance") return false;
+  const owner = {
+    revenue_guidance: /\b(?:revenues?|sales)\b/gi,
+    revenue_growth: /\b(?:revenues?|sales)\b/gi,
+    operating_income_guidance: /\b(?:operating (?:income|profit)|income from operations|ebit)\b/gi,
+    free_cash_flow_guidance: /\b(?:free cash flow|fcf)\b/gi,
+    operating_margin: /\boperating margin\b/gi,
+    gross_margin: /\bgross margin\b/gi
+  }[metric?.metric_name];
+  if (!owner) return false;
+  const text = String(metric.value_text || metric.excerpt || "");
+  const payload = parseJson(metric.payload_json, {});
+  const position = metric.metric_position ?? payload.metric_position;
+  const matches = [...text.matchAll(owner)];
+  // Use the extractor's owned metric position only when the original text
+  // actually contains that owner there. No position means the first owner.
+  const match = Number.isInteger(position) ? matches.find((item) => item.index === position) : matches[0];
+  if (!match) return false;
+  const afterOwner = text.slice(match.index + match[0].length);
+  return /^\s+(?:was|were|totaled|totalled|exceeded|reached|grew|increased|decreased|declined|came in at)\b/i.test(afterOwner);
+}
+
 const REVENUE_SUBSET_PATTERN = /\b(?:commercial|government|international|segment|services?|subscription|product|software|semiconductor|data[ -]center|cloud|advertising|digital|licen[cs]e|maintenance|aftermarket|consumer|enterprise|domestic|overseas|regional|systemwide|same[- ]store|comparable[- ]store|professional services?|installed base management|systems?|other|packaging|china|dram|foundry(?: logic)?)\s+(?:revenue|revenues|sales)\b|\brevenue from (?:these|the) contracts\b|\bannual recurring revenue\b|\barr\b|\b(?:asset|property|land|home|portfolio) sales\b|\b(?:addressable|global|industry|nand|semiconductor) market\b[^.]{0,100}\brevenue\b|\bmarket (?:revenue|revenues|sales)\b|\b(?:revenue|sales) (?:stream|opportunity|pool)\b|\b(?:annualized )?(?:revenue|sales) run rate\b/i;
 
 function isRevenueSubsetMetric(metric) {
+  // A medium-term CAGR is not the next reporting year's growth rate. Keep
+  // explicit long-horizon targets as research even if an older extraction
+  // incorrectly marked the company subject as usable.
+  if (isMultiYearGuidanceMetric(metric)) return true;
   const subject = metricGuidanceSubject(metric);
   if (["segment_or_subset", "non_company_or_non_periodic"].includes(subject)) return true;
   if (["company_total", "company_total_or_unspecified"].includes(subject)) return false;
   return REVENUE_SUBSET_PATTERN.test(metricEvidenceText(metric));
 }
 
+function isMultiYearGuidanceMetric(metric) {
+  const scope = metricGuidanceScope(metric);
+  if (["multi_year", "multi_year_target", "long_term", "medium_term", "non_periodic"].includes(scope)) return true;
+  const evidence = metricOwnedSelectionText(metric);
+  return /\b(?:compounded? annual growth|cagr)\b[^.;]{0,140}\b(?:from\s+)?20\d{2}\s+(?:to|through|[-–])\s+20\d{2}\b/i.test(evidence) ||
+    /\b(?:long[- ]term|medium[- ]term|multi[- ]year)\b[^.;]{0,60}\b(?:targets?|goals?|objectives?|ambitions?)\b/i.test(evidence);
+}
+
+// Selection exclusions apply to the original owner, not a later metric in
+// the same management paragraph. Keep legacy untyped display behavior intact.
+function metricOwnedSelectionText(metric) {
+  const evidence = String(metric.evidence_excerpt || metric.value_text || metric.excerpt || "");
+  if (!metric.source_type) return metricEvidenceText(metric);
+  const position = metric.metric_position ?? parseJson(metric.payload_json, {}).metric_position;
+  if (!Number.isInteger(position)) return evidence;
+  const ownerPatterns = /\b(?:revenues?|sales|operating (?:income|profit|cash flow)|income from operations|(?:adjusted\s+)?ebit(?:da)?|free cash flow|fcf|net income|capex|capital expenditures?|earnings per share|eps)\b/gi;
+  const matches = [...evidence.matchAll(ownerPatterns)];
+  const owner = matches.find((m) => m.index === position);
+  if (!owner) return evidence;
+  const next = matches.find((m) => m.index > position);
+  const prefix = evidence.slice(0, position);
+  const boundary = [...prefix.matchAll(/[.;](?=\s+[A-Z]|$)|[;\n]/g)].at(-1);
+  const previous = matches.filter((m) => m.index < position).at(-1);
+  const start = Math.max(boundary ? boundary.index + 1 : 0, previous ? previous.index + previous[0].length : 0, position - 100);
+  return evidence.slice(start, next?.index ?? evidence.length);
+}
+
 const NON_COMPANY_GUIDANCE_PATTERN = /\b(?:segment|division|business unit|business area)\b[^.]{0,100}\b(?:operating income|operating profit|free cash flow|fcf)\b|\b(?:operating income|operating profit|free cash flow|fcf)\b[^.]{0,100}\b(?:segment|division|business unit|business area)\b|\bfrom (?:our |the )?discontinued operations?\b|\b(?:cumulative|aggregate)\b[^.]{0,80}\b(?:cash flow|fcf)\b|\bfinancial capacity\b|\b(?:cost )?savings?\b|\b(?:increase|decrease|improve|reduce|lower|impact|change)\b[^.]{0,120}\b(?:operating income|operating profit|free cash flow|fcf)\b[^.]{0,35}\bby\b|\b(?:operating income|operating profit|free cash flow|fcf)\b[^.]{0,80}\b(?:increase|decrease|improve|reduce|lower|impact|change)\b[^.]{0,35}\bby\b/i;
 
 function isNonCompanyGuidanceMetric(metric) {
+  if (isMultiYearGuidanceMetric(metric)) return true;
   const subject = metricGuidanceSubject(metric);
   if (["segment_or_subset", "non_company_or_non_periodic"].includes(subject)) return true;
   if (["company_total", "company_total_or_unspecified"].includes(subject)) return false;
@@ -4762,7 +4954,7 @@ function selectFullYearGuidanceM(
   const guidanceCandidates = metrics.filter((metric) => metric.actual_or_guidance === "guidance");
   const candidates = guidanceCandidates
     .filter((metric) => {
-      const evidence = metricEvidenceText(metric);
+      const evidence = metricOwnedSelectionText(metric);
       return !(rejectMetric && rejectMetric(metric)) &&
         !excludes.some((pattern) => pattern.test(evidence)) &&
         (!requirements.length || requirements.some((pattern) => pattern.test(evidence)));
@@ -4846,7 +5038,15 @@ export function preferAuthoritativeGuidanceMetrics(metrics) {
 
 export function digestGuidanceMetrics(metrics, { sourceDatabase = YOUTUBE_DB_PATH } = {}) {
   const selectedMetrics = deduplicateGuidanceMetrics(preferAuthoritativeGuidanceMetrics(metrics));
-  const clearMetrics = selectedMetrics.filter((metric) => metric.quality_status === "clear");
+  // An unusable official excerpt must not hide a usable transcript target.
+  // Establish the source contract before applying authority and deduplication.
+  const sourceDecisions = new Map(metrics.map((metric) => [metric, sourceGuidanceConsumptionDecision(metric, {
+    requireTypedSource: sourceDatabase === "valuation-pit-guidance"
+  })]));
+  const consumableMetrics = deduplicateGuidanceMetrics(preferAuthoritativeGuidanceMetrics(
+    metrics.filter((metric) => sourceDecisions.get(metric).accepted)
+  )).filter((metric) => !historicalFactMislabeledGuidance(metric));
+  const clearMetrics = consumableMetrics.filter((metric) => metric.quality_status === "clear");
   const guidanceMetrics = selectedMetrics.filter((metric) => metric.actual_or_guidance === "guidance");
   const revenueIdentityPattern = /\b(?:revenue|revenues|sales|total income)\b/i;
   const semanticallyValidRevenueMetrics = clearMetrics.filter((metric) => {
@@ -4867,7 +5067,20 @@ export function digestGuidanceMetrics(metrics, { sourceDatabase = YOUTUBE_DB_PAT
   ));
   const operatingMargin = median(metricValues(clearMetrics, ["operating_margin", "margin"], "margin_pct"));
   const grossMargin = median(metricValues(clearMetrics, ["gross_margin"], "margin_pct"));
-  const guidanceSourceMetrics = selectedMetrics.filter((metric) => ["clear", "ambiguous"].includes(metric.quality_status));
+  // Keep the exact contributors, not merely the aggregate value: two excluded
+  // and accepted excerpts may quote the same percentage. The release audit
+  // needs source IDs to prove that research-only evidence was not consumed.
+  const scalarIds = (candidates, names, field = "growth_yoy") => [...new Set(candidates
+    .filter((metric) => names.includes(metric.metric_name) && finiteNumber(metric[field]) != null)
+    .map((metric) => metric.evidence_id)
+    .filter(Boolean))].sort();
+  const scalarEvidenceIds = {
+    revenueGrowth: scalarIds(semanticallyValidRevenueMetrics, ["revenue_growth", "revenue_guidance"]),
+    revenueGuidanceGrowth: scalarIds(semanticallyValidRevenueGuidanceMetrics, ["revenue_growth", "revenue_guidance"]),
+    operatingMargin: scalarIds(clearMetrics, ["operating_margin", "margin"], "margin_pct"),
+    grossMargin: scalarIds(clearMetrics, ["gross_margin"], "margin_pct")
+  };
+  const guidanceSourceMetrics = consumableMetrics.filter((metric) => ["clear", "ambiguous"].includes(metric.quality_status));
   const revenueGuidance = selectFullYearGuidanceM(
     guidanceSourceMetrics.filter((metric) => metric.metric_name === "revenue_guidance"),
     {
@@ -4878,7 +5091,7 @@ export function digestGuidanceMetrics(metrics, { sourceDatabase = YOUTUBE_DB_PAT
   const operatingIncomeGuidance = selectFullYearGuidanceM(
     guidanceSourceMetrics.filter((metric) => metric.metric_name === "operating_income_guidance"),
     {
-      requirePatterns: [/\boperating (?:income|profit)\b|\bincome from operations\b/i],
+      requirePatterns: [/\boperating (?:income|profit)\b|\bincome from operations\b|\b(?:adjusted\s+)?ebit\b/i],
       excludePatterns: [/\bnet income\b/i, /\bfree cash flow\b|\bfcf\b/i, /\b(?:adjusted )?ebitda\b/i],
       rejectMetric: isNonCompanyGuidanceMetric
     }
@@ -4913,6 +5126,7 @@ export function digestGuidanceMetrics(metrics, { sourceDatabase = YOUTUBE_DB_PAT
     revenueGuidanceGrowth,
     operatingMargin,
     grossMargin,
+    scalarEvidenceIds,
     revenueGuidanceM: revenueGuidance.amountM,
     revenueUnscopedGuidanceM: revenueGuidance.unscopedAmountM,
     revenueQuarterGuidanceM: revenueGuidance.quarterlyAmountM,
@@ -4922,6 +5136,21 @@ export function digestGuidanceMetrics(metrics, { sourceDatabase = YOUTUBE_DB_PAT
       revenue: revenueGuidance,
       operatingIncome: operatingIncomeGuidance,
       freeCashFlow: fcfGuidance
+    },
+    rejectedHistoricalGuidance: selectedMetrics.filter(historicalFactMislabeledGuidance).map((metric) => ({
+      evidenceId: metric.evidence_id || null, metricName: metric.metric_name,
+      reason: "owned_metric_describes_historical_actual_not_forward_guidance"
+    })),
+    rejectedSourceGuidance: metrics.filter((metric) => !sourceDecisions.get(metric).accepted).map((metric) => ({
+      evidenceId: metric.evidence_id || metric.id || null,
+      metricName: metric.metric_name,
+      reason: sourceDecisions.get(metric).reason
+    })),
+    guidanceConsumptionPolicy: {
+      sourceEvidencePresent: metrics.length > 0,
+      rejectedEvidenceCount: metrics.filter((metric) => !sourceDecisions.get(metric).accepted).length,
+      policy: "Only scoped, owned forward company targets feed PIT numerical inputs; retained research does not imply guidance was absent.",
+      missingUsableTargetIsNotNoManagementGuidance: true
     },
     fxConversions,
     minObservedAt: observedDates[0] || null,

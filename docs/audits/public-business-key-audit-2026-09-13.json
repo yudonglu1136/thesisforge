@@ -1,0 +1,421 @@
+{
+  "generatedAt": "2026-09-12T21:13:49.076Z",
+  "scope": "Installed public artifacts, business-key uniqueness only; not a curve or source-truth acceptance.",
+  "stores": {
+    "research": {
+      "bytes": 2952052736,
+      "checks": [
+        {
+          "table": "price_points",
+          "keys": [
+            "symbol",
+            "date"
+          ],
+          "rows": 4463919,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 553
+        },
+        {
+          "table": "guru_snapshots",
+          "keys": [
+            "guru_id"
+          ],
+          "rows": 38,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 0
+        },
+        {
+          "table": "guru_exposure_snapshots",
+          "keys": [
+            "guru_id"
+          ],
+          "rows": 29,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 0
+        },
+        {
+          "table": "guru_backtests",
+          "keys": [
+            "guru_id",
+            "years"
+          ],
+          "rows": 78,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 0
+        },
+        {
+          "table": "guru_backtest_proxies",
+          "keys": [
+            "guru_id",
+            "years"
+          ],
+          "rows": 49,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 0
+        },
+        {
+          "table": "valuation_pit_financials",
+          "keys": [
+            "ticker",
+            "fiscal_period",
+            "dimension"
+          ],
+          "rows": 65038,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 15
+        },
+        {
+          "table": "valuation_pit_guidance",
+          "keys": [
+            "source_database",
+            "source_id"
+          ],
+          "rows": 85312,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 13
+        },
+        {
+          "table": "valuation_pit_model_runs",
+          "keys": [
+            "ticker",
+            "fiscal_period",
+            "model_version"
+          ],
+          "rows": 31953,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 8
+        },
+        {
+          "table": "valuation_pit_price_observations",
+          "keys": [
+            "ticker",
+            "fiscal_period",
+            "model_version"
+          ],
+          "rows": 31636,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 8
+        },
+        {
+          "table": "valuation_ticker_snapshots",
+          "keys": [
+            "ticker"
+          ],
+          "rows": 533,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 0
+        },
+        {
+          "table": "valuation_snapshots",
+          "keys": [
+            "id"
+          ],
+          "rows": 1,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 0
+        },
+        {
+          "table": "investment_quality_annual",
+          "keys": [
+            "ticker",
+            "report_period"
+          ],
+          "rows": 13688,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 8
+        }
+      ],
+      "foreignKeyViolations": 0,
+      "sourceUnchanged": true
+    },
+    "strategy": {
+      "bytes": 4905816064,
+      "checks": [
+        {
+          "table": "source_documents",
+          "keys": [
+            "kind",
+            "locator",
+            "sha256"
+          ],
+          "rows": 7374,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 51
+        },
+        {
+          "table": "managers",
+          "keys": [
+            "id"
+          ],
+          "rows": 33,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 0
+        },
+        {
+          "table": "manager_entities",
+          "keys": [
+            "manager_id",
+            "cik"
+          ],
+          "rows": 38,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 0
+        },
+        {
+          "table": "filing_manifest",
+          "keys": [
+            "manager_id",
+            "accession"
+          ],
+          "rows": 1324,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 2
+        },
+        {
+          "table": "filings",
+          "keys": [
+            "manager_id",
+            "accession"
+          ],
+          "rows": 1332,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 4
+        },
+        {
+          "table": "filing_holdings",
+          "keys": [
+            "filing_id",
+            "ordinal"
+          ],
+          "rows": 200589,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 466
+        },
+        {
+          "table": "document_holdings",
+          "keys": [
+            "document_id",
+            "ordinal"
+          ],
+          "rows": 238972,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 303
+        },
+        {
+          "table": "holding_resolutions",
+          "keys": [
+            "filing_id",
+            "ordinal"
+          ],
+          "rows": 200589,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 317
+        },
+        {
+          "table": "security_identifiers",
+          "keys": [
+            "cusip"
+          ],
+          "rows": 2363,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 2
+        },
+        {
+          "table": "corporate_actions",
+          "keys": [
+            "id"
+          ],
+          "rows": 10,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 0
+        },
+        {
+          "table": "price_series",
+          "keys": [
+            "id"
+          ],
+          "rows": 6921,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 15
+        },
+        {
+          "table": "price_observations",
+          "keys": [
+            "series_id",
+            "date"
+          ],
+          "rows": 5441307,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 17370
+        },
+        {
+          "table": "etf_catalog",
+          "keys": [
+            "symbol"
+          ],
+          "rows": 2,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 0
+        },
+        {
+          "table": "financial_records",
+          "keys": [
+            "ticker",
+            "fiscal_period",
+            "dimension"
+          ],
+          "rows": 65038,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 204
+        },
+        {
+          "table": "financial_metrics",
+          "keys": [
+            "record_id",
+            "metric"
+          ],
+          "rows": 780456,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 1985
+        },
+        {
+          "table": "guidance_events",
+          "keys": [
+            "source_database",
+            "source_event_id"
+          ],
+          "rows": 85312,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 462
+        },
+        {
+          "table": "valuation_nodes",
+          "keys": [
+            "ticker",
+            "fiscal_period",
+            "model_version"
+          ],
+          "rows": 31953,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 146
+        },
+        {
+          "table": "valuation_metrics",
+          "keys": [
+            "node_id",
+            "section",
+            "metric"
+          ],
+          "rows": 1565706,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 14319
+        },
+        {
+          "table": "model_price_evidence",
+          "keys": [
+            "ticker",
+            "fiscal_period",
+            "model_version"
+          ],
+          "rows": 31636,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 42
+        },
+        {
+          "table": "coverage_issues",
+          "keys": [
+            "id"
+          ],
+          "rows": 122385,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 234
+        }
+      ],
+      "foreignKeyViolations": 0,
+      "sourceUnchanged": true
+    },
+    "composition": {
+      "bytes": 543330304,
+      "checks": [
+        {
+          "table": "series",
+          "keys": [
+            "symbol"
+          ],
+          "rows": 1582,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 1
+        },
+        {
+          "table": "prices",
+          "keys": [
+            "symbol",
+            "date"
+          ],
+          "rows": 4519078,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 4182
+        },
+        {
+          "table": "audit",
+          "keys": [
+            "symbol"
+          ],
+          "rows": 1601,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 1
+        },
+        {
+          "table": "source_responses",
+          "keys": [
+            "symbol",
+            "endpoint"
+          ],
+          "rows": 2,
+          "duplicateGroups": 0,
+          "missingKeys": 0,
+          "milliseconds": 0
+        }
+      ],
+      "foreignKeyViolations": 0,
+      "sourceUnchanged": true
+    }
+  },
+  "pass": true,
+  "provenance": "Read-only checks on exact local counterparts of the three installed immutable public release artifacts. No production database writes. Business-key uniqueness is not source-semantic or full-history acceptance."
+}

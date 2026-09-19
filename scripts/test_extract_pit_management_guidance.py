@@ -1,7 +1,15 @@
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
+import contextlib
+import copy
+import io
+import sqlite3
+import tempfile
+from types import SimpleNamespace
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).with_name("extract-pit-management-guidance.py")
@@ -12,7 +20,443 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
+class EpsChangesTests(unittest.TestCase):
+    def events(self,quote):
+        metrics=MODULE.metric_names(quote)
+        return MODULE.deduplicate_sentence_events([MODULE.extract_event("TEST","Q12026","2026-04-01","https://example.com/original",Path("original.txt"),"Chief Financial Officer",quote,name,pos,metrics)for name,pos in metrics if name=="eps_guidance"])
+
+    def test_explicit_current_target_is_not_delta_or_old_target(self):
+        for quote, expected in [
+            ("Increasing our full year adjusted EPS guidance by $0.22 per share to a midpoint of $7.57 per share.",7.57),
+            ("We have raised our full-year outlook for adjusted earnings per share by $0.60 from greater than $24.50 to greater than $25.10.",25.10),
+            ("We are raising our full-year EPS outlook by $0.13-$0.15, to $5.03-$5.11, reflecting growth of 13%-15%.",5.07),
+            ("We are raising our full-year EPS outlook by $0.09-$0.12 to $5.15-$5.20.",5.175),
+            ("We raise the 2022 adjusted EPS guidance by $0.08 from $22.93 to $23.01.",23.01),
+        ]:
+            row=self.events(quote)[0]
+            self.assertAlmostEqual(row["per_share_value"],expected,msg=quote)
+            self.assertEqual(row["eps_change_evidence"]["kind"],"current_target")
+            self.assertEqual(row["evidence_excerpt"],quote)
+            self.assertIsNone(row["amount"])
+        self.assertEqual(self.events("We raised full-year EPS guidance by $0.60 from greater than $24.50 to greater than $25.10.")[0]["eps_change_evidence"]["target_kind"],"lower_bound")
+
+    def test_standalone_changes_and_operational_drivers_are_not_eps_levels(self):
+        for quote in [
+            "We raised full-year EPS guidance by $0.10.",
+            "We expect optimization actions to impact fiscal 2024 GAAP operating margin by 70 basis points and EPS by $0.56.",
+            "We expect current exchange rates to negatively impact second quarter earnings per share by $0.02-$0.03.",
+            "The EPS guidance range is increased $0.05 for first quarter tailwinds.",
+            "We exceeded our third quarter EPS guidance range by $0.05.",
+            "We are raising the high end of our outlook for non-GAAP net income by $0.09 per diluted share for the year.",
+        ]:
+            row=self.events(quote)[0]
+            self.assertIsNone(row["per_share_value"],quote)
+            self.assertEqual(row["eps_change_evidence"]["kind"],"change_only",quote)
+            self.assertEqual(row["evidence_excerpt"],quote)
+            self.assertEqual(row["guidance_subject"],"non_company_or_non_periodic")
+            self.assertFalse(row["research_per_share_evidence"][-1]["included_in_valuation_inputs"])
+
+    def test_separate_new_target_owner_never_replaces_or_deletes_delta_owner(self):
+        quote="We are raising our full-year adjusted earnings per share guidance by $0.10 and now expect adjusted EPS between $12.09 and $12.29."
+        rows=self.events(quote)
+        self.assertEqual(len(rows),2)
+        self.assertIsNone(rows[0]["per_share_value"])
+        self.assertEqual(rows[0]["eps_change_evidence"]["kind"],"change_only")
+        self.assertAlmostEqual(rows[1]["per_share_value"],12.19)
+        self.assertNotEqual(rows[0]["id"],rows[1]["id"])
+        self.assertNotEqual(rows[0]["metric_position"],rows[1]["metric_position"])
+        self.assertTrue(all(r["evidence_excerpt"]==quote for r in rows))
+
+    def test_dash_only_changes_are_explicitly_unresolved_not_fabricated_current_targets(self):
+        for quote in [
+            "We're raising our adjusted EPS guidance for 2021 by $0.01- $2.83-$2.87.",
+            "We're raising our adjusted earnings per share guidance for the year by $0.50- $6.25-$6.75.",
+            "For the full year, we are raising the midpoint of our adjusted EPS guidance by $0.03- $3.78.",
+            "We're raising our adjusted EPS guidance for 2022 by $0.28- $22.93.",
+        ]:
+            row=self.events(quote)[0]
+            self.assertIsNone(row["per_share_value"])
+            self.assertEqual(row["extraction_review_required"],"eps_change_target_original_source_required")
+            self.assertEqual(row["eps_change_evidence"]["kind"],"ambiguous_change_vs_target")
+            self.assertEqual(row["evidence_excerpt"],quote)
+
+
 class PlusMinusGuidanceTests(unittest.TestCase):
+    def test_signed_growth_ranges_preserve_their_economic_direction(self):
+        for quote, expected in [
+            ("For full year 2020, we expect reported sales growth between -1% and 1%.", 0),
+            ("We expect annual revenue growth between -0.5% and 1%.", 0.25),
+            ("We expect annual revenue growth of -2% to 1%.", -0.5),
+            ("We expect annual sales to decline in the range of 1.5%-3%.", -2.25),
+            ("We forecast Q1 revenue to decline 3%-7% on a constant currency basis.", -5),
+            ("We expect full-year revenue down 2% to up 1%.", -0.5),
+        ]:
+            row = self.event(quote)
+            self.assertAlmostEqual(row["growth_yoy"], expected, msg=quote)
+            self.assertEqual(row["evidence_excerpt"], quote)
+
+    def test_growth_projection_revision_selects_new_level_not_midpoint(self):
+        row = self.event("We increased our 2022 full year revenue growth projection from 8.75% to 10.25% at the midpoint of our guidance range.")
+        self.assertAlmostEqual(row["growth_yoy"], 10.25)
+        ranged = self.event("We increased our full-year revenue growth guidance to a range from 8.75% to 10.25%.")
+        self.assertAlmostEqual(ranged["growth_yoy"], 9.5)
+
+    def test_named_business_and_currency_driver_sources_retain_exact_component_disposition(self):
+        for quote in [
+            "We expect revenue for HAPS business this year of $60 million.",
+            "For the full year, we expect UGG brand sales to grow 4%.",
+            "For fiscal 2026, we expect a $265 million impact to revenues.",
+            "We expect revenues from reimbursable travel to decline 2% this year.",
+        ]:
+            row = self.event(quote)
+            self.assertIn(row["guidance_subject"], {"segment_or_subset", "non_company_or_non_periodic"}, quote)
+            self.assertEqual(row["evidence_excerpt"], quote)
+
+    def test_original_actual_beat_cannot_be_a_new_forward_target(self):
+        for quote in [
+            "For the quarter, worldwide net sales of $121.2 billion exceeded the top end of our revenue guidance range and represented an increase of 10% year-over-year.",
+            "The company closed the first quarter with sales of $1,560 million and a diluted EPS of $0.71, exceeding the high end of the company's guidance for sales and EPS by $25 million and $0.04 respectively.",
+        ]:
+            for row in self.events(quote):
+                self.assertEqual(row["actual_or_guidance"], "actual", quote)
+                self.assertEqual(row["evidence_excerpt"], quote)
+        current = self.event("For next quarter, we expect revenue of $1.6 billion, exceeding our previous guidance of $1.5 billion.")
+        self.assertEqual(current["actual_or_guidance"], "guidance")
+
+    def test_direct_eps_components_retain_quote_but_not_absolute_eps_scalar(self):
+        for quote in [
+            "For 2026, we expect approximately $0.85 of non-GAAP EPS dilution, primarily from financing costs associated with the transaction.",
+            "We continue to expect an approximate $0.04 foreign exchange headwind on full-year adjusted earnings per share.",
+            "We anticipate $0.05 of EPS pickup attributable to rate relief for this year.",
+            "For the fiscal year, we anticipate an adverse impact of approximately $6 million or $0.12 on earnings per share.",
+            "We expect FX to be around $0.03 headwind to adjusted EPS for the year.",
+            "At current spot rates, we expect a tailwind of approximately $0.30 to adjusted EPS for 2026.",
+        ]:
+            row = self.event(quote, metric="eps_guidance")
+            self.assertIsNone(row["per_share_value"], quote)
+            self.assertEqual(row["guidance_subject"], "non_company_or_non_periodic", quote)
+            self.assertEqual(row["model_exclusion_reason"], "eps_component_not_absolute_earnings_level", quote)
+            self.assertEqual(row["evidence_excerpt"], quote)
+            self.assertFalse(row["research_per_share_evidence"][-1]["included_in_valuation_inputs"])
+        for quote, expected in [
+            ("We expect full-year adjusted EPS of $3.70-$3.80, despite the impact of delayed deals.", 3.75),
+            ("Despite a $0.04 FX headwind, we expect full-year adjusted EPS of $3.70-$3.80.", 3.75),
+        ]:
+            row = self.event(quote, metric="eps_guidance")
+            self.assertAlmostEqual(row["per_share_value"], expected)
+            self.assertNotEqual(row["model_exclusion_reason"], "eps_component_not_absolute_earnings_level")
+
+    def test_updated_net_income_per_share_cannot_borrow_later_normalized_ffo(self):
+        for low, high, ffo_low, ffo_high, expected in [
+            ("0.73", "0.84", "3.48", "3.59", 0.785),
+            ("0.91", "0.95", "3.59", "3.63", 0.93),
+        ]:
+            quote = f"Last night, we updated our previously issued full year 2023 outlook for net income attributable to common stockholders to a range of ${low}-${high} per diluted share, and normalized FFO of ${ffo_low}-${ffo_high} per diluted share, or ${((float(ffo_low)+float(ffo_high))/2):g} at the midpoint."
+            row = self.event(quote, metric="eps_guidance")
+            self.assertAlmostEqual(row["per_share_value"], expected)
+            self.assertEqual(row["unit"], "currency_per_share")
+            self.assertIsNone(row["amount"])
+            ffo = row["research_per_share_evidence"][0]
+            self.assertAlmostEqual(ffo["per_share_value"], (float(ffo_low)+float(ffo_high))/2)
+            self.assertFalse(ffo["included_in_valuation_inputs"])
+            self.assertEqual(row["evidence_excerpt"], quote)
+        maintained = self.event("We are maintaining our previously provided full year adjusted earnings per share range of $9.80-$10.10.", metric="eps_guidance")
+        self.assertAlmostEqual(maintained["per_share_value"], 9.95)
+        previous_only = self.event("For the full year our previously issued EPS guidance range was $3.00-$3.20, before we withdrew guidance.", metric="eps_guidance")
+        self.assertIsNone(previous_only["per_share_value"])
+        wrong_owner = self.event("We expect annual net income to improve, with normalized FFO of $3.48-$3.59 per diluted share.", metric="eps_guidance")
+        self.assertIsNone(wrong_owner["per_share_value"])
+
+    def test_separated_net_income_per_share_adds_eps_without_scaling_total_income(self):
+        for quote, expected in [
+            ("For Q2 we expect net income to range from $1.20 to $1.35 per share.", 1.275),
+            ("For Q3 we expect non-GAAP net income for diluted share in a range of $1 to $1.04.", 1.02),
+            ("For the full year we expect net income in the range of $1.18-$1.22 per diluted share.", 1.20),
+        ]:
+            row = self.event(quote, metric="eps_guidance")
+            self.assertAlmostEqual(row["per_share_value"], expected)
+            self.assertEqual(row["unit"], "currency_per_share")
+            self.assertIsNone(row["amount"])
+        for quote in [
+            "For the full year we expect operating income of $5.10-$5.40 per share.",
+            "For the full year we expect operating earnings of $5.10-$5.40 per share.",
+            "For Q2 we expect net income of $5 million and dividends of $0.25 per share.",
+            "For Q2 we expect net income to be $5 million based on 100 million shares.",
+        ]:
+            self.assertFalse(any(name == "eps_guidance" for name, _ in MODULE.metric_names(quote)), quote)
+
+    def test_prior_nonforecast_announcement_does_not_erase_current_split_adjusted_eps(self):
+        quote = "The company reaffirmed its fiscal 2018 underlying outlook for net sales growth of 6% to 7%. Split-adjusted fiscal 2018 EPS of $1.43 to $1.48 includes an expected full year negative impact due to tax reform of $0.03 and a negative impact of $0.10 from creating the previously announced charitable foundation during the fourth quarter."
+        row = self.event(quote, metric="eps_guidance")
+        self.assertAlmostEqual(row["per_share_value"], 1.455)
+        self.assertEqual(row["per_share_basis"], "unspecified")
+    def test_sequential_growth_is_not_yoy_and_declines_keep_negative_sign(self):
+        for phrase, yoy, qoq in [
+            ("6% sequential increase and 27.6% year-over-year increase", 27.6, 6),
+            ("1% sequential decrease or 22% year-over-year increase", 22, -1),
+            ("6.2% sequential decline", None, -6.2),
+            ("6%-8% sequential decline and 20%-22% year over year growth", 21, -7),
+        ]:
+            quote = "For the first quarter we expect revenue of $9 billion, representing a " + phrase + "."
+            row = self.event(quote)
+            self.assertEqual(row["growth_yoy"], yoy, phrase)
+            self.assertEqual(row["growth_qoq"], qoq, phrase)
+    def test_past_delivery_with_fiscal_qualifier_cannot_borrow_later_forward_narrative(self):
+        quote = "We delivered fiscal Q3 revenue of $31.8 million, an increase of 136% compared to Q3 last year. We expect to broaden customer relationships and continue growth in revenue."
+        row = self.event(quote)
+        self.assertEqual(row["actual_or_guidance"], "actual")
+        self.assertEqual(row["quality_status"], "historical_actual")
+        real = self.event("Fourth Quarter of Fiscal 2022 Financial Outlook. Revenue is expected to be between $37 million to $41 million, up 97% year over year at the midpoint")
+        self.assertEqual(real["actual_or_guidance"], "guidance")
+        self.assertEqual(real["growth_yoy"], 97)
+        actual = self.event("In Q1, we achieved another quarter of record revenue at $46.5 million, above our guidance range and up 24% sequentially.")
+        self.assertEqual(actual["actual_or_guidance"], "actual")
+        self.assertIsNone(actual["growth_yoy"])
+        self.assertEqual(actual["growth_qoq"], 24)
+        next_quarter = self.event("Turning to guidance for the first quarter, we expect revenue in Q1 fiscal 2023 between $43.5 million and $47.5 million, up 21% sequentially at the midpoint and 324% year-over-year.")
+        self.assertEqual(next_quarter["amount"], 45.5)
+        self.assertEqual(next_quarter["growth_yoy"], 324)
+        self.assertEqual(next_quarter["growth_qoq"], 21)
+    def test_explicit_eps_guidance_midpoint_reference_does_not_select_old_actual(self):
+        for quote, expected in [
+            ("The difference between the Company's full year 2018 EPS of $1.77 and the midpoint of the full year 2019 guidance range of $1.93 is due primarily to lower expected property sale gains.", 1.93),
+            ("The difference between the fourth quarter 2018 EPS of $0.31 and the first quarter 2019 guidance midpoint of $0.27 is due primarily to the items described below.", 0.27),
+        ]:
+            self.assertAlmostEqual(self.event(quote, metric="eps_guidance")["per_share_value"], expected)
+    def test_original_eps_owner_excludes_fx_assumption_and_identifies_reported_actual(self):
+        quote = "We expect underlying earnings per share to grow mid-single digit compared to full-year earnings per share in 2018 of 42.9p, assuming a US$1.30 to sterling exchange rate."
+        for metric, position in MODULE.metric_names(quote):
+            if metric == "eps_guidance":
+                event = MODULE.extract_event("TEST", "Q12019", "2019-04-01", "https://example.test", Path("source.txt"), "CFO", quote, metric, position, MODULE.metric_names(quote))
+                self.assertIsNone(event["per_share_value"])
+        actual = self.event("Q1 2026 adjusted earnings per share of $0.80 grew 6% versus 2025, achieving the high end of our guidance range of $0.78-$0.80.", metric="eps_guidance")
+        self.assertEqual(actual["actual_or_guidance"], "actual")
+        target = self.event("For Q1 we expect adjusted earnings per share of $0.80 representing growth of 6%.", metric="eps_guidance")
+        self.assertEqual(target["actual_or_guidance"], "guidance")
+
+    def test_qualifier_does_not_break_direct_following_percentage_owner(self):
+        quote = "The company reaffirmed full year expectations for 4-5% underlying net sales growth and 6-8% underlying operating income growth, and increased the FY18 EPS outlook to $1.85-$1.95."
+        self.assertEqual(self.event(quote)["growth_yoy"], 4.5)
+
+    def test_questions_and_historical_statements_are_not_forecasts(self):
+        quote = "14. Based on the strong free cash flow model should we expect further increases? How can we utilize the $1B cash balance?"
+        self.assertEqual(self.event(quote, metric="free_cash_flow_guidance")["actual_or_guidance"], "question")
+        self.assertEqual(self.event("Income Statement - 2025 Fourth Quarter and Year-To-Date ($ in millions) QTD Total operating revenues $3,995. Gain on sale of project $4.")["actual_or_guidance"], "actual")
+        driver = self.event("For full year 2018 earnings per share will be negatively impacted by $0.13.", metric="eps_guidance")
+        self.assertEqual(driver["guidance_subject"], "non_company_or_non_periodic")
+
+    def test_eps_driver_and_dividend_are_not_absolute_earnings(self):
+        driver = self.event("For 2021, we expect an EPS headwind of $0.25-$0.30 related to direct material input costs.", metric="eps_guidance")
+        self.assertEqual(driver["guidance_subject"], "non_company_or_non_periodic")
+        dividend = self.event("For fiscal 2026 we rebased the annual dividend to $4 per share and plan to grow our dividend in line with EPS growth of 6%-8% annually.", metric="eps_guidance")
+        self.assertIsNone(dividend["per_share_value"])
+        self.assertFalse(any(item["value"] == 1 for item in MODULE.per_share_values("Revenue is $1,025,000,000 and EPS is $5.25.")))
+        self.assertEqual(self.event("For 2026 we expect adjusted EPS of $5.25 and dividends of $1.25 per share.", metric="eps_guidance")["per_share_value"], 5.25)
+
+    def test_comparison_fiscal_year_cannot_replace_forward_target_year(self):
+        for quote, expected in [
+            ("For the full fiscal year 2014, we expect net revenue growth of 2%-6% in local currency over fiscal 2013.", 2014),
+            ("For the full FY2026, we expect revenue growth of 5%-7% relative to FY2025.", 2026),
+        ]:
+            self.assertEqual(self.event(quote)["guidance_target_year"], expected)
+
+    def test_fiscal_short_year_is_annual_but_qualified_quarter_stays_quarter(self):
+        quote = "For fiscal 26, given further weakness through the first half in the US we have updated both organic net sales and operating profit growth guidance. We have reiterated free cash flow guidance of $3 billion."
+        result = self.event(quote, metric="free_cash_flow_guidance")
+        self.assertEqual(result["guidance_scope"], "full_year")
+        self.assertEqual(result["guidance_target_year"], 2026)
+        self.assertEqual(result["amount"], 3000)
+        self.assertIsNone(result["currency"])
+        for prefix in ["For Q2 fiscal 26", "For the second quarter of fiscal 26"]:
+            quarter = self.event(prefix + " we expect revenue of $1 billion.")
+            self.assertEqual(quarter["guidance_scope"], "quarter")
+            self.assertEqual(quarter["guidance_target_year"], 2026)
+        no_year = self.event("For the next 26 months we expect revenue of $1 billion.")
+        self.assertNotEqual(no_year["guidance_scope"], "full_year")
+
+    def test_full_dollar_guidance_reconciles_to_millions_and_preserves_currency(self):
+        for quote, expected in (
+            ("We expect Q4 2025 worldwide revenues to be in the range of $1,025,000,000- $1,045,000,000, up sequentially from Q3 of 2025.", 1035),
+            ("For the full year of 2018, we now expect sales in the range of $7,630,000,000 -$7,750,000,000 and adjusted diluted EPS in the range of $3.49-$3.55.", 7690),
+            ("For the fourth quarter, we expect revenue in the range of $1,370 ,000,000- $1,390,000,000 and Q4 earnings per share in the range of $1.79- $1.85, based on a weighted diluted share count of approximately 173 million shares.", 1380),
+        ):
+            with self.subTest(quote=quote):
+                result = self.event(quote)
+                self.assertEqual(result["amount"], expected)
+                self.assertIsNone(result["currency"], "A bare dollar remains unresolved currency")
+                self.assertEqual(len(result["selected_values"]), 2)
+                for value in result["selected_values"]:
+                    self.assertEqual(quote[value["position"]:value["end"]], value["text"])
+        self.assertEqual(self.event("For the full year we expect revenue of MXN 1,025,000,000.")["currency"], "MXN")
+
+    def test_full_dollar_amount_parser_does_not_borrow_year_shares_or_eps(self):
+        self.assertEqual(MODULE.amount_values("For 2026, EPS is $1.20 and diluted shares are 1,025,000,000."), [])
+        result = self.event("For the full year we expect revenue of $1,200,000,000 and costs of $1,000,000,000.")
+        self.assertEqual(result["amount"], 1200)
+        self.assertEqual(MODULE.amount_values("USD (1,200,000,000)")[0]["value"], -1200)
+        self.assertEqual(len(MODULE.amount_values("$1,200,000,000 million")), 1)
+
+    def test_original_are_ordinal_midpoints_and_range_width_changes(self):
+        fixture = json.loads((Path(__file__).parents[1] / "server/fixtures/guidance-are-ordinal-widths-2026.json").read_text())
+        for case in fixture["cases"]:
+            original = case["original"]
+            with self.subTest(source_id=original["id"]):
+                event = self.event(original["evidence_excerpt"], metric="eps_guidance")
+                for key, expected in case["expected"].items():
+                    if isinstance(expected, float):
+                        self.assertAlmostEqual(event[key], expected, places=9, msg=key)
+                    else:
+                        self.assertEqual(event[key], expected, key)
+                self.assertEqual(len(event["research_per_share_evidence"]), 1)
+                research = event["research_per_share_evidence"][0]
+                for key, expected in case["researchExpected"].items():
+                    if isinstance(expected, float):
+                        self.assertAlmostEqual(research[key], expected, places=9, msg=key)
+                    else:
+                        self.assertEqual(research[key], expected, key)
+                self.assertIsNone(event["amount"])
+                self.assertIsNone(research["currency"])
+                if research["metric_name"] == "guidance_range_width":
+                    self.assertEqual(event["selected_values"], [])
+                    self.assertEqual(research["affected_metrics"], ["eps_guidance", "ffo_per_share"])
+
+    def test_eps_ffo_ordinal_is_explicit_and_preserves_reversed_order(self):
+        explicit = self.event("For 2026 we expect FFO per share and EPS at $7.38 and $2.22, respectively.", metric="eps_guidance")
+        self.assertEqual(explicit["per_share_value"], 2.22)
+        self.assertEqual(explicit["research_per_share_evidence"][0]["per_share_value"], 7.38)
+        unclear = self.event("For 2026 we expect EPS and FFO per share at $2.22 and $7.38.", metric="eps_guidance")
+        self.assertIsNone(unclear["per_share_value"], "Different per-share metrics require explicit ordinal evidence")
+
+    def test_narrowed_target_range_is_not_a_range_width_change(self):
+        event = self.event("We narrowed our 2026 EPS guidance range to $2.20-$2.24 and FFO per share guidance to $7.36-$7.40.", metric="eps_guidance")
+        self.assertAlmostEqual(event["per_share_value"], 2.22)
+        self.assertAlmostEqual(event["research_per_share_evidence"][0]["per_share_value"], 7.38)
+        self.assertEqual(event["quality_status"], "clear")
+        self.assertIsNone(event["model_exclusion_reason"])
+
+    def test_range_width_rejection_is_owned_not_paragraph_wide(self):
+        sentence = ("For 2026, we expect EPS of $2.22. "
+                    "We narrowed the range for FFO per share from a range of $0.08 to a range of $0.02 per share.")
+        event = self.event(sentence, metric="eps_guidance")
+        self.assertEqual(event["per_share_value"], 2.22)
+        self.assertEqual(event["quality_status"], "clear")
+        research = event["research_per_share_evidence"][0]
+        self.assertEqual(research["metric_name"], "guidance_range_width")
+        self.assertEqual(research["affected_metrics"], ["ffo_per_share"])
+        self.assertIsNone(research["per_share_value"])
+        self.assertEqual((research["range_width_before"], research["range_width_after"]), (0.08, 0.02))
+
+    def test_original_ffiv_year_range_and_are_eps_ffo_economic_owners(self):
+        fixture = json.loads((Path(__file__).parents[1] / "server/fixtures/guidance-ffiv-are-owned-evidence-2026.json").read_text())
+        for case in fixture["cases"]:
+            with self.subTest(ticker=case["ticker"], source_id=case["sourceId"]):
+                event = self.event(case["originalQuote"], metric=case["metric"])
+                for key, value in case["expected"].items():
+                    if isinstance(value, (float, int)):
+                        self.assertAlmostEqual(event[key], value, places=9, msg=key)
+                    else:
+                        self.assertEqual(event[key], value, key)
+                self.assertEqual(len(event["selected_values"]), 2)
+                if case["researchExpected"]:
+                    research = event["research_per_share_evidence"]
+                    self.assertEqual(len(research), 1)
+                    for key, value in case["researchExpected"].items():
+                        if isinstance(value, float):
+                            self.assertAlmostEqual(research[0][key], value, places=9, msg=key)
+                        else:
+                            self.assertEqual(research[0][key], value, key)
+                    self.assertIsNone(research[0]["currency"], "Bare dollar is not currency evidence")
+                    self.assertEqual(research[0]["unit"], "currency_per_share")
+                    self.assertEqual(event["per_share_basis"], "unspecified")
+
+    def test_rejected_year_does_not_consume_the_real_percent_range(self):
+        for sentence, expected in (
+            ("We are raising our revenue outlook for FY 2025 to 6.5%-7.5% growth.", 7),
+            ("We are lowering our revenue outlook for FY 2025 to -7.5% to -6.5% growth.", -7),
+            ("For FY2025, we expect revenue growth of 2000%-2100%.", 2050),
+            ("We are raising our revenue growth outlook for 2025 to 6.5%.", 6.5),
+        ):
+            with self.subTest(sentence=sentence):
+                event = self.event(sentence)
+                self.assertEqual(event["growth_yoy"], expected)
+                self.assertTrue(all(value["value"] != 2025 for value in event["selected_values"]))
+
+    def test_ffo_never_becomes_eps_in_either_clause_order(self):
+        for sentence in (
+            "For 2026, we expect EPS ranging from $1.08 to $1.18 and FFO per share ranging from $8.33 to $8.43.",
+            "For 2026, we expect FFO per share ranging from $8.33 to $8.43 and EPS ranging from $1.08 to $1.18.",
+            "For 2026, we expect EPS ranging from $1.08 to $1.18 and funds from operations per share ranging from $8.33 to $8.43.",
+        ):
+            with self.subTest(sentence=sentence):
+                event = self.event(sentence, metric="eps_guidance")
+                self.assertAlmostEqual(event["per_share_value"], 1.13)
+                self.assertIsNone(event["amount"])
+                research = event["research_per_share_evidence"][0]
+                self.assertAlmostEqual(research["per_share_value"], 8.38)
+                self.assertEqual(research["per_share_basis"], "ffo")
+                self.assertFalse(research["included_in_valuation_inputs"])
+                self.assertIsNone(research["amount"])
+        self.assertEqual(self.events("For 2026, we expect FFO per share of $8.38.", metric="eps_guidance"), [])
+
+    def test_ranging_from_is_a_range_but_historical_from_is_not(self):
+        sentence = "EPS increased from $1.08 to $1.18 last year."
+        values = MODULE.per_share_values(sentence)
+        self.assertFalse(MODULE.explicit_range_pair(values[0], values[1], sentence))
+        event = self.event("For 2026, we expect EPS ranging from $1.08 to $1.18.", metric="eps_guidance")
+        self.assertAlmostEqual(event["per_share_value"], 1.13)
+        self.assertNotIn("research_per_share_evidence", event)
+
+    def test_six_original_quotes_for_four_confirmed_owned_parser_defects(self):
+        fixture = json.loads((Path(__file__).parents[1] / "server/fixtures/guidance-four-owned-parser-errors-2026.json").read_text())
+        for case in fixture["cases"]:
+            original = case["original"]
+            metrics = MODULE.metric_names(original["evidence_excerpt"])
+            metric, position = next(item for item in metrics if item[0] == original["metric_name"])
+            with self.subTest(ticker=original["ticker"], source_id=original["id"]):
+                event = MODULE.extract_event(original["ticker"], original["fiscal_period"], original["observed_at"], original["source_url"], Path("public-transcript-fixture"), original["speaker"], original["evidence_excerpt"], metric, position, metrics)
+                for key, expected in case["expected"].items():
+                    if isinstance(expected, float):
+                        self.assertAlmostEqual(event[key], expected, places=9, msg=key)
+                    else:
+                        self.assertEqual(event[key], expected, key)
+                if metric == "eps_guidance":
+                    self.assertEqual(len(event["selected_values"]), 2)
+
+    def test_explicit_per_share_range_cannot_be_split_by_another_metric_owner(self):
+        sentence = "We expect revenue growth and EPS between $1.10 and $1.30 for the full year."
+        event = self.event(sentence, metric="eps_guidance")
+        self.assertAlmostEqual(event["per_share_value"], 1.20)
+        self.assertEqual(len(event["selected_values"]), 2)
+        # A real parallel pair of different company-level monetary metrics is
+        # still ordinal; the protected unit is only per-share or a legal range.
+        pair = "We expect EBITDA and operating income of $2.6 billion and $1.9 billion, respectively."
+        self.assertEqual(self.event(pair, metric="ebitda_guidance")["amount"], 2600)
+        self.assertEqual(self.event(pair, metric="operating_income_guidance")["amount"], 1900)
+
+    def test_revised_eps_range_is_distinct_from_delta_and_later_other_values(self):
+        range_event = self.event("We are raising full-year EPS guidance by $0.20 to $2.10-$2.30, including a $0.05 tax benefit.", metric="eps_guidance")
+        self.assertAlmostEqual(range_event["per_share_value"], 2.20)
+        point_event = self.event("We are raising full-year EPS guidance by $0.20 to $2.10, including a $0.05 tax benefit.", metric="eps_guidance")
+        self.assertEqual(point_event["per_share_value"], 2.10)
+
+    def test_q4_of_fiscal_year_remains_quarter_and_distinct_annual_target_survives(self):
+        for marker in ("Q4 of FY21", "Q4 of fiscal 2021", "Q4 of fiscal year 2021"):
+            with self.subTest(marker=marker):
+                event = self.event(f"For {marker}, we expect revenue of USD 13 billion.")
+                self.assertEqual(event["guidance_scope"], "quarter")
+                self.assertEqual(event["guidance_target_year"], 2021)
+        annual = self.event("For full-year FY21, we expect revenue of USD 50 billion.")
+        self.assertEqual(annual["guidance_scope"], "full_year")
+
+    def test_employee_growth_does_not_bind_to_revenue_in_either_clause_order(self):
+        for sentence in (
+            "For the full year, we expect employee growth of 2%-3% and revenue growth of 3%-4%.",
+            "For the full year, we expect revenue growth of 3%-4% and employee growth of 2%-3%.",
+        ):
+            with self.subTest(sentence=sentence):
+                event = self.event(sentence)
+                self.assertEqual(event["growth_yoy"], 3.5)
+
     def events(self, sentence, metric="revenue_guidance"):
         metrics = MODULE.metric_names(sentence)
         return [
@@ -39,7 +483,8 @@ class PlusMinusGuidanceTests(unittest.TestCase):
         event = self.event("Revenue is expected to be $4.1 billion, ±$100 million.")
 
         self.assertEqual(event["amount"], 4_100)
-        self.assertEqual(event["currency"], "USD")
+        self.assertIsNone(event["currency"])
+        self.assertEqual(event["currency_resolution"]["status"], "source_currency_required")
 
     def test_plus_or_minus_words_use_center_not_tolerance_average(self):
         event = self.event("Revenue is expected to be $2.1 billion, + or - $150 million.")
@@ -348,10 +793,67 @@ class PlusMinusGuidanceTests(unittest.TestCase):
 
         self.assertEqual(event["guidance_scope"], "quarter")
 
+    def test_compact_forecast_year_stays_annual_but_q2_fy26e_stays_quarter(self):
+        annual = self.event("FY26E revenue guidance is USD 100 million.")
+        self.assertEqual(annual["guidance_scope"], "full_year")
+        self.assertEqual(annual["guidance_target_year"], 2026)
+        quarterly = self.event("Q2 FY26E revenue guidance is USD 100 million.")
+        self.assertEqual(quarterly["guidance_scope"], "quarter")
+        self.assertIsNone(quarterly["guidance_target_year"])
+
+    def test_bare_left_percent_endpoint_and_comparison_base_are_not_lost(self):
+        for value in ("15-18%", "15–18%", "15 to 18%", "15% to 18%"):
+            with self.subTest(value=value):
+                event = self.event(f"For full year 2026 we expect revenue growth of {value}.")
+                self.assertEqual(event["growth_yoy"], 16.5)
+                self.assertEqual(len(event["selected_values"]), 2)
+        current = self.event("Updated FY2026 outlook reflects 22-23% year-over-year increase in net sales, compared to 18-20% previously.")
+        self.assertEqual(current["growth_yoy"], 22.5)
+        decimals = self.event("Updated FY2026 outlook reflects 22.5-23.5% year-over-year increase in net sales, compared to the previous 18.5-20.5% range.")
+        self.assertEqual(decimals["growth_yoy"], 23)
+
+    def test_annual_paragraph_scope_does_not_cross_a_new_quarter_horizon(self):
+        sentence = ("For the full year 2026, revenue is expected to be USD 900 million. "
+                    "The company outlined its planned investment in facilities and supporting operations. "
+                    "For Q3 we expect a separate investment program. "
+                    "Guidance for capital expenditures is USD 20 million.")
+        event = self.event(sentence, metric="capex_guidance")
+        self.assertEqual(event["guidance_scope"], "quarter")
+
+    def test_results_versus_outlook_table_is_preserved_as_actual_not_new_guidance(self):
+        event = self.event("Financial Results vs. Outlook Q2 2026 RESULTS Q2 2026 OUTLOOK Revenue USD 260.2 million USD 139-143 million.")
+        self.assertEqual(event["actual_or_guidance"], "actual")
+        self.assertEqual(event["quality_status"], "historical_actual")
+
     def test_met_guidance_is_historical_not_a_new_outlook(self):
         sentence = "Revenue of $2 billion met our guidance for the second quarter."
 
         self.assertIsNotNone(MODULE.HISTORICAL_GUIDANCE.search(sentence))
+
+    def test_owned_revenue_exceeded_is_actual_despite_better_than_expected(self):
+        sentence = (
+            "We ended 2025 on a strong note with a better-than-expected Holiday quarter. "
+            "For the year, revenue exceeded $4 billion, led by low-double digit "
+            "international growth for the Crocs Brand."
+        )
+        event = self.event(sentence)
+        self.assertEqual(event["amount"], 4000)
+        self.assertEqual(event["actual_or_guidance"], "actual")
+        self.assertEqual(event["quality_status"], "historical_actual")
+        for past in ("has exceeded", "had exceeded"):
+            with self.subTest(past=past):
+                self.assertEqual(self.event(sentence.replace("exceeded", past))["actual_or_guidance"], "actual")
+
+    def test_owned_future_target_survives_unrelated_past_performance(self):
+        for sentence in (
+            "We ended 2025 with a better-than-expected Holiday quarter. For 2026, we expect revenue to exceed $4 billion.",
+            "We exceeded expectations last year. For 2026, revenue is expected to exceed $4 billion.",
+            "This results in us maintaining our full year reported revenue guidance range of $6.67 billion-$6.73 billion for the full year.",
+        ):
+            with self.subTest(sentence=sentence):
+                event = self.event(sentence)
+                self.assertEqual(event["actual_or_guidance"], "guidance")
+                self.assertEqual(event["quality_status"], "clear")
 
     def test_actual_value_does_not_enter_later_forward_sentence_context(self):
         event = self.event(
@@ -702,6 +1204,268 @@ class PlusMinusGuidanceTests(unittest.TestCase):
         )
 
         self.assertEqual(event["guidance_subject"], "non_company_or_non_periodic")
+
+
+class CurrencyGuidanceTests(unittest.TestCase):
+    def event(self, sentence):
+        metrics = MODULE.metric_names(sentence)
+        name, position = next(item for item in metrics if item[0] == "revenue_guidance")
+        return MODULE.extract_event("TBBB", "Q22026", "2026-08-01",
+                                    "https://example.test/issuer-release", Path("fixture.txt"),
+                                    "Fixture CFO", sentence, name, position, metrics)
+
+    def test_mxn_prefix_spellings_are_never_usd(self):
+        for marker in ("MXN", "Ps.", "MX$", "MEX$", "Mexican pesos"):
+            with self.subTest(marker=marker):
+                event = self.event(f"We expect full year revenue of {marker} 80 billion.")
+                self.assertEqual(event["amount"], 80_000)
+                self.assertEqual(event["currency"], "MXN")
+
+    def test_mxn_suffix_spellings(self):
+        for marker in ("MXN", "Mexican pesos"):
+            event = self.event(f"We expect full year revenue of 80 billion {marker}.")
+            self.assertEqual(event["currency"], "MXN")
+            self.assertEqual(event["amount"], 80_000)
+
+    def test_currency_code_can_touch_amount_but_not_form_part_of_a_word(self):
+        for marker, currency in (("MXN", "MXN"), ("USD", "USD"), ("GBP", "GBP"), ("EUR", "EUR")):
+            with self.subTest(marker=marker):
+                event = self.event(f"We expect full year revenue of {marker}80 billion.")
+                self.assertEqual(event["currency"], currency)
+                self.assertEqual(event["amount"], 80_000)
+        self.assertIsNone(self.event("We expect full year revenue of AMXN80 billion.")["currency"])
+
+    def test_mxn_shared_scale_ranges(self):
+        for sentence in ("We expect full year revenue of MXN 80-84 billion.",
+                         "We expect full year revenue of Ps. 80 to Ps. 84 billion.",
+                         "We expect full year revenue of 80–84 billion Mexican pesos."):
+            with self.subTest(sentence=sentence):
+                event = self.event(sentence)
+                self.assertEqual(event["amount"], 82_000)
+                self.assertEqual(event["currency"], "MXN")
+
+    def test_repeated_scale_and_between_ranges(self):
+        for sentence in ("We expect full year revenue of MXN 80 billion to MXN 84 billion.",
+                         "We expect full year revenue between Ps. 80 billion and Ps. 84 billion."):
+            event = self.event(sentence)
+            self.assertEqual(event["amount"], 82_000)
+            self.assertEqual(event["currency"], "MXN")
+
+    def test_explicit_us_currency_is_preserved(self):
+        for marker in ("US$", "USD", "U.S. dollars"):
+            event = self.event(f"We expect full year revenue of {marker} 4 billion.")
+            self.assertEqual(event["currency"], "USD")
+
+    def test_bare_dollar_requires_reporting_currency(self):
+        event = self.event("We expect full year revenue of $80 billion.")
+        self.assertIsNone(event["currency"])
+        self.assertEqual(event["amount"], 80_000)
+        self.assertEqual(event["currency_resolution"]["status"], "source_currency_required")
+
+    def test_peso_evidence_disambiguates_dollar(self):
+        event = self.event("In Mexican pesos, we expect full year revenue of $80 billion.")
+        self.assertEqual(event["currency"], "MXN")
+
+    def test_mixed_currency_range_is_not_averaged(self):
+        event = self.event("We expect full year revenue between MXN 80 billion and USD 4 billion.")
+        self.assertIsNone(event["amount"])
+        self.assertIsNone(event["currency"])
+        self.assertEqual(event["quality_status"], "currency_conflict")
+
+    def test_conflicting_prefix_suffix_fails_closed(self):
+        event = self.event("We expect full year revenue of USD 80 billion Mexican pesos.")
+        self.assertIsNone(event["amount"])
+        self.assertEqual(event["quality_status"], "currency_conflict")
+
+    def test_ps_abbreviation_does_not_split_the_amount_from_metric(self):
+        sentence = "We expect full year revenue of Ps. 80 billion to Ps. 84 billion."
+        self.assertEqual(list(MODULE.sentences(sentence)), [sentence])
+
+    def test_percentage_only_needs_no_currency(self):
+        event = self.event("We expect full year revenue growth of 15%.")
+        self.assertIsNone(event["amount"])
+        self.assertIsNone(event["currency"])
+        self.assertEqual(event["growth_yoy"], 15)
+        self.assertEqual(event["quality_status"], "clear")
+
+    def test_mxn_plus_minus_uses_center(self):
+        event = self.event("We expect full year revenue of MXN 80 billion plus or minus Ps. 100 million.")
+        self.assertEqual(event["amount"], 80_000)
+        self.assertEqual(event["currency"], "MXN")
+
+    def test_actual_tbbb_fy2026_guidance_does_not_become_a_2025_money_forecast(self):
+        fixture = json.loads((Path(__file__).parents[1] / "server/fixtures/tbbb-fy2026-guidance.json").read_text())
+        sentence = fixture["evidence"]
+        metrics = MODULE.metric_names(sentence)
+        name, position = next(item for item in metrics if item[0] == "revenue_guidance")
+        event = MODULE.extract_event(fixture["ticker"], fixture["fiscal_period"], fixture["observed_at"],
+                                     fixture["source_url"], Path("official-sec-fixture"), "Issuer management",
+                                     sentence, name, position, metrics)
+        for key, expected in fixture["expected"].items():
+            self.assertEqual(event[key], expected, key)
+        self.assertEqual(event["fiscal_period"], "Q42025")
+        self.assertEqual(event["observed_at"], "2026-03-11")
+
+
+class OwnedMonetaryRangeTests(unittest.TestCase):
+    def event(self, quote, metric):
+        metrics = MODULE.metric_names(quote)
+        position = next(position for name, position in metrics if name == metric)
+        return MODULE.extract_event("TEST", "Q12026", "2026-04-01", "https://example.test/original", Path("original.txt"), "Issuer CFO", quote, metric, position, metrics)
+
+    def test_capex_cannot_borrow_the_previous_net_interest_expense_range(self):
+        quote = "Additionally, we now expect the following for 2022: an adjusted annual effective tax rate of 16%-18%, net interest expense in the range of $250 million-$270 million, capital expenditures in the range of $650 million-$750 million, and depreciation and amortization of approximately $420 million."
+        event = self.event(quote, "capex_guidance")
+        self.assertEqual(event["amount"], 700)
+        self.assertEqual([v["value"] for v in event["selected_values"]], [650, 750])
+
+    def test_breakeven_range_preserves_negative_and_zero_endpoints(self):
+        quote = "For the second quarter, we expect adjusted revenues to be within the range of $151 million-$156 million, and adjusted EBITDA to be in the range of negative $4 million to break even."
+        event = self.event(quote, "ebitda_guidance")
+        self.assertEqual(event["amount"], -2)
+        self.assertEqual([v["value"] for v in event["selected_values"]], [-4, 0])
+        self.assertEqual(self.event(quote, "revenue_guidance")["amount"], 153.5)
+        self.assertEqual(self.event("For the second quarter, we expect EBITDA of negative $4 million, with a goal to reach break even next year.", "ebitda_guidance")["amount"], -4)
+
+    def test_expense_and_restructuring_payment_targets_do_not_become_revenue_or_fcf(self):
+        for quote, metric in [
+            ("However, taking into account our current revenue outlook for the year, we are now planning for operating expense to average $340 million-$345 million per quarter in fiscal year 2024, down from our previous guidance of $355 million per quarter.", "revenue_guidance"),
+            ("In terms of free cash flow, we expect Q2 to look similar to last year, including cash restructuring payments of approximately $100 million.", "free_cash_flow_guidance"),
+        ]:
+            event = self.event(quote, metric)
+            self.assertIsNone(event["amount"], quote)
+            self.assertEqual(event["evidence_excerpt"], quote)
+        self.assertEqual(self.event("We expect full year free cash flow of $600 million, after restructuring payments of $100 million.", "free_cash_flow_guidance")["amount"], 600)
+
+    def test_margin_and_customer_growth_cannot_become_revenue_growth(self):
+        quote = "I mentioned earlier, I think, on this call, we expect Q3 to be about maybe 10%-10.5% margins, flattish year over year, but growing to about 12% in Q4, reflecting stronger sales, but also more of the productivity actions that we've been implementing all year."
+        self.assertIsNone(self.event(quote, "revenue_guidance")["growth_yoy"])
+        self.assertIsNone(self.event("We continue to forecast 2% customer growth for 2016, which equates to approximately $25 million-$30 million in incremental base revenue annually.", "revenue_guidance")["growth_yoy"])
+        self.assertEqual(self.event("We expect full year revenue growth of 8%, compared with customer growth of 2%.", "revenue_guidance")["growth_yoy"], 8)
+
+
+class PointInTimeCutoffTests(unittest.TestCase):
+    def test_cutoff_requires_source_date_or_explicit_legacy_opt_in(self):
+        with sqlite3.connect(":memory:") as connection:
+            with self.assertRaisesRegex(ValueError, "as_of_cutoff is required"):
+                MODULE.resolve_as_of_cutoff(connection)
+            self.assertIsNone(MODULE.resolve_as_of_cutoff(connection, allow_legacy=True))
+            self.assertEqual(MODULE.resolve_as_of_cutoff(connection, "2026-09-05"), "2026-09-05")
+
+    def test_existing_cutoff_cannot_be_widened_or_changed(self):
+        with sqlite3.connect(":memory:") as connection:
+            connection.execute("CREATE TABLE pit_source_metadata (key TEXT PRIMARY KEY, value TEXT)")
+            connection.execute("INSERT INTO pit_source_metadata VALUES ('as_of_cutoff','2026-09-05')")
+            self.assertEqual(MODULE.resolve_as_of_cutoff(connection), "2026-09-05")
+            self.assertEqual(MODULE.resolve_as_of_cutoff(connection, "2026-09-05"), "2026-09-05")
+            for cutoff in ("2026-09-06", "2026-09-04", "2026-09-05T00:00:00", "2026-02-30"):
+                with self.subTest(cutoff=cutoff), self.assertRaises(ValueError):
+                    MODULE.resolve_as_of_cutoff(connection, cutoff, allow_legacy=True)
+
+    def test_future_transcript_is_excluded_and_observation_date_is_preserved(self):
+        text = "Earnings Call: Q2 2026\n2026-09-06\nhttps://example.test/original\n"
+        quote = "We expect full year revenue of USD 5 billion."
+        with mock.patch.object(Path, "read_text", return_value=text), mock.patch.object(MODULE, "speaker_sections", return_value=[("Chief Financial Officer", quote)]):
+            period, events = MODULE.extract_file("TEST", Path("original.txt"), "2026-09-05")
+            self.assertIsNone(period)
+            self.assertEqual(events, [])
+            for cutoff in ("2026-09-06", "2026-09-07"):
+                period, events = MODULE.extract_file("TEST", Path("original.txt"), cutoff)
+                self.assertEqual(period, "Q22026")
+                self.assertTrue(events)
+                self.assertEqual(events[0]["observed_at"], "2026-09-06")
+                self.assertEqual(events[0]["source_url"], "https://example.test/original")
+
+
+class UniqueTranscriptPersistenceTests(unittest.TestCase):
+    def event(self):
+        sentence = "We expect CapEx in 2021 to be around $800 million."
+        metrics = MODULE.metric_names(sentence)
+        metric, position = next(item for item in metrics if item[0] == "capex_guidance")
+        return MODULE.extract_event("IP", "Q42020", "2021-01-28", "https://stockanalysis.com/stocks/ip/transcripts/268771-q4-2020/", Path("IP/earnings_IP_Q42020_268771-q4-2020.txt"), "Issuer CFO", sentence, metric, position, metrics)
+
+    def test_real_repeated_capex_sentence_is_one_identical_persisted_event(self):
+        with sqlite3.connect(":memory:") as connection:
+            MODULE.ensure_schema(connection)
+            event = self.event()
+            self.assertTrue(MODULE.persist_unique_transcript_event(connection, event))
+            self.assertFalse(MODULE.persist_unique_transcript_event(connection, copy.deepcopy(event)))
+            self.assertFalse(MODULE.persist_unique_transcript_event(connection, dict(reversed(list(event.items())))))
+            self.assertEqual(connection.execute("SELECT count(*) FROM pit_guidance_events").fetchone()[0], 1)
+
+    def test_same_id_with_different_payload_fails_closed(self):
+        for change in ({"amount": 900}, {"guidance_scope": "quarter"}, {"per_share_value": 2.0},
+                       {"source_url": "https://example.test/other"}, {"source_file": "other.txt"},
+                       {"actual_or_guidance": "actual"}):
+            with self.subTest(change=change), sqlite3.connect(":memory:") as connection:
+                MODULE.ensure_schema(connection)
+                event = self.event()
+                MODULE.persist_unique_transcript_event(connection, event)
+                with self.assertRaisesRegex(ValueError, "Conflicting guidance event ID"):
+                    MODULE.persist_unique_transcript_event(connection, {**event, **change})
+                self.assertEqual(json.loads(connection.execute("SELECT payload_json FROM pit_guidance_events").fetchone()[0]), event)
+
+    def test_typed_column_or_other_source_collision_cannot_hide_in_payload(self):
+        for column, value in (("amount", 999), ("source_type", "official_issuer_sec_filing")):
+            with self.subTest(column=column), sqlite3.connect(":memory:") as connection:
+                MODULE.ensure_schema(connection)
+                event = self.event()
+                MODULE.persist_unique_transcript_event(connection, event)
+                connection.execute(f"UPDATE pit_guidance_events SET {column}=?", (value,))
+                with self.assertRaisesRegex(ValueError, "Conflicting guidance event ID"):
+                    MODULE.persist_unique_transcript_event(connection, event)
+
+    def test_writer_rejects_non_transcript_source(self):
+        with sqlite3.connect(":memory:") as connection:
+            MODULE.ensure_schema(connection)
+            with self.assertRaisesRegex(ValueError, "another guidance source type"):
+                MODULE.persist_unique_transcript_event(connection, {**self.event(), "source_type": "official_issuer_sec_filing"})
+
+    def test_cli_reports_occurrences_separately_from_unique_coverage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "IP").mkdir()
+            (root / "IP" / "fixture.txt").touch()
+            database = root / "source.sqlite"
+            with sqlite3.connect(database) as connection:
+                connection.execute("CREATE TABLE pit_source_metadata (key TEXT PRIMARY KEY, value TEXT)")
+                connection.execute("INSERT INTO pit_source_metadata VALUES ('as_of_cutoff','2026-09-05')")
+            event = self.event()
+            args = SimpleNamespace(source_db=database, target_db=root / "unused.sqlite", transcript_root=root)
+            with mock.patch.object(MODULE, "parse_args", return_value=args), mock.patch.object(MODULE, "target_tickers", return_value=[("IP", "IP")]), mock.patch.object(MODULE, "extract_file", return_value=("Q42020", [event, copy.deepcopy(event), copy.deepcopy(event)])), contextlib.redirect_stdout(io.StringIO()) as output:
+                MODULE.main()
+            result = json.loads(output.getvalue())
+            self.assertEqual((result["extractedOccurrences"], result["events"], result["duplicateOccurrences"]), (3, 1, 2))
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(connection.execute("SELECT count(*) FROM pit_guidance_events").fetchone()[0], 1)
+                self.assertEqual(connection.execute("SELECT guidance_events FROM pit_guidance_coverage WHERE ticker='IP'").fetchone()[0], 1)
+
+    def test_cli_collision_rolls_back_deletion_and_preserves_official_source(self):
+        for cross_source in (False, True):
+            with self.subTest(cross_source=cross_source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "IP").mkdir()
+                (root / "IP" / "fixture.txt").touch()
+                database = root / "source.sqlite"
+                event = self.event()
+                with sqlite3.connect(database) as connection:
+                    MODULE.ensure_schema(connection)
+                    connection.execute("CREATE TABLE pit_source_metadata (key TEXT PRIMARY KEY, value TEXT)")
+                    connection.execute("INSERT INTO pit_source_metadata VALUES ('as_of_cutoff','2026-09-05')")
+                    MODULE.persist_unique_transcript_event(connection, {**event, "id": "retained-transcript"})
+                    MODULE.persist_unique_transcript_event(connection, {**event, "id": event["id"] if cross_source else "retained-official"})
+                    connection.execute("UPDATE pit_guidance_events SET source_type='official_issuer_sec_filing' WHERE id!=?", ("retained-transcript",))
+                    connection.execute("INSERT INTO pit_guidance_coverage VALUES ('IP',1,1,1,1,'covered','prior coverage')")
+                    before = connection.execute("SELECT * FROM pit_guidance_events ORDER BY id").fetchall()
+                    coverage_before = connection.execute("SELECT * FROM pit_guidance_coverage").fetchall()
+                args = SimpleNamespace(source_db=database, target_db=root / "unused.sqlite", transcript_root=root)
+                events = [event] if cross_source else [event, {**event, "amount": 999}]
+                with mock.patch.object(MODULE, "parse_args", return_value=args), mock.patch.object(MODULE, "target_tickers", return_value=[("IP", "IP")]), mock.patch.object(MODULE, "extract_file", return_value=("Q42020", events)):
+                    with self.assertRaisesRegex(ValueError, "Conflicting guidance event ID"):
+                        MODULE.main()
+                with sqlite3.connect(database) as connection:
+                    self.assertEqual(connection.execute("SELECT * FROM pit_guidance_events ORDER BY id").fetchall(), before)
+                    self.assertEqual(connection.execute("SELECT * FROM pit_guidance_coverage").fetchall(), coverage_before)
 
 
 if __name__ == "__main__":

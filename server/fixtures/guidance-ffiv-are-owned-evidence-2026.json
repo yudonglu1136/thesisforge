@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "scope": "Two original quotations from the existing bounded root-cause audit; no new issuer research or currency inference.",
+  "cases": [
+    {
+      "sourceId": "811b908e94c394ff7ce974f8",
+      "ticker": "ARE",
+      "fiscalPeriod": "Q12022",
+      "observedAt": "2022-04-26",
+      "metric": "eps_guidance",
+      "sourceUrl": "https://stockanalysis.com/stocks/are/transcripts/19816-q1-2022/",
+      "originalQuote": "Strong operating and financial results for the first quarter supports our improved outlook for 2022, with EPS diluted ranging from $1.08 to $1.18 and FFO per share as adjusted diluted from a range from $8.33 to $8.43, up 8%+ over 2021 at the midpoint of guidance.",
+      "expected": {
+        "per_share_value": 1.13,
+        "amount": null,
+        "guidance_scope": "full_year",
+        "guidance_target_year": 2022
+      },
+      "researchExpected": {
+        "metric_name": "ffo_per_share",
+        "per_share_value": 8.38,
+        "per_share_basis": "adjusted_ffo",
+        "quality_status": "research_only_non_eps_per_share",
+        "model_exclusion_reason": "non_eps_per_share_economic_basis",
+        "included_in_valuation_inputs": false,
+        "amount": null
+      }
+    },
+    {
+      "sourceId": "289307d5bd86ad62e8ecc2c0",
+      "ticker": "FFIV",
+      "fiscalPeriod": "Q22025",
+      "observedAt": "2025-04-28",
+      "metric": "revenue_guidance",
+      "sourceUrl": "https://stockanalysis.com/stocks/ffiv/transcripts/310378-q2-2025/",
+      "originalQuote": "Balancing the strength, we are currently seeing in the business with some prudence in relation to the macro environment, we are raising our revenue outlook for FY 2025 to 6.5%-7.5% growth, up from our prior range of 6%-7%.",
+      "expected": {
+        "growth_yoy": 7,
+        "guidance_scope": "full_year",
+        "guidance_target_year": 2025
+      },
+      "researchExpected": null
+    }
+  ]
+}

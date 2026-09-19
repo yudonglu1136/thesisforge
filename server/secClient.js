@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { XMLParser } from "fast-xml-parser";
+import { parseLegacy13fInformationTable, indexed13fAttachment, assertLegacy13fIdentity } from "./thirteenFLegacy.js";
 import {
   priceSymbolResolutionForHolding,
   tickerForHolding
@@ -10,6 +12,11 @@ import { gurus } from "./gurus.js";
 import { canonicalGuruAvatarUrl } from "./guruAvatarCatalog.js";
 import { manager13fHoldingPublicTradingAnnotation } from "./backtestReplicability.js";
 import { loadPriceSeries, nearestPoint } from "./marketData.js";
+import { factOsEnabled } from "./factRepository.js";
+import {
+  loadFactGuruDashboard,
+  loadFactGuruExposure
+} from "./factGuruAdapter.js";
 import {
   assessCorporateActionAdjustedShareChange,
   group13fFilingsByReportDate,
@@ -293,13 +300,18 @@ async function getFilingDocument(cik, filing, preferredName) {
     const submissionName = `${filing.accessionNumber}.txt`;
     const submissionText = await getText(`${baseUrl}/${submissionName}`);
     const informationTables = informationTableFileNamesFromSubmission(submissionText);
+    if (informationTables.length === 0 && /<(?:S|C)>/i.test(submissionText) && /FORM\s+13F\s+INFORMATION\s+TABLE/i.test(submissionText)) {
+      assertLegacy13fIdentity(submissionText, {cik, accessionNumber: filing.accessionNumber, reportDate: filing.reportDate});
+      parseLegacy13fInformationTable(submissionText);
+      return {url: `${baseUrl}/${submissionName}`, name: submissionName, text: submissionText};
+    }
     if (informationTables.length !== 1) {
       throw new Error(
         `Expected one 13F information-table attachment for ${filing.accessionNumber}; ` +
         `found ${informationTables.length}.`
       );
     }
-    submissionInformationTable = informationTables[0];
+    submissionInformationTable = indexed13fAttachment(candidates, filing.accessionNumber, informationTables[0]);
   }
 
   const name =
@@ -331,6 +343,30 @@ function cleanIssuer(value) {
     .trim();
 }
 
+// A source placeholder is not a security identifier. In particular, do not
+// aggregate a table's unrelated issuers under 000000nan and then inherit the
+// first issuer override that happens to resolve. Do not apply a broad length
+// or checksum repair here: audited eight-character filing exceptions remain
+// the responsibility of the existing exact-scope resolver.
+function assertNoEconomicPlaceholderIdentifier(holding, context = {}) {
+  const cusip = String(holding.cusip || "").trim().toUpperCase();
+  const placeholder = /^(?:0*(?:NAN|NULL|NONE|N\/A|NA|UNKNOWN)|0{8,9})$/.test(cusip);
+  const hasEconomicPosition = [holding.value, holding.reportedValue, holding.shares]
+    .some((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+  if (!placeholder || !hasEconomicPosition) return;
+  const error = new Error(
+    `13F source contains placeholder CUSIP ${cusip} for an economic position; ` +
+    "the filing cannot be used for holdings or a backtest."
+  );
+  error.code = "invalid_13f_identifier";
+  error.sourceRecord = {
+    ...context,
+    cusip,
+    issuer: holding.issuer || ""
+  };
+  throw error;
+}
+
 function normalize13fHolding(raw, context = {}) {
   const issuer = cleanIssuer(raw.nameOfIssuer);
   const title = stringValue(raw.titleOfClass);
@@ -340,6 +376,8 @@ function normalize13fHolding(raw, context = {}) {
   const shareType = stringValue(sharesNode.sshPrnamtType);
   const reportedValue = numberValue(raw.value);
   const putCall = stringValue(raw.putCall).toUpperCase();
+
+  assertNoEconomicPlaceholderIdentifier({ issuer, cusip, reportedValue, shares }, context);
 
   const resolutionInput = { issuer, title, cusip, ...context };
   const ticker = tickerForHolding(resolutionInput);
@@ -374,7 +412,7 @@ function normalize13fHolding(raw, context = {}) {
 
 function isCommonValueScaleCandidate(holding) {
   if (holding.putCall || holding.shareType !== "SH" || holding.shares <= 0 || holding.value <= 0) return false;
-  return /(^| )(ADS?|ADR|CL|COM|ORD|SHS?|STK|UNIT)( |$)/i.test(holding.title || "");
+  return /(^| )(ADS?|ADR|CL|COM|EQUITIES|ORD|SHS?|STK|UNIT)( |$)/i.test(holding.title || "");
 }
 
 function median(values) {
@@ -408,6 +446,7 @@ export function normalize13fValueScale(holdings) {
 export function aggregate13fHoldings(holdings) {
   const byId = new Map();
   for (const holding of holdings) {
+    assertNoEconomicPlaceholderIdentifier(holding);
     if (!holding.issuer) continue;
     const key = holding.id || `${holding.cusip || holding.issuer}-${holding.putCall || "COMMON"}`;
     const current = byId.get(key);
@@ -437,13 +476,16 @@ export function aggregate13fHoldings(holdings) {
 }
 
 export function parse13fInfoTable(xmlText, context = {}) {
-  const parsed = xmlParser.parse(xmlText);
+  const legacy = /<SEC-DOCUMENT>/i.test(xmlText) && /<(?:S|C)>/i.test(xmlText)
+    ? parseLegacy13fInformationTable(xmlText) : null;
+  const parsed = legacy ? {informationTable: {infoTable: legacy.rows}} : xmlParser.parse(xmlText);
   const root = parsed.informationTable || parsed.XML?.informationTable || parsed;
   const tables = toArray(root.infoTable);
 
-  return aggregate13fHoldings(normalize13fValueScale(
-    tables.map((raw) => normalize13fHolding(raw, context))
-  ))
+  const rawHoldings = tables.map((raw) => normalize13fHolding(raw, context));
+  return aggregate13fHoldings(legacy
+    ? rawHoldings.map(holding => ({...holding, value: holding.reportedValue * legacy.valueScale, valueScale: legacy.valueScale}))
+    : normalize13fValueScale(rawHoldings))
     .map((holding) => ({
       ...holding,
       holdingBucket: is13fOptionHolding(holding)
@@ -517,14 +559,28 @@ async function load13fQuarterSnapshot(guru, group) {
   for (const filing of group?.filings || []) {
     const filerCik = filing.filerCik || guru.cik;
     const doc = await getFilingDocument(filerCik, filing);
-    components.push({
-      filing: { ...filing, filerCik },
-      doc,
-      holdings: parse13fInfoTable(doc.text, {
+    let holdings;
+    try {
+      holdings = parse13fInfoTable(doc.text, {
         guruId: guru.id,
         reportDate: group.reportDate,
         accessionNumber: filing.accessionNumber
-      })
+      });
+    } catch (error) {
+      if (error.code === "invalid_13f_identifier") {
+        error.sourceRecord = {
+          ...error.sourceRecord,
+          filerCik,
+          sourceUrl: doc.url,
+          sourceSha256: createHash("sha256").update(doc.text).digest("hex")
+        };
+      }
+      throw error;
+    }
+    components.push({
+      filing: { ...filing, filerCik },
+      doc,
+      holdings
     });
   }
   if (!components.length) throw new Error(`No usable 13F components for ${group?.reportDate || "quarter"}`);
@@ -1608,6 +1664,9 @@ export async function load13fHoldingHistory(guru, { years = 5, limit = 24 } = {}
           .sort((a, b) => b.value - a.value)
       });
     } catch (error) {
+      // A known corrupt identity is not an absent historical quarter. Skipping
+      // it would silently carry an older book and let a false curve pass.
+      if (error.code === "invalid_13f_identifier") throw error;
       filingErrors.push({
         reportDate: group.reportDate,
         accessionNumbers: group.filings.map((filing) => filing.accessionNumber),
@@ -2018,8 +2077,8 @@ export async function loadGuruMarketContext(guruId, { ticker, refresh = false } 
   const selectedTicker = chooseDefaultTicker(guru, operations, ticker);
   const { start, end } = chartWindow(operations);
   const [spy, selected] = await Promise.all([
-    loadPriceSeries("SPY", { start, end }),
-    loadPriceSeries(selectedTicker, { start, end })
+    loadPriceSeries("SPY", { start, end, priceType: "RAW_CLOSE" }),
+    loadPriceSeries(selectedTicker, { start, end, priceType: "RAW_CLOSE" })
   ]);
   const enriched = enrichOperationsWithPrices(operations, spy, selected, selectedTicker);
   const tickers = [...new Set(operations.map((operation) => operation.ticker))]
@@ -2347,6 +2406,11 @@ export async function loadGuruExposureHistory(
   }
 
   const requestedLimit = Math.max(4, Math.min(40, Number(limit) || 24));
+  if (factOsEnabled()) {
+    return loadFactGuruExposure(withGuruShell(guru, {}), {
+      limit: requestedLimit
+    });
+  }
   const cached = readGuruExposureSnapshot(guruId);
   if (cached && !forceRefresh) {
     const storedCapacity = Math.max(
@@ -2518,6 +2582,7 @@ async function refreshGuruExposureSnapshotNow(
       previousHoldings = holdings;
       await wait(60);
     } catch (error) {
+      if (error.code === "invalid_13f_identifier") throw error;
       errors.push({
         accessionNumbers: group.filings.map((filing) => filing.accessionNumber),
         reportDate: group.reportDate,
@@ -2625,6 +2690,32 @@ async function loadGuruDashboardUncached({ forceRefresh = false } = {}) {
 }
 
 export async function loadGuruDashboard({ forceRefresh = false } = {}) {
+  if (factOsEnabled()) {
+    const books = await loadFactGuruDashboard(gurus);
+    return {
+      generatedAt: new Date().toISOString(),
+      source: { label: "Sharadar local Fact OS", pitSupported: false },
+      gurus: books.map((book, index) => {
+        const guru = gurus[index];
+        const shell = withGuruShell(guru, book);
+        return {
+          ...shell,
+          simulationTag: guru.type === "manager13f"
+            ? {
+                label: "Disclosure timing unavailable",
+                tone: "muted",
+                description: "Sharadar SF3 provides quarter-end positions but not actual filing availability dates required for a PIT copy simulation."
+              }
+            : {
+                ...(shell.simulationTag || {}),
+                tone: "muted",
+                description: "This canonical holdings source does not supply the disclosure timing required for this simulation."
+              }
+        };
+      }),
+      cache: { status: "local-only", source: "sharadar_fact_os" }
+    };
+  }
   if (forceRefresh) {
     clearGuruDashboardMemoryCache();
     try {

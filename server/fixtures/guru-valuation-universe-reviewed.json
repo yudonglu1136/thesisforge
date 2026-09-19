@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "asOf": "2026-09-05",
+  "companies": [
+    {
+      "ticker": "REVIEW",
+      "sourceTicker": "REVIEW",
+      "priceTicker": "REVIEW",
+      "name": "Synthetic reviewed test issuer",
+      "cik": "0099999999",
+      "currency": "USD",
+      "reportingCurrency": "MXN",
+      "valuationProfile": "consumer_staples",
+      "profileRationale": "Synthetic fixture for an explicitly reviewed grocery-retail profile.",
+      "reviewStatus": "reviewed",
+      "reviewedAt": "2026-09-05",
+      "aliases": ["REVIEW.A"],
+      "identityEvidence": [
+        {
+          "source": "Synthetic official-filing fixture",
+          "url": "https://example.test/issuer-review",
+          "evidence": "Synthetic fixture: issuer CIK and quoted-security identity were reviewed."
+        }
+      ]
+    },
+    {
+      "ticker": "PENDING",
+      "reviewStatus": "unreviewed",
+      "reason": "pending_lease_sbc_share_claim_bridge"
+    }
+  ]
+}

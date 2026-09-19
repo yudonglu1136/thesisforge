@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-09-12T21:26:29.000Z",
+  "status": "blocked",
+  "scope": "Read-only official SEC source investigation; bounded placeholder-identifier parser repair; no database publication",
+  "manager": { "id": "john-stamas", "firm": "Defender Capital, LLC.", "cik": "0001766929" },
+  "findings": [
+    {
+      "code": "original_value_error_corrected_by_later_restatement",
+      "reportDate": "2022-03-31",
+      "original": {
+        "accession": "0001766929-22-000002",
+        "acceptedAt": "2022-04-22T15:42:08.000Z",
+        "informationTableUrl": "https://www.sec.gov/Archives/edgar/data/1766929/000176692922000002/dc22.3.3113f.xml",
+        "informationTableSha256": "bfdad55c4d3408e8ab3f04f069749f13468b6f7bcc5bc07f7c49b25981460c01",
+        "coverUrl": "https://www.sec.gov/Archives/edgar/data/1766929/000176692922000002/primary_doc.xml",
+        "coverSha256": "4b59e5ad14fe36c9e5f89a8fabc55dfd870c1a1db88aabd3f9cf5b92acdd6645",
+        "tableEntryTotal": 36,
+        "tableValueThousandsUsd": 915127,
+        "row": { "cusip": "60471A101", "issuer": "MIRION TECHNOLOGIES", "title": "COM", "reportedValueThousandsUsd": 628200, "shares": 60000 },
+        "cachedTablePath": "/Users/yudonglu/Documents/market-refresh-20260912/strategy-final/0001766929-22-000002.xml"
+      },
+      "restatement": {
+        "accession": "0001766929-22-000003",
+        "acceptedAt": "2022-06-07T18:46:01.000Z",
+        "amendmentType": "RESTATEMENT",
+        "amendmentNumber": 1,
+        "informationTableUrl": "https://www.sec.gov/Archives/edgar/data/1766929/000176692922000003/amenddc22.3.3113f.xml",
+        "informationTableSha256": "877e11edd832c912f4e1ed92c2f12341eacc796f50747e9d34977d44e41d5f78",
+        "coverUrl": "https://www.sec.gov/Archives/edgar/data/1766929/000176692922000003/primary_doc.xml",
+        "coverSha256": "28204a0266f465d3b82a0817c14ac0ee5dde4701b3bf452bd3c71f9990a53f24",
+        "tableEntryTotal": 36,
+        "tableValueThousandsUsd": 287555,
+        "row": { "cusip": "60471A101", "issuer": "MIRION TECHNOLOGIES", "title": "COM", "reportedValueThousandsUsd": 628, "shares": 60000 }
+      },
+      "semanticComparison": {
+        "orderedRowCountUnchanged": true,
+        "changedRows": 1,
+        "changedZeroBasedRowIndex": 27,
+        "onlyChangedField": "value",
+        "allOtherParsedFieldsEqual": true,
+        "valueDifferenceThousandsUsd": 627572,
+        "differenceReconcilesToCoverTotal": true
+      },
+      "releaseDisposition": "Do not map MIR and publish the original erroneous 68.6462% weight. Do not backdate the June correction. Generic amendment-event and source-quality policy requires separate audited implementation."
+    },
+    {
+      "code": "invalid_13f_identifier",
+      "reportDate": "2025-09-30",
+      "accession": "0001766929-25-000005",
+      "acceptedAt": "2025-10-29T15:36:04.000Z",
+      "informationTableUrl": "https://www.sec.gov/Archives/edgar/data/1766929/000176692925000005/DC_25_03.13f.xml",
+      "informationTableSha256": "844d56a7350c933a6860077305d3fd643587f59e5e4a55034d2918bdee81f889",
+      "cachedTablePath": "/Users/yudonglu/Documents/market-refresh-20260912/strategy-final/0001766929-25-000005.xml",
+      "sourceRowCount": 35,
+      "distinctRawCusips": ["000000nan"],
+      "reportedTableValueUsd": 298184693,
+      "badDerivedHolding": { "source": "guru-additions-20260912/john-stamas.json staging artifact, not a claim about live UI", "issuer": "BERKSHIRE HATHAWAY CLASS B", "ticker": "COST", "portfolioWeight": 1, "shares": 9120005 },
+      "finalStrategyState": { "source": "market-refresh-20260912/strategy-final/strategy.sqlite, independently queried by release owner", "rowCount": 1, "classification": "verified", "cusip": "000000NAN", "ticker": null, "resolutionStatus": "unresolved", "issue": "Invalid aggregated source is marked classification-verified; current final strategy does not resolve it to COST." },
+      "correctiveFilingSearch": {
+        "sourceUrl": "https://data.sec.gov/submissions/CIK0001766929.json",
+        "recentFilingCount": 35,
+        "oldestFilingDate": "2019-02-08",
+        "newestFilingDate": "2026-07-09",
+        "archivedFiles": [],
+        "matchingReportAccessions": ["0001766929-25-000005"],
+        "correctionFound": false
+      },
+      "releaseDisposition": "Reject the source table, preserve raw evidence, and block history/curve generation; do not guess identifiers or carry forward a previous book silently."
+    }
+  ],
+  "existingDiagnosticMatrix": {
+    "reportPath": "/Users/yudonglu/Documents/market-refresh-20260912/guru-baseline/guru-curve-restoration-acceptance.json",
+    "generatedAt": "2026-09-12T15:49:00.172Z",
+    "expectedRows": 64,
+    "displayableRows": 62,
+    "strictReady": 29,
+    "proxyReady": 33,
+    "failedRows": ["john-stamas:5", "john-stamas:10"],
+    "securityMasterVersion": "holding-resolution-v1-cb446ae272b57a41",
+    "status": "failed diagnostic, not a publication attestation; discovered source defects invalidate any assumption that mapping alone completes it"
+  },
+  "implemented": {
+    "files": ["server/secClient.js", "server/secClientFilings.test.js"],
+    "behavior": "Positive-value or positive-share placeholder identifiers fail before resolution/aggregation; source URL and SHA are attached; history and exposure stop instead of skipping corrupted quarters.",
+    "targetedTests": { "command": "node --test server/secClientFilings.test.js server/thirteenF.test.js", "passed": 46, "failed": 0 },
+    "databasesModified": false,
+    "canonicalSecurityMasterChanged": false,
+    "backtestMethodsChanged": false,
+    "productionModified": false
+  }
+}

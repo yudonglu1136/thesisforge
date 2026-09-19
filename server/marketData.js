@@ -7,6 +7,12 @@ import {
   writePriceSeriesToDb
 } from "./localDatabase.js";
 import { yahooChartSymbol } from "./tickerAliases.js";
+import {
+  factOsEnabled,
+  queryFacts,
+  PRICE_TYPES,
+  FactDataError
+} from "./factRepository.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const priceCacheDir = process.env.PRICE_CACHE_DIR || path.join(__dirname, "cache", "prices");
@@ -309,12 +315,67 @@ async function fetchYahooSeries(symbol, start, end, {
 export async function loadPriceSeries(symbol, {
   start,
   end,
+  priceType,
+  force = false,
   requireAdjusted = false,
   requireFullRange = false,
   expectedTradingDates = []
 }) {
+  if (factOsEnabled() && !Object.values(PRICE_TYPES).includes(priceType)) {
+    throw new FactDataError(
+      "explicit_price_basis_required",
+      "Choose RAW_CLOSE, SPLIT_ADJUSTED_CLOSE or TOTAL_RETURN_ADJUSTED_CLOSE explicitly."
+    );
+  }
   const normalized = String(symbol || "").trim().toUpperCase();
   if (!normalized) return { symbol: "", source: "missing", points: [] };
+
+  if (factOsEnabled()) {
+    try {
+      const rows = await queryFacts(
+        "get_price_history",
+        [normalized, start, end, priceType],
+        { dataset: "auto" }
+      );
+      const points = rows.map((point) => ({
+        date: point.date,
+        symbol: normalized,
+        close: point.value,
+        adjustedClose: priceType === PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE
+          ? point.value
+          : null,
+        priceType,
+        securityId: point.security_id,
+        provenance: point.provenance
+      }));
+      return {
+        symbol: normalized,
+        source: "sharadar_fact_os",
+        returnBasis: priceType === PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE
+          ? "total_return_adjusted_close"
+          : priceType.toLowerCase(),
+        priceType,
+        generatedAt: new Date().toISOString(),
+        cache: "local-only",
+        points,
+        status: points.length ? "available" : "missing",
+        message: points.length
+          ? "Local Sharadar facts; refresh synchronizes separately."
+          : "No local price coverage. No legacy price or provider request was substituted."
+      };
+    } catch (error) {
+      if (!(error instanceof FactDataError)) throw error;
+      return {
+        symbol: normalized,
+        source: "sharadar_fact_os",
+        priceType,
+        status: "unavailable",
+        points: [],
+        error: error.code,
+        message: error.message
+      };
+    }
+  }
 
   const dbPoints = readPriceSeriesFromDb(normalized, start, end);
   const dbUsable = requireAdjusted
@@ -337,7 +398,7 @@ export async function loadPriceSeries(symbol, {
   }
 
   const cacheFile = path.join(priceCacheDir, cacheKey(normalized, start, end));
-  const cached = await readJson(cacheFile);
+  const cached = force ? null : await readJson(cacheFile);
   const cachedPoints = cached?.points || [];
   const cachedUsable = requireAdjusted
     ? requireFullRange

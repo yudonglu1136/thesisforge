@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import {
   sp500AliasEntries,
-  sp500CanonicalTicker,
   sp500CompanyTickers,
   sp500UniverseSummary
 } from "./sp500ValuationUniverse.js";
+import {
+  guruValuationExpectedTickerSet,
+  guruValuationUniverseSummary
+} from "./guruValuationUniverse.js";
 import { guidancePlusMinusCenterM } from "./importSecQuarterlyValuations.js";
 import {
   independentGuidanceMidpointMismatch,
@@ -19,16 +23,19 @@ import {
 import { valuationMarketPriceSymbol } from "./tickerAliases.js";
 import { inspectUnmodeledFinancialPeriods } from "./valuationCoverageAudit.js";
 import { inspectValuationTemporalContinuity } from "./valuationTemporalAudit.js";
+import { auditGuidanceCoverageRelease, guidanceReleaseEventKey } from "./guidanceCoverageReleaseAudit.js";
+import { auditFinancialCoverageRelease } from "./financialCoverageReleaseAudit.js";
+import { auditReviewedShareCount } from "./reviewedShareCountAudit.js";
+import { auditReviewedEconomicInput } from "./reviewedEconomicInputs.js";
+import { auditReviewedFinancialSource } from "./reviewedFinancialSourceAudit.js";
+import { auditValuationComparisonPrice } from "./valuationComparisonPrice.js";
+import { separateOriginalRevenueOccurrences } from "./guidanceOccurrenceAudit.js";
+import { reviewedCurrentFromEnvironment, auditReviewedCurrentDatabase, applyReviewedCurrentPeriodDispositions } from "./reviewedCurrentFullRebuild.js";
 
-const [baselineArg, firstArg, secondArg] = process.argv.slice(2);
 const REQUIRE_TRANSCRIPT_QA = process.env.PIT_RELEASE_REQUIRE_TRANSCRIPT_QA !== "false";
 const REQUIRE_BILINGUAL_QA = process.env.PIT_RELEASE_REQUIRE_BILINGUAL_QA !== "false";
 const TRACE_MEMORY = process.env.PIT_RELEASE_TRACE_MEMORY === "true";
 const REPORT_PATH = String(process.env.PIT_RELEASE_REPORT_PATH || "").trim();
-
-if (!baselineArg || !firstArg || !secondArg) {
-  throw new Error("Usage: node server/verifyPitValuationRelease.js <baseline.sqlite> <run1.sqlite> <run2.sqlite>");
-}
 
 const VALUATION_TABLES = new Set([
   "valuation_pit_source_metadata",
@@ -220,7 +227,7 @@ function daysBetween(left, right) {
 
 function* modelRows(db) {
   for (const row of db.prepare(`
-    SELECT ticker, fiscal_period, as_of_date, financial_available_at,
+    SELECT ticker, fiscal_period, model_version, as_of_date, financial_available_at,
            guidance_max_observed_at, input_json, output_json
     FROM valuation_pit_model_runs
     ORDER BY ticker, as_of_date, fiscal_period
@@ -438,17 +445,15 @@ function inspectTranscriptQaSnapshots(db, { requireBilingual = true } = {}) {
 }
 
 function expectedTickerSet(baselineDb) {
-  const sp500Tickers = new Set(sp500CompanyTickers());
-  const extras = [];
+  const baselineTickers = [];
   for (const row of baselineDb.prepare(`
     SELECT ticker
     FROM valuation_ticker_snapshots
     ORDER BY ticker
   `).iterate()) {
-    const ticker = sp500CanonicalTicker(row.ticker);
-    if (!sp500Tickers.has(ticker)) extras.push(ticker);
+    baselineTickers.push(row.ticker);
   }
-  return new Set([...sp500Tickers, ...extras]);
+  return guruValuationExpectedTickerSet(baselineTickers);
 }
 
 function inspectUniverseManifest() {
@@ -566,9 +571,36 @@ function sourceMetadata(db) {
   `).all().map((row) => [row.key, row.value]));
 }
 
-function inspectStoredPlusMinusGuidance(db) {
+function inspectFinancialCoverage(db, baselineDb, expectedTickers, metadata) {
+  const hasTable = (database, table) => Boolean(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table));
+  const rawRows = (database) => database.prepare(`
+    SELECT ticker, source_ticker, fiscal_period, dimension, available_at, payload_json
+    FROM valuation_pit_financials ORDER BY ticker, fiscal_period, dimension
+  `).iterate();
+  const dispositions = (database) => database.prepare(`
+    SELECT ticker,
+           json_extract(payload_json, '$.dataQuality.valuationStatus') AS valuation_status,
+           json_extract(payload_json, '$.dataQuality.derivedInstrument') AS derived_instrument,
+           json_extract(payload_json, '$.dataQuality.sourceTicker') AS source_ticker
+    FROM valuation_ticker_snapshots ORDER BY ticker
+  `).iterate();
+  const baselineMetadata = hasTable(baselineDb, "valuation_pit_source_metadata") ? sourceMetadata(baselineDb) : {};
+  return auditFinancialCoverageRelease({
+    requiredTickers: expectedTickers,
+    ledger: JSON.parse(metadata.financial_coverage_by_ticker || "null"),
+    financialRows: rawRows(db), snapshotDispositions: dispositions(db),
+    modelCounts: new Map(db.prepare("SELECT ticker, COUNT(*) AS count FROM valuation_pit_model_runs GROUP BY ticker").all().map((row) => [String(row.ticker).toUpperCase(), Number(row.count)])),
+    declaredSummary: JSON.parse(metadata.financial_coverage_summary || "{}"),
+    baselineTickers: baselineDb.prepare("SELECT ticker FROM valuation_ticker_snapshots ORDER BY ticker").all().map((row) => row.ticker),
+    baselineLedger: JSON.parse(baselineMetadata.financial_coverage_by_ticker || "null"),
+    baselineFinancialRows: hasTable(baselineDb, "valuation_pit_financials") ? rawRows(baselineDb) : null,
+    baselineSnapshotDispositions: dispositions(baselineDb)
+  });
+}
+
+function inspectStoredPlusMinusGuidance(db, rejectedEventKeys = new Set()) {
   const rows = db.prepare(`
-    SELECT ticker, fiscal_period, observed_at, metric_name, amount,
+    SELECT source_id, ticker, fiscal_period, observed_at, metric_name, amount,
            value_text, evidence_excerpt, source_database
     FROM valuation_pit_guidance
     WHERE instr(COALESCE(value_text, '') || ' ' || COALESCE(evidence_excerpt, ''), '±') > 0
@@ -580,7 +612,9 @@ function inspectStoredPlusMinusGuidance(db) {
   `).all();
   const failures = [];
   let monetaryCenterChecks = 0;
+  let researchOnlyRows = 0;
   for (const row of rows) {
+    if (rejectedEventKeys.has(guidanceReleaseEventKey(row))) { researchOnlyRows += 1; continue; }
     const evidence = `${row.value_text || ""} ${row.evidence_excerpt || ""}`;
     const centerM = guidancePlusMinusCenterM(evidence, row.metric_name);
     if (centerM == null) continue;
@@ -602,13 +636,14 @@ function inspectStoredPlusMinusGuidance(db) {
   return {
     rowsWithPlusMinus: rows.length,
     monetaryCenterChecks,
+    researchOnlyRows,
     failures
   };
 }
 
-function inspectStoredIndependentGuidanceAmounts(db) {
+function inspectStoredIndependentGuidanceAmounts(db, rejectedEventKeys = new Set()) {
   const rows = db.prepare(`
-    SELECT ticker, fiscal_period, observed_at, metric_name, amount,
+    SELECT source_id, ticker, fiscal_period, observed_at, metric_name, amount,
            value_text, evidence_excerpt, source_database
     FROM valuation_pit_guidance
     WHERE amount IS NOT NULL
@@ -617,8 +652,10 @@ function inspectStoredIndependentGuidanceAmounts(db) {
   const failures = [];
   let rowsAudited = 0;
   let parallelMetricChecks = 0;
+  let researchOnlyRows = 0;
   for (const row of rows) {
     rowsAudited += 1;
+    if (rejectedEventKeys.has(guidanceReleaseEventKey(row))) { researchOnlyRows += 1; continue; }
     const evidence = String(row.evidence_excerpt || row.value_text || "");
     const historicalActualMismatch = independentHistoricalActualAmountMismatch({
       amount: row.amount,
@@ -683,7 +720,7 @@ function inspectStoredIndependentGuidanceAmounts(db) {
       sourceDatabase: row.source_database
     });
   }
-  return { rowsAudited, parallelMetricChecks, failures };
+  return { rowsAudited, parallelMetricChecks, researchOnlyRows, failures };
 }
 
 function inspectStoredGuidanceLineage(db, expectedExtractionVersion) {
@@ -753,7 +790,7 @@ function inspectStoredGuidanceLineage(db, expectedExtractionVersion) {
       });
     }
   }
-  const emptyDuplicates = db.prepare(`
+  const sameQuoteGroups = db.prepare(`
     SELECT ticker, fiscal_period, observed_at, metric_name, value_text,
            SUM(CASE WHEN amount IS NULL AND growth_yoy IS NULL AND growth_qoq IS NULL AND margin_pct IS NULL THEN 1 ELSE 0 END) AS empty_rows,
            SUM(CASE WHEN amount IS NOT NULL OR growth_yoy IS NOT NULL OR growth_qoq IS NOT NULL OR margin_pct IS NOT NULL THEN 1 ELSE 0 END) AS valued_rows
@@ -763,6 +800,23 @@ function inspectStoredGuidanceLineage(db, expectedExtractionVersion) {
     HAVING empty_rows > 0 AND valued_rows > 0
     ORDER BY ticker, fiscal_period, observed_at, metric_name
   `).all();
+  const sameQuoteRows = db.prepare(`
+    SELECT metric_name, value_text, payload_json FROM valuation_pit_guidance
+    WHERE source_database = 'downloaded_online_earnings_transcript'
+      AND ticker = ? AND fiscal_period = ? AND observed_at = ?
+      AND metric_name = ? AND value_text = ?
+    ORDER BY source_id
+  `);
+  const emptyDuplicates = [];
+  let separateOriginalOccurrenceGroups = 0;
+  for (const row of sameQuoteGroups) {
+    const originals = sameQuoteRows.all(row.ticker, row.fiscal_period, row.observed_at, row.metric_name, row.value_text);
+    if (separateOriginalRevenueOccurrences(originals)) {
+      separateOriginalOccurrenceGroups += 1;
+    } else {
+      emptyDuplicates.push(row);
+    }
+  }
   for (const row of emptyDuplicates) {
     failures.push({
       ticker: row.ticker,
@@ -774,7 +828,8 @@ function inspectStoredGuidanceLineage(db, expectedExtractionVersion) {
       valuedRows: Number(row.valued_rows)
     });
   }
-  return { rowsAudited, scalarChecks, transcriptSubjectChecks, emptyDuplicates: emptyDuplicates.length, failures };
+  return { rowsAudited, scalarChecks, transcriptSubjectChecks, emptyDuplicates: emptyDuplicates.length,
+    sameQuoteMixedValueGroups: sameQuoteGroups.length, separateOriginalOccurrenceGroups, failures };
 }
 
 function inspectReleasePathLeaks(db) {
@@ -918,18 +973,16 @@ function inspectSourceCurrencyConversion(row, recordType, sourceRecord, failures
   return 1;
 }
 
-function inspectModels(db) {
+function inspectModels(db, { reviewedCurrentCandidates = new Map() } = {}) {
   const rows = modelRows(db);
   const failures = [];
   const guidanceEvidenceIds = new Set(db.prepare(`
     SELECT source_id FROM valuation_pit_guidance ORDER BY source_id
   `).all().map((row) => String(row.source_id)));
-  const storedPriceAtOrBefore = db.prepare(`
-    SELECT date, close
+  const storedPriceOnDate = db.prepare(`
+    SELECT date, close, source
     FROM price_points
-    WHERE symbol = ? AND date <= ? AND close > 0
-    ORDER BY date DESC
-    LIMIT 1
+    WHERE symbol = ? AND date = ?
   `);
   const snapshotPricePayload = db.prepare(`
     SELECT payload_json
@@ -937,21 +990,22 @@ function inspectModels(db) {
     WHERE ticker = ?
   `);
   const pitPriceObservation = db.prepare(`
-    SELECT price_symbol, price_date, close, quote_currency, source, payload_json
+    SELECT ticker, fiscal_period, model_version, price_symbol, price_date,
+           close, quote_currency, source, payload_json
     FROM valuation_pit_price_observations
-    WHERE ticker = ? AND fiscal_period = ?
-    ORDER BY imported_at DESC
-    LIMIT 1
+    WHERE ticker = ? AND fiscal_period = ? AND model_version = ?
   `);
   let snapshotPriceTicker = null;
   let snapshotPriceCache = new Map();
+  let snapshotQuoteCurrency = null;
   const snapshotPriceOnDate = (ticker, date) => {
     if (snapshotPriceTicker !== ticker) {
       const payload = parseJson(snapshotPricePayload.get(ticker)?.payload_json, {});
       snapshotPriceTicker = ticker;
+      snapshotQuoteCurrency = payload.currency || null;
       snapshotPriceCache = new Map((Array.isArray(payload?.priceHistory) ? payload.priceHistory : [])
         .filter((point) => point?.date && finite(point?.close) > 0)
-        .map((point) => [String(point.date).slice(0, 10), finite(point.close)]));
+        .map((point) => [String(point.date).slice(0, 10), point]));
     }
     return snapshotPriceCache.get(date) ?? null;
   };
@@ -966,6 +1020,7 @@ function inspectModels(db) {
   let snapshotMarketPriceChecks = 0;
   let pitMarketPriceObservationChecks = 0;
   let storedMarketPriceDateMisses = 0;
+  let comparisonPriceBasisExclusions = 0;
   let fcfCapChecks = 0;
   let profileMethodChecks = 0;
   let shareBasisChecks = 0;
@@ -977,6 +1032,7 @@ function inspectModels(db) {
   let guidanceEvidenceLineageChecks = 0;
   let growthInputChecks = 0;
   let equityBridgeChecks = 0;
+  let reviewedCurrentRows = 0;
   const financialProfiles = new Set(["bank", "insurance", "card_network_lender", "credit_services", "capital_markets"]);
   const earningsProfiles = new Set(["asset_manager", "insurance_broker", "managed_care", "payments_processor"]);
   const revenueStageProfiles = new Set(["emerging_biotech", "emerging_health_ai"]);
@@ -1004,6 +1060,19 @@ function inspectModels(db) {
 
   for (const row of rows) {
     rowCount += 1;
+    if (reviewedCurrentCandidates.has(row.ticker)) {
+      // Only the strict source/claims/arithmetic+stored-row replay above can
+      // provide this map. Current-specific FCFE models are not generic score
+      // models; never force them through a WACC/normalized-margin surrogate.
+      const expected = reviewedCurrentCandidates.get(row.ticker).modelRuns[0];
+      if (row.fiscal_period !== expected.fiscalPeriod || row.as_of_date !== expected.asOfDate ||
+        row.financial_available_at !== expected.financialAvailableAt || row.guidance_max_observed_at !== expected.guidanceMaxObservedAt) {
+        failures.push({ ticker: row.ticker, code: "reviewed_current_temporal_scope_changed" });
+      }
+      reviewedCurrentRows += 1;
+      sourceDateChecks += 1; priceInputChecks += 1; methodArithmeticChecks += 1; shareBasisChecks += 1;
+      continue;
+    }
     const input = row.input;
     const output = row.output;
     const fairValue = finite(output.fairValue);
@@ -1099,68 +1168,80 @@ function inspectModels(db) {
     if (forbiddenPriceInputs.length) {
       failures.push({ ticker: row.ticker, period: row.fiscal_period, code: "market_price_in_model_input", paths: forbiddenPriceInputs });
     }
-    const storedPrice = storedPriceAtOrBefore.get(
-      valuationMarketPriceSymbol(row.ticker),
-      row.as_of_date
-    );
     const outputPriceDate = String(output.priceDate || "").slice(0, 10);
     const outputPrice = finite(output.priceAtDate);
     if (outputPrice != null) {
-      let expectedPrice = null;
-      let expectedSource = null;
-      if (storedPrice && outputPriceDate && storedPrice.date === outputPriceDate) {
-        storedMarketPriceChecks += 1;
-        expectedPrice = finite(storedPrice.close);
-        expectedSource = "price_points";
-      } else if (outputPriceDate) {
-        expectedPrice = snapshotPriceOnDate(row.ticker, outputPriceDate);
-        if (expectedPrice != null) {
-          snapshotMarketPriceChecks += 1;
-          expectedSource = "valuation_ticker_snapshots.priceHistory";
-        }
-      }
-      if (expectedPrice == null) {
-        const observation = pitPriceObservation.get(row.ticker, row.fiscal_period);
-        if (
-          observation &&
-          String(observation.price_symbol || "") === valuationMarketPriceSymbol(row.ticker) &&
-          String(observation.price_date || "").slice(0, 10) === outputPriceDate
-        ) {
-          expectedPrice = finite(observation.close);
-          pitMarketPriceObservationChecks += 1;
-          expectedSource = "valuation_pit_price_observations";
-        }
-      }
-      if (expectedPrice == null) {
-        storedMarketPriceDateMisses += 1;
+      const priceSymbol = valuationMarketPriceSymbol(row.ticker);
+      const storedPrice = storedPriceOnDate.get(priceSymbol, outputPriceDate);
+      const snapshotPoint = snapshotPriceOnDate(row.ticker, outputPriceDate);
+      const observation = pitPriceObservation.get(row.ticker, row.fiscal_period, row.model_version);
+      const shared = { priceSymbol, quoteCurrency: snapshotQuoteCurrency, sourceField: "close", unit: "currency_per_share" };
+      const candidates = [];
+      if (storedPrice) candidates.push({ ...shared, ...storedPrice, id: "price_points", kind: "raw_price_point" });
+      if (snapshotPoint) candidates.push({ ...shared, ...snapshotPoint, id: "valuation_ticker_snapshots.priceHistory", kind: "released_snapshot" });
+      if (observation) candidates.push({
+        ...shared, id: "valuation_pit_price_observations", kind: "pit_observation",
+        ticker: observation.ticker, fiscalPeriod: observation.fiscal_period, modelVersion: observation.model_version,
+        priceSymbol: observation.price_symbol, quoteCurrency: observation.quote_currency,
+        date: observation.price_date, close: finite(observation.close), source: observation.source,
+        payloadSource: parseJson(observation.payload_json, {})?.source?.source
+      });
+      // Resolve source/field/adjustment basis before comparing numbers. A Yahoo
+      // row cannot disprove a Sharadar split-only observation (or vice versa).
+      // Matching storage alone proves lineage, not independent original-vendor
+      // verification; that source audit is a separate release artifact.
+      const priceAudit = auditValuationComparisonPrice({
+        ticker: row.ticker, fiscalPeriod: row.fiscal_period, modelVersion: row.model_version,
+        asOfDate: row.as_of_date, priceDate: outputPriceDate, priceSymbol,
+        quoteCurrency: snapshotQuoteCurrency,
+        declaredSource: output.dataSnapshot?.asOfPriceSource?.source,
+        candidates, outputPrice
+      });
+      comparisonPriceBasisExclusions += priceAudit.excluded?.length || 0;
+      if (priceAudit.status === "ready") {
+        if (priceAudit.selectedEvidenceKind === "raw_price_point") storedMarketPriceChecks += 1;
+        if (priceAudit.selectedEvidenceKind === "released_snapshot") snapshotMarketPriceChecks += 1;
+        if (priceAudit.selectedEvidenceKind === "pit_observation") pitMarketPriceObservationChecks += 1;
+      } else {
+        if (priceAudit.reason === "declared_price_source_unreconciled") storedMarketPriceDateMisses += 1;
         failures.push({
           ticker: row.ticker,
           period: row.fiscal_period,
-          code: "market_price_source_unreconciled",
+          code: priceAudit.reason,
           asOfDate: row.as_of_date,
-          priceSymbol: valuationMarketPriceSymbol(row.ticker),
-          outputPriceDate,
-          outputPrice,
-          latestStoredDate: storedPrice?.date || null
-        });
-      } else if (!closeEnough(outputPrice, expectedPrice)) {
-        failures.push({
-          ticker: row.ticker,
-          period: row.fiscal_period,
-          code: "stored_market_price_unit_mismatch",
-          asOfDate: row.as_of_date,
-          priceSymbol: valuationMarketPriceSymbol(row.ticker),
+          priceSymbol,
           priceDate: outputPriceDate,
           outputPrice,
-          expectedPrice,
-          expectedSource
+          priceAudit
         });
       }
     }
 
     const shareSource = input.trailingTwelveMonthsSourceRecord || input.sourceRecord || {};
+    for (const [sourceRecord, financialSources, financial] of [
+      [input.sourceRecord, output.dataSnapshot?.secCompanyFacts?.sourceTags, input.financial],
+      [input.trailingTwelveMonthsSourceRecord, output.dataSnapshot?.financialSource?.trailingTwelveMonthsSources, input.trailingTwelveMonths]
+    ]) {
+      failures.push(...auditReviewedFinancialSource({ ticker: row.ticker, fiscalPeriod: row.fiscal_period,
+        sourceRecord: sourceRecord || {}, financialSources: financialSources || {}, financial: financial || {},
+        asOfDate: row.as_of_date }).failures);
+    }
     const rawShareCounts = shareSource.rawShareCounts;
-    if (rawShareCounts && typeof rawShareCounts === "object") {
+    const reviewedShareAudit = auditReviewedShareCount({
+      ticker: row.ticker,
+      fiscalPeriod: row.fiscal_period,
+      sourceRecord: shareSource,
+      financialShareSource: output.dataSnapshot?.secCompanyFacts?.sourceTags?.shares_m,
+      scoreSharesM: sharesM,
+      financialSharesM: finite(input.financial?.shares_m),
+      trailingSharesM: finite(input.trailingTwelveMonths?.shares_m),
+      asOfDate: row.as_of_date
+    });
+    if (reviewedShareAudit.applies) {
+      shareBasisChecks += 1;
+      failures.push(...reviewedShareAudit.failures);
+    }
+    if (!reviewedShareAudit.applies && rawShareCounts && typeof rawShareCounts === "object") {
       shareBasisChecks += 1;
       const basicShares = finite(rawShareCounts.sharesbas);
       const dilutedShares = finite(rawShareCounts.shareswadil);
@@ -1497,6 +1578,16 @@ function inspectModels(db) {
         ? Math.max(0, valuationRevenue * evSalesMultiple + cashM - debtM) / sharesM
         : null;
     }
+    const economicInputAudit = auditReviewedEconomicInput({
+      ticker: row.ticker, fiscalPeriod: row.fiscal_period,
+      marker: scoreInputs.reviewedEconomicInput, financial: input.financial,
+      trailing: input.trailingTwelveMonths, sharesM, fairValue,
+      reconstructedBeforeClaims: reconstructedFairValue, asOfDate: row.as_of_date
+    });
+    failures.push(...economicInputAudit.failures);
+    if (economicInputAudit.applies && economicInputAudit.claimsPerShare != null && reconstructedFairValue != null) {
+      reconstructedFairValue -= economicInputAudit.claimsPerShare;
+    }
     methodArithmeticChecks += 1;
     if (!closeEnough(fairValue, reconstructedFairValue)) {
       failures.push({ ticker: row.ticker, period: row.fiscal_period, code: "fair_value_method_arithmetic", fairValue, reconstructedFairValue, profile });
@@ -1714,6 +1805,7 @@ function inspectModels(db) {
 
   return {
     rows: rowCount,
+    reviewedCurrentRows,
     dcfRows,
     failures,
     maxTerminalValueShare,
@@ -1725,6 +1817,7 @@ function inspectModels(db) {
     snapshotMarketPriceChecks,
     pitMarketPriceObservationChecks,
     storedMarketPriceDateMisses,
+    comparisonPriceBasisExclusions,
     fcfCapChecks,
     profileMethodChecks,
     shareBasisChecks,
@@ -1768,6 +1861,25 @@ function latestTicker(db, ticker) {
   };
 }
 
+// Reuse the identical independent checks for pre-release diagnostics. Calling
+// an individual inspector never emits a release pass or migration manifest.
+export {
+  inspectModels,
+  inspectReleasePathLeaks,
+  inspectStoredGuidanceLineage,
+  inspectStoredIndependentGuidanceAmounts,
+  inspectStoredPlusMinusGuidance,
+  inspectTranscriptQaSnapshots,
+  modelSignature,
+  snapshotSignature
+};
+
+export function verifyPitValuationRelease(argv = process.argv.slice(2)) {
+const loadedCurrent = reviewedCurrentFromEnvironment();
+const [baselineArg, firstArg, secondArg] = argv;
+if (!baselineArg || !firstArg || !secondArg) {
+  throw new Error("Usage: node server/verifyPitValuationRelease.js <baseline.sqlite> <run1.sqlite> <run2.sqlite>");
+}
 const baseline = openDatabase(baselineArg);
 const first = openDatabase(firstArg);
 const second = openDatabase(secondArg);
@@ -1803,6 +1915,7 @@ try {
   assert.equal(sp500PriceCoverage.nonPositiveStoredPoints, 0);
   reportProgress("sp500-price-coverage");
   const expectedTickers = expectedTickerSet(baseline);
+  for (const candidate of loadedCurrent?.candidates || []) expectedTickers.add(candidate.ticker);
   const firstTickerSet = new Set();
   for (const row of first.prepare(`
     SELECT ticker
@@ -1825,6 +1938,11 @@ try {
   const releasePathAudit = inspectReleasePathLeaks(first);
   assertNoFindings("Release path audit", releasePathAudit.failures);
   reportProgress("release-paths");
+  const currentAudit = auditReviewedCurrentDatabase(first, loadedCurrent);
+  assertNoFindings("Independent current-only source/model/storage audit", currentAudit.failures);
+  const secondCurrentAudit = auditReviewedCurrentDatabase(second, loadedCurrent);
+  assertNoFindings("Second-run independent current-only audit", secondCurrentAudit.failures);
+  assert.deepEqual(secondCurrentAudit.results, currentAudit.results);
   const transcriptQaAudit = REQUIRE_TRANSCRIPT_QA
     ? inspectTranscriptQaSnapshots(first, { requireBilingual: REQUIRE_BILINGUAL_QA })
     : { skipped: true, reason: "PIT_RELEASE_REQUIRE_TRANSCRIPT_QA=false" };
@@ -1859,7 +1977,12 @@ try {
   const financialCoverage = JSON.parse(metadata.financial_coverage_summary || "{}");
   const guidanceCoverage = JSON.parse(metadata.guidance_coverage_summary || "{}");
   const noQuantifiedGuidance = JSON.parse(metadata.guidance_no_quantified_tickers || "[]");
-  assert.deepEqual(financialCoverage, { annual_only: 2, covered: 530, derived: 1 });
+  const financialCoverageAudit = inspectFinancialCoverage(first, baseline, expectedTickers, metadata);
+  assertNoFindings("Per-issuer financial coverage and retained-baseline audit", financialCoverageAudit.failures);
+  const secondFinancialCoverageAudit = inspectFinancialCoverage(second, baseline, expectedTickers, sourceMetadata(second));
+  assertNoFindings("Second-run per-issuer financial coverage audit", secondFinancialCoverageAudit.failures);
+  assert.deepEqual(secondFinancialCoverageAudit.issuerReconciliation, financialCoverageAudit.issuerReconciliation);
+  assert.deepEqual(financialCoverage, financialCoverageAudit.statusCounts);
   assert.deepEqual(
     Object.keys(guidanceCoverage).sort(),
     ["covered", "covered_official_filing", "no_quantified_official_guidance"]
@@ -1873,18 +1996,6 @@ try {
     noQuantifiedGuidance.length
   );
   assert.equal(Number(metadata.guidance_coverage_ticker_count), expectedTickers.size - notApplicableTickers.length);
-  const tickersWithGuidance = new Set(first.prepare(`
-    SELECT DISTINCT UPPER(ticker) AS ticker
-    FROM valuation_pit_guidance
-  `).all().map((row) => String(row.ticker).toUpperCase()));
-  const expectedNoQuantifiedGuidance = [...expectedTickers]
-    .filter((ticker) => !notApplicableTickers.includes(ticker) && !tickersWithGuidance.has(ticker))
-    .sort();
-  assert.deepEqual(
-    noQuantifiedGuidance,
-    expectedNoQuantifiedGuidance,
-    "No-quantified-guidance metadata must match the independently imported evidence rows"
-  );
   assert.match(metadata.source_fingerprint || "", /^[a-f0-9]{64}$/);
   assert.ok(String(metadata.source || "").includes("Sharadar"));
   assert.ok(String(metadata.revision_policy || "").includes("earliest datekey"));
@@ -1912,12 +2023,36 @@ try {
            MIN(observed_at) AS first_observed_at, MAX(observed_at) AS latest_observed_at
     FROM valuation_pit_guidance
   `).get();
-  assert.equal(Number(guidanceStats.tickers), expectedTickers.size - notApplicableTickers.length - noQuantifiedGuidance.length);
   assert.ok(Number(guidanceStats.events) > 60_000);
   assert.ok(Number(guidanceStats.periods) > 13_000);
-  const plusMinusGuidanceAudit = inspectStoredPlusMinusGuidance(first);
+  const { rejectedEventKeys, ...guidanceCoverageAudit } = auditGuidanceCoverageRelease({
+    rows: first.prepare(`
+      SELECT * FROM valuation_pit_guidance
+      ORDER BY ticker, fiscal_period, observed_at, source_database, source_id
+    `).iterate(),
+    financialRows: first.prepare(`
+      SELECT ticker, available_at, currency, payload_json FROM valuation_pit_financials
+      ORDER BY ticker, available_at DESC
+    `).iterate(),
+    modelRuns: first.prepare(`
+      SELECT ticker, fiscal_period, as_of_date, input_json FROM valuation_pit_model_runs
+      ORDER BY ticker, fiscal_period, as_of_date
+    `).iterate(),
+    requiredTickers: [...expectedTickers].filter((ticker) => !notApplicableTickers.includes(ticker)),
+    noQuantifiedTickers: noQuantifiedGuidance,
+    declaredCoverage: guidanceCoverage,
+    declaredStats: guidanceStats
+  });
+  assertNoFindings("Independent guidance coverage and research-exclusion audit", guidanceCoverageAudit.failures);
+  assert.equal(Number(guidanceStats.events), guidanceCoverageAudit.usableEvents + guidanceCoverageAudit.researchEvents);
+  assert.equal(Number(guidanceStats.tickers), guidanceCoverageAudit.usableTickers + guidanceCoverageAudit.researchOnlyTickers.length);
+  assert.equal(noQuantifiedGuidance.length, guidanceCoverageAudit.noEvidenceTickers.length + guidanceCoverageAudit.researchOnlyTickers.length);
+  // A research exemption is allowed only after independent evidence/coverage
+  // reconstruction AND model non-consumption checks have passed above. Raw
+  // scalars still must reconcile to their unchanged stored source payload.
+  const plusMinusGuidanceAudit = inspectStoredPlusMinusGuidance(first, rejectedEventKeys);
   assertNoFindings("Plus/minus guidance audit", plusMinusGuidanceAudit.failures);
-  const independentGuidanceAudit = inspectStoredIndependentGuidanceAmounts(first);
+  const independentGuidanceAudit = inspectStoredIndependentGuidanceAmounts(first, rejectedEventKeys);
   assertNoFindings("Independent guidance amount audit", independentGuidanceAudit.failures);
   const guidanceLineageAudit = inspectStoredGuidanceLineage(
     first,
@@ -1937,11 +2072,11 @@ try {
   assert.equal(firstModelSignature, secondModelSignature);
   assert.equal(firstSnapshotSignature, secondSnapshotSignature);
 
-  const modelAudit = inspectModels(first);
+  const modelAudit = inspectModels(first, { reviewedCurrentCandidates: currentAudit.candidates });
   reportProgress("model-audit");
   assertNoFindings("Model audit", modelAudit.failures);
   assert.ok(modelAudit.sourceDateChecks >= modelAudit.rows, "Every valuation node must audit at least one PIT source date");
-  const unmodeledPeriodAudit = inspectUnmodeledFinancialPeriods(first);
+  const unmodeledPeriodAudit = applyReviewedCurrentPeriodDispositions(inspectUnmodeledFinancialPeriods(first), currentAudit.candidates);
   reportProgress("unmodeled-period-audit");
   assertNoFindings("Unmodeled period audit", unmodeledPeriodAudit.unexpected);
   assert.equal(
@@ -1963,6 +2098,7 @@ try {
     snapshotSignature: firstSnapshotSignature,
     modelAudit: {
       rows: modelAudit.rows,
+      reviewedCurrentRows: modelAudit.reviewedCurrentRows,
       dcfRows: modelAudit.dcfRows,
       maxTerminalValueShare: modelAudit.maxTerminalValueShare,
       minDcfSpread: modelAudit.minDcfSpread,
@@ -1972,6 +2108,7 @@ try {
       storedMarketPriceChecks: modelAudit.storedMarketPriceChecks,
       snapshotMarketPriceChecks: modelAudit.snapshotMarketPriceChecks,
       pitMarketPriceObservationChecks: modelAudit.pitMarketPriceObservationChecks,
+      comparisonPriceBasisExclusions: modelAudit.comparisonPriceBasisExclusions,
       storedMarketPriceDateMisses: modelAudit.storedMarketPriceDateMisses,
       fcfCapChecks: modelAudit.fcfCapChecks,
       profileMethodChecks: modelAudit.profileMethodChecks,
@@ -1987,6 +2124,7 @@ try {
     },
     universe: {
       ...universeManifest,
+      guru: guruValuationUniverseSummary(),
       expectedTickers: expectedTickers.size,
       modeledTickers: modelCounts.size,
       notApplicableTickers,
@@ -1996,12 +2134,16 @@ try {
     sourceCoverage: {
       metadata,
       financial: financialCoverageStats,
+      financialCoverageAudit,
       guidance: guidanceStats,
+      guidanceCoverageAudit,
       plusMinusGuidanceAudit,
       independentGuidanceAudit,
       guidanceLineageAudit
     },
     transcriptQaAudit,
+    reviewedCurrentAudit: { manifestSha256: loadedCurrent?.manifestSha256 || null, results: currentAudit.results,
+      historicalApproval: false, currentOnlyTickers: [...currentAudit.candidates.keys()].sort() },
     releasePathAudit,
     temporalAudit,
     unmodeledPeriodAudit: {
@@ -2026,4 +2168,9 @@ try {
   baseline.close();
   first.close();
   second.close();
+}
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  verifyPitValuationRelease();
 }

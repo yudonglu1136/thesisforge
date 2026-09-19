@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import {
   attachMstrCryptoMetrics,
@@ -20,16 +21,34 @@ import {
 import { valuationMarketPriceSymbol } from "./tickerAliases.js";
 import { nullableFiniteNumber } from "./pitScalar.js";
 import { preserveTranscriptQaByFiscalPeriod } from "./valuationTranscriptQa.js";
+import { independentGuidanceCurrencyMismatch } from "./guidanceEvidenceAudit.js";
+import { financialCoverageLedger } from "./financialCoverageReleaseAudit.js";
+import { mergeValuationComparisonHistory } from "./valuationComparisonPrice.js";
+import { reviewedCurrentFromEnvironment, bindReviewedCurrentFinancialPeriods, sourceCurrentBindingMetadata } from "./reviewedCurrentFullRebuild.js";
 
 const TARGET_DB_PATH = process.env.SQLITE_DB_PATH || path.join(process.cwd(), "server/data/guru-analysis.sqlite");
 const SOURCE_DB_PATH = process.env.PIT_VALUATION_SOURCE_PATH || path.join(process.cwd(), "server/data/valuation-pit-source.sqlite");
-const MODEL_VERSION = process.env.PIT_VALUATION_MODEL_VERSION || "pit-valuation-v55-actual-value-and-owner-audit-2026-08-30";
+const MODEL_VERSION = process.env.PIT_VALUATION_MODEL_VERSION || "pit-valuation-v56-reviewed-economic-inputs-2026-09-06";
 const GENERATED_AT_OVERRIDE = process.env.PIT_VALUATION_GENERATED_AT || "";
 const SEC_FACTS_CACHE_DIR = process.env.SEC_FACTS_CACHE_DIR || path.join(process.cwd(), "server/data/sec-companyfacts");
 const PIT_SOURCE_LABEL = "valuation-pit-source";
 const PIT_GUIDANCE_LABEL = "valuation-pit-guidance";
 const APPLY = process.argv.includes("--apply");
 const ALLOW_INCOMPLETE = process.argv.includes("--allow-incomplete");
+
+// Reconstructed PIT sources can contain metadata from the prior published
+// runtime. Model/price policy and Q&A approval belong to the NEW build, not to
+// its inherited source. Preserve source lineage, but never inherit release proof.
+export function publicationMetadata(sourceMetadata, modelVersion = MODEL_VERSION) {
+  const metadata = new Map([...sourceMetadata].filter(([key]) =>
+    key !== "model_version" && key !== "market_price_unit_policy"
+      && !key.startsWith("transcript_qa_")
+  ));
+  metadata.set("model_version", modelVersion);
+  metadata.set("market_price_unit_policy",
+    "price_points values are already stored in the quoted security currency; ticker suffixes never trigger an additional unit conversion");
+  return metadata;
+}
 
 function parseJson(value, fallback = null) {
   try {
@@ -90,15 +109,6 @@ function markFiscalCalendarTransition(ticker, row) {
   };
 }
 
-function mergePriceHistory(existing, incremental) {
-  const byDate = new Map();
-  for (const point of [...(existing || []), ...(incremental || [])]) {
-    if (!point?.date || !(finiteNumber(point.close) > 0)) continue;
-    byDate.set(point.date, point);
-  }
-  return [...byDate.values()].sort((left, right) => String(left.date).localeCompare(String(right.date)));
-}
-
 function sanitizeReleasePayload(value, key = "") {
   if (Array.isArray(value)) return value.map((child) => sanitizeReleasePayload(child, key));
   if (value && typeof value === "object") {
@@ -108,7 +118,7 @@ function sanitizeReleasePayload(value, key = "") {
   }
   if (
     typeof value === "string" &&
-    /(path|file|database|root)$/i.test(key) &&
+    /(path|file|database|root|origin)$/i.test(key) &&
     path.isAbsolute(value)
   ) {
     return `source-artifact://${path.basename(value)}`;
@@ -181,11 +191,14 @@ function compactPriceHistory(points, maxPoints = 1800) {
   return [...sampled, ...recent];
 }
 
-function compactSnapshotPriceHistory(snapshot) {
+export function compactSnapshotPriceHistory(snapshot) {
   const validHistory = (Array.isArray(snapshot.priceHistory) ? snapshot.priceHistory : [])
     .filter((point) => point?.date && finiteNumber(point.close) > 0);
   const fullCount = validHistory.length;
-  const priceHistory = compactPriceHistory(validHistory);
+  // Dated comparison-price proof may retain a private source path in the
+  // staging seed. Publish its artifact identity and hashes, never the local
+  // workstation path; the private original remains unchanged for audit.
+  const priceHistory = compactPriceHistory(validHistory).map(point => sanitizeReleasePayload(point));
   return {
     ...snapshot,
     priceHistory,
@@ -338,16 +351,13 @@ function attachPointInTimeSupplements(ticker, rows, existingSnapshot) {
   });
 }
 
-function readPitGuidance(source, tickers) {
+export function readPitGuidance(source, tickers) {
   const placeholders = tickers.map(() => "?").join(",");
   if (!placeholders) return { rows: [], byPeriod: new Map() };
   const statement = source.prepare(`
     SELECT *
     FROM pit_guidance_events
     WHERE ticker IN (${placeholders})
-      AND actual_or_guidance = 'guidance'
-      AND fiscal_period IS NOT NULL
-      AND quality_status IN ('clear', 'ambiguous')
     ORDER BY ticker, fiscal_period, observed_at, id
   `);
   const rows = [];
@@ -358,6 +368,41 @@ function readPitGuidance(source, tickers) {
     WHERE ticker IN (${placeholders})
     GROUP BY ticker
   `).all(...tickers).map((row) => [String(row.ticker).toUpperCase(), String(row.currency).toUpperCase()]));
+  const reportingEvidenceByTicker = new Map();
+  for (const item of source.prepare(`
+    SELECT ticker, available_at, payload_json
+    FROM pit_financial_periods WHERE ticker IN (${placeholders})
+    ORDER BY ticker, available_at DESC
+  `).all(...tickers)) {
+    const ticker = String(item.ticker).toUpperCase();
+    if (!reportingEvidenceByTicker.has(ticker)) reportingEvidenceByTicker.set(ticker, []);
+    reportingEvidenceByTicker.get(ticker).push(item);
+  }
+  const issuerCurrencyAtOrBefore = (ticker, observedAt) => {
+    if (!/^\d{4}-\d{2}-\d{2}/.test(String(observedAt || ""))) return null;
+    const candidates = (reportingEvidenceByTicker.get(ticker) || []).filter((item) =>
+      item.available_at && item.available_at <= observedAt
+    );
+    if (!candidates.length) return null;
+    // Multiple dimensions at the same visible event must agree. Never borrow
+    // the model/quote currency or a later issuer disclosure as source currency.
+    const latestDate = candidates[0].available_at;
+    const values = candidates.filter((item) => item.available_at === latestDate).flatMap((item) => {
+      const payload = parseJson(item.payload_json, {});
+      return [
+        ["reportingCurrency", payload.reportingCurrency],
+        ["sourceFinancialStatementCurrency", payload.sourceFinancialStatementCurrency],
+        ["sourceRecord.reportingCurrency", payload.sourceRecord?.reportingCurrency],
+        ["sourceRecord.sourceCurrency", payload.sourceRecord?.sourceCurrency]
+      ].filter(([, value]) => /^[A-Z]{3}$/.test(String(value || "").toUpperCase())).map(([field, value]) => ({
+        currency: String(value).toUpperCase(),
+        field,
+        availableAt: item.available_at,
+        source: payload.sourceRecord?.sourceUrl || payload.sourceRecord?.dataset || null
+      }));
+    });
+    return new Set(values.map((item) => item.currency)).size === 1 ? values[0] : null;
+  };
   const hasFxRates = Boolean(source.prepare(`
     SELECT 1 AS present FROM sqlite_master
     WHERE type='table' AND name='pit_fx_reference_rates'
@@ -374,6 +419,7 @@ function readPitGuidance(source, tickers) {
     }
   }
   const rateAtOrBefore = (currency, observedAt) => {
+    if (!/^\d{4}-\d{2}-\d{2}/.test(String(observedAt || ""))) return null;
     if (currency === "EUR") return { rate_date: observedAt, units_per_eur: 1, source_url: "ECB EUR reference base" };
     const candidates = fxRates.get(currency) || [];
     for (let index = candidates.length - 1; index >= 0; index -= 1) {
@@ -383,12 +429,17 @@ function readPitGuidance(source, tickers) {
   };
   const grouped = new Map();
   for (const row of rows) {
+    // Preserve every original event in the release ledger, including actuals,
+    // excluded capital budgets and unresolved research. Retention is separate
+    // from permission to consume it in a numerical model.
+    if (row.actual_or_guidance !== "guidance" ||
+        !["clear", "ambiguous", "currency_conflict"].includes(row.quality_status)) continue;
     const ticker = String(row.ticker || "").toUpperCase();
     const fiscalPeriod = normalizePeriod(row.fiscal_period);
     if (!ticker || !fiscalPeriod) continue;
     const key = `${ticker}::${fiscalPeriod}`;
     const targetCurrency = targetCurrencies.get(ticker) || null;
-    const sourceCurrency = String(row.currency || "").toUpperCase() || null;
+    const reportedSourceCurrency = String(row.currency || "").trim().toUpperCase() || null;
     const sourceAmountM = guidancePlusMinusCenterM(
       `${row.value_text || ""} ${row.evidence_excerpt || ""}`,
       row.metric_name
@@ -396,10 +447,33 @@ function readPitGuidance(source, tickers) {
       finiteNumber(row.amount);
     let modelAmountM = sourceAmountM;
     let fxConversion = null;
-    if (modelAmountM != null && sourceCurrency && targetCurrency && sourceCurrency !== targetCurrency) {
+    let qualityStatus = row.quality_status;
+    let rejectionReason = null;
+    const issuerCurrencyEvidence = !reportedSourceCurrency && sourceAmountM != null
+      ? issuerCurrencyAtOrBefore(ticker, row.observed_at)
+      : null;
+    const sourceCurrency = reportedSourceCurrency || issuerCurrencyEvidence?.currency || null;
+    const rejectMonetaryInput = (status, reason) => {
+      modelAmountM = null;
+      qualityStatus = status;
+      rejectionReason = reason;
+    };
+    const currencyEvidenceMismatch = sourceCurrency && sourceAmountM != null
+      ? independentGuidanceCurrencyMismatch({
+        amount: sourceAmountM,
+        currency: sourceCurrency,
+        evidence: row.evidence_excerpt || row.value_text
+      })
+      : null;
+    if (row.quality_status === "currency_conflict" || currencyEvidenceMismatch) {
+      rejectMonetaryInput("currency_conflict", "guidance_conflicting_source_currency");
+    } else if (sourceAmountM != null && (!sourceCurrency || !targetCurrency)) {
+      rejectMonetaryInput("currency_unresolved", !sourceCurrency ? "guidance_source_currency_unresolved" : "guidance_model_currency_unresolved");
+    } else if (modelAmountM != null && sourceCurrency !== targetCurrency) {
       const sourceRate = rateAtOrBefore(sourceCurrency, row.observed_at);
       const targetRate = rateAtOrBefore(targetCurrency, row.observed_at);
-      if (sourceRate && targetRate) {
+      if (Number(sourceRate?.units_per_eur) > 0 && Number.isFinite(Number(sourceRate.units_per_eur)) &&
+          Number(targetRate?.units_per_eur) > 0 && Number.isFinite(Number(targetRate.units_per_eur))) {
         const conversionRate = Number(targetRate.units_per_eur) / Number(sourceRate.units_per_eur);
         modelAmountM *= conversionRate;
         fxConversion = {
@@ -413,14 +487,25 @@ function readPitGuidance(source, tickers) {
           source: targetRate.source_url || sourceRate.source_url
         };
       } else {
-        modelAmountM = null;
+        rejectMonetaryInput("fx_unavailable", "guidance_event_visible_fx_unavailable");
       }
     }
     grouped.set(key, [...(grouped.get(key) || []), {
       ...row,
+      quality_status: qualityStatus,
       model_amount_m: modelAmountM,
       model_currency: targetCurrency,
       fx_conversion: fxConversion,
+      currency_resolution: {
+        status: rejectionReason ? "rejected" : sourceAmountM == null ? "not_monetary" : issuerCurrencyEvidence ? "issuer_reporting_currency" : "explicit_guidance_currency",
+        reportedSourceCurrency,
+        resolvedSourceCurrency: sourceCurrency,
+        targetCurrency,
+        issuerEvidence: issuerCurrencyEvidence,
+        independentEvidenceMismatch: currencyEvidenceMismatch,
+        rejectionReason
+      },
+      model_exclusion_reason: rejectionReason,
       evidence_id: row.id,
       evidence_url: row.source_url,
       excerpt: row.evidence_excerpt
@@ -513,7 +598,49 @@ function updateDashboard(db, previousDashboard, snapshots, generatedAt, sourceMe
   `).run(generatedAt, JSON.stringify(payload));
 }
 
+export function assertSafeImportMode({ apply = APPLY, allowIncomplete = ALLOW_INCOMPLETE } = {}) {
+  if (apply && allowIncomplete) throw new Error("Unsafe PIT import: --allow-incomplete is dry-run only and cannot be combined with --apply.");
+}
+
+export function guidanceCoverageBlockers(modelTickers, guidanceCoverage) {
+  const acceptableStatuses = new Set(["covered", "covered_official_filing", "no_quantified_official_guidance"]);
+  return modelTickers.flatMap((model) => {
+    const ticker = String(model.ticker || "").toUpperCase();
+    const matches = guidanceCoverage.filter((row) => String(row.ticker || "").toUpperCase() === ticker);
+    if (matches.length !== 1) return [{
+      ticker,
+      status: matches.length ? "guidance_duplicate_coverage" : "guidance_missing_coverage",
+      note: `Expected exactly one guidance coverage row; found ${matches.length}.`
+    }];
+    const row = matches[0];
+    return acceptableStatuses.has(row.status) ? [] : [{
+      ticker,
+      status: `guidance_${row.status || "missing"}`,
+      note: row.note || "Management guidance coverage has not passed the PIT evidence review."
+    }];
+  });
+}
+
+export function issuerReviewBlockers(modelTickers, issuerReviews = null, reviewedCurrent = new Map()) {
+  if (issuerReviews == null) return [];
+  return modelTickers.flatMap((model) => {
+    const ticker = String(model.ticker || "").toUpperCase();
+    const rows = issuerReviews.filter((row) => String(row.ticker || "").toUpperCase() === ticker);
+    const current = reviewedCurrent.get(ticker);
+    const currentBound = current && rows.length === 1 && rows[0].status === "reviewed_current_only" &&
+      rows[0].reason.includes(current.currentSourceBinding.manifestSha256);
+    return rows.length === 1 && (rows[0].status === "reviewed" && !current || currentBound) ? [] : [{
+      ticker,
+      status: "issuer_pending_economic_review",
+      note: rows[0]?.reason || "The staged issuer requires an explicit completed economic, share/ADR and cash-flow review."
+    }];
+  });
+}
+
 function main() {
+  assertSafeImportMode();
+  const loadedCurrent = reviewedCurrentFromEnvironment();
+  const reviewedCurrent = new Map((loadedCurrent?.candidates || []).map(c => [c.ticker, c]));
   if (!fs.existsSync(SOURCE_DB_PATH)) throw new Error(`PIT valuation source not found: ${SOURCE_DB_PATH}`);
   if (!fs.existsSync(TARGET_DB_PATH)) throw new Error(`Target database not found: ${TARGET_DB_PATH}`);
   const source = new DatabaseSync(SOURCE_DB_PATH, { readOnly: true });
@@ -536,6 +663,10 @@ function main() {
     const sourceMetadata = new Map(
       source.prepare("SELECT key, value FROM pit_source_metadata").all().map((row) => [row.key, row.value])
     );
+    const currentBinding = sourceCurrentBindingMetadata(loadedCurrent);
+    if (currentBinding) {
+      if (sourceMetadata.get("reviewed_current_candidates") !== JSON.stringify(currentBinding)) throw new Error("Full source does not bind the exact independently reviewed current candidates");
+    } else if (sourceMetadata.has("reviewed_current_candidates")) throw new Error("Current-only source requires separately pinned original evidence manifest");
     const countStatuses = (rows) => Object.fromEntries(
       [...rows.reduce((counts, row) => {
         const status = String(row.status || "unknown");
@@ -544,6 +675,7 @@ function main() {
       }, new Map()).entries()].sort(([left], [right]) => left.localeCompare(right))
     );
     sourceMetadata.set("financial_coverage_summary", JSON.stringify(countStatuses(coverage)));
+    sourceMetadata.set("financial_coverage_by_ticker", JSON.stringify(financialCoverageLedger(coverage)));
     sourceMetadata.set("guidance_coverage_summary", JSON.stringify(countStatuses(guidanceCoverage)));
     sourceMetadata.set("guidance_coverage_ticker_count", String(guidanceCoverage.length));
     sourceMetadata.set("guidance_no_quantified_tickers", JSON.stringify(
@@ -554,22 +686,11 @@ function main() {
     ));
     const blockers = coverage.filter((row) => row.status === "missing" || row.status === "external_required");
     const modelTickers = coverage.filter((row) => ["covered", "annual_only"].includes(row.status));
-    const acceptableGuidanceStatuses = new Set([
-      "covered",
-      "covered_official_filing",
-      "no_quantified_official_guidance"
-    ]);
-    const modelTickerSet = new Set(modelTickers.map((row) => String(row.ticker).toUpperCase()));
-    for (const row of guidanceCoverage) {
-      const ticker = String(row.ticker || "").toUpperCase();
-      if (modelTickerSet.has(ticker) && !acceptableGuidanceStatuses.has(row.status)) {
-        blockers.push({
-          ticker,
-          status: `guidance_${row.status || "missing"}`,
-          note: row.note || "Management guidance coverage has not passed the PIT evidence review."
-        });
-      }
-    }
+    blockers.push(...guidanceCoverageBlockers(modelTickers, guidanceCoverage));
+    const hasIssuerReview = source.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='pit_issuer_review'").get();
+    blockers.push(...issuerReviewBlockers(modelTickers,
+      hasIssuerReview ? source.prepare("SELECT ticker, status, reason FROM pit_issuer_review ORDER BY ticker").all() : null, reviewedCurrent));
+    for (const ticker of reviewedCurrent.keys()) if (!modelTickers.some(r => r.ticker === ticker)) blockers.push({ ticker, status: "current_candidate_missing_full_source_coverage" });
     const evidenceTickers = [...new Set(modelTickers.flatMap((row) => [row.ticker, row.source_ticker]).filter(Boolean))];
     const pitGuidance = readPitGuidance(source, evidenceTickers);
     const guidanceByPeriod = pitGuidance.byPeriod;
@@ -583,6 +704,21 @@ function main() {
     for (const coverageRow of modelTickers) {
       const ticker = String(coverageRow.ticker).toUpperCase();
       const sourceTicker = String(coverageRow.source_ticker || ticker).toUpperCase();
+      if (reviewedCurrent.has(ticker)) {
+        const sourceRows = source.prepare("SELECT * FROM pit_financial_periods WHERE ticker=? ORDER BY fiscal_period,dimension").all(ticker);
+        const checked = bindReviewedCurrentFinancialPeriods(reviewedCurrent.get(ticker), sourceRows);
+        const existing = currentSnapshot(ticker);
+        if (!existing || String(existing.cik).replace(/^0+/, "") !== checked.snapshot.cik) throw new Error(`${ticker}: exact current metadata/CIK seed is absent`);
+        // This branch preserves one reviewed point, never calls the generic
+        // historical model and never promotes a current review to history.
+        checked.snapshot.history = preserveTranscriptQaByFiscalPeriod(checked.snapshot.history, existing.history);
+        nextSnapshots.push(compactSnapshotPriceHistory(checked.snapshot));
+        modelRuns.push(...checked.modelRuns);
+        results.push({ ticker, sourceTicker, financialRows: sourceRows.length, valuationRows: 1,
+          currentOnly: true, historicalCurveAuthorized: false,
+          explicitlyUnmodeledPeriods: checked.snapshot.dataQuality.financialPeriodDispositions.filter(r => r.status === "explicitly_unmodeled").length });
+        continue;
+      }
       if (!hasExplicitValuationProfile(ticker)) {
         blockers.push({ ticker, status: "missing_valuation_profile", note: "Covered PIT ticker has no explicit valuation profile." });
         continue;
@@ -609,7 +745,14 @@ function main() {
       const snapshotBase = cleanSnapshot({
         ...existing,
         ticker,
-        priceHistory: mergePriceHistory(existingPrices, databasePrices)
+        priceHistory: mergeValuationComparisonHistory({
+          existing: existingPrices, incremental: databasePrices,
+          priceSymbol: valuationMarketPriceSymbol(ticker), quoteCurrency: existing.currency,
+          // Existing London and older US histories include explicitly sourced
+          // Yahoo close. Retain that truthful basis only when no paid point is
+          // available on the same day; never relabel it Sharadar or adjusted close.
+          allowYahooClose: true
+        })
       });
       const officialIssuerPit = ["BA.L", "LSEG"].includes(ticker);
       const factsUrl = officialIssuerPit
@@ -815,13 +958,7 @@ function main() {
         DELETE FROM valuation_snapshots;
       `);
       const insertMeta = target.prepare("INSERT INTO valuation_pit_source_metadata (key, value, imported_at) VALUES (?, ?, ?)");
-      for (const [key, value] of sourceMetadata) insertMeta.run(key, value, generatedAt);
-      insertMeta.run("model_version", MODEL_VERSION, generatedAt);
-      insertMeta.run(
-        "market_price_unit_policy",
-        "price_points values are already stored in the quoted security currency; ticker suffixes never trigger an additional unit conversion",
-        generatedAt
-      );
+      for (const [key, value] of publicationMetadata(sourceMetadata)) insertMeta.run(key, value, generatedAt);
       const insertFinancial = target.prepare(`
         INSERT INTO valuation_pit_financials (
           ticker, source_ticker, fiscal_period, fiscal_year, fiscal_quarter, dimension,
@@ -886,4 +1023,5 @@ function main() {
   }
 }
 
-main();
+const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
+if (import.meta.url === invokedPath) main();

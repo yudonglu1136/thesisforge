@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pyarrow.dataset as ds
@@ -52,6 +53,13 @@ DERIVED_TICKERS = {"RKLX"}
 EXTERNAL_SOURCE_TICKERS = {"BA.L", "LSEG"}
 LONDON_SOURCE_TICKERS = {"DGE.L"}
 LONDON_USD_REPORTERS = {"AZN"}
+DGE_USD_REPORTING_EVIDENCE = {
+    "sourceUrl": "https://www.sec.gov/Archives/edgar/data/835403/000165495424001045/diageoplc2902b.htm",
+    "availableAt": "2024-01-30",
+    "reportPeriodFrom": "2023-12-31",
+    "sourceCurrency": "USD",
+    "note": "FY24 interim statements first report in USD; FY23 original GBP observations must not be retrospectively relabelled using later USD recasts.",
+}
 
 SOURCE_COLUMNS = [
     "ticker",
@@ -101,6 +109,9 @@ def parse_args() -> argparse.Namespace:
         help="Deduplicated S&P 500 manifest to union with existing tracked tickers.",
     )
     parser.add_argument("--start-date", default="2010-01-01")
+    parser.add_argument("--as-of", help="Exclude financials first available after this UTC date.")
+    parser.add_argument("--guru-universe", type=Path, help="Additive reviewed Guru manifest; never S&P membership.")
+    parser.add_argument("--tickers", help="Explicit comma-separated subset for an isolated candidate source build.")
     parser.add_argument("--fx-cache", type=Path, default=DEFAULT_CACHE_PATH)
     return parser.parse_args()
 
@@ -146,8 +157,10 @@ def snapshot_cik(payload: dict) -> str | None:
     return normalize_cik(cik)
 
 
-def target_universe(db_path: Path, sp500_path: Path | None) -> list[dict]:
-    with sqlite3.connect(db_path) as connection:
+def index_and_tracked_universe(db_path: Path, sp500_path: Path | None) -> list[dict]:
+    if not db_path.is_file():
+        raise FileNotFoundError(db_path)
+    with closing(sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)) as connection:
         snapshots = []
         for ticker, payload_json in connection.execute(
             "SELECT ticker, payload_json FROM valuation_ticker_snapshots ORDER BY ticker"
@@ -189,6 +202,27 @@ def target_universe(db_path: Path, sp500_path: Path | None) -> list[dict]:
     return sorted([*companies, *extras], key=lambda row: row["ticker"])
 
 
+def target_universe(db_path: Path, sp500_path: Path | None, guru_path: Path | None = None) -> list[dict]:
+    by_ticker = {r["ticker"]: r for r in index_and_tracked_universe(db_path, sp500_path)}
+    if guru_path:
+        manifest = json.loads(guru_path.read_text(encoding="utf-8"))
+        if manifest.get("schemaVersion") != 1:
+            raise ValueError("Unsupported Guru valuation universe schema")
+        for company in manifest.get("companies", []):
+            if company.get("reviewStatus") != "reviewed":
+                continue
+            required = ("ticker", "sourceTicker", "priceTicker", "cik", "currency", "reportingCurrency", "valuationProfile", "identityEvidence")
+            if any(not company.get(key) for key in required):
+                raise ValueError(f"Incomplete reviewed Guru identity: {company.get('ticker')}")
+            ticker = company["ticker"].upper()
+            if ticker in by_ticker:
+                if normalize_cik(company["cik"]) != by_ticker[ticker].get("cik"):
+                    raise ValueError(f"Conflicting Guru issuer identity: {ticker}")
+            by_ticker[ticker] = {**by_ticker.get(ticker, {}), **company, "ticker": ticker,
+                "sourceTicker": company["sourceTicker"].upper(), "membership": "guru_reviewed_extra"}
+    return sorted(by_ticker.values(), key=lambda row: row["ticker"])
+
+
 def first_visible_rows(table_rows: list[dict]) -> list[dict]:
     selected: dict[tuple[str, str], dict] = {}
     for row in table_rows:
@@ -204,8 +238,41 @@ def first_visible_rows(table_rows: list[dict]) -> list[dict]:
 
 
 def statement_conversion(
-    ui_ticker: str, row: dict, fx_rate_book: FxRateBook | None
+    ui_ticker: str, row: dict, fx_rate_book: FxRateBook | None, identity: dict | None = None
 ) -> dict:
+    # Diageo changed presentation currency from FY24, without changing its
+    # London ordinary-share quotation. The dated branch must precede a static
+    # manifest currency, otherwise today's identity would rewrite FY23 history.
+    if ui_ticker == "DGE.L":
+        report_period = iso(row.get("reportperiod"))
+        available_at = iso(row.get("datekey"))
+        if not report_period or not available_at:
+            raise ValueError("DGE.L requires a dated statement period and PIT availability")
+        if report_period >= DGE_USD_REPORTING_EVIDENCE["reportPeriodFrom"]:
+            if available_at < DGE_USD_REPORTING_EVIDENCE["availableAt"]:
+                raise ValueError("DGE.L USD statement predates its first public FY24 statement")
+            if fx_rate_book is None:
+                raise RuntimeError("DGE.L PIT source construction requires official ECB FX rates")
+            conversion = fx_rate_book.conversion("USD", "GBP", available_at)
+            return {"scale": conversion["conversionRate"], "sourceCurrency": "USD", "modelCurrency": "GBP",
+                    "useRawReported": True, "fxConversion": conversion,
+                    "reportingCurrencyEvidence": DGE_USD_REPORTING_EVIDENCE,
+                    "note": "Dated FY24+ Diageo USD statements; raw reported amounts converted once using ECB GBP per USD at PIT availability"}
+        return {"scale": 1.0, "sourceCurrency": "GBP", "modelCurrency": "GBP", "useRawReported": True,
+                "fxConversion": None, "note": "Original pre-FY24 Diageo GBP statements; later USD recasts excluded"}
+    if identity and identity.get("reportingCurrency"):
+        source_currency = identity["reportingCurrency"].upper()
+        target_currency = identity["currency"].upper()
+        conversion = None
+        if source_currency != target_currency:
+            if fx_rate_book is None:
+                raise RuntimeError(f"{ui_ticker} PIT source construction requires official ECB FX rates")
+            conversion = fx_rate_book.conversion(source_currency, target_currency, row["datekey"])
+        return {"scale": conversion["conversionRate"] if conversion else 1.0,
+                "sourceCurrency": source_currency, "modelCurrency": target_currency,
+                "useRawReported": True,
+                "note": "Raw reported financial amounts; explicit reviewed issuer currency; ECB PIT conversion when required",
+                "fxConversion": conversion}
     if ui_ticker in LONDON_SOURCE_TICKERS:
         return {
             "scale": 1.0,
@@ -234,8 +301,8 @@ def statement_conversion(
     }
 
 
-def metric_value(ui_ticker: str, row: dict, local_key: str, usd_key: str | None, currency_scale: float):
-    if ui_ticker in LONDON_SOURCE_TICKERS:
+def metric_value(ui_ticker: str, row: dict, local_key: str, usd_key: str | None, currency_scale: float, use_raw_reported=False):
+    if ui_ticker in LONDON_SOURCE_TICKERS or use_raw_reported:
         return scaled(row.get(local_key), currency_scale)
     if usd_key and row.get(usd_key) is not None:
         return scaled(row.get(usd_key), currency_scale)
@@ -249,10 +316,11 @@ def build_period(
     row: dict,
     target_db: Path | None = None,
     fx_rate_book: FxRateBook | None = None,
+    identity: dict | None = None,
 ) -> dict:
     fiscal_period = str(row["fiscalperiod"])
     fiscal_year, fiscal_quarter = fiscal_period.split("-", 1)
-    conversion = statement_conversion(ui_ticker, row, fx_rate_book)
+    conversion = statement_conversion(ui_ticker, row, fx_rate_book, identity)
     currency_scale = conversion["scale"]
     currency = conversion["modelCurrency"]
     currency_note = conversion["note"]
@@ -281,8 +349,11 @@ def build_period(
         "Apply provider sharefactor once for the quoted security basis and never infer splits from adjacent-period changes."
     )
 
-    cfo_m = metric_value(ui_ticker, row, "ncfo", None, currency_scale)
-    capex_m = metric_value(ui_ticker, row, "capex", None, currency_scale)
+    def metric(local_key, usd_key=None):
+        return metric_value(ui_ticker, row, local_key, usd_key, currency_scale, conversion.get("useRawReported", False))
+
+    cfo_m = metric("ncfo")
+    capex_m = metric("capex")
     capex_m = abs(capex_m) if capex_m is not None else None
     source_common = {
         "filed": iso(row["datekey"]),
@@ -321,19 +392,21 @@ def build_period(
         "calendarDate": iso(row["calendardate"]),
         "financialStatementCurrency": currency,
         "sourceFinancialStatementCurrency": conversion["sourceCurrency"],
+        **({"reportingCurrencyEvidence": conversion["reportingCurrencyEvidence"]}
+           if conversion.get("reportingCurrencyEvidence") else {}),
         "sourceDimension": row["dimension"],
-        "revenue_m": metric_value(ui_ticker, row, "revenue", "revenueusd", currency_scale),
-        "gross_profit_m": metric_value(ui_ticker, row, "gp", None, currency_scale),
-        "operating_income_m": metric_value(ui_ticker, row, "opinc", None, currency_scale),
-        "net_income_m": metric_value(ui_ticker, row, "netinc", "netinccmnusd", currency_scale),
+        "revenue_m": metric("revenue", "revenueusd"),
+        "gross_profit_m": metric("gp"),
+        "operating_income_m": metric("opinc"),
+        "net_income_m": metric("netinc", "netinccmnusd"),
         "cfo_m": cfo_m,
         "capex_m": capex_m,
         "fcf_after_capex_m": cfo_m - capex_m if cfo_m is not None and capex_m is not None else None,
         "shares_m": scaled(effective_shares, 1.0),
-        "equity_m": metric_value(ui_ticker, row, "equity", "equityusd", currency_scale),
-        "assets_m": metric_value(ui_ticker, row, "assets", None, currency_scale),
-        "cash_m": metric_value(ui_ticker, row, "cashneq", "cashnequsd", currency_scale),
-        "debt_m": metric_value(ui_ticker, row, "debt", "debtusd", currency_scale),
+        "equity_m": metric("equity", "equityusd"),
+        "assets_m": metric("assets"),
+        "cash_m": metric("cashneq", "cashnequsd"),
+        "debt_m": metric("debt", "debtusd"),
         "sourceRecord": {
             "dataset": "Jansen Sharadar SF1",
             "dimension": row["dimension"],
@@ -349,6 +422,8 @@ def build_period(
             "currencyScale": currency_scale,
             "currencyScaleNote": currency_note,
             "fxConversion": conversion["fxConversion"],
+            **({"reportingCurrencyEvidence": conversion["reportingCurrencyEvidence"]}
+               if conversion.get("reportingCurrencyEvidence") else {}),
             "rawProviderFxusd": number(row.get("fxusd")),
             "sharefactor": provider_sharefactor,
             "appliedShareFactor": applied_sharefactor,
@@ -433,7 +508,14 @@ def main():
             "Sharadar fundamentals is missing both supported PIT cutoff fields: "
             + ", ".join(PIT_CUTOFF_FIELD_CANDIDATES)
         )
-    universe = target_universe(args.target_db, args.sp500_universe)
+    universe = target_universe(args.target_db, args.sp500_universe, args.guru_universe)
+    if args.tickers:
+        selected_tickers = {t.strip().upper() for t in args.tickers.split(",") if t.strip()}
+        unknown = selected_tickers - {r["ticker"] for r in universe}
+        if unknown:
+            raise ValueError(f"Unreviewed/unknown requested source tickers: {sorted(unknown)}")
+        universe = [r for r in universe if r["ticker"] in selected_tickers]
+    identity_by_ticker = {r["ticker"]: r for r in universe}
     tickers = [row["ticker"] for row in universe]
     source_by_ticker = {row["ticker"]: row["sourceTicker"] for row in universe}
     source_tickers = sorted(
@@ -443,25 +525,31 @@ def main():
             if ticker not in DERIVED_TICKERS | EXTERNAL_SOURCE_TICKERS
         }
     )
+    source_filter = ((ds.field("ticker").isin(source_tickers))
+        & ds.field("dimension").isin(["ARQ", "ART"])
+        & (ds.field(provider_pit_cutoff_field) >= dt.date.fromisoformat(args.start_date)))
+    if args.as_of:
+        source_filter = source_filter & (ds.field(provider_pit_cutoff_field) <= dt.date.fromisoformat(args.as_of))
     table = dataset.to_table(
         columns=[*SOURCE_COLUMNS, provider_pit_cutoff_field],
-        filter=(ds.field("ticker").isin(source_tickers))
-        & (ds.field("dimension").isin(["ARQ", "ART"]))
-        & (ds.field(provider_pit_cutoff_field) >= dt.date.fromisoformat(args.start_date)),
+        filter=source_filter,
     )
     by_source: dict[str, list[dict]] = {}
     for row in table.to_pylist():
         row["datekey"] = row.get(provider_pit_cutoff_field)
         by_source.setdefault(row["ticker"], []).append(row)
 
+    converted_tickers = LONDON_USD_REPORTERS | {"DGE.L"} | {r["ticker"] for r in universe
+        if r.get("reportingCurrency") and r["reportingCurrency"] != r.get("currency")}
+    fx_currencies = {"USD", "GBP"} | {r[k] for r in universe for k in ("reportingCurrency", "currency") if r.get(k)}
     fx_dates = sorted(
         row["datekey"]
-        for ticker in LONDON_USD_REPORTERS
+        for ticker in converted_tickers
         for row in by_source.get(source_by_ticker.get(ticker, ticker), [])
         if row.get("datekey")
     )
     fx_rate_book = (
-        rate_book_for_range(fx_dates[0], fx_dates[-1], cache_path=args.fx_cache)
+        rate_book_for_range(fx_dates[0], fx_dates[-1], currencies=sorted(fx_currencies), cache_path=args.fx_cache)
         if fx_dates
         else FxRateBook([])
     )
@@ -505,6 +593,7 @@ def main():
                     row,
                     args.target_db,
                     fx_rate_book=fx_rate_book,
+                    identity=identity_by_ticker[ticker],
                 )
                 for row in selected
             ]

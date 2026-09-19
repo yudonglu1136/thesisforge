@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "scope": "Six original public transcript quotations: four proven parser defect families, including one already-correct revised-EPS counterexample. Currency is not independently established here.",
+  "cases": [
+    {
+      "original": {
+        "id": "485572294d616b19c3290801",
+        "ticker": "A",
+        "fiscal_period": "Q22023",
+        "observed_at": "2023-05-23",
+        "metric_name": "eps_guidance",
+        "speaker": "Robert McMahon — Senior Vice President and CFO, Agilent Technologies",
+        "source_url": "https://stockanalysis.com/stocks/a/transcripts/57096-q2-2023/",
+        "evidence_excerpt": "With the change in revenue, we now expect full-year fiscal 2023 non-GAAP earnings per share to be between $5.60 and $5.65, representing growth of 7%-8%."
+      },
+      "expected": {
+        "per_share_value": 5.625,
+        "amount": null,
+        "guidance_scope": "full_year"
+      }
+    },
+    {
+      "original": {
+        "id": "d9b91713902370abd7405bdc",
+        "ticker": "APH",
+        "fiscal_period": "Q12015",
+        "observed_at": "2015-04-22",
+        "metric_name": "eps_guidance",
+        "speaker": "Adam Norwitt — CEO, Amphenol",
+        "source_url": "https://stockanalysis.com/stocks/aph/transcripts/546706-q1-2015/",
+        "evidence_excerpt": "For the second quarter, we expect sales in the range of $1.315 billion-$1.355 billion and EPS in the range of $0.56-$0.58 respectively."
+      },
+      "expected": {
+        "per_share_value": 0.57,
+        "amount": null,
+        "guidance_scope": "quarter"
+      }
+    },
+    {
+      "original": {
+        "id": "27f3a37c252c24ff781c6b26",
+        "ticker": "ABBV",
+        "fiscal_period": "Q12018",
+        "observed_at": "2018-04-26",
+        "metric_name": "eps_guidance",
+        "speaker": "Richard A. Gonzalez — Chairman and CEO, AbbVie",
+        "source_url": "https://stockanalysis.com/stocks/abbv/transcripts/63855-q1-2018/",
+        "evidence_excerpt": "As a result, we are raising our full-year EPS guidance range by $0.33 to $7.66-$7.76."
+      },
+      "expected": {
+        "per_share_value": 7.71,
+        "amount": null,
+        "guidance_scope": "full_year"
+      }
+    },
+    {
+      "original": {
+        "id": "d58124b360720ecba624289c",
+        "ticker": "ABBV",
+        "fiscal_period": "Q22024",
+        "observed_at": "2024-07-25",
+        "metric_name": "eps_guidance",
+        "speaker": "Scott Reents — EVP and CFO, AbbVie",
+        "source_url": "https://stockanalysis.com/stocks/abbv/transcripts/188920-q2-2024/",
+        "evidence_excerpt": "Turning to our financial outlook, we are raising our full-year adjusted earnings per share guidance by $0.10 to between $10.71 and $10.91."
+      },
+      "expected": {
+        "per_share_value": 10.81,
+        "amount": null,
+        "guidance_scope": "full_year"
+      }
+    },
+    {
+      "original": {
+        "id": "26edc4b3b207a8dd1376cc9b",
+        "ticker": "ACN",
+        "fiscal_period": "Q32021",
+        "observed_at": "2021-06-24",
+        "metric_name": "revenue_guidance",
+        "speaker": "KC McClure — CFO, Accenture",
+        "source_url": "https://stockanalysis.com/stocks/acn/transcripts/4978-q3-2021/",
+        "evidence_excerpt": "For the Q4 of FY21, we expect revenues to be in the range of $13.1 billion-$13.5 billion."
+      },
+      "expected": {
+        "amount": 13300,
+        "guidance_scope": "quarter",
+        "guidance_target_year": 2021
+      }
+    },
+    {
+      "original": {
+        "id": "ed5d88c09c019c904c8543ad",
+        "ticker": "ADP",
+        "fiscal_period": "Q32024",
+        "observed_at": "2024-05-01",
+        "metric_name": "revenue_guidance",
+        "speaker": "Don McGuire — CFO, ADP",
+        "source_url": "https://stockanalysis.com/stocks/adp/transcripts/163931-q3-2024/",
+        "evidence_excerpt": "We continue to anticipate soft pays per control growth through the end of the year and expect worksite employee growth to hold steady at about 3%, keeping us on track for our full-year outlook for worksite employee growth of 2%-3% and revenue growth of 3%-4%."
+      },
+      "expected": {
+        "growth_yoy": 3.5,
+        "guidance_scope": "full_year"
+      }
+    }
+  ]
+}

@@ -8,9 +8,15 @@ import {
   writeBackgroundJobRun,
   writePortfolioNavPoint
 } from "./localDatabase.js";
-import { readDividendCalendarForTickers } from "./dividendClient.js";
+import {
+  readDividendCalendarForTickers,
+  loadDividendCalendarForTickers
+} from "./dividendClient.js";
+import { factOsEnabled, canonicalListingRequest } from "./factRepository.js";
+import { loadPriceSeries } from "./marketData.js";
 import { canonicalTicker, logoUrlForTicker } from "./logoClient.js";
 import { loadValuationDashboard } from "./valuationClient.js";
+import { factGeneration } from "./valuationFacts.js";
 import {
   isSterlingCurrency,
   marketTickerCandidates,
@@ -82,11 +88,26 @@ function isRealUser(user) {
   return Boolean((id && id !== "local-dev-user") || /^[a-f0-9]{40}$/i.test(adminHash));
 }
 
-function portfolioCacheKey(user) {
+function portfolioCacheIdentity(user) {
   const adminHash = String(user?.adminPortfolioHash || "").trim().toLowerCase();
   if (/^[a-f0-9]{40}$/.test(adminHash)) return `userhash:${adminHash}`;
   const id = String(user?.id || "").trim();
   return id ? `user:${id}` : "legacy";
+}
+
+function portfolioCachePrefix(user) {
+  return `${JSON.stringify(portfolioCacheIdentity(user))}:facts:`;
+}
+
+function portfolioCacheKey(user) {
+  const source = factOsEnabled() ? `sharadar:${factGeneration()}` : "legacy";
+  return `${portfolioCachePrefix(user)}${source}`;
+}
+
+function portfolioAnalyticsPriceSource() {
+  return factOsEnabled()
+    ? "Sharadar Local Fact OS (total-return-adjusted)"
+    : "local SQLite price_points";
 }
 
 function legacyPortfolioConnection() {
@@ -353,6 +374,10 @@ function valuationMapFromDashboard(dashboard) {
 function portfolioPriceSymbols(holding = {}) {
   const normalized = normalizeTicker(holding.ticker);
   if (!normalized || normalized.startsWith("CASH")) return [];
+  if (factOsEnabled()) {
+    const listing = canonicalListingRequest(holding);
+    return listing.unavailable ? [] : [listing.ticker];
+  }
   return marketTickerCandidates(normalized, {
     currency: holding.currency,
     companyName: holding.name || holding.companyName
@@ -403,6 +428,18 @@ function buildValuationOverlay(holding, valuationRow) {
     gap: Number.isFinite(gap) ? gap : null,
     targetPrice3Y: Number.isFinite(targetPrice3Y) ? targetPrice3Y : null,
     expectedReturn3Y: Number.isFinite(expectedReturn3Y) ? expectedReturn3Y : null,
+    priceSource: Number.isFinite(modelPrice)
+      ? latest.latestPriceSource || "legacy_model_quote"
+      : "broker_reported_mark",
+    publishedModelStatus:
+      valuationRow.publishedModelStatus ||
+      valuationRow.dataQuality?.publishedModelStatus ||
+      latest.publishedModelStatus ||
+      null,
+    modelInputPolicy:
+      valuationRow.dataQuality?.modelInputPolicy ||
+      latest.modelInputPolicy ||
+      null,
     label: label.label,
     labelZh: label.labelZh,
     tone: label.tone,
@@ -427,6 +464,14 @@ function modelImpliedForwardReturn({ valuation, trailingReturn }) {
 }
 
 async function attachPortfolioAnalytics(payload) {
+  if (factOsEnabled()) {
+    const calendar = await loadDividendCalendarForTickers(payload.holdings || []);
+    payload = {
+      ...payload,
+      dividendCalendar: calendar.events,
+      dividendCalendarStatus: calendar.status
+    };
+  }
   try {
     const riskFreeRate = finiteNumber(process.env.PORTFOLIO_ANALYTICS_RISK_FREE_RATE, 0.04);
     const today = new Date();
@@ -453,7 +498,13 @@ async function attachPortfolioAnalytics(payload) {
       let priceSymbol = "";
       let pricePoints = [];
       for (const candidate of portfolioPriceSymbols(holding)) {
-        const candidatePoints = readPriceSeriesFromDb(candidate, start, end);
+        const candidatePoints = factOsEnabled()
+          ? (await loadPriceSeries(candidate, {
+              start,
+              end,
+              priceType: "TOTAL_RETURN_ADJUSTED_CLOSE"
+            })).points
+          : readPriceSeriesFromDb(candidate, start, end);
         if (candidatePoints.length > pricePoints.length) {
           priceSymbol = candidate;
           pricePoints = candidatePoints;
@@ -550,7 +601,7 @@ async function attachPortfolioAnalytics(payload) {
         generatedAt: new Date().toISOString(),
         source: {
           valuation: valuationDashboard?.source?.label || "valuation dashboard",
-          prices: "local SQLite price_points",
+          prices: portfolioAnalyticsPriceSource(),
           methodology: "Current-weight reconstruction; historical risk from one-year daily returns; forward return from partial fair-value gap convergence, 3Y model IRR, and capped momentum."
         },
         assumptions: {
@@ -1887,6 +1938,10 @@ export function startPortfolioNavRecorder({
 }
 
 export const __portfolioTestInternals = {
+  portfolioPriceSymbols,
+  portfolioCacheKey,
+  portfolioAnalyticsPriceSource,
+  buildValuationOverlay,
   isAllowedIbkrFlexEndpoint,
   isAllowedIbkrFlexStatementUrl,
   flexStatementUrlFromRoot,

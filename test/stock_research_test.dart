@@ -40,6 +40,37 @@ Map<String, dynamic> fixture(String ticker) => {
 };
 
 void main() {
+  testWidgets('logo backdrop can change without changing issuer identity', (
+    tester,
+  ) async {
+    for (final backdrop in [null, const Color(0xff1b2932)]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LanguageScope(
+            language: AppLanguage.en,
+            child: StockLogo(
+              ticker: 'AMZN',
+              palette: Palette(false),
+              backgroundColor: backdrop,
+            ),
+          ),
+        ),
+      );
+      final box = tester.widget<Container>(
+        find.descendant(
+          of: find.byType(StockLogo),
+          matching: find.byType(Container),
+        ),
+      );
+      expect(
+        (box.decoration! as BoxDecoration).color,
+        backdrop ?? const Color(0xFFF4F6F8),
+      );
+      expect(find.byKey(const ValueKey('stock-logo-AMZN')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   for (final language in AppLanguage.values) {
     for (final size in [const Size(1280, 720), const Size(390, 844)]) {
       for (final missing in [true, false]) {

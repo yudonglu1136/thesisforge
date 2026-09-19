@@ -1,6 +1,49 @@
-# Agent Operating Contract
+# ThesisForge Agent Operating Contract
 
-This repository is the Guru Intelligence product. Follow this deployment split unless the user explicitly changes the architecture.
+This repository is the single ThesisForge product root. Guru research,
+fundamental analysis, valuation, portfolio, strategy, and the local Fact OS are
+modules of this one product; they are not separate projects. Follow this
+deployment split unless the user explicitly changes the architecture.
+
+## Single-Root And Append-Only Data Contract
+
+- The only local project root is `/Users/yudonglu/Documents/thesisforge`.
+  Agents must not create sibling clones, worktrees, `*-release`, `*-refresh`,
+  `*-candidate`, or dated project copies under `Documents`. Use a branch in this
+  repository, a bounded directory under `tmp/`, or `/private/tmp`, and remove
+  temporary artifacts when the task finishes.
+- Do not copy a database or the full `data/fact_os` tree to run an experiment.
+  SQLite experiments must use the backup API into a bounded temporary file;
+  Parquet readers must pin the published manifest. Never put SQLite, Parquet,
+  provider archives, or whole data trees under `output/`, `docs/`, or a new
+  project directory.
+- `data/fact_os/raw` is immutable and content-addressed. A byte-identical
+  response reuses the existing object and adds only a small receipt. Do not
+  create a second raw file, rename it as a new download, or rewrite it in place.
+- Canonical facts are append/revision safe: write by the documented natural key,
+  preserve older observations, and publish a new Parquet generation only when
+  the canonical content changes. Re-running the same input must be a no-op for
+  facts, Parquet bytes, and current manifests. Never use full-table replacement
+  or `INSERT OR REPLACE` to simulate append-only ingestion.
+- Derived Parquet generations are immutable. Publication is manifest-last and
+  atomic. Garbage collection may remove only unreferenced generations after the
+  retention window; raw archives are never GC targets.
+- There is one public runtime database:
+  `server/data/guru-analysis.sqlite`. User portfolio stores live only under
+  `server/data/user-portfolios/`; distinct recovered private snapshots may live
+  only in the content-addressed `server/data/private-recovery/by-sha/` vault.
+  Never copy private stores into fixtures, output, release bundles, Fact OS, or
+  another project.
+- Every sync or migration must hold the Fact OS writer lock, verify natural-key
+  uniqueness, compare pre/post row counts and oldest dates, run a same-input
+  replay, and write a receipt under `data/fact_os/audit/`. A retry must resume or
+  no-op; it must not redownload or duplicate already accepted bytes.
+- Before declaring storage work complete, run `npm run audit:storage-layout`
+  and the full Fact OS storage audit. A new write expected to exceed 2 GiB needs
+  an explicit size estimate, target path, retention plan, and free-space check.
+- The external Vercel project is still named `fundamental-analysis`; that remote
+  deployment identifier is not permission to recreate a local folder with the
+  same name.
 
 ## Deployment Ownership
 
@@ -438,7 +481,7 @@ When valuation financials, management guidance, or historical fair values are re
 - Apply the same official-rate contract to financial statements. A cross-listed/ADR price ratio is not FX and must never convert financials; fixed currency fallbacks are forbidden. Store the paid source currency, target model currency, ECB rate pair/date/value/URL, conversion formula, and raw provider FX field at every converted PIT row, and fail closed when the event-visible official rate is unavailable.
 - If official filings have been reviewed but contain no quantified group-level guidance, record `no_quantified_official_guidance`; do not manufacture a value. Private companies without public quarterly guidance remain explicitly uncovered.
 - Missing values remain `null`. Never use zero, market price, a later filing, or a future share count to fill a historical financial input. A carried prior disclosed value must be explicitly recorded in `sourceRecord.metricDerivation`.
-- Preserve Transcript/Q&A, users, portfolios, Guru, archived Ontology, prices, dividends, and podcast data. A production valuation refresh may replace only `valuation_pit_source_metadata`, `valuation_pit_financials`, `valuation_pit_guidance`, `valuation_pit_model_runs`, `valuation_ticker_snapshots`, and `valuation_snapshots`.
+- Preserve Transcript/Q&A, users, portfolios, Guru, archived Ontology, prices, dividends, and podcast data. A production valuation refresh may replace only `valuation_pit_source_metadata`, `valuation_pit_financials`, `valuation_pit_guidance`, `valuation_pit_model_runs`, `valuation_pit_price_observations`, `valuation_ticker_snapshots`, and `valuation_snapshots`. These seven tables form the atomic valuation artifact; the separate Guru `price_points` table is not part of that replacement.
 - Before replacing valuation snapshots, carry forward stored transcript Q&A and its bilingual fields only when the normalized fiscal period matches exactly; never carry guidance or model inputs from the prior snapshot. First rebuild English coverage with `TRANSCRIPT_QA_TRANSLATE_ZH=false`. Then generate and audit the local Qwen cache, and attach Chinese only with `TRANSCRIPT_QA_TRANSLATE_ZH=true`, a fixed `TRANSCRIPT_QA_GENERATED_AT`, and a persistent `TRANSCRIPT_QA_TRANSLATION_CACHE_PATH`. Translation is opt-in and cache-only; a missing cache item must fail the run instead of calling an online translator. Every modeled history row must have an explicit Q&A coverage status, every `has_qa` row must contain complete stored English and Chinese Q&A, and transcript research must be marked `includedInValuationInputs: false` so it cannot alter historical fair value.
 - Transcript Q&A extraction must begin strictly after a detected Q&A boundary. Reject prepared-remarks questions, audio checks, procedural handoffs, name-only fragments, and answers without substantive management context. Rebuild Chinese fields with `scripts/translate-valuation-qa-mlx.py`; its deterministic number protection and audit sidecar must pass before enrichment, and the strict verifier must show every attached Q&A row is bilingual.
 - Back up the AWS runtime database before the transaction. Abort and roll back if any required ticker is blocked, SQLite integrity fails, guidance is dated after its model node, or non-valuation table counts change.
@@ -459,7 +502,75 @@ When valuation financials, management guidance, or historical fair values are re
 - Run the strict release verifier before production: `node server/verifyPitValuationRelease.js <baseline.sqlite> <run1.sqlite> <run2.sqlite>`. It must report `status: pass`, identical model and snapshot signatures across both runs, zero unexplained temporal jumps, zero unexpected modelable gaps, zero source-date failures, zero non-positive stored prices, and unchanged non-valuation table counts.
 - Generate the persistent all-ticker audit ledger with `SQLITE_DB_PATH=<candidate.sqlite> npm run audit:valuation:ledger`. Commit `server/reports/valuation-audit-ledger.json` and `.md`; production is blocked while the ledger contains any unresolved P0/P1 finding. Price/fair-value divergence is a watch item, never a reason to feed market price into fair value.
 - Build the production artifact from one audited candidate with `python3 scripts/build-pit-migration-artifact.py --database <run1.sqlite> --release-audit <release-audit.json> --output <valuation-pit-migration.sqlite.gz>`. The generated manifest owns the artifact SHA-256, model version, strict-audit signatures, and expected table counts; never hand-edit those release values into the deployment hook.
-- Deploy only a strict-audit candidate. Record the pre-deploy Elastic Beanstalk version, create a fresh compressed database backup and EBS snapshot, stage the six valuation tables, replace them in one `BEGIN IMMEDIATE` transaction, and retain the prior version and backup for rollback. Re-run health, coverage, valuation, Portfolio, Guru, and Transcript checks against production before declaring the update complete.
+- Deploy only a strict-audit candidate. Record the pre-deploy Elastic Beanstalk version, create a fresh compressed database backup and EBS snapshot, stage the seven valuation tables, replace them in one `BEGIN IMMEDIATE` transaction, and retain the prior version and backup for rollback. Re-run health, coverage, valuation, Portfolio, Guru, and Transcript checks against production before declaring the update complete.
+
+### Guru-to-Valuation coverage expansion (2026-09-05)
+
+- Guru identity coverage is not valuation coverage. Reconcile exact securities
+  appearing in the requested Guru holdings against released valuation ticker
+  snapshots/explicit aliases and report the denominator. The public SEC/security
+  master is a historical top-60 selected-book manifest; never call that a full
+  live-Guru audit. Funds, private companies and unresolved identities require
+  separate dispositions, not a generic operating-company DCF.
+- Keep reviewed Guru additions in `server/config/guru-valuation-universe.json`,
+  separate from the 503-security/500-issuer S&P contract. Unreviewed entries are
+  research queues, not model authorization. Check CIK/CUSIP/share class, source
+  ticker, quoted-security factor, reporting/model currency, economic profile and
+  dated identity evidence before activation. Preserve existing valuation tickers
+  and use the same additive union in source construction and release checks.
+- Use `scripts/audit-guru-valuation-coverage.py` for a read-only local inventory
+  and `scripts/stage-guru-valuation-expansion.py` for new private input candidates.
+  Staging is not completion: candidate `pit_issuer_review` rows must all be
+  `reviewed` before model application. Every modeled issuer needs a guidance
+  coverage row. `--allow-incomplete` is dry-run only and must never accompany
+  `--apply`.
+- Review official management releases even when transcript evidence exists.
+  Bound each research batch by exact tickers and an as-of cutoff. Missing
+  guidance may be recorded only after a successful review; an unretrieved or
+  failed filing is not proof of no guidance. Bare currency symbols require dated
+  issuer reporting-currency evidence; unknown currency or unavailable official FX
+  must prevent monetary model consumption, including raw-amount fallback.
+- For IFRS retailers, reconcile financing-classified lease principal, lease
+  interest and other interest before using CFO minus capex as equity cash flow.
+  Check intangible capex and supplier-finance classification; never deduct the
+  same supplier payment twice. Preserve reported CFO separately from economic
+  adjustments. Handle outstanding share classes, unvested awards and options in
+  an explicit claims schedule; do not both expense an existing award and charge
+  its dilution, or use a market-price-dependent illustrative diluted count as a
+  fixed model input. A completed cash-flow bridge is not a completed valuation.
+- A source-only audit or an unapproved scenario calculation cannot satisfy the
+  valuation release gate. Record staged, modeled, independently audited, and
+  deployed counts separately. `scripts/report-guru-valuation-readiness.py` and
+  `scripts/audit-staged-guru-guidance.mjs` report input-stage progress only;
+  neither authorizes publishing a price. Keep failed issuer-file access and
+  unresolved monetary currency separate from a genuine absence of guidance.
+- When importing an isolated local transcript batch, merge only the explicit
+  ticker scope and transcript-owned events with their original dates. Preserve
+  all official evidence, unrelated coverage rows, and issuer-review states;
+  re-run the scoped official review afterward. Never copy a freshly rebuilt
+  transcript coverage table over the full candidate universe.
+- Source counts must distinguish extraction occurrences from unique persisted
+  events. Identical event IDs are idempotent only when the complete payload and
+  typed fields agree. A conflicting payload or source owner must roll back the
+  transaction; never silently overwrite it with `INSERT OR REPLACE`.
+- A comparison price needs an exact provider, field, quoted-security currency
+  and adjustment basis. Sharadar `close` is split-only; Yahoo `close` is a
+  separate provider series. Do not compare them as identical observations or
+  overwrite a paid historical point merely because `price_points` was read
+  last. Reconcile PIT price evidence to the exact ticker, fiscal period and
+  model version. Same-series conflicts remain blockers at the original strict
+  tolerance. Never change Guru backtest prices during a valuation-only repair.
+- When old normalized financials lack reporting currency, do not infer it from
+  USD quote currency or `fxusd=1`. A dated SEC statement-unit ledger must match
+  the independently verified CIK and original cached filing facts. Multiple
+  currencies, future evidence, missing identity or stale evidence remain
+  unresolved. Append the audited reporting-currency evidence only in a new
+  candidate copy; preserve original amounts, source records, FX and dates.
+- A current-only economic scenario is not authorization to generate generic
+  historical DCFs. Preserve its reviewed date, cash-flow/claims bridge and
+  explicit method; an EV/sales scenario must never be labeled DCF. Source-only
+  passes, isolated model diagnostics and two identical partial-batch signatures
+  do not replace the complete additive release gate.
 
 ## Guru Terminal Visual Baseline (2026-09-02)
 

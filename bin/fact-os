@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+FACT_OS_PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$FACT_OS_PROJECT"
+FACT_OS_RUNTIME=${FACT_OS_PYTHON:-"$FACT_OS_PROJECT/.venv-fact-os/bin/python"}
+if [ ! -x "$FACT_OS_RUNTIME" ]; then
+  echo 'Missing project Python environment. Install fact_os/requirements.txt into .venv-fact-os.' >&2
+  exit 2
+fi
+exec "$FACT_OS_RUNTIME" -m fact_os "$@"

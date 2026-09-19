@@ -26,7 +26,7 @@ const manifestOutput = path.join(outputDir, 'gavin-baker-sector-edge-manifest.js
 const copyOutput = path.join(outputDir, 'gavin-baker-sector-edge-copy-en.md');
 const databasePath =
   process.env.GAVIN_BACKTEST_DB ||
-  '/Users/yudonglu/Documents/fundamental-analysis/server/data/guru-analysis.sqlite';
+  '/Users/yudonglu/Documents/thesisforge/server/data/guru-analysis.sqlite';
 const taxonomyPath =
   process.env.SHARADAR_TICKERS_CSV ||
   '/Users/yudonglu/Documents/jansen_us_firm_replication/data/sharadar/cache/tickers.csv';

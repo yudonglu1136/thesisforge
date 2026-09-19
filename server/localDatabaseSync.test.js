@@ -189,6 +189,7 @@ function prepareServerFixture(directory, bundledOptions) {
   fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify({ type: "module" }));
   fs.copyFileSync(path.resolve("server/localDatabase.js"), path.join(serverDirectory, "localDatabase.js"));
   fs.copyFileSync(path.resolve("server/databaseTableSummaries.js"), path.join(serverDirectory, "databaseTableSummaries.js"));
+  fs.copyFileSync(path.resolve("server/databaseHealthIndexes.js"), path.join(serverDirectory, "databaseHealthIndexes.js"));
   fs.copyFileSync(path.resolve("server/gurus.js"), path.join(serverDirectory, "gurus.js"));
   fs.copyFileSync(
     path.resolve("server/backtestProxyAudit.js"),

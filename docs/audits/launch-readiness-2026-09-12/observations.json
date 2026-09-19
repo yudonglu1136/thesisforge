@@ -1,0 +1,77 @@
+{
+  "auditDate": "2026-09-12",
+  "verdict": "NO_GO",
+  "method": "Read-only diagnostics and source review; this file records additional observed tool results, not an automated certification.",
+  "productionWrites": false,
+  "vercel": {
+    "matchingApexAndWwwDeployment": true,
+    "target": "production",
+    "gitRef": "trunk",
+    "gitSha": "730dc21",
+    "deployedAt": "2026-09-06T12:04:25.363Z",
+    "awsOriginProtocol": "http:",
+    "environmentValueDecryptedAndVerified": true,
+    "authProvider": "supabase",
+    "authDevBypass": false,
+    "source": "Vercel CLI inspect and read-only GET project environment / deployment endpoints; connector lookup was unavailable, CLI succeeded."
+  },
+  "supabase": {
+    "status": "ACTIVE_HEALTHY",
+    "region": "ap-northeast-2",
+    "postgresVersion": "17.6.1.121",
+    "authUserCount": 27,
+    "usersWithSignInWithin30Days": 8,
+    "publicBusinessTableCount": 0,
+    "migrationCount": 3,
+    "securityAdvisor": ["auth_leaked_password_protection disabled"],
+    "performanceAdvisorCount": 0,
+    "source": "Supabase read-only project metadata, SQL aggregate/schema queries, migrations and advisors; no user identities exported.",
+    "limitations": ["No business tables means no meaningful application-query performance certification from the Postgres advisor.", "Backup/PITR plan entitlement was not verified."]
+  },
+  "additionalBackups": {
+    "region": "us-east-1",
+    "sourceTaggedEncryptedRollbackSnapshots": 2,
+    "latestTaggedRollbackSnapshot": "2026-09-03T08:52:47.904000+00:00",
+    "knownDatabaseBackupPrefixObjectCount": 11,
+    "knownDatabaseBackupPrefixLatest": "2026-09-05T20:44:36+00:00",
+    "knownPortfolioBackupPrefixObjectCount": 0,
+    "source": "EC2 describe-snapshots filtered by GuruPriceRepairSourceSnapshot tag; S3 list-objects-v2 against known database-backups/ and portfolio-backups/ prefixes.",
+    "limitations": ["No archive contents downloaded or restored.", "Empty known prefix is not proof that no other portfolio backup exists."]
+  },
+  "cpu": {
+    "metric": "AWS/EC2 CPUUtilization",
+    "from": "2026-09-11T12:00:00Z",
+    "to": "2026-09-12T12:00:00Z",
+    "hourlyBucketCount": 24,
+    "meanOfHourlyAveragesPercent": 0.30421144331639216,
+    "maximumPercent": 0.5583240279328678,
+    "limitation": "Observed low-load period, not a capacity benchmark; host memory, disk free and I/O wait unavailable."
+  },
+  "avgo": {
+    "localFinancialLatestAvailable": "2026-06-09",
+    "localFinancialLatestReportPeriod": "2026-05-03",
+    "localModelLatestDate": "2026-06-09",
+    "officialReleaseDate": "2026-09-02",
+    "officialReportPeriod": "2026-08-02",
+    "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1730168/000173016826000076/avgo-20260902.htm",
+    "sql": "SELECT ticker,dimension,max(available_at) latest_available,max(report_period) latest_period FROM valuation_pit_financials WHERE ticker IN (?,?) GROUP BY ticker,dimension; SELECT ticker,max(as_of_date) latest_model FROM valuation_pit_model_runs WHERE ticker IN (?,?) GROUP BY ticker;",
+    "parameters": ["AVGO", "PLTR"]
+  },
+  "tests": [
+    {"command": "npm run test:server", "passed": 1472, "failed": 0},
+    {"command": "flutter test --no-pub --reporter expanded", "passed": 527, "failed": 0, "note": "Off-screen tap warnings occurred; no real-browser release acceptance performed."},
+    {"command": "flutter analyze --no-pub", "result": "No issues found"},
+    {"command": "npm run test:ontology", "pythonPassed": 3, "nodePassed": 22, "failed": 0},
+    {"command": "npm run audit:i18n", "result": "passed"},
+    {"command": "npm run test:performance", "passed": 40, "failed": 1, "avatarBytes": 1157636, "avatarBudgetBytes": 1048576},
+    {"command": "npm audit --omit=dev --json", "moderate": 1, "high": 0, "critical": 0, "package": "qs", "fixAvailable": true}
+  ],
+  "unverified": [
+    "Production full SQLite integrity/schema/data coverage and user database inventory",
+    "Production filesystem disk free, RSS and actual backup restore",
+    "Linux Node 22 release build and full real-user bilingual browser QA",
+    "Full enabled-manager production data release matrix",
+    "Three-run 60 sequential / 60 concurrent c20 release benchmark",
+    "Licensed data redistribution and legal compliance"
+  ]
+}

@@ -23,6 +23,10 @@ __pycache__/
 output/
 server/cache/
 
+# Permanent private/licensed analytical warehouse (not an application cache).
+data/fact_os/
+.venv-fact-os/
+
 # Backend/runtime data artifacts belong in AWS, not GitHub/Vercel.
 server/data/*
 !server/data/.gitkeep

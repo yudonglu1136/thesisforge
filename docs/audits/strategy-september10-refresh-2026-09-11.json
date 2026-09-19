@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "status": "partial_source_refresh",
+  "scope": "local_preview_only",
+  "cutoff": "2026-09-10",
+  "generation": "d0fc8d947c38301f96a4072bde18e582d4e67ed5b82de1d31ec0d1e9b955cfdf",
+  "calculationVersion": "strategy-full-matrix-audit-20260910-v5",
+  "coverage": {
+    "returnSecuritiesCurrent": 720,
+    "comparisonQuoteSecuritiesCurrent": 527,
+    "benchmarkCurrent": "SPY",
+    "ctaCurrent": ["KMLM", "DBMF"],
+    "officialManagerDirectoriesChecked": 29,
+    "newMissingHoldingsFilings": 0,
+    "financialInputsRefreshed": false,
+    "financialBlocker": "provider_subscription_required",
+    "latestRetrievableBrokerReport": "2026-09-09"
+  },
+  "repair": {
+    "firstMarketPassAddedRows": 6923,
+    "confirmedTerminalCorrections": 371,
+    "additionalBoundaryRecoveryRows": 2689,
+    "additionalDividendVintageCorrections": 3,
+    "openFieldsQuarantined": 40,
+    "closingPricesChangedByOpenQuarantine": 0,
+    "remainingRecentOpenRangeConflicts": 0,
+    "remainingRecentCloseRangeConflicts": 0,
+    "strictExecutionGateChanged": false,
+    "syntheticSessions": 0,
+    "originalGenerationWrites": 0,
+    "financialAndGuruProtectedTablesChanged": 0,
+    "integrity": "ok",
+    "foreignKeyIssues": 0
+  },
+  "fullPopulationRegression": {
+    "gateStatus": "fail",
+    "allConfigurationsReady": false,
+    "enabledManagers": 28,
+    "expected": 3234,
+    "completed": 3234,
+    "ready": 1503,
+    "blocked": 1731,
+    "errors": 0,
+    "invalidResults": 0,
+    "duplicates": 0,
+    "missingCases": 0,
+    "unexpectedCases": 0,
+    "blockedReasons": {
+      "no_eligible_stocks": 1526,
+      "missing_active_price": 131,
+      "corporate_action_transition_requires_review": 27,
+      "cash_settlement_requires_reinvestment": 41,
+      "conflicting_security_identity": 6
+    },
+    "baselineAfterInitialDateRefresh": {
+      "ready": 1185,
+      "blocked": 2049,
+      "errors": 0
+    },
+    "limit": "All enabled single managers, Top 1–10 and 1/3/5/10Y; all manager pairs and discrete parameter interactions. Not every continuous date, slider value or manager subset. This is not a strict Guru-cache release gate."
+  },
+  "localHttpParity": {
+    "status": "pass",
+    "checks": 42,
+    "anonymousDenied": true,
+    "savedRulesWritten": 0,
+    "meaning": "HTTP worker agrees with the population matrix, including explicit blocked results; does not mean every configuration is ready."
+  },
+  "screenshotCase": {
+    "status": "blocked",
+    "code": "no_eligible_stocks",
+    "date": "2021-09-10",
+    "aboveLimit": ["LOW", "A", "CMG", "HLT"],
+    "missingModel": ["QSR"],
+    "rulesChangedAutomatically": false
+  },
+  "separateUnfilteredControls": {
+    "KMLM30": "ready",
+    "DBMF50": "ready",
+    "leverage1_5": "ready",
+    "lastObservation": "2026-09-10",
+    "dailyObservations": 1255,
+    "holdingSnapshots": 21,
+    "notTheOriginalFilteredResult": true
+  },
+  "verification": {
+    "flutterTestsPassed": 464,
+    "targetedNodeTestsPassed": 92,
+    "performanceTestsPassed": 41,
+    "ontologyNodeTestsPassed": 22,
+    "ontologyPythonTestsPassed": 3,
+    "flutterAnalyze": "pass",
+    "i18nAudit": "pass",
+    "ontologyModuleVerification": "pass",
+    "localPreviewBuild": "pass",
+    "productionModeBuild": "pass",
+    "browserDesktopAnd390x844": "verified",
+    "browserLanguages": ["en", "zh"],
+    "deployed": false
+  },
+  "remainingDataIssues": [
+    "BRK.A current close conflicts with provider day range; withheld",
+    "EA current quote failed daily close validation; withheld",
+    "APH split requires model/price share-basis review",
+    "Unverified non-USD quote units retain actual older dates",
+    "Private rollovers and corporate actions are not repaired with invented prices",
+    "Financial provider authorization and September 10 broker report remain external prerequisites"
+  ],
+  "privateReceipts": {
+    "releaseDirectory": "/Users/yudonglu/Documents/investment-market-reviewed-20260911",
+    "matrixDirectory": "/Users/yudonglu/Documents/strategy-september10-release-matrix-20260911",
+    "httpParityReport": "/Users/yudonglu/Documents/strategy-september10-http-parity-20260911.json",
+    "smokeReport": "/Users/yudonglu/Documents/strategy-september10-preview-20260911.json"
+  }
+}

@@ -20,8 +20,10 @@ const {
   filingsFromRecentShape,
   informationTableFileNamesFromSubmission,
   infer13fValueScale,
+  load13fHoldingHistory,
   normalize13fValueScale,
   parse13fInfoTable,
+  refreshGuruExposureSnapshot,
   selectManager13fActivityRows,
   withManager13fPublicTradingStatus
 } = await import("./secClient.js");
@@ -117,6 +119,33 @@ test("Baupost-style legacy 13F $000 values are scaled once before aggregation", 
   assert.equal(parsed[0].holdingBucket, "common_long");
 });
 
+test("Heard EQUITIES titles use the existing unit inference without rescaling dollar filings", () => {
+  // Heard 2020 Q4–2021 Q3 uses EQUITIES instead of COM. Its 2021 Q3
+  // cover explicitly labels the information-table values as thousands:
+  // https://www.sec.gov/Archives/edgar/data/1796409/000179640921000005/xslForm13F_X01/primary_doc.xml
+  const rows = [
+    ["FICO US", "303250104", 53120, 133490],
+    ["TDG US", "893641100", 51097, 81812],
+    ["AMT US", "03027X100", 30000, 100000],
+    ["BX US", "09260D107", 30000, 300000],
+    ["BLK US", "09247X101", 39337, 46900]
+  ].map(([issuer, cusip, value, shares]) => ({
+    issuer, cusip, value, reportedValue: value, shares,
+    title: "EQUITIES", shareType: "SH", putCall: ""
+  }));
+  assert.equal(infer13fValueScale(rows), 1000);
+  const parsed = parse13fInfoTable(informationTableXml(rows));
+  assert.equal(parsed[0].reportedValue, 53120);
+  assert.equal(parsed[0].value, 53_120_000);
+  assert.equal(parsed[0].valueScale, 1000);
+  assert.equal(parsed[0].holdingBucket, "common_long");
+  const dollarRows = rows.map(row => ({...row, value: row.value * 1000, reportedValue: row.reportedValue * 1000}));
+  assert.equal(infer13fValueScale(dollarRows), 1);
+  assert.equal(normalize13fValueScale(dollarRows)[0].value, 53_120_000);
+  assert.equal(infer13fValueScale(rows.map(row => ({...row, putCall: "PUT"}))), 1);
+  assert.equal(infer13fValueScale(rows.slice(0, 4)), 1);
+});
+
 test("Trian's latest JHG row keeps its value but is marked non-public for downstream UI", () => {
   const holding = withManager13fPublicTradingStatus(
     "nelson-peltz",
@@ -168,6 +197,16 @@ test("Appaloosa-style PUT rows remain outside the common-long book", () => {
   assert.deepEqual(parsed.map((row) => row.id), ["037833100-COMMON", "037833100-PUT"]);
   assert.equal(parsed.find((row) => row.putCall === "").holdingBucket, "common_long");
   assert.equal(parsed.find((row) => row.putCall === "PUT").holdingBucket, "option");
+});
+
+test("Defender's reported BioTime identity uses the documented continuous Lineage shares", () => {
+  const holdings = parse13fInfoTable(informationTableXml([
+    {issuer:'BIOTIME INC',title:'COM',cusip:'09066L105',value:4269000,shares:3198000},
+    {issuer:'AGEX THERAPEUTICS INC',title:'COM',cusip:'00848H108',value:938000,shares:447000}
+  ]));
+  assert.equal(holdings.find(h => h.cusip === '09066L105').ticker, 'LCTX');
+  assert.equal(holdings.find(h => h.cusip === '09066L105').issuer, 'BIOTIME INC');
+  assert.notEqual(holdings.find(h => h.cusip === '00848H108').ticker, 'LCTX');
 });
 
 test("Third Point-style non-common claims do not enter common longs", () => {
@@ -253,6 +292,80 @@ test("duplicate common-long CUSIP rows aggregate value and shares exactly once",
     direct.map(({ value, reportedValue, shares, sourceRows }) => ({ value, reportedValue, shares, sourceRows })),
     [{ value: 5, reportedValue: 5, shares: 5, sourceRows: 2 }]
   );
+});
+
+test("economic placeholder CUSIPs fail before issuer resolution or duplicate aggregation", () => {
+  const rows = [
+    { issuer: "BERKSHIRE HATHAWAY CLASS B", title: "COM", cusip: "000000nan", value: 49_888_398, shares: 99_233 },
+    { issuer: "COSTCO WHSL CORP NEW", title: "COM", cusip: "000000nan", value: 8_000_000, shares: 10_000 }
+  ];
+  assert.throws(() => parse13fInfoTable(informationTableXml(rows), {
+    guruId: "john-stamas", reportDate: "2025-09-30", accessionNumber: "0001766929-25-000005"
+  }), (error) => {
+    assert.equal(error.code, "invalid_13f_identifier");
+    assert.equal(error.sourceRecord.cusip, "000000NAN");
+    assert.equal(error.sourceRecord.accessionNumber, "0001766929-25-000005");
+    return true;
+  });
+  for (const cusip of ["000000NAN", "000000000", "NULL", "N/A", "NONE"]) {
+    assert.throws(() => aggregate13fHoldings(rows.map((row) => ({
+      ...row, cusip, ticker: "COST", id: `${cusip}-COMMON`
+    }))), { code: "invalid_13f_identifier" });
+  }
+  const emptySentinel = parse13fInfoTable(informationTableXml([
+    { issuer: "NONE", title: "NONE", cusip: "000000000", value: 0, shares: 0 }
+  ]));
+  assert.equal(emptySentinel[0].value, 0);
+});
+
+test("corrupt 13F holdings and exposure abort instead of silently skipping the quarter", async () => {
+  const originalFetch = globalThis.fetch;
+  const reportDate = "2025-09-30";
+  const accessionNumber = "0001766929-25-000005";
+  const xml = informationTableXml([
+    { issuer: "COSTCO WHSL CORP NEW", title: "COM", cusip: "000000nan", value: 100, shares: 1 }
+  ]);
+  globalThis.fetch = async (url) => {
+    const sourceUrl = String(url);
+    if (sourceUrl.includes("data.sec.gov/submissions/")) {
+      return new Response(JSON.stringify({ filings: { recent: {
+        form: ["13F-HR"], accessionNumber: [accessionNumber], reportDate: [reportDate],
+        filingDate: ["2025-10-29"], acceptanceDateTime: ["2025-10-29T15:36:04.000Z"],
+        primaryDocument: ["primary_doc.xml"]
+      }, files: [] } }), { status: 200 });
+    }
+    if (sourceUrl.endsWith("/index.json")) {
+      return new Response(JSON.stringify({ directory: { item: [
+        { name: "primary_doc.xml", type: "text.gif" },
+        { name: "informationTable.xml", type: "text.gif" }
+      ] } }), { status: 200 });
+    }
+    if (sourceUrl.endsWith("/informationTable.xml")) return new Response(xml, { status: 200 });
+    throw new Error(`Unexpected test URL: ${sourceUrl}`);
+  };
+  try {
+    await assert.rejects(load13fHoldingHistory({
+      id: "john-stamas", type: "manager13f", cik: "0001766929"
+    }, { years: 0, limit: 0 }), (error) => {
+      assert.equal(error.code, "invalid_13f_identifier");
+      assert.equal(error.sourceRecord.reportDate, reportDate);
+      assert.equal(error.sourceRecord.accessionNumber, accessionNumber);
+      assert.equal(error.sourceRecord.filerCik, "0001766929");
+      assert.match(error.sourceRecord.sourceUrl, /176692925000005\/informationTable.xml$/);
+      assert.match(error.sourceRecord.sourceSha256, /^[a-f0-9]{64}$/);
+      return true;
+    });
+    await assert.rejects(refreshGuruExposureSnapshot("john-stamas", {
+      limit: 40, persist: false
+    }), (error) => {
+      assert.equal(error.code, "invalid_13f_identifier");
+      assert.equal(error.sourceRecord.accessionNumber, accessionNumber);
+      assert.match(error.sourceRecord.sourceSha256, /^[a-f0-9]{64}$/);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Renaissance-scale 13F activity represents every action without squeezing out larger positions", () => {

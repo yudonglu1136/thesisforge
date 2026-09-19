@@ -6,8 +6,16 @@ import {
   cusipsFromInformationTable,
   holdingsFromInformationTable,
   informationTableFromSubmissionText,
+  parseArgs,
   selectTopCommonLongHoldings
 } from "../scripts/build-guru-sec-cusip-manifest.mjs";
+
+test("SEC manifest supports an explicit addition scope without changing its default population", () => {
+  const args = ["--output", "/tmp/manifest-test.json", "--generated-at", "2026-09-01T00:00:00Z"];
+  assert.equal(parseArgs(args).managerIds, undefined);
+  assert.deepEqual(parseArgs([...args, "--manager-ids", "william-heard,john-stamas"]).managerIds,
+    ["william-heard", "john-stamas"]);
+});
 
 test("SEC manifest parser extracts deterministic exact CUSIPs and source identity", () => {
   const xml = `

@@ -1,0 +1,170 @@
+{
+  "schemaVersion": "tbbb-economic-evidence-v1",
+  "evidenceId": "tbbb-2026q2-economic-inputs-2026-09-05",
+  "reviewedThroughDate": "2026-09-05",
+  "periodEndDate": "2026-06-30",
+  "periodStartDate": "2025-07-01",
+  "periodType": "TTM",
+  "availableDate": "2026-08-12",
+  "availabilityPrecision": "date_only_no_intraday_claim",
+  "issuer": {
+    "name": "BBB Foods Inc.",
+    "ticker": "TBBB",
+    "cik": "1978954",
+    "quotedSecurity": "NYSE Class A common share",
+    "quotedCurrency": "USD",
+    "statementCurrency": "MXN",
+    "securityFactor": 1,
+    "securityFactorBasis": "direct_common_share_listing_not_ADR",
+    "sourceId": "prospectus2026"
+  },
+  "sources": {
+    "annual2025": {
+      "url": "https://www.sec.gov/Archives/edgar/data/1978954/000119312526140232/tbbb-20251231.htm",
+      "availableDate": "2026-04-02",
+      "title": "BBB Foods FY2025 Form 20-F",
+      "locator": "Consolidated statements of profit or loss F-7; cash flows F-9; Notes 4.2, 8 and 16"
+    },
+    "q2release2026": {
+      "url": "https://www.sec.gov/Archives/edgar/data/1978954/000119312526346965/6k_tbbb_2q26_earnings_re.htm",
+      "availableDate": "2026-08-12",
+      "title": "BBB Foods Q2 2026 earnings release, SEC Form 6-K",
+      "locator": "H1 income statement p.14; H1 cash flows p.17; share claims pp.18-19; existing-award expense p.20"
+    },
+    "prospectus2026": {
+      "url": "https://www.sec.gov/Archives/edgar/data/1978954/000119312526248693/tbbb-20260529.htm",
+      "availableDate": "2026-05-29",
+      "title": "BBB Foods final prospectus supplement",
+      "locator": "Cover; share rights and quoted currency"
+    },
+    "q1mda2026": {
+      "url": "https://www.sec.gov/Archives/edgar/data/1978954/000119312526241914/tbbb-ex99_2.htm",
+      "availableDate": "2026-05-27",
+      "title": "BBB Foods Q1 2026 management discussion and analysis",
+      "locator": "Capital Expenditures, p.9"
+    }
+  },
+  "financialMetrics": {
+    "revenue": { "label": "Total revenue", "classification": "income_statement", "unit": "MXN_thousand" },
+    "cfo": { "label": "Net cash flows provided by operating activities", "classification": "operating", "unit": "MXN_thousand" },
+    "ppePurchases": { "label": "Purchase of property, furniture, equipment and leasehold improvements", "classification": "investing_outflow_magnitude", "unit": "MXN_thousand" },
+    "ppeDisposals": { "label": "Sale of property and equipment", "classification": "investing_inflow", "unit": "MXN_thousand" },
+    "intangibleCapex": { "label": "Additions to intangible assets", "classification": "investing_outflow_magnitude", "unit": "MXN_thousand" },
+    "leasePrincipal": { "label": "Principal payments on lease liabilities", "classification": "financing_outflow_magnitude", "unit": "MXN_thousand" },
+    "leaseInterest": { "label": "Interest payments on leases", "classification": "financing_outflow_magnitude", "unit": "MXN_thousand" },
+    "otherDebtInterest": { "label": "Interest payment on debt", "classification": "financing_outflow_magnitude", "unit": "MXN_thousand" },
+    "supplierFinanceInflow": { "label": "Finance obtained through supplier finance arrangements", "classification": "financing_inflow", "unit": "MXN_thousand" },
+    "supplierFinanceRepayment": { "label": "Supplier finance repayments net of commissions received", "classification": "financing_outflow_magnitude", "unit": "MXN_thousand" },
+    "sbc": { "label": "Share-based payment expense", "classification": "noncash_cfo_addback", "unit": "MXN_thousand" },
+    "otherDebtPrincipal": { "label": "Payment of debt", "classification": "financing_outflow_magnitude", "unit": "MXN_thousand" }
+  },
+  "financialPeriods": [
+    {
+      "id": "fy2025",
+      "sourceId": "annual2025",
+      "periodStartDate": "2025-01-01",
+      "periodEndDate": "2025-12-31",
+      "label": "reported_actual",
+      "values": {
+        "revenue": 78152943, "cfo": 4681613,
+        "ppePurchases": 3548943, "ppeDisposals": 1392, "intangibleCapex": 24373,
+        "leasePrincipal": 738802, "leaseInterest": 1420187, "otherDebtInterest": 88126,
+        "supplierFinanceInflow": 6276203, "supplierFinanceRepayment": 5831149,
+        "sbc": 2930222, "otherDebtPrincipal": 176250
+      }
+    },
+    {
+      "id": "h12026",
+      "sourceId": "q2release2026",
+      "periodStartDate": "2026-01-01",
+      "periodEndDate": "2026-06-30",
+      "label": "reported_actual",
+      "values": {
+        "revenue": 48897638, "cfo": 4285393,
+        "ppePurchases": 1641401, "ppeDisposals": 185, "intangibleCapex": 13956,
+        "leasePrincipal": 455388, "leaseInterest": 891666, "otherDebtInterest": 46338,
+        "supplierFinanceInflow": 4354953, "supplierFinanceRepayment": 4139777,
+        "sbc": 1336717, "otherDebtPrincipal": 119259
+      }
+    },
+    {
+      "id": "h12025",
+      "sourceId": "q2release2026",
+      "periodStartDate": "2025-01-01",
+      "periodEndDate": "2025-06-30",
+      "label": "reported_comparative_as_visible_2026_08_12",
+      "values": {
+        "revenue": 35901467, "cfo": 1955169,
+        "ppePurchases": 1418061, "ppeDisposals": 1940, "intangibleCapex": 10474,
+        "leasePrincipal": 308436, "leaseInterest": 674518, "otherDebtInterest": 23672,
+        "supplierFinanceInflow": 2596957, "supplierFinanceRepayment": 2425445,
+        "sbc": 465617, "otherDebtPrincipal": 87299
+      }
+    }
+  ],
+  "ttmFormula": { "fy2025": 1, "h12026": 1, "h12025": -1 },
+  "capitalInvestmentBudget": {
+    "sourceId": "q1mda2026",
+    "targetFiscalYear": 2026,
+    "currency": "MXN",
+    "unit": "million",
+    "label": "management_annual_capital_investment_budget",
+    "totalM": 5250,
+    "newStoresM": 3555,
+    "newDistributionCentersM": 490,
+    "newDistributionCenterCount": 4,
+    "remainingUnclassifiedM": 1205,
+    "remainingLabel": "analyst_difference_not_maintenance_capex",
+    "q1DeploymentM": 1089.705,
+    "q1CashPpeM": 706.574,
+    "fullYearCashOnlyCapexM": null,
+    "includedInCashFlowBridge": false,
+    "mappingTreatment": "Capital program includes noncash investment; reconcile financing and lease schedules before a cash-FCFE deduction. Do not label the unclassified balance maintenance capex or subtract the entire budget in addition to related lease payments."
+  },
+  "shareClaims": {
+    "sourceId": "q2release2026",
+    "periodEndDate": "2026-06-30",
+    "unit": "shares",
+    "locator": "Appendix 1 pp.18-19",
+    "issuedByClass": { "A": 77938244, "B": 5210000, "C": 38039530 },
+    "issuedTotal": 121187774,
+    "conditionalAwards": [
+      { "id": "unvested_lep", "shares": 4374993, "label": "reported_vesting_conditional_claim" },
+      { "id": "bolton_allocation", "shares": 4224960, "label": "reported_delivery_conditional_claim" },
+      { "id": "post_ipo_rsus", "shares": 535664, "label": "reported_vesting_conditional_claim" }
+    ],
+    "options": [
+      { "id": "legacy_options", "shares": 37640312, "weightedAverageStrikeUsd": 5.73, "strikePrecisionUsd": 0.01, "label": "reported_conditional_option_claim" },
+      { "id": "post_ipo_options", "shares": 4082500, "weightedAverageStrikeUsd": 32.91, "strikePrecisionUsd": 0.01, "label": "reported_conditional_option_claim" }
+    ],
+    "reportedIllustration": {
+      "assumedSharePriceUsd": 35,
+      "netDilutedShares": 162047684,
+      "label": "issuer_illustrative_assumption_reference_only_not_model_input"
+    }
+  },
+  "existingAwardExpense": {
+    "sourceId": "q2release2026",
+    "locator": "Appendix 2 p.20",
+    "unit": "MXN_million",
+    "label": "management_projection_existing_awards_only",
+    "values": { "2026": 2379, "2027": 881, "2028": 215, "2029": 50 },
+    "includedInCashFlowBridge": false,
+    "futureGrantsForecast": null
+  },
+  "supplierFinancePolicy": {
+    "sourceId": "annual2025",
+    "locator": "Note 4.2 Classification of financial liabilities in supplier finance arrangements",
+    "treatment": "Bank payment to the supplier is already an operating outflow and a financing inflow; repayment is financing. Do not deduct gross supplier repayments from CFO again."
+  },
+  "limitations": [
+    "date_only_availability_no_intraday_precision",
+    "ttm_disposal_comparator_inconsistency_minus_0_363_mxn_million",
+    "intermediate_cash_bridge_not_normalized_fcfe",
+    "noncash_financed_equipment_reinvestment_schedule_incomplete",
+    "existing_award_claims_must_be_valued_separately",
+    "future_grants_not_forecast",
+    "rounded_average_strikes_not_complete_per_tranche_option_terms",
+    "exercise_cash_is_conditional_not_current_cash"
+  ]
+}

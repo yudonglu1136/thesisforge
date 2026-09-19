@@ -108,7 +108,11 @@ async function warmPriceHistory(tickers) {
   const start = process.env.VALUATION_IMPORT_PRICE_START_DATE || "2014-01-01";
   const end = todayIso();
   const attempts = await Promise.allSettled(
-    tickers.map((ticker) => loadPriceSeries(ticker, { start, end }))
+    tickers.map((ticker) => loadPriceSeries(ticker, {
+      start,
+      end,
+      priceType: "RAW_CLOSE"
+    }))
   );
   return attempts.map((attempt, index) => ({
     ticker: tickers[index],

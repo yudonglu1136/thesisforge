@@ -135,7 +135,11 @@ async function hydratePrices(tickers) {
   let missing = 0;
   for (const ticker of tickers) {
     try {
-      const series = await loadPriceSeries(ticker, { start, end });
+      const series = await loadPriceSeries(ticker, {
+        start,
+        end,
+        priceType: "RAW_CLOSE"
+      });
       if (series.points.length) ok += 1;
       else missing += 1;
       log("[hydrate] price", {

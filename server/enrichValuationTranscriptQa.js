@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { normalizeEarningsPeriod, readTranscriptQaBundleByTickerPeriod } from "./transcriptQaClient.js";
 import { transcriptQaCoverageSummary } from "./valuationTranscriptQa.js";
+import { auditedQaTranslation, selectedQaTranslation, qaTranslationSources, assertAttachedQaTranslations } from "./valuationQaTranslationIntegrity.js";
 
 const CURRENT_DB_PATH = process.env.SQLITE_DB_PATH || path.join(process.cwd(), "server/data/guru-analysis.sqlite");
 const YOUTUBE_DB_PATH = process.env.YOUTUBE_TRANSCRIPT_DB_PATH || "/Users/yudonglu/Documents/youtube_transcript_db/transcripts.sqlite";
@@ -180,11 +181,7 @@ function mergeStoredQaTranslations(freshRows, existingRows) {
 
 function collectTranslationSources(qaRows, sources) {
   if (!SHOULD_TRANSLATE_ZH) return;
-  for (const qa of qaRows) {
-    const answer = translationSource(qa.answer, FALLBACK_ANSWER);
-    if (needsStoredChinese(qa.questionZh, qa.question)) sources.add(translationSource(qa.question));
-    if (needsStoredChinese(qa.answerZh, answer)) sources.add(answer);
-  }
+  for (const source of qaTranslationSources(qaRows, FALLBACK_ANSWER)) sources.add(source);
 }
 
 async function translateSourcesToChinese(sources) {
@@ -253,6 +250,11 @@ function auditedTranslationLineage(sources, translations) {
     if (!enoughChineseForSource(translations.get(source), source)) {
       failures.push({ source: source.slice(0, 160), status, code: "cache_translation_missing" });
     }
+    try {
+      auditedQaTranslation(source, translations, sourceAudits);
+    } catch (error) {
+      failures.push({ source: source.slice(0, 160), status, code: error.message });
+    }
   }
   if (failures.length) {
     throw new Error(
@@ -274,15 +276,17 @@ function auditedTranslationLineage(sources, translations) {
 }
 
 function translatedValue(sourceValue, existingValue, translatedBySource) {
+  // Existing Chinese may come from an older, differently audited generation.
+  // The used-source audit above binds the exact cache text attached here.
+  void existingValue;
   const source = translationSource(sourceValue);
   if (!source) return "";
-  if (!needsStoredChinese(existingValue, source)) return existingValue || source;
-  return translatedBySource.get(source) || source;
+  return selectedQaTranslation(source, translatedBySource);
 }
 
 function translateQaRowsToChinese(qaRows, translatedBySource) {
   if (!SHOULD_TRANSLATE_ZH) return qaRows;
-  return qaRows.map((qa) => {
+  const translatedRows = qaRows.map((qa) => {
     const answer = translationSource(qa.answer, FALLBACK_ANSWER);
     const next = { ...qa };
     next.answer = answer;
@@ -292,6 +296,8 @@ function translateQaRowsToChinese(qaRows, translatedBySource) {
     if (FORCE_RETRANSLATE_ZH || !next.askedByZh) next.askedByZh = askedByToChinese(next.askedBy || next.speaker);
     return next;
   });
+  assertAttachedQaTranslations(translatedRows, translatedBySource, FALLBACK_ANSWER);
+  return translatedRows;
 }
 
 if (!fs.existsSync(CURRENT_DB_PATH)) {

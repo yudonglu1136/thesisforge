@@ -11,6 +11,7 @@ import test from "node:test";
 import express from "express";
 import { createSystemHealth } from "./systemHealthCore.js";
 import { readDatabaseTableSummariesFrom } from "./databaseTableSummaries.js";
+import { installDatabaseHealthIndexes } from "./databaseHealthIndexes.js";
 import { createPublicHealthWorkerBuilder } from "./publicHealthWorkerRunner.js";
 import { createPublicHealthService } from "./publicHealthService.js";
 import { requireAuth } from "./auth/requireAuth.js";
@@ -67,6 +68,19 @@ test("worker returns identical full health semantics without initializing or cha
     assert.equal(curveModule(result).details.curveAvailability.failures[0].reason, "strict_declared_coverage_floor_mismatch");
     assert.equal(sha(databasePath), beforeHash);
     assert.deepEqual(fs.readdirSync(dir), ["existing.sqlite"]);
+    // Installing only performance indexes must not alter any matrix outcome,
+    // identity/freshness/quality gate, or public semantic field.
+    const migration = new DatabaseSync(databasePath);
+    installDatabaseHealthIndexes(migration);
+    migration.close();
+    const indexedHash = sha(databasePath);
+    const indexedBuilder = createPublicHealthWorkerBuilder({ databasePath, methodIdentity: identity });
+    const indexed = await indexedBuilder.buildHealth(options);
+    // The real file's metadata changes with the intentional index migration.
+    assert.deepEqual({ ...indexed, database: {} }, { ...direct, database: {}, modules: direct.modules.map((module) =>
+      module.id === "database" ? indexed.modules.find((entry) => entry.id === "database") : module
+    ) });
+    assert.equal(sha(databasePath), indexedHash);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

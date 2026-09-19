@@ -38,7 +38,7 @@ function usage(message = "") {
     "Usage: node scripts/build-guru-sec-cusip-manifest.mjs " +
     "--output <json> --generated-at <ISO> [--start-report-date YYYY-MM-DD] " +
     "[--end-report-date YYYY-MM-DD] [--include-disabled] [--request-delay-ms 125] " +
-    "[--response-cache-dir <untracked-dir>]\n"
+    "[--response-cache-dir <untracked-dir>] [--manager-ids <comma-separated-IDs>]\n"
   );
   process.exit(message ? 2 : 0);
 }
@@ -65,6 +65,7 @@ export function parseArgs(argv) {
     else if (token === "--end-report-date") args.endReportDate = next();
     else if (token === "--request-delay-ms") args.requestDelayMs = Number(next());
     else if (token === "--response-cache-dir") args.responseCacheDir = next();
+    else if (token === "--manager-ids") args.managerIds = next().split(",");
     else if (token === "--include-disabled") args.includeDisabled = true;
     else if (token === "--help" || token === "-h") usage();
     else usage(`Unknown argument: ${token}`);
@@ -83,6 +84,9 @@ export function parseArgs(argv) {
   if (!Number.isFinite(args.requestDelayMs) || args.requestDelayMs < 100) {
     usage("--request-delay-ms must be at least 100ms to respect SEC fair-access limits");
   }
+  if (args.managerIds && (new Set(args.managerIds).size !== args.managerIds.length ||
+      args.managerIds.some(id => !gurus.some(guru => guru.id === id && guru.type === "manager13f" &&
+        (args.includeDisabled || !guru.disableSimulation))))) usage("--manager-ids must contain distinct eligible manager13f IDs");
   return args;
 }
 
@@ -229,8 +233,8 @@ function managerRows(includeDisabled) {
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+export async function main(argv = process.argv.slice(2)) {
+  const args = parseArgs(argv);
   const userAgent = process.env.SEC_USER_AGENT || DEFAULT_USER_AGENT;
   const responseCacheDir = args.responseCacheDir ? path.resolve(args.responseCacheDir) : "";
   let lastRequestAt = 0;
@@ -280,7 +284,8 @@ async function main() {
     return cachedFetch(url, "text/xml, text/plain, */*");
   };
 
-  const selectedManagers = managerRows(args.includeDisabled);
+  const selectedManagers = managerRows(args.includeDisabled)
+    .filter(manager => !args.managerIds || args.managerIds.includes(manager.id));
   const filings = [];
   const cusipObservations = new Map();
 

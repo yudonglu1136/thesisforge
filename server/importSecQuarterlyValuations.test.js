@@ -45,6 +45,68 @@ test("official revenue_guidance growth feeds the valuation digest", () => {
   assert.equal(digest.revenueGuidanceGrowth, 7.25);
 });
 
+test("multi-year CAGR cannot become next-period revenue growth even with an old company-total label", () => {
+  const target = {
+    ...guidance("revenue_guidance", null,
+      "We expect compounded annual growth in total revenue of 30% from 2025 to 2028."),
+    growth_yoy: 30, evidence_id: "multi-year", guidance_subject: "company_total_or_unspecified"
+  };
+  const annual = {
+    ...guidance("revenue_guidance", null, "We expect total revenue growth of 12% for FY2026."),
+    growth_yoy: 12, evidence_id: "annual", guidance_scope: "full_year", guidance_subject: "company_total"
+  };
+  for (const scope of [undefined, "multi_year_target"]) {
+    const result = digestGuidanceMetrics([{ ...target, guidance_scope: scope }, annual]);
+    assert.equal(result.revenueGuidanceGrowth, 12);
+    assert.deepEqual(result.scalarEvidenceIds.revenueGuidanceGrowth, ["annual"]);
+    assert.equal(result.evidence.length, 2, "Original multi-year target remains research evidence");
+  }
+});
+
+test("scalar guidance lineage excludes a same-valued subset and records deduplicated contributors", () => {
+  const total = {
+    ...guidance("revenue_guidance", null, "We expect total revenue growth of 30% for FY2026."),
+    growth_yoy: 30, evidence_id: "total", guidance_subject: "company_total"
+  };
+  const subset = { ...total, evidence_id: "subset", guidance_subject: "segment_or_subset" };
+  const duplicate = { ...total, evidence_id: "duplicate" };
+  const operating = { ...guidance("operating_margin", null, "Operating margin guidance is 15%."),
+    margin_pct: 15, evidence_id: "operating" };
+  const gross = { ...guidance("gross_margin", null, "Gross margin guidance is 25%."),
+    margin_pct: 25, evidence_id: "gross" };
+  const blocked = { ...gross, evidence_id: "rejected", quality_status: "currency_conflict" };
+  const digest = digestGuidanceMetrics([total, subset, duplicate, operating, gross, blocked]);
+  assert.equal(digest.revenueGuidanceGrowth, 30);
+  assert.deepEqual(digest.scalarEvidenceIds, {
+    revenueGrowth: ["total"], revenueGuidanceGrowth: ["total"],
+    operatingMargin: ["operating"], grossMargin: ["gross"]
+  });
+});
+
+test("historical annual revenue cannot become guidance through better-than-expected wording", () => {
+  const quote = "We ended the year with a better-than-expected Holiday quarter. For the year, revenue exceeded $4 billion.";
+  const actual = { ...guidance("revenue_guidance", 4000, quote), evidence_id: "reported-year",
+    guidance_scope: "full_year", guidance_subject: "company_total_or_unspecified" };
+  const forward = { ...guidance("revenue_guidance", 4200, "For the full year, we expect revenue of $4.2 billion."),
+    evidence_id: "forward-year", guidance_scope: "full_year" };
+  for (const position of [undefined, quote.indexOf("revenue exceeded")]) {
+    const result = digestGuidanceMetrics([{ ...actual, metric_position: position }, forward]);
+    assert.equal(result.revenueGuidanceM, 4200);
+    assert.deepEqual(result.guidanceSelection.revenue.acceptedEvidenceIds, ["forward-year"]);
+    assert.equal(result.rejectedHistoricalGuidance[0].evidenceId, "reported-year");
+    assert.equal(result.evidence.length, 2);
+  }
+});
+
+test("a forward owned metric is not rejected because its prior comparator is in the same quote", () => {
+  const quote = "Revenue was $4 billion last year. For the full year, we expect revenue of $4.2 billion.";
+  const metric = { ...guidance("revenue_guidance", 4200, quote), evidence_id: "forward",
+    guidance_scope: "full_year", metric_position: quote.indexOf("revenue of") };
+  const result = digestGuidanceMetrics([metric]);
+  assert.equal(result.revenueGuidanceM, 4200);
+  assert.deepEqual(result.rejectedHistoricalGuidance, []);
+});
+
 test("official issuer guidance overrides same-period transcript extraction", () => {
   const transcriptFcf = guidance(
     "free_cash_flow_guidance",
@@ -56,11 +118,11 @@ test("official issuer guidance overrides same-period transcript extraction", () 
   const officialFcf = guidance(
     "free_cash_flow_guidance",
     2_400,
-    "Equity free cash flow of at least GBP 2.4 billion."
+    "For full year 2026, our guidance is equity free cash flow of at least GBP 2.4 billion."
   );
   officialFcf.currency = "GBP";
   officialFcf.source_type = "official_issuer_results_release";
-  officialFcf.payload_json = JSON.stringify({ guidance_scope: "full_year", guidance_year: 2026 });
+  officialFcf.payload_json = JSON.stringify({ guidance_scope: "full_year", guidance_year: 2026, guidance_subject: "company_total" });
 
   const digest = digestGuidanceMetrics([transcriptFcf, officialFcf]);
 

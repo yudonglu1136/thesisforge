@@ -1,3 +1,5 @@
+import { inspectDatabaseHealthIndexes, valuationHealthSourceDate } from "./databaseHealthIndexes.js";
+
 const tableSummarySpecs = [
   { table: "dashboard_snapshots", label: "Guru dashboard", latest: "generated_at" },
   {
@@ -30,10 +32,7 @@ const tableSummarySpecs = [
     table: "valuation_ticker_snapshots",
     label: "Valuation tickers",
     latest: "generated_at",
-    sourceDate: `COALESCE(
-      NULLIF(json_extract(payload_json, '$.history[#-1].asOfDate'), ''),
-      NULLIF(json_extract(payload_json, '$.latest.asOfDate'), '')
-    )`
+    sourceDate: valuationHealthSourceDate
   },
   { table: "valuation_podcast_insights", label: "Podcast insights", latest: "generated_at", maxDate: "observed_at" },
   {
@@ -50,6 +49,18 @@ const tableSummarySpecs = [
 ];
 
 export function readDatabaseTableSummariesFrom(db) {
+  // A combined COUNT/MAX aggregate forces scans of large JSON blobs and every
+  // price row. Independent scalar aggregates can use SQLite's exact MIN/MAX
+  // index seeks. No cached counts/dates, sampling, or weaker freshness checks.
+  // Older databases keep their existing query until the operator installs the
+  // optional indexes; request handling never creates or changes a schema.
+  let indexedTables;
+  try {
+    const indexes = inspectDatabaseHealthIndexes(db);
+    indexedTables = new Set(["valuation_ticker_snapshots", "price_points"].filter((table) =>
+      indexes.filter((index) => index.table === table).every((index) => index.state === "ready")
+    ));
+  } catch { indexedTables = new Set(); }
   return tableSummarySpecs.map((spec) => {
     const selects = [
       "COUNT(*) AS row_count",
@@ -59,7 +70,13 @@ export function readDatabaseTableSummariesFrom(db) {
       spec.maxDate ? `MAX(${spec.maxDate}) AS max_date` : "NULL AS max_date"
     ];
     try {
-      const row = db.prepare(`SELECT ${selects.join(", ")} FROM ${spec.table}`).get();
+      const sql = indexedTables.has(spec.table)
+        ? `SELECT ${selects.map((select) => {
+          const [expression, alias] = select.split(/ AS /);
+          return expression === "NULL" ? select : `(SELECT ${expression} FROM ${spec.table}) AS ${alias}`;
+        }).join(", ")}`
+        : `SELECT ${selects.join(", ")} FROM ${spec.table}`;
+      const row = db.prepare(sql).get();
       return {
         table: spec.table,
         label: spec.label,

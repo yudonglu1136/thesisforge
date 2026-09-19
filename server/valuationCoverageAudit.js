@@ -1,3 +1,5 @@
+import { prepareReviewedEconomicRows, reviewedNonModelableReason } from "./reviewedEconomicInputs.js";
+
 function finite(value) {
   if (value == null || value === "") return null;
   return Number.isFinite(Number(value)) ? Number(value) : null;
@@ -115,14 +117,31 @@ export function inspectUnmodeledFinancialPeriods(db) {
       const period = periods[index];
       selectedCount += 1;
       const hasTrueTrailingBasis = period.hasReportedTrailing || consecutiveQuarterFlowKeys(periods, index);
-      if (modeled.has(period.key)) continue;
-      const data = period.trailing || period.base;
+      let reviewedExclusion = null;
+      let invalidReviewedExclusion = null;
+      try {
+        reviewedExclusion = reviewedNonModelableReason({ ticker: period.ticker, fiscalPeriod: period.fiscalPeriod,
+          availableDate: period.availableAt, periodEndDate: period.base?.periodEndDate,
+          currency: period.base?.financialStatementCurrency });
+      } catch (error) { invalidReviewedExclusion = error.message; }
+      if (modeled.has(period.key) && !reviewedExclusion && !invalidReviewedExclusion) continue;
+      let data = period.trailing || period.base;
+      if (!reviewedExclusion && !invalidReviewedExclusion) {
+        try {
+          const [fiscalYear, fiscalQuarter] = period.fiscalPeriod.split("-");
+          const [economicRow] = prepareReviewedEconomicRows({ ticker: period.ticker, rows: [{ ...period.base,
+            fiscalYear: Number(fiscalYear), fiscalQuarter, financialAvailableAt: period.availableAt,
+            pitTrailingTwelveMonths: period.trailing }] });
+          if (economicRow.reviewedEconomicInput) data = economicRow.pitTrailingTwelveMonths;
+        } catch (error) { invalidReviewedExclusion = error.message; }
+      }
       const profile = profiles.get(period.ticker) || null;
       const revenue = finite(data.revenue_m);
       const netIncome = finite(data.net_income_m);
       const cfo = finite(data.cfo_m);
       const capex = finite(data.capex_m);
-      const fcf = cfo != null && capex != null ? cfo - capex : finite(data.fcf_after_capex_m);
+      const fcf = data.reviewedEconomicInput ? finite(data.fcf_after_capex_m) :
+        cfo != null && capex != null ? cfo - capex : finite(data.fcf_after_capex_m);
       const shares = finite(data.shares_m ?? period.base?.shares_m);
       const equity = finite(data.equity_m ?? period.base?.equity_m);
       const cash = finite(data.cash_m ?? period.base?.cash_m) || 0;
@@ -134,7 +153,13 @@ export function inspectUnmodeledFinancialPeriods(db) {
       let reason;
       let unexpectedlyModelable = false;
 
-      if (!period.hasCoreFinancials) {
+      if (invalidReviewedExclusion) {
+        reason = "invalid_reviewed_economic_inputs_or_exclusion";
+        unexpectedlyModelable = true;
+      } else if (reviewedExclusion) {
+        reason = modeled.has(period.key) ? "pre_ipo_period_incorrectly_modeled" : reviewedExclusion;
+        unexpectedlyModelable = modeled.has(period.key);
+      } else if (!period.hasCoreFinancials) {
         reason = "incomplete_provider_income_statement";
       } else if (!hasTrueTrailingBasis) {
         reason = "insufficient_consecutive_quarters_for_true_ttm";

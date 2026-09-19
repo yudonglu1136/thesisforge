@@ -28,6 +28,7 @@ from typing import Iterable, Sequence
 
 
 DEFAULT_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+NUMERIC_PROTECTION_VERSION = "deterministic-v8-shared-money-range-explicit-plural-scales"
 DEFAULT_CHECKPOINT_EVERY = 100
 DEFAULT_BATCH_SIZE = 12
 DEFAULT_CHUNK_CHARS = 3_200
@@ -36,7 +37,7 @@ FINAL_RETRY_FRAGMENT_CHARS = 140
 NUMERIC_TEXT_SPAN_CHARS = 180
 FINAL_NUMERIC_TEXT_SPAN_CHARS = 96
 
-SYSTEM_PROMPT = """你是买方研究团队的资深中英双语财报编辑。把英文财报电话会文本逐句完整翻译成自然、准确的简体中文。不得概括、增添、删除或解释。保持说话人、产品名、ticker、缩写、时间顺序、因果关系及不确定语气。输入中的 ⟦N0⟧、⟦N1⟧ 等标记代表已审计的数字或金额；每个标记必须原样保留一次，不能改写、移动到错误句子或遗漏。严格区分增速与利润率：generated X adjusted free cash flow 表示调整后自由现金流率，不是增长；margin 译为利润率；revenue accelerated 表示营收增速加快。输出只含简体中文译文。"""
+SYSTEM_PROMPT = """你是买方研究团队的资深中英双语财报编辑。把英文财报电话会文本逐句完整翻译成自然、准确的简体中文。不得概括、增添、删除或解释。保持说话人、产品名、ticker、缩写、时间顺序、因果关系及不确定语气。输入中的 ⟦N0⟧、⟦N1⟧ 等标记代表已审计的数字或金额；每个标记必须原样保留一次，不能改写、移动到错误句子或遗漏。严格区分现金流金额、现金流率和增速：free cash flow margin 或明确表示占营收比例的自由现金流译为自由现金流率；现金流金额不能改成比率；free cash flow growth 译为自由现金流增速。财务 margin 译为利润率，金额 gross profit 译为毛利、operating income 译为营业利润，不因同段出现 margin 就把所有利润金额改成利润率。revenue accelerated 表示营收增速加快。输出只含简体中文译文。"""
 RETRY_SYSTEM_PROMPT = """你是财报翻译校对员。逐句完整翻译成自然、准确的简体中文，只输出译文。源文中每个用中文全角方括号【】包住的数字、年份、季度、金额或百分比均为已经校准的审计值；必须把每个完整括号片段原样保留在对应句子中，出现次数也必须完全相同，不得省略、复制或改写。"""
 FINAL_RETRY_SYSTEM_PROMPT = """你是财报逐句翻译审计员。完整翻译下面这个很短的英文片段，只输出简体中文译文。寒暄、问题背景、限定词和比较关系都不能概括或省略。每个用中文全角方括号【】包住的审计值必须原样保留在对应位置，数量完全一致。不得直接照抄英文句子。"""
 NUMERIC_SPAN_SYSTEM_PROMPT = """你是财报逐句翻译审计员。输入是从完整英文句子中截出的纯文本片段，片段的前后可能紧邻一个已被系统移除并单独保存的数字。只翻译输入片段本身，保持语序、连接词、标点、寒暄和限定语，不得概括、补写数字或照抄整段英文。只输出自然、准确的简体中文片段。"""
@@ -44,9 +45,18 @@ NUMERIC_SPAN_SYSTEM_PROMPT = """你是财报逐句翻译审计员。输入是从
 PLACEHOLDER_RE = re.compile(r"⟦N(\d+)⟧")
 RETRY_PLACEHOLDER_RE = re.compile(r"ZXNUM(\d+)ZX")
 RETRY_END_RE = re.compile(r"ZXEND(\d+)ZX")
-PROTECTED_VALUE_RE = re.compile(
+MONEY_RANGE_PATTERN = (
+    r"(?P<moneyrange>(?P<range_between>\bbetween\s+)?"
+    r"(?P<range_currency>US\$|CA\$|AU\$|HK\$|NZ\$|\$|£|€|¥)\s*"
+    r"(?P<range_left>[-+]?\d[\d,]*(?:\.\d+)?)"
+    r"(?:\s*(?P<range_left_scale>trillions?|billions?|millions?|thousands?|[TBMK])(?![A-Za-z0-9]))?"
+    r"\s*(?(range_between)and|(?:to\b|through\b|[-–—]))\s*"
+    r"(?:(?P=range_currency)\s*)?(?P<range_right>[-+]?\d[\d,]*(?:\.\d+)?)"
+    r"(?:\s*(?P<range_right_scale>trillions?|billions?|millions?|thousands?|[TBMK])(?![A-Za-z0-9]))?)"
+)
+BASE_PROTECTED_VALUE_RE = re.compile(
     r"(?P<money>(?:US\$|CA\$|AU\$|HK\$|NZ\$|\$|£|€|¥)\s*"
-    r"[-+]?\d[\d,]*(?:\.\d+)?\s*(?:trillion|billion|million|thousand|[TBMK])?)"
+    r"[-+]?\d[\d,]*(?:\.\d+)?(?:\s*(?:trillions?|billions?|millions?|thousands?|[TBMK])(?![A-Za-z0-9]))?)"
     r"|(?P<quarter>\b(?:FY\s*)?20\d{2}\s*Q[1-4]\b|\bQ[1-4]\s*(?:FY\s*)?20\d{2}\b|\bFY\s*20\d{2}\b|\bQ[1-4]\b)"
     r"|(?P<identifier>\b(?:FY\d{2}|[A-Za-z][A-Za-z0-9.-]*\d[A-Za-z0-9.-]*|\d+(?:\.\d+)?[A-Za-z][A-Za-z0-9.-]*)\b)"
     r"|(?P<bps>[-+]?\d[\d,]*(?:\.\d+)?\s*(?:basis points?|bps)\b)"
@@ -55,6 +65,7 @@ PROTECTED_VALUE_RE = re.compile(
     r"|(?P<number>\b\d[\d,]*(?:\.\d+)?\b)",
     re.IGNORECASE,
 )
+PROTECTED_VALUE_RE = re.compile(MONEY_RANGE_PATTERN + "|" + BASE_PROTECTED_VALUE_RE.pattern, re.IGNORECASE)
 
 ABBREVIATIONS = (
     "U.S.", "U.K.", "e.g.", "i.e.", "Mr.", "Ms.", "Dr.", "Inc.", "Ltd.",
@@ -79,6 +90,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache", required=True, help="Output source-to-Chinese translation JSON cache.")
     parser.add_argument("--audit", required=True, help="Output translation lineage and validation JSON.")
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--context", default="", help="Explicit translation-domain context, recorded in prompt hashes; never an instruction to alter source facts.")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--chunk-chars", type=int, default=DEFAULT_CHUNK_CHARS)
     parser.add_argument("--checkpoint-every", type=int, default=DEFAULT_CHECKPOINT_EVERY)
@@ -92,11 +104,27 @@ def sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def split_speaker_label(text: str) -> tuple[str, str]:
+    """Preserve the exact attributed speaker/company; translate the answer.
+
+    Numeric checks cannot catch a fluent translation that silently assigns a
+    CEO to another company. This prefix is factual source identity, not prose
+    for the language model to reconstruct.
+    """
+    match = re.match(r"^([^:\n]{1,180}\s+[—–]\s+[^:\n]{1,220}:)\s*(.+)$", text, re.S)
+    if match and re.search(r"\b(?:CEO|CFO|COO|president|officer|director|chairman|founder|relations|controller|treasurer)\b", match[1], re.I):
+        return match[1], match[2]
+    return "", text
+
+
 def has_chinese(value: str) -> bool:
     return bool(re.search(r"[\u3400-\u9fff]", value or ""))
 
 
 def enough_chinese(value: str, source: str) -> bool:
+    label, body = split_speaker_label(source)
+    if label and value and value.startswith(label):
+        source, value = body, value[len(label):].strip()
     if not value or not has_chinese(value):
         return False
     chinese_chars = len(re.findall(r"[\u3400-\u9fff]", value))
@@ -114,6 +142,36 @@ def read_json(path: Path, fallback):
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return fallback
+
+
+def reusable_source_audit(source: str, translated, audit):
+    """Resume only an exact audited source/target pair, never a status flag.
+
+    A modified cache must be regenerated even if a previous process left a
+    passing sidecar behind. Reuse only this generator's understood row schema;
+    richer editorial/recovery packages retain their own separate merger and
+    provenance rules rather than being silently flattened here.
+    """
+    if not isinstance(translated, str) or not isinstance(audit, dict):
+        return None
+    if (audit.get("status") not in {"pass", "approved"}
+            or audit.get("source_sha256") != sha256_text(source)
+            or audit.get("translation_sha256") != sha256_text(translated)
+            or audit.get("source_chars") != len(source)
+            or audit.get("translation_chars") != len(translated)
+            or audit.get("warnings") != []
+            or not enough_chinese(translated, source)):
+        return None
+    try:
+        record = SourceAudit(**audit)
+    except TypeError:
+        return None
+    if (isinstance(record.chunk_count, bool)
+            or not isinstance(record.chunk_count, int) or record.chunk_count < 1):
+        return None
+    if chunk_warnings(source, translated):
+        return None
+    return record
 
 
 def atomic_write_json(path: Path, payload) -> None:
@@ -166,7 +224,7 @@ def currency_name(symbol: str) -> str:
 
 def deterministic_money(value: str) -> str:
     match = re.fullmatch(
-        r"(US\$|CA\$|AU\$|HK\$|NZ\$|\$|£|€|¥)\s*([-+]?\d[\d,]*(?:\.\d+)?)\s*(trillion|billion|million|thousand|[TBMK])?",
+        r"(US\$|CA\$|AU\$|HK\$|NZ\$|\$|£|€|¥)\s*([-+]?\d[\d,]*(?:\.\d+)?)\s*(trillions?|billions?|millions?|thousands?|[TBMK])?",
         value.strip(),
         flags=re.IGNORECASE,
     )
@@ -177,7 +235,7 @@ def deterministic_money(value: str) -> str:
         number = Decimal(raw_number.replace(",", ""))
     except InvalidOperation:
         return value
-    scale = (raw_scale or "").lower()
+    scale = (raw_scale or "").lower().removesuffix("s")
     multiplier = {
         "trillion": Decimal("1000000000000"),
         "t": Decimal("1000000000000"),
@@ -204,6 +262,13 @@ def deterministic_money(value: str) -> str:
 
 def deterministic_protected_value(match: re.Match[str]) -> str:
     value = match.group(0).strip()
+    if match.lastgroup == "moneyrange":
+        currency = match.group("range_currency")
+        right_scale = match.group("range_right_scale") or ""
+        left_scale = match.group("range_left_scale") or right_scale
+        left = deterministic_money(currency + match.group("range_left") + " " + left_scale)
+        right = deterministic_money(currency + match.group("range_right") + " " + right_scale)
+        return left + "至" + right
     if match.lastgroup == "money":
         return deterministic_money(value)
     if match.lastgroup == "bps":
@@ -212,16 +277,33 @@ def deterministic_protected_value(match: re.Match[str]) -> str:
     return re.sub(r"\s+%$", "%", value)
 
 
+def protected_value_spans(source: str):
+    for match in PROTECTED_VALUE_RE.finditer(source):
+        if match.lastgroup == "moneyrange":
+            # A by-X-to-Y revision is not a range. Nor is a left-only scale
+            # sufficient proof that an explicitly quoted right amount shares it.
+            preceding = source[:match.start()]
+            delta_revision = re.search(r"\bby\s*$", preceding, re.IGNORECASE)
+            left_only_scale = match.group("range_left_scale") and not match.group("range_right_scale")
+            if delta_revision or left_only_scale:
+                for scalar in BASE_PROTECTED_VALUE_RE.finditer(source, match.start(), match.end()):
+                    yield scalar.start(), scalar.end(), deterministic_protected_value(scalar)
+                continue
+        yield match.start(), match.end(), deterministic_protected_value(match)
+
+
 def protect_numbers(source: str, *, retry: bool = False) -> tuple[str, list[str]]:
     values: list[str] = []
-
-    def replace(match: re.Match[str]) -> str:
-        value = deterministic_protected_value(match)
+    pieces = []
+    cursor = 0
+    for start, end, value in protected_value_spans(source):
+        pieces.append(source[cursor:start])
         placeholder = retry_token(len(values), value) if retry else f"⟦N{len(values)}⟧"
         values.append(value)
-        return placeholder
-
-    return PROTECTED_VALUE_RE.sub(replace, source), values
+        pieces.append(placeholder)
+        cursor = end
+    pieces.append(source[cursor:])
+    return "".join(pieces), values
 
 
 def restore_numbers(translated: str, values: Sequence[str], *, retry: bool = False) -> str:
@@ -338,18 +420,24 @@ def has_financial_margin(source: str) -> bool:
 
 def normalize_financial_terms(source: str, translated: str) -> str:
     output = translated
+    # A paragraph can contain both an amount and its margin. Global replacement
+    # would turn correctly translated gross profit into gross margin. In mixed
+    # owner clauses leave the wording to translation/review, not regex guessing.
+    gross_amount_owner = bool(re.search(r"\bgross profits?\b", source, re.IGNORECASE))
+    operating_amount_owner = bool(re.search(r"\boperating (?:income|profits?)\b", source, re.IGNORECASE))
     if re.search(r"\bcontribution margins?\b", source, re.IGNORECASE):
         output = re.sub(r"贡献毛利率?|贡献利润(?!率)", "贡献利润率", output)
-    if re.search(r"\bgross margins?\b", source, re.IGNORECASE):
+    if not gross_amount_owner and re.search(r"\bgross margins?\b", source, re.IGNORECASE):
         output = re.sub(r"毛利(?!率)", "毛利率", output)
-    if re.search(r"\boperating margins?\b", source, re.IGNORECASE):
+    if not operating_amount_owner and re.search(r"\boperating margins?\b", source, re.IGNORECASE):
         output = re.sub(r"营业利润(?!率)", "营业利润率", output)
     if re.search(r"\bprofit margins?\b", source, re.IGNORECASE):
         output = output.replace("利润空间", "利润率")
     if re.search(r"\bfree cash flow margins?\b", source, re.IGNORECASE):
         output = output.replace("自由现金流利润率", "自由现金流率")
     if has_financial_margin(source):
-        output = re.sub(r"毛利(?!率)", "毛利率", output)
+        if not gross_amount_owner:
+            output = re.sub(r"毛利(?!率)", "毛利率", output)
         output = output.replace("利润空间", "利润率")
     return output
 
@@ -357,11 +445,11 @@ def normalize_financial_terms(source: str, translated: str) -> str:
 def split_numeric_spans(source: str) -> list[tuple[str, str]]:
     spans: list[tuple[str, str]] = []
     cursor = 0
-    for match in PROTECTED_VALUE_RE.finditer(source):
-        if match.start() > cursor:
-            spans.append(("text", source[cursor:match.start()]))
-        spans.append(("value", deterministic_protected_value(match)))
-        cursor = match.end()
+    for start, end, value in protected_value_spans(source):
+        if start > cursor:
+            spans.append(("text", source[cursor:start]))
+        spans.append(("value", value))
+        cursor = end
     if cursor < len(source):
         spans.append(("text", source[cursor:]))
     return spans
@@ -369,6 +457,9 @@ def split_numeric_spans(source: str) -> list[tuple[str, str]]:
 
 def chunk_warnings(source: str, translated: str) -> list[str]:
     warnings: list[str] = []
+    label, _ = split_speaker_label(source)
+    if label and not translated.startswith(label):
+        warnings.append("speaker_identity_changed_or_not_preserved")
     if not enough_chinese(translated, source):
         warnings.append("insufficient_chinese")
     if "<think>" in translated.lower() or "</think>" in translated.lower():
@@ -399,20 +490,22 @@ def batches(values: Sequence, size: int) -> Iterable[Sequence]:
         yield values[index:index + size]
 
 
-def translate_chunk_batch(model, tokenizer, chunk_rows: list[dict], system_prompt: str = SYSTEM_PROMPT) -> list[str]:
+def translate_chunk_batch(model, tokenizer, chunk_rows: list[dict], system_prompt: str | None = None) -> list[str]:
+    system_prompt = system_prompt or SYSTEM_PROMPT
     from mlx_lm import batch_generate
     from mlx_lm.sample_utils import make_sampler
 
+    labels_and_bodies = [split_speaker_label(row["protected"]) for row in chunk_rows]
     prompts = [
         tokenizer.apply_chat_template(
             [
                 {"role": "system", "content": row.get("systemPrompt", system_prompt)},
-                {"role": "user", "content": row["protected"]},
+                {"role": "user", "content": body},
             ],
             add_generation_prompt=True,
             tokenize=True,
         )
-        for row in chunk_rows
+        for row, (_, body) in zip(chunk_rows, labels_and_bodies, strict=True)
     ]
     max_tokens = [max(160, min(4_096, int(math.ceil(len(row["source"]) * 0.92)))) for row in chunk_rows]
     response = batch_generate(
@@ -423,7 +516,8 @@ def translate_chunk_batch(model, tokenizer, chunk_rows: list[dict], system_promp
         sampler=make_sampler(temp=0.0),
         verbose=False,
     )
-    return response.texts
+    return [f"{label} {translated}" if label else translated
+            for (label, _), translated in zip(labels_and_bodies, response.texts, strict=True)]
 
 
 def translate_retry_fragments(
@@ -599,7 +693,7 @@ def write_checkpoint(
             "retrySystemPromptSha256": sha256_text(RETRY_SYSTEM_PROMPT),
             "finalRetrySystemPromptSha256": sha256_text(FINAL_RETRY_SYSTEM_PROMPT),
             "numericSpanSystemPromptSha256": sha256_text(NUMERIC_SPAN_SYSTEM_PROMPT),
-            "numericProtection": "deterministic-v5-segmented-span-reinsertion",
+            "numericProtection": NUMERIC_PROTECTION_VERSION,
             "financialTerminologyPolicy": "deterministic-margin-semantics-v1",
             "startedAt": started_at,
             "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -612,7 +706,14 @@ def write_checkpoint(
 
 
 def main() -> int:
+    global SYSTEM_PROMPT, RETRY_SYSTEM_PROMPT, FINAL_RETRY_SYSTEM_PROMPT, NUMERIC_SPAN_SYSTEM_PROMPT
     args = parse_args()
+    if args.context.strip():
+        context = "\n仅用于理解术语的领域背景，不得因此增加原文没有的事实或职务：" + args.context.strip()
+        SYSTEM_PROMPT += context
+        RETRY_SYSTEM_PROMPT += context
+        FINAL_RETRY_SYSTEM_PROMPT += context
+        NUMERIC_SPAN_SYSTEM_PROMPT += context
     db_path = Path(args.db).expanduser().resolve()
     cache_path = Path(args.cache).expanduser().resolve()
     audit_path = Path(args.audit).expanduser().resolve()
@@ -624,19 +725,24 @@ def main() -> int:
     sources = extract_sources(db_path)
     existing_cache = {} if args.force else read_json(cache_path, {})
     existing_audit_payload = {} if args.force else read_json(audit_path, {})
+    if args.context.strip() and existing_cache and existing_audit_payload.get("systemPromptSha256") != sha256_text(SYSTEM_PROMPT):
+        raise SystemExit("Translation context changed; use a new cache/audit path to preserve the prior translation lineage.")
+    if existing_cache and existing_audit_payload.get("numericProtection") != NUMERIC_PROTECTION_VERSION:
+        raise SystemExit("Numeric protection changed; use a new cache/audit path rather than silently reuse old numeric output.")
+    if existing_cache and existing_audit_payload.get("systemPromptSha256") != sha256_text(SYSTEM_PROMPT):
+        raise SystemExit("Translation prompt changed; use a new cache/audit path to preserve the prior prompt lineage.")
+    if existing_cache and existing_audit_payload.get("model") != args.model:
+        raise SystemExit("Translation model changed; use a new cache/audit path to preserve the prior model lineage.")
     existing_source_audits = existing_audit_payload.get("sources") or {}
-    translations = {
-        source: translated
-        for source, translated in existing_cache.items()
-        if source in sources
-        and enough_chinese(str(translated), source)
-        and (existing_source_audits.get(source) or {}).get("status") in {"pass", "approved"}
-    }
-    audits = {
-        source: SourceAudit(**value)
-        for source, value in existing_source_audits.items()
-        if source in translations and isinstance(value, dict)
-    }
+    translations, audits = {}, {}
+    current_sources = set(sources)
+    for source, translated in existing_cache.items():
+        if source not in current_sources:
+            continue
+        record = reusable_source_audit(source, translated, existing_source_audits.get(source))
+        if record is not None:
+            translations[source] = translated
+            audits[source] = record
     missing_sources = [source for source in sources if source not in translations]
     if args.limit > 0:
         missing_sources = missing_sources[: args.limit]

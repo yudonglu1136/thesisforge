@@ -8,6 +8,7 @@ import csv
 import datetime as dt
 import io
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ import requests
 
 ECB_BASE = "https://data-api.ecb.europa.eu/service/data/EXR"
 IMPORT_VERSION = "ecb-reference-fx-v2-2026-08-29"
+MAX_RATE_AGE_DAYS = 10
 DEFAULT_CACHE_PATH = Path(
     os.environ.get(
         "PIT_FX_CACHE_PATH",
@@ -39,6 +41,30 @@ def ecb_url(currency: str, start: str, end: str) -> str:
     )
 
 
+def parse_currency_csv(text: str, currency: str, start: str, end: str, url: str) -> list[dict]:
+    """A successful HTTP response is not proof of series, units or timeliness."""
+    expected_key = f"EXR.D.{currency}.EUR.SP00.A"
+    rows = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        if not row.get("TIME_PERIOD") or not row.get("OBS_VALUE"):
+            continue
+        if (row.get("KEY") != expected_key or row.get("CURRENCY") != currency
+                or row.get("CURRENCY_DENOM") != "EUR" or row.get("FREQ") != "D"
+                or row.get("UNIT") != currency or row.get("UNIT_MULT") != "0"):
+            raise ValueError(f"Unexpected ECB series or units for {currency}/EUR")
+        date = dt.date.fromisoformat(row["TIME_PERIOD"]).isoformat()
+        if not start <= date <= end:
+            raise ValueError(f"ECB observation outside requested dates: {date}")
+        value = float(row["OBS_VALUE"])
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"Invalid ECB observation for {currency}: {value}")
+        if date in rows and rows[date]["units_per_eur"] != value:
+            raise ValueError(f"Conflicting ECB observations for {currency} on {date}")
+        rows[date] = {"currency": currency, "rate_date": date, "units_per_eur": value,
+                      "source_url": url, "extraction_version": IMPORT_VERSION}
+    return sorted(rows.values(), key=lambda row: row["rate_date"])
+
+
 def fetch_currency(currency: str, start: str, end: str) -> list[dict]:
     currency = currency.upper()
     url = ecb_url(currency, start, end)
@@ -51,17 +77,7 @@ def fetch_currency(currency: str, start: str, end: str) -> list[dict]:
                 timeout=90,
             )
             response.raise_for_status()
-            rows = [
-                {
-                    "currency": currency,
-                    "rate_date": row["TIME_PERIOD"],
-                    "units_per_eur": float(row["OBS_VALUE"]),
-                    "source_url": url,
-                    "extraction_version": IMPORT_VERSION,
-                }
-                for row in csv.DictReader(io.StringIO(response.text))
-                if row.get("TIME_PERIOD") and row.get("OBS_VALUE")
-            ]
+            rows = parse_currency_csv(response.text, currency, start, end, url)
             if not rows:
                 raise RuntimeError(
                     f"ECB returned no {currency}/EUR rates for {start} through {end}"
@@ -123,6 +139,9 @@ class FxRateBook:
         self._by_currency: dict[str, list[dict]] = {}
         self._dates: dict[str, list[str]] = {}
         for row in self.rows:
+            if not math.isfinite(row["units_per_eur"]) or row["units_per_eur"] <= 0:
+                raise ValueError("Nonfinite or nonpositive FX observation")
+            dt.date.fromisoformat(row["rate_date"])
             self._by_currency.setdefault(row["currency"], []).append(row)
         for currency, currency_rows in self._by_currency.items():
             self._dates[currency] = [row["rate_date"] for row in currency_rows]
@@ -151,8 +170,12 @@ class FxRateBook:
             raise RuntimeError(
                 f"Missing ECB PIT FX rate for {source_currency}->{target_currency} at {iso_date(as_of)}"
             )
+        for row in (source, target):
+            age = (dt.date.fromisoformat(iso_date(as_of)) - dt.date.fromisoformat(row["rate_date"])).days
+            if not 0 <= age <= MAX_RATE_AGE_DAYS:
+                raise RuntimeError(f"Stale ECB PIT FX rate for {row['currency']} at {iso_date(as_of)}: {age} days old")
         conversion_rate = target["units_per_eur"] / source["units_per_eur"]
-        if not conversion_rate > 0:
+        if not math.isfinite(conversion_rate) or not conversion_rate > 0:
             raise RuntimeError(
                 f"Invalid ECB PIT FX rate for {source_currency}->{target_currency} at {iso_date(as_of)}"
             )
@@ -223,13 +246,12 @@ def rate_book_for_range(
         last = cached_book.rate_at_or_before(currency, end_date)
         if not first or not last:
             return False
-        last_age = (end_date - dt.date.fromisoformat(last["rate_date"])).days
-        return last_age <= 10
+        return all(0 <= (date - dt.date.fromisoformat(row["rate_date"])).days <= MAX_RATE_AGE_DAYS
+                   for date, row in ((start_date, first), (end_date, last)))
 
     merged = {
         (row["currency"], row["rate_date"]): row
         for row in cached_rows
-        if str(row.get("currency") or "").upper() in currencies
     }
     for currency in currencies:
         if cache_covers(currency):
@@ -240,12 +262,13 @@ def rate_book_for_range(
     write_cache(cache_path, rows)
     book = FxRateBook(rows)
     for currency in currencies:
-        if not book.rate_at_or_before(currency, start_date) or not book.rate_at_or_before(
-            currency, end_date
-        ):
-            raise RuntimeError(
-                f"ECB cache does not cover {currency}/EUR for {start_date} through {end_date}"
-            )
+        for date in (start_date, end_date):
+            row = book.rate_at_or_before(currency, date)
+            if not row:
+                raise RuntimeError(f"ECB cache does not cover {currency}/EUR for {start_date} through {end_date}")
+            age = (date - dt.date.fromisoformat(row["rate_date"])).days
+            if age > MAX_RATE_AGE_DAYS:
+                raise RuntimeError(f"Stale ECB PIT FX coverage for {currency}/EUR at {date}: {age} days old")
     return book
 
 

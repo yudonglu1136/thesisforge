@@ -1,0 +1,32 @@
+# Independent CTA policy — local implementation
+
+## User flow
+
+On Strategies, click the CTA card or **Configure CTA rules**. Keep KMLM/DBMF and the initial allocation controls. The dialog supports **Buy & hold**, **Scheduled** (monthly, quarterly, annually) and **Flexible tranches**. Tranches have editable minimum target, percentage-point step, cooldown, and add/remove rally/drawdown levels. Cancel discards changes; Apply updates controls without trading or running. Save rules stores the complete normalized policy in the existing owner-private, append-only strategy store. Old rules without `ctaPolicy` keep their synchronized behavior.
+
+Completed runs add **CTA trades**, with an actual daily CTA-weight curve and dated trigger list. Click an event to inspect its post-execution positions. The main historical selector includes CTA-only events as well as equity rotations. Evidence and exclusion dates retain the most recent actual equity-selection date; CTA trades do not re-screen stocks or rewrite model evidence. Changed controls never relabel the prior completed run.
+
+## Execution contract
+
+- CTA policy is independent of equity selection. At an equity rotation or leverage reset without a CTA trigger, total-return CTA units remain unchanged, including after trading costs.
+- Initial allocation is executed at the first close. Calendar modes reset on the first observed market session of a new month, quarter or year. There is no hidden calendar reset in hold/tranche modes.
+- Tranches use the CTA ETF's dividend/split-adjusted total-return close, not its raw ex-dividend price. Signals observed at the preceding session close execute at the next session close. There is no same-close lookahead or synthetic return fill.
+- Default example: initial 30%; minimum target 15%; sell 5 target percentage points at +15%, +25%, +35% from cycle entry; restore 5 points at 8%, 12%, 18% drawdowns from the cycle peak. Levels are positive and increasing, with 1–8 stages. Recovery levels must cover all trim stages. These are adjustable research inputs, not optimized/recommended thresholds.
+- At most one stage executes per eligible session. Each stage is consumed only by an actual directional trade, once per cycle. The configured number of trading sessions after a tranche trade is skipped. A skipped/no-op signal does not produce a fictional trade, fee, snapshot or cooldown.
+- Buybacks cannot occur before a trim and cannot restore more target tranches than were sold. A trim only sells; a recovery only buys, even when overnight gaps or equity drift have already moved the allocation beyond its target. Such no-op stages remain available for a later qualifying execution.
+- The peak follows the signal series until the first executed buyback, then freezes for the rest of recovery. No new trims occur during recovery. Once outstanding target tranches have been restored, entry and peak reset at that execution close and a new cycle starts. Target weights, not historical dollar proceeds or physical broker share counts, define the ladder.
+- Weights are fractions of gross invested assets before leverage; observed weights drift and can move outside the configured *target* floor/base. Costs use actual buys plus sells. Post-fee NAV is solved self-consistently. CTA proceeds scale the existing equity basket; equity proceeds fund CTA buys. No intentional cash allocation is created.
+- Financing remains 4% ACT/365 on debt, including weekends, capitalized at daily observed closes. Debt/gross exposure reset only at equity-selection events, not at CTA-only events. A leverage reset cannot force a CTA buy. An infeasible positive equity allocation blocks honestly rather than selling CTA contrary to policy or substituting cash.
+- The engine reuses the strict security/corporate-action marker. Missing active observations and unresolved transitions block; cash-settled acquisition proceeds still require a separately implemented reinvestment policy. Existing strict Guru cash/coverage semantics are unchanged. Flexible CTA requires the user's fully-invested research policy.
+
+## Verification
+
+- 113 focused backend tests pass across CTA, strategy composition, legacy rules, PIT execution, the existing parameter matrix, price loading, owner-private saves, costs and leverage.
+- 39 strategy widget tests pass, including CTA parameter editing, adding stages, invalid-input protection, cancel, request/save equality, No CTA, and English/Chinese 390px layouts at 150% text.
+- Full Flutter analysis and all 509 Flutter tests pass, as do the bilingual audit, Ontology checks (22 Node + 3 Python tests), `npm run build`, and local web preview build.
+- Real local HTTP: KMLM and DBMF × hold/monthly/quarterly/annual/tranche modes, using QQQ/SPY/SCHD 50/25/25, 30% CTA, 1.5× financing, 10bps costs, 2021-09-10 through 2026-09-10: all ten runs completed with 1,255 daily points and 0% intentional cash. Monthly had 60 scheduled trades after initial entry; quarterly 20; annual 5. Hold had no CTA trades after entry.
+- Additional real HTTP: legacy disclosure-cadence Bill Ackman + Li Lu; Guru/factors/QQQ 40/30/30; and pure four-factor Top 10, with valuation premium filter 30%, flexible CTA and 1.5× leverage, all completed. The pure factor five-year run had 1,255 points, 21 equity events and 27 actual snapshots, with no zero-notional trade snapshots.
+- Real DBMF/QQQ five-year regression after the no-op fix: 21 equity events, 7 CTA events, 27 snapshots, no zero-notional trades, no cash.
+- In-app browser: opened the English CTA dialog, selected flexible tranches, changed cooldown to 3, applied a QQQ sleeve and completed the five-year backtest. All comparison curves rendered. CTA history showed seven events; clicking the 2023-01-13 buyback opened 70% QQQ / 30% KMLM, with equity evidence still dated 2022-12-30. Switched to Chinese and verified both the dated snapshot and editable modal. Snapshot component weights and equity-ledger weights were separately reconciled via real HTTP with zero errors.
+
+This is a retrospective research simulator, not broker execution or evidence of future protection. No brokerage orders, production deployment, source-price replacement or financial-data refresh was performed for this feature. Historical universe and valuation reconstruction limitations continue to apply. Arbitrary rules may still fail because of genuine data gaps, no eligible stocks or an infeasible allocation.

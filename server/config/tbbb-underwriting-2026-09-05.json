@@ -1,0 +1,72 @@
+{
+  "version": "tbbb-underwriting-2026-09-05-v1",
+  "asOfDate": "2026-09-05",
+  "periodEndDate": "2026-06-30",
+  "currency": "MXN",
+  "unit": "million",
+  "sources": {
+    "fy2025": {"availableDate":"2026-03-11","url":"https://www.sec.gov/Archives/edgar/data/1978954/000119312526102363/tbbb_4q25_earnings_relea.htm","locator":"Consolidated income statements and cash flows, FY2025/FY2024; 2026 guidance p.12"},
+    "h12026": {"availableDate":"2026-08-12","url":"https://www.sec.gov/Archives/edgar/data/1978954/000119312526346965/6k_tbbb_2q26_earnings_re.htm","locator":"Income p.14; balance sheet p.15; CF p.17; share claims pp.18-19; liquidity p.7"},
+    "h12024": {"availableDate":"2024-08-21","url":"https://www.sec.gov/Archives/edgar/data/1978954/000095017024099520/earnings_release_2q24.htm","locator":"Six-month total revenue, consolidated income statement p.13"},
+    "q1budget": {"availableDate":"2026-05-27","url":"https://www.sec.gov/Archives/edgar/data/1978954/000119312526241914/tbbb-ex99_2.htm","locator":"Capital Expenditures p.9; financing availability and dividend covenant pp.7-9"},
+    "q1notes": {"availableDate":"2026-05-27","url":"https://www.sec.gov/Archives/edgar/data/1978954/000119312526241914/tbbb-ex99_1.htm","locator":"Note 5 noncash debt-financed PPE; Note 12 equipment lease additions; Note 18 share awards"},
+    "fy2025ppe": {"availableDate":"2026-04-02","url":"https://www.sec.gov/Archives/edgar/data/1978954/000119312526140232/R17.htm","locator":"Note 10, acquisitions 3,782.409m less cash PPE 3,548.943m = debt-financed PPE 233.466m"},
+    "fy2025leases": {"availableDate":"2026-04-02","url":"https://www.sec.gov/Archives/edgar/data/1978954/000119312526140232/tbbb-20251231.htm","locator":"Note 12, FY2025 equipment lease additions: transportation 124.981m, store equipment 427.990m"},
+    "grants": {"availableDate":"2026-04-02","url":"https://www.sec.gov/Archives/edgar/data/1978954/000119312526140232/R52.htm","locator":"Share-based payments tables: FY2025 new post-IPO options 2,860,000; RSUs 541,000"},
+    "reich": {"availableDate":"2026-08-11","url":"https://www.sec.gov/Archives/edgar/data/1978954/000119312526344856/ownership.xml","locator":"Form 4, 2026-08-07 exercise 20,000; shares withheld 4,754"},
+    "cappello": {"availableDate":"2026-08-11","url":"https://www.sec.gov/Archives/edgar/data/1978954/000119312526344768/ownership.xml","locator":"Form 4, 2026-08-07 exercise 84,955; shares withheld 7,660"},
+    "khouri": {"availableDate":"2026-08-11","url":"https://www.sec.gov/Archives/edgar/data/1978954/000119312526344750/ownership.xml","locator":"Form 4, 2026-08-07 two exercises of 94,998; shares withheld 14,101"},
+    "recentSale": {"availableDate":"2026-09-04","url":"https://www.sec.gov/Archives/edgar/data/1978954/000119312526383719/ownership.xml","locator":"Form 4, 2026-09-02 secondary sale: no issuance or change to total claims"},
+    "treasury": {"availableDate":"2026-09-04","url":"https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value_month=202609","locator":"NEW_DATE 2026-09-04; BC_10YEAR 4.78, nominal par CMT, not real TIPS"},
+    "countryPremium": {"availableDate":"2026-01-05","url":"https://pages.stern.nyu.edu/adamodar/New_Home_Page/datafile/ctryprem.html","locator":"January 2026 author estimates: Mexico CRP 2.46%, total ERP 6.69%; mature ERP 4.23%; US default spread 0.23%"},
+    "banxico": {"availableDate":"2026-06-25","url":"https://www.banxico.org.mx/publications-and-press/announcements-of-monetary-policy-decisions/%7B1232328B-67C5-6882-B908-B200C19F3E3D%7D.pdf","locator":"Inflation forecast convergence to 3% in Q2 2027; goal is not a market FX forward"},
+    "fed": {"availableDate":"2026-07-10","url":"https://www.federalreserve.gov/monetarypolicy/2026-07-mpr-statement.htm","locator":"Longer-run inflation goal 2%"},
+    "ecbMxn": {"availableDate":"2026-09-04","url":"https://data-api.ecb.europa.eu/service/data/EXR/D.MXN.EUR.SP00.A?startPeriod=2026-08-22&endPeriod=2026-09-04&format=csvdata","locator":"2026-09-04: MXN per EUR 19.6401"},
+    "ecbUsd": {"availableDate":"2026-09-04","url":"https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A?startPeriod=2026-08-22&endPeriod=2026-09-04&format=csvdata","locator":"2026-09-04: USD per EUR 1.1622"}
+  },
+  "reported": {
+    "fy2025": {"sourceId":"fy2025","revenueM":78152.943,"cfoM":4681.613,"wcMovementsM":[-1179.045,-785.418,2592.163,262.422,44.286],"leasePrincipalM":738.802,"leaseInterestM":1420.187,"otherInterestM":88.126,"cashPpeM":3548.943,"intangiblesM":24.373,"noncashDebtPpeM":233.466,"noncashEquipmentLeaseM":[124.981,427.990]},
+    "fy2024": {"sourceId":"fy2025","revenueM":57439.019,"cfoM":3748.537,"wcMovementsM":[-680.887,-418.647,1709.786,165.090,-20.648],"leasePrincipalM":471.703,"leaseInterestM":1072.774,"otherInterestM":94.734},
+    "h12026": {"sourceId":"h12026","revenueM":48897.638,"cfoM":4285.393,"wcMovementsM":[-6.384,-462.004,1824.316,400.905,36,55.550],"leasePrincipalM":455.388,"leaseInterestM":891.666,"otherInterestM":46.338,"otherDebtPrincipalM":119.259,"cashPpeM":1641.401,"ppeDisposalsM":0.185,"intangiblesM":13.956,"netCreditLineCashM":-844.791,"supplierFinanceProceedsM":4354.953,"supplierFinanceRepaymentsM":4139.777},
+    "h12025": {"sourceId":"h12026","revenueM":35901.467,"cfoM":1955.169,"wcMovementsM":[-71.592,-557.420,815.683,59.675,10.790],"leasePrincipalM":308.436,"leaseInterestM":674.518,"otherInterestM":23.672},
+    "h12024": {"sourceId":"h12024","revenueM":26258.595},
+    "budget": {"sourceId":"q1budget","totalM":5250,"newStoresM":3555,"newDcsM":490,"q1DeploymentM":1089.705,"q1CashPpeM":706.574,"q1CashIntangiblesM":7.097,"q1DebtFinancedPpeM":154.138,"q1EquipmentLeaseAdditionsM":[77.078,151.915],"fullYearCashNoncashSplit":null},
+    "balanceSheet": {"sourceId":"h12026","cashJune2026M":1981.125,"cashDecember2025M":1427.248,"usdBankDepositsM":236,"usdBankDepositsPrecisionM":1,"bankDepositsCarryingMxnM":4128.611,"juneReportingMxnPerUsd":17.47},
+    "futureGrantAnchor": {"sourceId":"grants","fiscalYear":2025,"newOptions":2860000,"newRsus":541000},
+    "knownExercises": [
+      {"sourceId":"reich","eventDate":"2026-08-07","grossOptions":20000,"withheldShares":4754,"displayedStrikesUsd":[9.67]},
+      {"sourceId":"cappello","eventDate":"2026-08-07","grossOptions":84955,"withheldShares":7660,"displayedStrikesUsd":[3.67]},
+      {"sourceId":"khouri","eventDate":"2026-08-07","grossOptions":189996,"withheldShares":14101,"displayedStrikesUsd":[2.37,3.67]}
+    ],
+    "macro": {"tenYearTreasury":0.0478,"usDefaultSpread":0.0023,"matureErp":0.0423,"mexicoCrp":0.0246,"ecbMxnPerEur":19.6401,"ecbUsdPerEur":1.1622}
+  },
+  "analystPolicies": {
+    "guideWeight":0.25,
+    "beta":1,
+    "inflationMxn":0.03,
+    "inflationUsd":0.02,
+    "terminalRevenueGrowth":0.03,
+    "growthFadeYears":5,
+    "futureAwardPolicy":"Repeat FY2025 gross new option+RSU count as a constant share-pool percentage each December, beginning December 2026; assume full vesting, one share for every option and no exercise proceeds. This is an analyst upper-claim cost, not an issuer commitment or expected accounting SBC.",
+    "currentClaimsPolicy":"June maximum shares, reduced only by verified August withheld shares. All remaining awards vest and all options become a full share with zero exercise proceeds: a conservative claim upper bound, NOT exact option fair value or current issued shares.",
+    "operatingPolicy":"Cash profit before operating-WC movement and capex, after cash tax, all lease principal/interest and other interest. Hold scenario's observed margin constant: no assumed efficiency uplift beyond the selected historical observation.",
+    "workingCapitalPolicy":"Use observed operating-WC cash benefit per incremental annual revenue, not a perpetual CFO/revenue margin. Base uses latest complete TTM, downside FY2025. No repeated supplier-finance repayment deduction or cash borrowing credit.",
+    "investmentPolicy":"FY2026 uses disclosed 5,250m mixed cash/noncash budget. All 1,205m unallocated balance becomes a recurring revenue-scaled capital allowance (NOT reported maintenance); 4,045m expansion allocation scales with incremental revenue. Forecast investment includes software/intangibles, so no second future intangible-capex charge. The Q1 cash/deployment fraction is normalized by adding separately reported cash intangibles to both numerator and denominator; FY2025 uses the equivalent inclusive fraction for downside. This analyst all-capital normalization does not relabel the issuer's Q1 budget deployment. Building leases and financed-equipment servicing remain inside operating cash profit; other principal uses actual TTM/revenue. This is a ratio-based refinancing forecast, not a verified debt amortization schedule.",
+    "cashPolicy":"Reserve June cash/revenue for operations and deduct future reserve increases. Carry the reported rounded USD bank deposits in USD; no interest or option-cash credit. H2 annual-minus-H1 forecast is spread uniformly over H2 for the as-of nowcast. Attribute remaining bank deposits and H2 net cash economically at December 2026 after that year's award batch; subsequent FCFE is available at each year end. These are valuation distributions, not a dividend forecast; covenants can restrict actual payouts.",
+    "discountPolicy":"USD Ke = default-adjusted 10Y Treasury + beta*mature ERP + Mexico CRP + explicit execution premium. Convert nominal USD Ke to nominal MXN with (1+KeUSD)*(1+MXN inflation)/(1+USD inflation)-1. Inflation targets are analyst long-run currency assumptions, not observable FX forward prices. Terminal company revenue grows at MXN 3%; terminal per-current-claim growth also subtracts continued new-award dilution."
+  },
+  "scenarios": {
+    "base": {"label":"Analyst conservative baseline","operatingMarginAnchor":"ttm","workingCapitalAnchor":"ttm","cashFinancingAnchor":"q12026","rawGuideGrowth":0.305,"executionPremium":0.01,"rationale":"Latest full-year cash profitability and WC terms; no additional operating leverage; latest disclosed equipment-financing mix; 100bp discretionary expansion/execution hurdle."},
+    "downside": {"label":"Funding and cash-conversion stress","operatingMarginAnchor":"fy2025","workingCapitalAnchor":"fy2025","cashFinancingAnchor":"fy2025","rawGuideGrowth":0.29,"executionPremium":0.02,"rationale":"Cash profit and WC return to FY2025, and more investment is cash-funded as in FY2025; 200bp execution hurdle. A funding deficit invalidates a standalone financed-path claim and is reported explicitly."},
+    "upside": {"label":"Historical-margin recovery","operatingMarginAnchor":"fy2024","workingCapitalAnchor":"ttm","cashFinancingAnchor":"q12026","rawGuideGrowth":0.32,"executionPremium":0,"rationale":"Cash profit recovers only to the observed FY2024 margin while TTM WC terms and Q1 financing continue; no discretionary extra execution premium. Not a probability-weighted price target."}
+  },
+  "limits": [
+    "Exact June option tranche rollforward is not established; full-share upper claims deliberately avoid requiring an invented tranche allocation or time-value reserve.",
+    "Known August exercises do not establish a new complete company-wide current issued-share count; the maximum-claim rollforward is used, not a claimed September basic-share fact.",
+    "FY2026 full-year cash/noncash budget split remains unknown as a reported fact; forecasts use explicit observed-ratio estimates and a stressed alternative.",
+    "No mature/new-store cohort cash-profit or maintenance schedule was established. The selected actual aggregate margin and conservative recurring capital allowance are analyst estimates, not audited forecasts.",
+    "Future award count, financing renewals, inflation parity, cash availability and growth taper are forecasts. No market quote or target calibration is used.",
+    "The TTM cash bridge has a documented 0.363m PPE-disposal comparator inconsistency. Current input uses the audited local-PIT reconciliation unchanged.",
+    "These scenarios have analytical anchors but are not statistical confidence bounds. The baseline is deliberately conservative in equity-claim treatment, not a guaranteed floor on realizable value."
+  ]
+}
