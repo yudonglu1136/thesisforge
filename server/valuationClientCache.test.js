@@ -14,6 +14,7 @@ process.env.SYNC_BUNDLED_GURU_BACKTESTS = "false";
 process.env.SYNC_BUNDLED_DIVIDEND_CALENDAR = "false";
 process.env.SYNC_BUNDLED_PODCAST_INSIGHTS = "false";
 process.env.VALUATION_TICKER_CACHE_MAX_ENTRIES = "2";
+process.env.FACT_OS_ENABLED = "0";
 
 const {
   writeBackgroundJobRun,

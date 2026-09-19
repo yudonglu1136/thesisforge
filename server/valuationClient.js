@@ -10,6 +10,12 @@ import {
 } from "./localDatabase.js";
 import { applyAznValuationOverlay } from "./aznValuationOverlay.js";
 import { applyLsegValuationOverlay } from "./lsegValuationOverlay.js";
+import { factOsEnabled } from "./factRepository.js";
+import {
+  factGeneration,
+  loadCanonicalValuationDashboard,
+  loadCanonicalValuationDetail
+} from "./valuationFacts.js";
 import { normalizeTicker, valuationLookupKeysForSnapshot, valuationTickerCandidates } from "./tickerAliases.js";
 import { ValuationNotCoveredError } from "./valuationHttp.js";
 
@@ -440,7 +446,7 @@ function attachPodcastInsights(ticker, requestedTicker) {
 }
 
 export async function loadValuationDashboard() {
-  const version = valuationDashboardVersion();
+  const version = `${valuationDashboardVersion()}:${factOsEnabled() ? factGeneration() : "legacy"}`;
   if (dashboardCache.payload && dashboardCache.version === version) {
     return dashboardCache.payload;
   }
@@ -453,13 +459,30 @@ export async function loadValuationDashboard() {
     };
   }
 
+  const archivedTickers = (snapshot.tickers || [])
+    .map(applyAznValuationOverlay)
+    .map(applyLsegValuationOverlay);
+  const canonicalTickers = factOsEnabled()
+    ? await loadCanonicalValuationDashboard(archivedTickers)
+    : archivedTickers;
   const tickers = sortTickers(
-    (snapshot.tickers || [])
-      .map(applyAznValuationOverlay)
-      .map(applyLsegValuationOverlay)
+    canonicalTickers
       .map(withValuationAuditLayers)
       .map(compactTickerForDashboard)
   );
+  const latestPriceDates = tickers
+    .map((ticker) => String(ticker.latest?.latestPriceDate || ""))
+    .filter(Boolean)
+    .sort();
+  const canonicalLatestPriceDate = latestPriceDates.at(-1) || null;
+  const canonicalPositiveUpsideCount = tickers.filter((ticker) => {
+    const value = ticker.latest?.upsideToBase;
+    return value !== null && value !== undefined && Number.isFinite(Number(value)) && Number(value) >= 0;
+  }).length;
+  const canonicalNegativeUpsideCount = tickers.filter((ticker) => {
+    const value = ticker.latest?.upsideToBase;
+    return value !== null && value !== undefined && Number.isFinite(Number(value)) && Number(value) < 0;
+  }).length;
 
   const payload = {
     ...snapshot,
@@ -470,6 +493,10 @@ export async function loadValuationDashboard() {
     },
     summary: {
       ...(snapshot.summary || {}),
+      livePriceTickerCount: latestPriceDates.length,
+      latestPriceDate: canonicalLatestPriceDate,
+      positiveUpsideCount: canonicalPositiveUpsideCount,
+      negativeUpsideCount: canonicalNegativeUpsideCount,
       auditLayerCounts: summarizeValuationAuditLayers(tickers)
     },
     podcastInsights: readValuationPodcastInsightSummary(),
@@ -485,7 +512,8 @@ export async function loadValuationTicker(ticker, options = {}) {
   const normalized = normalizeTicker(ticker);
   const pricePoints = normalizePricePoints(options.pricePoints);
   const detail = valuationDetailLevel(options.detail);
-  const cacheKey = `${normalized}:${detail}:${pricePoints}`;
+  const factVersion = factOsEnabled() ? factGeneration() : "legacy";
+  const cacheKey = `${normalized}:${detail}:${pricePoints}:${factVersion}`;
   const candidates = valuationTickerCandidates(normalized);
   const podcastVersion = detail === "full"
     ? readValuationPodcastInsightsVersion(candidates)
@@ -501,16 +529,18 @@ export async function loadValuationTicker(ticker, options = {}) {
   }
 
   if (snapshotVersion) {
-    const version = `ticker:${resolvedTicker}:${snapshotVersion}:${podcastVersion}`;
+    const version = `ticker:${resolvedTicker}:${snapshotVersion}:${podcastVersion}:${factVersion}`;
     const cached = readTickerCache(cacheKey, version);
     if (cached) return cached;
 
     const tickerSnapshot = readValuationTickerSnapshot(resolvedTicker);
     if (tickerSnapshot) {
+      const archivedTicker = applyLsegValuationOverlay(applyAznValuationOverlay(tickerSnapshot));
+      const canonicalTicker = factOsEnabled()
+        ? await loadCanonicalValuationDetail(archivedTicker)
+        : archivedTicker;
       const compactedTicker = compactTickerDetail(
-        withValuationAuditLayers(
-          applyLsegValuationOverlay(applyAznValuationOverlay(tickerSnapshot))
-        ), {
+        withValuationAuditLayers(canonicalTicker), {
         pricePoints,
         detail
       });

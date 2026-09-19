@@ -10,6 +10,7 @@ process.env.SYNC_BUNDLED_VALUATION_SNAPSHOTS = "false";
 process.env.SYNC_BUNDLED_GURU_BACKTESTS = "false";
 process.env.SYNC_BUNDLED_DIVIDEND_CALENDAR = "false";
 process.env.SYNC_BUNDLED_PODCAST_INSIGHTS = "false";
+process.env.FACT_OS_ENABLED = "0";
 
 const {
   readValuationDashboardVersion,

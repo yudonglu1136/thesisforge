@@ -14,6 +14,9 @@ process.env.SYNC_BUNDLED_GURU_BACKTESTS = "false";
 process.env.SYNC_BUNDLED_DIVIDEND_CALENDAR = "false";
 process.env.SYNC_BUNDLED_PODCAST_INSIGHTS = "false";
 process.env.PRICE_CACHE_DIR = path.join(tempDir, "prices");
+// These fixtures intentionally test the legacy Yahoo refresh/merge contract.
+// Keep them isolated from the canonical Sharadar adapter exercised elsewhere.
+process.env.FACT_OS_ENABLED = "0";
 
 const {
   aggregate13fHoldings,

@@ -13,6 +13,8 @@ const source = path.join(tempDir, "source.sqlite");
 const outputOne = path.join(tempDir, "fixture-one.sqlite");
 const outputTwo = path.join(tempDir, "fixture-two.sqlite");
 const asOf = "2026-09-01";
+// The fixture intentionally captures the retired simulation adapter contract.
+process.env.FACT_OS_ENABLED = "0";
 
 after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });

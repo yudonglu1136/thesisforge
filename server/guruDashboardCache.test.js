@@ -11,6 +11,9 @@ process.env.SYNC_BUNDLED_VALUATION_SNAPSHOTS = "false";
 process.env.SYNC_BUNDLED_GURU_BACKTESTS = "false";
 process.env.SYNC_BUNDLED_DIVIDEND_CALENDAR = "false";
 process.env.SYNC_BUNDLED_PODCAST_INSIGHTS = "false";
+// This suite validates the legacy SQLite snapshot cache, not the canonical
+// Sharadar-backed Guru adapter covered by the Fact OS consumer tests.
+process.env.FACT_OS_ENABLED = "0";
 
 const { gurus } = await import("./gurus.js");
 const {

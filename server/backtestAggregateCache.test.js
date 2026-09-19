@@ -71,6 +71,9 @@ process.env.SYNC_BUNDLED_DIVIDEND_CALENDAR = "false";
 process.env.SYNC_BUNDLED_PODCAST_INSIGHTS = "false";
 process.env.BACKTEST_CACHE_TTL_HOURS = "0";
 process.env.BACKTEST_STALE_BACKGROUND_REFRESH = "false";
+// This suite exercises the retired SEC/Yahoo simulation adapter in isolation.
+// Canonical Sharadar behavior is covered by factRepository/consumer tests.
+process.env.FACT_OS_ENABLED = "0";
 
 const { gurus } = await import("./gurus.js");
 const { manager13fCorporateActionCatalogVersion } = await import(

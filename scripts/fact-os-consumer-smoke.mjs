@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { parseArgs } from "node:util";
 
 const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,6 +23,27 @@ process.env.FACT_OS_ENABLED = "1";
 process.env.FACT_OS_ROOT = root;
 process.env.FACT_OS_PYTHON = python;
 process.env.SQLITE_DB_PATH = path.join(temp, "public-model-fixture.sqlite");
+
+// Copy only the two public archived model rows exercised below. The runtime
+// database initializer may write schema metadata, so the smoke test uses a
+// disposable fixture instead of opening the live public database. Private
+// portfolio databases are never opened and the large archive is not copied.
+const bundledPublicDatabase = path.join(project, "server/data/guru-analysis.sqlite");
+const fixture = new DatabaseSync(process.env.SQLITE_DB_PATH);
+fixture.exec(`
+  ATTACH DATABASE '${bundledPublicDatabase.replaceAll("'", "''")}' AS bundled;
+  CREATE TABLE valuation_ticker_snapshots (
+    ticker TEXT PRIMARY KEY,
+    generated_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+  );
+  INSERT INTO main.valuation_ticker_snapshots (ticker, generated_at, payload_json)
+    SELECT ticker, generated_at, payload_json
+    FROM bundled.valuation_ticker_snapshots
+    WHERE ticker IN ('MSFT', 'AVGO');
+  DETACH DATABASE bundled;
+`);
+fixture.close();
 for (const name of ["GURU_BACKTESTS", "GURU_EXPOSURE_SNAPSHOTS", "DIVIDEND_CALENDAR", "PODCAST_INSIGHTS"]) {
   process.env[`SYNC_BUNDLED_${name}`] = "false";
 }
