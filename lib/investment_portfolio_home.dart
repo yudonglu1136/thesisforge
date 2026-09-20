@@ -31,44 +31,75 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        copy('HOME / MY PORTFOLIO', '首页 / 我的组合', color: p.accent, size: 12),
-        const SizedBox(height: 12),
-        title('Your portfolio, at a glance.', '我的组合，一目了然。', 32),
-        const SizedBox(height: 10),
-        copy(
-          'Your balance. Your performance. What moved your money.',
-          '先看账户和表现，再看谁贡献了盈亏。',
+        LayoutBuilder(
+          builder: (_, c) {
+            final heading = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                copy(
+                  'HOME / MY PORTFOLIO',
+                  '首页 / 我的组合',
+                  color: p.accent,
+                  size: 11,
+                ),
+                const SizedBox(height: 8),
+                title('My portfolio', '我的组合', 30),
+                const SizedBox(height: 6),
+                copy(
+                  'Value, performance, allocation and what moved your money.',
+                  '净值、表现、资产结构与盈亏贡献，一页看清。',
+                ),
+              ],
+            );
+            final actions = Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (groups.isNotEmpty)
+                  tag(
+                    'Synced · ${text(h['reportDate'], w('Different dates', '日期不一致'))}',
+                    '已同步 · ${text(h['reportDate'], '日期不一致')}',
+                  ),
+                OutlinedButton.icon(
+                  key: const ValueKey('home-full-analysis'),
+                  onPressed: widget.onDetails,
+                  icon: const Icon(Icons.analytics_outlined, size: 17),
+                  label: Text(w('Full analysis', '完整分析')),
+                ),
+                IconButton(
+                  tooltip: w('Reload portfolio', '重新读取组合'),
+                  onPressed: loading ? null : load,
+                  icon: Icon(Icons.sync_rounded, color: p.accent),
+                ),
+                privacyToggle(),
+              ],
+            );
+            if (c.maxWidth >= 820 &&
+                MediaQuery.textScalerOf(context).scale(1) <= 1.2) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(child: heading),
+                  const SizedBox(width: 24),
+                  actions,
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [heading, const SizedBox(height: 14), actions],
+            );
+          },
         ),
-        const SizedBox(height: 18),
-        Wrap(
-          spacing: 10,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            if (groups.isNotEmpty)
-              tag(
-                'Broker report · ${text(h['reportDate'], w('Different account dates', '账户日期不一致'))}',
-                '券商报告 · ${text(h['reportDate'], '账户日期不一致')}',
-              ),
-            if (data?['source'] == 'local_owner_broker_snapshot')
-              copy(
-                'Local read-only copy · not live quotes',
-                '本地只读副本 · 非实时行情',
-                size: 12,
-              ),
-            OutlinedButton.icon(
-              onPressed: widget.onDetails,
-              icon: const Icon(Icons.analytics_outlined, size: 17),
-              label: Text(w('Full portfolio analysis', '完整组合分析')),
-            ),
-            IconButton(
-              tooltip: w('Reload portfolio', '重新读取组合'),
-              onPressed: loading ? null : load,
-              icon: Icon(Icons.refresh, color: p.accent),
-            ),
-            privacyToggle(),
-          ],
-        ),
+        if (data?['source'] == 'local_owner_broker_snapshot') ...[
+          const SizedBox(height: 8),
+          copy(
+            'Local read-only copy · not live quotes',
+            '本地只读副本 · 非实时行情',
+            size: 11,
+          ),
+        ],
         const SizedBox(height: 22),
         if (isSavedPortfolioReport(data)) ...[
           PortfolioDataNotice(
@@ -154,6 +185,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                               '${text(navRows.firstOrNull?['date'], '—')} → ${text(navRows.lastOrNull?['date'], '—')} · 含转入转出，不是投资收益率',
                             )
                           : '${g['accountCount']} ${w('connected accounts', '个已连接账户')}',
+                      icon: Icons.account_balance_wallet_outlined,
                       accent: true,
                     ),
                   ),
@@ -192,6 +224,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                                   '${latestEstimate['previousDate']} → ${latestEstimate['date']} · 已扣报告现金转入转出',
                                 )
                               : w('Daily MTM report needed', '需要每日 MTM 盈亏报告')),
+                      icon: Icons.trending_up_rounded,
                       color:
                           nullableNumber(
                                 daily['pnl'] ?? latestEstimate?['pnl'],
@@ -257,6 +290,9 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                               : number(g['cash']) < 0
                               ? w('Negative cash is borrowing', '负现金表示借款')
                               : w('From your broker report', '来自券商报告')),
+                      icon: realized['status'] == 'ready'
+                          ? Icons.check_circle_outline_rounded
+                          : Icons.account_balance_outlined,
                     ),
                   ),
                   SizedBox(
@@ -266,6 +302,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                       '持仓',
                       '${asList(g['positions']).where((r) => !['cash', 'accrual'].contains(r['kind'])).length}',
                       '${stocks.length} ${w('equities', '项股票')} · ${asList(g['positions']).where((r) => r['kind'] == 'other').length} ${w('other positions', '项其他资产')}',
+                      icon: Icons.pie_chart_outline_rounded,
                     ),
                   ),
                 ],
@@ -274,110 +311,78 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
           ),
           if (latestEstimate != null) ...[
             const SizedBox(height: 10),
-            copy(
-              'P&L estimate = NAV change − reported cash transfers. Security transfers are not reconciled; this is not verified total performance. Cash / borrowing: ${amount(g['cash'])}.',
-              '盈亏估算 = 净值变化 − 已报告现金转入转出。证券转仓未核对，不是已核验的完整投资收益。现金 / 融资余额：${amount(g['cash'])}。',
-              size: 11,
-              color: p.secondary,
-            ),
-          ],
-          const SizedBox(height: 18),
-          LayoutBuilder(
-            builder: (_, c) {
-              final chart = panel([
-                title('Portfolio value & P&L', '组合净值与盈亏'),
-                const SizedBox(height: 8),
-                copy(
-                  'Your broker history · choose a measure, then inspect any date.',
-                  '你的券商历史记录 · 切换指标，查看每一天。',
-                  size: 12,
-                ),
-                const SizedBox(height: 18),
-                PortfolioAccountValueChart(
-                  key: ValueKey('account-nav-$selectedCurrency'),
-                  rows: asList(asMap(h['nav'])['rows']),
-                  history: history,
-                  currency: selectedCurrency,
-                  palette: p,
-                  hideAmounts: hideAmounts,
-                ),
-                if (asList(asMap(h['nav'])['rows']).length < 2) ...[
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: homeHistoryHelp,
-                      icon: const Icon(Icons.add_chart, size: 17),
-                      label: Text(w('Set up account history', '设置账户历史数据')),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: p.secondary.withValues(alpha: .06),
+                border: Border.all(color: p.secondary.withValues(alpha: .16)),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    size: 16,
+                    color: p.secondary,
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: copy(
+                      'Estimated P&L adjusts NAV changes for reported cash transfers. Security transfers are not reconciled. Cash / borrowing: ${amount(g['cash'])}.',
+                      '盈亏估算已从净值变化中扣除已报告的现金转入转出；证券转仓尚未核对。现金 / 融资：${amount(g['cash'])}。',
+                      size: 11,
+                      color: p.secondary,
                     ),
                   ),
                 ],
-              ]);
-              final movers = homeMovers(h, asList(g['positions']));
-              return c.maxWidth > 1060
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(flex: 7, child: chart),
-                        const SizedBox(width: 18),
-                        Expanded(flex: 4, child: movers),
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [chart, const SizedBox(height: 18), movers],
-                    );
-            },
-          ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 18),
+          homeAllocationOverview(g),
+          const SizedBox(height: 18),
+          panel([
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                title('Portfolio value & P&L', '组合净值与盈亏'),
+                copy(
+                  'Broker history · inspect any date',
+                  '券商历史 · 查看任意日期',
+                  size: 11,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            PortfolioAccountValueChart(
+              key: ValueKey('account-nav-$selectedCurrency'),
+              rows: asList(asMap(h['nav'])['rows']),
+              history: history,
+              currency: selectedCurrency,
+              palette: p,
+              hideAmounts: hideAmounts,
+              chartHeight: 250,
+            ),
+            if (asList(asMap(h['nav'])['rows']).length < 2) ...[
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: homeHistoryHelp,
+                  icon: const Icon(Icons.add_chart, size: 17),
+                  label: Text(w('Set up account history', '设置账户历史数据')),
+                ),
+              ),
+            ],
+          ]),
+          const SizedBox(height: 18),
+          homeMovers(h, asList(g['positions'])),
           const SizedBox(height: 18),
           homeHoldings(g),
-          const SizedBox(height: 18),
-          pair(
-            panel([
-              copy('VALUATION CHECK', '估值检查', color: p.accent, size: 12),
-              const SizedBox(height: 10),
-              title('Does your portfolio still make sense?', '组合的价格，还合理吗？', 20),
-              const SizedBox(height: 12),
-              Text(
-                percent(asMap(g['valuation'])['netImpact']),
-                style: heading(28).copyWith(color: p.accent),
-              ),
-              copy(
-                'Model impact on net holding marks · ${percent(asMap(g['coverage'])['weight'])} of positive exposure covered',
-                '模型相对持仓净市值的影响 · 正敞口覆盖 ${percent(asMap(g['coverage'])['weight'])}',
-                size: 12,
-              ),
-              const SizedBox(height: 8),
-              copy(
-                'Research cutoff ${widget.asOf}. Uncovered assets stay at report marks; this is not an expected return.',
-                '研究信息截止 ${widget.asOf}。未覆盖资产按报告市值保留，不是预期收益。',
-                size: 12,
-              ),
-              TextButton(
-                onPressed: widget.onDetails,
-                child: Text(
-                  w('Review valuation & portfolio risk →', '查看估值与组合风险 →'),
-                ),
-              ),
-            ]),
-            panel([
-              visualSectionHeader(
-                'Allocation',
-                '持仓结构',
-                Icons.donut_large_rounded,
-              ),
-              const SizedBox(height: 12),
-              PortfolioAllocationChart(
-                hideAmounts: hideAmounts,
-                group: g,
-                palette: p,
-                onHolding: (ticker) => widget.onCompany(
-                  portfolioValuationTicker(g, ticker),
-                  'value',
-                ),
-              ),
-            ]),
-          ),
         ],
       ],
     );
@@ -388,12 +393,13 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
     String zh,
     String value,
     String detail, {
+    IconData icon = Icons.analytics_outlined,
     bool accent = false,
     Color? color,
   }) => Container(
     padding: const EdgeInsets.all(18),
     decoration: BoxDecoration(
-      color: accent ? p.accent.withValues(alpha: .08) : p.panel,
+      color: p.panel,
       border: Border.all(
         color: accent ? p.accent.withValues(alpha: .35) : p.border,
       ),
@@ -402,8 +408,22 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        copy(en, zh, size: 13),
-        const SizedBox(height: 10),
+        Row(
+          children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                color: (color ?? p.accent).withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, size: 17, color: color ?? p.accent),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: copy(en, zh, size: 13)),
+          ],
+        ),
+        const SizedBox(height: 14),
         Text(
           value,
           style: heading(
@@ -418,6 +438,172 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
       ],
     ),
   );
+
+  Widget homeAllocationOverview(Map<String, dynamic> g) {
+    final rows =
+        asList(
+          g['positions'],
+        ).where((r) => !['cash', 'accrual'].contains(r['kind'])).toList()..sort(
+          (a, b) =>
+              number(b['value']).abs().compareTo(number(a['value']).abs()),
+        );
+    Widget positionTable() => Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(flex: 5, child: copy('Position', '持仓', size: 11)),
+            Expanded(
+              flex: 3,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: copy('Value', '市值', size: 11),
+              ),
+            ),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: 82,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: copy('Allocation', '占比', size: 11),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Divider(height: 1, color: p.border),
+        for (final r in rows.take(6))
+          InkWell(
+            key: ValueKey('home-allocation-${r['id'] ?? r['ticker']}'),
+            onTap: r['kind'] == 'equity'
+                ? () => widget.onCompany(text(r['ticker']), 'evidence')
+                : null,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 13),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: p.border)),
+              ),
+              child: Row(
+                children: [
+                  if (r['kind'] == 'equity')
+                    StockLogo(ticker: text(r['ticker']), palette: p, size: 31)
+                  else
+                    Icon(Icons.layers_outlined, color: p.secondary, size: 31),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 5,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          text(r['ticker']),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: heading(14),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          text(r['name'], text(r['assetCategory'])),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: p.muted, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    flex: 3,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(amount(r['value']), style: heading(13)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 82,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(percent(r['netWeight']), style: heading(13)),
+                        const SizedBox(height: 5),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: LinearProgressIndicator(
+                            value: number(r['netWeight']).abs().clamp(0, 1),
+                            minHeight: 3,
+                            backgroundColor: p.border,
+                            color: p.accent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            onPressed: widget.onDetails,
+            child: Text(w('View all positions →', '查看全部持仓 →')),
+          ),
+        ),
+      ],
+    );
+    return panel([
+      Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 12,
+        runSpacing: 8,
+        children: [
+          title('Portfolio allocation', '资产配置'),
+          copy(
+            '${rows.length} ${w('positions', '项持仓')} · ${percent(asMap(g['coverage'])['weight'])} ${w('valuation coverage', '估值覆盖')}',
+            '${rows.length} 项持仓 · 估值覆盖 ${percent(asMap(g['coverage'])['weight'])}',
+            size: 11,
+          ),
+        ],
+      ),
+      const SizedBox(height: 18),
+      LayoutBuilder(
+        builder: (_, c) {
+          final chart = PortfolioAllocationChart(
+            hideAmounts: hideAmounts,
+            group: g,
+            palette: p,
+            onHolding: (ticker) =>
+                widget.onCompany(portfolioValuationTicker(g, ticker), 'value'),
+          );
+          if (c.maxWidth >= 1040 &&
+              MediaQuery.textScalerOf(context).scale(1) <= 1.2) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 5, child: chart),
+                const SizedBox(width: 26),
+                Container(width: 1, height: 420, color: p.border),
+                const SizedBox(width: 26),
+                Expanded(flex: 7, child: positionTable()),
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              chart,
+              const SizedBox(height: 18),
+              Divider(color: p.border),
+              const SizedBox(height: 8),
+              positionTable(),
+            ],
+          );
+        },
+      ),
+    ]);
+  }
 
   Widget homeMovers(
     Map<String, dynamic> h,
@@ -454,6 +640,64 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
     final barExtent = rows.fold<double>(
       0,
       (max, r) => math.max(max, (score(r) ?? 0).abs()),
+    );
+    Widget group(
+      String en,
+      String zh,
+      Color color,
+      List<Map<String, dynamic>> items,
+      String emptyEn,
+      String emptyZh,
+    ) => Material(
+      color: p.card.withValues(alpha: .52),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: p.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: .10),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    color == p.negative
+                        ? Icons.trending_down_rounded
+                        : Icons.trending_up_rounded,
+                    size: 18,
+                    color: color,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    w(en, zh),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: heading(16),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (items.isEmpty && unavailable.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                child: copy(emptyEn, emptyZh, size: 12),
+              ),
+            for (final r in items.take(5))
+              homeMoverRow(r, rate: rate(r), extent: barExtent),
+          ],
+        ),
+      ),
     );
     return panel([
       title('Winners & losers', '盈利与亏损贡献'),
@@ -548,17 +792,41 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
           child: Text(w('Which report fields do I need?', '需要哪些报告字段？')),
         ),
       ] else ...[
-        copy('WINNERS', '盈利贡献', color: p.accent, size: 11),
-        if (winners.isEmpty && unavailable.isEmpty)
-          copy('No positive P&L in this report.', '该报告中没有正收益项目。', size: 12),
-        for (final r in winners.take(3))
-          homeMoverRow(r, rate: rate(r), extent: barExtent),
-        const Divider(height: 24),
-        copy('LOSERS', '亏损贡献', color: p.negative, size: 11),
-        if (losers.isEmpty && unavailable.isEmpty)
-          copy('No negative P&L in this report.', '该报告中没有负收益项目。', size: 12),
-        for (final r in losers.take(3))
-          homeMoverRow(r, rate: rate(r), extent: barExtent),
+        LayoutBuilder(
+          builder: (_, c) {
+            final gains = group(
+              'Top gainers',
+              '主要盈利贡献',
+              p.accent,
+              winners,
+              'No positive P&L in this report.',
+              '该报告中没有正收益项目。',
+            );
+            final declines = group(
+              'Top losers',
+              '主要亏损贡献',
+              p.negative,
+              losers,
+              'No negative P&L in this report.',
+              '该报告中没有负收益项目。',
+            );
+            if (c.maxWidth >= 760 &&
+                MediaQuery.textScalerOf(context).scale(1) <= 1.2) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: gains),
+                  const SizedBox(width: 16),
+                  Expanded(child: declines),
+                ],
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [gains, const SizedBox(height: 14), declines],
+            );
+          },
+        ),
         if (unavailable.isNotEmpty) ...[
           const Divider(height: 24),
           copy(

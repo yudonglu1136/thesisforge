@@ -1,6 +1,68 @@
 pyenv: cannot rehash: /Users/yudonglu/.pyenv/shims isn't writable
 # ThesisForge — Graphite workspace QA
 
+## Current acceptance: Snowball-inspired personal portfolio home — 2026-09-20
+
+Final result: **passed**.
+
+Scope: redesign only the authenticated personal-portfolio landing surface. The
+Snowball reference supplies the information hierarchy—four summary metrics,
+allocation chart beside a compact breakdown table, then performance and
+gainers/losers—not its brand, purple palette, sample values, or navigation.
+ThesisForge keeps its Graphite shell, teal semantics, real broker-backed fields,
+privacy mode, valuation links and portfolio-history methodology.
+
+### Visual evidence
+
+- Source visual truth:
+  `/var/folders/3k/0wsqd58n6w71n8tyql0t09fc0000gn/T/codex-clipboard-1d308e4f-c5c4-4700-a2b0-ab8a128451a7.png`
+  (3022x1562 pixels; 1511x781 CSS-equivalent desktop frame) and
+  `/var/folders/3k/0wsqd58n6w71n8tyql0t09fc0000gn/T/codex-clipboard-b533d07c-68a8-4a6a-ae09-ce1efbc8dd05.png`
+  (2878x972 pixels; lower-page movers reference).
+- Widget-rendered implementation:
+  `/private/tmp/thesisforge-home-redesign.png` (1511x781 pixels).
+- Same-input comparison:
+  `/private/tmp/thesisforge-home-comparison.png` (3022x781 pixels), with the
+  reference and implementation normalized to the same viewport and opened
+  together. Flutter's test renderer uses the Ahem fallback font, so the image
+  verifies layout, density and hierarchy; browser/runtime typography remains
+  the app's existing family.
+- Browser shell check: 1511x781 at
+  `http://127.0.0.1:5174/?view=home&asOf=2026-09-18&lang=en` with no console
+  errors. The local signed-out state correctly withheld private holdings, so
+  synthetic broker fixtures were used only for the widget-rendered visual and
+  interaction checks; no sample data was added to the application.
+
+### Findings and comparison history
+
+- [Resolved P1] The old landing page presented the NAV chart before explaining
+  portfolio composition and split related information across several distant
+  panels. The accepted hierarchy now places four scan-friendly account metrics
+  first, then one allocation workbench with an interactive donut and top-position
+  table, followed by the value/P&L curve and contribution movers.
+- [Resolved P2] The first metric card carried too much saturated accent color.
+  All metric cards now share the same quiet panel surface; accent is limited to
+  the icon and border so account value is prominent without becoming a banner.
+- [Resolved P2] The P&L methodology disclosure read like a loose warning line.
+  It is now a compact information strip with concise bilingual copy.
+- [Resolved P2] Gainers and losers were mixed in one dense list. They are now
+  paired Snowball-style cards with consistent icons, spacing, signed values and
+  existing Day/Open/Realized selectors.
+- No remaining P0/P1/P2 finding. Existing logos/assets are reused; no image was
+  approximated. Copy remains materially different from the reference and names
+  the actual ThesisForge data semantics.
+
+### Interaction, responsive and runtime checks
+
+- The donut's Position/Income, Holdings/Sectors and income type/source views,
+  legend selection, ticker navigation and hover/tap state remain covered by the
+  existing portfolio visual tests.
+- YTD/range inspection, NAV/P&L modes, privacy persistence and percentage-only
+  chart behavior remain covered. Focused result: **39 tests passed**.
+- English and Chinese 390x844 layouts at 150% text scale passed without overflow.
+- `flutter analyze`: no issues. Production `npm run build`: passed; compiled
+  workflow marker verified.
+
 ## Current acceptance: all-institution 13F Insights — 2026-09-20
 
 Final result: **passed**.

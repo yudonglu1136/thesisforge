@@ -231,7 +231,7 @@ void main() {
       );
       await t.pumpAndSettle();
       expect(find.byKey(const ValueKey('personal-home')), findsOneWidget);
-      expect(find.text('Your portfolio, at a glance.'), findsOneWidget);
+      expect(find.text('My portfolio'), findsOneWidget);
       expect(find.text('Shared holdings'), findsNothing);
       expect(
         api.reads.any(
@@ -261,7 +261,7 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(find.text('Broker report · 2026-09-09'), findsOneWidget);
+      expect(find.text('Synced · 2026-09-09'), findsOneWidget);
       expect(
         find.text('Open equities · unrealized P&L, not today’s move'),
         findsOneWidget,
@@ -297,6 +297,9 @@ void main() {
     'dated daily winners and losers use signed account-currency P&L',
     (t) async {
       await mount(t, HomeApi()..daily = true);
+      expect(find.text('Portfolio allocation'), findsOneWidget);
+      expect(find.text('Top gainers'), findsOneWidget);
+      expect(find.text('Top losers'), findsOneWidget);
       expect(find.text('+USD 100'), findsOneWidget);
       expect(find.text('USD -50'), findsOneWidget);
       expect(find.text('Session contribution · 2026-09-09'), findsOneWidget);
@@ -319,7 +322,7 @@ void main() {
       );
       await fixtures.tap(t, find.byKey(const ValueKey('home-position-AAA')));
       expect(selected, [('AAA', 'evidence')]);
-      await fixtures.tap(t, find.text('Full portfolio analysis'));
+      await fixtures.tap(t, find.text('Full analysis'));
       expect(details, 1);
     },
   );
