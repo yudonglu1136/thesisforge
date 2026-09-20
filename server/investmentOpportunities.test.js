@@ -63,36 +63,38 @@ function fixture(t) {
   return {db,source,store,service,storeFile};
 }
 
-test('consensus aggregates exact claims once per manager and excludes options and quant crowding',t=>{
+test('institutional activity aggregates exact claims once per manager and includes every covered 13F filer',t=>{
   const {source}=fixture(t),r=buildOpportunities(source,'2026-08-28');
   const row=r.rows.find(x=>x.ticker==='TEST');
-  assert.equal(row.managerCount,2);assert.equal(row.adds,2);assert.equal(row.managers[0].shares,20);
+  assert.equal(row.managerCount,3);assert.equal(row.adds,3);assert.equal(row.managers[0].shares,20);
+  assert.equal(row.newPositions,0);assert.equal(row.increases,3);assert.equal(row.reductions,0);assert.equal(row.exits,0);
+  assert.deepEqual(r.coverage.activity,{newPositions:0,increases:3,reductions:0,exits:0});
   assert.equal(row.managers[0].weight,.2);assert.ok(!r.rows.some(x=>x.ticker==='OPT'));
   near(row.modelGap,.2);near(row.valuation.change,.1);
   assert.equal(row.valuation.previousFairValue,60);
   assert.equal(row.valuation.previousDate,'2026-04-20');
-  assert.equal(r.coverage.fullBooks,2);assert.equal(r.coverage.extractedBooks,0);
+  assert.equal(r.coverage.fullBooks,3);assert.equal(r.coverage.extractedBooks,0);
 });
 
 test('fundamentals Guru drilldown stays exact to ticker, quarter and public cutoff',t=>{
   const {source}=fixture(t);
   const latest=fundamentalGuruQuarter(source,'TEST','2026-08-28');
   assert.equal(latest.version,'fundamental-guru-quarter-v1');assert.equal(latest.reportDate,'2026-06-30');
-  assert.equal(latest.adds,2);assert.equal(latest.managerCount,2);
+  assert.equal(latest.adds,3);assert.equal(latest.managerCount,3);
   assert.ok(latest.managers.every(m=>m.ticker==='TEST'&&m.reportDate===latest.reportDate&&m.availableAt<=latest.asOf));
   assert.ok(latest.managers.every(m=>m.avatar&&m.shares===20));
   const earlier=fundamentalGuruQuarter(source,'TEST','2026-08-28','2026-03-31');
-  assert.equal(earlier.adds,0);assert.equal(earlier.coverage.extractedBooks,2);
+  assert.equal(earlier.adds,0);assert.equal(earlier.coverage.extractedBooks,3);
   assert.ok(earlier.managers.every(m=>m.shares===10&&m.reportDate==='2026-03-31'));
   assert.throws(()=>fundamentalGuruQuarter(source,'TEST','2026-06-01','2026-06-30'));
   assert.throws(()=>fundamentalGuruQuarter(source,'bad/ticker','2026-08-28'));
   const empty=fundamentalGuruQuarter(source,'MISSING','2026-08-28');
-  assert.equal(empty.ticker,'MISSING');assert.deepEqual(empty.managers,[]);assert.equal(empty.coverage.reportedManagers,2);
+  assert.equal(empty.ticker,'MISSING');assert.deepEqual(empty.managers,[]);assert.equal(empty.coverage.reportedManagers,3);
   assert.equal(fundamentalGuruQuarter(source,'A.B','2026-08-28').managers[0].ticker,'A.B');
 });
 test('historical cutoff never borrows latest full books, prices, model or future filings',t=>{
   const {source}=fixture(t),r=buildOpportunities(source,'2026-06-01');
-  assert.deepEqual(r.rows.map(x=>x.ticker),['TEST']);assert.equal(r.coverage.extractedBooks,2);
+  assert.deepEqual(r.rows.map(x=>x.ticker),['TEST']);assert.equal(r.coverage.extractedBooks,3);
   assert.equal(r.rows[0].valuation.fairValue,60);assert.equal(r.rows[0].price.value,50);
   assert.equal(r.rows[0].valuation.previousFairValue,undefined);
   assert.ok(opportunityTimeline(source,'TEST','2026-06-01').every(e=>e.date<='2026-06-01'));
@@ -150,7 +152,7 @@ test('save needs no scenario, is idempotent, immutable, owner-scoped and survive
 test('review separates price/model change, detects new filings, records acknowledgment without overwriting original',t=>{
   const {service,store}=fixture(t),w=saveWatch(service,'alice',{operationId:'watch_operation_001',ticker:'TEST',asOf:'2026-06-01'});
   const r=reviewWatch(service,'alice',w.id,'2026-08-28');assert.equal(r.status,'new_evidence');
-  near(r.modelChange,.1);near(r.priceChange,.1);assert.equal(r.newFilings.length,2);
+  near(r.modelChange,.1);near(r.priceChange,.1);assert.equal(r.newFilings.length,3);
   const body={operationId:'review_operation_001',watchId:w.id,asOf:'2026-08-28',comparisonId:r.comparisonId};
   const a=saveWatchReview(service,'alice',body);assert.equal(saveWatchReview(service,'alice',body).id,a.id);
   const after=reviewWatch(service,'alice',w.id,'2026-08-28');assert.equal(after.status,'unchanged');assert.equal(after.newFilings.length,0);
@@ -166,7 +168,7 @@ test('method changes do not masquerade as investment returns; stale review is re
 });
 test('unmodeled holding can be watched without substituting another company',t=>{
   const {service}=fixture(t),w=saveWatch(service,'alice',{operationId:'watch_operation_001',ticker:'MISS',asOf:'2026-08-28'});
-  assert.equal(w.ticker,'MISS');assert.equal(w.baseline.published,null);assert.equal(w.baseline.evidence.length,2);
+  assert.equal(w.ticker,'MISS');assert.equal(w.baseline.published,null);assert.equal(w.baseline.evidence.length,3);
   assert.equal(reviewWatch(service,'alice',w.id,'2026-08-28').status,'data_unavailable');
 });
 
@@ -176,7 +178,7 @@ test('personal decision retains server-verified candidate context without opting
   const body={operationId:'decision_fixture_001',ticker:'TEST',asOf:'2026-08-28',scenarioId:scenario.id,action:'Watch',notes:'Test only',rules:[],units:0,targetWeight:0,sourceGuruIds:[],
     candidateContext:{lens:'adds',reportDate:'2026-06-30',evidence:[{guruId:'forged'}]}};
   const d=service.saveDecision('alice',body);
-  assert.equal(d.candidateContext.evidence.length,2);assert.equal(d.discovery.length,0);
+  assert.equal(d.candidateContext.evidence.length,3);assert.equal(d.discovery.length,0);
   assert.ok(!d.candidateContext.evidence.some(e=>e.guruId==='forged'));
   assert.throws(()=>service.saveDecision('alice',{...body,operationId:'decision_fixture_002',candidateContext:{lens:'unverified'}}));
 });

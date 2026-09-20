@@ -29,13 +29,18 @@ double? discoverShareChange(Map<String, dynamic> m) {
 }
 
 extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
-  Color discoverLensColor(String id) => id == 'debate'
+  Color discoverLensColor(String id) =>
+      {'reduced', 'exited', 'debate'}.contains(id)
       ? p.secondary
       : id == 'growth'
       ? const Color(0xFF76BCEB)
       : p.accent;
 
   String discoverLensAction(String id) => switch (id) {
+    'new' => w('Inspect new positions', '查看新建仓机构'),
+    'increased' => w('Inspect increases', '查看加仓机构'),
+    'reduced' => w('Inspect reductions', '查看减仓机构'),
+    'exited' => w('Inspect exits', '查看清仓机构'),
     'adds' => w('Compare manager additions', '对比经理增持'),
     'growth' => w('Inspect growth quality', '检验增长质量'),
     'revision' => w('Inspect the value trend', '检验估值趋势'),
@@ -44,6 +49,22 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
   };
 
   String discoverLensQuestion(String id) => switch (id) {
+    'new' => w(
+      'Which institutions reported starting this position?',
+      '哪些机构本季度申报了新建仓？',
+    ),
+    'increased' => w(
+      'Which institutions reported adding to this position?',
+      '哪些机构本季度申报了加仓？',
+    ),
+    'reduced' => w(
+      'Which institutions reported reducing this position?',
+      '哪些机构本季度申报了减仓？',
+    ),
+    'exited' => w(
+      'Which institutions reported exiting this position?',
+      '哪些机构本季度申报了清仓？',
+    ),
     'adds' => w(
       'Who is building a position — and how meaningful is it?',
       '谁在增加持仓？这笔仓位有多重要？',
@@ -58,6 +79,10 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
   };
 
   String discoverLeadLabel() => switch (discoverCollection) {
+    'new' => w('New positions', '新建仓机构'),
+    'increased' => w('Increased', '加仓机构'),
+    'reduced' => w('Reduced', '减仓机构'),
+    'exited' => w('Exited', '清仓机构'),
     'adds' => w('Adding', '增持经理'),
     'debate' => w('Adds / trims', '增 / 减持'),
     'revision' => w('Rising quarters', '上升次数'),
@@ -65,13 +90,25 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
   };
   String discoverLeadValue(Map<String, dynamic> r) =>
       switch (discoverCollection) {
+        'new' => text(r['newPositions']),
+        'increased' => text(r['increases']),
+        'reduced' => text(r['reductions']),
+        'exited' => text(r['exits']),
         'adds' => text(r['adds']),
         'debate' => '${r['adds']} / ${r['trims']}',
         'revision' =>
           '${asMap(asMap(r['valuation'])['trend'])['upCount'] ?? '—'} / 7',
         _ => pct(asMap(r['valuation'])['revenueGrowth']),
       };
-  String discoverTailLabel() => {'adds', 'debate'}.contains(discoverCollection)
+  String discoverTailLabel() =>
+      {
+        'new',
+        'increased',
+        'reduced',
+        'exited',
+        'adds',
+        'debate',
+      }.contains(discoverCollection)
       ? w('Median wt.', '仓位中位数')
       : discoverCollection == 'revision'
       ? w('Max drawdown', '最大回撤')
@@ -79,7 +116,14 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
       ? w('ROIC floor', 'ROIC 最低值')
       : w('Value Δ', '估值变化');
   String discoverTailValue(Map<String, dynamic> r) =>
-      {'adds', 'debate'}.contains(discoverCollection)
+      {
+        'new',
+        'increased',
+        'reduced',
+        'exited',
+        'adds',
+        'debate',
+      }.contains(discoverCollection)
       ? pct(r['medianWeight'])
       : discoverCollection == 'revision'
       ? pct(asMap(asMap(r['valuation'])['trend'])['maxDrawdown'])
@@ -148,8 +192,23 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
               child: Text(w('Return to screen date', '返回筛选截止日')),
             ),
           ] else ...[
-            if (id == 'adds' || id == 'debate')
-              discoverPositioningEvidence(debate: id == 'debate')
+            if ({
+              'new',
+              'increased',
+              'reduced',
+              'exited',
+              'adds',
+              'debate',
+            }.contains(id))
+              discoverPositioningEvidence(
+                debate: id == 'debate',
+                action: const {
+                  'new': 'new',
+                  'increased': 'increased',
+                  'reduced': 'reduced',
+                  'exited': 'sold_out',
+                }[id],
+              )
             else if (opportunityDetailLoading)
               label('Loading dated evidence…', '正在加载带日期的证据…')
             else if (c == null)
@@ -206,10 +265,13 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
     );
   }
 
-  Widget discoverPositioningEvidence({required bool debate}) {
+  Widget discoverPositioningEvidence({required bool debate, String? action}) {
     final managers = asList(opportunityRow['managers']);
     final adds = discoverManagerSide(managers, additions: true);
     final trims = discoverManagerSide(managers, additions: false);
+    final exact = action == null
+        ? const <Map<String, dynamic>>[]
+        : managers.where((m) => m['action'] == action).toList();
     final newCount = adds.where((m) => m['action'] == 'new').length;
     final unknown = managers
         .where((m) => m['comparisonStatus'] != 'adjusted')
@@ -222,15 +284,25 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
           runSpacing: 12,
           children: [
             lensStat(
-              w('Adding / new', '增持 / 新建'),
-              '${adds.length}',
-              color: p.accent,
+              action == null
+                  ? w('Adding / new', '增持 / 新建')
+                  : opportunityAction(action),
+              '${action == null ? adds.length : exact.length}',
+              color: {'reduced', 'sold_out'}.contains(action)
+                  ? p.secondary
+                  : p.accent,
             ),
             lensStat(
-              debate
+              action != null
+                  ? w('Current holders', '当前持有机构')
+                  : debate
                   ? w('Reducing / exited', '减持 / 退出')
                   : w('New positions', '首次持仓'),
-              '${debate ? trims.length : newCount}',
+              '${action != null
+                  ? opportunityRow['managerCount']
+                  : debate
+                  ? trims.length
+                  : newCount}',
               color: debate ? p.secondary : p.text,
             ),
             lensStat(
@@ -244,7 +316,13 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
           '持仓季度 ${reportQuarterLabel(opportunityQuarter)} · 仓位为各经理披露普通股多头组合内的占比，不是基金总资产占比。',
         ),
         const SizedBox(height: 14),
-        if (debate)
+        if (action != null)
+          discoverManagerGroup(
+            exact,
+            additions: !{'reduced', 'sold_out'}.contains(action),
+            title: opportunityAction(action),
+          )
+        else if (debate)
           LayoutBuilder(
             builder: (_, constraints) {
               final left = discoverManagerGroup(
@@ -272,10 +350,14 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
         else
           discoverManagerGroup(adds, additions: true),
         lensNote(
-          debate
+          action != null
+              ? 'This is a delayed 13F share-count observation. It does not reveal execution price, timing within the quarter or the manager’s motive.'
+              : debate
               ? 'Position changes do not tell us why managers disagree. Check business durability, price paid and portfolio constraints; none of those motives is inferred here.'
               : 'A large percentage increase can start from a tiny holding. Compare the reported share change with the ending portfolio weight before calling it conviction.',
-          debate
+          action != null
+              ? '这是有披露延迟的 13F 股数观察，无法得知真实成交价、季度内交易时间或机构动机。'
+              : debate
               ? '仓位变化不能证明经理的观点或动机。请分别检验经营持续性、买入价格和组合约束；这里不推断他们为何分歧。'
               : '增持百分比可能来自很小的初始仓位。结合期末组合占比，再判断这笔持仓是否重要。',
         ),
@@ -296,6 +378,7 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
     List<Map<String, dynamic>> rows, {
     required bool additions,
     int visibleCount = 3,
+    String? title,
   }) {
     final tint = additions ? p.accent : p.secondary;
     return Container(
@@ -320,9 +403,10 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  additions
-                      ? w('Added or started', '增持或新建')
-                      : w('Reduced or exited', '减持或退出'),
+                  title ??
+                      (additions
+                          ? w('Added or started', '增持或新建')
+                          : w('Reduced or exited', '减持或退出')),
                   style: TextStyle(
                     color: tint,
                     fontSize: 13,

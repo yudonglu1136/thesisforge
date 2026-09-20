@@ -95,7 +95,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
             ('valueflow', 'Value Flow', '价值链'),
           ])
             SizedBox(
-              width: c.maxWidth < 650 ? (c.maxWidth - 10) / 2 : null,
+              width: c.maxWidth < 650 ? math.max(0, c.maxWidth - 10) / 2 : null,
               child: ChoiceChip(
                 label: Text(w(tab.$2, tab.$3)),
                 selected: discoveryTab == tab.$1,

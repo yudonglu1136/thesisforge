@@ -61,6 +61,10 @@ List<Map<String, dynamic>> sampleRows() => [
     'quality': qualityFixture(),
     'name': 'Example Semiconductor',
     'managerCount': 4,
+    'newPositions': 1,
+    'increases': 2,
+    'reductions': 1,
+    'exits': 1,
     'adds': 3,
     'trims': 2,
     'modelGap': .2,
@@ -79,6 +83,24 @@ List<Map<String, dynamic>> sampleRows() => [
         'shares': 20,
         'action': 'increased',
       },
+      {
+        'guruId': 'new-manager',
+        'name': 'New manager',
+        'shares': 8,
+        'action': 'new',
+      },
+      {
+        'guruId': 'reduce-manager',
+        'name': 'Reduce manager',
+        'shares': 6,
+        'action': 'reduced',
+      },
+      {
+        'guruId': 'exit-manager',
+        'name': 'Exit manager',
+        'shares': 0,
+        'action': 'sold_out',
+      },
     ],
   },
   {
@@ -86,6 +108,10 @@ List<Map<String, dynamic>> sampleRows() => [
     'quality': qualityFixture(),
     'name': 'Intuitive Surgical fixture',
     'managerCount': 2,
+    'newPositions': 1,
+    'increases': 1,
+    'reductions': 0,
+    'exits': 0,
     'adds': 2,
     'trims': 0,
     'modelGap': -.1,
@@ -104,6 +130,10 @@ List<Map<String, dynamic>> sampleRows() => [
     'ticker': 'NVDA',
     'name': 'Missing fixture',
     'managerCount': 1,
+    'newPositions': 0,
+    'increases': 0,
+    'reductions': 1,
+    'exits': 0,
     'adds': 0,
     'trims': 1,
     'modelGap': null,
@@ -249,6 +279,32 @@ void main() {
         ).map((r) => r['ticker']),
         ['TEST', 'ISRG'],
       );
+      expect(
+        filterDiscoverCandidates(
+          rows,
+          collection: 'new',
+          sort: 'newPositions',
+        ).map((r) => r['ticker']),
+        ['ISRG', 'TEST'],
+      );
+      expect(
+        filterDiscoverCandidates(
+          rows,
+          collection: 'increased',
+        ).map((r) => r['ticker']),
+        ['TEST', 'ISRG'],
+      );
+      expect(
+        filterDiscoverCandidates(
+          rows,
+          collection: 'reduced',
+        ).map((r) => r['ticker']),
+        ['TEST', 'NVDA'],
+      );
+      expect(
+        filterDiscoverCandidates(rows, collection: 'exited').single['ticker'],
+        'TEST',
+      );
       expect(filterDiscoverCandidates(rows, collection: 'growth').length, 2);
       expect(
         filterDiscoverCandidates(rows, collection: 'revision').single['ticker'],
@@ -330,6 +386,25 @@ void main() {
       });
     }
   }
+  testWidgets('quarterly activity cards rank four distinct 13F actions', (
+    tester,
+  ) async {
+    await mountExplorer(tester, ExplorerApi());
+    for (final id in ['new', 'increased', 'reduced', 'exited']) {
+      expect(find.byKey(ValueKey('discover-collection-$id')), findsOneWidget);
+    }
+    await tapKey(tester, 'discover-collection-exited');
+    expect(
+      find.byKey(const ValueKey('discover-candidate-TEST')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('discover-candidate-ISRG')), findsNothing);
+    expect(
+      find.text('Which institutions reported exiting this position?'),
+      findsWidgets,
+    );
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
     'collection, search and reset are functional and retain input focus',
     (tester) async {
@@ -375,7 +450,7 @@ void main() {
       await tester.ensureVisible(back);
       await tester.tap(back);
       await tester.pumpAndSettle();
-      expect(find.text('Find the signal. Build your case.'), findsOneWidget);
+      expect(find.text('Quarterly institutional moves'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('discover-candidate-NVDA')),
         findsNothing,

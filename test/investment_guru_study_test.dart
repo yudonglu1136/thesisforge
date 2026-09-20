@@ -52,6 +52,26 @@ class StudyApi extends ApiClient {
         u.queryParameters['period']!,
       );
     }
+    if (path.contains('/backtest?')) {
+      final id = u.pathSegments[u.pathSegments.length - 2];
+      return {
+        'status': 'ready',
+        'guru': {'id': id},
+        'method': {'years': 5, 'benchmark': 'SPY'},
+        'window': {'start': '2023-01-03', 'end': date},
+        'summary': {
+          'totalReturn': .24,
+          'cagr': .08,
+          'sharpe': .7,
+          'maxDrawdown': -.12,
+          'benchmark': {'totalReturn': .2, 'cagr': .07},
+        },
+        'equity': [
+          {'date': '2023-01-03', 'value': 1.0, 'benchmark': 1.0},
+          {'date': date, 'value': 1.24, 'benchmark': 1.2},
+        ],
+      };
+    }
     final id = u.pathSegments.last;
     return {
       'asOf': date,
@@ -179,7 +199,16 @@ void main() {
         },
       );
       expect(find.byType(GuruStudyScatter), findsNWidgets(2));
+      expect(
+        find.byKey(const ValueKey('guru-directory-simulation-bill-ackman')),
+        findsOneWidget,
+      );
+      expect(find.text('Portfolio vs SPY'), findsOneWidget);
       await tap(t, find.byKey(const ValueKey('study-point-sharpe-li-lu')));
+      expect(
+        find.byKey(const ValueKey('guru-directory-simulation-li-lu')),
+        findsOneWidget,
+      );
       expect(find.text("Study Li Lu's decisions"), findsOneWidget);
       await tap(t, find.text('2025 Q2').last);
       await tap(t, find.text('Explore quarterly holdings'));

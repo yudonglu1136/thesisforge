@@ -22,8 +22,18 @@ List<Map<String, dynamic>> filterDiscoverCandidates(
         ? row['managerCount']
         : row[key],
   );
+  final actionForCollection = const {
+    'new': 'new',
+    'increased': 'increased',
+    'reduced': 'reduced',
+    'exited': 'sold_out',
+  }[collection];
   final result = rows.where((r) {
     final included = switch (collection) {
+      'new' => (value(r, 'newPositions') ?? -1) > 0,
+      'increased' => (value(r, 'increases') ?? -1) > 0,
+      'reduced' => (value(r, 'reductions') ?? -1) > 0,
+      'exited' => (value(r, 'exits') ?? -1) > 0,
       'adds' => (value(r, 'adds') ?? -1) >= 2,
       'growth' =>
         const {
@@ -41,7 +51,12 @@ List<Map<String, dynamic>> filterDiscoverCandidates(
     };
     if (!included) return false;
     if (manager.isNotEmpty &&
-        !asList(r['managers']).any((m) => m['guruId'] == manager)) {
+        !asList(r['managers']).any(
+          (m) =>
+              m['guruId'] == manager &&
+              (actionForCollection == null ||
+                  m['action'] == actionForCollection),
+        )) {
       return false;
     }
     final modelled = r['valuationStatus'] == 'available';
@@ -96,6 +111,7 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
     builder: (_, c) {
       final compact = c.maxWidth < 620;
       final study = discoveryTab == 'managers' && selectedGuru == null;
+      final opportunities = discoveryTab == 'gurus' && selectedGuru == null;
       final showTitle =
           !{'valueflow', 'fundamentals'}.contains(discoveryTab) &&
           (selectedGuru == null ||
@@ -122,6 +138,8 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
                       Text(
                         study
                             ? w('Guru holdings & consensus', 'Guru 共识持仓与加减仓')
+                            : opportunities
+                            ? w('Quarterly institutional moves', '机构季度持仓变化')
                             : compact
                             ? w('Discover', '发现')
                             : w(
@@ -162,9 +180,13 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
             label(
               study
                   ? 'Shortlist a few managers. Compare their style, then study their holdings.'
+                  : opportunities
+                  ? 'Rank every disclosed manager by reported share changes. See what institutions started, added, reduced or exited.'
                   : 'See what managers changed, what the business delivered, and what the price assumes.',
               study
                   ? '选几位经理，比较投资风格，再深入研究他们的持仓。'
+                  : opportunities
+                  ? '汇总所有已披露机构的股数变化排名，看谁在新建仓、加仓、减仓或清仓。'
                   : '看大佬仓位怎么变、公司交出什么业绩，再检验价格隐含的预期。',
               size: compact ? 12 : 14,
             ),
@@ -214,13 +236,19 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
   void chooseCollection(String id) => changeDiscover(() {
     discoverCollection = id;
     discoverSort = switch (id) {
+      'new' => 'newPositions',
+      'increased' => 'increases',
+      'reduced' => 'reductions',
+      'exited' => 'exits',
       'adds' => 'adds',
       'growth' => growthQuality.enabled ? 'quality' : 'growth',
       'revision' => 'revision',
       _ => 'managers',
     };
-    opportunityLens = id == 'adds'
+    opportunityLens = {'new', 'increased', 'adds'}.contains(id)
         ? 'adds'
+        : {'reduced', 'exited'}.contains(id)
+        ? 'trims'
         : id == 'revision'
         ? 'value'
         : 'holdings';
@@ -228,6 +256,22 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
   });
 
   String discoverRule(String id) => switch (id) {
+    'new' => w(
+      'Rank companies by managers reporting a new position this quarter.',
+      '按本季度申报新建仓的机构数量排名。',
+    ),
+    'increased' => w(
+      'Rank companies by managers reporting a higher share count this quarter.',
+      '按本季度申报股数增加的机构数量排名。',
+    ),
+    'reduced' => w(
+      'Rank companies by managers reporting a lower share count this quarter.',
+      '按本季度申报股数减少的机构数量排名。',
+    ),
+    'exited' => w(
+      'Rank companies by managers reporting a complete exit this quarter.',
+      '按本季度申报清仓的机构数量排名。',
+    ),
     'adds' => w(
       'At least 2 managers reported new or increased shares.',
       '至少 2 位经理申报首次持仓或股数增加。',
@@ -255,6 +299,10 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
   };
 
   String discoverCollectionName(String id) => switch (id) {
+    'new' => w('New positions', '新建仓排名'),
+    'increased' => w('Most increased', '加仓排名'),
+    'reduced' => w('Most reduced', '减仓排名'),
+    'exited' => w('Exited positions', '清仓排名'),
     'adds' => w('Shared additions', '多人增持'),
     'growth' => w('Growing businesses', '收入增长'),
     'revision' => w('Steadily rising value', '估值稳步提升'),
@@ -295,8 +343,8 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
               },
             ),
           label(
-            '${coverage['reportedManagers'] ?? '—'} managers · ${coverage['total'] ?? '—'} securities',
-            '${coverage['reportedManagers'] ?? '—'} 位经理 · ${coverage['total'] ?? '—'} 只证券',
+            '${coverage['reportedManagers'] ?? '—'} reported / ${coverage['eligibleManagers'] ?? '—'} covered managers · ${coverage['total'] ?? '—'} securities',
+            '${coverage['reportedManagers'] ?? '—'} 位本季有申报 / ${coverage['eligibleManagers'] ?? '—'} 位已覆盖机构 · ${coverage['total'] ?? '—'} 只证券',
             size: 12,
           ),
           label(
@@ -344,7 +392,7 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
             if (c.maxWidth < 1080 && opportunityMobileDetail) {
               return const SizedBox.shrink();
             }
-            const ids = ['adds', 'growth', 'revision', 'debate'];
+            const ids = ['new', 'increased', 'reduced', 'exited'];
             if (c.maxWidth < 620) {
               return SizedBox(
                 height: 190,
@@ -376,6 +424,24 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
           },
         ),
         const SizedBox(height: 26),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            label('Other research lenses', '其他研究视角', size: 11),
+            for (final id in const ['adds', 'growth', 'revision', 'debate'])
+              OutlinedButton(
+                key: ValueKey('discover-collection-$id'),
+                onPressed: () => chooseCollection(id),
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: Text(discoverCollectionName(id)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 14),
         LayoutBuilder(
           builder: (_, c) {
             final matches = discoverMatches;
@@ -441,8 +507,8 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: label(
-                'Universe: disclosed common shares from the selected manager quarter, not the whole market. Adds and trims describe reported share changes, not verified trades. Growth is a reported quarterly input; value revisions compare the same method, currency and version. A model gap is fair value / dated price − 1, not an expected return. Missing models remain visible. The separate Fundamentals tab covers the broader eligible operating-company universe.',
-                '范围为所选经理季度披露的普通股，并非全市场。增减持描述申报股数变化，不是已确认成交。增长来自已披露季度数据；估值变化只比较相同方法、币种和版本。模型价差＝估值 / 该日期价格 − 1，不代表预期收益。缺失模型仍保留在列表；“基本面”页覆盖更广的符合条件的经营类公司。',
+                'Universe: common-long holdings disclosed by every covered institution for the selected quarter. Rankings count reported share changes, not verified trades or execution prices; 13F reports are delayed. Missing rows are not treated as exits. Portfolio weights are within each disclosed common-long book, not total fund AUM. Valuation remains supporting evidence, not part of the activity ranking.',
+                '范围为所选季度全部覆盖机构披露的普通股多头。排名统计申报股数变化，不代表已确认交易或成交价；13F 存在披露延迟。缺失记录不会被当作清仓。仓位占比是各机构披露普通股多头组合内占比，不是基金总资产占比。估值仅作辅助证据，不参与动作排名。',
                 size: 12,
               ),
             ),
@@ -457,7 +523,15 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
     List<Map<String, dynamic>> rows, {
     bool compact = false,
   }) {
-    final sort = id == 'growth'
+    final sort = id == 'new'
+        ? 'newPositions'
+        : id == 'increased'
+        ? 'increases'
+        : id == 'reduced'
+        ? 'reductions'
+        : id == 'exited'
+        ? 'exits'
+        : id == 'growth'
         ? growthQuality.enabled
               ? 'quality'
               : 'growth'
@@ -471,12 +545,16 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
       qualityRules: growthQuality,
     );
     final selected = discoverCollection == id;
-    final color = id == 'debate'
+    final color = {'reduced', 'exited', 'debate'}.contains(id)
         ? p.secondary
         : id == 'growth'
         ? const Color(0xFF76BCEB)
         : p.accent;
     final icon = switch (id) {
+      'new' => Icons.add_circle_outline,
+      'increased' => Icons.trending_up,
+      'reduced' => Icons.trending_down,
+      'exited' => Icons.exit_to_app,
       'adds' => Icons.people_outline,
       'growth' => Icons.bar_chart,
       'revision' => Icons.trending_up,
@@ -550,7 +628,24 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
                           ),
                         ),
                         Text(
-                          id == 'growth'
+                          id == 'new'
+                              ? w(
+                                  '${r['newPositions']} managers',
+                                  '${r['newPositions']} 位机构',
+                                )
+                              : id == 'increased'
+                              ? w(
+                                  '${r['increases']} managers',
+                                  '${r['increases']} 位机构',
+                                )
+                              : id == 'reduced'
+                              ? w(
+                                  '${r['reductions']} managers',
+                                  '${r['reductions']} 位机构',
+                                )
+                              : id == 'exited'
+                              ? w('${r['exits']} managers', '${r['exits']} 位机构')
+                              : id == 'growth'
                               ? pct(asMap(r['valuation'])['revenueGrowth'])
                               : id == 'revision'
                               ? w(
@@ -750,6 +845,10 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
                 discoverSort,
                 {
                   'managers': w('Most holders', '持有经理最多'),
+                  'newPositions': w('Most new positions', '新建仓机构最多'),
+                  'increases': w('Most increases', '加仓机构最多'),
+                  'reductions': w('Most reductions', '减仓机构最多'),
+                  'exits': w('Most exits', '清仓机构最多'),
                   'adds': w('Most additions', '增持经理最多'),
                   'growth': w('Revenue growth', '收入增速'),
                   'quality': w('ROIC floor', 'ROIC 最低值'),
@@ -865,9 +964,26 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
   Widget discoverCandidate(Map<String, dynamic> r, bool detailed) {
     final selected = r['ticker'] == opportunityTicker,
         v = asMap(r['valuation']);
-    final managers = asList(
-      r['managers'],
-    ).where((m) => number(m['shares']) > 0).take(3).toList();
+    final action = const {
+      'new': 'new',
+      'increased': 'increased',
+      'reduced': 'reduced',
+      'exited': 'sold_out',
+    }[discoverCollection];
+    final managers = asList(r['managers'])
+        .where(
+          (m) =>
+              action == null ? number(m['shares']) > 0 : m['action'] == action,
+        )
+        .take(3)
+        .toList();
+    final activityCount = switch (discoverCollection) {
+      'new' => r['newPositions'],
+      'increased' => r['increases'],
+      'reduced' => r['reductions'],
+      'exited' => r['exits'],
+      _ => null,
+    };
     return Semantics(
       button: true,
       selected: selected,
@@ -909,7 +1025,12 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
                           ),
                           const SizedBox(width: 9),
                           Text(
-                            '${r['adds']} ↑  ${r['trims']} ↓',
+                            activityCount == null
+                                ? '${r['adds']} ↑  ${r['trims']} ↓'
+                                : w(
+                                    '$activityCount managers',
+                                    '$activityCount 位机构',
+                                  ),
                             style: TextStyle(color: p.muted, fontSize: 11),
                           ),
                         ],
@@ -943,8 +1064,12 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
                           Flexible(
                             child: Text(
                               w(
-                                '${r['managerCount']} holders',
-                                '${r['managerCount']} 位持有',
+                                action == null
+                                    ? '${r['managerCount']} holders'
+                                    : '${managers.length == 3 && number(activityCount) > 3 ? '3+' : activityCount} reporting',
+                                action == null
+                                    ? '${r['managerCount']} 位持有'
+                                    : '${managers.length == 3 && number(activityCount) > 3 ? '3+' : activityCount} 位申报',
                               ),
                               maxLines: 1,
                               style: TextStyle(color: p.muted, fontSize: 10),

@@ -1,3 +1,4 @@
+pyenv: cannot rehash: /Users/yudonglu/.pyenv/shims isn't writable
 # ThesisForge — Graphite workspace QA
 
 ## Current acceptance: English Guru holdings + preserved study tools — 2026-09-11
@@ -238,7 +239,6 @@ See `docs/portfolio-research-2026-09-09.md` for formulas and remaining acceptanc
 ## Current acceptance: Horizontal quarterly research book — 2026-09-09
 
 final result: passed
-
 ## 2026-09-11 Portfolio history repair
 
 Home retains the existing native Flutter design and canonical logos. Actual
@@ -1122,3 +1122,46 @@ production deployment was performed.
   to force the entire dashboard into a fixed-height screenshot.
 
 Final result: **passed**.
+
+# Design QA — Opportunities and Guru copy simulation (2026-09-20)
+
+## Scope
+
+- Opportunities remains the primary Discover tab and now summarizes quarterly institutional activity as New positions, Most increased, Most reduced, and Exited positions.
+- Selecting a category changes the ranked security list and the exact manager-level evidence shown for that action.
+- Selecting a Guru in the full directory expands an audited disclosure-date copy simulation against SPY inside that Guru's row.
+
+## Reference comparison
+
+- Reference: the supplied All Gurus directory screenshot with an expanded Evan McGoff row.
+- Rendered implementation: local Flutter web app at 1440 × 1000.
+- The implementation retains the reference hierarchy, portrait treatment, highlighted row, teal accent, metric columns, and inline study actions.
+- The expanded row adds the requested curve and four compact performance metrics without changing the surrounding directory interaction model.
+- Opportunities uses the same panel, typography, spacing, status-color, and evidence-detail language as the existing ThesisForge UI.
+
+## Responsive and interaction checks
+
+- Desktop 1440 × 1000: four action cards, company ranking, evidence pane, and expanded Guru curve render without overflow.
+- Mobile 390 × 844: navigation, action-card carousel, tabs, and filters remain reachable and readable.
+- Verified category selection for Most increased and Exited positions.
+- Verified historical-quarter switching from 2026/Q2 to 2025/Q4.
+- Verified Guru selection for Evan McGoff and a populated 2021–2026 Portfolio vs SPY curve.
+- Verified a fresh browser tab reports no console warnings or errors after page load and interaction.
+
+## Data and disclosure checks
+
+- Activity labels come from reported share-count changes and do not claim execution price or intra-quarter timing.
+- Missing rows are not classified as exits.
+- Portfolio weights are identified as disclosed common-long book weights, not fund AUM.
+- Guru curves use audited SEC acceptance/filing dates, execute on the first tradable close, retain unavailable weight as cash, and are explicitly labeled as simulations rather than fund NAV.
+- Sharadar quarter-end holdings are not treated as public knowledge dates; when the audited SEC-timestamp cache is unavailable, the simulation continues to fail closed.
+
+## Validation
+
+- Flutter analyze: passed.
+- Flutter regression suite: 143 tests passed.
+- Backend targeted suite: 34 tests passed.
+- Desktop and mobile browser inspection: passed.
+- Fresh-tab browser console inspection: passed.
+
+final result: passed

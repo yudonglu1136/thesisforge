@@ -1028,6 +1028,21 @@ class _GuruStudyPanelState extends State<GuruStudyPanel> {
           ),
           if (active) ...[
             const SizedBox(height: 10),
+            BacktestPreview(
+              key: ValueKey('guru-directory-simulation-$id'),
+              guru: {...g, 'type': text(g['type'], 'manager13f')},
+              api: widget.api,
+              palette: p,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              w(
+                'Disclosure-date copy simulation: after each public filing, rebalance to the reported common-long weights at the first tradable close. Compare with SPY over the same dates. This is not the manager’s fund NAV and cannot capture quarter-end trading, shorts, private assets or undisclosed cash.',
+                '披露日复制模拟：每次申报公开后，在首个可交易收盘按已披露普通股多头权重调仓，并与同区间 SPY 对比。这不是经理的基金净值，无法反映季度内交易、空头、非上市资产或未披露现金。',
+              ),
+              style: s(11, false, p.muted),
+            ),
+            const SizedBox(height: 10),
             studyAction(),
             Align(
               alignment: Alignment.centerRight,

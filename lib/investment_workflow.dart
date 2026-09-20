@@ -183,6 +183,10 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     discoverCollection =
         const {
           'all',
+          'new',
+          'increased',
+          'reduced',
+          'exited',
           'adds',
           'growth',
           'revision',
@@ -199,6 +203,10 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     discoverSort =
         const {
           'managers',
+          'newPositions',
+          'increases',
+          'reductions',
+          'exits',
           'adds',
           'growth',
           'gap',

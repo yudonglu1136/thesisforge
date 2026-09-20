@@ -20,7 +20,11 @@ export function opportunityBooks(source, asOf, reportDate = null) {
   isoDate(asOf); if(reportDate)isoDate(reportDate);
   const catalog=source.guruCatalog();
   const configured=new Map(gurus.map(g=>[g.id,g]));
-  const eligible=catalog.filter(g=>configured.get(g.id)?.type==='manager13f' && !configured.get(g.id)?.excludeFromHeatmap);
+  // Opportunities is the complete covered institutional tape, not the
+  // concentrated-manager consensus screen. Broad systematic books remain in
+  // this ranking because the user is explicitly asking who reported each
+  // quarterly change; their style caveats stay attached to the Guru profile.
+  const eligible=catalog.filter(g=>configured.get(g.id)?.type==='manager13f');
   const histories=eligible.map(g=>({g,history:source.guruHistory(g.id,asOf)}));
   const quarters=[...new Set(histories.flatMap(x=>x.history.map(h=>h.reportDate)))].sort().reverse();
   const selected=reportDate??quarters[0]??null;
@@ -154,16 +158,31 @@ export function buildOpportunities(source,asOf,reportDate=null) {
     const held=row.managers.filter(m=>m.shares>0),v=valuations.get(row.ticker)??null;
     const price=prices.get(row.ticker)??{value:null,date:null,source:null,currency:null};
     const comparable=finite(v?.fairValue)&&v.fairValue>0&&finite(price.value)&&price.value>0&&!!v?.currency && v.currency===price.currency;
+    const newPositions=row.managers.filter(m=>m.action==='new').length;
+    const increases=row.managers.filter(m=>m.action==='increased').length;
+    const reductions=row.managers.filter(m=>m.action==='reduced').length;
+    const exits=row.managers.filter(m=>m.action==='sold_out').length;
     return {...row,managerCount:held.length,medianWeight:median(held.map(m=>m.weight)),
-      adds:row.managers.filter(m=>['new','increased'].includes(m.action)).length,
-      trims:row.managers.filter(m=>['reduced','sold_out'].includes(m.action)).length,
+      // Keep the two legacy aggregates for existing consumers, while exposing
+      // the four mutually exclusive reported actions needed by the quarterly
+      // institutional-moves ranking. These remain disclosure observations,
+      // never inferred trades.
+      newPositions,increases,reductions,exits,
+      adds:newPositions+increases,
+      trims:reductions+exits,
       price,valuation:v,quality:quality.get(row.ticker)??{status:'unavailable',years:[]},modelGap:comparable?change(v.fairValue,price.value):null,
       valuationStatus:!finite(v?.fairValue)||v.fairValue<=0?'not_modeled':!finite(price.value)||price.value<=0?'price_unavailable':!comparable?'currency_unverified':'available'};
   }).sort((a,b)=>b.managerCount-a.managerCount || (b.medianWeight??0)-(a.medianWeight??0) || a.ticker.localeCompare(b.ticker));
+  const activity={
+    newPositions:rows.reduce((n,r)=>n+r.newPositions,0),
+    increases:rows.reduce((n,r)=>n+r.increases,0),
+    reductions:rows.reduce((n,r)=>n+r.reductions,0),
+    exits:rows.reduce((n,r)=>n+r.exits,0)
+  };
   const result={version:'guru-valuation-discovery-v1',asOf,reportDate:data.reportDate,quarters:data.quarters,
     coverage:{eligibleManagers:data.eligibleManagers,reportedManagers:data.books.length,fullBooks:data.books.filter(b=>b.full).length,
       extractedBooks:data.books.filter(b=>!b.full).length,modelled:rows.filter(r=>r.valuationStatus==='available').length,
-      total:rows.length,scope:data.books.every(b=>b.full)?'full_current_books':'includes_historical_extracts'},rows};
+      total:rows.length,activity,scope:data.books.every(b=>b.full)?'full_current_books':'includes_historical_extracts'},rows};
   if(cache.rows.size>=4)cache.rows.delete(cache.rows.keys().next().value);
   cache.rows.set(key,result);return structuredClone(result);
 }
@@ -171,7 +190,7 @@ export function buildOpportunities(source,asOf,reportDate=null) {
 export function opportunityTimeline(source,ticker,asOf) {
   ticker=tickerKey(ticker);isoDate(asOf);
   const events=[];
-  const included=new Set(gurus.filter(g=>g.type==='manager13f'&&!g.excludeFromHeatmap).map(g=>g.id));
+  const included=new Set(gurus.filter(g=>g.type==='manager13f').map(g=>g.id));
   for(const g of source.guruCatalog().filter(g=>included.has(g.id)))for(const f of source.guruHistory(g.id,asOf)) {
     const h=[...(f.topHoldings??[]),...(f.largestChanges??[])].find(h=>common(h)&&h.ticker===ticker);
     if(!h)continue;

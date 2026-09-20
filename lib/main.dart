@@ -130,10 +130,7 @@ String? retiredModuleReturnPath(
   } on FormatException {
     return null;
   }
-  if (!isRetiredModuleRoute(
-    params['view'] ?? params['mode'],
-    path: uri.path,
-  )) {
+  if (!isRetiredModuleRoute(params['view'] ?? params['mode'], path: uri.path)) {
     return null;
   }
   // Old login return links are local-only. Retired module state and fragments
@@ -11296,7 +11293,9 @@ class _BacktestPreviewState extends State<BacktestPreview> {
     if (id.isEmpty || text(widget.guru['type']) != 'manager13f') return;
     setState(() => _loading = true);
     try {
-      final payload = await widget.api.getJson(guruBacktestPath(id));
+      final payload = await widget.api.getJson(
+        '${guruBacktestPath(id)}&surface=directory-disclosure-v1',
+      );
       if (mounted) setState(() => _payload = payload);
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());

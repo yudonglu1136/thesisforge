@@ -2138,10 +2138,34 @@ export async function loadGuruBacktest(
   const guru = gurus.find((item) => item.id === guruId);
   if (!guru) throw new Error(`Guru not found: ${guruId}`);
 
+  const strictCached = guru.type === "manager13f"
+    ? readGuruBacktest(guruId, window.cacheKey)
+    : null;
+  const proxyCached = guru.type === "manager13f"
+    ? readGuruBacktestProxy(guruId, window.cacheKey)
+    : null;
+  const cachedSelection = guru.type === "manager13f"
+    ? selectManagerBacktestCache(
+        strictCached,
+        proxyCached,
+        window.methodYears,
+        guru.id
+      )
+    : { payload: null, kind: "miss" };
+  const cached = cachedSelection.payload;
+
   if (factOsEnabled()) {
-    // SF3 quarter-end positions are not filing-time observations. A PIT copy
-    // backtest needs the actual public-availability timestamp, so fail closed
-    // and never let a legacy cached curve masquerade as canonical history.
+    // SF3 quarter-end positions are not filing-time observations. Reuse an
+    // independently audited SEC-disclosure simulation only when its current
+    // method and security-master versions pass the normal public cache gates.
+    // Otherwise fail closed rather than treating a quarter end as knowledge.
+    if (!refresh && cached && cachedBacktestIsUsable(cached)) {
+      return compactBacktestPayload(cachedBacktestWithHit(cached, {
+        status: "sqlite-sec-disclosure",
+        source: "audited-sec-disclosure-cache",
+        stale: !cachedBacktestIsFresh(cached)
+      }), { includeAttribution });
+    }
     return {
       generatedAt: new Date().toISOString(),
       status: "pit_unavailable",
@@ -2184,15 +2208,6 @@ export async function loadGuruBacktest(
   }
   const preserveReady = preserveReadyOnFailure && !refreshGeneration;
 
-  const strictCached = readGuruBacktest(guruId, window.cacheKey);
-  const proxyCached = readGuruBacktestProxy(guruId, window.cacheKey);
-  const cachedSelection = selectManagerBacktestCache(
-    strictCached,
-    proxyCached,
-    window.methodYears,
-    guru.id
-  );
-  const cached = cachedSelection.payload;
   if (!refresh && cached && cachedBacktestIsFresh(cached)) {
     return compactBacktestPayload(cachedBacktestWithHit(cached), { includeAttribution });
   }
