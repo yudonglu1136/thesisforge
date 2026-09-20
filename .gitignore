@@ -25,6 +25,8 @@ server/cache/
 
 # Permanent private/licensed analytical warehouse (not an application cache).
 data/fact_os/
+# Immutable local release databases are built/deployed artifacts, never source.
+data/releases/
 .venv-fact-os/
 
 # Backend/runtime data artifacts belong in AWS, not GitHub/Vercel.
