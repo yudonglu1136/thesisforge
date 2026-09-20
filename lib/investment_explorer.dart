@@ -139,7 +139,7 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
                         study
                             ? w('Guru holdings & consensus', 'Guru 共识持仓与加减仓')
                             : opportunities
-                            ? w('Quarterly institutional moves', '机构季度持仓变化')
+                            ? w('13F Insights', '13F 洞察')
                             : compact
                             ? w('Discover', '发现')
                             : w(
@@ -181,12 +181,12 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
               study
                   ? 'Shortlist a few managers. Compare their style, then study their holdings.'
                   : opportunities
-                  ? 'Rank every disclosed manager by reported share changes. See what institutions started, added, reduced or exited.'
+                  ? 'See what every covered 13F institution started, added, reduced or exited — not just the Guru shortlist.'
                   : 'See what managers changed, what the business delivered, and what the price assumes.',
               study
                   ? '选几位经理，比较投资风格，再深入研究他们的持仓。'
                   : opportunities
-                  ? '汇总所有已披露机构的股数变化排名，看谁在新建仓、加仓、减仓或清仓。'
+                  ? '覆盖全部 13F 申报机构的新建仓、加仓、减仓和清仓，不再局限于 Guru 名单。'
                   : '看大佬仓位怎么变、公司交出什么业绩，再检验价格隐含的预期。',
               size: compact ? 12 : 14,
             ),
@@ -310,6 +310,9 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
     _ => w('All opportunities', '全部研究线索'),
   };
 
+  // Retained for the Home research desk, while Discover now uses the full
+  // institutional 13F surface above the curated Guru opportunity model.
+  // ignore: unused_element
   List<Widget> discoverExplorerPage() {
     final coverage = asMap(opportunities?['coverage']);
     final rows = asList(opportunities?['rows']);

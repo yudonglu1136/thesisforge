@@ -147,6 +147,76 @@ class ExplorerApi extends opportunities.OpportunityApi {
   bool listFails = false;
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
+    if (path.startsWith('/api/investment/13f-insights?')) {
+      if (listFails) throw StateError('fixture outage');
+      return {
+        'version': 'institutional-13f-insights-v1',
+        'asOf': '2026-06-01',
+        'reportDate': '2026-03-31',
+        'previousReportDate': '2025-12-31',
+        'availableAt': '2026-05-15',
+        'quarters': ['2026-03-31', '2025-12-31'],
+        'coverage': {
+          'currentFilers': 8581,
+          'previousFilers': 8627,
+          'securities': 3,
+          'comparablePositions': 12000,
+          'scope': 'all_sf3_institutional_filers',
+        },
+        'activity': {
+          'newPositions': 120,
+          'increases': 430,
+          'reductions': 390,
+          'exits': 90,
+        },
+        'rows': sampleRows()
+            .map(
+              (row) => {
+                ...row,
+                'holders': row['managerCount'],
+                'currentValueM': 1000.0,
+                'previousValueM': 900.0,
+                'splitAdjustedFilers': 0,
+              },
+            )
+            .toList(),
+        'institutions': [
+          {
+            'investorId': 'BLACKROCK',
+            'name': 'BlackRock Inc.',
+            'holdings': 3200,
+            'newPositions': 14,
+            'increases': 200,
+            'reductions': 180,
+            'exits': 11,
+            'currentValueM': 3500000.0,
+          },
+          {
+            'investorId': 'VANGUARD',
+            'name': 'Vanguard Group Inc.',
+            'holdings': 3000,
+            'newPositions': 10,
+            'increases': 180,
+            'reductions': 170,
+            'exits': 9,
+            'currentValueM': 3000000.0,
+          },
+        ],
+        'details': {
+          'TEST': {
+            'increased': [
+              {
+                'investorId': 'BLACKROCK',
+                'name': 'BlackRock Inc.',
+                'currentValueM': 500.0,
+                'previousValueM': 450.0,
+                'changePct': .1,
+              },
+            ],
+          },
+        },
+      };
+    }
     if (path.contains('/fundamentals?')) {
       return fundamentals.FundamentalApi().response(
         Uri.parse(path).queryParameters['asOf']!,
@@ -240,24 +310,6 @@ void main() {
     },
   );
 
-  testWidgets(
-    'quarter chart selects exact observations and exposes dated table',
-    (tester) async {
-      await mountExplorer(tester, ExplorerApi());
-      await tapKey(tester, 'discover-collection-revision');
-      expect(find.byType(SteadyValueChart), findsOneWidget);
-      await tapKey(tester, 'value-quarter-0');
-      expect(find.textContaining(r'2024-Q2 · $25.00'), findsOneWidget);
-      await tapKey(tester, 'value-quarter-table');
-      expect(find.text(r'$25.00'), findsOneWidget);
-      await tapKey(tester, 'steady-value-rules');
-      expect(
-        find.textContaining('not validated return predictors'),
-        findsOneWidget,
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
   test(
     'growth collection excludes non-operating and unclassified economic routes',
     () {
@@ -365,7 +417,9 @@ void main() {
     const Size(390, 844),
   ]) {
     for (final language in [AppLanguage.en, AppLanguage.zh]) {
-      testWidgets('Discover populated layout $size $language', (tester) async {
+      testWidgets('13F Insights populated layout $size $language', (
+        tester,
+      ) async {
         await mountExplorer(
           tester,
           ExplorerApi(),
@@ -373,127 +427,64 @@ void main() {
           language: language,
         );
         expect(
-          find.byKey(const ValueKey('discover-collection-adds')),
+          find.byKey(const ValueKey('13f-action-increased')),
           findsOneWidget,
         );
+        expect(find.byKey(const ValueKey('13f-view-stocks')), findsOneWidget);
         expect(tester.takeException(), isNull);
         await tester.ensureVisible(
-          find.byKey(const ValueKey('discover-candidate-TEST')),
+          find.byKey(const ValueKey('13f-stock-TEST')),
         );
         expect(tester.takeException(), isNull);
-        await tapKey(tester, 'discover-candidate-TEST');
+        await tapKey(tester, '13f-stock-TEST');
         expect(tester.takeException(), isNull);
       });
     }
   }
-  testWidgets('quarterly activity cards rank four distinct 13F actions', (
+  testWidgets('all-filer activity cards rank four distinct 13F actions', (
     tester,
   ) async {
     await mountExplorer(tester, ExplorerApi());
     for (final id in ['new', 'increased', 'reduced', 'exited']) {
-      expect(find.byKey(ValueKey('discover-collection-$id')), findsOneWidget);
+      expect(find.byKey(ValueKey('13f-action-$id')), findsOneWidget);
     }
-    await tapKey(tester, 'discover-collection-exited');
-    expect(
-      find.byKey(const ValueKey('discover-candidate-TEST')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('discover-candidate-ISRG')), findsNothing);
-    expect(
-      find.text('Which institutions reported exiting this position?'),
-      findsWidgets,
-    );
+    expect(find.textContaining('8,581 filers'), findsOneWidget);
+    await tapKey(tester, '13f-action-exited');
+    expect(find.byKey(const ValueKey('13f-stock-TEST')), findsOneWidget);
+    expect(find.byKey(const ValueKey('13f-stock-ISRG')), findsNothing);
     expect(tester.takeException(), isNull);
   });
   testWidgets(
-    'collection, search and reset are functional and retain input focus',
+    'stock search and institution ranking use the all-filer payload',
     (tester) async {
       await mountExplorer(tester, ExplorerApi());
-      await tapKey(tester, 'discover-collection-growth');
-      expect(
-        find.byKey(const ValueKey('discover-candidate-NVDA')),
-        findsNothing,
-      );
-      final input = find.byKey(const ValueKey('discover-search'));
+      final input = find.byKey(const ValueKey('13f-search'));
       await tester.ensureVisible(input);
       await tester.enterText(input, 'intuitive');
       await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('13f-stock-ISRG')), findsOneWidget);
+      expect(find.byKey(const ValueKey('13f-stock-TEST')), findsNothing);
+      await tester.enterText(input, '');
+      await tester.pumpAndSettle();
+      await tapKey(tester, '13f-view-institutions');
       expect(
-        find.byKey(const ValueKey('discover-candidate-ISRG')),
+        find.byKey(const ValueKey('13f-institution-BLACKROCK')),
         findsOneWidget,
       );
-      expect(
-        find.byKey(const ValueKey('discover-candidate-TEST')),
-        findsNothing,
-      );
-      await tester.enterText(input, 'no-such-company');
-      await tester.pumpAndSettle();
-      expect(find.text('No matches for this combination.'), findsOneWidget);
-      await tapKey(tester, 'discover-reset');
-      expect(
-        find.byKey(const ValueKey('discover-candidate-NVDA')),
-        findsOneWidget,
-      );
-      expect(tester.widget<TextFormField>(input).controller!.text, '');
-    },
-  );
-  testWidgets(
-    'valuation round trip returns to Discover and retains collection',
-    (tester) async {
-      await mountExplorer(tester, ExplorerApi());
-      await tapKey(tester, 'discover-collection-growth');
-      final action = find.text('Test my assumptions');
-      await tester.ensureVisible(action);
-      await tester.tap(action);
-      await tester.pumpAndSettle();
-      final back = find.text('Back to candidates');
-      await tester.ensureVisible(back);
-      await tester.tap(back);
-      await tester.pumpAndSettle();
-      expect(find.text('Quarterly institutional moves'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('discover-candidate-NVDA')),
-        findsNothing,
-      );
-      expect(find.text('Growing businesses'), findsNWidgets(2));
+      expect(find.text('13F Insights'), findsWidgets);
     },
   );
   testWidgets('list failure has a recoverable retry', (tester) async {
     final api = ExplorerApi()..listFails = true;
     await mountExplorer(tester, api);
     expect(
-      find.text('Could not load the dated opportunity list.'),
+      find.text('Could not load the all-institution 13F tape.'),
       findsOneWidget,
     );
     api.listFails = false;
     await tester.tap(find.text('Retry'));
     await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('discover-candidate-TEST')),
-      findsOneWidget,
-    );
-  });
-  testWidgets('manager and model-coverage dropdowns filter the actual rows', (
-    tester,
-  ) async {
-    await mountExplorer(tester, ExplorerApi());
-    await tapKey(tester, 'discover-coverage-all');
-    await tester.tap(find.text('Coverage gaps').last);
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('discover-candidate-NVDA')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('discover-candidate-TEST')), findsNothing);
-    await tapKey(tester, 'discover-reset');
-    await tapKey(tester, 'discover-manager-');
-    await tester.tap(find.text('Second manager').last);
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('discover-candidate-ISRG')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('discover-candidate-TEST')), findsNothing);
+    expect(find.byKey(const ValueKey('13f-stock-TEST')), findsOneWidget);
   });
   testWidgets(
     'fundamentals workbench replaces the revenue-only screen and resets search',

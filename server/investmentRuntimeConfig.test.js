@@ -8,7 +8,7 @@ import express from 'express';
 import { DatabaseSync } from 'node:sqlite';
 import { holdingResolutionVersion } from './cusipOverrides.js';
 import { manager13fCorporateActionCatalogVersion } from './corporateActions.js';
-import { INVESTMENT_RELEASE_VERSION, INVESTMENT_REQUIRED_SOURCE_TABLES, resolveInvestmentRuntimeConfig, validateInvestmentRelease, verifiedInvestmentOwner } from './investmentRuntimeConfig.js';
+import { INVESTMENT_RELEASE_VERSION, INVESTMENT_REQUIRED_SOURCE_TABLES, resolveInvestmentRuntimeConfig, validateInstitutional13fArtifact, validateInvestmentRelease, verifiedInvestmentOwner } from './investmentRuntimeConfig.js';
 import { investmentProductionIdentity } from './investmentRoutes.js';
 import { InvestmentStore } from './investmentStore.js';
 import { portfolioResponsePrivacy } from './portfolioHttp.js';
@@ -69,6 +69,21 @@ test('workflow stays disabled without probing files; preview accepts separate so
   a.equal(config.research,path.join(root,'new-source.sqlite'));
   a.equal(config.investment,path.join(root,'private/investment.sqlite'));a.equal(config.production,false);
   a.equal(fs.existsSync(path.join(root,'private')),false);
+});
+
+test('13F sidecar requires exact immutable bytes and natural-key uniqueness',t=>{
+  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'tf-13f-artifact-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const file=path.join(root,'13f.sqlite'),manifestPath=path.join(root,'manifest.json'),db=new DatabaseSync(file);
+  db.exec(`CREATE TABLE institutional_13f_insight_snapshots(report_date TEXT,source_generation TEXT,available_at TEXT,generated_at TEXT,payload_hash TEXT,payload_json TEXT,PRIMARY KEY(report_date,source_generation));
+    INSERT INTO institutional_13f_insight_snapshots VALUES('2026-06-30','g','2026-08-14','2026-09-20','h','{}');`);db.close();
+  const bytes=fs.readFileSync(file),trustedUid=fs.statSync(file).uid;
+  const manifest={version:'institutional-13f-artifact-v1',state:'verified',rows:1,
+    checks:{integrity:'ok',naturalKeyUniqueness:'pass',privateDataExcluded:true},
+    file:{path:file,bytes:bytes.length,sha256:crypto.createHash('sha256').update(bytes).digest('hex')}};
+  fs.writeFileSync(manifestPath,JSON.stringify(manifest));fs.chmodSync(file,0o400);fs.chmodSync(manifestPath,0o400);
+  a.equal(validateInstitutional13fArtifact(file,manifestPath,{trustedUid}).rows,1);
+  fs.chmodSync(file,0o600);fs.appendFileSync(file,'changed');fs.chmodSync(file,0o400);
+  a.throws(()=>validateInstitutional13fArtifact(file,manifestPath,{trustedUid}),/manifest|hash|file is not a database|database disk image/);
 });
 
 test('reviewed manifest validates exact versions paths sizes and distinct physical files without scanning large payloads',t=>{

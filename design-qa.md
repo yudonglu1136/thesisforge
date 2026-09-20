@@ -1,6 +1,72 @@
 pyenv: cannot rehash: /Users/yudonglu/.pyenv/shims isn't writable
 # ThesisForge — Graphite workspace QA
 
+## Current acceptance: all-institution 13F Insights — 2026-09-20
+
+Final result: **passed**.
+
+Scope: replace Discover / Opportunities with an institutional 13F movement
+radar built from every covered Sharadar SF3 filer. Guru selections remain an
+independent tab and do not alter the rankings. No source facts were rewritten.
+
+### Visual evidence
+
+- Source visual truth: `/var/folders/3k/0wsqd58n6w71n8tyql0t09fc0000gn/T/codex-clipboard-31152522-d626-45ee-a257-bfc9c75bf1f5.png`
+  (2762x1642 pixels, desktop concept).
+- Browser implementation: `output/13f-insights-20260920/13f-insights-desktop-1440.png`
+  (1440x1000 pixels) and
+  `output/13f-insights-20260920/13f-insights-mobile-390.png` (390x844 pixels).
+- Same-input comparison:
+  `output/13f-insights-20260920/13f-insights-comparison.png` (3122x1000 pixels),
+  source and implementation normalized to 1000px height and opened together.
+- State: English, dark Graphite theme, 2026/Q2, increased positions, MSFT
+  detail, public cutoff 2026-09-18. Desktop and 390px mobile states were both
+  browser-rendered. The desktop concept and implementation use different crop
+  densities, so comparison focused on hierarchy and interaction rather than
+  false pixel precision.
+- Focused comparison covered the four action cards, stock ranking, selected
+  security summary and reporting-institution detail. A separate mobile capture
+  verified the title, tabs, full-universe disclosure, quarter coverage, card
+  rail and search controls without clipped persistent navigation.
+
+### Findings and comparison history
+
+- [Resolved P1] The first rendered stock detail followed the generic holder
+  ordering (GOOGL) while the active increased ranking began with MSFT. The API
+  now selects the largest increased-position count by default and the client
+  preserves the returned bounded detail key. Post-fix browser evidence shows
+  MSFT in both the first list row and detail panel.
+- [Resolved P1] Opening 13F Insights still started the retired Opportunities
+  and Guru-discovery reads, delaying first content and exposing an unrelated
+  disclosure error. Route-aware loading now requests only 13F Insights on this
+  tab; Guru and fundamentals data load only after their tabs are selected.
+- [Resolved P2] Switching among new/increased/reduced/exited retained the prior
+  ticker. Each card now selects and lazily loads its own first-ranked stock.
+  Browser verification: New positions -> HONA and URL state
+  `insightAction=new&insightTicker=HONA`.
+- No remaining P0/P1/P2 finding. Fonts/typography reuse the established app
+  family and weights; spacing and card rhythm remain consistent with the
+  Graphite shell; teal/amber semantic colors preserve contrast; existing
+  company logo assets are used rather than approximations; copy explicitly
+  states the full-filer scope, split adjustment, delayed disclosure and lack of
+  trade-date/price inference.
+
+### Interaction and runtime checks
+
+- Quarter selector, four action cards, stock/institution views, search, ranked
+  stock selection and lazy detail fetch were exercised in the in-app browser.
+- Institution view search returned BLACKROCK INC. No browser console errors or
+  warnings remained in the accepted state.
+- Clean local first visit reached the populated all-institution workbench in
+  about 3.3 seconds in a Flutter debug build. This is local evidence, not a
+  production-latency claim.
+- Responsive widget coverage passed at 1487x1058, 1280x720 and 390x844 in both
+  languages. No focused region required an additional crop after the desktop
+  and mobile captures because all critical labels and selected-row figures were
+  legible in those captures.
+
+Final result: **passed**.
+
 ## Current acceptance: English Guru holdings + preserved study tools — 2026-09-11
 
 Final result: **passed**.

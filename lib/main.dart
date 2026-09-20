@@ -24,6 +24,7 @@ part 'investment_home.dart';
 part 'investment_desk.dart';
 part 'investment_opportunities.dart';
 part 'investment_explorer.dart';
+part 'investment_13f_insights.dart';
 part 'investment_discover_lenses.dart';
 part 'investment_value_trend.dart';
 part 'investment_growth_quality.dart';

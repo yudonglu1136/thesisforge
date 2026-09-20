@@ -13,6 +13,7 @@ export const INVESTMENT_REQUIRED_SOURCE_TABLES = Object.freeze(['valuation_pit_m
 export const INVESTMENT_ALLOWED_SOURCE_TABLES = Object.freeze([...INVESTMENT_REQUIRED_SOURCE_TABLES,
   'guru_backtest_proxies', 'valuation_pit_source_metadata', 'valuation_pit_price_observations', 'valuation_snapshots',
   'investment_current_quotes', 'investment_current_quote_metadata', 'sqlite_sequence', 'sqlite_stat1', 'sqlite_stat4']);
+export const INVESTMENT_13F_INSIGHTS_TABLES = Object.freeze(['institutional_13f_insight_snapshots']);
 export const verifiedInvestmentOwner = owner => typeof owner === 'string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(owner);
 const within = (parent, child) => child.startsWith(`${parent}${path.sep}`);
@@ -88,6 +89,34 @@ function assertTables(file, required, allowed = null) {
   } finally { db.close(); }
 }
 
+export function validateInstitutional13fArtifact(file,manifestPath,{trustedUid=0,stat=fs.statSync}={}) {
+  const database=absolute(file,'institutional_13f_artifact_path_required');
+  const metadata=absolute(manifestPath,'institutional_13f_manifest_required');
+  if(canonicalExisting(database)!==database||canonicalExisting(metadata)!==metadata)fail('institutional_13f_artifact_path_invalid');
+  const databaseStat=stat(database),manifestStat=stat(metadata);
+  if(!databaseStat.isFile()||!manifestStat.isFile()||databaseStat.uid!==trustedUid||manifestStat.uid!==trustedUid
+    ||(databaseStat.mode&0o222)||(manifestStat.mode&0o222)||databaseStat.nlink!==1||manifestStat.nlink!==1
+    ||manifestStat.size>65536)fail('institutional_13f_artifact_permissions');
+  if(fs.existsSync(`${database}-wal`)&&stat(`${database}-wal`).size>0)fail('institutional_13f_artifact_pending_wal');
+  const manifest=JSON.parse(fs.readFileSync(metadata,'utf8'));
+  if(manifest.version!=='institutional-13f-artifact-v1'||manifest.state!=='verified'
+    ||manifest.file?.path!==database||manifest.file.bytes!==databaseStat.size
+    ||!/^[a-f0-9]{64}$/.test(manifest.file?.sha256??'')||manifest.checks?.integrity!=='ok'
+    ||manifest.checks?.naturalKeyUniqueness!=='pass'||manifest.checks?.privateDataExcluded!==true
+    ||!Number.isSafeInteger(manifest.rows)||manifest.rows<1)fail('institutional_13f_manifest_invalid');
+  const digest=crypto.createHash('sha256').update(fs.readFileSync(database)).digest('hex');
+  if(digest!==manifest.file.sha256)fail('institutional_13f_artifact_hash_mismatch');
+  assertTables(database,INVESTMENT_13F_INSIGHTS_TABLES,INVESTMENT_13F_INSIGHTS_TABLES);
+  const db=new DatabaseSync(database,{readOnly:true});
+  try {
+    const rows=db.prepare('SELECT count(*) count FROM institutional_13f_insight_snapshots').get().count;
+    const duplicates=db.prepare(`SELECT count(*) count FROM (SELECT report_date,source_generation,count(*) n
+      FROM institutional_13f_insight_snapshots GROUP BY report_date,source_generation HAVING n>1)`).get().count;
+    if(rows!==manifest.rows||duplicates!==0)fail('institutional_13f_artifact_rows_invalid');
+  } finally {db.close();}
+  return manifest;
+}
+
 export function resolveInvestmentRuntimeConfig(env = process.env) {
   if (env.INVESTMENT_WORKFLOW_ENABLED !== 'true') return null;
   const userPaths = resolveUserDataPaths(env);
@@ -96,11 +125,12 @@ export function resolveInvestmentRuntimeConfig(env = process.env) {
   const config = { research: path.resolve(research), investment: userPaths.investment,
     strategy: env.STRATEGY_DATA_DB_PATH ? path.resolve(env.STRATEGY_DATA_DB_PATH) : null,
     composition: env.STRATEGY_COMPOSITION_PRICE_DB_PATH ? path.resolve(env.STRATEGY_COMPOSITION_PRICE_DB_PATH) : null,
+    insights: env.INVESTMENT_13F_INSIGHTS_DB_PATH ? path.resolve(env.INVESTMENT_13F_INSIGHTS_DB_PATH) : null,
     production: env.NODE_ENV === 'production', releaseId: env.INVESTMENT_RELEASE_ID ?? null };
   // Prevent attaching a private store to a public research database in every
   // environment, including aliases via symlinks or existing hard links.
   const privateIdentity = fs.existsSync(config.investment) ? fs.statSync(config.investment) : null;
-  for (const file of [config.research, config.strategy, config.composition].filter(Boolean)) {
+  for (const file of [config.research, config.strategy, config.composition, config.insights].filter(Boolean)) {
     if (file === config.investment) fail('investment_database_collision');
     if (privateIdentity && fs.existsSync(file)) {
       const publicIdentity = fs.statSync(file);
@@ -114,6 +144,10 @@ export function resolveInvestmentRuntimeConfig(env = process.env) {
     ['strategy', env.STRATEGY_DATA_DB_PATH], ['composition', env.STRATEGY_COMPOSITION_PRICE_DB_PATH]]) {
     config[key] = absolute(value, 'investment_production_explicit_paths_required');
   }
+  if(config.insights) {
+    config.insights=absolute(env.INVESTMENT_13F_INSIGHTS_DB_PATH,'institutional_13f_artifact_path_required');
+    validateInstitutional13fArtifact(config.insights,env.INVESTMENT_13F_INSIGHTS_MANIFEST_PATH);
+  } else if(env.INVESTMENT_13F_INSIGHTS_MANIFEST_PATH) fail('institutional_13f_artifact_path_required');
   // Legacy identities and encryption keys stay where they are. Only a fresh,
   // separate append-only investment journal is introduced beside user stores.
   const privateParent = canonicalExisting(path.dirname(config.investment));

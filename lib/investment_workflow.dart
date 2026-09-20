@@ -93,6 +93,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   String worksheetStatus = 'initial';
   final search = TextEditingController(),
       discoverSearchInput = TextEditingController(),
+      insightSearchInput = TextEditingController(),
       dateInput = TextEditingController(),
       notes = TextEditingController();
   final units = TextEditingController(), weight = TextEditingController();
@@ -116,6 +117,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   final holderSearch = TextEditingController();
   RangeValues? researchWindow;
   Map<String, dynamic>? opportunities,
+      institutional13f,
       opportunityCompany,
       opportunityEvents,
       watchComparison;
@@ -131,15 +133,24 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       discoverSort = 'managers',
       discoverSearch = '',
       opportunityReturnPage = 'home';
+  String insightQuarter = '',
+      insightAction = 'increased',
+      insightPerspective = 'stocks',
+      insightTicker = '',
+      insightInvestor = '',
+      insightSearch = '',
+      insightError = '';
   final discoverDetailKey = GlobalKey();
   GrowthQualityRules growthQuality = const GrowthQualityRules();
   final researchHoldersKey = GlobalKey();
   bool opportunityLoading = false,
+      insightLoading = false,
       opportunityDetailLoading = false,
       opportunityMobileDetail = false,
       managerDesk = false,
       homeResearchDesk = false;
   int opportunitySerial = 0, opportunityDetailSerial = 0;
+  int insightSerial = 0;
   Palette get p => _GraphitePalette(widget.palette.colorBlind);
   String w(String en, String zh) => context.tr(zh, en);
   String pct(dynamic v) => nullableNumber(v) == null
@@ -217,6 +228,23 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         : 'managers';
     discoverSearch = query['discoverSearch'] ?? '';
     discoverSearchInput.text = discoverSearch;
+    insightQuarter = query['insightQuarter'] ?? '';
+    insightAction =
+        const {
+          'new',
+          'increased',
+          'reduced',
+          'exited',
+        }.contains(query['insightAction'])
+        ? query['insightAction']!
+        : 'increased';
+    insightPerspective = query['insightView'] == 'institutions'
+        ? 'institutions'
+        : 'stocks';
+    insightTicker = query['insightTicker'] ?? '';
+    insightInvestor = query['insightInvestor'] ?? '';
+    insightSearch = query['insightSearch'] ?? '';
+    insightSearchInput.text = insightSearch;
     discoveryTab =
         const {
           'gurus',
@@ -229,7 +257,9 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     opportunityQuarter = query['quarter'] ?? '';
     managerDesk = query['workspace'] == 'manager';
     homeResearchDesk = managerDesk || query['workspace'] == 'research';
-    if ((page == 'home' && homeResearchDesk) || page == 'discover') {
+    if ((page == 'home' && homeResearchDesk) ||
+        (page == 'discover' &&
+            const {'fundamentals', 'valueflow'}.contains(discoveryTab))) {
       unawaited(loadOpportunities());
     }
     if (page == 'home' && homeResearchDesk) {
@@ -240,7 +270,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       unawaited(loadDiscovery());
     }
     if (page == 'discover') {
-      unawaited(loadDiscovery());
+      if (discoveryTab == 'gurus') unawaited(load13FInsights());
+      if (discoveryTab == 'managers') unawaited(loadDiscovery());
       if (text(query['guru']).isNotEmpty) {
         unawaited(
           loadGuru(
@@ -278,6 +309,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       search,
       holderSearch,
       discoverSearchInput,
+      insightSearchInput,
       dateInput,
       notes,
       units,
@@ -322,12 +354,18 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       'filing': value == 'discover' ? selectedQuarter : null,
       'holding': value == 'discover' ? selectedHolding : null,
     });
-    if ((value == 'discover' || (value == 'home' && homeResearchDesk)) &&
+    if (((value == 'discover' && discoveryTab == 'managers') ||
+            (value == 'home' && homeResearchDesk)) &&
         discoveryData == null &&
         !discoveryLoading) {
       unawaited(loadDiscovery());
     }
-    if (((value == 'home' && homeResearchDesk) || value == 'discover') &&
+    if (value == 'discover' && institutional13f == null && !insightLoading) {
+      unawaited(load13FInsights());
+    }
+    if (((value == 'home' && homeResearchDesk) ||
+            (value == 'discover' &&
+                const {'fundamentals', 'valueflow'}.contains(discoveryTab))) &&
         opportunities == null &&
         !opportunityLoading) {
       unawaited(loadOpportunities());

@@ -44,8 +44,14 @@ export function sourceNode(row) {
 }
 
 export class InvestmentSource {
-  constructor(file) { this.db=new DatabaseSync(file,{readOnly:true}); this.db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;'); this.companyCache=new Map(); this.cacheGeneration=null; }
-  close(){this.db.close();}
+  constructor(file,{insightsFile=null}={}) {
+    this.db=new DatabaseSync(file,{readOnly:true});
+    this.db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');
+    this.insightsDb=insightsFile?new DatabaseSync(insightsFile,{readOnly:true}):null;
+    this.insightsDb?.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');
+    this.companyCache=new Map(); this.cacheGeneration=null;
+  }
+  close(){this.insightsDb?.close();this.db.close();}
   availableTickers() { return this.db.prepare('SELECT DISTINCT ticker FROM valuation_pit_model_runs ORDER BY ticker').all().map(x=>x.ticker); }
   periods(ticker,asOf) {
     ticker=tickerKey(ticker);isoDate(asOf);

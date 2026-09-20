@@ -11,6 +11,7 @@ import { registerHedgeRoutes } from './hedgeRoutes.js';
 import { buildValueFlow } from './investmentValueFlow.js';
 import { buildFundamentals, fundamentalGuruQuarter } from './investmentFundamentals.js';
 import { buildOpportunities, opportunityTimeline, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
+import { institutional13fInsights, institutional13fInsightDetail } from './institutional13fInsights.js';
 
 export function registerInvestmentRoutes(app,service) {
   function route(method,path,handler) {app[method]('/api/investment'+path,(req,res)=>{
@@ -26,6 +27,8 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/fundamentals',(_,r)=>buildFundamentals(service.source,service.date(r.query.asOf)));
   route('get','/fundamentals/:ticker/gurus',(_,r)=>fundamentalGuruQuarter(service.source,r.params.ticker,service.date(r.query.asOf),r.query.quarter??null));
   route('get','/opportunities',(_,r)=>buildOpportunities(service.source,service.date(r.query.asOf),r.query.quarter??null));
+  route('get','/13f-insights',(_,r)=>institutional13fInsights(service.source,service.date(r.query.asOf),r.query.quarter??null,r.query.ticker??null));
+  route('get','/13f-insights/:ticker',(_,r)=>institutional13fInsightDetail(service.source,r.params.ticker,service.date(r.query.asOf),r.query.quarter??null));
   route('get','/opportunities/:ticker',(_,r)=>({ticker:r.params.ticker,asOf:service.date(r.query.asOf),events:opportunityTimeline(service.source,r.params.ticker,service.date(r.query.asOf))}));
   route('post','/watches',(owner,r)=>saveWatch(service,owner,r.body));
   route('get','/watches/:id',(owner,r)=>reviewWatch(service,owner,r.params.id,r.query.asOf));
@@ -56,7 +59,7 @@ export function enableInvestmentPreview(app) {
   const config=resolveInvestmentRuntimeConfig();
   if(!config)return;
   if(config.production)app.use('/api/investment',investmentProductionIdentity);
-  const source=new InvestmentSource(config.research);
+  const source=new InvestmentSource(config.research,{insightsFile:config.insights});
   let store;
   try {store=new InvestmentStore(config.investment,undefined,{verifiedOwnersOnly:config.production});}
   catch(error){source.close();throw error;}

@@ -89,7 +89,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
         runSpacing: 8,
         children: [
           for (final tab in [
-            ('gurus', 'Opportunities', '研究线索'),
+            ('gurus', '13F Insights', '13F 洞察'),
             ('managers', 'Guru', 'Guru'),
             ('fundamentals', 'Fundamentals', '基本面'),
             ('valueflow', 'Value Flow', '价值链'),
@@ -105,6 +105,16 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
                     if (tab.$1 == 'gurus') selectedGuru = null;
                   });
                   persistDiscover();
+                  if (tab.$1 == 'gurus' && institutional13f == null) {
+                    unawaited(load13FInsights());
+                  }
+                  if (tab.$1 == 'managers' && discoveryData == null) {
+                    unawaited(loadDiscovery());
+                  }
+                  if (const {'fundamentals', 'valueflow'}.contains(tab.$1) &&
+                      opportunities == null) {
+                    unawaited(loadOpportunities());
+                  }
                 },
               ),
             ),
@@ -123,7 +133,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
         button('Retry disclosures', '重试披露', () => unawaited(loadDiscovery())),
       ]),
     if (discoveryTab == 'gurus' && selectedGuru == null)
-      ...discoverExplorerPage(),
+      ...institutional13fInsightsPage(),
     if (discoveryTab == 'managers' && selectedGuru == null)
       GuruDiscoveryDesk(
         api: widget.api,
