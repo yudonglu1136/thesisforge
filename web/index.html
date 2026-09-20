@@ -31,8 +31,102 @@
 
   <title>Guru Intelligence | ThesisForge</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      background: #09131d;
+    }
+
+    #app-loading-shell {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483647;
+      display: grid;
+      place-items: center;
+      color: #e8f0f5;
+      background:
+        radial-gradient(circle at 50% 42%, rgba(47, 213, 177, 0.09), transparent 32%),
+        #09131d;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      transition: opacity 180ms ease;
+    }
+
+    #app-loading-shell[data-hidden="true"] {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .app-loading-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .app-loading-mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(47, 213, 177, 0.45);
+      border-radius: 12px;
+      color: #2fd5b1;
+      background: rgba(47, 213, 177, 0.09);
+      font-size: 22px;
+      font-weight: 800;
+    }
+
+    .app-loading-title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .app-loading-status {
+      color: #8ea1af;
+      font-size: 12px;
+    }
+
+    .app-loading-progress {
+      width: 124px;
+      height: 2px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(142, 161, 175, 0.18);
+    }
+
+    .app-loading-progress::after {
+      content: "";
+      display: block;
+      width: 44%;
+      height: 100%;
+      border-radius: inherit;
+      background: #2fd5b1;
+      animation: app-loading-slide 1.1s ease-in-out infinite;
+    }
+
+    @keyframes app-loading-slide {
+      from { transform: translateX(-115%); }
+      to { transform: translateX(275%); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .app-loading-progress::after { animation: none; }
+    }
+  </style>
 </head>
 <body>
+  <div id="app-loading-shell" role="status" aria-live="polite">
+    <div class="app-loading-content">
+      <div class="app-loading-mark" aria-hidden="true">TF</div>
+      <div class="app-loading-title">ThesisForge</div>
+      <div class="app-loading-status">Loading your research workspace…</div>
+      <div class="app-loading-progress" aria-hidden="true"></div>
+    </div>
+  </div>
   <script>
     // Remove legacy Flutter PWA caches once per migration, then keep the
     // current Flutter service worker warm on repeat visits.
@@ -65,6 +159,22 @@
 
       const release = 'flutter-cache-migration-v2';
       const migrationKey = `guru-cache-migration:${release}`;
+      const loadingShell = document.getElementById('app-loading-shell');
+      let loadingShellRemoved = false;
+      const removeLoadingShell = () => {
+        if (loadingShellRemoved || !loadingShell) return;
+        loadingShellRemoved = true;
+        loadingShell.dataset.hidden = 'true';
+        window.setTimeout(() => loadingShell.remove(), 220);
+      };
+      window.addEventListener('flutter-first-frame', removeLoadingShell, { once: true });
+      const appRootObserver = new MutationObserver(() => {
+        if (document.querySelector('flutter-view, flt-glass-pane')) {
+          appRootObserver.disconnect();
+          window.requestAnimationFrame(() => window.requestAnimationFrame(removeLoadingShell));
+        }
+      });
+      appRootObserver.observe(document.body, { childList: true, subtree: true });
       const loadFlutter = () => {
         const script = document.createElement('script');
         script.src = `flutter_bootstrap.js?v=${release}`;
