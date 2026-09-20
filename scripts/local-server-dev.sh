@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
-release_root="${THESISFORGE_LOCAL_RELEASE_ROOT:-$project_root/data/releases/thesisforge-20260920-v2}"
+release_root="${THESISFORGE_LOCAL_RELEASE_ROOT:-$project_root/data/releases/thesisforge-20260920-v3}"
 
 # Match the redesigned production workflow in local development. Public facts
 # use the one canonical runtime database; user events stay in the private store.

@@ -10,7 +10,7 @@ if [ "${THESISFORGE_DELETE_RETIRED_YAHOO_PUBLIC_DATA:-false}" != "true" ]; then
   exit 0
 fi
 
-expected_release="thesisforge-20260920-v2"
+expected_release="thesisforge-20260920-v3"
 expected_runtime="/var/app/data/${expected_release}.sqlite"
 expected_root="/var/app/data/investment-releases/${expected_release}"
 
