@@ -19,6 +19,9 @@ test('fresh AWS bootstrap keeps release inputs immutable and runtime writable on
   assert.match(source, /runuser -u webapp -- env THESISFORGE_BOOTSTRAP_DB/);
   assert.match(source, /PRAGMA journal_mode=WAL/);
   assert.match(source, /runtime_wal_not_writable/);
+  assert.match(source, /runtime-bootstrap\.json/);
+  assert.match(source, /runtime_bootstrap_receipt_mismatch/);
+  assert.match(source, /verifiedBeforeMutation:true/);
   assert.doesNotMatch(source, /chown -R root:root "\$release_root" "\$runtime_db"/);
 });
 

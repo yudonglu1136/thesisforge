@@ -13,6 +13,7 @@ runtime_db="$(env_value SQLITE_DB_PATH)"
 release_id="$(env_value INVESTMENT_RELEASE_ID)"
 release_root="/var/app/data/investment-releases/${release_id}"
 manifest_path="$(env_value INVESTMENT_RELEASE_MANIFEST_PATH)"
+runtime_receipt="$release_root/runtime-bootstrap.json"
 cutoff="$(env_value THESISFORGE_PUBLIC_DATA_CUTOFF)"
 
 if [[ -z "$runtime_db" || -z "$release_id" || -z "$manifest_path" || -z "$cutoff" ]]; then
@@ -42,6 +43,27 @@ install_exact_file() {
     exit 1
   fi
   if [[ -f "$target" ]]; then
+    if [[ "$key" == "RUNTIME_DB" ]]; then
+      if [[ ! -f "$runtime_receipt" || -L "$runtime_receipt" || -L "$target" ]]; then
+        echo "error: mutable runtime database has no verified bootstrap receipt" >&2
+        exit 1
+      fi
+      THESISFORGE_RUNTIME_RECEIPT="$runtime_receipt" \
+      THESISFORGE_RUNTIME_TARGET="$target" \
+      THESISFORGE_RUNTIME_URI="$uri" \
+      THESISFORGE_RUNTIME_BYTES="$bytes" \
+      THESISFORGE_RUNTIME_DIGEST="$digest" \
+      node --input-type=module <<'NODE'
+import fs from 'node:fs';
+const receipt=JSON.parse(fs.readFileSync(process.env.THESISFORGE_RUNTIME_RECEIPT,'utf8'));
+const stat=fs.lstatSync(process.env.THESISFORGE_RUNTIME_TARGET);
+if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size<4096
+  ||receipt.version!==1||receipt.uri!==process.env.THESISFORGE_RUNTIME_URI
+  ||receipt.bytes!==Number(process.env.THESISFORGE_RUNTIME_BYTES)
+  ||receipt.sha256!==process.env.THESISFORGE_RUNTIME_DIGEST)throw Error('runtime_bootstrap_receipt_mismatch');
+NODE
+      return 0
+    fi
     actual_bytes="$(stat -c %s "$target")"
     actual_digest="$(sha256sum "$target" | cut -d ' ' -f 1)"
     if [[ "$actual_bytes" == "$bytes" && "$actual_digest" == "$digest" ]]; then
@@ -69,6 +91,20 @@ install_exact_file "RUNTIME_DB" "$runtime_db"
 install_exact_file "RESEARCH_DB" "$release_root/research.sqlite"
 install_exact_file "STRATEGY_DB" "$release_root/strategy.sqlite"
 install_exact_file "COMPOSITION_DB" "$release_root/composition.sqlite"
+
+if [[ ! -f "$runtime_receipt" ]]; then
+  umask 022
+  THESISFORGE_RUNTIME_RECEIPT="$runtime_receipt" node --input-type=module <<'NODE'
+import fs from 'node:fs';
+import {execFileSync} from 'node:child_process';
+const env=JSON.parse(execFileSync('/opt/elasticbeanstalk/bin/get-config',['environment'],{encoding:'utf8'}));
+const receipt={version:1,releaseId:env.INVESTMENT_RELEASE_ID,uri:env.THESISFORGE_RUNTIME_DB_S3_URI,
+  bytes:Number(env.THESISFORGE_RUNTIME_DB_BYTES),sha256:env.THESISFORGE_RUNTIME_DB_SHA256,
+  verifiedBeforeMutation:true,createdAt:new Date().toISOString()};
+if(!receipt.uri||!Number.isSafeInteger(receipt.bytes)||!/^[a-f0-9]{64}$/.test(receipt.sha256))throw Error('invalid_runtime_receipt');
+fs.writeFileSync(process.env.THESISFORGE_RUNTIME_RECEIPT,JSON.stringify(receipt,null,2),{flag:'wx',mode:0o444});
+NODE
+fi
 
 if [[ ! -f "$manifest_path" ]]; then
   umask 022
