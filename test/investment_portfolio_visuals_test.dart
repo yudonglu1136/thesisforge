@@ -97,7 +97,8 @@ void main() {
         find.byKey(const ValueKey('portfolio-allocation-donut')),
         findsOneWidget,
       );
-      expect(find.text('Valuation by holding'), findsOneWidget);
+      expect(find.text('Holdings & model structure'), findsOneWidget);
+      expect(find.text('Model architecture'), findsOneWidget);
       await detail.tap(
         t,
         find.byKey(const ValueKey('history-metric-realized')),

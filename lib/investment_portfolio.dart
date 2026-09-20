@@ -34,6 +34,8 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
   String tab = 'overview', selectedCurrency = '', manager = '', query = '';
   int serial = 0;
   int holdingLimit = 20, comparisonLimit = 20;
+  int portfolioSortColumn = 2;
+  bool portfolioSortAscending = false;
   double riskFreeRate = .04;
   String homePnlMode = 'auto';
   bool get hideAmounts => portfolioPrivacyMode.value;
@@ -354,8 +356,8 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
             ],
           ),
           const SizedBox(height: 16),
-          if (tab == 'overview') ...overview(group),
-          if (tab == 'holdings') holdings(group),
+          if (tab == 'overview') portfolioDesk(group),
+          if (tab == 'holdings') portfolioHoldingsTable(group),
           if (tab == 'risk') riskView(group),
           if (tab == 'gurus') gurus(group),
           const SizedBox(height: 20),
@@ -1185,48 +1187,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
     _ => w('No model at cutoff', '截止日无模型'),
   };
   Widget holdings(Map<String, dynamic> g) {
-    final rows =
-        asList(g['positions'])
-            .where(
-              (r) => '${r['ticker']} ${r['name']}'.toLowerCase().contains(
-                query.toLowerCase(),
-              ),
-            )
-            .toList()
-          ..sort((a, b) => (number(b['value'])).compareTo(number(a['value'])));
-    return panel([
-      title('Each holding. Its impact on the portfolio.', '每项持仓，如何影响整个组合。'),
-      const SizedBox(height: 10),
-      copy(
-        'Report price and position size stay separate from the published valuation. Select a stock to research it.',
-        '报告价格和仓位与平台估值分开显示，点击股票继续研究。',
-      ),
-      const SizedBox(height: 16),
-      TextField(
-        controller: search,
-        onChanged: (v) => setState(() {
-          query = v;
-          holdingLimit = 20;
-        }),
-        decoration: InputDecoration(
-          prefixIcon: const Icon(Icons.search),
-          hintText: w('Find a holding', '查找持仓'),
-        ),
-      ),
-      const SizedBox(height: 18),
-      if (rows.isEmpty) copy('No matching positions.', '没有匹配的持仓。'),
-      for (final r in rows.take(holdingLimit)) holdingRow(r),
-      if (rows.length > holdingLimit)
-        TextButton(
-          onPressed: () => setState(() => holdingLimit += 20),
-          child: Text(
-            w(
-              'Show 20 more · ${rows.length} positions',
-              '再显示 20 项 · 共 ${rows.length} 项持仓',
-            ),
-          ),
-        ),
-    ]);
+    return portfolioHoldingsTable(g);
   }
 
   Widget holdingRow(Map<String, dynamic> r) {

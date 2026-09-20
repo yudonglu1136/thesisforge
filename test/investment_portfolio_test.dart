@@ -60,9 +60,16 @@ class PortfolioApi extends ApiClient {
         'price': 100,
         'netWeight': 1 / 3,
         'modelGap': .2,
+        'modelValue': 1200,
         'contribution': .2 / 3,
         'modelStatus': 'covered',
-        'model': {'fairValue': 120, 'currency': c, 'date': '2026-07-20'},
+        'model': {
+          'fairValue': 120,
+          'currency': c,
+          'date': '2026-07-20',
+          'modelRoute': 'operating_company',
+          'formula': '60% normalized earnings + 40% FCFE DCF',
+        },
       },
       {
         'ticker': 'BBB',
@@ -173,10 +180,11 @@ void main() {
       final api = PortfolioApi();
       await mount(t, api);
       expect(find.text('Your portfolio. The whole picture.'), findsOneWidget);
-      expect(find.text('USD 3,000'), findsOneWidget);
+      expect(find.textContaining('USD 3,000'), findsOneWidget);
       expect(find.text('40.0%'), findsWidgets);
-      expect(find.text('A downside rehearsal'), findsOneWidget);
-      expect(find.text('Sector exposure'), findsOneWidget);
+      expect(find.text('Holdings & model structure'), findsOneWidget);
+      expect(find.text('Model architecture'), findsOneWidget);
+      expect(find.text('Current → model'), findsOneWidget);
       expect(api.reads.single, contains('/portfolio-analysis?asOf=2026-08-28'));
       expect(t.takeException(), isNull);
     },
@@ -198,8 +206,8 @@ void main() {
     (t) async {
       await mount(t, PortfolioApi());
       await tap(t, find.text('EUR · 1 accounts'));
-      expect(find.text('EUR 3,000'), findsOneWidget);
-      expect(find.text('USD 3,000'), findsNothing);
+      expect(find.textContaining('EUR 3,000'), findsOneWidget);
+      expect(find.textContaining('USD 3,000'), findsNothing);
     },
   );
   testWidgets('holdings search and valuation drill-down retain exact ticker', (
@@ -208,11 +216,11 @@ void main() {
     final actions = <(String, String)>[];
     await mount(t, PortfolioApi(), onCompany: (a, b) => actions.add((a, b)));
     await tap(t, find.text('Holdings & value'));
-    expect(find.text('No model at cutoff'), findsOneWidget);
+    expect(find.text('No model at cutoff'), findsWidgets);
     await t.enterText(find.byType(TextField), 'AAA');
     await t.pumpAndSettle();
     expect(find.text('BBB'), findsNothing);
-    await tap(t, find.text('Test my valuation →'));
+    await tap(t, find.text('Valuation →'));
     expect(actions, [('AAA', 'value')]);
     expect(t.takeException(), isNull);
   });
@@ -240,13 +248,13 @@ void main() {
     expect(find.text('Portfolio could not be loaded'), findsOneWidget);
     api.fail = false;
     await tap(t, find.text('Try again'));
-    expect(find.text('USD 3,000'), findsOneWidget);
+    expect(find.textContaining('USD 3,000'), findsOneWidget);
     expect(api.reads.length, 2);
   });
   testWidgets('wrong cutoff response is rejected', (t) async {
     await mount(t, PortfolioApi()..wrong = true);
     expect(find.text('Portfolio could not be loaded'), findsOneWidget);
-    expect(find.text('USD 3,000'), findsNothing);
+    expect(find.textContaining('USD 3,000'), findsNothing);
   });
   testWidgets('partial account coverage has a visible warning', (t) async {
     await mount(t, PortfolioApi()..partial = true);

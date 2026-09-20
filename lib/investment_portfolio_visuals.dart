@@ -75,11 +75,13 @@ class PortfolioAllocationChart extends StatefulWidget {
     required this.palette,
     required this.onHolding,
     this.hideAmounts = false,
+    this.compact = false,
   });
   final Map<String, dynamic> group;
   final Palette palette;
   final ValueChanged<String> onHolding;
   final bool hideAmounts;
+  final bool compact;
   @override
   State<PortfolioAllocationChart> createState() =>
       _PortfolioAllocationChartState();
@@ -389,7 +391,7 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
             style: TextStyle(color: p.muted, fontSize: 11),
           ),
         ],
-        const SizedBox(height: 20),
+        SizedBox(height: widget.compact ? 12 : 20),
         if (slices.isEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 48),
@@ -411,13 +413,19 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
         else
           LayoutBuilder(
             builder: (_, c) {
-              final size = c.maxWidth >= 440 ? 224.0 : 172.0;
+              final size = widget.compact
+                  ? c.maxWidth >= 440
+                        ? 184.0
+                        : 156.0
+                  : c.maxWidth >= 440
+                  ? 224.0
+                  : 172.0;
               return c.maxWidth >= 330 &&
                       MediaQuery.textScalerOf(context).scale(1) <= 1.2
                   ? Row(
                       children: [
                         ring(size),
-                        const SizedBox(width: 18),
+                        SizedBox(width: widget.compact ? 12 : 18),
                         Expanded(child: legend),
                       ],
                     )
@@ -435,7 +443,7 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
             padding: const EdgeInsets.only(top: 12),
             child: Container(
               key: const ValueKey('allocation-hover-detail'),
-              constraints: const BoxConstraints(minHeight: 44),
+              constraints: BoxConstraints(minHeight: widget.compact ? 38 : 44),
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: p.accent.withValues(alpha: .07),
@@ -478,7 +486,7 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
             ),
             style: TextStyle(color: p.secondary, fontSize: 11, height: 1.5),
           ),
-        const SizedBox(height: 14),
+        SizedBox(height: widget.compact ? 8 : 14),
         Text(
           income
               ? w(
@@ -655,7 +663,7 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
         currency: selectedCurrency,
         palette: p,
         hideAmounts: hideAmounts,
-        chartHeight: 240,
+        chartHeight: 205,
       ),
       if (asList(asMap(h['nav'])['rows']).length < 2)
         TextButton.icon(
@@ -680,6 +688,7 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
     const SizedBox(height: 12),
     PortfolioAllocationChart(
       hideAmounts: hideAmounts,
+      compact: true,
       group: g,
       palette: p,
       onHolding: (ticker) =>
@@ -921,5 +930,555 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
         size: 11,
       ),
     ]);
+  }
+
+  Widget portfolioDesk(Map<String, dynamic> g) {
+    final hasHistory = asMap(g['home']).isNotEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (hasHistory) portfolioVisualHero(g) else portfolioAllocationPanel(g),
+        const SizedBox(height: 18),
+        portfolioHoldingsTable(g),
+      ],
+    );
+  }
+
+  String portfolioModelArchitecture(Map<String, dynamic> row) {
+    final model = asMap(row['model']);
+    return switch (text(model['modelRoute'])) {
+      'operating_company' => w('Operating-company blend', '经营公司加权模型'),
+      'multi_method_growth' => w('Growth-stage blend', '成长阶段加权模型'),
+      'financial_institution' => w('Financial institution', '金融机构模型'),
+      'customer_cash_earnings' => w('Customer cash earnings', '客户现金收益模型'),
+      'revenue_stage' => w('Revenue-stage model', '收入阶段模型'),
+      'bitcoin_treasury' => w('Treasury + operating value', '资产储备 + 经营价值'),
+      _ =>
+        row['modelStatus'] == 'covered'
+            ? w('Published model', '已发布模型')
+            : statusLabel(text(row['modelStatus'])),
+    };
+  }
+
+  String portfolioPointDifference(dynamic value) {
+    final n = nullableNumber(value);
+    if (n == null) return '—';
+    final points = n * 100;
+    return '${points >= 0 ? '+' : ''}${points.toStringAsFixed(1)} pp';
+  }
+
+  List<Map<String, dynamic>> portfolioTableRows(Map<String, dynamic> g) {
+    final source = asList(
+      g['positions'],
+    ).where((r) => !['cash', 'accrual'].contains(r['kind'])).toList();
+    final covered = source.where(
+      (r) =>
+          r['modelStatus'] == 'covered' &&
+          number(r['value']) > 0 &&
+          number(r['modelValue']) > 0,
+    );
+    final coveredMark = covered.fold<double>(
+      0,
+      (total, row) => total + number(row['value']),
+    );
+    final coveredModel = covered.fold<double>(
+      0,
+      (total, row) => total + number(row['modelValue']),
+    );
+    final rows = source
+        .where(
+          (r) => '${r['ticker']} ${r['name']}'.toLowerCase().contains(
+            query.toLowerCase(),
+          ),
+        )
+        .map((r) {
+          final currentShare = coveredMark > 0 && r['modelStatus'] == 'covered'
+              ? number(r['value']) / coveredMark
+              : null;
+          final modelShare = coveredModel > 0 && r['modelStatus'] == 'covered'
+              ? number(r['modelValue']) / coveredModel
+              : null;
+          return {
+            ...r,
+            '_currentCoveredWeight': currentShare,
+            '_modelCoveredWeight': modelShare,
+            '_structureGap': currentShare != null && modelShare != null
+                ? modelShare - currentShare
+                : null,
+          };
+        })
+        .toList();
+    dynamic key(Map<String, dynamic> row) => switch (portfolioSortColumn) {
+      0 => text(row['ticker']),
+      1 => nullableNumber(row['quantity']),
+      2 => nullableNumber(row['value']),
+      3 => nullableNumber(row['netWeight']),
+      4 => portfolioModelArchitecture(row),
+      5 => nullableNumber(row['modelGap']),
+      6 => nullableNumber(row['_structureGap']),
+      _ => nullableNumber(row['value']),
+    };
+    rows.sort((a, b) {
+      final left = key(a), right = key(b);
+      if (left == null && right == null) return 0;
+      if (left == null) return 1;
+      if (right == null) return -1;
+      final result = left is num && right is num
+          ? left.compareTo(right)
+          : left.toString().compareTo(right.toString());
+      return portfolioSortAscending ? result : -result;
+    });
+    return rows;
+  }
+
+  Widget portfolioTableSearchAndSort(int count) => LayoutBuilder(
+    builder: (_, c) {
+      final field = TextField(
+        controller: search,
+        onChanged: (value) => homeUpdate(() {
+          query = value;
+          holdingLimit = 20;
+        }),
+        decoration: InputDecoration(
+          prefixIcon: const Icon(Icons.search_rounded),
+          hintText: w('Find a holding', '查找持仓'),
+          suffixText: '$count',
+        ),
+      );
+      final sort = DropdownButtonFormField<int>(
+        initialValue: portfolioSortColumn,
+        isExpanded: true,
+        decoration: InputDecoration(labelText: w('Sort by', '排序')),
+        items: [
+          DropdownMenuItem(value: 2, child: Text(w('Current value', '当前市值'))),
+          DropdownMenuItem(
+            value: 3,
+            child: Text(w('Portfolio weight', '组合权重')),
+          ),
+          DropdownMenuItem(value: 5, child: Text(w('Model gap', '模型价差'))),
+          DropdownMenuItem(value: 6, child: Text(w('Structure shift', '结构变化'))),
+        ],
+        onChanged: (value) {
+          if (value == null) return;
+          homeUpdate(() {
+            portfolioSortColumn = value;
+            portfolioSortAscending = false;
+          });
+        },
+      );
+      if (c.maxWidth >= 700) {
+        return Row(
+          children: [
+            Expanded(child: field),
+            const SizedBox(width: 12),
+            SizedBox(width: 210, child: sort),
+          ],
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [field, const SizedBox(height: 10), sort],
+      );
+    },
+  );
+
+  Widget portfolioHoldingsTable(Map<String, dynamic> g) {
+    final rows = portfolioTableRows(g);
+    final coverage = asMap(g['coverage']), valuation = asMap(g['valuation']);
+    return panel([
+      Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.start,
+        spacing: 16,
+        runSpacing: 10,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              title('Holdings & model structure', '持仓与模型结构'),
+              const SizedBox(height: 6),
+              copy(
+                'Current weights, the model used for each company, and how the covered sleeve changes when positions are revalued to model output.',
+                '同时查看当前权重、每家公司使用的估值架构，以及按模型输出重估后已覆盖组合的结构变化。',
+                size: 12,
+              ),
+            ],
+          ),
+          tag(
+            '${coverage['count']} / ${coverage['total']} modelled · ${percent(coverage['weight'])} coverage',
+            '${coverage['count']} / ${coverage['total']} 项已建模 · 覆盖 ${percent(coverage['weight'])}',
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: p.accent.withValues(alpha: .055),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: p.accent.withValues(alpha: .16)),
+        ),
+        child: Wrap(
+          spacing: 24,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            copy(
+              '${w('Net holdings', '净持仓')}  ${amount(g['netValue'])}',
+              '净持仓  ${amount(g['netValue'])}',
+              color: p.text,
+              size: 12,
+            ),
+            copy(
+              '${w('Covered market value', '已覆盖市值')}  ${amount(valuation['coveredMark'])}',
+              '已覆盖市值  ${amount(valuation['coveredMark'])}',
+              color: p.text,
+              size: 12,
+            ),
+            copy(
+              '${w('Model-revalued', '模型重估')}  ${amount(valuation['coveredModel'])}',
+              '模型重估  ${amount(valuation['coveredModel'])}',
+              color: p.text,
+              size: 12,
+            ),
+            copy(
+              '${w('Covered gap', '覆盖部分价差')}  ${percent(valuation['gap'])}',
+              '覆盖部分价差  ${percent(valuation['gap'])}',
+              color: nullableNumber(valuation['gap']) == null
+                  ? p.muted
+                  : number(valuation['gap']) >= 0
+                  ? p.accent
+                  : p.negative,
+              size: 12,
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      portfolioTableSearchAndSort(rows.length),
+      const SizedBox(height: 12),
+      if (rows.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 28),
+          child: copy('No matching positions.', '没有匹配的持仓。'),
+        )
+      else
+        LayoutBuilder(
+          builder: (_, c) =>
+              c.maxWidth >= 1040 &&
+                  MediaQuery.textScalerOf(context).scale(1) <= 1.25
+              ? portfolioDesktopTable(g, rows.take(holdingLimit).toList())
+              : Column(
+                  children: [
+                    for (final row in rows.take(holdingLimit))
+                      portfolioMobileTableRow(g, row),
+                  ],
+                ),
+        ),
+      if (rows.length > holdingLimit)
+        Align(
+          alignment: Alignment.center,
+          child: TextButton(
+            onPressed: () => homeUpdate(() => holdingLimit += 20),
+            child: Text(
+              w(
+                'Show 20 more · ${rows.length} positions',
+                '再显示 20 项 · 共 ${rows.length} 项持仓',
+              ),
+            ),
+          ),
+        ),
+      const SizedBox(height: 8),
+      copy(
+        'Current → model structure compares weights inside the covered sleeve after applying published fair values. It is not a target allocation, score or expected return. Missing models remain missing, not zero.',
+        '“当前 → 模型结构”仅比较已覆盖部分按平台公允价值重估后的权重变化，不是目标仓位、评分或预期收益；缺失模型不会按零处理。',
+        size: 11,
+      ),
+    ]);
+  }
+
+  Widget portfolioDesktopTable(
+    Map<String, dynamic> g,
+    List<Map<String, dynamic>> rows,
+  ) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: DataTable(
+      sortColumnIndex: portfolioSortColumn,
+      sortAscending: portfolioSortAscending,
+      showCheckboxColumn: false,
+      headingRowHeight: 46,
+      dataRowMinHeight: 68,
+      dataRowMaxHeight: 78,
+      horizontalMargin: 12,
+      columnSpacing: 28,
+      columns: [
+        DataColumn(label: Text(w('Holding', '持仓')), onSort: portfolioSort),
+        DataColumn(
+          label: Text(w('Position', '仓位')),
+          numeric: true,
+          onSort: portfolioSort,
+        ),
+        DataColumn(
+          label: Text(w('Current value', '当前市值')),
+          numeric: true,
+          onSort: portfolioSort,
+        ),
+        DataColumn(
+          label: Text(w('Weight', '权重')),
+          numeric: true,
+          onSort: portfolioSort,
+        ),
+        DataColumn(
+          label: Text(w('Model architecture', '模型架构')),
+          onSort: portfolioSort,
+        ),
+        DataColumn(
+          label: Text(w('Model output', '模型输出')),
+          numeric: true,
+          onSort: portfolioSort,
+        ),
+        DataColumn(
+          label: Text(w('Current → model', '当前 → 模型')),
+          numeric: true,
+          onSort: portfolioSort,
+        ),
+        DataColumn(label: Text(w('Research', '研究'))),
+      ],
+      rows: [for (final row in rows) portfolioDataRow(g, row)],
+    ),
+  );
+
+  void portfolioSort(int column, bool ascending) => homeUpdate(() {
+    portfolioSortColumn = column;
+    portfolioSortAscending = ascending;
+  });
+
+  DataRow portfolioDataRow(Map<String, dynamic> g, Map<String, dynamic> row) {
+    final model = asMap(row['model']);
+    final covered = row['modelStatus'] == 'covered';
+    final structureGap = nullableNumber(row['_structureGap']);
+    final architecture = portfolioModelArchitecture(row);
+    return DataRow(
+      key: ValueKey('portfolio-table-${row['id'] ?? row['ticker']}'),
+      onSelectChanged: row['kind'] == 'equity'
+          ? (_) => widget.onCompany(text(row['ticker']), 'overview')
+          : null,
+      cells: [
+        DataCell(
+          SizedBox(
+            width: 210,
+            child: Row(
+              children: [
+                StockLogo(ticker: text(row['ticker']), palette: p, size: 34),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(text(row['ticker']), style: heading(14)),
+                      Text(
+                        text(row['name']),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: p.muted, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        DataCell(
+          _portfolioStackedValue(
+            hideAmounts
+                ? '••••'
+                : nullableNumber(row['quantity']) == null
+                ? '—'
+                : formatNumber(number(row['quantity'])),
+            text(row['reportDate'], '—'),
+            alignEnd: true,
+          ),
+        ),
+        DataCell(
+          _portfolioStackedValue(
+            amount(row['value']),
+            amount(row['price'], text(row['currency'])),
+            alignEnd: true,
+          ),
+        ),
+        DataCell(Text(percent(row['netWeight']), style: heading(13))),
+        DataCell(
+          Tooltip(
+            message: text(model['formula'], architecture),
+            child: SizedBox(
+              width: 180,
+              child: _portfolioStackedValue(
+                architecture,
+                covered
+                    ? w(
+                        'Published ${model['date'] ?? '—'}',
+                        '发布于 ${model['date'] ?? '—'}',
+                      )
+                    : statusLabel(text(row['modelStatus'])),
+              ),
+            ),
+          ),
+        ),
+        DataCell(
+          _portfolioStackedValue(
+            covered ? amount(model['fairValue'], text(model['currency'])) : '—',
+            covered
+                ? percent(row['modelGap'])
+                : statusLabel(text(row['modelStatus'])),
+            color: !covered || nullableNumber(row['modelGap']) == null
+                ? null
+                : number(row['modelGap']) >= 0
+                ? p.accent
+                : p.negative,
+            alignEnd: true,
+          ),
+        ),
+        DataCell(
+          _portfolioStackedValue(
+            covered
+                ? '${percent(row['_currentCoveredWeight'])} → ${percent(row['_modelCoveredWeight'])}'
+                : '—',
+            portfolioPointDifference(structureGap),
+            color: structureGap == null
+                ? null
+                : structureGap >= 0
+                ? p.accent
+                : p.negative,
+            alignEnd: true,
+          ),
+        ),
+        DataCell(
+          TextButton(
+            onPressed: row['kind'] == 'equity'
+                ? () => widget.onCompany(
+                    covered
+                        ? portfolioValuationTicker(g, text(row['ticker']))
+                        : text(row['ticker']),
+                    covered ? 'value' : 'overview',
+                  )
+                : null,
+            child: Text(
+              covered ? w('Valuation →', '估值 →') : w('Research →', '研究 →'),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _portfolioStackedValue(
+    String primary,
+    String secondary, {
+    Color? color,
+    bool alignEnd = false,
+  }) => Column(
+    mainAxisAlignment: MainAxisAlignment.center,
+    crossAxisAlignment: alignEnd
+        ? CrossAxisAlignment.end
+        : CrossAxisAlignment.start,
+    children: [
+      Text(
+        primary,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: color ?? p.text,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const SizedBox(height: 3),
+      Text(
+        secondary,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: color ?? p.muted, fontSize: 11),
+      ),
+    ],
+  );
+
+  Widget portfolioMobileTableRow(
+    Map<String, dynamic> g,
+    Map<String, dynamic> row,
+  ) {
+    final covered = row['modelStatus'] == 'covered';
+    final model = asMap(row['model']);
+    final structureGap = nullableNumber(row['_structureGap']);
+    return InkWell(
+      key: ValueKey('portfolio-mobile-${row['id'] ?? row['ticker']}'),
+      onTap: row['kind'] == 'equity'
+          ? () => widget.onCompany(text(row['ticker']), 'overview')
+          : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: p.border)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                StockLogo(ticker: text(row['ticker']), palette: p, size: 34),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(text(row['ticker']), style: heading(15)),
+                      Text(
+                        text(row['name']),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: p.muted, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                _portfolioStackedValue(
+                  amount(row['value']),
+                  percent(row['netWeight']),
+                  alignEnd: true,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 20,
+              runSpacing: 10,
+              children: [
+                smallMetric(
+                  'Model architecture',
+                  '模型架构',
+                  portfolioModelArchitecture(row),
+                ),
+                smallMetric(
+                  'Model output',
+                  '模型输出',
+                  covered
+                      ? '${amount(model['fairValue'], text(model['currency']))} · ${percent(row['modelGap'])}'
+                      : '—',
+                ),
+                smallMetric(
+                  'Current → model',
+                  '当前 → 模型',
+                  covered
+                      ? '${percent(row['_currentCoveredWeight'])} → ${percent(row['_modelCoveredWeight'])} (${portfolioPointDifference(structureGap)})'
+                      : '—',
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

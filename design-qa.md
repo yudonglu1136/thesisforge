@@ -1,6 +1,71 @@
 pyenv: cannot rehash: /Users/yudonglu/.pyenv/shims isn't writable
 # ThesisForge — Graphite workspace QA
 
+## Current acceptance: portfolio detail and model-structure table — 2026-09-20
+
+final result: passed
+
+Scope: simplify the authenticated Portfolio detail page around the user's
+actual decision flow. The supplied Snowball screenshot is used only for its
+quiet, flat and highly scannable holdings-table hierarchy. ThesisForge keeps
+its own Graphite shell, broker-backed NAV, interactive allocation views,
+privacy mode and published valuation methodology. Snowball's dividend rating
+is deliberately not copied.
+
+### Visual evidence
+
+- Source visual truth:
+  `/var/folders/3k/0wsqd58n6w71n8tyql0t09fc0000gn/T/codex-clipboard-7d9f0266-8715-4a50-9526-7386060695ec.png`
+  (3016x1530 pixels; portfolio-table reference).
+- Widget-rendered implementation:
+  `/private/tmp/thesisforge-portfolio-detail.png` (1511x1000 pixels).
+- Normalized side-by-side comparison:
+  `/private/tmp/thesisforge-portfolio-detail-comparison.png` (3022x1000
+  pixels), opened and inspected together. Flutter's widget renderer uses the
+  Ahem fallback font, so the image verifies hierarchy, density, alignment,
+  chart/table balance and responsive constraints; the runtime keeps the app's
+  existing typography.
+- Browser runtime check:
+  `http://127.0.0.1:5174/?view=portfolio&asOf=2026-09-18&lang=en` rendered
+  without console errors. That long-running local preview still serves its
+  signed-out sample-account shell; it was used only as a route/runtime check.
+  The accepted detail visual uses an isolated seven-position widget fixture,
+  never application or production demo data.
+
+### Findings and comparison history
+
+- [Resolved P1] The prior detail view scattered composition and valuation
+  across multiple cards before users could inspect their positions. The new
+  hierarchy is NAV/P&L plus the interactive allocation donut first, followed
+  immediately by one flat holdings table.
+- [Resolved P1] A generic third-party-style rating would not describe the
+  ThesisForge model. The table now exposes each company's actual backend
+  `modelRoute`, published fair value and model/price gap.
+- [Resolved P1] “Current → model” now compares each covered position's weight
+  with its weight after revaluing the same covered sleeve to published fair
+  values. The UI explicitly states that this is not a target allocation,
+  score, or expected return; missing models remain missing rather than zero.
+- [Resolved P2] The first pass left the visual hero too tall. The detail NAV
+  plot and donut were compacted while retaining all controls, hover/tap states,
+  explanations and research links, allowing the table header to enter the
+  first desktop viewport.
+- [Resolved P2] The sort selector could overflow on narrow or enlarged-text
+  layouts. It now expands within its bounded field and stacks below search at
+  compact widths.
+- No remaining P0/P1/P2 finding. Existing security logos and app assets are
+  reused; no reference asset was approximated.
+
+### Interaction, responsive and verification checks
+
+- Position/Income, Holdings/Sectors, income type/source, donut hover/tap,
+  privacy mode, NAV ranges, holding search, sorting, ticker drilldown and the
+  existing Risk/Guru tabs remain available.
+- Desktop uses a sortable horizontal DataTable; compact and enlarged-text
+  layouts switch to stacked holding rows instead of clipping columns.
+- Focused portfolio suite: **53 tests passed**. `flutter analyze`: no issues.
+  Production `npm run build`: passed and the compiled workflow marker was
+  verified.
+
 ## Current acceptance: Snowball-inspired personal portfolio home — 2026-09-20
 
 Final result: **passed**.
