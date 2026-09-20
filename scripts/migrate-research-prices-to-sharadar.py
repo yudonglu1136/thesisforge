@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fact-os-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
+    parser.add_argument("--security-master", type=Path)
     parser.add_argument("--cutoff", default="2026-09-18")
     parser.add_argument("--generated-at", required=True)
     return parser.parse_args()
@@ -138,7 +139,8 @@ def source_summary(db: sqlite3.Connection) -> dict[str, Any]:
     return summary
 
 
-def requested_price_symbols(db: sqlite3.Connection) -> tuple[list[str], set[str]]:
+def requested_price_symbols(db: sqlite3.Connection,
+                            security_master: Path | None = None) -> tuple[list[str], set[str]]:
     required = {str(row[0]).upper() for row in db.execute(
         "SELECT DISTINCT symbol FROM price_points WHERE symbol<>''"
     )}
@@ -162,12 +164,28 @@ def requested_price_symbols(db: sqlite3.Connection) -> tuple[list[str], set[str]
             expanded.update(str(row[0]).upper() for row in db.execute(
                 f"SELECT DISTINCT {key} FROM investment_current_quotes WHERE {key}<>''"
             ))
+    if security_master is not None:
+        master_path = security_master.expanduser().resolve()
+        if not master_path.is_file():
+            raise RuntimeError(f"security master missing: {master_path}")
+        master = json.loads(master_path.read_text(encoding="utf-8"))
+        if master.get("schemaVersion") != 2:
+            raise RuntimeError("unsupported Guru security-master schema")
+        for row in master.get("securities", []):
+            validation = row.get("providerValidation") or {}
+            symbol = str(validation.get("symbol") or "").strip().upper()
+            if (validation.get("provider") != "Sharadar Local Fact OS" or
+                    validation.get("status") != "available" or
+                    not re.fullmatch(r"[A-Z0-9][A-Z0-9.-]{0,20}", symbol)):
+                raise RuntimeError("security master contains a non-Sharadar or invalid resolved symbol")
+            expanded.add(symbol)
     return sorted(expanded), required
 
 
 def rebuild_price_points(db: sqlite3.Connection, fact: duckdb.DuckDBPyConnection,
-                         cutoff: str, generated_at: str) -> dict[str, Any]:
-    symbols, required = requested_price_symbols(db)
+                         cutoff: str, generated_at: str,
+                         security_master: Path | None = None) -> dict[str, Any]:
+    symbols, required = requested_price_symbols(db, security_master)
     fact.execute("CREATE TEMP TABLE requested_symbols(symbol VARCHAR PRIMARY KEY)")
     fact.executemany("INSERT INTO requested_symbols VALUES (?)", [(symbol,) for symbol in symbols])
     coverage = fact.execute("""
@@ -463,7 +481,9 @@ def main() -> None:
             fact = duckdb.connect(str(root / "fact_os.duckdb"), read_only=True)
             try:
                 db.execute("BEGIN IMMEDIATE")
-                prices = rebuild_price_points(db, fact, args.cutoff, args.generated_at)
+                prices = rebuild_price_points(
+                    db, fact, args.cutoff, args.generated_at, args.security_master
+                )
                 valuations = migrate_valuations(db, args.generated_at)
                 dividends = migrate_dividends(db, fact, args.cutoff, args.generated_at)
                 removed_caches = delete_price_derived_caches(db)
@@ -494,6 +514,10 @@ def main() -> None:
         "cutoff": args.cutoff,
         "source": {"path": str(source), "bytes": source.stat().st_size, "sha256": source_hash},
         "factOs": {"root": str(root), "catalogSha256": sha256_bytes(initial_catalog)},
+        "securityMaster": ({
+            "path": str(args.security_master.expanduser().resolve()),
+            "sha256": sha256_file(args.security_master.expanduser().resolve())
+        } if args.security_master else None),
         "output": {"path": str(output), "bytes": output.stat().st_size, "sha256": sha256_file(output)},
         "before": before, "after": after, "prices": prices, "valuations": valuations,
         "dividends": dividends, "invalidatedPriceDerivedCaches": removed_caches,

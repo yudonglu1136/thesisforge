@@ -30,7 +30,8 @@ class SharadarResearchMigrationTest(unittest.TestCase):
                 contraticker VARCHAR,contraname VARCHAR,_ingestion_run VARCHAR,_observed_at VARCHAR);
               INSERT INTO stocks VALUES
                 ('AAA','2026-09-17',9,11,8,10,100,9.5,'2026-09-19T00:00:00Z'),
-                ('AAA','2026-09-18',10,12,9,11,110,10.6,'2026-09-19T00:00:00Z');
+                ('AAA','2026-09-18',10,12,9,11,110,10.6,'2026-09-19T00:00:00Z'),
+                ('BBB','2026-09-18',20,22,19,21,210,20.5,'2026-09-19T00:00:00Z');
               INSERT INTO funds VALUES
                 ('SPY','2026-09-18',600,601,599,600,1000,598,'2026-09-19T00:00:00Z');
               INSERT INTO actions VALUES
@@ -72,13 +73,24 @@ class SharadarResearchMigrationTest(unittest.TestCase):
             db.execute("INSERT INTO guru_backtest_proxies VALUES(?,?,?,?,?,?,?)",
                        ('two',5,'old',None,None,'v1',json.dumps({"holding":"YAHOO INC","source":"Sharadar"})))
             db.commit(); db.close()
+            security_master = root / "guru-security-master.json"
+            security_master.write_text(json.dumps({
+                "schemaVersion": 2,
+                "securities": [{"providerValidation": {
+                    "provider": "Sharadar Local Fact OS",
+                    "status": "available",
+                    "symbol": "BBB"
+                }}]
+            }))
             output, receipt = root / "candidate.sqlite", root / "receipt.json"
             completed = subprocess.run([sys.executable,str(SCRIPT),'--source',str(source),'--fact-os-root',str(fact_root),
-                '--output',str(output),'--receipt',str(receipt),'--cutoff','2026-09-18',
+                '--output',str(output),'--receipt',str(receipt),'--security-master',str(security_master),
+                '--cutoff','2026-09-18',
                 '--generated-at','2026-09-20T00:00:00Z'],capture_output=True,text=True)
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
             result = sqlite3.connect(output)
             self.assertEqual(result.execute("SELECT close,source FROM price_points WHERE symbol='AAA' AND date='2026-09-18'").fetchone(),(11.0,'sharadar_fact_os_sep'))
+            self.assertEqual(result.execute("SELECT close,source FROM price_points WHERE symbol='BBB' AND date='2026-09-18'").fetchone(),(21.0,'sharadar_fact_os_sep'))
             self.assertEqual(result.execute("SELECT COUNT(*) FROM price_points WHERE source LIKE '%yahoo%'").fetchone()[0],0)
             self.assertEqual(result.execute("SELECT payload FROM private_user_data").fetchone()[0],'untouched')
             self.assertEqual(result.execute("SELECT COUNT(*) FROM guru_backtests").fetchone()[0],0)
@@ -91,6 +103,7 @@ class SharadarResearchMigrationTest(unittest.TestCase):
             result.close()
             audit=json.loads(receipt.read_text())
             self.assertEqual(audit['activeYahooCounts'],{k:0 for k in audit['activeYahooCounts']})
+            self.assertEqual(audit['securityMaster']['path'], str(security_master.resolve()))
 
 
 if __name__ == '__main__':
