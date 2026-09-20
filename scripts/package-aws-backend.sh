@@ -2,7 +2,7 @@
 set -euo pipefail
 
 version="${1:-$(git rev-parse --short HEAD)}"
-zip_path="${AWS_PACKAGE_PATH:-/tmp/guru-dashboard-${version}.zip}"
+zip_path="${AWS_PACKAGE_PATH:-/tmp/thesisforge-${version}.zip}"
 db_path="${SQLITE_DB_PATH:-server/data/guru-analysis.sqlite}"
 pit_migration_path="${PIT_MIGRATION_PATH:-server/data/valuation-pit-migration.sqlite.gz}"
 include_sqlite_db="${INCLUDE_SQLITE_DB:-0}"
