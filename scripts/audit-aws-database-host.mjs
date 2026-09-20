@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 const mode = process.argv.slice(2).join(' ');
 if (!['--read-only', '--read-only --restore-drill'].includes(mode)) throw Error('Explicit --read-only required');
 const restoreDrill = mode.endsWith('--restore-drill');
-const instance = 'i-01fb060bbb28588e1', group = 'sg-0260ccde6587bc4cb', region = 'us-east-1';
+const instance = 'i-0896b2f2f421b847b', group = 'sg-0d7dabbfa4cdc91cc', region = 'us-east-1';
 const aws = (...args) => JSON.parse(execFileSync('aws', [...args, '--region', region, '--output', 'json'], {
   encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000
 }));

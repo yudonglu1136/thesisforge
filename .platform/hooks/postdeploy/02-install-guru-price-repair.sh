@@ -152,7 +152,7 @@ PY
 
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
   backup_dir="${runtime_dir}/backups"
-  backup_db="${backup_dir}/guru-analysis-pre-guru-price-${timestamp}.sqlite"
+  backup_db="${backup_dir}/thesisforge-pre-guru-price-${timestamp}.sqlite"
   backup_gz="${backup_db}.gz"
   mkdir -p "${backup_dir}"
   python3 - "${runtime_db}" "${backup_db}" <<'PY'

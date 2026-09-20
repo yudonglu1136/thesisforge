@@ -9,7 +9,7 @@ import { backupUserData, restoreUserData } from '../server/userDataBackup.js';
 
 // Explicit operator smoke test, NEVER a startup hook or a production data export.
 // Only synthetic databases are created. No running application store is opened.
-const bucket='guru-analysis-dashboard-eb-378477120101-us-east-1';
+const bucket='thesisforge-production-378477120101-us-east-1';
 const prefix=`database-backups/user-data-validation/${crypto.randomUUID()}/`;
 const run=promisify(execFile);
 const uploaded=[];

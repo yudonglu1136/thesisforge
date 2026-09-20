@@ -15,8 +15,8 @@ test('explicit release, observed users and tenant database counts are distinct g
   }
 });
 test('only the exact Ready/Green release and original single instance may be primed',()=>{
-  const env={EnvironmentName:'guru-analysis-api-prod',VersionLabel:'owner-release-fixture',Status:'Ready',Health:'Green'};
-  const resources={Instances:[{Id:'i-01fb060bbb28588e1'}]};
+  const env={EnvironmentName:'thesisforge-api-prod',VersionLabel:'owner-release-fixture',Status:'Ready',Health:'Green'};
+  const resources={Instances:[{Id:'i-0896b2f2f421b847b'}]};
   assert.doesNotThrow(()=>verifyPrimeRelease(env,resources,options.expectedRelease));
   for(const mutate of [e=>e.VersionLabel='old',e=>e.Status='Updating',e=>e.Health='Yellow',e=>e.EnvironmentName='different']){
     const e={...env};mutate(e);assert.throws(()=>verifyPrimeRelease(e,resources,options.expectedRelease));

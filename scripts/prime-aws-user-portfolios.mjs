@@ -11,8 +11,8 @@ import {parseArgs} from 'node:util';
 import {DatabaseSync} from 'node:sqlite';
 import {matchingTemporaryIngressRules} from './backup-aws-user-data.mjs';
 
-const REGION='us-east-1',ACCOUNT='378477120101',ENVIRONMENT='guru-analysis-api-prod';
-const INSTANCE='i-01fb060bbb28588e1',GROUP='sg-0260ccde6587bc4cb';
+const REGION='us-east-1',ACCOUNT='378477120101',ENVIRONMENT='thesisforge-api-prod';
+const INSTANCE='i-0896b2f2f421b847b',GROUP='sg-0d7dabbfa4cdc91cc';
 const RUNTIME_FILES=['scripts/prime-user-portfolio-reports.mjs','server/portfolioClient.js',
   'server/userPortfolioStore.js','server/userDataPaths.js','server/asyncUserCache.js',
   'server/portfolioReport.js','server/portfolioHistory.js','server/portfolioIncome.js'];

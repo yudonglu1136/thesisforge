@@ -48,7 +48,7 @@ for repeated research work rather than a marketing landing page.
 | **Portfolio** | How does the user's real book look now? | Encrypted IBKR/Yodlee sync, NAV history, holdings and allocation, cash flows, valuation gaps, dividends, Sharpe and scenario analytics |
 | **Admin** | Is the platform and its data healthy? | User portfolio audit, data-job health, backend status, refresh controls, account drilldown |
 
-## Guru Intelligence
+## ThesisForge
 
 ![Guru dashboard with manager selection, portfolio simulation, signal board, and crowded holdings](docs/images/guru-dashboard.png)
 
@@ -211,7 +211,7 @@ Protected routes require a valid Supabase-authenticated request in production.
 
 ## Status
 
-Guru Intelligence is an active private product build. The responsive web
+ThesisForge is an active private product build. The responsive web
 terminal is the current production surface.
 
 > **Research software, not investment advice.** Model outputs depend on source

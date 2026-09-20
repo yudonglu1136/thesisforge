@@ -11,8 +11,8 @@ import {DatabaseSync} from 'node:sqlite';
 import {restoreUserData} from '../server/userDataBackup.js';
 
 const REGION='us-east-1', ACCOUNT='378477120101';
-const INSTANCE='i-01fb060bbb28588e1', GROUP='sg-0260ccde6587bc4cb';
-const BUCKET='guru-analysis-dashboard-eb-378477120101-us-east-1';
+const INSTANCE='i-0896b2f2f421b847b', GROUP='sg-0d7dabbfa4cdc91cc';
+const BUCKET='thesisforge-production-378477120101-us-east-1';
 const MAX_EXPORT_BYTES=16*1024*1024;
 export function privateBackupOutput(destination, repository) {
   if(typeof destination!=='string'||!path.isAbsolute(destination)||fs.existsSync(destination)) throw Error('new_private_output_required');
@@ -213,4 +213,3 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   } else try {console.log(JSON.stringify(await backupAwsUserData(process.argv[3]),null,2));}
   catch {console.error('AWS user backup did not complete. No live database was replaced. Keep the private recovery directory for diagnosis; no secrets emitted.');process.exitCode=1;}
 }
-

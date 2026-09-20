@@ -11,7 +11,7 @@ const range=process.argv[3]==='--days'?{periodDays:Number(process.argv[4])}:{fro
 ibkrReportRange(range);
 const root=path.resolve(out);fs.mkdirSync(root,{recursive:true,mode:0o700});
 const settings=JSON.parse(execFileSync('aws',['elasticbeanstalk','describe-configuration-settings','--region','us-east-1',
-  '--application-name','guru-analysis-dashboard','--environment-name','guru-analysis-api-prod',
+  '--application-name','thesisforge-api','--environment-name','thesisforge-api-prod',
   '--query',"ConfigurationSettings[0].OptionSettings[?Namespace=='aws:elasticbeanstalk:application:environment' && (OptionName=='IBKR_FLEX_TOKEN' || OptionName=='IBKR_FLEX_QUERY_ID')]"]));
 const config=Object.fromEntries(settings.map(r=>[r.OptionName,r.Value]));
 if(!config.IBKR_FLEX_TOKEN||!config.IBKR_FLEX_QUERY_ID)throw new Error('AWS operator connector is not configured');
@@ -26,7 +26,7 @@ try {
   const content=JSON.stringify(sanitize(report));
   fs.writeFileSync(path.join(root,'report.json'),content,{mode:0o600,flag:'wx'});
   const metadata={version:'owner-report-download-v1',retrievedAt:new Date().toISOString(),
-    source:'IBKR report retrieved using AWS EB operator connector',awsEnvironment:'guru-analysis-api-prod',
+    source:'IBKR report retrieved using AWS EB operator connector',awsEnvironment:'thesisforge-api-prod',
     sha256:crypto.createHash('sha256').update(content).digest('hex'),requestedRange:range,credentialsCopied:false,productionModified:false};
   fs.writeFileSync(path.join(root,'download.json'),JSON.stringify(metadata,null,2),{mode:0o600,flag:'wx'});
   console.log(JSON.stringify(metadata));

@@ -1,6 +1,6 @@
 # Deployment Contract
 
-Guru Intelligence is split into a Vercel frontend and an AWS backend.
+ThesisForge is split into a Vercel frontend and an AWS backend.
 
 ## Source Of Truth
 
