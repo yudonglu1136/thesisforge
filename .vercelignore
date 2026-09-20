@@ -7,6 +7,13 @@ dist
 node_modules
 coverage
 prototypes
+data
+fact_os
+output
+docs
+test
+.venv-fact-os
+.playwright-cli
 server/*
 !server/retiredProductRoutes.js
 *.log
