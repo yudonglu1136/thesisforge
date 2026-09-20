@@ -35,10 +35,19 @@ test('13F insights exposes all-filer snapshots without a Guru selection',()=>{
   assert.equal(result.coverage.scope,'all_sf3_institutional_filers');
   assert.equal(result.coverage.selectedGuruCount,null);
   assert.deepEqual(result.quarters,['2026-06-30','2026-03-31']);
+  assert.equal(result.selectedTicker,'MSFT');
   assert.deepEqual(Object.keys(result.details),['MSFT']);
   assert.deepEqual(result.details.MSFT.history.map(row=>row.reportDate),['2026-03-31','2026-06-30']);
   assert.equal(result.details.MSFT.history[1].institutionalOwnershipPct,95.6);
   assert.equal(JSON.stringify(result).includes('VANGRD'),false);
+});
+
+test('13F insights keeps the requested stock and its chart history aligned',()=>{
+  const source=fixture();
+  const result=institutional13fInsights(source,'2026-09-18',null,'NVDA');
+  assert.equal(result.selectedTicker,'NVDA');
+  assert.deepEqual(Object.keys(result.details),['NVDA']);
+  assert.deepEqual(result.details.NVDA.history.map(row=>row.reportDate),['2026-03-31','2026-06-30']);
 });
 
 test('13F security detail is lazy and quarter-bound',()=>{

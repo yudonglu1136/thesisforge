@@ -1,6 +1,63 @@
 pyenv: cannot rehash: /Users/yudonglu/.pyenv/shims isn't writable
 # ThesisForge — Graphite workspace QA
 
+## Current acceptance: 13F history loading, switching and hover — 2026-09-21
+
+Final result: **passed**.
+
+Scope: repair the existing all-institution 13F stock-detail flow without
+redesigning it. A stock named in the URL or selected in the table must show its
+own historical institution-count and ownership charts immediately; switching
+stocks must not require a refresh. Both charts must expose exact quarterly
+values on mouse hover and touch inspection.
+
+### Visual evidence
+
+- Reported broken state:
+  `/var/folders/3k/0wsqd58n6w71n8tyql0t09fc0000gn/T/codex-clipboard-6909dc64-2450-4784-a35d-d3e136fa9e6b.png`
+  (GOOGL selected while both charts incorrectly showed no trend).
+- Browser-rendered implementation:
+  `/private/tmp/thesisforge-13f-hover-verified.png` (2048x1100 pixels).
+- The two images were opened and inspected together. The accepted render keeps
+  the established Graphite hierarchy and compact two-column desktop layout,
+  now showing all eight available GOOGL quarterly observations. The ownership
+  tooltip displays quarter, aggregate reported shares and percentage of shares
+  outstanding; the institution tooltip displays quarter and exact filer count.
+
+### Findings and resolution
+
+- [Resolved P1] The summary endpoint implicitly preloaded MSFT while the UI could
+  highlight GOOGL from URL state. The response now declares `selectedTicker`,
+  and the client reconciles URL, response and row availability atomically.
+- [Resolved P1] A late summary request could replace a detail fetched by a newer
+  stock click. Detail responses are now keyed by cutoff, quarter and ticker,
+  cached independently, merged without changing selection, and protected from
+  stale request races.
+- [Resolved P1] Empty detail was presented as insufficient history while the
+  request was still in flight. The detail area now presents an explicit compact
+  loading state and only shows the insufficient-history copy for real data gaps.
+- [Resolved P2] History canvases exposed no inspection values. Both charts now
+  support mouse hover, tap and drag, with a vertical guide, emphasized points
+  and a bounded value tooltip.
+- [Resolved P1] Every stock click previously decompressed and scanned all eight
+  full-universe quarterly payloads. The backend now builds one bounded history
+  index per visible snapshot set and reuses it across securities.
+- No remaining P0/P1/P2 issue in the requested flow.
+
+### Verification and performance
+
+- Direct-load browser check: a GOOGL URL rendered GOOGL charts without a click
+  or refresh. AMZN then loaded from the table in the same page and retained a
+  complete history. Browser console: no warnings or errors.
+- Hover QA: institution history showed `2025/Q3 · 5,619 filers`; ownership
+  history showed `2024/Q4 · 7.87B shares · 64.52% outstanding`.
+- Real artifact benchmark (8 quarters): repeated uncached per-stock processing
+  was about 1.4 seconds. After the one-time history index, GOOGL, AMZN, NVDA and
+  MSFT detail generation measured 30–48ms directly; warm local HTTP responses
+  measured below 3ms.
+- Server focused tests: **6 passed**. Flutter focused tests: **16 passed**.
+  `flutter analyze`: no issues.
+
 ## Current acceptance: 13F stock ownership history and dual rankings — 2026-09-20
 
 final result: passed

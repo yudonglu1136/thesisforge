@@ -7,6 +7,38 @@ const parse = row => {
   return JSON.parse(row.payload_json);
 };
 
+const selectedPayloadCache = new WeakMap();
+const historyIndexCache = new WeakMap();
+
+function cacheEntries(cache, source) {
+  let entries=cache.get(source);
+  if (!entries) {
+    entries=new Map();
+    cache.set(source,entries);
+  }
+  return entries;
+}
+
+function setBounded(entries,key,value,limit) {
+  if (!entries.has(key)) {
+    while (entries.size>=limit) entries.delete(entries.keys().next().value);
+  }
+  entries.set(key,value);
+}
+
+function snapshotKey(row) {
+  return `${row.report_date}|${row.payload_hash??row.generated_at}`;
+}
+
+function selectedPayload(source,row) {
+  const entries=cacheEntries(selectedPayloadCache,source);
+  const key=snapshotKey(row);
+  if (entries.has(key)) return entries.get(key);
+  const payload=parse(row);
+  setBounded(entries,key,payload,1);
+  return payload;
+}
+
 function tableExists(db,name) {
   return Boolean(db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"
@@ -17,7 +49,7 @@ function visibleRows(db,table,asOf) {
   const compressed=table.endsWith('_v2');
   const payload=compressed ? 'payload_gzip' : 'payload_json';
   return db.prepare(`
-    SELECT report_date,available_at,generated_at,${payload}
+    SELECT report_date,available_at,generated_at,payload_hash,${payload}
     FROM ${table} s
     WHERE available_at<=?
       AND generated_at=(
@@ -47,26 +79,33 @@ function visibleSnapshot(source, asOf, reportDate = null) {
     ? visible.find(row => row.report_date === reportDate)
     : visible[0];
   assert(selected, 'institutional_13f_quarter_not_available');
-  return {payload:parse(selected), selected, visible, quarters:visible.map(row => row.report_date)};
+  return {payload:selectedPayload(source,selected), selected, visible, quarters:visible.map(row => row.report_date)};
 }
 
-function securityHistory(visible, ticker) {
-  return visible
-    .map(snapshot => {
-      const payload=parse(snapshot);
-      const row=payload?.rows?.find(item=>item.ticker===ticker);
-      if (!row) return null;
-      return {
-        reportDate: payload.reportDate??snapshot.report_date,
-        availableAt: payload.availableAt??snapshot.available_at,
-        holders: row.holders??null,
-        institutionalSharesK: row.currentUnitsK??null,
-        sharesOutstandingK: row.sharesOutstandingK??null,
-        institutionalOwnershipPct: row.institutionalOwnershipPct??null,
-      };
-    })
-    .filter(Boolean)
-    .reverse();
+function securityHistories(source, visible, selected, selectedData) {
+  const bounded=visible.filter(row=>row.report_date<=selected.report_date);
+  const key=bounded.map(snapshotKey).join(';');
+  const entries=cacheEntries(historyIndexCache,source);
+  if (entries.has(key)) return entries.get(key);
+  const histories=new Map();
+  for (const snapshot of [...bounded].reverse()) {
+    const payload=snapshot===selected ? selectedData : parse(snapshot);
+    for (const row of payload?.rows??[]) {
+      if (!row?.ticker) continue;
+      const history=histories.get(row.ticker)??[];
+      history.push({
+        reportDate:payload.reportDate??snapshot.report_date,
+        availableAt:payload.availableAt??snapshot.available_at,
+        holders:row.holders??null,
+        institutionalSharesK:row.currentUnitsK??null,
+        sharesOutstandingK:row.sharesOutstandingK??null,
+        institutionalOwnershipPct:row.institutionalOwnershipPct??null,
+      });
+      histories.set(row.ticker,history);
+    }
+  }
+  setBounded(entries,key,histories,1);
+  return histories;
 }
 
 export function institutional13fInsights(source, asOf, reportDate = null, ticker = null) {
@@ -75,16 +114,18 @@ export function institutional13fInsights(source, asOf, reportDate = null, ticker
   const selectedTicker=typeof ticker==='string' && /^[A-Z][A-Z0-9.-]{0,14}$/.test(ticker)
     ? ticker
     : mostIncreased?.ticker;
+  const histories=securityHistories(source,visible,selected,payload);
   const boundedDetails=selectedTicker
     ? {[selectedTicker]:{
       ...(payload.details?.[selectedTicker]??{}),
-      history:securityHistory(visible.filter(row=>row.report_date<=selected.report_date),selectedTicker),
+      history:histories.get(selectedTicker)??[],
     }}
     : {};
   const {details:allDetails,...summary}=payload;
   return {
     ...summary,
     asOf,
+    selectedTicker,
     quarters,
     generatedAt: selected.generated_at,
     details: boundedDetails,
@@ -106,7 +147,7 @@ export function institutional13fInsightDetail(source, ticker, asOf, reportDate =
     version:payload.version,asOf,reportDate:payload.reportDate,ticker,row,
     details:{
       ...(payload.details?.[ticker]??{}),
-      history:securityHistory(visible.filter(item=>item.report_date<=selected.report_date),ticker),
+      history:securityHistories(source,visible,selected,payload).get(ticker)??[],
     },
   };
 }

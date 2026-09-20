@@ -53,8 +53,20 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     'insightSearch': insightSearch.isEmpty ? null : insightSearch,
   }, replaceCurrent: true);
 
+  String _insightDetailCacheKey(String ticker, [String? quarter]) =>
+      '$asOf|${quarter ?? insightQuarter}|$ticker';
+
+  void _merge13FInsightDetail(String ticker, Map<String, dynamic> detail) {
+    final current = Map<String, dynamic>.from(institutional13f ?? {});
+    final details = Map<String, dynamic>.from(asMap(current['details']));
+    details[ticker] = detail;
+    current['details'] = details;
+    institutional13f = current;
+  }
+
   Future<void> load13FInsights({String? quarter}) async {
     final serial = ++insightSerial, cutoff = asOf;
+    final requestedInsightTicker = insightTicker;
     updateUI(() {
       insightLoading = true;
       insightError = '';
@@ -72,19 +84,29 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
         institutional13f = data;
         insightQuarter = text(data['reportDate']);
         final rows = asList(data['rows']);
-        if (!rows.any((row) => row['ticker'] == insightTicker)) {
-          final loadedDetails = asMap(data['details']);
-          insightTicker = text(
-            loadedDetails.keys.firstOrNull,
-            text(rows.firstOrNull?['ticker']),
-          );
+        final rowTickers = rows.map((row) => text(row['ticker'])).toSet();
+        final serverTicker = text(data['selectedTicker']);
+        final requestedStillCurrent = insightTicker == requestedInsightTicker;
+        if (!rowTickers.contains(insightTicker) || requestedStillCurrent) {
+          insightTicker = rowTickers.contains(requestedInsightTicker)
+              ? requestedInsightTicker
+              : rowTickers.contains(serverTicker)
+              ? serverTicker
+              : text(rows.firstOrNull?['ticker']);
         }
+        final cacheKey = _insightDetailCacheKey(insightTicker, insightQuarter);
+        final cached = insightDetailCache[cacheKey];
+        if (cached != null) _merge13FInsightDetail(insightTicker, cached);
         final institutions = asList(data['institutions']);
         if (!institutions.any((row) => row['investorId'] == insightInvestor)) {
           insightInvestor = text(institutions.firstOrNull?['investorId']);
         }
       });
       _persist13FInsights();
+      final loaded = asMap(asMap(institutional13f?['details'])[insightTicker]);
+      if (insightTicker.isNotEmpty && loaded.isEmpty) {
+        unawaited(_load13FInsightDetail(insightTicker));
+      }
     } catch (_) {
       if (mounted && serial == insightSerial) {
         updateUI(
@@ -104,28 +126,40 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
   Future<void> select13FInsightStock(String ticker) async {
     updateUI(() => insightTicker = ticker);
     _persist13FInsights();
+    await _load13FInsightDetail(ticker);
+  }
+
+  Future<void> _load13FInsightDetail(String ticker) async {
     final detail = asMap(asMap(institutional13f?['details'])[ticker]);
     if (detail.isNotEmpty) return;
     final serial = insightSerial, cutoff = asOf, quarter = insightQuarter;
+    if (quarter.isEmpty) return;
+    final cacheKey = _insightDetailCacheKey(ticker, quarter);
+    final cached = insightDetailCache[cacheKey];
+    if (cached != null) {
+      if (mounted && serial == insightSerial && cutoff == asOf) {
+        updateUI(() => _merge13FInsightDetail(ticker, cached));
+      }
+      return;
+    }
+    if (insightDetailLoading.contains(cacheKey)) return;
+    updateUI(() => insightDetailLoading.add(cacheKey));
     try {
       final data = await widget.api.getJson(
         '/api/investment/13f-insights/${Uri.encodeComponent(ticker)}?asOf=$cutoff&quarter=$quarter',
       );
-      if (!mounted ||
-          serial != insightSerial ||
-          cutoff != asOf ||
-          insightTicker != ticker) {
-        return;
-      }
+      if (!mounted || serial != insightSerial || cutoff != asOf) return;
+      final nextDetail = asMap(data['details']);
       updateUI(() {
-        final current = Map<String, dynamic>.from(institutional13f ?? {});
-        final details = Map<String, dynamic>.from(asMap(current['details']));
-        details[ticker] = asMap(data['details']);
-        current['details'] = details;
-        institutional13f = current;
+        insightDetailCache[cacheKey] = nextDetail;
+        _merge13FInsightDetail(ticker, nextDetail);
       });
     } catch (_) {
       // Aggregate ranking remains usable when a bounded detail request fails.
+    } finally {
+      if (mounted) {
+        updateUI(() => insightDetailLoading.remove(cacheKey));
+      }
     }
   }
 
@@ -849,14 +883,22 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           else
             SizedBox(
               height: 128,
-              child: CustomPaint(
-                painter: _InsightHistoryPainter(
-                  points: points,
-                  series: series,
-                  accent: p.accent,
-                  secondary: p.secondary,
-                  grid: p.border,
-                ),
+              child: _InsightHistoryInteractiveChart(
+                points: points,
+                series: series,
+                accent: p.accent,
+                secondary: p.secondary,
+                grid: p.border,
+                panel: p.panel,
+                textColor: p.text,
+                muted: p.muted,
+                quarterLabel: reportQuarterLabel,
+                tooltipLines: (point) => series == _InsightHistorySeries.holders
+                    ? ['${_integer(point.holders)} ${w('filers', '家机构')}']
+                    : [
+                        '${w('Shares', '持股数')} ${_reportedShares(point.sharesK)}',
+                        '${w('% outstanding', '占总股本')} ${point.ownershipPct == null ? '—' : '${point.ownershipPct!.toStringAsFixed(2)}%'}',
+                      ],
               ),
             ),
           const SizedBox(height: 7),
@@ -956,6 +998,9 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       ]);
     }
     final detail = asMap(asMap(institutional13f?['details'])[insightTicker]);
+    final detailIsLoading = insightDetailLoading.contains(
+      _insightDetailCacheKey(insightTicker),
+    );
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -1001,7 +1046,33 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             ],
           ),
           const SizedBox(height: 18),
-          _insightHistoryCharts(detail),
+          if (detail.isEmpty && detailIsLoading)
+            Container(
+              height: 170,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: p.card.withValues(alpha: .5),
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: p.border),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: p.accent,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  label('Loading quarterly history…', '正在加载季度历史…', size: 11),
+                ],
+              ),
+            )
+          else
+            _insightHistoryCharts(detail),
           const SizedBox(height: 18),
           Row(
             children: [
@@ -1212,13 +1283,18 @@ class _InsightHistoryPoint {
   final double? ownershipPct;
 }
 
-class _InsightHistoryPainter extends CustomPainter {
-  const _InsightHistoryPainter({
+class _InsightHistoryInteractiveChart extends StatefulWidget {
+  const _InsightHistoryInteractiveChart({
     required this.points,
     required this.series,
     required this.accent,
     required this.secondary,
     required this.grid,
+    required this.panel,
+    required this.textColor,
+    required this.muted,
+    required this.quarterLabel,
+    required this.tooltipLines,
   });
 
   final List<_InsightHistoryPoint> points;
@@ -1226,6 +1302,148 @@ class _InsightHistoryPainter extends CustomPainter {
   final Color accent;
   final Color secondary;
   final Color grid;
+  final Color panel;
+  final Color textColor;
+  final Color muted;
+  final String Function(String) quarterLabel;
+  final List<String> Function(_InsightHistoryPoint) tooltipLines;
+
+  @override
+  State<_InsightHistoryInteractiveChart> createState() =>
+      _InsightHistoryInteractiveChartState();
+}
+
+class _InsightHistoryInteractiveChartState
+    extends State<_InsightHistoryInteractiveChart> {
+  int? hoveredIndex;
+  double pointerX = 0;
+
+  void _selectAt(double dx, double width) {
+    if (widget.points.isEmpty || width <= 10) return;
+    final ratio = ((dx - 5) / (width - 10)).clamp(0.0, 1.0);
+    final index = (ratio * (widget.points.length - 1)).round();
+    if (hoveredIndex == index && pointerX == dx) return;
+    setState(() {
+      hoveredIndex = index;
+      pointerX = dx;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final width = constraints.maxWidth;
+      final index = hoveredIndex;
+      final tooltipWidth = math
+          .min(164.0, math.max(118.0, width * .56))
+          .toDouble();
+      final tooltipLeft = (pointerX - tooltipWidth / 2)
+          .clamp(0.0, math.max(0.0, width - tooltipWidth))
+          .toDouble();
+      return MouseRegion(
+        cursor: SystemMouseCursors.precise,
+        onHover: (event) => _selectAt(event.localPosition.dx, width),
+        onExit: (_) => setState(() => hoveredIndex = null),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (event) => _selectAt(event.localPosition.dx, width),
+          onPanStart: (event) => _selectAt(event.localPosition.dx, width),
+          onPanUpdate: (event) => _selectAt(event.localPosition.dx, width),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _InsightHistoryPainter(
+                    points: widget.points,
+                    series: widget.series,
+                    accent: widget.accent,
+                    secondary: widget.secondary,
+                    grid: widget.grid,
+                    hoverIndex: index,
+                  ),
+                ),
+              ),
+              if (index != null && index < widget.points.length)
+                Positioned(
+                  top: 4,
+                  left: tooltipLeft,
+                  width: tooltipWidth,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: widget.panel.withValues(alpha: .96),
+                        borderRadius: BorderRadius.circular(7),
+                        border: Border.all(color: widget.grid),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x33000000),
+                            blurRadius: 10,
+                            offset: Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 7,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.quarterLabel(
+                                widget.points[index].reportDate,
+                              ),
+                              style: TextStyle(
+                                color: widget.muted,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            for (final line in widget.tooltipLines(
+                              widget.points[index],
+                            ))
+                              Text(
+                                line,
+                                style: TextStyle(
+                                  color: widget.textColor,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.35,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _InsightHistoryPainter extends CustomPainter {
+  const _InsightHistoryPainter({
+    required this.points,
+    required this.series,
+    required this.accent,
+    required this.secondary,
+    required this.grid,
+    required this.hoverIndex,
+  });
+
+  final List<_InsightHistoryPoint> points;
+  final _InsightHistorySeries series;
+  final Color accent;
+  final Color secondary;
+  final Color grid;
+  final int? hoverIndex;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1239,10 +1457,67 @@ class _InsightHistoryPainter extends CustomPainter {
     }
     if (series == _InsightHistorySeries.holders) {
       _drawSeries(canvas, chart, (point) => point.holders, accent, fill: true);
-      return;
+    } else {
+      _drawBars(canvas, chart, (point) => point.sharesK, accent);
+      _drawSeries(canvas, chart, (point) => point.ownershipPct, secondary);
     }
-    _drawBars(canvas, chart, (point) => point.sharesK, accent);
-    _drawSeries(canvas, chart, (point) => point.ownershipPct, secondary);
+    _drawHover(canvas, chart);
+  }
+
+  void _drawHover(Canvas canvas, Rect chart) {
+    final index = hoverIndex;
+    if (index == null || index < 0 || index >= points.length) return;
+    final x = points.length == 1
+        ? chart.center.dx
+        : chart.left + chart.width * index / (points.length - 1);
+    canvas.drawLine(
+      Offset(x, chart.top),
+      Offset(x, chart.bottom),
+      Paint()
+        ..color = grid.withValues(alpha: .95)
+        ..strokeWidth = 1,
+    );
+    final reads = series == _InsightHistorySeries.holders
+        ? <(double? Function(_InsightHistoryPoint), Color)>[
+            ((point) => point.holders, accent),
+          ]
+        : <(double? Function(_InsightHistoryPoint), Color)>[
+            ((point) => point.sharesK, accent),
+            ((point) => point.ownershipPct, secondary),
+          ];
+    for (final entry in reads) {
+      final offset = _seriesOffset(chart, index, entry.$1);
+      if (offset == null) continue;
+      canvas.drawCircle(offset, 5.2, Paint()..color = grid);
+      canvas.drawCircle(offset, 3.1, Paint()..color = entry.$2);
+    }
+  }
+
+  Offset? _seriesOffset(
+    Rect chart,
+    int index,
+    double? Function(_InsightHistoryPoint) read,
+  ) {
+    final values = <(int, double)>[];
+    for (var itemIndex = 0; itemIndex < points.length; itemIndex++) {
+      final value = read(points[itemIndex]);
+      if (value != null && value.isFinite) values.add((itemIndex, value));
+    }
+    final value = read(points[index]);
+    if (value == null || !value.isFinite || values.isEmpty) return null;
+    final rawMin = values.map((item) => item.$2).reduce(math.min);
+    final rawMax = values.map((item) => item.$2).reduce(math.max);
+    final spread = rawMax - rawMin;
+    final padding = spread == 0
+        ? math.max(rawMax.abs() * .08, 1)
+        : spread * .12;
+    final minValue = rawMin - padding;
+    final maxValue = rawMax + padding;
+    final x = points.length == 1
+        ? chart.center.dx
+        : chart.left + chart.width * index / (points.length - 1);
+    final ratio = (value - minValue) / (maxValue - minValue);
+    return Offset(x, chart.bottom - ratio * chart.height);
   }
 
   void _drawBars(
@@ -1357,5 +1632,6 @@ class _InsightHistoryPainter extends CustomPainter {
       oldDelegate.series != series ||
       oldDelegate.accent != accent ||
       oldDelegate.secondary != secondary ||
-      oldDelegate.grid != grid;
+      oldDelegate.grid != grid ||
+      oldDelegate.hoverIndex != hoverIndex;
 }

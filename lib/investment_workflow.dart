@@ -142,6 +142,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       insightSearch = '',
       insightError = '';
   int insightInstitutionLimit = 8;
+  final Map<String, Map<String, dynamic>> insightDetailCache = {};
+  final Set<String> insightDetailLoading = {};
   final discoverDetailKey = GlobalKey();
   GrowthQualityRules growthQuality = const GrowthQualityRules();
   final researchHoldersKey = GlobalKey();
