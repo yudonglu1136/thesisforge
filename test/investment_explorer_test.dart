@@ -176,6 +176,15 @@ class ExplorerApi extends opportunities.OpportunityApi {
                 'holders': row['managerCount'],
                 'currentValueM': 1000.0,
                 'previousValueM': 900.0,
+                'currentUnitsK': row['ticker'] == 'TEST'
+                    ? 7200000.0
+                    : 1200000.0,
+                'sharesOutstandingK': row['ticker'] == 'TEST'
+                    ? 7500000.0
+                    : 1500000.0,
+                'institutionalOwnershipPct': row['ticker'] == 'TEST'
+                    ? 96.0
+                    : 80.0,
                 'splitAdjustedFilers': 0,
               },
             )
@@ -204,6 +213,22 @@ class ExplorerApi extends opportunities.OpportunityApi {
         ],
         'details': {
           'TEST': {
+            'history': [
+              {
+                'reportDate': '2025-12-31',
+                'availableAt': '2026-02-14',
+                'holders': 3,
+                'institutionalSharesK': 6800000.0,
+                'institutionalOwnershipPct': 91.0,
+              },
+              {
+                'reportDate': '2026-03-31',
+                'availableAt': '2026-05-15',
+                'holders': 4,
+                'institutionalSharesK': 7200000.0,
+                'institutionalOwnershipPct': 96.0,
+              },
+            ],
             'increased': [
               {
                 'investorId': 'BLACKROCK',
@@ -437,6 +462,14 @@ void main() {
         );
         expect(tester.takeException(), isNull);
         await tapKey(tester, '13f-stock-TEST');
+        expect(
+          find.byKey(const ValueKey('13f-holders-history-chart')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('13f-ownership-history-chart')),
+          findsOneWidget,
+        );
         expect(tester.takeException(), isNull);
       });
     }
@@ -474,6 +507,16 @@ void main() {
       expect(find.text('13F Insights'), findsWidgets);
     },
   );
+  testWidgets('stock ranking switches between institution and share count', (
+    tester,
+  ) async {
+    await mountExplorer(tester, ExplorerApi());
+    expect(find.byKey(const ValueKey('13f-rank-holders')), findsOneWidget);
+    expect(find.byKey(const ValueKey('13f-rank-shares')), findsOneWidget);
+    await tapKey(tester, '13f-rank-shares');
+    expect(find.textContaining('aggregate reported shares'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('list failure has a recoverable retry', (tester) async {
     final api = ExplorerApi()..listFails = true;
     await mountExplorer(tester, api);

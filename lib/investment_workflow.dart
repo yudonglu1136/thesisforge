@@ -136,10 +136,12 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   String insightQuarter = '',
       insightAction = 'increased',
       insightPerspective = 'stocks',
+      insightStockRanking = 'holders',
       insightTicker = '',
       insightInvestor = '',
       insightSearch = '',
       insightError = '';
+  int insightInstitutionLimit = 8;
   final discoverDetailKey = GlobalKey();
   GrowthQualityRules growthQuality = const GrowthQualityRules();
   final researchHoldersKey = GlobalKey();
@@ -241,6 +243,14 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     insightPerspective = query['insightView'] == 'institutions'
         ? 'institutions'
         : 'stocks';
+    insightStockRanking = query['insightRank'] == 'shares'
+        ? 'shares'
+        : 'holders';
+    insightInstitutionLimit = switch (query['insightLimit']) {
+      '20' => 20,
+      '50' => 50,
+      _ => 8,
+    };
     insightTicker = query['insightTicker'] ?? '';
     insightInvestor = query['insightInvestor'] ?? '';
     insightSearch = query['insightSearch'] ?? '';

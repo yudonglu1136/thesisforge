@@ -7,7 +7,7 @@ import {parseArgs} from 'node:util';
 
 const fail=code=>{throw Error(code);};
 const hash=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-const table='institutional_13f_insight_snapshots';
+const table='institutional_13f_insight_snapshots_v2';
 
 export function packageInstitutional13fArtifact({source,output,releaseId,runtimeRoot='/var/app/data/13f-insights/releases'}) {
   if(!/^13f-insights-\d{8}-v[1-9]\d*$/.test(releaseId??''))fail('invalid_13f_release_id');
@@ -24,9 +24,9 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
   try {
     db.exec('PRAGMA journal_mode=DELETE;PRAGMA synchronous=FULL;BEGIN IMMEDIATE');
     db.exec(schema);
-    db.exec(`CREATE INDEX institutional_13f_insights_available_idx ON ${table}(available_at,report_date)`);
-    const insert=db.prepare(`INSERT INTO ${table}(report_date,source_generation,available_at,generated_at,payload_hash,payload_json) VALUES(?,?,?,?,?,?)`);
-    for(const row of rows)insert.run(row.report_date,row.source_generation,row.available_at,row.generated_at,row.payload_hash,row.payload_json);
+    db.exec(`CREATE INDEX institutional_13f_insights_v2_available_idx ON ${table}(available_at,report_date)`);
+    const insert=db.prepare(`INSERT INTO ${table}(report_date,source_generation,available_at,generated_at,payload_hash,payload_gzip) VALUES(?,?,?,?,?,?)`);
+    for(const row of rows)insert.run(row.report_date,row.source_generation,row.available_at,row.generated_at,row.payload_hash,row.payload_gzip);
     db.exec('COMMIT;VACUUM');
     if(db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')fail('13f_artifact_integrity_failed');
     if(db.prepare('PRAGMA foreign_key_check').all().length)fail('13f_artifact_foreign_key_failed');
@@ -36,8 +36,8 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
   } finally {db.close();}
   const bytes=fs.statSync(file).size,sha256=hash(file);
   const runtimeDirectory=path.join(runtimeRoot,releaseId),runtimeFile=path.join(runtimeDirectory,path.basename(file));
-  const manifest={version:'institutional-13f-artifact-v1',releaseId,state:'verified',generatedAt:new Date().toISOString(),rows:rows.length,
-    source:{path:source,table,methodVersion:'institutional-13f-insights-v1'},
+  const manifest={version:'institutional-13f-artifact-v2',releaseId,state:'verified',generatedAt:new Date().toISOString(),rows:rows.length,table,
+    source:{path:source,table,methodVersion:'institutional-13f-insights-v2'},
     checks:{integrity:'ok',foreignKeyCheck:'ok',naturalKeyUniqueness:'pass',privateDataExcluded:true},
     file:{path:runtimeFile,bytes,sha256}};
   fs.writeFileSync(path.join(output,'manifest.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx',mode:0o600});

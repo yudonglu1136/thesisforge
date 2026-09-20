@@ -13,14 +13,15 @@ import datetime as dt
 import hashlib
 import json
 import sqlite3
+import gzip
 from pathlib import Path
 
 import duckdb
 
 
-METHOD_VERSION = "institutional-13f-insights-v1"
+METHOD_VERSION = "institutional-13f-insights-v2"
 DETAIL_SECURITY_LIMIT = 750
-DETAIL_PER_ACTION = 8
+DETAIL_PER_ACTION = 50
 
 
 def arguments() -> argparse.Namespace:
@@ -119,6 +120,14 @@ def snapshot(con: duckdb.DuckDBPyConnection, current: str, previous: str, observ
     security_rows = con.execute(
         f"""{cte}, names AS (
           SELECT ticker,name FROM holdings_ticker WHERE date='{current}'
+        ), share_counts AS (
+          SELECT ticker,sharesbas*sharefactor/1000.0 AS shares_outstanding_k
+          FROM fundamentals
+          WHERE dimension='ARQ' AND sharesbas>0 AND sharefactor>0
+            AND date<='{available_at(current)}' AND reportperiod<='{current}'
+          QUALIFY row_number() OVER(
+            PARTITION BY ticker ORDER BY reportperiod DESC,date ASC,lastupdated DESC
+          )=1
         )
         SELECT j.ticker,max(n.name) AS issuer_name,
           count(*) FILTER(WHERE current_units>0) AS holders,
@@ -130,18 +139,27 @@ def snapshot(con: duckdb.DuckDBPyConnection, current: str, previous: str, observ
           sum(previous_value) AS total_previous_value,
           sum(current_units) AS total_current_units,
           sum(adjusted_previous_units) AS total_previous_units,
-          count(*) FILTER(WHERE split_factor<>1) AS split_adjusted
+          count(*) FILTER(WHERE split_factor<>1) AS split_adjusted,
+          max(s.shares_outstanding_k) AS shares_outstanding_k
         FROM joined j LEFT JOIN names n USING(ticker)
+        LEFT JOIN share_counts s USING(ticker)
         GROUP BY j.ticker"""
     ).fetchall()
     securities = []
     for row in security_rows:
+        shares_outstanding_k = row[12]
+        institutional_ownership_pct = (
+            None if not shares_outstanding_k or row[9] is None
+            else row[9] / shares_outstanding_k * 100
+        )
         securities.append({
             "ticker": row[0], "name": None if row[1] in (None, "None") else row[1],
             "holders": row[2], "newPositions": row[3], "increases": row[4],
             "reductions": row[5], "exits": row[6], "currentValueM": row[7],
             "previousValueM": row[8], "currentUnitsK": row[9],
             "previousUnitsK": row[10], "splitAdjustedFilers": row[11],
+            "sharesOutstandingK": shares_outstanding_k,
+            "institutionalOwnershipPct": institutional_ownership_pct,
             "adds": row[3] + row[4], "trims": row[5] + row[6],
             "netFilers": row[3] + row[4] - row[5] - row[6],
         })
@@ -215,7 +233,8 @@ def snapshot(con: duckdb.DuckDBPyConnection, current: str, previous: str, observ
             "universe": "All Sharadar SF3 institutional SHR positions in the selected report quarter",
             "classification": "Quarter-over-quarter reported units, adjusted for split actions between quarter ends",
             "availability": "Quarter-end aggregate; shared availability uses the 45-day 13F deadline because SF3 does not retain each filing timestamp",
-            "units": "units are thousands; values are USD millions",
+            "units": "reported holdings and shares outstanding are thousands; values are USD millions; institutionalOwnershipPct is a percentage",
+            "ownership": "Aggregate reported institutional units divided by the latest ARQ basic shares and reported share factor available by the shared 13F cutoff; unavailable denominators remain null and are not inferred",
             "detailPolicy": f"Largest {DETAIL_PER_ACTION} reporting institutions per action for leading securities; counts use the full universe",
         },
     }
@@ -232,12 +251,12 @@ def main() -> int:
             "partitions": catalog["datasets"][key]["partitions"],
             "state": catalog["datasets"][key]["state"],
         }
-        for key in ("holdings", "holdings_ticker", "holdings_investor", "actions")
+        for key in ("holdings", "holdings_ticker", "holdings_investor", "actions", "fundamentals")
     }
     source_generation = compact_hash({"method": METHOD_VERSION, "source": source})
     observed_at = max(
         catalog["datasets"][key]["state"]["last_success"]
-        for key in ("holdings", "holdings_ticker", "holdings_investor", "actions")
+        for key in ("holdings", "holdings_ticker", "holdings_investor", "actions", "fundamentals")
     )
     duck = duckdb.connect(str(fact_path), read_only=True)
     dates = [str(row[0]) for row in duck.execute(
@@ -250,47 +269,52 @@ def main() -> int:
     sql = sqlite3.connect(database_path)
     sql.execute("PRAGMA busy_timeout=30000")
     sql.execute("""
-      CREATE TABLE IF NOT EXISTS institutional_13f_insight_snapshots(
+      CREATE TABLE IF NOT EXISTS institutional_13f_insight_snapshots_v2(
         report_date TEXT NOT NULL,
         source_generation TEXT NOT NULL,
         available_at TEXT NOT NULL,
         generated_at TEXT NOT NULL,
         payload_hash TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
+        payload_gzip BLOB NOT NULL,
         PRIMARY KEY(report_date,source_generation)
       )
     """)
-    sql.execute("CREATE INDEX IF NOT EXISTS institutional_13f_insights_available_idx ON institutional_13f_insight_snapshots(available_at,report_date)")
-    before = sql.execute("SELECT count(*) FROM institutional_13f_insight_snapshots").fetchone()[0]
+    sql.execute("CREATE INDEX IF NOT EXISTS institutional_13f_insights_v2_available_idx ON institutional_13f_insight_snapshots_v2(available_at,report_date)")
+    before = sql.execute("SELECT count(*) FROM institutional_13f_insight_snapshots_v2").fetchone()[0]
     inserted = []
     generated_at = dt.datetime.now(dt.timezone.utc).isoformat()
     for index in range(len(selected) - 1):
         current, previous = selected[index], selected[index + 1]
         exists = sql.execute(
-            "SELECT payload_hash FROM institutional_13f_insight_snapshots WHERE report_date=? AND source_generation=?",
+            "SELECT payload_hash FROM institutional_13f_insight_snapshots_v2 WHERE report_date=? AND source_generation=?",
             (current, source_generation),
         ).fetchone()
         if exists:
             continue
         payload = snapshot(duck, current, previous, observed_at)
         encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-        payload_hash = hashlib.sha256(encoded.encode()).hexdigest()
+        raw = encoded.encode()
+        compressed = gzip.compress(raw, compresslevel=9, mtime=0)
+        payload_hash = hashlib.sha256(raw).hexdigest()
         with sql:
             sql.execute(
-                "INSERT INTO institutional_13f_insight_snapshots VALUES(?,?,?,?,?,?)",
-                (current, source_generation, payload["availableAt"], generated_at, payload_hash, encoded),
+                "INSERT INTO institutional_13f_insight_snapshots_v2 VALUES(?,?,?,?,?,?)",
+                (current, source_generation, payload["availableAt"], generated_at, payload_hash, compressed),
             )
-        inserted.append({"reportDate": current, "payloadHash": payload_hash, "bytes": len(encoded)})
-    after = sql.execute("SELECT count(*) FROM institutional_13f_insight_snapshots").fetchone()[0]
+        inserted.append({
+            "reportDate": current, "payloadHash": payload_hash,
+            "bytes": len(raw), "compressedBytes": len(compressed),
+        })
+    after = sql.execute("SELECT count(*) FROM institutional_13f_insight_snapshots_v2").fetchone()[0]
     duplicates = sql.execute("""
       SELECT count(*) FROM (
         SELECT report_date,source_generation,count(*) n
-        FROM institutional_13f_insight_snapshots
+        FROM institutional_13f_insight_snapshots_v2
         GROUP BY report_date,source_generation HAVING n>1
       )
     """).fetchone()[0]
     replay = sql.execute(
-        "SELECT count(*) FROM institutional_13f_insight_snapshots WHERE source_generation=?",
+        "SELECT count(*) FROM institutional_13f_insight_snapshots_v2 WHERE source_generation=?",
         (source_generation,),
     ).fetchone()[0]
     sql.execute("PRAGMA optimize")

@@ -42,6 +42,12 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     'insightQuarter': insightQuarter,
     'insightAction': insightAction == 'increased' ? null : insightAction,
     'insightView': insightPerspective == 'stocks' ? null : insightPerspective,
+    'insightRank': insightStockRanking == 'holders'
+        ? null
+        : insightStockRanking,
+    'insightLimit': insightInstitutionLimit == 8
+        ? null
+        : '$insightInstitutionLimit',
     'insightTicker': insightTicker,
     'insightInvestor': insightInvestor,
     'insightSearch': insightSearch.isEmpty ? null : insightSearch,
@@ -140,6 +146,20 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     return '\$${n.toStringAsFixed(1)}M';
   }
 
+  String _reportedShares(dynamic value) {
+    final thousands = nullableNumber(value);
+    if (thousands == null) return '—';
+    final shares = thousands * 1000;
+    if (shares.abs() >= 1000000000) {
+      return '${(shares / 1000000000).toStringAsFixed(2)}B';
+    }
+    if (shares.abs() >= 1000000) {
+      return '${(shares / 1000000).toStringAsFixed(1)}M';
+    }
+    if (shares.abs() >= 1000) return '${(shares / 1000).toStringAsFixed(0)}K';
+    return _integer(shares);
+  }
+
   List<Map<String, dynamic>> _insightStocks() {
     final key = _insightKey(insightAction);
     final query = insightSearch.trim().toLowerCase();
@@ -149,9 +169,13 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           '${row['ticker']} ${row['name']}'.toLowerCase().contains(query);
     }).toList();
     rows.sort((a, b) {
+      final primary = insightStockRanking == 'shares'
+          ? number(b['currentUnitsK']).compareTo(number(a['currentUnitsK']))
+          : number(b['holders']).compareTo(number(a['holders']));
+      if (primary != 0) return primary;
       final count = number(b[key]).compareTo(number(a[key]));
       if (count != 0) return count;
-      return number(b['holders']).compareTo(number(a['holders']));
+      return text(a['ticker']).compareTo(text(b['ticker']));
     });
     return rows;
   }
@@ -450,6 +474,28 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
               _persist13FInsights();
             }),
           ),
+          if (insightPerspective == 'stocks') ...[
+            ChoiceChip(
+              key: const ValueKey('13f-rank-holders'),
+              avatar: const Icon(Icons.account_balance_outlined, size: 16),
+              label: Text(w('By institutions', '按机构数量')),
+              selected: insightStockRanking == 'holders',
+              onSelected: (_) => updateUI(() {
+                insightStockRanking = 'holders';
+                _persist13FInsights();
+              }),
+            ),
+            ChoiceChip(
+              key: const ValueKey('13f-rank-shares'),
+              avatar: const Icon(Icons.stacked_line_chart, size: 16),
+              label: Text(w('By shares held', '按机构持股数')),
+              selected: insightStockRanking == 'shares',
+              onSelected: (_) => updateUI(() {
+                insightStockRanking = 'shares';
+                _persist13FInsights();
+              }),
+            ),
+          ],
           SizedBox(
             width: 330,
             child: TextField(
@@ -471,9 +517,15 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           ),
           label(
             insightPerspective == 'stocks'
-                ? w('Ranked by filer count', '按机构数量排名')
+                ? insightStockRanking == 'shares'
+                      ? w('Ranked by aggregate reported shares', '按机构申报持股总数排名')
+                      : w('Ranked by holder count', '按持有机构数量排名')
                 : w('Ranked by reported position changes', '按申报仓位动作数量排名'),
-            insightPerspective == 'stocks' ? '按机构数量排名' : '按申报仓位动作数量排名',
+            insightPerspective == 'stocks'
+                ? insightStockRanking == 'shares'
+                      ? '按机构申报持股总数排名'
+                      : '按持有机构数量排名'
+                : '按申报仓位动作数量排名',
             size: 11,
           ),
         ],
@@ -508,6 +560,10 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     final rows = _insightStocks(),
         key = _insightKey(insightAction),
         color = _insightColor(insightAction);
+    final compact = MediaQuery.sizeOf(context).width < 620;
+    final actionWidth = compact ? 50.0 : 94.0;
+    final sharesWidth = compact ? 60.0 : 82.0;
+    final holdersWidth = compact ? 48.0 : 72.0;
     return Container(
       decoration: BoxDecoration(
         color: p.panel,
@@ -525,14 +581,21 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
               children: [
                 Expanded(child: label('Company', '公司', size: 11)),
                 SizedBox(
-                  width: 82,
+                  width: actionWidth,
                   child: label(
                     _insightName(insightAction),
                     _insightName(insightAction),
                     size: 11,
                   ),
                 ),
-                SizedBox(width: 70, child: label('Holders', '持有者', size: 11)),
+                SizedBox(
+                  width: sharesWidth,
+                  child: label('Shares held', '机构持股', size: 11),
+                ),
+                SizedBox(
+                  width: holdersWidth,
+                  child: label('Institutions', '机构数', size: 11),
+                ),
               ],
             ),
           ),
@@ -583,7 +646,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                         ),
                       ),
                       SizedBox(
-                        width: 82,
+                        width: actionWidth,
                         child: Text(
                           _integer(row[key]),
                           style: TextStyle(
@@ -593,10 +656,31 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                         ),
                       ),
                       SizedBox(
-                        width: 70,
+                        width: sharesWidth,
+                        child: Text(
+                          _reportedShares(row['currentUnitsK']),
+                          style: TextStyle(
+                            color: insightStockRanking == 'shares'
+                                ? p.accent
+                                : p.text,
+                            fontWeight: insightStockRanking == 'shares'
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: holdersWidth,
                         child: Text(
                           _integer(row['holders']),
-                          style: TextStyle(color: p.text),
+                          style: TextStyle(
+                            color: insightStockRanking == 'holders'
+                                ? p.accent
+                                : p.text,
+                            fontWeight: insightStockRanking == 'holders'
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                          ),
                         ),
                       ),
                     ],
@@ -676,6 +760,189 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     );
   }
 
+  List<_InsightHistoryPoint> _insightHistory(Map<String, dynamic> detail) =>
+      asList(detail['history'])
+          .map(
+            (item) => _InsightHistoryPoint(
+              reportDate: text(item['reportDate']),
+              holders: nullableNumber(item['holders']),
+              sharesK: nullableNumber(item['institutionalSharesK']),
+              ownershipPct: nullableNumber(item['institutionalOwnershipPct']),
+            ),
+          )
+          .where((point) => point.reportDate.isNotEmpty)
+          .toList();
+
+  Widget _insightHistoryCard({
+    required Key key,
+    required String titleEn,
+    required String titleZh,
+    required String subtitleEn,
+    required String subtitleZh,
+    required List<_InsightHistoryPoint> points,
+    required _InsightHistorySeries series,
+  }) {
+    final available = points.where(
+      (point) => series == _InsightHistorySeries.holders
+          ? point.holders != null
+          : point.sharesK != null,
+    );
+    final latest = available.lastOrNull;
+    final start = points.firstOrNull?.reportDate ?? '';
+    final end = points.lastOrNull?.reportDate ?? '';
+    return Container(
+      key: key,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: p.card.withValues(alpha: .64),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: p.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      w(titleEn, titleZh),
+                      style: TextStyle(
+                        color: p.text,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    label(subtitleEn, subtitleZh, size: 10),
+                  ],
+                ),
+              ),
+              if (latest != null)
+                Text(
+                  series == _InsightHistorySeries.holders
+                      ? '${_integer(latest.holders)} ${w('filers', '家')}'
+                      : '${_reportedShares(latest.sharesK)}${latest.ownershipPct == null ? '' : ' · ${latest.ownershipPct!.toStringAsFixed(1)}%'}',
+                  style: TextStyle(
+                    color: p.accent,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (points.length < 2)
+            SizedBox(
+              height: 128,
+              child: Center(
+                child: label(
+                  'More quarterly snapshots are needed for a trend.',
+                  '至少需要两个季度快照才能显示趋势。',
+                  size: 11,
+                ),
+              ),
+            )
+          else
+            SizedBox(
+              height: 128,
+              child: CustomPaint(
+                painter: _InsightHistoryPainter(
+                  points: points,
+                  series: series,
+                  accent: p.accent,
+                  secondary: p.secondary,
+                  grid: p.border,
+                ),
+              ),
+            ),
+          const SizedBox(height: 7),
+          if (series == _InsightHistorySeries.shares) ...[
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 9,
+              runSpacing: 4,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(width: 12, height: 2, color: p.accent),
+                    const SizedBox(width: 4),
+                    label('Shares', '持股数', size: 9),
+                  ],
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(width: 12, height: 2, color: p.secondary),
+                    const SizedBox(width: 4),
+                    label('% outstanding', '占总股本', size: 9),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+          ],
+          Row(
+            children: [
+              Text(
+                start.isEmpty ? '—' : reportQuarterLabel(start),
+                style: TextStyle(color: p.muted, fontSize: 9),
+              ),
+              const Spacer(),
+              Text(
+                end.isEmpty ? '—' : reportQuarterLabel(end),
+                style: TextStyle(color: p.muted, fontSize: 9),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _insightHistoryCharts(Map<String, dynamic> detail) {
+    final points = _insightHistory(detail);
+    return LayoutBuilder(
+      builder: (_, constraints) {
+        final holders = _insightHistoryCard(
+          key: const ValueKey('13f-holders-history-chart'),
+          titleEn: 'Institution count history',
+          titleZh: '持有机构数量变化',
+          subtitleEn: 'Distinct 13F filers reporting the stock',
+          subtitleZh: '申报持有该股票的 13F 机构数量',
+          points: points,
+          series: _InsightHistorySeries.holders,
+        );
+        final shares = _insightHistoryCard(
+          key: const ValueKey('13f-ownership-history-chart'),
+          titleEn: 'Institutional ownership history',
+          titleZh: '机构持股与占总股本变化',
+          subtitleEn: 'Aggregate reported shares · % of shares outstanding',
+          subtitleZh: '机构申报持股总数 · 占当时总股本比例',
+          points: points,
+          series: _InsightHistorySeries.shares,
+        );
+        if (constraints.maxWidth < 520) {
+          return Column(
+            children: [holders, const SizedBox(height: 12), shares],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: holders),
+            const SizedBox(width: 12),
+            Expanded(child: shares),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _insightStockDetail() {
     final row = asList(
       institutional13f?['rows'],
@@ -734,12 +1001,57 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             ],
           ),
           const SizedBox(height: 18),
-          Text(
-            w(
-              'Largest reported ${_insightName(insightAction).toLowerCase()}',
-              '主要${_insightName(insightAction)}机构',
-            ),
-            style: TextStyle(color: p.text, fontWeight: FontWeight.w700),
+          _insightHistoryCharts(detail),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      w(
+                        'Institution ranking · ${_insightName(insightAction).toLowerCase()}',
+                        '机构排名 · ${_insightName(insightAction)}',
+                      ),
+                      style: TextStyle(
+                        color: p.text,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    label(
+                      'Largest reported positions first',
+                      '按申报仓位规模由大到小',
+                      size: 10,
+                    ),
+                  ],
+                ),
+              ),
+              DropdownButton<int>(
+                key: const ValueKey('13f-institution-limit'),
+                value: insightInstitutionLimit,
+                dropdownColor: p.card,
+                underline: const SizedBox.shrink(),
+                items: [
+                  for (final count in const [8, 20, 50])
+                    DropdownMenuItem(
+                      value: count,
+                      child: Text(
+                        w('Top $count', '前 $count 家'),
+                        style: TextStyle(color: p.text, fontSize: 12),
+                      ),
+                    ),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  updateUI(() {
+                    insightInstitutionLimit = value;
+                    _persist13FInsights();
+                  });
+                },
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           if (asList(detail[insightAction]).isEmpty)
@@ -748,7 +1060,9 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
               '该证券暂无明细样本，但汇总数量仍使用全量机构。',
               size: 12,
             ),
-          for (final institution in asList(detail[insightAction]))
+          for (final institution in asList(
+            detail[insightAction],
+          ).take(insightInstitutionLimit))
             Container(
               padding: const EdgeInsets.symmetric(vertical: 10),
               decoration: BoxDecoration(
@@ -880,4 +1194,168 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           ],
         ),
       );
+}
+
+enum _InsightHistorySeries { holders, shares }
+
+class _InsightHistoryPoint {
+  const _InsightHistoryPoint({
+    required this.reportDate,
+    required this.holders,
+    required this.sharesK,
+    required this.ownershipPct,
+  });
+
+  final String reportDate;
+  final double? holders;
+  final double? sharesK;
+  final double? ownershipPct;
+}
+
+class _InsightHistoryPainter extends CustomPainter {
+  const _InsightHistoryPainter({
+    required this.points,
+    required this.series,
+    required this.accent,
+    required this.secondary,
+    required this.grid,
+  });
+
+  final List<_InsightHistoryPoint> points;
+  final _InsightHistorySeries series;
+  final Color accent;
+  final Color secondary;
+  final Color grid;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final chart = Rect.fromLTWH(5, 5, size.width - 10, size.height - 10);
+    final gridPaint = Paint()
+      ..color = grid.withValues(alpha: .72)
+      ..strokeWidth = 1;
+    for (var index = 0; index < 4; index++) {
+      final y = chart.top + chart.height * index / 3;
+      canvas.drawLine(Offset(chart.left, y), Offset(chart.right, y), gridPaint);
+    }
+    if (series == _InsightHistorySeries.holders) {
+      _drawSeries(canvas, chart, (point) => point.holders, accent, fill: true);
+      return;
+    }
+    _drawBars(canvas, chart, (point) => point.sharesK, accent);
+    _drawSeries(canvas, chart, (point) => point.ownershipPct, secondary);
+  }
+
+  void _drawBars(
+    Canvas canvas,
+    Rect chart,
+    double? Function(_InsightHistoryPoint) read,
+    Color color,
+  ) {
+    final values = <(int, double)>[];
+    for (var index = 0; index < points.length; index++) {
+      final value = read(points[index]);
+      if (value != null && value.isFinite) values.add((index, value));
+    }
+    if (values.isEmpty) return;
+    final rawMin = values.map((item) => item.$2).reduce(math.min);
+    final rawMax = values.map((item) => item.$2).reduce(math.max);
+    final spread = rawMax - rawMin;
+    final padding = spread == 0
+        ? math.max(rawMax.abs() * .08, 1)
+        : spread * .12;
+    final minValue = rawMin - padding;
+    final maxValue = rawMax + padding;
+    final barWidth = math.min(
+      24.0,
+      chart.width / math.max(points.length * 1.8, 1),
+    );
+    final fillPaint = Paint()..color = color.withValues(alpha: .36);
+    final edgePaint = Paint()
+      ..color = color.withValues(alpha: .88)
+      ..strokeWidth = 1.4;
+    for (final item in values) {
+      final x = points.length == 1
+          ? chart.center.dx
+          : chart.left + chart.width * item.$1 / (points.length - 1);
+      final ratio = (item.$2 - minValue) / (maxValue - minValue);
+      final y = chart.bottom - ratio * chart.height;
+      final bar = RRect.fromRectAndRadius(
+        Rect.fromLTRB(x - barWidth / 2, y, x + barWidth / 2, chart.bottom),
+        const Radius.circular(2),
+      );
+      canvas.drawRRect(bar, fillPaint);
+      canvas.drawLine(
+        Offset(x - barWidth / 2, y),
+        Offset(x + barWidth / 2, y),
+        edgePaint,
+      );
+    }
+  }
+
+  void _drawSeries(
+    Canvas canvas,
+    Rect chart,
+    double? Function(_InsightHistoryPoint) read,
+    Color color, {
+    bool fill = false,
+  }) {
+    final values = <(int, double)>[];
+    for (var index = 0; index < points.length; index++) {
+      final value = read(points[index]);
+      if (value != null && value.isFinite) values.add((index, value));
+    }
+    if (values.isEmpty) return;
+    final rawMin = values.map((item) => item.$2).reduce(math.min);
+    final rawMax = values.map((item) => item.$2).reduce(math.max);
+    final spread = rawMax - rawMin;
+    final padding = spread == 0
+        ? math.max(rawMax.abs() * .08, 1)
+        : spread * .12;
+    final minValue = rawMin - padding;
+    final maxValue = rawMax + padding;
+    Offset offset((int, double) item) {
+      final x = points.length == 1
+          ? chart.center.dx
+          : chart.left + chart.width * item.$1 / (points.length - 1);
+      final ratio = (item.$2 - minValue) / (maxValue - minValue);
+      return Offset(x, chart.bottom - ratio * chart.height);
+    }
+
+    final path = Path();
+    for (var index = 0; index < values.length; index++) {
+      final point = offset(values[index]);
+      if (index == 0) {
+        path.moveTo(point.dx, point.dy);
+      } else {
+        path.lineTo(point.dx, point.dy);
+      }
+    }
+    if (fill && values.length > 1) {
+      final area = Path.from(path)
+        ..lineTo(offset(values.last).dx, chart.bottom)
+        ..lineTo(offset(values.first).dx, chart.bottom)
+        ..close();
+      canvas.drawPath(area, Paint()..color = color.withValues(alpha: .08));
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..strokeWidth = 2.2
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+    for (final item in values) {
+      canvas.drawCircle(offset(item), 2.7, Paint()..color = color);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _InsightHistoryPainter oldDelegate) =>
+      oldDelegate.points != points ||
+      oldDelegate.series != series ||
+      oldDelegate.accent != accent ||
+      oldDelegate.secondary != secondary ||
+      oldDelegate.grid != grid;
 }

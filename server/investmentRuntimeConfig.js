@@ -13,7 +13,10 @@ export const INVESTMENT_REQUIRED_SOURCE_TABLES = Object.freeze(['valuation_pit_m
 export const INVESTMENT_ALLOWED_SOURCE_TABLES = Object.freeze([...INVESTMENT_REQUIRED_SOURCE_TABLES,
   'guru_backtest_proxies', 'valuation_pit_source_metadata', 'valuation_pit_price_observations', 'valuation_snapshots',
   'investment_current_quotes', 'investment_current_quote_metadata', 'sqlite_sequence', 'sqlite_stat1', 'sqlite_stat4']);
-export const INVESTMENT_13F_INSIGHTS_TABLES = Object.freeze(['institutional_13f_insight_snapshots']);
+export const INVESTMENT_13F_INSIGHTS_TABLES = Object.freeze([
+  'institutional_13f_insight_snapshots',
+  'institutional_13f_insight_snapshots_v2',
+]);
 export const verifiedInvestmentOwner = owner => typeof owner === 'string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(owner);
 const within = (parent, child) => child.startsWith(`${parent}${path.sep}`);
@@ -99,19 +102,25 @@ export function validateInstitutional13fArtifact(file,manifestPath,{trustedUid=0
     ||manifestStat.size>65536)fail('institutional_13f_artifact_permissions');
   if(fs.existsSync(`${database}-wal`)&&stat(`${database}-wal`).size>0)fail('institutional_13f_artifact_pending_wal');
   const manifest=JSON.parse(fs.readFileSync(metadata,'utf8'));
-  if(manifest.version!=='institutional-13f-artifact-v1'||manifest.state!=='verified'
+  const expectedTable=manifest.version==='institutional-13f-artifact-v2'
+    ? 'institutional_13f_insight_snapshots_v2'
+    : manifest.version==='institutional-13f-artifact-v1'
+      ? 'institutional_13f_insight_snapshots'
+      : null;
+  if(!expectedTable||manifest.state!=='verified'
     ||manifest.file?.path!==database||manifest.file.bytes!==databaseStat.size
     ||!/^[a-f0-9]{64}$/.test(manifest.file?.sha256??'')||manifest.checks?.integrity!=='ok'
     ||manifest.checks?.naturalKeyUniqueness!=='pass'||manifest.checks?.privateDataExcluded!==true
+    ||(manifest.table??expectedTable)!==expectedTable
     ||!Number.isSafeInteger(manifest.rows)||manifest.rows<1)fail('institutional_13f_manifest_invalid');
   const digest=crypto.createHash('sha256').update(fs.readFileSync(database)).digest('hex');
   if(digest!==manifest.file.sha256)fail('institutional_13f_artifact_hash_mismatch');
-  assertTables(database,INVESTMENT_13F_INSIGHTS_TABLES,INVESTMENT_13F_INSIGHTS_TABLES);
+  assertTables(database,[expectedTable],[expectedTable]);
   const db=new DatabaseSync(database,{readOnly:true});
   try {
-    const rows=db.prepare('SELECT count(*) count FROM institutional_13f_insight_snapshots').get().count;
+    const rows=db.prepare(`SELECT count(*) count FROM ${expectedTable}`).get().count;
     const duplicates=db.prepare(`SELECT count(*) count FROM (SELECT report_date,source_generation,count(*) n
-      FROM institutional_13f_insight_snapshots GROUP BY report_date,source_generation HAVING n>1)`).get().count;
+      FROM ${expectedTable} GROUP BY report_date,source_generation HAVING n>1)`).get().count;
     if(rows!==manifest.rows||duplicates!==0)fail('institutional_13f_artifact_rows_invalid');
   } finally {db.close();}
   return manifest;

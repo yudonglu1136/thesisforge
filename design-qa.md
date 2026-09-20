@@ -1,6 +1,67 @@
 pyenv: cannot rehash: /Users/yudonglu/.pyenv/shims isn't writable
 # ThesisForge — Graphite workspace QA
 
+## Current acceptance: 13F stock ownership history and dual rankings — 2026-09-20
+
+final result: passed
+
+Scope: extend the existing all-institution 13F Insights stock view without
+changing its visual system. The selected stock now leads with its historical
+holder count and institutional ownership, while the institution leaderboard is
+deliberately placed after those trends. Stock ranking can switch independently
+between aggregate reported shares and reporting-institution count.
+
+### Visual evidence
+
+- Source state:
+  `/var/folders/3k/0wsqd58n6w71n8tyql0t09fc0000gn/T/codex-clipboard-f11667ba-45d1-4824-8ae7-20dc453fdb04.png`
+  (2666x1066 pixels; pre-change desktop view).
+- Browser-rendered implementation:
+  `/private/tmp/thesisforge-13f-insights-final.png` (1600x1000 pixels).
+- Both images were opened and inspected together. The accepted implementation
+  keeps the established Graphite palette and existing information density, but
+  changes the decision order to ranking controls -> selected security summary
+  -> two historical charts -> institution ranking.
+
+### Findings and resolution
+
+- [Resolved P1] The stock table had only one implicit ranking. Two explicit
+  controls now rank by distinct 13F institution count or aggregate reported
+  shares; the URL persists the non-default selection.
+- [Resolved P1] Institution rows previously occupied the selected-stock detail
+  before historical context. The detail now shows institution-count history
+  and aggregate reported shares plus ownership percentage first, with the
+  institution ranking below.
+- [Resolved P1] Ownership history did not exist in the snapshot contract. The
+  append-only quarterly artifact now carries point-in-time basic shares
+  outstanding using only fundamentals available by each 13F cutoff. The UI
+  labels the denominator as shares outstanding rather than claiming free-float
+  coverage.
+- [Resolved P2] The institution list was fixed and short. Its visible limit is
+  now selectable as Top 8, Top 20 or Top 50 and is retained in URL state.
+- [Resolved P2] The two ownership series could visually overlap when normalized
+  trends were similar. Aggregate shares now use teal columns and ownership
+  percentage uses an amber line with an explicit legend.
+- [Resolved P2] Desktop table columns and the two history cards were tightened
+  for the 1280px breakpoint; compact layouts stack the charts and keep ranking
+  values readable.
+- No remaining P0/P1/P2 issue in the requested flow.
+
+### Interaction, data and verification checks
+
+- Browser interaction verified both ranking dimensions and Top 8/20/50 menu
+  states. The accepted MSFT detail shows eight quarterly snapshots ending at
+  6,231 filers, 5.49B reported shares and 73.9% of shares outstanding.
+- History is clipped to the selected report quarter, so later snapshots cannot
+  leak into a historical view. Compressed v2 snapshots are append-only and a
+  same-input replay inserted zero rows.
+- Server tests: **5 passed**. Flutter focused tests: **16 passed**.
+  `flutter analyze`: no issues. Fact OS storage audit: passed with zero
+  byte-identical raw duplicates and zero GC-eligible files.
+- The broader repository storage-layout audit still flags pre-existing retired
+  sibling project directories outside this repository; this change created no
+  sibling project or duplicate database.
+
 ## Current acceptance: portfolio detail and model-structure table — 2026-09-20
 
 final result: passed
