@@ -13515,79 +13515,108 @@ class PortfolioDashboard extends StatelessWidget {
           PortfolioSampleNotice(palette: palette),
           const SizedBox(height: 10),
         ],
-        if (readOnly)
-          PortfolioAdminReadOnlyPanel(
-            connection: connection,
-            notice: readOnlyNotice,
-            palette: palette,
-          )
-        else if (registered)
-          PortfolioConnectionStatusPanel(
-            connection: connection,
-            api: api,
-            palette: palette,
-            onRefresh: onRefresh,
-          )
-        else
-          PortfolioConnectionPanel(
-            connection: connection,
-            api: api,
-            palette: palette,
-            onConnected: onRefresh,
-          ),
-        const SizedBox(height: 10),
         LayoutBuilder(
           builder: (context, constraints) {
             final wide = constraints.maxWidth >= 1040;
-            final main = Column(
-              children: [
-                Panel(
-                  palette: palette,
-                  child: Column(
+            final nav = Panel(
+              palette: palette,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  PanelTitle(
+                    icon: Icons.show_chart_rounded,
+                    kicker: 'PERFORMANCE',
+                    title: sampleMode
+                        ? context.tr('示例净值走势', 'Sample NAV')
+                        : context.tr('组合净值走势', 'Portfolio NAV'),
+                    palette: palette,
+                    trailing: Text(
+                      formatMoney(dayPnl),
+                      style: TextStyle(
+                        color: tone,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    height: 250,
+                    child: PortfolioPerformanceChart(
+                      points: performance,
+                      status: performanceStatus,
+                      palette: palette,
+                    ),
+                  ),
+                  if (!realPerformance) ...[
+                    const SizedBox(height: 12),
+                    PortfolioDataNotice(
+                      icon: Icons.info_outline_rounded,
+                      text: text(
+                        performanceStatus['message'],
+                        'IBKR did not return real portfolio NAV history for this query.',
+                      ),
+                      palette: palette,
+                    ),
+                  ],
+                ],
+              ),
+            );
+            final allocation = PortfolioAllocationPieCard(
+              holdings: holdings,
+              palette: palette,
+            );
+            final hero = wide
+                ? Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      PanelTitle(
-                        icon: Icons.show_chart_rounded,
-                        kicker: 'PERFORMANCE',
-                        title: sampleMode
-                            ? context.tr('示例净值走势', 'Sample NAV')
-                            : context.tr('组合净值走势', 'Portfolio NAV'),
-                        palette: palette,
-                        trailing: Text(
-                          formatMoney(dayPnl),
-                          style: TextStyle(
-                            color: tone,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      SizedBox(
-                        height: 280,
-                        child: PortfolioPerformanceChart(
-                          points: performance,
-                          status: performanceStatus,
-                          palette: palette,
-                        ),
-                      ),
-                      if (!realPerformance) ...[
-                        const SizedBox(height: 12),
-                        PortfolioDataNotice(
-                          icon: Icons.info_outline_rounded,
-                          text: text(
-                            performanceStatus['message'],
-                            'IBKR did not return real portfolio NAV history for this query.',
-                          ),
-                          palette: palette,
-                        ),
-                      ],
+                      Expanded(flex: 3, child: nav),
+                      const SizedBox(width: 10),
+                      SizedBox(width: 390, child: allocation),
                     ],
-                  ),
-                ),
+                  )
+                : Column(
+                    children: [nav, const SizedBox(height: 10), allocation],
+                  );
+            final contextCards = [
+              PortfolioAccountCard(
+                accounts: accounts,
+                palette: palette,
+                sampleMode: sampleMode,
+              ),
+              PortfolioSectorCard(sectors: sectors, palette: palette),
+              PortfolioRiskCard(holdings: holdings, palette: palette),
+            ];
+            return Column(
+              children: [
+                hero,
+                const SizedBox(height: 10),
+                PortfolioHoldingsTable(holdings: holdings, palette: palette),
                 const SizedBox(height: 10),
                 PortfolioAnalyticsPanel(analytics: analytics, palette: palette),
                 const SizedBox(height: 10),
-                PortfolioHoldingsTable(holdings: holdings, palette: palette),
+                if (wide)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (
+                        var index = 0;
+                        index < contextCards.length;
+                        index++
+                      ) ...[
+                        if (index > 0) const SizedBox(width: 10),
+                        Expanded(child: contextCards[index]),
+                      ],
+                    ],
+                  )
+                else
+                  Column(
+                    children: [
+                      for (final card in contextCards) ...[
+                        card,
+                        const SizedBox(height: 10),
+                      ],
+                    ],
+                  ),
                 const SizedBox(height: 10),
                 PortfolioDividendCalendarSection(
                   dividends: dividends,
@@ -13597,36 +13626,27 @@ class PortfolioDashboard extends StatelessWidget {
                   baseCurrency: text(summary['currency'], 'USD'),
                   palette: palette,
                 ),
-              ],
-            );
-            final side = Column(
-              children: [
-                PortfolioAllocationPieCard(
-                  holdings: holdings,
-                  palette: palette,
-                ),
                 const SizedBox(height: 10),
-                PortfolioAccountCard(
-                  accounts: accounts,
-                  palette: palette,
-                  sampleMode: sampleMode,
-                ),
-                const SizedBox(height: 10),
-                PortfolioSectorCard(sectors: sectors, palette: palette),
-                const SizedBox(height: 10),
-                PortfolioRiskCard(holdings: holdings, palette: palette),
-              ],
-            );
-
-            if (!wide) {
-              return Column(children: [main, const SizedBox(height: 10), side]);
-            }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: main),
-                const SizedBox(width: 10),
-                SizedBox(width: 340, child: side),
+                if (readOnly)
+                  PortfolioAdminReadOnlyPanel(
+                    connection: connection,
+                    notice: readOnlyNotice,
+                    palette: palette,
+                  )
+                else if (registered)
+                  PortfolioConnectionStatusPanel(
+                    connection: connection,
+                    api: api,
+                    palette: palette,
+                    onRefresh: onRefresh,
+                  )
+                else
+                  PortfolioConnectionPanel(
+                    connection: connection,
+                    api: api,
+                    palette: palette,
+                    onConnected: onRefresh,
+                  ),
               ],
             );
           },
@@ -15180,7 +15200,7 @@ class PortfolioHoldingLogo extends StatelessWidget {
   );
 }
 
-class PortfolioAllocationPieCard extends StatelessWidget {
+class PortfolioAllocationPieCard extends StatefulWidget {
   const PortfolioAllocationPieCard({
     super.key,
     required this.holdings,
@@ -15191,8 +15211,18 @@ class PortfolioAllocationPieCard extends StatelessWidget {
   final Palette palette;
 
   @override
+  State<PortfolioAllocationPieCard> createState() =>
+      _PortfolioAllocationPieCardState();
+}
+
+class _PortfolioAllocationPieCardState
+    extends State<PortfolioAllocationPieCard> {
+  int? hoveredSlice;
+
+  @override
   Widget build(BuildContext context) {
-    final positiveHoldings = holdings
+    final palette = widget.palette;
+    final positiveHoldings = widget.holdings
         .where(
           (row) =>
               number(row['value']) > 0 &&
@@ -15234,6 +15264,9 @@ class PortfolioAllocationPieCard extends StatelessWidget {
         },
     ];
 
+    final hovered = hoveredSlice != null && hoveredSlice! < slices.length
+        ? slices[hoveredSlice!]
+        : null;
     return Panel(
       palette: palette,
       child: Column(
@@ -15265,12 +15298,19 @@ class PortfolioAllocationPieCard extends StatelessWidget {
                     slices: slices,
                     total: total,
                     palette: palette,
+                    onHover: (index) {
+                      if (index != hoveredSlice) {
+                        setState(() => hoveredSlice = index);
+                      }
+                    },
                   ),
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        formatMoney(total),
+                        hovered == null
+                            ? formatMoney(total)
+                            : text(hovered['ticker'], 'Other'),
                         style: TextStyle(
                           color: palette.text,
                           fontWeight: FontWeight.w900,
@@ -15279,7 +15319,9 @@ class PortfolioAllocationPieCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        context.ui('positive MV'),
+                        hovered == null
+                            ? context.ui('positive MV')
+                            : '${formatReturn(number(hovered['sliceValue']) / total).replaceFirst('+', '')} · ${formatMoney(number(hovered['sliceValue']))}',
                         style: TextStyle(color: palette.muted, fontSize: 11),
                       ),
                     ],
@@ -15368,21 +15410,56 @@ class PortfolioPieChart extends StatelessWidget {
     required this.slices,
     required this.total,
     required this.palette,
+    this.onHover,
   });
 
   final List<Map<String, dynamic>> slices;
   final double total;
   final Palette palette;
+  final ValueChanged<int?>? onHover;
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: PortfolioPiePainter(
-        slices: slices,
-        total: total,
-        palette: palette,
-      ),
-      child: const SizedBox.expand(),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        int? hit(Offset position) {
+          final size = Size(constraints.maxWidth, constraints.maxHeight);
+          final center = size.center(Offset.zero);
+          final radius = math.min(size.width, size.height) * .38;
+          final strokeWidth = math.max(22.0, radius * .34);
+          final offset = position - center;
+          if ((offset.distance - radius).abs() > strokeWidth / 2 + 5) {
+            return null;
+          }
+          final angle =
+              (math.atan2(offset.dy, offset.dx) + math.pi / 2 + math.pi * 2) %
+              (math.pi * 2);
+          var through = 0.0;
+          for (var index = 0; index < slices.length; index += 1) {
+            through +=
+                math.pi * 2 * (number(slices[index]['sliceValue']) / total);
+            if (angle <= through) return index;
+          }
+          return null;
+        }
+
+        return MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onHover: (event) => onHover?.call(hit(event.localPosition)),
+          onExit: (_) => onHover?.call(null),
+          child: GestureDetector(
+            onTapDown: (event) => onHover?.call(hit(event.localPosition)),
+            child: CustomPaint(
+              painter: PortfolioPiePainter(
+                slices: slices,
+                total: total,
+                palette: palette,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -19074,8 +19151,97 @@ class PortfolioHoldingsTable extends StatelessWidget {
   final List<Map<String, dynamic>> holdings;
   final Palette palette;
 
+  String _modelArchitecture(Map<String, dynamic> valuation) {
+    final model = asMap(valuation['model']);
+    return switch (text(model['route'])) {
+      'operating_company' => 'Operating-company blend',
+      'multi_method_growth' => 'Growth-stage blend',
+      'financial_institution' || 'bank' => 'Financial institution',
+      'customer_cash_earnings' => 'Customer cash earnings',
+      'revenue_stage' => 'Revenue-stage model',
+      'bitcoin_treasury' => 'Treasury + operating value',
+      _ =>
+        truthy(valuation['covered']) ? 'Published model' : 'No published model',
+    };
+  }
+
+  String _pointDifference(dynamic value) {
+    final parsed = nullableNumber(value);
+    if (parsed == null) return '—';
+    final points = parsed * 100;
+    return '${points >= 0 ? '+' : ''}${points.toStringAsFixed(1)} pp';
+  }
+
+  List<Map<String, dynamic>> _modelRows() {
+    final source = holdings
+        .where(
+          (row) =>
+              number(row['value']) > 0 &&
+              !text(row['ticker']).toUpperCase().startsWith('CASH'),
+        )
+        .toList();
+    double revaluedValue(Map<String, dynamic> row) {
+      final valuation = asMap(row['valuation']);
+      final price = nullableNumber(valuation['latestPrice']);
+      final fairValue = nullableNumber(valuation['fairValue']);
+      if (!truthy(valuation['covered']) ||
+          price == null ||
+          price <= 0 ||
+          fairValue == null ||
+          fairValue <= 0) {
+        return 0;
+      }
+      return number(row['value']) * fairValue / price;
+    }
+
+    final coveredCurrent = source
+        .where((row) => revaluedValue(row) > 0)
+        .fold<double>(0, (sum, row) => sum + number(row['value']));
+    final coveredModel = source.fold<double>(
+      0,
+      (sum, row) => sum + revaluedValue(row),
+    );
+    return [
+      for (final row in source)
+        {
+          ...row,
+          '_modelValue': revaluedValue(row),
+          '_currentCoveredWeight': coveredCurrent > 0 && revaluedValue(row) > 0
+              ? number(row['value']) / coveredCurrent
+              : null,
+          '_modelCoveredWeight': coveredModel > 0 && revaluedValue(row) > 0
+              ? revaluedValue(row) / coveredModel
+              : null,
+          '_structureGap':
+              coveredCurrent > 0 && coveredModel > 0 && revaluedValue(row) > 0
+              ? revaluedValue(row) / coveredModel -
+                    number(row['value']) / coveredCurrent
+              : null,
+        },
+    ]..sort(
+      (left, right) => number(right['value']).compareTo(number(left['value'])),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final rows = _modelRows();
+    final covered = rows.where(
+      (row) =>
+          nullableNumber(row['_modelValue']) != null &&
+          number(row['_modelValue']) > 0,
+    );
+    final coveredCurrent = covered.fold<double>(
+      0,
+      (sum, row) => sum + number(row['value']),
+    );
+    final coveredModel = covered.fold<double>(
+      0,
+      (sum, row) => sum + number(row['_modelValue']),
+    );
+    final coveredGap = coveredCurrent > 0
+        ? coveredModel / coveredCurrent - 1
+        : null;
     return Panel(
       palette: palette,
       child: Column(
@@ -19084,19 +19250,306 @@ class PortfolioHoldingsTable extends StatelessWidget {
           PanelTitle(
             icon: Icons.table_rows_rounded,
             kicker: 'HOLDINGS',
-            title: context.tr('最新持仓', 'Latest Holdings'),
+            title: context.tr('持仓与模型结构', 'Holdings & Model Structure'),
             palette: palette,
+            trailing: InfoChip(
+              context.tr(
+                '${covered.length} / ${rows.length} 项已建模',
+                '${covered.length} / ${rows.length} modelled',
+              ),
+              palette: palette,
+            ),
           ),
-          const SizedBox(height: 14),
-          if (holdings.isEmpty)
+          const SizedBox(height: 8),
+          Text(
+            context.tr(
+              '当前仓位、每家公司使用的估值架构，以及按模型公允价值重估后已覆盖组合的结构变化。',
+              'Current positions, each company’s valuation architecture, and how the covered sleeve changes when revalued to published model output.',
+            ),
+            style: TextStyle(color: palette.muted, fontSize: 12, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: palette.accent.withValues(alpha: .055),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: palette.accent.withValues(alpha: .16)),
+            ),
+            child: Wrap(
+              spacing: 24,
+              runSpacing: 8,
+              children: [
+                Text(
+                  context.tr(
+                    '已覆盖市值 ${formatMoney(coveredCurrent)}',
+                    'Covered market value ${formatMoney(coveredCurrent)}',
+                  ),
+                  style: TextStyle(color: palette.text, fontSize: 12),
+                ),
+                Text(
+                  context.tr(
+                    '模型重估 ${formatMoney(coveredModel)}',
+                    'Model-revalued ${formatMoney(coveredModel)}',
+                  ),
+                  style: TextStyle(color: palette.text, fontSize: 12),
+                ),
+                Text(
+                  context.tr(
+                    '覆盖部分价差 ${coveredGap == null ? '—' : formatReturn(coveredGap)}',
+                    'Covered gap ${coveredGap == null ? '—' : formatReturn(coveredGap)}',
+                  ),
+                  style: TextStyle(
+                    color: coveredGap == null
+                        ? palette.muted
+                        : coveredGap >= 0
+                        ? palette.positive
+                        : palette.negative,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (rows.isEmpty)
             EmptyState(text: 'No holdings from Yodlee yet.', palette: palette)
           else
-            for (final row in holdings.take(18))
-              PortfolioHoldingRow(row: row, palette: palette),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                if (constraints.maxWidth < 980 ||
+                    MediaQuery.textScalerOf(context).scale(1) > 1.25) {
+                  return Column(
+                    children: [
+                      for (final row in rows.take(30))
+                        PortfolioHoldingRow(row: row, palette: palette),
+                    ],
+                  );
+                }
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    showCheckboxColumn: false,
+                    headingRowHeight: 46,
+                    dataRowMinHeight: 68,
+                    dataRowMaxHeight: 76,
+                    horizontalMargin: 10,
+                    columnSpacing: 24,
+                    columns: [
+                      DataColumn(label: Text(context.tr('持仓', 'Holding'))),
+                      DataColumn(
+                        label: Text(context.tr('股数', 'Shares')),
+                        numeric: true,
+                      ),
+                      DataColumn(
+                        label: Text(context.tr('当前市值', 'Current value')),
+                        numeric: true,
+                      ),
+                      DataColumn(
+                        label: Text(context.tr('权重', 'Weight')),
+                        numeric: true,
+                      ),
+                      DataColumn(
+                        label: Text(context.tr('模型架构', 'Model architecture')),
+                      ),
+                      DataColumn(
+                        label: Text(context.tr('模型输出', 'Model output')),
+                        numeric: true,
+                      ),
+                      DataColumn(
+                        label: SizedBox(
+                          width: 124,
+                          child: Text(
+                            context.tr('当前 → 模型', 'Current → model'),
+                            textAlign: TextAlign.end,
+                          ),
+                        ),
+                        numeric: true,
+                      ),
+                      DataColumn(
+                        label: Text(context.tr('未实现盈亏', 'Unrealized P&L')),
+                        numeric: true,
+                      ),
+                    ],
+                    rows: [
+                      for (final row in rows.take(30)) _dataRow(context, row),
+                    ],
+                  ),
+                );
+              },
+            ),
+          const SizedBox(height: 10),
+          Text(
+            context.tr(
+              '“当前 → 模型”只比较已覆盖部分按已发布公允价值重估后的权重变化；不是目标仓位、评分或预期收益。缺失模型不会按零处理。',
+              'Current → model compares weights inside the covered sleeve after applying published fair values. It is not a target allocation, rating or expected return. Missing models remain missing, not zero.',
+            ),
+            style: TextStyle(color: palette.muted, fontSize: 11, height: 1.45),
+          ),
         ],
       ),
     );
   }
+
+  DataRow _dataRow(BuildContext context, Map<String, dynamic> row) {
+    final valuation = asMap(row['valuation']);
+    final model = asMap(valuation['model']);
+    final covered = truthy(valuation['covered']);
+    final structureGap = nullableNumber(row['_structureGap']);
+    final pnl = number(row['unrealizedPnl']);
+    final pnlTone = pnl >= 0 ? palette.positive : palette.negative;
+    final formula = text(model['formula'], _modelArchitecture(valuation));
+    return DataRow(
+      cells: [
+        DataCell(
+          SizedBox(
+            width: 210,
+            child: Row(
+              children: [
+                PortfolioHoldingLogo(row: row, palette: palette, size: 34),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        text(row['ticker'], 'N/A'),
+                        style: TextStyle(
+                          color: palette.text,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        context.ui(compactName(text(row['name']))),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: palette.muted, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        DataCell(
+          Text(
+            nullableNumber(row['quantity']) == null
+                ? '—'
+                : formatNumber(number(row['quantity'])),
+          ),
+        ),
+        DataCell(
+          _stackedValue(
+            formatMoney(number(row['value'])),
+            formatCurrencyValue(
+              number(row['price']),
+              text(row['currency'], 'USD'),
+            ),
+          ),
+        ),
+        DataCell(
+          Text(
+            formatReturn(number(row['weight'])).replaceFirst('+', ''),
+            style: TextStyle(color: palette.text, fontWeight: FontWeight.w800),
+          ),
+        ),
+        DataCell(
+          Tooltip(
+            message: formula,
+            child: SizedBox(
+              width: 180,
+              child: _stackedValue(
+                _modelArchitecture(valuation),
+                covered
+                    ? text(
+                        model['asOfDate'],
+                        text(valuation['latestPriceDate'], '—'),
+                      )
+                    : context.tr('没有已发布模型', 'No published model'),
+              ),
+            ),
+          ),
+        ),
+        DataCell(
+          _stackedValue(
+            covered && nullableNumber(valuation['fairValue']) != null
+                ? formatCurrencyValue(
+                    number(valuation['fairValue']),
+                    text(valuation['currency'], 'USD'),
+                  )
+                : '—',
+            covered && nullableNumber(valuation['gap']) != null
+                ? formatReturn(number(valuation['gap']))
+                : context.tr('未覆盖', 'Uncovered'),
+            color: !covered || nullableNumber(valuation['gap']) == null
+                ? null
+                : number(valuation['gap']) >= 0
+                ? palette.positive
+                : palette.negative,
+            alignEnd: true,
+          ),
+        ),
+        DataCell(
+          SizedBox(
+            width: 124,
+            child: _stackedValue(
+              covered
+                  ? '${formatReturn(number(row['_currentCoveredWeight'])).replaceFirst('+', '')} → ${formatReturn(number(row['_modelCoveredWeight'])).replaceFirst('+', '')}'
+                  : '—',
+              _pointDifference(structureGap),
+              color: structureGap == null
+                  ? null
+                  : structureGap >= 0
+                  ? palette.positive
+                  : palette.negative,
+              alignEnd: true,
+            ),
+          ),
+        ),
+        DataCell(
+          Text(
+            formatMoney(pnl),
+            style: TextStyle(color: pnlTone, fontWeight: FontWeight.w900),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _stackedValue(
+    String primary,
+    String secondary, {
+    Color? color,
+    bool alignEnd = false,
+  }) => Column(
+    mainAxisAlignment: MainAxisAlignment.center,
+    crossAxisAlignment: alignEnd
+        ? CrossAxisAlignment.end
+        : CrossAxisAlignment.start,
+    children: [
+      Text(
+        primary,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: color ?? palette.text,
+          fontWeight: FontWeight.w800,
+          fontSize: 13,
+        ),
+      ),
+      const SizedBox(height: 3),
+      Text(
+        secondary,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: color ?? palette.muted, fontSize: 11),
+      ),
+    ],
+  );
 }
 
 class PortfolioHoldingRow extends StatelessWidget {

@@ -444,7 +444,8 @@ function buildValuationOverlay(holding, valuationRow) {
     labelZh: label.labelZh,
     tone: label.tone,
     coverageKind: valuationRow.dataQuality?.valuationCoverageKind || "",
-    auditStatus: valuationRow.dataQuality?.modelInputAudit?.status || ""
+    auditStatus: valuationRow.dataQuality?.modelInputAudit?.status || "",
+    model: valuationRow.model || null
   };
 }
 

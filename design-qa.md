@@ -5,8 +5,8 @@ pyenv: cannot rehash: /Users/yudonglu/.pyenv/shims isn't writable
 
 final result: passed
 
-Scope: simplify the authenticated Portfolio detail page around the user's
-actual decision flow. The supplied Snowball screenshot is used only for its
+Scope: simplify the main `?view=portfolio` page around the user's actual
+decision flow. The supplied Snowball screenshot is used only for its
 quiet, flat and highly scannable holdings-table hierarchy. ThesisForge keeps
 its own Graphite shell, broker-backed NAV, interactive allocation views,
 privacy mode and published valuation methodology. Snowball's dividend rating
@@ -25,12 +25,13 @@ is deliberately not copied.
   Ahem fallback font, so the image verifies hierarchy, density, alignment,
   chart/table balance and responsive constraints; the runtime keeps the app's
   existing typography.
-- Browser runtime check:
+- Browser runtime check and final visual acceptance:
   `http://127.0.0.1:5174/?view=portfolio&asOf=2026-09-18&lang=en` rendered
-  without console errors. That long-running local preview still serves its
-  signed-out sample-account shell; it was used only as a route/runtime check.
-  The accepted detail visual uses an isolated seven-position widget fixture,
-  never application or production demo data.
+  the accepted main route with the NAV panel and interactive allocation ring
+  first, followed by the flat model-structure table. The signed-out local
+  preview correctly labels its illustrative fallback as sample data; it was
+  used for route, layout and interaction checks only. Hovering a donut segment
+  replaced the center total with the exact ticker, weight and value.
 
 ### Findings and comparison history
 
@@ -52,6 +53,9 @@ is deliberately not copied.
 - [Resolved P2] The sort selector could overflow on narrow or enlarged-text
   layouts. It now expands within its bounded field and stacks below search at
   compact widths.
+- [Resolved P2] The first main-route render exposed an 8px overflow in the
+  `Current → model` column at 1280px. Header and cell now share a fixed 124px
+  width inside the horizontal table scroller; the browser rerender is clean.
 - No remaining P0/P1/P2 finding. Existing security logos and app assets are
   reused; no reference asset was approximated.
 
@@ -62,9 +66,9 @@ is deliberately not copied.
   existing Risk/Guru tabs remain available.
 - Desktop uses a sortable horizontal DataTable; compact and enlarged-text
   layouts switch to stacked holding rows instead of clipping columns.
-- Focused portfolio suite: **53 tests passed**. `flutter analyze`: no issues.
-  Production `npm run build`: passed and the compiled workflow marker was
-  verified.
+- Focused portfolio suite: **55 tests passed**. Portfolio/valuation server
+  suite: **28 tests passed**. `flutter analyze`: no issues. Production
+  `npm run build`: passed and the compiled workflow marker was verified.
 
 ## Current acceptance: Snowball-inspired personal portfolio home — 2026-09-20
 

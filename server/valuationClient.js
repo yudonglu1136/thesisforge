@@ -18,6 +18,7 @@ import {
 } from "./valuationFacts.js";
 import { normalizeTicker, valuationLookupKeysForSnapshot, valuationTickerCandidates } from "./tickerAliases.js";
 import { ValuationNotCoveredError } from "./valuationHttp.js";
+import { valuationModelRoute } from "./valuationModelRoute.js";
 
 const dashboardCache = {
   version: null,
@@ -290,6 +291,11 @@ function compactDataQuality(dataQuality = {}) {
 }
 
 function compactTickerForDashboard(ticker = {}) {
+  const latestHistory = Array.isArray(ticker.history)
+    ? ticker.history.at(-1) || {}
+    : {};
+  const semantics = latestHistory.dataSnapshot?.valuationSemantics || {};
+  const scoreInputs = semantics.scoreInputs || {};
   return {
     generatedAt: ticker.generatedAt,
     ticker: ticker.ticker,
@@ -300,6 +306,17 @@ function compactTickerForDashboard(ticker = {}) {
     currency: ticker.currency,
     description: ticker.description,
     modelType: ticker.modelType,
+    model: {
+      route: valuationModelRoute(scoreInputs),
+      formula:
+        semantics.fairValueFormula ||
+        latestHistory.method ||
+        ticker.latest?.fairValueSource ||
+        "",
+      methodWeights: scoreInputs.methodWeights || {},
+      asOfDate: latestHistory.asOfDate || "",
+      version: latestHistory.dataSnapshot?.modelVersion || ""
+    },
     latest: ticker.latest,
     scenarios: Array.isArray(ticker.scenarios) ? ticker.scenarios.slice(0, 3) : [],
     dataQuality: compactDataQuality(ticker.dataQuality || {}),
