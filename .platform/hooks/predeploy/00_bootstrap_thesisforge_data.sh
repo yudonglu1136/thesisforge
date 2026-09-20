@@ -101,6 +101,18 @@ fi
 # The release databases are immutable research inputs. The main runtime copy is
 # deliberately separate: existing schema installers and bounded runtime caches
 # write to it as the unprivileged application user.
+chown webapp:webapp /var/app/data
+chmod 0775 /var/app/data
 chown webapp:webapp "$runtime_db"
 chmod 0600 "$runtime_db"
+runuser -u webapp -- env THESISFORGE_BOOTSTRAP_DB="$runtime_db" node --input-type=module <<'NODE'
+import {DatabaseSync} from 'node:sqlite';
+const target=process.env.THESISFORGE_BOOTSTRAP_DB;
+if(!target)throw Error('missing_bootstrap_database');
+const database=new DatabaseSync(target);
+try {
+  database.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA wal_checkpoint(TRUNCATE);');
+  if(database.prepare('PRAGMA journal_mode').get().journal_mode!=='wal')throw Error('runtime_wal_not_writable');
+} finally {database.close();}
+NODE
 echo "ThesisForge public data bootstrap is verified."
