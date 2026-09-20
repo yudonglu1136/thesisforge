@@ -139,13 +139,6 @@ export function valuationLookupKeysForSnapshot(snapshot = {}) {
   return keys;
 }
 
-export function yahooChartSymbol(value) {
-  const ticker = normalizeTicker(value);
-  if (!ticker) return "";
-  if (ticker.endsWith(".L")) return ticker;
-  return ticker.replace(/\./g, "-");
-}
-
 export function valuationMarketPriceSymbol(value) {
   const ticker = normalizeTicker(value);
   if (!ticker) return "";

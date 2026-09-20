@@ -8,7 +8,8 @@ import {execFileSync} from 'node:child_process';
 const run=(bin,args,options={})=>execFileSync(bin,args,{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:30000,...options});
 if(process.argv[2]!=='--install-existing-host'||process.getuid()!==0||process.platform!=='linux'||process.arch!=='x64')throw Error('explicit_linux_root_install_required');
 const env=JSON.parse(run('/opt/elasticbeanstalk/bin/get-config',['environment']));
-if(env.SQLITE_DB_PATH!=='/var/app/data/thesisforge.sqlite'||env.NODE_ENV!=='production')throw Error('unexpected_backend_host');
+if(!(/^\/var\/app\/data\/thesisforge-[0-9]{8}-v[1-9][0-9]*\.sqlite$/.test(env.SQLITE_DB_PATH||'')
+  ||env.SQLITE_DB_PATH==='/var/app/data/thesisforge.sqlite')||env.NODE_ENV!=='production')throw Error('unexpected_backend_host');
 const dir='/var/lib/thesisforge-caddy',binary='/usr/local/bin/thesisforge-caddy';
 const cfg=`{
  admin off

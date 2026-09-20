@@ -217,7 +217,7 @@ export async function stageGuruDeltaRelease(p,{releaseRoot=defaultRoot,uid=proce
 export async function installInvestmentGuruDelta(p) {
   if (process.platform !== 'linux' || process.getuid() !== 0) fail('guru_operator_root_required');
   const env = JSON.parse(execFileSync('/opt/elasticbeanstalk/bin/get-config',['environment'],{encoding:'utf8'}));
-  if (env.NODE_ENV !== 'production' || env.SQLITE_DB_PATH !== '/var/app/data/thesisforge.sqlite'
+  if (env.NODE_ENV !== 'production' || env.SQLITE_DB_PATH !== `/var/app/data/${p.releaseId}.sqlite`
     || ![p.baseManifest?.path,path.join(defaultRoot,p.releaseId,'manifest.json')].includes(env.INVESTMENT_RELEASE_MANIFEST_PATH)) fail('guru_wrong_live_runtime');
   os.setPriority(process.pid,10); execFileSync('/usr/bin/ionice',['-c','3','-p',String(process.pid)]);
   const result = await stageGuruDeltaRelease(p,{progress:item => console.log(JSON.stringify(item))});

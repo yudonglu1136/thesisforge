@@ -196,11 +196,10 @@ test("a wrong output cannot choose the other provider merely because its value m
   assertPriceFailure(audit, /stored_market_price_unit_mismatch/);
 });
 
-test("existing Yahoo-declared models can reconcile truthful raw Yahoo lineage", (t) => {
+test("retired Yahoo-declared models fail closed even when raw Yahoo values match", (t) => {
   const audit = inspectFixture(t, {
     declaredSource: "yahoo", rawPoints: [{ source: "yahoo", close: 200, adjustedClose: 175 }]
   });
-  assertNoPriceFailures(audit);
-  assert.equal(audit.storedMarketPriceChecks, 1);
-  assert.equal(audit.comparisonPriceBasisExclusions, 0);
+  assertPriceFailure(audit, /unverified_declared_price_source/);
+  assert.equal(audit.storedMarketPriceChecks, 0);
 });

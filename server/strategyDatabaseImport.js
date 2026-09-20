@@ -171,7 +171,8 @@ export function importStrategyDatabase({sourceFile,targetFile,cutoff,etfFile,fil
   }
   const etfs=strategyEtfs(etfFile),etfDoc=doc('etf_artifact','strategy-etfs',JSON.stringify(etfs));
   for(const [ticker,e] of Object.entries(etfs)) {
-   const id=series(ticker,'yahoo','cta_etf',e.currency,etfDoc,e.returnBasis);
+   if(!String(e.source??'').toLowerCase().includes('sharadar'))throw Error('cta_etf_source_must_be_sharadar');
+   const id=series(ticker,e.sourceLabel??'sharadar_fact_os_sfp','cta_etf',e.currency,etfDoc,e.returnBasis);
    for(const r of e.points)priceInsert.run(id,r.date,null,null,null,r.close,r.adjustedClose,null,e.downloadedAt??null,'valid');
    put('etf_catalog',{symbol:ticker,inception:e.inception,first_date:e.first,last_date:e.last,series_id:id,source_url:e.url,points_hash:e.pointsSha256,downloaded_at:e.downloadedAt});
   }

@@ -109,7 +109,7 @@ export function portfolioMarketContext(source,analysis,payload,asOf,{riskFreeRat
   const symbols=new Set(['SPY',...analysis.groups.flatMap(g=>g.positions.filter(p=>p.kind==='equity'&&p.currency==='USD').map(p=>p.ticker))]);
   const series=new Map(),cache=cacheFor(source);
   const start=new Date(Date.parse(asOf+'T00:00:00Z')-367*86400000).toISOString().slice(0,10);
-  const query=source.db.prepare("SELECT date,adjusted_close adjustedClose FROM price_points WHERE symbol=? AND date BETWEEN ? AND ? AND source='yahoo' ORDER BY date");
+  const query=source.db.prepare("SELECT date,adjusted_close adjustedClose FROM price_points WHERE symbol=? AND date BETWEEN ? AND ? AND source LIKE 'sharadar_fact_os_%' ORDER BY date");
   for(const t of symbols) {
     const key=`${t}:${start}:${asOf}`;
     series.set(t,cache.series.get(key)??remember(cache.series,key,query.all(t,start,asOf),160));
@@ -143,7 +143,7 @@ export function portfolioMarketContext(source,analysis,payload,asOf,{riskFreeRat
     if(p)prices.set(t,{value:p.close,date,currency:r.currency});
     else {
       const usd=universe.companies.some(c=>c.currency==='USD'&&c.shareClasses?.some(s=>s.ticker===t))||analysis.groups.some(g=>g.positions.some(p=>p.ticker===t&&p.currency==='USD'));
-      const raw=usd?source.db.prepare("SELECT close FROM price_points WHERE symbol=? AND date=? AND source='yahoo'").get(t,date):null;
+      const raw=usd?source.db.prepare("SELECT close FROM price_points WHERE symbol=? AND date=? AND source LIKE 'sharadar_fact_os_%'").get(t,date):null;
       if(positive(raw?.close))prices.set(t,{value:raw.close,date,currency:'USD'});
     }
   }

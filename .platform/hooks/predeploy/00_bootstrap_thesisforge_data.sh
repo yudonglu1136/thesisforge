@@ -21,7 +21,11 @@ if [[ -z "$runtime_db" || -z "$release_id" || -z "$manifest_path" || -z "$cutoff
   exit 1
 fi
 if [[ "$runtime_db" != "/var/app/data/thesisforge.sqlite" \
-   || "$manifest_path" != "$release_root/manifest.json" \
+   && "$runtime_db" != "/var/app/data/${release_id}.sqlite" ]]; then
+  echo "error: unexpected ThesisForge runtime target" >&2
+  exit 1
+fi
+if [[ "$manifest_path" != "$release_root/manifest.json" \
    || ! "$release_id" =~ ^thesisforge-[0-9]{8}-v[1-9][0-9]*$ \
    || ! "$cutoff" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   echo "error: unexpected ThesisForge public-data target" >&2

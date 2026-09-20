@@ -212,8 +212,8 @@ test('outputs deterministic; source maps and normalized rules are never mutated'
   a.deepEqual(runStrategyLab(d,r),runStrategyLab(d,r));a.equal(signature({histories:[...d.histories],prices:[...d.priceMaps].map(([k,v])=>[k,[...v]]),r}),before);
 });
 test('sampled comparison chart is augmented only by actual corroborated close rows',()=>{
-  const snap={currency:'USD',priceHistory:[{date:dates[0],close:100,source:'yahoo'},{date:dates[2],close:102,source:'yahoo'}]};
-  const rows=[100,101,102].map((close,i)=>({date:dates[i],close,source:'yahoo'}));
+  const snap={currency:'USD',priceHistory:[{date:dates[0],close:100,source:'sharadar_fact_os_sep'},{date:dates[2],close:102,source:'sharadar_fact_os_sep'}]};
+  const rows=[100,101,102].map((close,i)=>({date:dates[i],close,source:'sharadar_fact_os_sep'}));
   const r=strategyComparisonPrices(snap,rows,dates[2]);a.equal(r.points.get(dates[1]),101);a.equal(r.audits[0].overlaps,2);
   rows[2].close=500;a.equal(strategyComparisonPrices(snap,rows,dates[2]).points.has(dates[1]),false);
   rows.forEach(r=>r.source='unknown');a.equal(strategyComparisonPrices(snap,rows,dates[2]).points.has(dates[1]),false);

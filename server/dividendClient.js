@@ -25,12 +25,6 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const dividendJobId = "portfolio_dividend_calendar";
-const yahooTickerOverrides = new Map([
-  ["AZN", "AZN.L"],
-  ["LSEG", "LSEG.L"],
-  ["AZNL", "AZN.L"],
-  ["LSEGL", "LSEG.L"]
-]);
 const londonDividendTickers = new Set(["AZN", "AZNL", "AZN.L", "LSEG", "LSEGL", "LSEG.L"]);
 
 let dividendCalendarRefresherStarted = false;
@@ -202,14 +196,6 @@ function tickerHash(tickerInfos) {
   return tickerInfos.map((item) => item.ticker).sort().join(",");
 }
 
-function yahooTicker(ticker, { londonListed = false } = {}) {
-  const normalized = normalizeTicker(ticker);
-  const override = yahooTickerOverrides.get(normalized);
-  if (override) return override;
-  if (londonListed && normalized) return londonMarketTicker(normalized, { currency: "GBP" });
-  return String(normalized || ticker || "").replace(/\./g, "-");
-}
-
 function isPenceCurrency(currency) {
   const raw = String(currency || "").trim();
   const compact = raw.replace(/[^A-Za-z]/g, "").toUpperCase();
@@ -231,7 +217,7 @@ function isLondonDividendTicker(ticker) {
   return (
     londonDividendTickers.has(normalized) ||
     normalized.endsWith(".L") ||
-    yahooTicker(normalized).toUpperCase().endsWith(".L")
+    londonMarketTicker(normalized, { currency: "GBP" }).toUpperCase().endsWith(".L")
   );
 }
 
@@ -244,7 +230,6 @@ function normalizeDividendMoneyUnit({ ticker, amount, currency, source = "" }) {
   const sourceText = String(source || "").toLowerCase();
   const currencyLooksPence = isPenceCurrency(rawCurrency);
   const marketDataPenceSource =
-    sourceText.includes("yahoo") ||
     sourceText.includes("lseg") ||
     sourceText.includes("market") ||
     sourceText.includes("history");
@@ -365,193 +350,21 @@ async function loadNasdaqDeclaredEvents(tickerInfos, { startDate, endDate, reque
   };
 }
 
-async function fetchYahooDividendHistory(tickerInput) {
-  const tickerInfo = typeof tickerInput === "string" ? { ticker: tickerInput } : tickerInput;
-  const ticker = tickerInfo.ticker;
-  const londonListed = Boolean(tickerInfo.londonListed || isLondonDividendTicker(ticker));
-  const source = londonListed ? "yahoo_dividend_history_london" : "yahoo_dividend_history";
-  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker(ticker, { londonListed }))}`);
-  url.searchParams.set("range", "5y");
-  url.searchParams.set("interval", "1d");
-  url.searchParams.set("events", "div");
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "ThesisForge-DividendCalendar/1.0"
-    },
-    signal: AbortSignal.timeout(12_000)
-  });
-  if (!response.ok) throw new Error(`Yahoo dividend history ${ticker} failed with ${response.status}`);
-  const payload = await response.json();
-  const result = payload?.chart?.result?.[0];
-  const chartError = payload?.chart?.error;
-  if (chartError) throw new Error(chartError.description || `Yahoo dividend history ${ticker} failed`);
-  const currency = result?.meta?.currency || "USD";
-  const rows = Object.values(result?.events?.dividends || {});
-  return rows
-    .map((row) => {
-      const normalized = normalizeDividendMoneyUnit({
-        ticker,
-        amount: finiteNumber(row.amount, NaN),
-        currency,
-        source
-      });
-      return {
-        date: isoDate(new Date(Number(row.date) * 1000)),
-        amount: normalized.amount,
-        currency: normalized.currency,
-        normalizedFrom: normalized.normalizedFrom,
-        source
-      };
-    })
-    .filter((row) => row.date && Number.isFinite(row.amount) && row.amount > 0)
-    .sort((left, right) => left.date.localeCompare(right.date));
-}
-
-function estimateFutureDividends(tickerInfo, history, { startDate, endDate }) {
-  if (!history.length) return [];
-  const gaps = [];
-  for (let index = 1; index < history.length; index += 1) {
-    const gap = dayDiff(history[index - 1].date, history[index].date);
-    if (gap >= 20 && gap <= 430) gaps.push(gap);
-  }
-  const intervalDays = Math.max(30, Math.min(365, Math.round(median(gaps) || 365)));
-  const recentAmounts = history.slice(-Math.min(6, history.length)).map((row) => row.amount);
-  const amount = Math.round((median(recentAmounts) || history.at(-1).amount) * 10000) / 10000;
-  const currency = history.at(-1).currency || "USD";
-  const historySource = history.at(-1).source || "";
-  const fxRateToBase = finiteNumber(tickerInfo.fxRateToBase, 1);
-  const baseCurrency = tickerInfo.baseCurrency || "USD";
-  const normalizedFrom = history.findLast?.((row) => row.normalizedFrom)?.normalizedFrom ||
-    [...history].reverse().find((row) => row.normalizedFrom)?.normalizedFrom ||
-    "";
-  let exDate = addDays(history.at(-1).date, intervalDays);
-  while (exDate < startDate) exDate = addDays(exDate, intervalDays);
-
-  const events = [];
-  while (exDate <= endDate && events.length < 18) {
-    events.push({
-      ticker: tickerInfo.ticker,
-      companyName: tickerInfo.companyName,
-      name: tickerInfo.companyName,
-      exDate,
-      payDate: "",
-      recordDate: "",
-      declarationDate: "",
-      amount,
-      amountKind: "per_share",
-      perShare: true,
-      quantity: tickerInfo.quantity || undefined,
-      holdingValue: tickerInfo.value || undefined,
-      holdingPrice: tickerInfo.price || undefined,
-      estimatedPayout: tickerInfo.quantity ? amount * tickerInfo.quantity : undefined,
-      currency,
-      fxRateToBase,
-      baseCurrency,
-      status: "estimated",
-      type: "Estimated dividend",
-      source: historySource.includes("london")
-        ? "yahoo_history_estimate_london"
-        : "yahoo_history_estimate",
-      sourceLabel: "Yahoo dividend history estimate",
-      logoUrl: logoUrlForTicker(tickerInfo.ticker),
-      payload: {
-        intervalDays,
-        lastDividendDate: history.at(-1).date,
-        historyPointCount: history.length,
-        amountKind: "per_share",
-        fxRateToBase,
-        baseCurrency,
-        dividendUnitNormalization: normalizedFrom ? `${normalizedFrom}_to_GBP` : ""
-      }
-    });
-    exDate = addDays(exDate, intervalDays);
-  }
-  return events;
-}
-
-function historicalDividendEvents(tickerInfo, history, { startDate, endDate }) {
-  const normalizedStart = isoDate(startDate);
-  const normalizedEnd = isoDate(endDate);
-  if (!history.length || normalizedEnd < normalizedStart) return [];
-  const fxRateToBase = finiteNumber(tickerInfo.fxRateToBase, 1);
-  const baseCurrency = tickerInfo.baseCurrency || "USD";
-  return history
-    .filter((row) => row.date >= normalizedStart && row.date <= normalizedEnd)
-    .map((row) => ({
-      ticker: tickerInfo.ticker,
-      companyName: tickerInfo.companyName,
-      name: tickerInfo.companyName,
-      exDate: row.date,
-      payDate: "",
-      recordDate: "",
-      declarationDate: "",
-      amount: row.amount,
-      amountKind: "per_share",
-      perShare: true,
-      quantity: tickerInfo.quantity || undefined,
-      holdingValue: tickerInfo.value || undefined,
-      holdingPrice: tickerInfo.price || undefined,
-      estimatedPayout: tickerInfo.quantity ? row.amount * tickerInfo.quantity : undefined,
-      currency: row.currency || "USD",
-      fxRateToBase,
-      baseCurrency,
-      status: "paid",
-      type: "Paid dividend",
-      source: row.source || "yahoo_dividend_history",
-      sourceLabel: row.source?.includes("london")
-        ? "Yahoo London dividend history"
-        : "Yahoo dividend history",
-      logoUrl: logoUrlForTicker(tickerInfo.ticker),
-      payload: {
-        amountKind: "per_share",
-        fxRateToBase,
-        baseCurrency,
-        dividendUnitNormalization: row.normalizedFrom ? `${row.normalizedFrom}_to_GBP` : ""
-      }
-    }));
-}
-
 async function loadEstimatedEvents(tickerInfos, {
   historyStartDate,
   startDate,
   endDate,
   requestDelayMs
 }) {
-  if (process.env.DIVIDEND_YAHOO_ESTIMATE_ENABLED === "false") {
-    return { events: [], attempted: 0, errors: 0, historicalCount: 0, estimatedCount: 0, ok: false, skipped: true };
-  }
-
-  const events = [];
-  let historicalCount = 0;
-  let estimatedCount = 0;
-  let attempted = 0;
-  let errors = 0;
-  for (const tickerInfo of tickerInfos) {
-    attempted += 1;
-    try {
-      const history = await fetchYahooDividendHistory(tickerInfo);
-      const historical = historicalDividendEvents(tickerInfo, history, {
-        startDate: historyStartDate || defaultDividendReadStartDate(startDate),
-        endDate: addDays(startDate, -1)
-      });
-      const estimated = estimateFutureDividends(tickerInfo, history, { startDate, endDate });
-      historicalCount += historical.length;
-      estimatedCount += estimated.length;
-      events.push(...historical, ...estimated);
-    } catch (error) {
-      errors += 1;
-      if (errors <= 5) console.warn(`Yahoo dividend estimate warning: ${error.message}`);
-    }
-    if (requestDelayMs > 0) await sleep(requestDelayMs);
-  }
   return {
-    events,
-    attempted,
-    errors,
-    historicalCount,
-    estimatedCount,
-    ok: attempted > 0 && errors < attempted
+    events: [],
+    attempted: 0,
+    errors: 0,
+    historicalCount: 0,
+    estimatedCount: 0,
+    ok: false,
+    skipped: true,
+    reason: "sharadar_actions_only"
   };
 }
 
@@ -711,7 +524,7 @@ function enrichStoredDividendEvent(event, tickerInfoByTicker) {
   });
   const amount = normalized.amount;
   const amountKind = event.amountKind || payload.amountKind || (
-    source.includes("yahoo") || source.includes("nasdaq") ? "per_share" : ""
+    source.includes("nasdaq") || source.includes("sharadar") ? "per_share" : ""
   );
   const perShare =
     event.perShare === true ||
@@ -778,7 +591,6 @@ export async function refreshDividendCalendarForTickers(tickerInputs = [], optio
     const nasdaqEndDate = addDays(forecastStartDate, nasdaqScanDays);
     const requestDelayMs = Math.max(0, finiteNumber(process.env.DIVIDEND_NASDAQ_REQUEST_DELAY_MS, 125));
     const nasdaqTimeBudgetMs = Math.max(5000, finiteNumber(process.env.DIVIDEND_NASDAQ_TIME_BUDGET_MS, 45_000));
-    const yahooDelayMs = Math.max(0, finiteNumber(process.env.DIVIDEND_YAHOO_REQUEST_DELAY_MS, 50));
     const hash = tickerHash(tickerInfos);
 
     if (!tickerInfos.length) {
@@ -854,7 +666,7 @@ export async function refreshDividendCalendarForTickers(tickerInputs = [], optio
           historyStartDate,
           startDate: forecastStartDate,
           endDate,
-          requestDelayMs: yahooDelayMs
+          requestDelayMs: 0
         })
       ]);
       if (!declaredResult.ok && !estimatedResult.ok) {
@@ -882,7 +694,7 @@ export async function refreshDividendCalendarForTickers(tickerInputs = [], optio
           timedOut: Boolean(declaredResult.timedOut),
           skipped: Boolean(declaredResult.skipped)
         },
-        yahoo: {
+        historicalEstimates: {
           attempted: estimatedResult.attempted,
           errors: estimatedResult.errors,
           historicalCount: estimatedResult.historicalCount,
@@ -958,6 +770,5 @@ export function startDividendCalendarRefresher(getTickerInputs, {
 export const __dividendTestInternals = {
   isLondonDividendTicker,
   normalizeDividendMoneyUnit,
-  safeHoldingQuantity,
-  yahooTicker
+  safeHoldingQuantity
 };

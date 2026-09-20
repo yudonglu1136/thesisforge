@@ -7,8 +7,7 @@ import {
   portfolioDisplayTicker,
   valuationTickerCandidates,
   valuationLookupKeysForSnapshot,
-  valuationMarketPriceSymbol,
-  yahooChartSymbol
+  valuationMarketPriceSymbol
 } from "./tickerAliases.js";
 
 test("IBKR-style London tickers normalize to dot-L display symbols", () => {
@@ -41,10 +40,8 @@ test("GBP valuation snapshots expose London aliases without mapping US names acc
   );
 });
 
-test("market data keeps Yahoo London suffix but converts US share-class dots", () => {
+test("market data keeps canonical London aliases", () => {
   assert.equal(londonMarketTicker("LSEGL"), "LSEG.L");
-  assert.equal(yahooChartSymbol("LSEG.L"), "LSEG.L");
-  assert.equal(yahooChartSymbol("BRK.B"), "BRK-B");
   assert.deepEqual(marketTickerCandidates("AZNL"), ["AZN.L", "AZNL", "AZN"]);
 });
 

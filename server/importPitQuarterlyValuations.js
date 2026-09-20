@@ -747,11 +747,7 @@ function main() {
         ticker,
         priceHistory: mergeValuationComparisonHistory({
           existing: existingPrices, incremental: databasePrices,
-          priceSymbol: valuationMarketPriceSymbol(ticker), quoteCurrency: existing.currency,
-          // Existing London and older US histories include explicitly sourced
-          // Yahoo close. Retain that truthful basis only when no paid point is
-          // available on the same day; never relabel it Sharadar or adjusted close.
-          allowYahooClose: true
+          priceSymbol: valuationMarketPriceSymbol(ticker), quoteCurrency: existing.currency
         })
       });
       const officialIssuerPit = ["BA.L", "LSEG"].includes(ticker);

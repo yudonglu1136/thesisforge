@@ -174,7 +174,11 @@ AWS is backend/API only. Package and deploy EB without frontend `dist/`:
 bash scripts/package-aws-backend.sh <version>
 ```
 
-Production must set `SQLITE_DB_PATH` to the intended persistent runtime database.
+Production must set `SQLITE_DB_PATH` to the release-scoped persistent runtime
+database (`/var/app/data/<release-id>.sqlite`). A new release never overwrites an
+open SQLite file: it installs a new runtime file, switches the environment only
+after verification, and keeps the prior runtime only for the bounded rollback
+window before reviewed deletion.
 No standalone Ontology service or snapshot is required. The package script
 rejects the retired `INCLUDE_ONTOLOGY_SNAPSHOT=1` flag before reading data or
 replacing an archive. This does not change the existing explicit SQLite seed,

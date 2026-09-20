@@ -5,7 +5,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
-const MAIN_DATABASE='/var/app/data/thesisforge.sqlite';
+const MAIN_DATABASE=process.env.SQLITE_DB_PATH||'/var/app/data/thesisforge.sqlite';
 const DEADLINE_MS=15000;
 export function validateCheckpointRequest(options, now=Date.now()) {
   const database=options.database||MAIN_DATABASE;

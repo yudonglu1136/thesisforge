@@ -13,5 +13,5 @@ console.log(JSON.stringify({
   declaredCount: result.declaredCount,
   estimatedCount: result.estimatedCount,
   nasdaq: result.nasdaq,
-  yahoo: result.yahoo
+  historicalEstimates: result.historicalEstimates
 }, null, 2));

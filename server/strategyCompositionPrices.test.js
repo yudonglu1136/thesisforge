@@ -11,9 +11,9 @@ function fixture(t) {
   const dir=mkdtempSync(join(tmpdir(),'composition-price-test-')),file=join(dir,'prices.sqlite');
   t.after(()=>rmSync(dir,{recursive:true,force:true}));
   const db=new DatabaseSync(file);
-  db.exec('CREATE TABLE series(symbol TEXT PRIMARY KEY,provider_symbol TEXT,currency TEXT,source_sha256 TEXT,metadata_json TEXT); CREATE TABLE prices(symbol TEXT,date TEXT,close REAL,adjusted_close REAL,quality_status TEXT)');
-  const add=(symbol,{currency='USD',type='ETF',provider=symbol,prices=[['2026-01-02',100],['2026-01-05',110],['2026-01-06',120]]}={})=>{
-    db.prepare('INSERT INTO series VALUES(?,?,?,?,?)').run(symbol,provider,currency,'fixture-hash-'+symbol,JSON.stringify({symbol,currency,instrumentType:type}));
+  db.exec('CREATE TABLE series(symbol TEXT PRIMARY KEY,provider_symbol TEXT,currency TEXT,source_sha256 TEXT,metadata_json TEXT,provider TEXT); CREATE TABLE prices(symbol TEXT,date TEXT,close REAL,adjusted_close REAL,quality_status TEXT)');
+  const add=(symbol,{currency='USD',type='ETF',providerSymbol=symbol,provider='sharadar',prices=[['2026-01-02',100],['2026-01-05',110],['2026-01-06',120]]}={})=>{
+    db.prepare('INSERT INTO series VALUES(?,?,?,?,?,?)').run(symbol,providerSymbol,currency,'fixture-hash-'+symbol,JSON.stringify({symbol,currency,instrumentType:type}),provider);
     for(const [date,adj] of prices)db.prepare('INSERT INTO prices VALUES(?,?,?,?,?)').run(symbol,date,200,adj,'verified_daily_bar');
   };
   return {file,db,add};
@@ -36,7 +36,7 @@ test('research prices replace a whole vintage, clip at cutoff, preserve CTA and 
 test('unverified currency, provider aliases and invalid adjusted prices cannot replace prior evidence',t=>{
   const {file,db,add}=fixture(t);
   add('AAA',{currency:'EUR',type:'EQUITY'});
-  add('BBB',{provider:'OTHER',type:'EQUITY'});
+  add('BBB',{providerSymbol:'OTHER',type:'EQUITY'});
   add('CCC',{prices:[['2026-01-02',null]]});
   db.close();
   const old=new Map([['2026-01-02',1]]),data={priceMaps:new Map(['AAA','BBB','CCC'].map(s=>[s,old])),dates:['2026-01-02']};
@@ -48,16 +48,16 @@ test('an index symbol with equity identity fails instead of running the wrong in
   const {file,db,add}=fixture(t);add('SCHD',{type:'EQUITY'});db.close();
   assert.throws(()=>compositionPrices(file,{priceMaps:new Map([['SCHD',new Map()]]),dates:[]},'2026-01-05'),/index_identity_mismatch/);
 });
-test('reviewed provider punctuation preserves the exact share class and does not accept another class',t=>{
-  const {file,db,add}=fixture(t);add('BRK.B',{provider:'BRK-B',type:'EQUITY'});
+test('reviewed Sharadar identity preserves the exact share class and does not accept another class',t=>{
+  const {file,db,add}=fixture(t);add('BRK.B',{type:'EQUITY'});
   const setMeta=symbol=>db.prepare('UPDATE series SET metadata_json=?').run(JSON.stringify({symbol,currency:'USD',instrumentType:'EQUITY'}));
-  setMeta('BRK-B');
+  setMeta('BRK.B');
   const old=new Map([['2026-01-02',1]]),data={priceMaps:new Map([['BRK.B',old]]),dates:[...old.keys()]};
   const good=compositionPrices(file,data,'2026-01-05');
   assert.deepEqual([...good.priceMaps.get('BRK.B').values()],[100,110]);
-  assert.equal(good.sources.compositionPrices['BRK.B'].providerSymbol,'BRK-B');
+  assert.equal(good.sources.compositionPrices['BRK.B'].providerSymbol,'BRK.B');
   setMeta('BRK-A');assert.equal(compositionPrices(file,data,'2026-01-05').priceMaps.get('BRK.B'),old);
-  setMeta('BRK-B');db.exec("UPDATE series SET provider_symbol='BRK-A'");
+  setMeta('BRK.B');db.exec("UPDATE series SET provider_symbol='BRK.A'");
   assert.equal(compositionPrices(file,data,'2026-01-05').priceMaps.get('BRK.B'),old);db.close();
 });
 test('linked-model quote repair uses the held class close, never adjusted close or another class, without changing returns',t=>{

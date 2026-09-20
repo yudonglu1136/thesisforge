@@ -886,7 +886,7 @@ const cusipTickerMap = new Map([
   ["30231G102", "XOM"],
   ["303075105", "FDS"],
   ["315948109", "FBTC"],
-  // Fiserv resumed FISV in 2025; Yahoo exposes the continuous issuer history there.
+  // Fiserv resumed FISV in 2025; use the continuous issuer history for the resolved listing.
   ["337738108", "FISV"],
   ["33829M101", "FIVE"],
   ["36266G107", "GEHC"],

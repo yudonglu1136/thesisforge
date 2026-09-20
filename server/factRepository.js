@@ -15,7 +15,7 @@ let rollbackAnnounced = false;
 export function factOsEnabled() {
   const enabled = process.env.FACT_OS_ENABLED !== "0";
   if (!enabled && !rollbackAnnounced) {
-    console.warn("[fact-os] EXPLICIT LEGACY ROLLBACK: FACT_OS_ENABLED=0. Canonical-only source guarantees do not apply.");
+    console.warn("[fact-os] Direct Fact OS reader disabled; only released SQLite data is allowed. Network/legacy provider fallback remains disabled.");
     rollbackAnnounced = true;
   }
   return enabled;

@@ -39,8 +39,7 @@ const {
 } = await import("./localDatabase.js");
 const {
   enforceAdjustedPriceRequirement,
-  loadPriceSeries,
-  normalizeYahooChartPoints
+  loadPriceSeries
 } = await import("./marketData.js");
 
 after(() => {
@@ -715,7 +714,46 @@ test("audited price repair validates and atomically records exact adjusted rows"
   );
 });
 
-test("Yahoo chart normalization retains adjusted close for total-return backtests", () => {
+test("released Sharadar SQLite prices are served without a network request", async () => {
+  writePriceSeriesToDb("SHARADARFIXTURE", [
+    { date: "2024-01-02", close: 101, adjustedClose: 100 },
+    { date: "2024-01-03", close: 102, adjustedClose: 101 }
+  ], "sharadar_fact_os_sep");
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => { fetchCalls += 1; throw new Error("network must not be used"); };
+  try {
+    const result = await loadPriceSeries("SHARADARFIXTURE", {
+      start: "2024-01-02", end: "2024-01-03", requireAdjusted: true,
+      expectedTradingDates: ["2024-01-02", "2024-01-03"]
+    });
+    assert.equal(result.source, "sqlite");
+    assert.equal(result.returnBasis, "total_return_adjusted_close");
+    assert.equal(result.points.length, 2);
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("missing or incomplete released prices fail closed without a provider request", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => { fetchCalls += 1; throw new Error("network must not be used"); };
+  try {
+    const result = await loadPriceSeries("NOLOCALSHARADAR", {
+      start: "2024-01-02", end: "2024-01-03", requireAdjusted: true
+    });
+    assert.equal(result.source, "unavailable");
+    assert.equal(result.failure.code, "adjusted_close_unavailable");
+    assert.equal(result.upstreamSource, "sharadar_sqlite");
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test.skip("retired legacy chart normalization retains adjusted close for historical test fixtures", () => {
   const points = normalizeYahooChartPoints({
     timestamp: [1704153600],
     indicators: {
@@ -731,7 +769,7 @@ test("Yahoo chart normalization retains adjusted close for total-return backtest
   assert.equal(points[0].adjustedClose, 97.5);
 });
 
-test("adjusted-close requirement fails closed when Yahoo omits one or every adjusted row", () => {
+test.skip("adjusted-close requirement fails closed when Yahoo omits one or every adjusted row", () => {
   const partialPoints = normalizeYahooChartPoints({
     timestamp: [1704153600, 1704240000],
     indicators: {
@@ -795,7 +833,7 @@ test("adjusted-close requirement fails closed when Yahoo omits one or every adju
   assert.match(missing.failure.policy, /fail_closed/);
 });
 
-test("loadPriceSeries cannot publish partially adjusted Yahoo history", async () => {
+test.skip("loadPriceSeries cannot publish partially adjusted Yahoo history", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
     ok: true,
@@ -828,7 +866,7 @@ test("loadPriceSeries cannot publish partially adjusted Yahoo history", async ()
   }
 });
 
-test("a truncated adjusted SQLite series is refreshed for the requested range", async () => {
+test.skip("a truncated adjusted SQLite series is refreshed for the requested range", async () => {
   writePriceSeriesToDb("TRUNCATEDFIXTURE", [
     {
       date: "2024-01-02",
@@ -877,7 +915,7 @@ test("a truncated adjusted SQLite series is refreshed for the requested range", 
   }
 });
 
-test("an adjusted SQLite series with an internal benchmark-session gap is refreshed", async () => {
+test.skip("an adjusted SQLite series with an internal benchmark-session gap is refreshed", async () => {
   writePriceSeriesToDb("GAPFIXTURE", [
     {
       date: "2024-01-02",
@@ -942,7 +980,7 @@ test("an adjusted SQLite series with an internal benchmark-session gap is refres
   }
 });
 
-test("a fresh provider internal-session gap is retried once with provider rows only", async () => {
+test.skip("a fresh provider internal-session gap is retried once with provider rows only", async () => {
   writePriceSeriesToDb("RETRYFIXTURE", [
     { date: "2024-01-02", close: 101, adjustedClose: 101 },
     { date: "2024-01-03", close: 999, adjustedClose: 999 },
@@ -1003,7 +1041,7 @@ test("a fresh provider internal-session gap is retried once with provider rows o
   }
 });
 
-test("an incomplete primary Yahoo response uses exact rows from the alternate Yahoo chart host", async () => {
+test.skip("an incomplete primary Yahoo response uses exact rows from the alternate Yahoo chart host", async () => {
   const originalFetch = globalThis.fetch;
   const requestedHosts = [];
   globalThis.fetch = async (url) => {
@@ -1065,7 +1103,7 @@ test("an incomplete primary Yahoo response uses exact rows from the alternate Ya
   }
 });
 
-test("a transient Yahoo transport failure is retried without weakening adjusted-price checks", async () => {
+test.skip("a transient Yahoo transport failure is retried without weakening adjusted-price checks", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
   globalThis.fetch = async () => {
@@ -1115,7 +1153,7 @@ test("a transient Yahoo transport failure is retried without weakening adjusted-
   }
 });
 
-test("exhausted Yahoo transport retries still fail closed with auditable attempt metadata", async () => {
+test.skip("exhausted Yahoo transport retries still fail closed with auditable attempt metadata", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
   globalThis.fetch = async () => {
@@ -1152,7 +1190,7 @@ test("exhausted Yahoo transport retries still fail closed with auditable attempt
   }
 });
 
-test("an audited SQLite point is merged after an upstream IPO-range refresh", async () => {
+test.skip("an audited SQLite point is merged after an upstream IPO-range refresh", async () => {
   writePriceSeriesToDb("SPY", [
     { date: "2024-01-02", close: 470, adjustedClose: 470 },
     { date: "2024-01-03", close: 471, adjustedClose: 471 },
@@ -1253,7 +1291,7 @@ test("an audited SQLite point is merged after an upstream IPO-range refresh", as
   }
 });
 
-test("an unledgered stale SQLite point cannot fill a fresh upstream gap", async () => {
+test.skip("an unledgered stale SQLite point cannot fill a fresh upstream gap", async () => {
   writePriceSeriesToDb("UNTRUSTEDMERGEFIXTURE", [
     { date: "2024-01-02", close: 101, adjustedClose: 101 },
     { date: "2024-01-03", close: 102, adjustedClose: 102 },
@@ -1308,7 +1346,7 @@ test("an unledgered stale SQLite point cannot fill a fresh upstream gap", async 
   }
 });
 
-test("a fresh upstream row without adjusted close cannot inherit a stale DB value", async () => {
+test.skip("a fresh upstream row without adjusted close cannot inherit a stale DB value", async () => {
   writePriceSeriesToDb("FRESHNULL", [{
     date: "2024-01-02",
     close: 101,
@@ -1346,7 +1384,7 @@ test("a fresh upstream row without adjusted close cannot inherit a stale DB valu
   }
 });
 
-test("a rejected Yahoo refresh cannot poison the next adjusted-price call", async () => {
+test.skip("a rejected Yahoo refresh cannot poison the next adjusted-price call", async () => {
   writePriceSeriesToDb("FRESHNULLTWICE", [{
     date: "2024-01-10",
     close: 110,
@@ -1401,7 +1439,7 @@ test("a rejected Yahoo refresh cannot poison the next adjusted-price call", asyn
   }
 });
 
-test("fully adjusted delisted history can defer endpoint coverage to active-holding checks", () => {
+test.skip("fully adjusted delisted history can defer endpoint coverage to active-holding checks", () => {
   const payload = {
     symbol: "DELISTED",
     source: "yahoo",

@@ -9,12 +9,10 @@ process.env.SYNC_BUNDLED_DIVIDEND_CALENDAR = "false";
 
 const { __dividendTestInternals } = await import("./dividendClient.js");
 
-const { isLondonDividendTicker, normalizeDividendMoneyUnit, safeHoldingQuantity, yahooTicker } =
+const { isLondonDividendTicker, normalizeDividendMoneyUnit, safeHoldingQuantity } =
   __dividendTestInternals;
 
 test("AZN is treated as a London ordinary-share dividend ticker", () => {
-  assert.equal(yahooTicker("AZN"), "AZN.L");
-  assert.equal(yahooTicker("HSBA", { londonListed: true }), "HSBA.L");
   assert.equal(isLondonDividendTicker("AZN"), true);
   assert.equal(isLondonDividendTicker("AZN.L"), true);
 });
@@ -25,7 +23,7 @@ test("London pence dividends are normalized before payout math", () => {
       ticker: "AZN",
       amount: 159.5,
       currency: "GBP",
-      source: "yahoo_dividend_history"
+      source: "london_dividend_history"
     }),
     { amount: 1.595, currency: "GBP", multiplier: 0.01, normalizedFrom: "GBP" }
   );
@@ -35,7 +33,7 @@ test("London pence dividends are normalized before payout math", () => {
       ticker: "AZN.L",
       amount: 159.5,
       currency: "GBp",
-      source: "yahoo_dividend_history"
+      source: "london_dividend_history"
     }),
     { amount: 1.595, currency: "GBP", multiplier: 0.01, normalizedFrom: "GBp" }
   );
@@ -45,7 +43,7 @@ test("London pence dividends are normalized before payout math", () => {
       ticker: "HSBA",
       amount: 103,
       currency: "GBP",
-      source: "yahoo_dividend_history_london"
+      source: "london_dividend_history"
     }),
     { amount: 1.03, currency: "GBP", multiplier: 0.01, normalizedFrom: "GBP" }
   );
@@ -57,7 +55,7 @@ test("normal GBP and USD amounts are not divided by 100", () => {
       ticker: "AZN",
       amount: 1.595,
       currency: "GBP",
-      source: "yahoo_dividend_history"
+      source: "london_dividend_history"
     }),
     { amount: 1.595, currency: "GBP", multiplier: 1, normalizedFrom: "" }
   );
@@ -67,7 +65,7 @@ test("normal GBP and USD amounts are not divided by 100", () => {
       ticker: "V",
       amount: 6,
       currency: "USD",
-      source: "yahoo_dividend_history"
+      source: "london_dividend_history"
     }),
     { amount: 6, currency: "USD", multiplier: 1, normalizedFrom: "" }
   );

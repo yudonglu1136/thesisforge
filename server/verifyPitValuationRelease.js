@@ -1186,9 +1186,8 @@ function inspectModels(db, { reviewedCurrentCandidates = new Map() } = {}) {
         date: observation.price_date, close: finite(observation.close), source: observation.source,
         payloadSource: parseJson(observation.payload_json, {})?.source?.source
       });
-      // Resolve source/field/adjustment basis before comparing numbers. A Yahoo
-      // row cannot disprove a Sharadar split-only observation (or vice versa).
-      // Matching storage alone proves lineage, not independent original-vendor
+      // Resolve source/field/adjustment basis before comparing numbers. Matching
+      // storage alone proves lineage, not independent original-vendor
       // verification; that source audit is a separate release artifact.
       const priceAudit = auditValuationComparisonPrice({
         ticker: row.ticker, fiscalPeriod: row.fiscal_period, modelVersion: row.model_version,

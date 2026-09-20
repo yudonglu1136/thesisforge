@@ -137,7 +137,7 @@ export function overlayValuationFacts(snapshot, { prices = [], quarterly = [], t
       publishedModelStatus: "archived_not_recomputed", modelInputPolicy: MODEL_NOTICE,
       factErrors: [...errors, ...(!quoteCompatible(snapshot) ? ["quoted_security_currency_not_supported"] : [])] },
     warnings: [...new Set([...(snapshot.warnings || []), MODEL_NOTICE,
-      ...(!latestPrice ? ["No compatible local quote. No Yahoo/legacy price has been substituted."] : [])])] };
+      ...(!latestPrice ? ["No compatible local Sharadar quote is available; no legacy provider has been substituted."] : [])])] };
 }
 
 export async function loadCanonicalValuationDetail(snapshot, { asOf, readBatch = queryFactsBatch } = {}) {

@@ -46,8 +46,8 @@ function fixture(t,{original=true,manager='bill-ackman',future=false}={}) {
  const accession='0000000001-25-000001',publicDate='2025-08-14',reportDate='2025-06-30';
  const h={id:'037833100-COMMON',cusip:'037833100',issuer:'APPLE INC',ticker:'AAPL',shares:10,value:100};
  d.prepare('INSERT INTO guru_exposure_snapshots VALUES (?,?)').run(manager,JSON.stringify({history:[{accessionNumber:accession,reportDate,filingDate:publicDate,positionCount:1,topHoldings:[h],filing:{form:'13F-HR',secUrl:'https://www.sec.gov/example'}}]}));
- for(const symbol of ['SPY','AAPL'])for(const date of ['2025-08-14','2025-08-15','2025-08-18'])d.prepare('INSERT INTO price_points VALUES (?,?,?,?,?,?,?,?,?,?)').run(symbol,date,10,11,9,10,9.5,100,'yahoo','2025-08-19');
- d.prepare('INSERT INTO valuation_ticker_snapshots VALUES (?,?)').run('AAPL',JSON.stringify({currency:'USD',priceSource:'yahoo',priceHistory:[{date:'2025-08-14',close:10},{date:'2025-08-18',close:11}]}));
+ for(const symbol of ['SPY','AAPL'])for(const date of ['2025-08-14','2025-08-15','2025-08-18'])d.prepare('INSERT INTO price_points VALUES (?,?,?,?,?,?,?,?,?,?)').run(symbol,date,10,11,9,10,9.5,100,'sharadar_fact_os_sep','2025-08-19');
+ d.prepare('INSERT INTO valuation_ticker_snapshots VALUES (?,?)').run('AAPL',JSON.stringify({currency:'USD',priceSource:'sharadar_fact_os_sep',priceHistory:[{date:'2025-08-14',close:10},{date:'2025-08-18',close:11}]}));
  d.prepare('INSERT INTO valuation_pit_model_runs VALUES (?,?,?,?,?,?,?,?)').run('AAPL','2025-Q2','test-v1','2025-08-13',future?'2025-08-20':'2025-08-13',null,
   JSON.stringify({sourceRecord:{currency:'USD',datekey:'2025-08-13'},financial:{revenue_m:100,cfo_m:null},trailingTwelveMonths:{revenue_m:300},valuationSemantics:{fairValueFormula:'Test model'}}),JSON.stringify({fairValue:12}));
  d.close();
@@ -60,7 +60,7 @@ function fixture(t,{original=true,manager='bill-ackman',future=false}={}) {
   catalog:[{id:manager,name:manager,entityName:'Test',type:'manager13f',cik:manager==='chamath-palihapitiya'?'0001607841':'0000000001'}],
   manifestFile:json('manifest.json',{filings:[]}),securityFile:json('security.json',{securities:[],unresolved:[],ambiguous:[]}),
   filingFile:json('filings.json',{version:'strategy-original-filings-v1',records,recordsHash:signature(records)}),
-  etfFile:json('etfs.json',{version:'strategy-etfs-v1',asOf:'2025-08-18',series:{KMLM:{symbol:'KMLM',currency:'USD',returnBasis:'total_return_adjusted_close',inception:'2020-12-01',first:'2025-08-14',last:'2025-08-18',points,pointsSha256:sha(JSON.stringify(points))}}})};
+  etfFile:json('etfs.json',{version:'strategy-etfs-v1',asOf:'2025-08-18',series:{KMLM:{symbol:'KMLM',currency:'USD',source:'sharadar_fact_os_sfp',sourceLabel:'sharadar_fact_os_sfp',returnBasis:'total_return_adjusted_close',inception:'2020-12-01',first:'2025-08-14',last:'2025-08-18',points,pointsSha256:sha(JSON.stringify(points))}}})};
  return {dir,opts};
 }
 

@@ -2,11 +2,8 @@
  * Comparison-only prices. Never pass this output into fair-value inputs.
  *
  * Sharadar close is split-adjusted, excluding cash dividends and spin-offs.
- * Yahoo close is a different provider series; do NOT call it total-return
- * adjusted_close or assert that its historical corporate-action vintage agrees.
  * References: https://sharadar.com/docs/stocks and
  * https://blog.sharadar.com/2026/07/sharadar-stock-prices-fund-prices-and.html
- * Yahoo adjusted close: https://help.yahoo.com/kb/SLN28256.html
  *
  * A price date is a trading date, not the vintage of retrospective adjustments.
  * These helpers do not rescale prices, infer splits from share counts, convert
@@ -20,27 +17,16 @@ const SHARADAR_CLOSE = Object.freeze({
   unit: "currency_per_share",
   documentationUrl: "https://sharadar.com/docs/stocks"
 });
-const YAHOO_CLOSE = Object.freeze({
-  provider: "yahoo", field: "close",
-  basis: "yahoo_provider_historical_close",
-  unit: "currency_per_share",
-  documentationUrl: "https://help.yahoo.com/kb/SLN28256.html",
-  limitation: "Raw close corporate-action treatment/vintage is not assumed equivalent to Sharadar close; adjusted_close is a different field."
-});
-
 // Exact, reviewed source identifiers: no substring guesses or arbitrary
 // `audited:*` acceptance. The repair builder maps close -> close, not closeadj.
 const SOURCE_CONTRACTS = Object.freeze({
   "jansen-sharadar-sep-split-adjusted": SHARADAR_CLOSE,
   "sharadar-paid-api-split-adjusted": SHARADAR_CLOSE,
+  "sharadar_fact_os_sep": SHARADAR_CLOSE,
+  "sharadar_fact_os_sfp": SHARADAR_CLOSE,
   "audited:sharadar-paid-api": SHARADAR_CLOSE,
-  "audited-series:sharadar-sep": SHARADAR_CLOSE,
-  yahoo: YAHOO_CLOSE,
-  "audited-series:yahoo": YAHOO_CLOSE,
-  "audited-series:yahoo_query1_chart": YAHOO_CLOSE
+  "audited-series:sharadar-sep": SHARADAR_CLOSE
 });
-// `yahoo+sqlite-merged` is deliberately absent: marketData.js can merge audited
-// non-Yahoo supplements, so the series-level label cannot prove a point's vendor.
 const STORAGE_PRIORITY = Object.freeze({
   original_vendor: 0, released_snapshot: 1, pit_observation: 2, raw_price_point: 3
 });
@@ -139,7 +125,7 @@ export function resolveValuationComparisonPrice(request = {}) {
     sourceContract: declaredContract,
     evidence: eligible.map(({ contract, ...candidate }) => candidate), excluded,
     comparisonOnly: true, priceExcludedFromFairValue: true,
-    warning: declaredContract.provider === "yahoo" ? YAHOO_CLOSE.limitation : null
+    warning: null
   };
 }
 
@@ -154,15 +140,14 @@ export function auditValuationComparisonPrice({ outputPrice, ...request } = {}) 
 }
 
 /**
- * New-import selection requires an explicit series policy and maximum price
- * age. No Yahoo fallback is silently labelled split-only. A declared-provider
- * path supports truthful existing Yahoo lineage, not provider interchangeability.
+ * New-import selection requires an explicit Sharadar series policy and maximum
+ * price age. Unsupported providers fail closed.
  */
 export function selectValuationComparisonPrice(request = {}) {
   const { candidates, asOfDate, priceSymbol, quoteCurrency, policy, maxAgeCalendarDays } = request;
   if (!validDate(asOfDate)) return fail("invalid_price_date");
   if (!Number.isInteger(maxAgeCalendarDays) || maxAgeCalendarDays < 0) return fail("missing_explicit_maximum_price_age");
-  if (!["prefer_sharadar_split_only", "declared_provider_close"].includes(policy?.mode)) return fail("missing_explicit_price_policy");
+  if (policy?.mode !== "prefer_sharadar_split_only") return fail("missing_explicit_price_policy");
   const explicitContract = policy.mode === "declared_provider_close"
     ? valuationComparisonPriceContract(policy.source) : null;
   if (policy.mode === "declared_provider_close" && !explicitContract) return fail("unverified_declared_price_source");
@@ -191,7 +176,7 @@ export function selectValuationComparisonPrice(request = {}) {
  * split-only observation just because its row was read last. This is not a
  * total-return series and must never be used for Guru backtest returns.
  */
-export function mergeValuationComparisonHistory({ existing = [], incremental = [], priceSymbol, quoteCurrency, allowYahooClose = false } = {}) {
+export function mergeValuationComparisonHistory({ existing = [], incremental = [], priceSymbol, quoteCurrency } = {}) {
   const byDate = new Map();
   for (const [kind, points] of [["released_snapshot", existing], ["raw_price_point", incremental]]) {
     for (const [index, point] of points.entries()) {
@@ -206,10 +191,10 @@ export function mergeValuationComparisonHistory({ existing = [], incremental = [
   }
   return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, candidates]) => {
     const hasPaid = candidates.some((point) => valuationComparisonPriceContract(point.source).provider === "sharadar");
-    if (!hasPaid && !allowYahooClose) throw new Error(`No paid comparison-price source: ${priceSymbol}/${date}`);
+    if (!hasPaid) throw new Error(`No paid comparison-price source: ${priceSymbol}/${date}`);
     const resolved = selectValuationComparisonPrice({
       asOfDate: date, priceSymbol, quoteCurrency, candidates, maxAgeCalendarDays: 0,
-      policy: hasPaid ? { mode: "prefer_sharadar_split_only" } : { mode: "declared_provider_close", source: candidates[0].source }
+      policy: { mode: "prefer_sharadar_split_only" }
     });
     if (resolved.status !== "ready") throw new Error(`Comparison-price merge blocked: ${priceSymbol}/${date}/${resolved.reason}`);
     const selected = candidates.find((point) => point.id === resolved.selectedEvidenceId);

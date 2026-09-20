@@ -1505,7 +1505,7 @@ export function buildPublicHoldingsProxyPayload({
     quarterContributions: proxySimulation.quarterContributions,
     cache: {
       status: "refreshed",
-      source: "SEC EDGAR + public-sleeve adjusted close + SQLite"
+      source: "SEC EDGAR + Sharadar public-sleeve total-return history + SQLite"
     }
   };
   return { payload, failure: null, model: proxyModel };
@@ -1516,6 +1516,9 @@ function linkProxyToStrictFailure(proxyAttempt, strictPayload) {
   return {
     ...proxyAttempt.payload,
     generatedAt: strictPayload.generatedAt,
+    ...(strictPayload.refreshGeneration
+      ? { refreshGeneration: strictPayload.refreshGeneration }
+      : {}),
     proxy: {
       ...proxyAttempt.payload.proxy,
       strictFailureGeneratedAt: strictPayload.generatedAt
@@ -1812,7 +1815,7 @@ async function loadDisclosureBacktest(
         persist,
         allowCold,
         shareComputation: false,
-        refreshGeneration: "",
+        refreshGeneration,
         // A mutation-following recomputation must invalidate a pre-mutation
         // curve if the repaired generation still fails its audit gates.
         preserveReadyOnFailure: preserveReady
@@ -1846,6 +1849,7 @@ async function loadDisclosureBacktest(
   if (transactions.length < 2 || spyPoints.length < 30) {
     const payload = {
       generatedAt: new Date().toISOString(),
+      ...(refreshGeneration ? { refreshGeneration } : {}),
       status: "insufficient_data",
       guru: {
         id: guru.id,
@@ -1911,6 +1915,7 @@ async function loadDisclosureBacktest(
   if (rebalances.length < 1) {
     const payload = {
       generatedAt: new Date().toISOString(),
+      ...(refreshGeneration ? { refreshGeneration } : {}),
       status: "insufficient_data",
       guru: {
         id: guru.id,
@@ -1985,6 +1990,7 @@ async function loadDisclosureBacktest(
   const quarterContributions = buildQuarterContributions(rebalances, spyPoints, priceMaps, equity.at(-1)?.date || end);
   const payload = {
     generatedAt: new Date().toISOString(),
+    ...(refreshGeneration ? { refreshGeneration } : {}),
     status: "ready",
     guru: {
       id: guru.id,
@@ -2039,7 +2045,7 @@ async function loadDisclosureBacktest(
     quarterContributions,
     cache: {
       status: "refreshed",
-      source: "STOCK Act + Yahoo + SQLite"
+      source: "STOCK Act + Sharadar total-return history + SQLite"
     }
   };
 
@@ -2244,7 +2250,7 @@ export async function loadGuruBacktest(
         persist,
         allowCold,
         shareComputation: false,
-        refreshGeneration: "",
+        refreshGeneration,
         // A mutation-following recomputation must invalidate a pre-mutation
         // curve if the repaired generation still fails its audit gates.
         preserveReadyOnFailure: preserveReady
@@ -2303,6 +2309,7 @@ export async function loadGuruBacktest(
   ) {
     const payload = {
       generatedAt: new Date().toISOString(),
+      ...(refreshGeneration ? { refreshGeneration } : {}),
       status: "insufficient_data",
       guru: {
         id: guru.id,
@@ -2534,6 +2541,7 @@ export async function loadGuruBacktest(
   if (rebalances.length < 1 || coverageFailures.length) {
     const payload = {
       generatedAt: new Date().toISOString(),
+      ...(refreshGeneration ? { refreshGeneration } : {}),
       status: "insufficient_data",
       guru: {
         id: guru.id,
@@ -2655,6 +2663,7 @@ export async function loadGuruBacktest(
       : { payload: null, failure: null };
     const payload = {
       generatedAt: new Date().toISOString(),
+      ...(refreshGeneration ? { refreshGeneration } : {}),
       status: "insufficient_data",
       guru: {
         id: guru.id,
@@ -2745,6 +2754,7 @@ export async function loadGuruBacktest(
   const quarterContributions = simulation.quarterContributions;
   const payload = {
     generatedAt: new Date().toISOString(),
+    ...(refreshGeneration ? { refreshGeneration } : {}),
     status: "ready",
     guru: {
       id: guru.id,
@@ -2798,7 +2808,7 @@ export async function loadGuruBacktest(
         "Original/amendment ambiguity is resolved per reporting CIK; an orphan amendment blocks the combined quarter, and every exclusion remains in the audit ledger.",
         "Quarter contributions are generated from the same drifted units as the headline equity curve and must reconcile within the engine tolerance.",
         "Reported share changes are raw 13F observations, not corporate-action-adjusted proof of purchases or sales.",
-        "Yahoo adjusted-close history is mutable vendor data rather than an immutable institutional price archive; a missing delisting/suspension observation stops the result.",
+        "Sharadar total-return history is consumed from an immutable released snapshot; a missing delisting/suspension observation stops the result.",
         "Transaction costs, taxes, slippage, shorts, private holdings, and fund-level cash are excluded."
       ]
     },
@@ -2848,7 +2858,7 @@ export async function loadGuruBacktest(
     quarterContributions,
     cache: {
       status: "refreshed",
-      source: "SEC EDGAR + Yahoo adjusted close + SQLite"
+      source: "SEC EDGAR + Sharadar total-return history + SQLite"
     }
   };
 
