@@ -93,5 +93,14 @@ NODE
 fi
 
 chmod 0555 "$release_root"
-chown -R root:root "$release_root" "$runtime_db"
+chown -R root:root "$release_root"
+if ! id webapp >/dev/null 2>&1; then
+  echo "error: Elastic Beanstalk application user is missing" >&2
+  exit 1
+fi
+# The release databases are immutable research inputs. The main runtime copy is
+# deliberately separate: existing schema installers and bounded runtime caches
+# write to it as the unprivileged application user.
+chown webapp:webapp "$runtime_db"
+chmod 0600 "$runtime_db"
 echo "ThesisForge public data bootstrap is verified."

@@ -29,7 +29,7 @@
     "build:production-research": "node scripts/build-production-research-db.mjs",
     "test:research": "node --test scripts/public-research.test.mjs scripts/export-isrg-public-case.test.mjs && node scripts/build-public-research.mjs --check",
     "test:proxy": "node --test server/apiProxy.test.js",
-    "test:launch-prep": "node --test server/apiProxy.test.js server/asyncUserCache.test.js server/userPortfolioHandles.test.js server/portfolioHttp.test.js scripts/check-production-source.test.mjs scripts/isolated-flutter-build.test.mjs",
+    "test:launch-prep": "node --test server/apiProxy.test.js server/asyncUserCache.test.js server/userPortfolioHandles.test.js server/portfolioHttp.test.js scripts/check-production-source.test.mjs scripts/isolated-flutter-build.test.mjs scripts/thesisforge-bootstrap.test.mjs",
     "test:user-data": "node --test server/userDataPaths.test.js server/userDataBackup.test.js server/userPortfolioHandles.test.js server/loginActivity.test.js server/investmentWorkflow.test.js scripts/user-data-operations.test.mjs",
     "user-data": "node scripts/user-data-maintenance.mjs",
     "db:audit": "node scripts/database-release-audit.mjs",
