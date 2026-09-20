@@ -107,10 +107,10 @@ test("guru catalog has the audited manager population", () => {
 
   assert.equal(gurus.length, 42);
   assert.equal(managers.length, 33);
-  assert.equal(enabledManagers.length, 32);
+  assert.equal(enabledManagers.length, 31);
   assert.deepEqual(
     managers.filter((guru) => guru.disableSimulation).map((guru) => guru.id).sort(),
-    ["nick-sleep-qais-zakaria"]
+    ["john-stamas", "nick-sleep-qais-zakaria"]
   );
 });
 
@@ -149,7 +149,12 @@ test("the added managers have complete bilingual and strategy metadata", () => {
     const guru = gurus.find((candidate) => candidate.id === id);
     assert.ok(guru, `${id} is configured`);
     assert.equal(guru.type, "manager13f", `${id} uses the 13F pipeline`);
-    assert.equal(guru.disableSimulation, undefined, `${id} keeps simulation enabled`);
+    if (id === "john-stamas") {
+      assert.equal(guru.disableSimulation, true, `${id} fails closed for simulation`);
+      assert.match(guru.simulationNote, /price-coverage threshold/);
+    } else {
+      assert.equal(guru.disableSimulation, undefined, `${id} keeps simulation enabled`);
+    }
     assert.equal(guru.name, expected.name);
     assert.equal(guru.chineseName, expected.chineseName);
     assert.match(guru.chineseName, /[\u3400-\u9fff]/, `${id} has a Chinese display name`);

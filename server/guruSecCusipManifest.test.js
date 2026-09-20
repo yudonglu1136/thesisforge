@@ -13,7 +13,7 @@ import {
 test("SEC manifest supports an explicit addition scope without changing its default population", () => {
   const args = ["--output", "/tmp/manifest-test.json", "--generated-at", "2026-09-01T00:00:00Z"];
   assert.equal(parseArgs(args).managerIds, undefined);
-  assert.deepEqual(parseArgs([...args, "--manager-ids", "william-heard,john-stamas"]).managerIds,
+  assert.deepEqual(parseArgs([...args, "--include-disabled", "--manager-ids", "william-heard,john-stamas"]).managerIds,
     ["william-heard", "john-stamas"]);
 });
 

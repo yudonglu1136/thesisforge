@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { enabledManager13fGurus } from './gurus.js';
+import { gurus, enabledManager13fGurus } from './gurus.js';
 import { validateInvestmentRelease } from './investmentRuntimeConfig.js';
 import { applyGuruDelta, guruDeltaRowSha256, guruDeltaTables, newGuruIds, validateGuruDeltaContract } from '../scripts/investment-guru-delta.mjs';
 import { stageGuruDeltaRelease, validateGuruReleaseInstall, guruDeltaDiskProjection, copyGuruReleaseFile } from '../scripts/install-investment-guru-delta.mjs';
@@ -23,7 +23,7 @@ function insert(db,table,row) {
   db.prepare(`INSERT INTO ${table}(${columns.join(',')}) VALUES(${columns.map(() => '?').join(',')})`).run(...columns.map(c => row[c]));
 }
 function row(table,id,years,version='new') {
-  const guru = enabledManager13fGurus.find(g => g.id === id), generatedAt = version === 'new' ? '2026-09-13T00:00:00Z' : '2026-09-11T00:00:00Z';
+  const guru = gurus.find(g => g.id === id), generatedAt = version === 'new' ? '2026-09-13T00:00:00Z' : '2026-09-11T00:00:00Z';
   const payload = table === 'guru_snapshots' ? {id,cik:guru.cik,type:'manager13f',generatedAt}
     : {guru:{id},method:{years:String(years)},generatedAt,status:id === 'john-stamas' ? 'insufficient_data' : 'fixture',equityCurve:[]};
   return {guru_id:id,cik:guru.cik,type:'manager13f',years,generated_at:generatedAt,start_date:'2021-09-11',end_date:'2026-09-11',method_version:'fixture',payload_json:JSON.stringify(payload)};
@@ -133,12 +133,12 @@ test('a real drop below the 10 GiB floor after allocation stops before copying s
 test('exact public Guru delta atomically preserves unrelated data, failed caches, and idempotent file bytes',t => {
   const f = fixture(t), beforeBase = hash(f.baseFile), beforeDelta = hash(f.deltaFile);
   a.equal(validateGuruDeltaContract(f.contract),f.contract);
-  const result = applyGuruDelta(f.candidate,f.deltaFile,f.contract); a.equal(result.upserts,74); a.equal(result.deletes,62); a.equal(result.nonTargetWrites,0);
+  const result = applyGuruDelta(f.candidate,f.deltaFile,f.contract); a.equal(result.upserts,72); a.equal(result.deletes,60); a.equal(result.nonTargetWrites,0);
   const db = new DatabaseSync(f.candidate,{readOnly:true});
   a.equal(db.prepare('SELECT close FROM price_points').get().close,123.45);
   a.equal(db.prepare('SELECT payload_json FROM valuation_snapshots').get().payload_json,'{"cash":123}');
   a.equal(db.prepare("SELECT generated_at FROM guru_snapshots WHERE guru_id='bill-ackman'").get().generated_at,'2026-09-11T00:00:00Z');
-  a.equal(JSON.parse(db.prepare("SELECT payload_json FROM guru_backtests WHERE guru_id='john-stamas' AND years=5").get().payload_json).status,'insufficient_data');
+  a.equal(db.prepare("SELECT payload_json FROM guru_backtests WHERE guru_id='john-stamas' AND years=5").get(),undefined);
   db.close(); const after = hash(f.candidate);
   a.equal(applyGuruDelta(f.candidate,f.deltaFile,f.contract).status,'already_applied'); a.equal(hash(f.candidate),after);
   a.equal(hash(f.baseFile),beforeBase); a.equal(hash(f.deltaFile),beforeDelta);

@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { enabledManager13fGurus } from '../server/gurus.js';
+import { gurus, enabledManager13fGurus } from '../server/gurus.js';
 
 export const guruDeltaTables = Object.freeze({
   guru_snapshots: ['guru_id','cik','type','generated_at','payload_json'],
@@ -27,7 +27,8 @@ export function validateGuruDeltaContract(contract) {
     || stable([...(contract.scope?.snapshotGuruIds ?? [])].sort()) !== stable(newGuruIds)
     || stable(contract.scope?.years) !== '[5,10]') fail('invalid_guru_delta_contract');
   const gurus = contract.scope.cacheGuruIds;
-  if (!Array.isArray(gurus) || gurus.length !== 32 || new Set(gurus).size !== gurus.length
+  if (!Array.isArray(gurus) || gurus.length !== enabledManager13fGurus.length
+    || new Set(gurus).size !== gurus.length
     || stable([...gurus].sort()) !== stable(enabledManager13fGurus.map(guru => guru.id).sort())) fail('invalid_guru_delta_catalog');
   for (const [table,columns] of Object.entries(guruDeltaTables)) {
     const item = contract.tables[table], caches = table.startsWith('guru_backtest');
@@ -99,7 +100,7 @@ export function applyGuruDelta(candidateFile, deltaFile, contract) {
         if (row) {
           const payload = JSON.parse(row.payload_json);
           const identity = table === 'guru_snapshots' ? payload : payload.guru;
-          const catalog = enabledManager13fGurus.find(guru => guru.id === row.guru_id);
+          const catalog = gurus.find(guru => guru.id === row.guru_id && guru.type === 'manager13f');
           if (identity?.id !== row.guru_id || (table === 'guru_snapshots'
             && (row.cik !== catalog.cik || payload.cik !== catalog.cik || row.type !== 'manager13f' || payload.type !== row.type))) fail('guru_delta_payload_identity_mismatch');
           if (table.startsWith('guru_backtest') && (payload.guru?.id !== row.guru_id || Number(payload.method?.years) !== row.years)) fail('guru_delta_payload_identity_mismatch');

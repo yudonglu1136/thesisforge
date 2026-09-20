@@ -77,7 +77,7 @@ test('empty source expands actual catalog rather than hard-coded counts',()=>{
     assert.equal(r.curves.expected,enabledManager13fGurus.length*requiredGuruCurveWindows.length);
     for(const id of ['william-heard','evan-mcgoff','michael-cuggino','john-stamas']) {
       assert.ok(r.profiles.failures.some(x=>x.guruId===id&&x.failures.includes('missing_or_invalid_exposure')));
-      assert.deepEqual(r.curves.failures.filter(x=>x.guruId===id).map(x=>x.years),[5,10]);
+      assert.deepEqual(r.curves.failures.filter(x=>x.guruId===id).map(x=>x.years),id==='john-stamas'?[]:[5,10]);
     }
   }finally{db.close();}
 });

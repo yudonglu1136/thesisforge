@@ -637,6 +637,9 @@ export const gurus = [
     type: "manager13f",
     role: "Defender Capital CIO",
     thesisTag: "Defender Capital public long-equity portfolio",
+    disableSimulation: true,
+    simulationNote:
+      "Historical holdings remain available, but the public 13F copy simulation is disabled because the audited filing history does not meet the existing price-coverage threshold. No lower-quality or cash-substitute curve is published.",
     notes: [
       "Defender Capital, LLC. is the Form 13F filer associated with CIO John Stamas. This is not the similarly named Defender Capital Partners private-fund entity.",
       "The app tracks the firm's reportable long holdings, not John Stamas's personal assets; cash, shorts, private investments and intra-quarter trading are not disclosed by this series."
