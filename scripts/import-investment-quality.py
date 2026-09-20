@@ -5,6 +5,8 @@ Uses ART at fiscal Q4 (one non-overlapping TTM observation per fiscal year).
 The first published row wins even when a later restatement looks healthier.
 """
 import argparse
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import math
@@ -17,6 +19,27 @@ from pathlib import Path
 COLUMNS = ['ticker', 'dimension', 'date', 'reportperiod', 'fiscalperiod',
            'roic', 'invcapavg', 'ebit', 'revenue', 'opinc', 'fcf', 'ncfo',
            'netinc', 'capex']
+
+
+@contextmanager
+def pinned_fundamentals(source):
+    """Pin the published Fact OS generation; legacy Parquet dirs still work."""
+    catalog = source / 'manifests' / 'catalog.json'
+    if not catalog.is_file():
+        files = sorted(source.rglob('*.parquet'))
+        yield files
+        return
+    lock_path = source / 'sync' / 'readers.lock'
+    lock_path.parent.mkdir(exist_ok=True)
+    with lock_path.open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        manifest = json.loads(catalog.read_text())
+        item = manifest.get('datasets', {}).get('fundamentals') or {}
+        files = [(source / part['path']).resolve() for part in item.get('partitions', [])]
+        if not files or any(not path.is_file() or not path.is_relative_to(source.resolve()) for path in files):
+            raise ValueError('Published Fact OS fundamentals generation is incomplete')
+        yield files
+        fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def number(value):
@@ -80,6 +103,8 @@ def main():
     parser.add_argument('--source', required=True, type=Path)
     parser.add_argument('--db', required=True, type=Path)
     args = parser.parse_args()
+    args.source = args.source.resolve()
+    args.db = args.db.resolve()
     if not args.db.is_file():
         raise ValueError('Existing runtime database required')
     db = sqlite3.connect(args.db, timeout=30)
@@ -88,11 +113,14 @@ def main():
     aliases = {}
     for ticker, source in mappings:
         aliases.setdefault(source, set()).add(ticker)
-    data = ds.dataset(args.source, format='parquet', partitioning='hive')
-    rows = data.to_table(columns=COLUMNS, filter=(ds.field('dimension') == 'ART') & ds.field('ticker').isin(list(aliases))).to_pylist()
+    with pinned_fundamentals(args.source) as source_paths:
+        data = ds.dataset([str(path) for path in source_paths], format='parquet')
+        rows = data.to_table(columns=COLUMNS, filter=(ds.field('dimension') == 'ART') & ds.field('ticker').isin(list(aliases))).to_pylist()
+        source_files = [(str(path.relative_to(args.source)), path.stat().st_size) for path in source_paths]
     records = [o for r in first_reports(rows) for ticker in aliases[r['ticker']] if (o := observation(r, ticker)) is not None]
     if not records:
         raise ValueError('No matched annual observations; existing quality data was not changed')
+    source_generation = hashlib.sha256(json.dumps(source_files).encode()).hexdigest()
     with db:
         db.execute('''CREATE TABLE IF NOT EXISTS investment_quality_annual (
           ticker TEXT NOT NULL, source_ticker TEXT NOT NULL, fiscal_year INTEGER NOT NULL,
@@ -100,18 +128,22 @@ def main():
           roic REAL, operating_margin REAL, fcf_margin REAL, cash_conversion REAL,
           raw_roic REAL, ebit REAL, invested_capital_avg REAL, revenue REAL, operating_income REAL,
           cfo REAL, capex REAL, net_income REAL, issues_json TEXT NOT NULL, source_hash TEXT NOT NULL,
-          PRIMARY KEY(ticker,report_period))''')
+          PRIMARY KEY(ticker,report_period,available_at,source_hash))''')
         db.execute('CREATE INDEX IF NOT EXISTS investment_quality_pit ON investment_quality_annual(ticker,available_at,fiscal_year)')
         db.execute('CREATE TABLE IF NOT EXISTS investment_quality_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)')
-        # A single transaction replaces ONLY this importer-owned factor layer.
-        db.execute('DELETE FROM investment_quality_annual')
-        db.executemany('INSERT INTO investment_quality_annual VALUES (' + ','.join('?' for _ in range(20)) + ')', records)
+        before = db.execute('SELECT COUNT(*) FROM investment_quality_annual').fetchone()[0]
+        # Append only. The reader applies the historical first-publication rule,
+        # so later vendor corrections remain auditable instead of rewriting PIT.
+        db.executemany('INSERT OR IGNORE INTO investment_quality_annual VALUES (' + ','.join('?' for _ in range(20)) + ')', records)
+        after = db.execute('SELECT COUNT(*) FROM investment_quality_annual').fetchone()[0]
         meta = {'source': 'Jansen / Sharadar SF1', 'version': 'annual-quality-v1',
                 'importedAt': datetime.now(timezone.utc).isoformat(),
+                'sourceGeneration': source_generation,
                 'roicDefinition': 'Pre-tax EBIT / average invested capital. Invested capital = debt + assets - intangibles - cash - current liabilities.',
                 'selection': 'Earliest date per source ticker/report period; ART fiscal Q4 only; never MR dimensions.',
-                'rows': len(records), 'tickers': len(set(r[0] for r in records))}
-        db.executemany('INSERT OR REPLACE INTO investment_quality_metadata VALUES (?,?)', [(k,json.dumps(v)) for k,v in meta.items()])
+                'rows': after, 'inserted': after-before, 'tickers': len(set(r[0] for r in records))}
+        db.executemany('INSERT OR IGNORE INTO investment_quality_metadata VALUES (?,?)',
+                       [(f'{source_generation}:{k}', json.dumps(v)) for k,v in meta.items()])
     print(json.dumps(meta, indent=2))
     db.close()
 

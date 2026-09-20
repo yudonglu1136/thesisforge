@@ -675,7 +675,7 @@ export function createSystemHealth({
       ok: !["failed", "unknown"].includes(status),
       degraded: status === "stale",
       status,
-      service: "guru-analysis-dashboard",
+      service: "thesisforge-api",
       database: {
         ...publicDatabase,
         state: databaseState,
@@ -828,7 +828,7 @@ export function createSystemHealth({
       ok: status !== "failed" && status !== "error",
       status,
       service: {
-        name: "guru-analysis-dashboard",
+        name: "thesisforge-api",
         runtime: "node",
         nodeVersion: process.version,
         pid: process.pid,

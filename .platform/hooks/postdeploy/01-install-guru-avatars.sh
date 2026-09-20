@@ -2,7 +2,7 @@
 set -euo pipefail
 
 app_dir="${GURU_APP_DIR:-/var/app/current}"
-runtime_db="${SQLITE_DB_PATH:-/var/app/data/guru-analysis.sqlite}"
+runtime_db="${SQLITE_DB_PATH:-/var/app/data/thesisforge.sqlite}"
 
 if [ ! -d "${app_dir}" ]; then
   echo "error: application directory is missing: ${app_dir}" >&2

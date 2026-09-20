@@ -17,7 +17,8 @@ const browserLocationPath = path.join(rootDir, 'lib', 'browser_location_web.dart
 
 function inlineBootScript() {
   const html = fs.readFileSync(indexPath, 'utf8');
-  const match = html.match(/<body>\s*<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  const match = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)]
+    .find((entry) => entry[1].includes('flutter-cache-migration-v2'));
   assert.ok(match, 'web/index.html must contain the inline Flutter bootstrap');
   return match[1];
 }
@@ -42,10 +43,23 @@ function createBrowserHarness(url, storage = new Map()) {
       return true;
     },
   };
-  const window = { location, localStorage, caches: cacheStorage };
+  const loadingShell = { dataset: {}, remove: () => {} };
+  const window = {
+    location,
+    localStorage,
+    caches: cacheStorage,
+    addEventListener: () => {},
+    requestAnimationFrame: (callback) => callback(),
+    setTimeout: () => 0,
+  };
+  class MutationObserver {
+    observe() {}
+    disconnect() {}
+  }
   const context = {
     URL,
     Promise,
+    MutationObserver,
     window,
     localStorage,
     navigator: {
@@ -63,6 +77,8 @@ function createBrowserHarness(url, storage = new Map()) {
     },
     caches: cacheStorage,
     document: {
+      getElementById: (id) => (id === 'app-loading-shell' ? loadingShell : null),
+      querySelector: () => null,
       createElement: () => ({}),
       body: {
         appendChild: () => {

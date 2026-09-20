@@ -52,7 +52,7 @@ export function validateGuruReleaseInstall(p,releaseRoot=defaultRoot) {
     || JSON.stringify([...(d.tables ?? [])].sort()) !== JSON.stringify(Object.keys(guruDeltaTables).sort())) fail('invalid_guru_delta_file');
   const url = new URL(d.downloadUrl);
   if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash
-    || !['guru-analysis-dashboard-eb-378477120101-us-east-1.s3.amazonaws.com','guru-analysis-dashboard-eb-378477120101-us-east-1.s3.us-east-1.amazonaws.com'].includes(url.hostname)
+    || !['thesisforge-production-378477120101-us-east-1.s3.amazonaws.com','thesisforge-production-378477120101-us-east-1.s3.us-east-1.amazonaws.com'].includes(url.hostname)
     || url.pathname !== `/investment-releases/${p.releaseId}/delta.sqlite`) fail('invalid_guru_delta_object');
   const base = p.baseManifest;
   if (!hex(base?.sha256) || !/^redesign-\d{8}-v[1-9]\d*$/.test(base.releaseId ?? '')
@@ -217,7 +217,7 @@ export async function stageGuruDeltaRelease(p,{releaseRoot=defaultRoot,uid=proce
 export async function installInvestmentGuruDelta(p) {
   if (process.platform !== 'linux' || process.getuid() !== 0) fail('guru_operator_root_required');
   const env = JSON.parse(execFileSync('/opt/elasticbeanstalk/bin/get-config',['environment'],{encoding:'utf8'}));
-  if (env.NODE_ENV !== 'production' || env.SQLITE_DB_PATH !== '/var/app/data/guru-analysis.sqlite'
+  if (env.NODE_ENV !== 'production' || env.SQLITE_DB_PATH !== '/var/app/data/thesisforge.sqlite'
     || ![p.baseManifest?.path,path.join(defaultRoot,p.releaseId,'manifest.json')].includes(env.INVESTMENT_RELEASE_MANIFEST_PATH)) fail('guru_wrong_live_runtime');
   os.setPriority(process.pid,10); execFileSync('/usr/bin/ionice',['-c','3','-p',String(process.pid)]);
   const result = await stageGuruDeltaRelease(p,{progress:item => console.log(JSON.stringify(item))});

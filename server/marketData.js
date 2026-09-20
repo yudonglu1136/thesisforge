@@ -268,7 +268,7 @@ async function fetchYahooSeriesOnce(symbol, start, end, {
   const url = `https://${hostname}/v8/finance/chart/${encoded}?period1=${unix(start)}&period2=${unix(end) + 86400}&interval=1d`;
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "Mozilla/5.0 guru-analysis-dashboard/0.1",
+      "User-Agent": "Mozilla/5.0 thesisforge/0.1",
       "Accept": "application/json"
     }
   });

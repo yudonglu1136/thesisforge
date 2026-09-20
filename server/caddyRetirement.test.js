@@ -60,7 +60,7 @@ test('retired Caddy handler returns no-store JSON 410 without any forwarding or 
   assert.doesNotMatch(config, /8791/);
   assert.match(apiConfig, /handle \{\s*reverse_proxy 127\.0\.0\.1:8787\s*\}/);
   assert.ok(apiConfig.indexOf('handle @retired_product') < apiConfig.indexOf('reverse_proxy 127.0.0.1:8787'));
-  assert.match(config, /handle \/api\/\* \{\s*reverse_proxy http:\/\/guru-analysis-api-prod-378477120101\.us-east-1\.elasticbeanstalk\.com/);
+  assert.match(config, /handle \/api\/\* \{\s*reverse_proxy http:\/\/thesisforge-api-prod-378477120101\.us-east-1\.elasticbeanstalk\.com/);
 });
 
 test('Caddy adapts the actual configuration when the operator supplies its binary', t => {

@@ -1,6 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { assert, finite, ratio, change, isoDate, signature, percentile, personalScenarioPackage } from './investmentMath.js';
 import { researchGuidanceReview } from './investmentGuidance.js';
+import { valuationModelRoute } from './valuationModelRoute.js';
+import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrices.js';
 
 export const SOURCE_ADAPTER_VERSION='investment-pit-adapter-v1';
 const metricNames=['revenueGrowth','operatingMargin','fcfMargin','capexIntensity'];
@@ -37,7 +39,7 @@ export function sourceNode(row) {
       modelVersion:row.model_version,hash:signature({input,output}),record,ttmRecord:input.trailingTwelveMonthsSourceRecord??null},
     publishedFairValue:finite(output.fairValue)?output.fairValue:null,
     publishedFormula:input.valuationSemantics?.fairValueFormula??output.method??null,
-    score:input.valuationSemantics?.scoreInputs??{},guidance:input.guidance??{},input,
+    score:{...(input.valuationSemantics?.scoreInputs??{}),modelRoute:valuationModelRoute(input.valuationSemantics?.scoreInputs)},guidance:input.guidance??{},input,
   };
 }
 
@@ -55,8 +57,9 @@ export class InvestmentSource {
     const s=snapshot??readJson(this.db.prepare('SELECT payload_json FROM valuation_ticker_snapshots WHERE ticker=?').get(ticker));
     const prices=(s?.priceHistory??[]).filter(x=>x.date<=asOf && finite(x.close)&&x.close>0).sort((a,b)=>compare(a.date,b.date));
     const p=prices.at(-1);
-    if(!p) return {value:null,date:null,source:null,currency:s?.currency??null};
-    return {value:p.close,date:p.date,source:p.source??s.priceSource??'stored ticker prices',currency:s.currency,adjustment:'stored published close; no rescaling'};
+    const stored=p?{value:p.close,date:p.date,source:p.source??s.priceSource??'stored ticker prices',currency:s.currency,adjustment:'stored published close; no rescaling'}:
+      {value:null,date:null,source:null,currency:s?.currency??null};
+    return preferInvestmentQuote(investmentCurrentQuotes(this,[ticker],asOf).get(ticker),stored);
   }
   reviewGuidance(ticker,node) {
     if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='valuation_pit_guidance'").get())return null;
@@ -110,11 +113,12 @@ export class InvestmentSource {
       AND (guidance_max_observed_at IS NULL OR guidance_max_observed_at<=as_of_date))
       SELECT ticker, fiscal_period, as_of_date,
       json_extract(input_json,'$.financial.revenue_growth_pct') growth,
-      json_extract(input_json,'$.valuationSemantics.scoreInputs.modelRoute') route
+      json_extract(input_json,'$.valuationSemantics.scoreInputs') score
       FROM ranked WHERE n=1 ORDER BY ticker`).all(asOf);
     const seen=new Set(); const eligible=[];
     for(const r of rows) {if(seen.has(r.ticker))continue;seen.add(r.ticker);
-      if(r.route==='operating_company'&&finite(r.growth)&&r.growth>=15) eligible.push({ticker:r.ticker,period:r.fiscal_period,availableAt:r.as_of_date,revenueGrowth:r.growth/100});}
+      const route=valuationModelRoute(JSON.parse(r.score??'{}'));
+      if(['operating_company','multi_method_growth','revenue_stage'].includes(route)&&finite(r.growth)&&r.growth>=15) eligible.push({ticker:r.ticker,period:r.fiscal_period,availableAt:r.as_of_date,revenueGrowth:r.growth/100});}
     return eligible.sort((a,b)=>compare(a.ticker,b.ticker));
   }
   guruCatalog() {

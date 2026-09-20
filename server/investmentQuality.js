@@ -6,10 +6,20 @@ export function opportunityQuality(source, asOf) {
   isoDate(asOf);
   const result = new Map();
   if (!source.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='investment_quality_annual'").get()) return result;
-  const rows = source.db.prepare(`WITH visible AS (
-    SELECT *, ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY fiscal_year DESC,report_period DESC) n
-    FROM investment_quality_annual WHERE available_at<=? AND report_period<=? AND dimension='ART')
-    SELECT * FROM visible WHERE n<=10 ORDER BY ticker,fiscal_year DESC,report_period DESC`).all(asOf,asOf);
+  const rows = source.db.prepare(`WITH eligible AS (
+    SELECT *, ROW_NUMBER() OVER(
+      PARTITION BY ticker,report_period
+      ORDER BY available_at,source_hash
+    ) publication_n
+    FROM investment_quality_annual
+    WHERE available_at<=? AND report_period<=? AND dimension='ART'
+  ), visible AS (
+    SELECT *, ROW_NUMBER() OVER(
+      PARTITION BY ticker ORDER BY fiscal_year DESC,report_period DESC
+    ) n
+    FROM eligible WHERE publication_n=1
+  )
+  SELECT * FROM visible WHERE n<=10 ORDER BY ticker,fiscal_year DESC,report_period DESC`).all(asOf,asOf);
   for (const r of rows) {
     if (!result.has(r.ticker)) result.set(r.ticker, {source:'Jansen / Sharadar SF1',version:'annual-quality-v1',asOf,years:[],status:'available'});
     const q=result.get(r.ticker);

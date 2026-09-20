@@ -15,7 +15,7 @@ for(const g of targets){
  for(const raw of [g.cik,...(g.alternateCiks??[])].filter(Boolean)){
   const cik=String(raw).padStart(10,'0'),url=`https://data.sec.gov/submissions/CIK${cik}.json`;
   try{
-   const res=await fetch(url,{headers:{'User-Agent':process.env.SEC_USER_AGENT||'guru-analysis-dashboard/0.1 contact@example.com'},signal:AbortSignal.timeout(15000)});
+   const res=await fetch(url,{headers:{'User-Agent':process.env.SEC_USER_AGENT||'ThesisForge/0.1 contact@thesisforge.tech'},signal:AbortSignal.timeout(15000)});
    if(!res.ok)throw Error('sec_http_'+res.status);
    const body=await res.text(),payload=JSON.parse(body);if(String(payload.cik).padStart(10,'0')!==cik)throw Error('cik_mismatch');
    fs.writeFileSync(path.join(out,`${g.id}-${cik}.json`),body,{flag:'wx',mode:0o600});

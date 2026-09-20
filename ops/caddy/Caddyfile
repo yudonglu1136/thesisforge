@@ -6,9 +6,9 @@ www.thesisforge.tech {
   encode zstd gzip
 
   handle /api/* {
-    reverse_proxy http://guru-analysis-api-prod-378477120101.us-east-1.elasticbeanstalk.com {
+    reverse_proxy http://thesisforge-api-prod-378477120101.us-east-1.elasticbeanstalk.com {
       header_up -Origin
-      header_up Host guru-analysis-api-prod-378477120101.us-east-1.elasticbeanstalk.com
+      header_up Host thesisforge-api-prod-378477120101.us-east-1.elasticbeanstalk.com
     }
   }
 

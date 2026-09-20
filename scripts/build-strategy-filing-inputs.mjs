@@ -19,7 +19,7 @@ try {
         for(const part of parts) {
           const url=part.xmlUrl;
           if(!url||new URL(url).hostname!=='www.sec.gov')throw new Error('unverified_sec_url');
-          const response=await fetch(url,{headers:{'User-Agent':process.env.SEC_USER_AGENT||'guru-analysis-dashboard/0.1 contact@example.com'},signal:AbortSignal.timeout(15000)});
+          const response=await fetch(url,{headers:{'User-Agent':process.env.SEC_USER_AGENT||'ThesisForge/0.1 contact@thesisforge.tech'},signal:AbortSignal.timeout(15000)});
           if(!response.ok)throw new Error('sec_http_'+response.status);
           const xml=await response.text(),hash=crypto.createHash('sha256').update(xml).digest('hex');
           fs.writeFileSync(path.join(output,part.accessionNumber+'.xml'),xml,{flag:'wx',mode:0o600});

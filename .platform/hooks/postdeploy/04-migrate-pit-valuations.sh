@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-runtime_db="${SQLITE_DB_PATH:-/var/app/data/guru-analysis.sqlite}"
+runtime_db="${SQLITE_DB_PATH:-/var/app/data/thesisforge.sqlite}"
 runtime_dir="$(dirname "${runtime_db}")"
 artifact="${PIT_MIGRATION_ARTIFACT:-/var/app/current/server/data/valuation-pit-migration.sqlite.gz}"
 manifest="${PIT_MIGRATION_MANIFEST:-/var/app/current/server/data/valuation-pit-migration.manifest.json}"
@@ -12,7 +12,7 @@ backup_db="${backup_dir}/guru-analysis-pre-pit-${timestamp}.sqlite"
 backup_gz="${backup_db}.gz"
 migration_db="${runtime_dir}/.valuation-pit-migration-${timestamp}.sqlite"
 log_file="${PIT_LOG_FILE:-/var/log/pit-valuation-migration.log}"
-backup_bucket="${PIT_BACKUP_BUCKET:-guru-analysis-dashboard-eb-378477120101-us-east-1}"
+backup_bucket="${PIT_BACKUP_BUCKET:-thesisforge-production-378477120101-us-east-1}"
 
 exec > >(tee -a "${log_file}") 2>&1
 

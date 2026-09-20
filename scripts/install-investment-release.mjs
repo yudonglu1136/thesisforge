@@ -36,7 +36,7 @@ export function validateInstallPayload(p) {
    ||!validDate(v.verifiedAt))fail('exact_producer_full_validation_required');
   const url=new URL(f.downloadUrl);
   if(url.protocol!=='https:'||url.username||url.password||url.port||url.hash
-   ||!['guru-analysis-dashboard-eb-378477120101-us-east-1.s3.amazonaws.com','guru-analysis-dashboard-eb-378477120101-us-east-1.s3.us-east-1.amazonaws.com'].includes(url.hostname)
+   ||!['thesisforge-production-378477120101-us-east-1.s3.amazonaws.com','thesisforge-production-378477120101-us-east-1.s3.us-east-1.amazonaws.com'].includes(url.hostname)
    ||url.pathname!==`/investment-releases/${p.releaseId}/${key}.sqlite`)fail('invalid_private_object');
  }
  return path.join(root,p.releaseId);
@@ -200,7 +200,7 @@ export async function installInvestmentRelease(p) {
  const directory=validateInstallPayload(p);
  if(process.platform!=='linux'||process.getuid()!==0)fail('operator_root_required');
  const env=JSON.parse(execFileSync('/opt/elasticbeanstalk/bin/get-config',['environment'],{encoding:'utf8'}));
- if(env.SQLITE_DB_PATH!=='/var/app/data/guru-analysis.sqlite'||env.NODE_ENV!=='production')fail('wrong_runtime');
+ if(env.SQLITE_DB_PATH!=='/var/app/data/thesisforge.sqlite'||env.NODE_ENV!=='production')fail('wrong_runtime');
  if(p.resume) {
   try{process.kill(p.previousInstallerPid,0);fail('previous_installer_still_running');}
   catch(e){if(e.code!=='ESRCH')throw e;}

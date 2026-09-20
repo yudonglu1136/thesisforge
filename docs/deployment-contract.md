@@ -41,7 +41,11 @@ If `dig +short www.thesisforge.tech A` returns the Lightsail IP, the frontend is
 
 ## Vercel Project
 
-Project: `fundamental-analysis`
+Project: `thesisforge`
+
+AWS application: `thesisforge-api`
+
+AWS production environment: `thesisforge-api-prod`
 
 Vercel builds the Flutter app with:
 

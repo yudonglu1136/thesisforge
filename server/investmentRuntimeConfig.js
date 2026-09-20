@@ -11,7 +11,8 @@ export const INVESTMENT_REQUIRED_SOURCE_TABLES = Object.freeze(['valuation_pit_m
   'valuation_ticker_snapshots', 'guru_snapshots', 'guru_exposure_snapshots', 'guru_backtests', 'price_points',
   'investment_quality_annual', 'investment_quality_metadata']);
 export const INVESTMENT_ALLOWED_SOURCE_TABLES = Object.freeze([...INVESTMENT_REQUIRED_SOURCE_TABLES,
-  'guru_backtest_proxies', 'valuation_pit_source_metadata', 'valuation_pit_price_observations', 'valuation_snapshots', 'sqlite_sequence', 'sqlite_stat1', 'sqlite_stat4']);
+  'guru_backtest_proxies', 'valuation_pit_source_metadata', 'valuation_pit_price_observations', 'valuation_snapshots',
+  'investment_current_quotes', 'investment_current_quote_metadata', 'sqlite_sequence', 'sqlite_stat1', 'sqlite_stat4']);
 export const verifiedInvestmentOwner = owner => typeof owner === 'string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(owner);
 const within = (parent, child) => child.startsWith(`${parent}${path.sep}`);

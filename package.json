@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently -k \"npm run server\" \"npm run client\"",
     "client": "bash scripts/flutter-dev.sh",
-    "server": "API_AUTH_DEV_BYPASS=true node server/index.js",
+    "server": "bash scripts/local-server-dev.sh",
     "hydrate:db": "node server/hydrateDatabase.js",
     "import:strategy:db": "node scripts/import-strategy-database.mjs",
     "import:hedge": "node scripts/import-hedge-data.mjs",
@@ -26,6 +26,7 @@
     "refresh:dividends": "node server/refreshDividendCalendar.js",
     "refresh:13f": "node server/refreshThirteenF.js",
     "build:research": "node scripts/build-public-research.mjs",
+    "build:production-research": "node scripts/build-production-research-db.mjs",
     "test:research": "node --test scripts/public-research.test.mjs scripts/export-isrg-public-case.test.mjs && node scripts/build-public-research.mjs --check",
     "test:proxy": "node --test server/apiProxy.test.js",
     "test:launch-prep": "node --test server/apiProxy.test.js server/asyncUserCache.test.js server/userPortfolioHandles.test.js server/portfolioHttp.test.js scripts/check-production-source.test.mjs scripts/isolated-flutter-build.test.mjs",

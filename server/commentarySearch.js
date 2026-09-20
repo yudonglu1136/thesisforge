@@ -146,7 +146,7 @@ async function fetchGoogleNews(query) {
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "Mozilla/5.0 guru-analysis-dashboard/0.1",
+      "User-Agent": "Mozilla/5.0 thesisforge/0.1",
       "Accept": "application/rss+xml,text/xml,*/*"
     }
   });
@@ -182,7 +182,7 @@ async function fetchGdelt(query, window) {
 
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "Mozilla/5.0 guru-analysis-dashboard/0.1",
+      "User-Agent": "Mozilla/5.0 thesisforge/0.1",
       "Accept": "application/json"
     }
   });

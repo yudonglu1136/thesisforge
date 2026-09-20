@@ -41,9 +41,8 @@ deployment split unless the user explicitly changes the architecture.
 - Before declaring storage work complete, run `npm run audit:storage-layout`
   and the full Fact OS storage audit. A new write expected to exceed 2 GiB needs
   an explicit size estimate, target path, retention plan, and free-space check.
-- The external Vercel project is still named `fundamental-analysis`; that remote
-  deployment identifier is not permission to recreate a local folder with the
-  same name.
+- The external Vercel project is named `thesisforge`; never recreate the retired
+  local `fundamental-analysis` or `guru-intelligence` project roots.
 
 ## Deployment Ownership
 
@@ -53,10 +52,9 @@ deployment split unless the user explicitly changes the architecture.
 - Vercel serves the Flutter web build from `dist/`.
 - Vercel proxies only `/api/*` to the AWS Elastic Beanstalk API.
 - After a production deploy, both `https://www.thesisforge.tech` and `https://thesisforge.tech` must alias to the same latest Vercel deployment.
-- The confirmed 2026-08-30 production baseline is Vercel deployment
-  `fundamental-analysis-cqreyaz5s-yudonglu1136s-projects.vercel.app`, built from
-  GitHub `trunk` commit `1a630a8`. Both public domains must remain on this
-  deployment until a newer verified `trunk` deployment replaces it.
+- Production deployments belong to the Vercel project `thesisforge` and the AWS
+  Elastic Beanstalk application `thesisforge-api`; both public domains must
+  remain on one verified `trunk` deployment.
 - A split alias is a release blocker. After every production deployment, run
   `vercel inspect` for both public domains and confirm that they return the same
   deployment ID and URL. If either domain is stale, explicitly assign both
@@ -86,7 +84,7 @@ deployment split unless the user explicitly changes the architecture.
 
 ## Required Vercel Production Env
 
-The Vercel project `fundamental-analysis` must have these production env vars:
+The Vercel project `thesisforge` must have these production env vars:
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`

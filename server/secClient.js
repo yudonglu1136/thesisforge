@@ -51,7 +51,7 @@ let dashboardMemoryCache = null;
 let dashboardMemoryLoad = null;
 const insiderForm4FilingLimit = Math.max(10, Math.min(80, Number(process.env.INSIDER_FORM4_FILINGS || 30)));
 const secUserAgent =
-  process.env.SEC_USER_AGENT || "guru-analysis-dashboard/0.1 contact@example.com";
+  process.env.SEC_USER_AGENT || "ThesisForge/0.1 contact@thesisforge.tech";
 const secRequestTimeoutMs = Math.max(
   5000,
   Math.min(120000, Number(process.env.SEC_REQUEST_TIMEOUT_MS || 30000))
@@ -182,7 +182,7 @@ async function getText(url) {
 async function getPublicText(url) {
   const response = await fetchWithTimeout(url, {
     headers: {
-      "User-Agent": "guru-analysis-dashboard/0.1",
+      "User-Agent": "ThesisForge/0.1 contact@thesisforge.tech",
       "Accept": "text/html, application/json, text/plain, */*"
     }
   }, publicRequestTimeoutMs);

@@ -64,7 +64,7 @@ function installPayload(f) {
   const tables = [...Object.keys(guruDeltaTables),'price_points','valuation_snapshots'];
   return {version:'investment-guru-install-v1',releaseId,cutoff:'2026-09-11',sourceAlignment:'pass',rollbackVerified:true,rollbackSnapshot:'snap-123abc',
     measuredJournalBytes:64*1024,baseManifest:{path:f.manifestPath,releaseId:f.base.releaseId,sha256:hash(f.manifestPath)},patch:f.contract,
-    delta:{...info(f.deltaFile),tables:Object.keys(guruDeltaTables),downloadUrl:`https://guru-analysis-dashboard-eb-378477120101-us-east-1.s3.amazonaws.com/investment-releases/${releaseId}/delta.sqlite`},
+    delta:{...info(f.deltaFile),tables:Object.keys(guruDeltaTables),downloadUrl:`https://thesisforge-production-378477120101-us-east-1.s3.amazonaws.com/investment-releases/${releaseId}/delta.sqlite`},
     research:{...result,tables,producerValidation:{version:'sqlite-full-validation-v1',...result,integrityCheck:'ok',foreignKeyCheck:'ok',schema:'pass',privateDataExcluded:true,
       nonGuruTablesUnchanged:true,nonTargetGuruRowsUnchanged:true,baseResearchSha256:f.contract.baseResearch.sha256,verifiedAt:'2026-09-13T00:00:00Z'}}};
 }

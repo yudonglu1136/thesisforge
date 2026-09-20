@@ -8,11 +8,11 @@ snapshot_id="${GURU_PRICE_REPAIR_SNAPSHOT_ID:-}"
 encrypted_snapshot_id="${GURU_PRICE_REPAIR_ENCRYPTED_SNAPSHOT_ID:-}"
 source_volume_id="${GURU_PRICE_REPAIR_SOURCE_VOLUME_ID:-}"
 release_id="${GURU_PRICE_REPAIR_RELEASE_ID:-}"
-runtime_db="${SQLITE_DB_PATH:-/var/app/data/guru-analysis.sqlite}"
+runtime_db="${SQLITE_DB_PATH:-/var/app/data/thesisforge.sqlite}"
 runtime_dir="$(dirname "${runtime_db}")"
 app_dir="${GURU_APP_DIR:-/var/app/current}"
 operator="${GURU_PRICE_REPAIR_OPERATOR:-eb-postdeploy}"
-backup_bucket="${PIT_BACKUP_BUCKET:-guru-analysis-dashboard-eb-378477120101-us-east-1}"
+backup_bucket="${PIT_BACKUP_BUCKET:-thesisforge-production-378477120101-us-east-1}"
 log_file="${GURU_PRICE_REPAIR_LOG_FILE:-/var/log/guru-price-repair.log}"
 
 exec > >(tee -a "${log_file}") 2>&1
@@ -21,7 +21,7 @@ if [ -z "${s3_uri}${expected_sha}${snapshot_id}${encrypted_snapshot_id}${source_
   echo "no Guru price-repair artifact configured; skipping"
   exit 0
 fi
-if [[ ! "${s3_uri}" =~ ^s3://guru-analysis-dashboard-eb-378477120101-us-east-1/guru-price-repairs/[A-Za-z0-9._/-]+\.json\.gz$ ]]; then
+if [[ ! "${s3_uri}" =~ ^s3://thesisforge-production-378477120101-us-east-1/guru-price-repairs/[A-Za-z0-9._/-]+\.json\.gz$ ]]; then
   echo "error: Guru price-repair S3 URI is outside the private release prefix"
   exit 1
 fi
@@ -117,7 +117,7 @@ print(matches[0] if len(matches)==1 else "")
   trap cleanup EXIT
   chmod 600 "${artifact_gz}" "${artifact_json}"
 
-  repair_bucket="guru-analysis-dashboard-eb-378477120101-us-east-1"
+  repair_bucket="thesisforge-production-378477120101-us-east-1"
   repair_key="${s3_uri#s3://${repair_bucket}/}"
   remote_size="$(aws s3api head-object --bucket "${repair_bucket}" --key "${repair_key}" \
     --query ContentLength --output text)"

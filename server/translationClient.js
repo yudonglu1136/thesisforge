@@ -160,7 +160,7 @@ async function translateChunkWithGoogle(chunk) {
       const response = await fetch(url, {
         headers: {
           "accept": "application/json,text/plain,*/*",
-          "user-agent": "guru-analysis-dashboard/0.1"
+          "user-agent": "thesisforge/0.1"
         }
       });
       if (!response.ok) throw new Error(`translation upstream ${response.status}`);

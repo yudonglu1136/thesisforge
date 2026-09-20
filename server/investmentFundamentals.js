@@ -2,6 +2,7 @@ import { finite, isoDate } from './investmentMath.js';
 import { sourceNode, tickerKey } from './investmentSource.js';
 import { opportunityQuality } from './investmentQuality.js';
 import { buildOpportunities } from './investmentOpportunities.js';
+import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrices.js';
 
 export const FUNDAMENTALS_VERSION = 'fundamental-changes-v1';
 const cache = new WeakMap();
@@ -112,6 +113,7 @@ export function buildFundamentals(source,asOf) {
     json_extract(payload_json,'$.currency') currency,json_extract(payload_json,'$.priceSource') priceSource,
     json_extract(payload_json,'$.priceHistory') prices FROM valuation_ticker_snapshots`).all().map(s=>[s.ticker,s]));
   const snapshots=state.snapshots;
+  const currentQuotes=investmentCurrentQuotes(source,[...groups.keys()],asOf);
   for(const [ticker,group] of groups) {
     let n,p;
     try{n=compactNode(state,group[0]);}catch{invalid++;continue;}
@@ -121,20 +123,23 @@ export function buildFundamentals(source,asOf) {
     const metrics={...n.metrics,revenueGrowth:n.source.dimension==='ARQ'?n.metrics.revenueGrowth:null};
     const changes=comparable?Object.fromEntries(keys.map(k=>[k,delta(n.metrics[k],p.metrics[k])])):nullMetrics();
     const snap=snapshots.get(ticker);
-    const price=priceAt(snap,asOf);
-    const priceAgeDays=price?Math.floor((Date.parse(asOf)-Date.parse(price.date))/86400000):null;
+    const storedPrice=priceAt(snap,asOf);
+    const price=preferInvestmentQuote(currentQuotes.get(ticker),storedPrice?{
+      value:storedPrice.close,date:storedPrice.date,source:storedPrice.source??snap?.priceSource??null,currency:snap?.currency??null,
+    }:{value:null,date:null,source:null,currency:snap?.currency??null});
+    const priceAgeDays=price?.date?Math.floor((Date.parse(asOf)-Date.parse(price.date))/86400000):null;
     const valueKnown=finite(n.fairValue)&&n.fairValue>0;
-    const valueComparable=valueKnown&&!!price&&n.currency!=null&&n.currency===snap?.currency&&priceAgeDays<=7;
+    const valueComparable=valueKnown&&finite(price?.value)&&price.value>0&&n.currency!=null&&n.currency===price?.currency&&priceAgeDays<=7;
     companies.push({ticker,name:snap?.name??ticker,period:n.period,periodEnd:n.periodEnd,
       availableAt:n.availableAt,filingDate:n.filingDate,source:n.source,metrics,changes,
       previous:comparable?{period:p.period,periodEnd:p.periodEnd,availableAt:p.availableAt,metrics:p.metrics}:null,
       comparisonStatus:comparable?'adjacent_quarters':n.source.dimension!=='ARQ'?'not_quarterly':'prior_not_comparable',
       screens:fundamentalScreens(metrics,changes),
       quality:quality.get(ticker)??{status:'unavailable',years:[]},
-      price:{value:price?.close??null,date:price?.date??null,currency:snap?.currency??null,ageDays:priceAgeDays,source:price?.source??snap?.priceSource??null},
+      price:{value:price?.value??null,date:price?.date??null,currency:price?.currency??snap?.currency??null,ageDays:priceAgeDays,source:price?.source??snap?.priceSource??null},
       valuation:{fairValue:valueKnown?n.fairValue:null,date:n.availableAt,currency:n.currency,formula:n.formula},
-      modelGap:valueComparable?n.fairValue/price.close-1:null,
-      valuationStatus:!valueKnown?'no_value':!price?'no_price':n.currency!==snap?.currency?'currency_unverified':priceAgeDays>7?'stale_price':'available'});
+      modelGap:valueComparable?n.fairValue/price.value-1:null,
+      valuationStatus:!valueKnown?'no_value':!finite(price?.value)||price.value<=0?'no_price':n.currency!==price?.currency?'currency_unverified':priceAgeDays>7?'stale_price':'available'});
   }
   const result={version:FUNDAMENTALS_VERSION,asOf,retrospective:true,companies,
     coverage:{total:groups.size,operating:companies.length,excluded,invalid,

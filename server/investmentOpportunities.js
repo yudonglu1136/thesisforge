@@ -3,7 +3,9 @@ import { is13fCommonLongHolding } from './thirteenF.js';
 import { assert, finite, change, isoDate, signature } from './investmentMath.js';
 import { tickerKey } from './investmentSource.js';
 import { valueTrend } from './investmentValueTrend.js';
+import { valuationModelRoute } from './valuationModelRoute.js';
 import { opportunityQuality } from './investmentQuality.js';
+import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrices.js';
 
 const parse = r => r ? JSON.parse(r.payload_json) : null;
 const scalar = v => finite(v) ? v : null;
@@ -55,13 +57,14 @@ export function opportunityValuations(source,asOf) {
       COALESCE(json_extract(input_json,'$.valuationSemantics.fairValueFormula'),json_extract(output_json,'$.method')) formula,
       json_extract(input_json,'$.sourceRecord.currency') currency,
       json_extract(input_json,'$.financial.revenue_growth_pct') revenueGrowth,
-      json_extract(input_json,'$.valuationSemantics.scoreInputs.modelRoute') modelRoute
+      json_extract(input_json,'$.valuationSemantics.scoreInputs') score
     FROM visible JOIN valuation_pit_model_runs p ON p.rowid=visible.rid
       LEFT JOIN quarters ON quarters.rid=visible.rid
     WHERE n<=2 OR qn<=8 ORDER BY p.ticker,n`).all(asOf);
   const result=new Map();
   const histories=new Map();
   for(const r of rows) {
+    r.modelRoute=valuationModelRoute(JSON.parse(r.score??'{}'));
     if(r.qn!=null && r.qn<=8) {
       if(!histories.has(r.ticker))histories.set(r.ticker,[]);
       histories.get(r.ticker).push({period:r.fiscal_period,date:r.as_of_date,fairValue:scalar(r.fairValue),
@@ -98,6 +101,8 @@ function opportunityPrices(source,tickers,asOf) {
     result.set(r.ticker,{value:p?.close??null,date:p?.date??null,currency:r.currency,
       source:p?(p.source??r.source??'stored ticker prices'):null,adjustment:'stored published close; no rescaling'});
   }
+  for(const [ticker,quote] of investmentCurrentQuotes(source,tickers,asOf))
+    result.set(ticker,preferInvestmentQuote(quote,result.get(ticker)??{value:null,date:null,source:null,currency:null}));
   return result;
 }
 

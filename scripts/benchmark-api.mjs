@@ -123,7 +123,7 @@ async function waitUntilReady(port, child, timeoutMs = 20_000) {
       const response = await apiRequest(port, "/api/health", { encoding: "identity" });
       if ([200, 503].includes(response.status)) {
         const payload = JSON.parse(response.body.toString("utf8"));
-        if (payload?.service === "guru-analysis-dashboard") return performance.now() - started;
+        if (payload?.service === "thesisforge-api") return performance.now() - started;
       }
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 40));
