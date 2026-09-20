@@ -15,7 +15,11 @@ import { installDatabaseHealthIndexes } from "./databaseHealthIndexes.js";
 import { createPublicHealthWorkerBuilder } from "./publicHealthWorkerRunner.js";
 import { createPublicHealthService } from "./publicHealthService.js";
 import { requireAuth } from "./auth/requireAuth.js";
-import { enabledManager13fGurus, requiredGuruCurveWindows } from "./gurus.js";
+import {
+  enabledManager13fGurus,
+  expectedGuruCurveRows,
+  requiredGuruCurveWindows
+} from "./gurus.js";
 
 const identity = {
   backtestEndGraceDays: 12,
@@ -24,7 +28,7 @@ const identity = {
   manager13fSecurityMasterVersion: "fixture-security-master"
 };
 const options = { now: Date.parse("2026-09-12T00:00:00Z") };
-const expectedRows = enabledManager13fGurus.length * requiredGuruCurveWindows.length;
+const expectedRows = expectedGuruCurveRows;
 const curveModule = (health) => health.modules.find((module) => module.id === "guru_backtests");
 const sha = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 

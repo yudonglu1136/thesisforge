@@ -6,7 +6,13 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { gurus, enabledManager13fGurus, requiredGuruCurveWindows } from '../server/gurus.js';
+import {
+  gurus,
+  enabledManager13fGurus,
+  expectedGuruCurveRows,
+  requiredGuruCurveWindows,
+  requiredGuruCurveWindowsFor
+} from '../server/gurus.js';
 import { performance } from '../server/guruTurnoverMath.js';
 import { auditInvestmentGuruFile, currentGuruAuditIdentity, inspectInvestmentGuruReadiness, parseGuruReadinessArgs } from './audit-investment-guru-readiness.mjs';
 
@@ -48,7 +54,7 @@ function fixture(db=new DatabaseSync(':memory:'),selected=catalog) {
     put(db,'guru_exposure_snapshots',g.id,{guru:{id:g.id,name:g.name,entityName:g.entityName,cik:g.cik},latest:h,history:[h]});
     put(db,'guru_snapshots',g.id,{id:g.id,name:g.name,entityName:g.entityName,cik:g.cik,latestFiling:filing,
       summary:{reportDate:filing.reportDate,filingDate:filing.filingDate,totalPositions:1},holdings:[{id:'FIXTURE-COMMON'}],activity:[]});
-    if(!g.disableSimulation)for(const y of requiredGuruCurveWindows)put(db,'guru_backtests',g.id,curve(g.id,y),y);
+    if(!g.disableSimulation)for(const y of requiredGuruCurveWindowsFor(g))put(db,'guru_backtests',g.id,curve(g.id,y),y);
   }
   return db;
 }
@@ -63,8 +69,9 @@ test('dynamic complete profile and 5Y/10Y publication matrix passes without chan
     const before=db.prepare('SELECT total_changes() n').get().n;
     const r=inspectInvestmentGuruReadiness(db,options);
     assert.equal(r.status,'pass',JSON.stringify(codes(r)));assert.equal(r.profiles.expected,catalog.length);
-    assert.equal(r.curves.expected,catalog.length*requiredGuruCurveWindows.length);
-    assert.equal(r.curves.releaseReady,4);assert.equal(r.comparison.commonObservations,4);
+    const expected=catalog.reduce((n,g)=>n+requiredGuruCurveWindowsFor(g).length,0);
+    assert.equal(r.curves.expected,expected);
+    assert.equal(r.curves.releaseReady,expected);assert.equal(r.comparison.commonObservations,4);
     assert.equal(db.prepare('SELECT total_changes() n').get().n,before);
     assert.equal(JSON.stringify(r).includes('FIXTURE'),false,'no holdings or raw price rows in evidence');
   }finally{db.close();}
@@ -74,10 +81,11 @@ test('empty source expands actual catalog rather than hard-coded counts',()=>{
   const db=new DatabaseSync(':memory:');try {
     schema(db);const r=inspectInvestmentGuruReadiness(db,{...options,catalog:gurus});
     assert.equal(r.profiles.expected,gurus.filter(g=>g.type==='manager13f').length);
-    assert.equal(r.curves.expected,enabledManager13fGurus.length*requiredGuruCurveWindows.length);
+    assert.equal(r.curves.expected,expectedGuruCurveRows);
     for(const id of ['william-heard','evan-mcgoff','michael-cuggino','john-stamas']) {
       assert.ok(r.profiles.failures.some(x=>x.guruId===id&&x.failures.includes('missing_or_invalid_exposure')));
-      assert.deepEqual(r.curves.failures.filter(x=>x.guruId===id).map(x=>x.years),id==='john-stamas'?[]:[5,10]);
+      const guru=gurus.find(g=>g.id===id);
+      assert.deepEqual(r.curves.failures.filter(x=>x.guruId===id).map(x=>x.years),requiredGuruCurveWindowsFor(guru));
     }
   }finally{db.close();}
 });
@@ -161,7 +169,7 @@ test('policy-permitted exactly linked audited proxy is distinct from strict',()=
 test('diagnostic identity pass is not publication without exact paired generation and not-before',()=>{
   const db=fixture();try {
     const r=inspectInvestmentGuruReadiness(db,{...options,refreshGeneration:'',notBefore:''});
-    assert.equal(r.curves.displayable,4);assert.equal(r.curves.releaseReady,0);assert.equal(r.status,'failed');
+    assert.equal(r.curves.displayable,3);assert.equal(r.curves.releaseReady,0);assert.equal(r.status,'failed');
     assert.ok(codes(r).includes('release_attestation_missing'));
     assert.throws(()=>inspectInvestmentGuruReadiness(db,{...options,notBefore:''}),/must_be_paired/);
   }finally{db.close();}

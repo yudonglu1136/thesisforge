@@ -6,7 +6,8 @@ import {
   enabledManager13fGurus,
   expectedGuruCurveRows,
   manager13fPublicProxyAllowed,
-  requiredGuruCurveWindows
+  requiredGuruCurveWindows,
+  requiredGuruCurveWindowsFor
 } from "../server/gurus.js";
 import { requestLoopbackJson } from "./loopback-http-json.mjs";
 
@@ -18,6 +19,9 @@ const REQUIRED_WINDOWS = requiredGuruCurveWindows;
 const EXPECTED_MANAGER_IDS = Object.freeze(enabledManager13fGurus.map((guru) => guru.id));
 const EXPECTED_MANAGER_COUNT = EXPECTED_MANAGER_IDS.length;
 const EXPECTED_CURVE_ROWS = expectedGuruCurveRows;
+const expectedManagerIdsForYears = (years) => enabledManager13fGurus
+  .filter((guru) => requiredGuruCurveWindowsFor(guru).includes(Number(years)))
+  .map((guru) => guru.id);
 const RETRYABLE_STATUS_ERROR_CODES = new Set([
   "ECONNREFUSED",
   "ECONNRESET",
@@ -148,7 +152,7 @@ function curveAvailability(health) {
 function hasExactAttestedCurveMatrix(report) {
   const expectedKeys = new Set(
     REQUIRED_WINDOWS.flatMap((years) =>
-      EXPECTED_MANAGER_IDS.map((guruId) => `${guruId}:${years}`)
+      expectedManagerIdsForYears(years).map((guruId) => `${guruId}:${years}`)
     )
   );
   const actualKeys = new Set(
@@ -201,13 +205,15 @@ function auditWindowResults(body, {
   const managers = body.results.filter((row) =>
     row?.guruType === "manager13f" && row?.disabled !== true
   );
+  const expectedManagerIds = expectedManagerIdsForYears(years);
+  const expectedManagerCount = expectedManagerIds.length;
   const identities = new Set(managers.map((row) => row.guruId));
-  const exactPopulation = EXPECTED_MANAGER_IDS.every((guruId) => identities.has(guruId));
-  if (managers.length !== EXPECTED_MANAGER_COUNT ||
-      identities.size !== EXPECTED_MANAGER_COUNT ||
+  const exactPopulation = expectedManagerIds.every((guruId) => identities.has(guruId));
+  if (managers.length !== expectedManagerCount ||
+      identities.size !== expectedManagerCount ||
       !exactPopulation) {
     throw new Error(
-      `Guru ${years}Y prewarm returned ${managers.length}/${EXPECTED_MANAGER_COUNT} unique manager results.`
+      `Guru ${years}Y prewarm returned ${managers.length}/${expectedManagerCount} unique manager results.`
     );
   }
   const disallowedProxy = managers.find((row) =>
@@ -242,10 +248,10 @@ function auditWindowResults(body, {
   if (failures.length) {
     throw new Error(
       `Guru ${years}Y prewarm failed current-generation validation for ` +
-      `${failures.length}/${EXPECTED_MANAGER_COUNT} managers.`
+      `${failures.length}/${expectedManagerCount} managers.`
     );
   }
-  const order = new Map(EXPECTED_MANAGER_IDS.map((guruId, index) => [guruId, index]));
+  const order = new Map(expectedManagerIds.map((guruId, index) => [guruId, index]));
   const refreshes = managers
     .map((row) => ({
       guruId: row.guruId,

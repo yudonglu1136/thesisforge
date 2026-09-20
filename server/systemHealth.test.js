@@ -21,7 +21,11 @@ const {
   manager13fProxyMethodVersion,
   manager13fSecurityMasterVersion
 } = await import("./backtest.js");
-const { gurus } = await import("./gurus.js");
+const {
+  gurus,
+  expectedGuruCurveRows,
+  requiredGuruCurveWindowsFor
+} = await import("./gurus.js");
 
 const expectedManagerCount = gurus.filter((guru) =>
   guru.type === "manager13f" && !guru.disableSimulation
@@ -438,11 +442,14 @@ test("Guru curve health rejects only Renaissance's 5Y public proxy policy except
   });
 
   assert.equal(summary.ok, false);
-  assert.equal(summary.expectedRows, expectedCurveRows);
-  assert.equal(summary.displayable, expectedCurveRows - 1);
-  assert.equal(summary.proxyReady, expectedCurveRows - 1);
+  assert.equal(summary.expectedRows, expectedGuruCurveRows);
+  assert.equal(summary.displayable, expectedGuruCurveRows - 1);
+  assert.equal(summary.proxyReady, expectedGuruCurveRows - 1);
   assert.equal(summary.byWindow["5Y"].proxyReady, expectedManagerCount - 1);
-  assert.equal(summary.byWindow["10Y"].proxyReady, expectedManagerCount);
+  assert.equal(
+    summary.byWindow["10Y"].proxyReady,
+    managers.filter((guru) => requiredGuruCurveWindowsFor(guru).includes(10)).length
+  );
   assert.deepEqual(summary.failures.map((row) => [
     row.guruId,
     row.years,

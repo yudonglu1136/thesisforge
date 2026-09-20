@@ -165,6 +165,9 @@ export const gurus = [
     entityName: "Himalaya Capital Management LLC",
     cik: "0001709323",
     type: "manager13f",
+    simulationWindows: [5],
+    simulationNote:
+      "The audited 5Y public-holdings simulation is available. The 10Y window is not published because the early filing history contains a single reportable position and does not meet the existing diversified proxy threshold.",
     role: "Himalaya Capital founder / Munger-style value investor",
     thesisTag: "Concentrated value compounders",
     notes: [
@@ -561,6 +564,9 @@ export const gurus = [
     cik: "0001549575",
     alternateCiks: ["0001173334"],
     type: "manager13f",
+    simulationWindows: [5],
+    simulationNote:
+      "The audited 5Y public-holdings simulation is available. The 10Y window is not published because the early filing history contains a single reportable position and does not meet the existing diversified proxy threshold.",
     role: "Pabrai Funds founder / concentrated value investor",
     thesisTag: "Low-risk, high-uncertainty value and concentrated bets",
     notes: [
@@ -652,6 +658,9 @@ export const gurus = [
     entityName: "SOROS FUND MANAGEMENT LLC",
     cik: "0001029160",
     type: "manager13f",
+    simulationWindows: [5],
+    simulationNote:
+      "The audited 5Y public-holdings simulation is available. The 10Y window is not published because verified price coverage for the early filing history remains below the existing 30% proxy threshold.",
     role: "Soros Fund Management",
     thesisTag: "Multi-strategy public equities",
     notes: [
@@ -683,5 +692,17 @@ export const enabledManager13fGurus = Object.freeze(gurus.filter((guru) =>
   guru.type === "manager13f" && !guru.disableSimulation
 ));
 
-export const expectedGuruCurveRows =
-  enabledManager13fGurus.length * requiredGuruCurveWindows.length;
+export function requiredGuruCurveWindowsFor(guruOrId) {
+  const supplied = typeof guruOrId === "object" ? guruOrId : null;
+  const guru = gurus.find((item) => item.id === (supplied?.id || guruOrId)) || supplied;
+  if (!guru || guru.disableSimulation || (guru.type && guru.type !== "manager13f")) return [];
+  const configured = Array.isArray(guru.simulationWindows)
+    ? guru.simulationWindows.map(Number)
+    : requiredGuruCurveWindows;
+  return requiredGuruCurveWindows.filter((years) => configured.includes(years));
+}
+
+export const expectedGuruCurveRows = enabledManager13fGurus.reduce(
+  (total, guru) => total + requiredGuruCurveWindowsFor(guru).length,
+  0
+);

@@ -6,7 +6,8 @@ import {
   enabledManager13fGurus,
   expectedGuruCurveRows,
   manager13fPublicProxyAllowed,
-  requiredGuruCurveWindows
+  requiredGuruCurveWindows,
+  requiredGuruCurveWindowsFor
 } from "./gurus.js";
 
 // The same health calculations serve both the API/admin adapter and the
@@ -498,7 +499,9 @@ export function createSystemHealth({
   } = {}) {
     const results = [];
     for (const guru of managers) {
-      for (const years of windows) {
+      const guruWindows = requiredGuruCurveWindowsFor(guru)
+        .filter((years) => windows.includes(years));
+      for (const years of guruWindows) {
         const strict = readStrict(guru.id, years);
         const proxy = readProxy(guru.id, years);
         const strictAudit = strict?.status === "ready"
@@ -559,12 +562,15 @@ export function createSystemHealth({
         });
       }
     }
-    const expectedRows = managers.length * windows.length;
+    const expectedRows = results.length;
     const displayable = results.filter((row) => row.outcome !== "failure").length;
     const byWindow = Object.fromEntries(windows.map((years) => {
       const rows = results.filter((row) => row.years === years);
+      const expected = managers.filter((guru) =>
+        requiredGuruCurveWindowsFor(guru).includes(years)
+      ).length;
       return [`${years}Y`, {
-        expected: managers.length,
+        expected,
         strictReady: rows.filter((row) => row.outcome === "ready").length,
         proxyReady: rows.filter((row) => row.outcome === "proxy_ready").length,
         failures: rows.filter((row) => row.outcome === "failure").length,

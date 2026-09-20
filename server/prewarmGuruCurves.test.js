@@ -5,7 +5,11 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { gurus } from "./gurus.js";
+import {
+  gurus,
+  expectedGuruCurveRows,
+  requiredGuruCurveWindowsFor
+} from "./gurus.js";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const prewarmScript = path.join(repoRoot, "scripts", "prewarm-guru-curves.mjs");
@@ -17,7 +21,11 @@ const expectedManagerIds = gurus.filter((guru) =>
   guru.type === "manager13f" && !guru.disableSimulation
 ).map((guru) => guru.id);
 const expectedManagerCount = expectedManagerIds.length;
-const expectedCurveRows = expectedManagerCount * 2;
+const expectedCurveRows = expectedGuruCurveRows;
+const expectedManagerIdsForYears = (years) => gurus.filter((guru) =>
+  guru.type === "manager13f" && !guru.disableSimulation &&
+  requiredGuruCurveWindowsFor(guru).includes(Number(years))
+).map((guru) => guru.id);
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
@@ -79,8 +87,9 @@ test("prewarm uses the explicit loopback client instead of fetch's hidden header
 });
 
 function managerResults(years, refreshGeneration, generatedAt = new Date().toISOString()) {
-  return Array.from({ length: expectedManagerCount }, (_, index) => {
-    const guruId = expectedManagerIds[index];
+  const managerIds = expectedManagerIdsForYears(years);
+  return Array.from({ length: managerIds.length }, (_, index) => {
+    const guruId = managerIds[index];
     const proxy = index >= 8 || (guruId === "renaissance-technologies" && years === 10);
     return {
       guruId,
@@ -183,7 +192,9 @@ test("prewarm writes its success marker only after both windows cover every conf
   assert.equal(report.refreshes.length, expectedCurveRows);
   assert.deepEqual(
     report.refreshes.map((row) => `${row.guruId}:${row.years}`),
-    [5, 10].flatMap((years) => expectedManagerIds.map((guruId) => `${guruId}:${years}`))
+    [5, 10].flatMap((years) =>
+      expectedManagerIdsForYears(years).map((guruId) => `${guruId}:${years}`)
+    )
   );
   assert.equal(
     report.refreshes.find((row) =>

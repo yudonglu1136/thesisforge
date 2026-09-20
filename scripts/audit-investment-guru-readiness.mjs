@@ -9,7 +9,12 @@
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { gurus, requiredGuruCurveWindows, manager13fPublicProxyAllowed } from '../server/gurus.js';
+import {
+  gurus,
+  requiredGuruCurveWindows,
+  requiredGuruCurveWindowsFor,
+  manager13fPublicProxyAllowed
+} from '../server/gurus.js';
 import { holdingResolutionVersion } from '../server/cusipOverrides.js';
 import { auditManager13fStrictReadyPayload } from '../server/backtestStrictAudit.js';
 import { auditPublicHoldingsProxyPayload } from '../server/backtestProxyAudit.js';
@@ -167,7 +172,7 @@ export function inspectInvestmentGuruReadiness(db,{asOf,now=Date.now(),refreshGe
   };
   const profiles=inspectProfiles(read,managers,asOf),rows=[],studies=[];
   const profileById=new Map(profiles.map(p=>[p.guruId,p]));
-  for(const g of enabled)for(const years of requiredGuruCurveWindows) {
+  for(const g of enabled)for(const years of requiredGuruCurveWindowsFor(g)) {
     const result=inspectCurve(read,g,years,{versions,asOf,now,refreshGeneration,notBefore,profile:profileById.get(g.id)});rows.push(result.row);
     if(result.equity)studies.push({id:g.id,equity:result.equity});
   }
@@ -186,7 +191,8 @@ export function inspectInvestmentGuruReadiness(db,{asOf,now=Date.now(),refreshGe
   if(studies.length!==enabled.length)comparison.failures.push('study_population_incomplete');
   const profileFailures=profiles.filter(r=>r.failures.length),curveFailures=rows.filter(r=>!r.releaseReady);
   const byWindow=Object.fromEntries(requiredGuruCurveWindows.map(y=>[`${y}Y`,{
-    expected:enabled.length,displayable:rows.filter(r=>r.years===y&&r.displayable).length,
+    expected:enabled.filter(g=>requiredGuruCurveWindowsFor(g).includes(y)).length,
+    displayable:rows.filter(r=>r.years===y&&r.displayable).length,
     releaseReady:rows.filter(r=>r.years===y&&r.releaseReady).length}]));
   const ok=!structuralFailures.length&&!profileFailures.length&&!curveFailures.length&&!comparison.failures.length;
   return {auditVersion:'investment-guru-readiness-v1',status:ok?'pass':'failed',asOf,checkedAt:new Date(now).toISOString(),

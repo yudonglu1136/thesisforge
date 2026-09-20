@@ -1,4 +1,8 @@
-import { gurus, manager13fPublicProxyAllowed } from "./gurus.js";
+import {
+  gurus,
+  manager13fPublicProxyAllowed,
+  requiredGuruCurveWindowsFor
+} from "./gurus.js";
 import { load13fHoldingHistory, loadGuruDashboard } from "./secClient.js";
 import { loadPriceSeries } from "./marketData.js";
 import { factOsEnabled } from "./factRepository.js";
@@ -2137,6 +2141,11 @@ export async function loadGuruBacktest(
   const includeAttribution = detail === "full" || detail === "attribution";
   const guru = gurus.find((item) => item.id === guruId);
   if (!guru) throw new Error(`Guru not found: ${guruId}`);
+  if (guru.type === "manager13f" &&
+      [5, 10].includes(window.methodYears) &&
+      !requiredGuruCurveWindowsFor(guru).includes(window.methodYears)) {
+    return unsupportedBacktest(guru, window);
+  }
 
   const strictCached = guru.type === "manager13f"
     ? readGuruBacktest(guruId, window.cacheKey)
@@ -2983,8 +2992,10 @@ export async function refreshGuruBacktestCache({
       }
     });
 
+    const requestedYears = normalizeBacktestWindow(years).methodYears;
     const refreshGurus = gurus.filter((item) => normalizedPopulation === "enabled-manager13f"
-      ? item.type === "manager13f" && !item.disableSimulation
+      ? item.type === "manager13f" &&
+        requiredGuruCurveWindowsFor(item).includes(requestedYears)
       : item.type === "manager13f" || item.type === "congress");
     for (const guru of refreshGurus) {
       let payload = null;
