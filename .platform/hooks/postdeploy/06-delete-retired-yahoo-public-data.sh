@@ -10,12 +10,19 @@ if [ "${THESISFORGE_DELETE_RETIRED_YAHOO_PUBLIC_DATA:-false}" != "true" ]; then
   exit 0
 fi
 
-expected_release="thesisforge-20260920-v3"
+case "${INVESTMENT_RELEASE_ID:-}" in
+  thesisforge-20260920-v2|thesisforge-20260920-v3)
+    expected_release="${INVESTMENT_RELEASE_ID}"
+    ;;
+  *)
+    echo "error: refusing retired-data cleanup for an unrecognized active release" >&2
+    exit 1
+    ;;
+esac
 expected_runtime="/var/app/data/${expected_release}.sqlite"
 expected_root="/var/app/data/investment-releases/${expected_release}"
 
-if [ "${INVESTMENT_RELEASE_ID:-}" != "${expected_release}" ] ||
-   [ "${SQLITE_DB_PATH:-}" != "${expected_runtime}" ] ||
+if [ "${SQLITE_DB_PATH:-}" != "${expected_runtime}" ] ||
    [ "${INVESTMENT_SOURCE_DB_PATH:-}" != "${expected_root}/research.sqlite" ] ||
    [ "${STRATEGY_DATA_DB_PATH:-}" != "${expected_root}/strategy.sqlite" ] ||
    [ "${STRATEGY_COMPOSITION_PRICE_DB_PATH:-}" != "${expected_root}/composition.sqlite" ]; then
@@ -45,9 +52,15 @@ for retired in \
   fi
 done
 
-for retired_root in \
-  "/var/app/data/investment-releases/thesisforge-20260920-v1" \
-  "/var/app/data/investment-releases/redesign-20260912-v1"; do
+retired_roots=(
+  "/var/app/data/investment-releases/thesisforge-20260920-v1"
+  "/var/app/data/investment-releases/redesign-20260912-v1"
+)
+if [ "${expected_release}" = "thesisforge-20260920-v3" ]; then
+  retired_roots+=("/var/app/data/investment-releases/thesisforge-20260920-v2")
+fi
+
+for retired_root in "${retired_roots[@]}"; do
   if [ -e "${retired_root}" ]; then
     case "${retired_root}" in
       "${private_root}"|"${private_root}"/*|"${expected_root}")
