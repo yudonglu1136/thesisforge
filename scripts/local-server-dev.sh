@@ -12,7 +12,7 @@ export SQLITE_DB_PATH="${SQLITE_DB_PATH:-$release_root/research.sqlite}"
 export INVESTMENT_SOURCE_DB_PATH="${INVESTMENT_SOURCE_DB_PATH:-$release_root/research.sqlite}"
 export STRATEGY_DATA_DB_PATH="${STRATEGY_DATA_DB_PATH:-$release_root/strategy.sqlite}"
 export STRATEGY_COMPOSITION_PRICE_DB_PATH="${STRATEGY_COMPOSITION_PRICE_DB_PATH:-$release_root/composition.sqlite}"
-export INVESTMENT_13F_INSIGHTS_DB_PATH="${INVESTMENT_13F_INSIGHTS_DB_PATH:-$release_root/13f-insights-20260921-v4/13f-insights.sqlite}"
+export INVESTMENT_13F_INSIGHTS_DB_PATH="${INVESTMENT_13F_INSIGHTS_DB_PATH:-$release_root/13f-insights-20260921-v7/13f-insights.sqlite}"
 export INVESTMENT_DB_PATH="${INVESTMENT_DB_PATH:-$project_root/server/data/user-portfolios/investment.sqlite}"
 export FACT_OS_ROOT="${FACT_OS_ROOT:-$project_root/data/fact_os}"
 # The redesigned workflow reads stored PIT artifacts on demand. Do not launch

@@ -22,10 +22,13 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
   const schema=sourceDb.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?");
   const schemas=Object.fromEntries([table,detailTable,marketTable,securityHistoryTable].map(name=>[name,schema.get(name)?.sql]));
   if(Object.values(schemas).some(value=>!value))fail('missing_13f_source_table');
-  const rows=sourceDb.prepare(`SELECT * FROM ${table} ORDER BY report_date,source_generation`).all();
-  const details=sourceDb.prepare(`SELECT * FROM ${detailTable} ORDER BY report_date,source_generation,ticker`).all();
-  const marketRows=sourceDb.prepare(`SELECT * FROM ${marketTable} ORDER BY report_date,source_generation,segment`).all();
-  const securityHistoryRows=sourceDb.prepare(`SELECT * FROM ${securityHistoryTable} ORDER BY report_date,source_generation,ticker`).all();
+  const currentGeneration=`EXISTS(SELECT 1 FROM ${table} s WHERE s.report_date=x.report_date
+    AND s.source_generation=x.source_generation AND s.generated_at=(SELECT max(n.generated_at) FROM ${table} n WHERE n.report_date=x.report_date))`;
+  const rows=sourceDb.prepare(`SELECT x.* FROM ${table} x WHERE ${currentGeneration} ORDER BY report_date,source_generation`).all();
+  const details=sourceDb.prepare(`SELECT x.* FROM ${detailTable} x WHERE ${currentGeneration} ORDER BY report_date,source_generation,ticker`).all();
+  const marketRows=sourceDb.prepare(`SELECT x.* FROM ${marketTable} x WHERE ${currentGeneration} ORDER BY report_date,source_generation,segment`).all();
+  const securityHistoryRows=sourceDb.prepare(`SELECT x.* FROM ${securityHistoryTable} x WHERE ${currentGeneration} ORDER BY report_date,source_generation,ticker`).all();
+  const securityHistoryColumns=sourceDb.prepare(`PRAGMA table_info(${securityHistoryTable})`).all().map(row=>row.name);
   sourceDb.close();
   const db=new DatabaseSync(file);
   try {
@@ -41,8 +44,8 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
     for(const row of details)insertDetail.run(row.report_date,row.source_generation,row.ticker,row.payload_hash,row.payload_gzip);
     const insertMarket=db.prepare(`INSERT INTO ${marketTable}(report_date,source_generation,segment,available_at,securities,covered_securities,institutional_value_m,market_cap_m,institutional_ownership_pct,net_change_value_m,net_change_pct_market_cap) VALUES(?,?,?,?,?,?,?,?,?,?,?)`);
     for(const row of marketRows)insertMarket.run(row.report_date,row.source_generation,row.segment,row.available_at,row.securities,row.covered_securities,row.institutional_value_m,row.market_cap_m,row.institutional_ownership_pct,row.net_change_value_m,row.net_change_pct_market_cap);
-    const insertSecurityHistory=db.prepare(`INSERT INTO ${securityHistoryTable}(report_date,source_generation,ticker,available_at,holders,institutional_value_m,institutional_shares_k,shares_outstanding_k,institutional_ownership_pct) VALUES(?,?,?,?,?,?,?,?,?)`);
-    for(const row of securityHistoryRows)insertSecurityHistory.run(row.report_date,row.source_generation,row.ticker,row.available_at,row.holders,row.institutional_value_m,row.institutional_shares_k,row.shares_outstanding_k,row.institutional_ownership_pct);
+    const insertSecurityHistory=db.prepare(`INSERT INTO ${securityHistoryTable}(${securityHistoryColumns.join(',')}) VALUES(${securityHistoryColumns.map(()=>'?').join(',')})`);
+    for(const row of securityHistoryRows)insertSecurityHistory.run(...securityHistoryColumns.map(column=>row[column]));
     db.exec('COMMIT;VACUUM');
     if(db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')fail('13f_artifact_integrity_failed');
     if(db.prepare('PRAGMA foreign_key_check').all().length)fail('13f_artifact_foreign_key_failed');
@@ -55,8 +58,8 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
   } finally {db.close();}
   const bytes=fs.statSync(file).size,sha256=hash(file);
   const runtimeDirectory=path.join(runtimeRoot,releaseId),runtimeFile=path.join(runtimeDirectory,path.basename(file));
-  const manifest={version:'institutional-13f-artifact-v3',releaseId,state:'verified',generatedAt:new Date().toISOString(),rows:rows.length,detailRows:details.length,marketRows:marketRows.length,securityHistoryRows:securityHistoryRows.length,table,
-    source:{path:source,table,methodVersion:'institutional-13f-insights-v3'},
+  const manifest={version:'institutional-13f-artifact-v4',releaseId,state:'verified',generatedAt:new Date().toISOString(),rows:rows.length,detailRows:details.length,marketRows:marketRows.length,securityHistoryRows:securityHistoryRows.length,table,
+    source:{path:source,table,methodVersion:'institutional-13f-insights-v4'},
     checks:{integrity:'ok',foreignKeyCheck:'ok',naturalKeyUniqueness:'pass',privateDataExcluded:true},
     file:{path:runtimeFile,bytes,sha256}};
   fs.writeFileSync(path.join(output,'manifest.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx',mode:0o600});

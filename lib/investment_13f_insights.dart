@@ -187,6 +187,22 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     return '\$${n.toStringAsFixed(1)}M';
   }
 
+  String _sharesFromThousands(dynamic value) {
+    final thousands = nullableNumber(value);
+    if (thousands == null) return '—';
+    final shares = thousands * 1000;
+    if (shares.abs() >= 1000000000) {
+      return '${(shares / 1000000000).toStringAsFixed(2)}B';
+    }
+    if (shares.abs() >= 1000000) {
+      return '${(shares / 1000000).toStringAsFixed(1)}M';
+    }
+    if (shares.abs() >= 1000) {
+      return '${(shares / 1000).toStringAsFixed(1)}K';
+    }
+    return _integer(shares);
+  }
+
   List<Map<String, dynamic>> _insightStocks() {
     final key = _insightKey(insightAction);
     final query = insightSearch.trim().toLowerCase();
@@ -998,8 +1014,10 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             (item) => _InsightHistoryPoint(
               reportDate: text(item['reportDate']),
               holders: nullableNumber(item['holders']),
-              amountM: nullableNumber(item['institutionalValueM']),
+              sharesK: nullableNumber(item['institutionalSharesK']),
               ownershipPct: nullableNumber(item['institutionalOwnershipPct']),
+              shareBasisFactor: nullableNumber(item['shareBasisFactor']) ?? 1,
+              shareBasisDate: text(item['shareBasisDate']),
             ),
           )
           .where((point) => point.reportDate.isNotEmpty)
@@ -1017,7 +1035,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     final available = points.where(
       (point) => series == _InsightHistorySeries.holders
           ? point.holders != null
-          : point.amountM != null,
+          : point.sharesK != null,
     );
     final latest = available.lastOrNull;
     final start = points.firstOrNull?.reportDate ?? '';
@@ -1057,7 +1075,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                 Text(
                   series == _InsightHistorySeries.holders
                       ? '${_integer(latest.holders)} ${w('filers', '家')}'
-                      : '${_usdMillions(latest.amountM)}${latest.ownershipPct == null ? '' : ' · ${latest.ownershipPct!.toStringAsFixed(1)}%'}',
+                      : '${_sharesFromThousands(latest.sharesK)}${latest.ownershipPct == null ? '' : ' · ${latest.ownershipPct!.toStringAsFixed(1)}%'}',
                   style: TextStyle(
                     color: p.accent,
                     fontWeight: FontWeight.w700,
@@ -1086,7 +1104,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                 series: series,
                 primaryScale: series == _InsightHistorySeries.holders
                     ? _InsightAxisScale.count
-                    : _InsightAxisScale.money,
+                    : _InsightAxisScale.sharesThousands,
                 accent: p.accent,
                 secondary: p.secondary,
                 grid: p.border,
@@ -1097,13 +1115,17 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                 tooltipLines: (point) => series == _InsightHistorySeries.holders
                     ? ['${_integer(point.holders)} ${w('filers', '家机构')}']
                     : [
-                        '${w('Amount', '持仓金额')} ${_usdMillions(point.amountM)}',
-                        '${w('% market cap', '占总市值')} ${point.ownershipPct == null ? '—' : '${point.ownershipPct!.toStringAsFixed(2)}%'}',
+                        '${w('Shares', '机构持股')} ${_sharesFromThousands(point.sharesK)}',
+                        '${w('% outstanding', '占总股本')} ${point.ownershipPct == null ? '—' : '${point.ownershipPct!.toStringAsFixed(2)}%'}',
+                        if (point.shareBasisDate.isNotEmpty)
+                          '${w('Share basis', '股数口径')} ${point.shareBasisDate}',
+                        if (point.shareBasisFactor != 1)
+                          '${w('Split factor', '拆股折算')} ×${point.shareBasisFactor.toStringAsFixed(point.shareBasisFactor % 1 == 0 ? 0 : 2)}',
                       ],
               ),
             ),
           const SizedBox(height: 7),
-          if (series == _InsightHistorySeries.amount) ...[
+          if (series == _InsightHistorySeries.shares) ...[
             Wrap(
               alignment: WrapAlignment.center,
               spacing: 9,
@@ -1114,7 +1136,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                   children: [
                     Container(width: 12, height: 2, color: p.accent),
                     const SizedBox(width: 4),
-                    label('Amount', '持仓金额', size: 9),
+                    label('Shares · current basis', '股数 · 当前口径', size: 9),
                   ],
                 ),
                 Row(
@@ -1122,7 +1144,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                   children: [
                     Container(width: 12, height: 2, color: p.secondary),
                     const SizedBox(width: 4),
-                    label('% market cap', '占总市值', size: 9),
+                    label('% outstanding', '占总股本', size: 9),
                   ],
                 ),
               ],
@@ -1160,18 +1182,19 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           points: points,
           series: _InsightHistorySeries.holders,
         );
-        final amount = _insightHistoryCard(
+        final shares = _insightHistoryCard(
           key: const ValueKey('13f-ownership-history-chart'),
-          titleEn: 'Institutional value history',
-          titleZh: '机构持仓金额与占总市值变化',
-          subtitleEn: 'Aggregate reported value · % of company market cap',
-          subtitleZh: '机构申报持仓金额 · 机构持仓金额占公司总市值',
+          titleEn: 'Institutional ownership history',
+          titleZh: '机构持股与占总股本变化',
+          subtitleEn:
+              'Reported shares normalized for splits to the current share basis · % of shares outstanding',
+          subtitleZh: '历史申报股数按拆股折算为当前股数口径 · 占总股本比例',
           points: points,
-          series: _InsightHistorySeries.amount,
+          series: _InsightHistorySeries.shares,
         );
         if (constraints.maxWidth < 520) {
           return Column(
-            children: [holders, const SizedBox(height: 12), amount],
+            children: [holders, const SizedBox(height: 12), shares],
           );
         }
         return Row(
@@ -1179,7 +1202,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           children: [
             Expanded(child: holders),
             const SizedBox(width: 12),
-            Expanded(child: amount),
+            Expanded(child: shares),
           ],
         );
       },
@@ -1446,22 +1469,28 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       );
 }
 
-enum _InsightHistorySeries { holders, amount }
+enum _InsightHistorySeries { holders, shares }
 
-enum _InsightAxisScale { count, percent, money }
+enum _InsightAxisScale { count, percent, sharesThousands }
 
 class _InsightHistoryPoint {
   const _InsightHistoryPoint({
     required this.reportDate,
-    required this.holders,
-    required this.amountM,
-    required this.ownershipPct,
+    this.holders,
+    this.amountM,
+    this.sharesK,
+    this.ownershipPct,
+    this.shareBasisFactor = 1,
+    this.shareBasisDate = '',
   });
 
   final String reportDate;
   final double? holders;
   final double? amountM;
+  final double? sharesK;
   final double? ownershipPct;
+  final double shareBasisFactor;
+  final String shareBasisDate;
 }
 
 class _InsightHistoryInteractiveChart extends StatefulWidget {
@@ -1504,7 +1533,7 @@ class _InsightHistoryInteractiveChartState
   void _selectAt(double dx, double width) {
     if (widget.points.isEmpty || width <= 10) return;
     const leftAxis = 42.0;
-    final rightAxis = widget.series == _InsightHistorySeries.amount
+    final rightAxis = widget.series == _InsightHistorySeries.shares
         ? 40.0
         : 8.0;
     final plotWidth = math.max(1.0, width - leftAxis - rightAxis);
@@ -1642,7 +1671,7 @@ class _InsightHistoryPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     const leftAxis = 42.0;
-    final rightAxis = series == _InsightHistorySeries.amount ? 40.0 : 8.0;
+    final rightAxis = series == _InsightHistorySeries.shares ? 40.0 : 8.0;
     final chart = Rect.fromLTWH(
       leftAxis,
       7,
@@ -1652,7 +1681,7 @@ class _InsightHistoryPainter extends CustomPainter {
     final double? Function(_InsightHistoryPoint) primaryRead =
         series == _InsightHistorySeries.holders
         ? (point) => point.holders
-        : (point) => point.amountM;
+        : (point) => point.sharesK;
     final primaryBounds = _bounds(primaryRead, primaryScale);
     final gridPaint = Paint()
       ..color = grid.withValues(alpha: .72)
@@ -1670,7 +1699,7 @@ class _InsightHistoryPainter extends CustomPainter {
         Offset(chart.left - 5, y),
         alignRight: true,
       );
-      if (series == _InsightHistorySeries.amount) {
+      if (series == _InsightHistorySeries.shares) {
         _drawAxisLabel(
           canvas,
           '${(ratio * 100).round()}%',
@@ -1688,7 +1717,7 @@ class _InsightHistoryPainter extends CustomPainter {
         fill: true,
       );
     } else {
-      _drawBars(canvas, chart, (point) => point.amountM, primaryBounds, accent);
+      _drawBars(canvas, chart, (point) => point.sharesK, primaryBounds, accent);
       _drawSeries(canvas, chart, (point) => point.ownershipPct, (
         min: 0,
         max: 100,
@@ -1732,14 +1761,18 @@ class _InsightHistoryPainter extends CustomPainter {
 
   String _formatAxis(double value, _InsightAxisScale scale) {
     if (scale == _InsightAxisScale.percent) return '${value.round()}%';
-    if (scale == _InsightAxisScale.money) {
-      if (value.abs() >= 1000000) {
-        return '\$${(value / 1000000).toStringAsFixed(1)}T';
+    if (scale == _InsightAxisScale.sharesThousands) {
+      final shares = value * 1000;
+      if (shares.abs() >= 1000000000) {
+        return '${(shares / 1000000000).toStringAsFixed(1)}B';
       }
-      if (value.abs() >= 1000) {
-        return '\$${(value / 1000).toStringAsFixed(value % 1000 == 0 ? 0 : 1)}B';
+      if (shares.abs() >= 1000000) {
+        return '${(shares / 1000000).toStringAsFixed(1)}M';
       }
-      return '\$${value.toStringAsFixed(value % 1 == 0 ? 0 : 1)}M';
+      if (shares.abs() >= 1000) {
+        return '${(shares / 1000).toStringAsFixed(1)}K';
+      }
+      return shares.round().toString();
     }
     final display = value;
     if (display.abs() >= 1000000000) {
@@ -1813,7 +1846,7 @@ class _InsightHistoryPainter extends CustomPainter {
               Color,
             )
           >[
-            ((point) => point.amountM, primaryBounds, accent),
+            ((point) => point.sharesK, primaryBounds, accent),
             ((point) => point.ownershipPct, (min: 0, max: 100), secondary),
           ];
     for (final entry in reads) {

@@ -218,11 +218,18 @@ function securityHistory(source, visible, selected, selectedData, ticker) {
   const cached=cacheEntries(securityHistoryCache,source);
   if (cached.has(cacheKey)) return cached.get(cacheKey);
   if (tableExists(source,'institutional_13f_security_history_v1')) {
-    const hasValue=tableColumns(source,'institutional_13f_security_history_v1').has('institutional_value_m');
+    const columns=tableColumns(source,'institutional_13f_security_history_v1');
+    const hasValue=columns.has('institutional_value_m');
+    const hasRawShares=columns.has('institutional_shares_raw_k');
+    const hasShareBasisFactor=columns.has('share_basis_factor');
+    const hasShareBasisDate=columns.has('share_basis_date');
     const history=db.prepare(`SELECT h.report_date reportDate,h.available_at availableAt,h.holders,
       h.institutional_shares_k institutionalSharesK,h.shares_outstanding_k sharesOutstandingK,
       h.institutional_ownership_pct institutionalOwnershipPct,
-      ${hasValue?'h.institutional_value_m':'NULL'} institutionalValueM
+      ${hasValue?'h.institutional_value_m':'NULL'} institutionalValueM,
+      ${hasRawShares?'h.institutional_shares_raw_k':'NULL'} institutionalSharesRawK,
+      ${hasShareBasisFactor?'h.share_basis_factor':'1'} shareBasisFactor,
+      ${hasShareBasisDate?'h.share_basis_date':'NULL'} shareBasisDate
       FROM institutional_13f_security_history_v1 h
       JOIN institutional_13f_insight_snapshots_v2 s
         ON s.report_date=h.report_date AND s.source_generation=h.source_generation
@@ -230,16 +237,26 @@ function securityHistory(source, visible, selected, selectedData, ticker) {
         AND s.generated_at=(SELECT max(n.generated_at) FROM institutional_13f_insight_snapshots_v2 n
           WHERE n.report_date=s.report_date AND n.available_at<=?)
       ORDER BY h.report_date`).all(ticker,selected.report_date,selected.available_at,selected.available_at);
+    const normalizeShareBasis=row=>{
+      const factor=Number.isFinite(row.shareBasisFactor)&&row.shareBasisFactor>0?row.shareBasisFactor:1;
+      return {...row,
+        institutionalSharesRawK:row.institutionalSharesRawK
+          ??(Number.isFinite(row.institutionalSharesK)?row.institutionalSharesK/factor:null),
+        shareBasisFactor:factor,
+        shareBasisDate:row.shareBasisDate??selectedData.shareBasisDate??selected.report_date,
+      };
+    };
     if (history.every(row=>row.institutionalValueM!=null)) {
-      setBounded(cached,cacheKey,history,96);
-      return history;
+      const normalized=history.map(normalizeShareBasis);
+      setBounded(cached,cacheKey,normalized,96);
+      return normalized;
     }
     const values=new Map();
     for (const snapshot of [...bounded].reverse()) {
       const value=snapshotValues(source,snapshot,snapshot===selected?selectedData:null).get(ticker);
       if (value!=null) values.set(snapshot.report_date,value);
     }
-    const enriched=history.map(row=>({...row,
+    const enriched=history.map(row=>normalizeShareBasis({...row,
       institutionalValueM:row.institutionalValueM??values.get(row.reportDate)??null,
     }));
     setBounded(cached,cacheKey,enriched,96);
@@ -264,6 +281,9 @@ function securityHistory(source, visible, selected, selectedData, ticker) {
         holders:row.holders??null,
         institutionalValueM:row.currentValueM??null,
         institutionalSharesK:row.currentUnitsK??null,
+        institutionalSharesRawK:row.rawCurrentUnitsK??row.currentUnitsK??null,
+        shareBasisFactor:row.shareBasisFactor??1,
+        shareBasisDate:row.shareBasisDate??payload.shareBasisDate??payload.reportDate??snapshot.report_date,
         sharesOutstandingK:row.sharesOutstandingK??null,
         institutionalOwnershipPct:row.institutionalOwnershipPct??null,
       });

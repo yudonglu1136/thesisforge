@@ -19,7 +19,7 @@ from pathlib import Path
 import duckdb
 
 
-METHOD_VERSION = "institutional-13f-insights-v3"
+METHOD_VERSION = "institutional-13f-insights-v4"
 DETAIL_SECURITY_LIMIT = 750
 DETAIL_PER_ACTION = 50
 
@@ -123,6 +123,7 @@ def snapshot(
     con: duckdb.DuckDBPyConnection,
     current: str,
     previous: str,
+    share_basis_date: str,
     observed_at: str,
     include_details: bool,
 ) -> tuple[dict, dict]:
@@ -162,6 +163,12 @@ def snapshot(
           WHERE date<='{current}' AND date>='{(dt.date.fromisoformat(current) - dt.timedelta(days=7)).isoformat()}'
             AND marketcap>0
           QUALIFY row_number() OVER(PARTITION BY ticker ORDER BY date DESC)=1
+        ), share_basis_splits AS (
+          SELECT ticker,product(value) AS factor
+          FROM actions
+          WHERE action='split' AND date>'{current}' AND date<='{share_basis_date}'
+            AND value IS NOT NULL AND value>0
+          GROUP BY ticker
         ), listing AS (
           SELECT ticker,exchange,sector,scalemarketcap
           FROM tickers WHERE "table"='SF1'
@@ -190,10 +197,12 @@ def snapshot(
           max(m.market_cap_m) AS market_cap_m,
           bool_or(sp.ticker IS NOT NULL) AS is_sp500,
           bool_or(nq.rank<=100) AS is_nasdaq_100_proxy,
-          bool_or(l.scalemarketcap='3 - Small') AS is_small_cap
+          bool_or(l.scalemarketcap='3 - Small') AS is_small_cap,
+          max(coalesce(bs.factor,1)) AS share_basis_factor
         FROM joined j LEFT JOIN names n USING(ticker)
         LEFT JOIN share_counts s USING(ticker)
         LEFT JOIN market_caps m USING(ticker)
+        LEFT JOIN share_basis_splits bs USING(ticker)
         LEFT JOIN listing l USING(ticker)
         LEFT JOIN nasdaq_rank nq USING(ticker)
         LEFT JOIN sp500_members sp USING(ticker)
@@ -201,13 +210,19 @@ def snapshot(
     ).fetchall()
     securities = []
     for row in security_rows:
+        share_basis_factor = row[19] or 1
+        raw_current_units_k = row[9]
+        current_units_k = None if raw_current_units_k is None else raw_current_units_k * share_basis_factor
+        previous_units_k = None if row[10] is None else row[10] * share_basis_factor
+        comparable_current_units_k = None if row[11] is None else row[11] * share_basis_factor
+        comparable_previous_units_k = None if row[12] is None else row[12] * share_basis_factor
         shares_outstanding_k = row[14]
         institutional_ownership_pct = (
-            None if not shares_outstanding_k or row[9] is None
-            else row[9] / shares_outstanding_k * 100
+            None if not shares_outstanding_k or current_units_k is None
+            else current_units_k / shares_outstanding_k * 100
         )
-        net_units_k = (row[11] or 0) - (row[12] or 0)
-        implied_price = None if not row[9] else row[7] * 1000 / row[9]
+        net_units_k = (comparable_current_units_k or 0) - (comparable_previous_units_k or 0)
+        implied_price = None if not current_units_k else row[7] * 1000 / current_units_k
         net_change_value_m = None if implied_price is None else net_units_k * implied_price / 1000
         net_change_pct_outstanding = (
             None if not shares_outstanding_k else net_units_k / shares_outstanding_k * 100
@@ -223,8 +238,11 @@ def snapshot(
             "ticker": row[0], "name": None if row[1] in (None, "None") else row[1],
             "holders": row[2], "newPositions": row[3], "increases": row[4],
             "reductions": row[5], "exits": row[6], "currentValueM": row[7],
-            "previousValueM": row[8], "currentUnitsK": row[9],
-            "previousUnitsK": row[10], "splitAdjustedFilers": row[13],
+            "previousValueM": row[8], "currentUnitsK": current_units_k,
+            "rawCurrentUnitsK": raw_current_units_k,
+            "previousUnitsK": previous_units_k, "splitAdjustedFilers": row[13],
+            "shareBasisFactor": share_basis_factor,
+            "shareBasisDate": share_basis_date,
             "sharesOutstandingK": shares_outstanding_k,
             "marketCapM": row[15],
             "institutionalOwnershipPct": institutional_ownership_pct,
@@ -317,6 +335,7 @@ def snapshot(
         "version": METHOD_VERSION,
         "reportDate": current,
         "previousReportDate": previous,
+        "shareBasisDate": share_basis_date,
         "availableAt": available_at(current),
         "sourceObservedAt": observed_at,
         "coverage": dict(zip(coverage_keys, coverage)),
@@ -337,8 +356,9 @@ def snapshot(
             "universe": "All Sharadar SF3 institutional SHR positions in the selected report quarter",
             "classification": "Quarter-over-quarter reported units, adjusted for split actions between quarter ends",
             "availability": "Quarter-end aggregate; shared availability uses the 45-day 13F deadline because SF3 does not retain each filing timestamp",
-            "units": "reported holdings and shares outstanding are thousands; values are USD millions; ownership and net-change ratios are percentages",
-            "ownership": "Aggregate reported institutional units divided by the latest ARQ basic shares and reported share factor available by the shared 13F cutoff; Sharadar does not provide a reliable free-float field, so the denominator is shares outstanding and unavailable denominators remain null",
+            "units": "reported holdings and shares outstanding are thousands; historical reported units are normalized to the latest included quarter's share basis using exact Sharadar split actions; values are USD millions; ownership and net-change ratios are percentages",
+            "shareBasis": f"Historical 13F units are multiplied by exact Sharadar split actions after each report date through {share_basis_date}; this changes only the unit of account and does not create an increase or reduction",
+            "ownership": "Split-normalized aggregate reported institutional units divided by the latest ARQ basic shares multiplied by the provider share factor; Sharadar does not provide a reliable free-float field, so the denominator is shares outstanding and unavailable denominators remain null",
             "marketOverview": "Aggregate reported common-stock value divided by the sum of unique covered securities' quarter-end Sharadar market capitalizations; it is a coverage-weighted ownership gauge, not total fund AUM or a free-float measure",
             "netChange": "Split-adjusted net reported share change valued at the current quarter's aggregate implied price; netChangePctOutstanding uses total shares outstanding, not free float",
             "detailPolicy": f"Largest {DETAIL_PER_ACTION} reporting institutions per action for leading securities; counts use the full universe",
@@ -363,7 +383,6 @@ def main() -> int:
             "fundamentals", "daily", "tickers", "sp500",
         )
     }
-    source_generation = compact_hash({"method": METHOD_VERSION, "source": source})
     observed_at = max(
         catalog["datasets"][key]["state"]["last_success"]
         for key in (
@@ -378,6 +397,16 @@ def main() -> int:
     selected = dates[: max(1, args.quarters) + 1]
     if len(selected) < 2:
         raise RuntimeError("insufficient_holdings_quarters")
+    latest_effective_split = duck.execute(
+        "SELECT max(date) FROM actions WHERE action='split' AND date<=?",
+        [dt.date.today()],
+    ).fetchone()[0]
+    share_basis_date = str(latest_effective_split or selected[0])
+    source_generation = compact_hash({
+        "method": METHOD_VERSION,
+        "source": source,
+        "shareBasisDate": share_basis_date,
+    })
 
     sql = sqlite3.connect(database_path)
     sql.execute("PRAGMA busy_timeout=30000")
@@ -430,6 +459,7 @@ def main() -> int:
         holders INTEGER,
         institutional_value_m REAL,
         institutional_shares_k REAL,
+        share_basis_factor REAL,
         shares_outstanding_k REAL,
         institutional_ownership_pct REAL,
         PRIMARY KEY(report_date,source_generation,ticker)
@@ -442,6 +472,11 @@ def main() -> int:
         sql.execute(
             "ALTER TABLE institutional_13f_security_history_v1 ADD COLUMN institutional_value_m REAL"
         )
+    for column, definition in (("share_basis_factor", "REAL"),):
+        if column not in security_history_columns:
+            sql.execute(
+                f"ALTER TABLE institutional_13f_security_history_v1 ADD COLUMN {column} {definition}"
+            )
     sql.execute("CREATE INDEX IF NOT EXISTS institutional_13f_security_history_v1_lookup_idx ON institutional_13f_security_history_v1(ticker,report_date,available_at)")
     before = sql.execute("SELECT count(*) FROM institutional_13f_insight_snapshots_v2").fetchone()[0]
     inserted = []
@@ -471,7 +506,9 @@ def main() -> int:
         include_details = index < max(0, args.detail_quarters)
         if exists and market_count == 4 and security_history_count > 0 and security_value_count == security_history_count and (not include_details or detail_count > 0):
             continue
-        payload, details = snapshot(duck, current, previous, observed_at, include_details)
+        payload, details = snapshot(
+            duck, current, previous, share_basis_date, observed_at, include_details
+        )
         encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
         raw = encoded.encode()
         compressed = gzip.compress(raw, compresslevel=9, mtime=0)
@@ -517,8 +554,9 @@ def main() -> int:
                 sql.executemany(
                     """INSERT INTO institutional_13f_security_history_v1(
                       report_date,source_generation,ticker,available_at,holders,institutional_value_m,
-                      institutional_shares_k,shares_outstanding_k,institutional_ownership_pct
-                    ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                      institutional_shares_k,share_basis_factor,
+                      shares_outstanding_k,institutional_ownership_pct
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
                     [
                         (
                             current,
@@ -528,6 +566,7 @@ def main() -> int:
                             row["holders"],
                             row["currentValueM"],
                             row["currentUnitsK"],
+                            row["shareBasisFactor"],
                             row["sharesOutstandingK"],
                             row["institutionalOwnershipPct"],
                         )

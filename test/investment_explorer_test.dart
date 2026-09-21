@@ -287,6 +287,9 @@ class ExplorerApi extends opportunities.OpportunityApi {
                 'holders': 3,
                 'institutionalValueM': 64000.0,
                 'institutionalSharesK': 6800000.0,
+                'institutionalSharesRawK': 340000.0,
+                'shareBasisFactor': 20.0,
+                'shareBasisDate': '2026-03-31',
                 'institutionalOwnershipPct': 91.0,
               },
               {
@@ -295,6 +298,9 @@ class ExplorerApi extends opportunities.OpportunityApi {
                 'holders': 4,
                 'institutionalValueM': 72000.0,
                 'institutionalSharesK': 7200000.0,
+                'institutionalSharesRawK': 7200000.0,
+                'shareBasisFactor': 1.0,
+                'shareBasisDate': '2026-03-31',
                 'institutionalOwnershipPct': 96.0,
               },
             ],
@@ -562,7 +568,9 @@ void main() {
           findsOneWidget,
         );
         expect(
-          find.text(language == AppLanguage.en ? 'Amount' : '持仓金额'),
+          find.text(
+            language == AppLanguage.en ? 'Shares · current basis' : '股数 · 当前口径',
+          ),
           findsWidgets,
         );
         expect(tester.takeException(), isNull);
