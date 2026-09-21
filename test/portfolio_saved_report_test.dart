@@ -211,8 +211,8 @@ void main() {
         expect(refreshed, 1);
         final success = find.textContaining(
           language == AppLanguage.en
-              ? 'Synced from IBKR/Yodlee'
-              : '已从 IBKR/Yodlee 拉取并写入后端',
+              ? 'IBKR verified and saved'
+              : 'IBKR 已验证并写入后端',
         );
         if (entry.key == 'complete') {
           expect(success, findsOneWidget);

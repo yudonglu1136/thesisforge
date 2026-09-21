@@ -370,7 +370,7 @@ void main() {
       await fixtures.tap(t, find.byKey(const ValueKey('home-sync-now')));
       expect(api.syncs, 1);
       expect(
-        find.textContaining('Holdings, NAV and reported dividend cash flows'),
+        find.textContaining('Holdings and NAV were refreshed'),
         findsOneWidget,
       );
       expect(t.takeException(), isNull);

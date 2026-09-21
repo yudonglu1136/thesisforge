@@ -5,6 +5,11 @@ export function portfolioSyncResult(portfolio, now = new Date()) {
     || portfolio?.connection?.status === "linked_partial";
   const failed = portfolio?.connection?.status === "error";
   const ok = !degraded && !failed;
+  const income = portfolio?.analysisAccounts?.length
+    ? portfolio.analysisAccounts.every((account) => account?.historyEvidence?.incomeStatus === "ready")
+      ? "ready"
+      : "cash_transactions_required"
+    : "report_inputs_unavailable";
   return {
     status: degraded ? "degraded" : failed ? "failed" : "success",
     response: {
@@ -12,6 +17,11 @@ export function portfolioSyncResult(portfolio, now = new Date()) {
       ...(ok ? { syncedAt: now.toISOString() } : {}),
       connection: portfolio?.connection,
       summary: portfolio?.summary,
+      ...(portfolio?.source?.asOf ? {reportDate: portfolio.source.asOf} : {}),
+      ...(portfolio?.source?.historyQueryStatus
+        ? {historyStatus: portfolio.source.historyQueryStatus}
+        : {}),
+      ...(portfolio?.analysisAccounts?.length ? {incomeStatus: income} : {}),
       portfolio
     }
   };

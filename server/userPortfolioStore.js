@@ -527,7 +527,42 @@ export function readPortfolioConnection(user) {
 }
 
 export function readPortfolioConnectionStatus(user) {
-  return readPortfolioConnection(user).status;
+  const connection = readPortfolioConnection(user);
+  const status = connection.status;
+  if (!connection.configured) return status;
+  const db = openUserDb(user);
+  const nav = db.prepare(`
+    SELECT COUNT(*) AS point_count, COUNT(DISTINCT account_id) AS account_count,
+           MIN(date) AS start_date, MAX(date) AS end_date
+    FROM portfolio_nav_points
+    WHERE account_id != 'portfolio'
+  `).get();
+  const latestReport = connection.revision ? db.prepare(`
+    SELECT report_date, retrieved_at
+    FROM portfolio_report_snapshots
+    WHERE provider = ? AND connection_revision = ?
+    ORDER BY report_date DESC, retrieved_at DESC LIMIT 1
+  `).get("ibkr_flex", connection.revision) : null;
+  const syncState = status.status === "linked" || status.status === "linked_empty"
+    ? "connected"
+    : status.status === "error" || status.lastError
+      ? "sync_failed"
+      : "saved_needs_validation";
+  return {
+    ...status,
+    syncState,
+    dailySyncEnabled: process.env.PORTFOLIO_NAV_AUTO_CAPTURE !== "false",
+    latestReport: latestReport ? {
+      reportDate: latestReport.report_date,
+      retrievedAt: latestReport.retrieved_at
+    } : null,
+    navHistory: {
+      pointCount: Number(nav?.point_count || 0),
+      accountCount: Number(nav?.account_count || 0),
+      startDate: nav?.start_date || "",
+      endDate: nav?.end_date || ""
+    }
+  };
 }
 
 export function savePortfolioConnection(user, input = {}) {

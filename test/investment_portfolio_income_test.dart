@@ -277,7 +277,7 @@ void main() {
       await mount(t, donut(income: {}));
       await tap(t, find.byKey(const ValueKey('allocation-income')));
       expect(
-        find.textContaining('Income history is not available.'),
+        find.textContaining('Received-income history is unavailable.'),
         findsOneWidget,
       );
       expect(

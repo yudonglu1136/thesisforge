@@ -55,7 +55,7 @@ export function reportAnalysisAccounts(parsed, {historyParsed=null}={}) {
     const dailyMtm=date(s.fromDate)===reportDate&&reportDate&&dailyRows.length&&dailyRows.every(r=>r.pnl!==null)&&
       new Set(dailyRows.map(r=>`${r.instrumentId}:${r.assetCategory}`)).size===dailyRows.length
       ?{date:reportDate,basis:'ibkr_instrument_mtm_in_base',rows:dailyRows}:null;
-    return {currency,reportDate,reportedNav:num(nav?.total),accountNumber:index+1,positions,dailyMtm,historyEvidence,
+    return {accountId:accountId?String(accountId):null,currency,reportDate,reportedNav:num(nav?.total),accountNumber:index+1,positions,dailyMtm,historyEvidence,
       navHistory:[...historyRows,...summaries].map(r=>({date:date(r.reportDate),nav:num(r.total)})).filter(r=>r.date&&r.nav!==null&&reportDate&&r.date<=reportDate),
       performanceBasis:'nav_only_external_flows_not_reconciled'};
   });

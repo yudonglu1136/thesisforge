@@ -118,6 +118,8 @@ test('successful broker load persists; outage after restart returns the dated re
 test('ordinary portfolio reads use the saved owner report without contacting the broker',async()=>{
   const user={id:'persistence-fast-read'};store.savePortfolioConnection(user,config());
   store.writeUserPortfolioReport(user,payload(),options(user));
+  store.writeUserPortfolioNavPoint(user,{accountId:'synthetic-account',date:'2026-09-07',nav:900});
+  store.writeUserPortfolioNavPoint(user,{accountId:'synthetic-account',date:'2026-09-09',nav:1200});
   clearPortfolioCache(user);
   let brokerRequests=0;
   globalThis.fetch=async()=>{brokerRequests+=1;throw new Error('ordinary reads must not contact IBKR');};
@@ -127,9 +129,13 @@ test('ordinary portfolio reads use the saved owner report without contacting the
   assert.equal(saved.freshness.reportAsOf,'2026-09-09');
   assert.equal(saved.connection.status,'linked');
   assert.equal(saved.holdings[0].ticker,'AAA');
+  assert.deepEqual(saved.analysisAccounts[0].navHistory.map(row=>row.date),[
+    '2026-09-07','2026-09-08','2026-09-09'
+  ]);
+  assert.equal(saved.analysisAccounts[0].navHistoryStatus.pointCount,3);
 });
 
-test('history query failure retains the last complete report; first-ever partial is not persisted',async()=>{
+test('history query failure refreshes current holdings while retaining only verified historical evidence',async()=>{
   const connection={...config(),ibkrFlexHistoryQueryId:'987654'};
   const existing={id:'persistence-history-existing'},first={id:'persistence-history-first'};
   store.savePortfolioConnection(existing,connection);store.savePortfolioConnection(first,connection);
@@ -142,13 +148,18 @@ test('history query failure retains the last complete report; first-ever partial
       ? '<FlexStatementResponse><Status>Success</Status><ReferenceCode>FIXTURE</ReferenceCode></FlexStatementResponse>'
       : '<FlexQueryResponse><FlexStatements><FlexStatement accountId="FIXTURE" fromDate="20260908" toDate="20260909" currency="USD"><AccountInformation currency="USD"/><EquitySummaryByReportDateInBase total="1200" cash="0" reportDate="20260909"/><OpenPositions><OpenPosition symbol="AAA" assetCategory="STK" currency="USD" quantity="10" markPrice="120" positionValue="1200"/></OpenPositions></FlexStatement></FlexStatements></FlexQueryResponse>'};
   };
-  const stale=await loadPortfolioDashboard({user:existing,forceRefresh:true});
-  assert.equal(stale.freshness.status,'stale');
-  assert.deepEqual(stale.analysisAccounts[0].historyEvidence,complete.analysisAccounts[0].historyEvidence);
-  assert.deepEqual(store.readUserPortfolioReport(existing).payload.analysisAccounts,complete.analysisAccounts);
-  const partial=await loadPortfolioDashboard({user:first,forceRefresh:true});
-  assert.equal(partial.connection.status,'linked_partial');assert.equal(partial.holdings[0].ticker,'AAA');
-  assert.equal(partial.freshness,undefined);assert.equal(store.readUserPortfolioReport(first),null);
+  const fresh=await loadPortfolioDashboard({user:existing,forceRefresh:true});
+  assert.equal(fresh.freshness.status,'current_report');
+  assert.equal(fresh.source.historyQueryStatus,'error');
+  assert.deepEqual(fresh.analysisAccounts[0].historyEvidence,complete.analysisAccounts[0].historyEvidence);
+  assert.equal(fresh.analysisAccounts[0].historyEvidenceStatus,'retained_from_last_verified_report');
+  assert.equal(store.readUserPortfolioReport(existing).payload.analysisAccounts[0].historyEvidenceStatus,
+    'retained_from_last_verified_report');
+  const current=await loadPortfolioDashboard({user:first,forceRefresh:true});
+  assert.equal(current.connection.status,'linked');assert.equal(current.holdings[0].ticker,'AAA');
+  assert.equal(current.freshness.status,'current_report');
+  assert.equal(current.source.historyQueryStatus,'error');
+  assert.equal(store.readUserPortfolioReport(first).reportAsOf,'2026-09-09');
 });
 
 test('partial multi-account refresh keeps the last complete dated portfolio',async()=>{

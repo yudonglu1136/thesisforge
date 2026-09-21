@@ -131,11 +131,23 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
                 );
         });
       } else {
+        final incomeStatus = text(result['incomeStatus']);
+        final historyStatus = text(result['historyStatus']);
         setState(() {
-          portfolioActionMessage = w(
-            'IBKR sync completed. Holdings, NAV and reported dividend cash flows were refreshed.',
-            'IBKR 同步完成，持仓、净值及已报告股息现金流已更新。',
-          );
+          portfolioActionMessage = incomeStatus == 'ready'
+              ? w(
+                  'IBKR sync completed. Holdings, NAV and reported cash dividends and interest were refreshed.',
+                  'IBKR 同步完成，持仓、净值及券商报告的现金股息与利息已更新。',
+                )
+              : historyStatus == 'error'
+              ? w(
+                  'Holdings and today’s NAV were saved. Historical cash transactions are unavailable, so dividend income was not claimed.',
+                  '持仓与今日净值已保存。历史现金交易暂不可用，因此没有把股息收入误报为已更新。',
+                )
+              : w(
+                  'Holdings and NAV were refreshed. To show received dividends, include Detailed Cash Transactions in the IBKR Activity Flex report.',
+                  '持仓与净值已更新。若要显示实际收到的股息，请在 IBKR Activity Flex 报告中加入 Detailed Cash Transactions。',
+                );
         });
       }
       await load();

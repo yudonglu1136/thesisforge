@@ -477,12 +477,12 @@ app.get("/api/portfolio/connection", async (request, response) => {
 app.post("/api/portfolio/connection", async (request, response) => {
   try {
     recordPortfolioRequestUser(request);
-    const status = savePortfolioConnection(request.user, request.body || {});
+    savePortfolioConnection(request.user, request.body || {});
     clearPortfolioCache(request.user);
     const payload = await loadPortfolioDashboard({ forceRefresh: true, user: request.user });
     response.json({
       ok: true,
-      connection: status,
+      connection: readPortfolioConnectionStatus(request.user),
       portfolio: payload
     });
   } catch (error) {
@@ -494,12 +494,12 @@ app.post("/api/portfolio/connection", async (request, response) => {
 app.post("/api/portfolio/accounts", async (request, response) => {
   try {
     recordPortfolioRequestUser(request);
-    const status = addPortfolioAccount(request.user, request.body || {});
+    addPortfolioAccount(request.user, request.body || {});
     clearPortfolioCache(request.user);
     const payload = await loadPortfolioDashboard({ forceRefresh: true, user: request.user });
     response.json({
       ok: true,
-      connection: status,
+      connection: readPortfolioConnectionStatus(request.user),
       portfolio: payload
     });
   } catch (error) {

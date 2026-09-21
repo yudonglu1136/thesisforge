@@ -406,10 +406,10 @@ const _uiChinese = <String, String>{
   'PORTFOLIO ACCOUNT': '组合账户',
   'Close': '关闭',
   'Account label': '账户名称',
-  'Yodlee Token': 'Yodlee Token',
+  'IBKR Flex token': 'IBKR Flex token',
   'Hide token': '隐藏 Token',
   'Show token': '显示 Token',
-  'Yodlee Query ID': 'Yodlee Query ID',
+  'Activity Flex Query ID': 'Activity Flex Query ID',
   'Cancel': '取消',
   'Adding': '正在添加',
   'Add & update': '添加并更新',
@@ -13952,11 +13952,17 @@ class _PortfolioConnectionStatusPanelState
       final summary = asMap(payload['summary']);
       final accountCount = number(summary['accounts']).round();
       final holdings = number(summary['holdings']).round();
+      final incomeReady = text(payload['incomeStatus']) == 'ready';
       setState(() {
-        _message = context.tr(
-          '已从 IBKR/Yodlee 拉取并写入后端：$accountCount 个账户 · $holdings 个持仓',
-          'Synced from IBKR/Yodlee into backend: $accountCount accounts · $holdings holdings',
-        );
+        _message = incomeReady
+            ? context.tr(
+                'IBKR 已验证并写入后端：$accountCount 个账户 · $holdings 个持仓 · 现金股息/利息已更新',
+                'IBKR verified and saved: $accountCount accounts · $holdings holdings · cash dividends/interest updated',
+              )
+            : context.tr(
+                'IBKR 已验证并写入后端：$accountCount 个账户 · $holdings 个持仓。报告未包含 Detailed Cash Transactions，因此没有声称股息已更新。',
+                'IBKR verified and saved: $accountCount accounts · $holdings holdings. Detailed Cash Transactions are missing, so dividend income was not claimed as refreshed.',
+              );
       });
       await widget.onRefresh();
     } catch (error) {
@@ -13987,6 +13993,12 @@ class _PortfolioConnectionStatusPanelState
     final connection = widget.connection;
     final savedAccounts = asList(connection['accounts']);
     final status = text(connection['status'], 'linked');
+    final syncState = text(connection['syncState']);
+    final navHistory = asMap(connection['navHistory']);
+    final navPointCount = number(navHistory['pointCount']).round();
+    final navStart = formatDate(text(navHistory['startDate']));
+    final navEnd = formatDate(text(navHistory['endDate']));
+    final dailySync = truthy(connection['dailySyncEnabled']);
     final failed =
         status == 'error' ||
         status == 'stale_report' ||
@@ -14023,7 +14035,15 @@ class _PortfolioConnectionStatusPanelState
                     '连接已保存，等待修复同步',
                     'Connection Saved; Sync Needs Attention',
                   )
-                : context.tr('IBKR / Yodlee 已注册', 'IBKR / Yodlee Registered'),
+                : syncState == 'connected'
+                ? context.tr(
+                    'IBKR Flex 已连接并验证',
+                    'IBKR Flex Connected & Verified',
+                  )
+                : context.tr(
+                    'IBKR Flex 已保存，等待验证',
+                    'IBKR Flex Saved; Verification Pending',
+                  ),
             palette: palette,
             trailing: _statusActions(palette, compactActions: compactActions),
           ),
@@ -14034,9 +14054,14 @@ class _PortfolioConnectionStatusPanelState
                     '你的连接记录仍然保留在后端加密用户库里，不需要重新注册。同步失败通常是 token 过期或 Query ID 权限变化；需要更换时先断开再重新注册。',
                     'Your connection is still encrypted in the per-user backend store. You do not need to register again. Sync failures usually mean the token expired or the Query ID permissions changed; disconnect first only if you need to replace credentials.',
                   )
+                : syncState == 'connected'
+                ? context.tr(
+                    '连接已由 IBKR 实际报告验证。系统会保留按日去重的 NAV 与持仓快照；同一账户同一天只更新一条记录。',
+                    'The connection was verified by a real IBKR report. Daily NAV and holding snapshots are retained with one upserted row per account/date.',
+                  )
                 : context.tr(
-                    '以后打开 Portfolio 会直接使用后端加密保存的连接；可以在右上角继续添加账户，或手动更新数据并写入今日 NAV。',
-                    'Portfolio will use the encrypted backend connection automatically. You can add another account from the top right, or update data manually to write today’s NAV.',
+                    '凭证已经加密保存，但还没有成功读取一份 IBKR 报告，所以这里不会把“已保存”误写成“已连接”。',
+                    'Credentials are encrypted and saved, but no IBKR report has loaded successfully yet, so “saved” is not presented as “connected.”',
                   ),
             style: TextStyle(color: palette.muted, height: 1.35),
           ),
@@ -14112,6 +14137,20 @@ class _PortfolioConnectionStatusPanelState
                 context.tr('前端不回显密钥', 'No credential echo in browser'),
                 palette: palette,
               ),
+              InfoChip(
+                dailySync
+                    ? context.tr('每日自动同步已启用', 'Daily sync enabled')
+                    : context.tr('每日自动同步未启用', 'Daily sync disabled'),
+                palette: palette,
+              ),
+              if (navPointCount > 0)
+                InfoChip(
+                  context.tr(
+                    '$navPointCount 个 NAV 点 · $navStart 至 $navEnd',
+                    '$navPointCount NAV points · $navStart to $navEnd',
+                  ),
+                  palette: palette,
+                ),
               OutlinedButton.icon(
                 onPressed: _disconnecting ? null : _confirmDisconnect,
                 icon: _disconnecting
@@ -14247,7 +14286,7 @@ class _PortfolioConnectionStatusPanelState
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  '${context.tr('Query ID', 'Query ID')} $queryId · $tokenPreview',
+                  '${context.tr('Activity Flex Query ID', 'Activity Flex Query ID')} $queryId · $tokenPreview',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -14311,8 +14350,8 @@ class _PortfolioAddAccountDialogState extends State<PortfolioAddAccountDialog> {
     if (token.isEmpty || queryId.isEmpty) {
       setState(() {
         _error = context.tr(
-          'Token 和 Yodlee Query ID 都要填。',
-          'Token and Yodlee Query ID are both required.',
+          'IBKR Flex token 和 Activity Flex Query ID 都要填。',
+          'IBKR Flex token and Activity Flex Query ID are both required.',
         );
       });
       return;
@@ -14322,11 +14361,23 @@ class _PortfolioAddAccountDialogState extends State<PortfolioAddAccountDialog> {
       _error = null;
     });
     try {
-      await widget.api.postJson('/api/portfolio/accounts', {
+      final payload = await widget.api.postJson('/api/portfolio/accounts', {
         'label': _labelController.text.trim(),
         'ibkrFlexToken': token,
         'ibkrFlexQueryId': queryId,
       });
+      final portfolio = asMap(payload['portfolio']);
+      final status = text(asMap(portfolio['connection'])['status']);
+      if (!['linked', 'linked_empty'].contains(status) ||
+          isSavedPortfolioReport(portfolio)) {
+        setState(
+          () => _error = context.tr(
+            '账户凭证已保存，但 IBKR 验证没有完成。请检查 token、Query ID 与报告权限后重试。',
+            'The account credentials were saved, but IBKR validation did not complete. Check the token, Query ID and report permissions, then retry.',
+          ),
+        );
+        return;
+      }
       await widget.onAdded();
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
@@ -14354,10 +14405,7 @@ class _PortfolioAddAccountDialogState extends State<PortfolioAddAccountDialog> {
               PanelTitle(
                 icon: Icons.add_card_rounded,
                 kicker: 'PORTFOLIO ACCOUNT',
-                title: context.tr(
-                  '添加 IBKR / Yodlee 账户',
-                  'Add IBKR / Yodlee Account',
-                ),
+                title: context.tr('添加 IBKR Flex 账户', 'Add IBKR Flex Account'),
                 palette: palette,
                 trailing: IconButton(
                   tooltip: context.ui('Close'),
@@ -14368,8 +14416,8 @@ class _PortfolioAddAccountDialogState extends State<PortfolioAddAccountDialog> {
               const SizedBox(height: 10),
               Text(
                 context.tr(
-                  '复制 IBKR Third-Party Services 里 Yodlee 那一行的 Token 和 Query ID。保存后会追加到你的后端用户库，并立即更新组合数据。',
-                  'Copy the Token and Query ID from the Yodlee row in IBKR Third-Party Services. After saving, it will be added to your encrypted backend user store and immediately synced.',
+                  'Yodlee 是 IBKR 内的报告模板名称，不是另一套凭证。复制该行的 Flex token 与 Activity Flex Query ID；只有 IBKR 验证成功后才会显示为已连接。',
+                  'Yodlee is the report-template name inside IBKR, not another credential set. Copy that row’s Flex token and Activity Flex Query ID; the account is shown as connected only after IBKR verifies it.',
                 ),
                 style: TextStyle(color: palette.muted, height: 1.35),
               ),
@@ -14386,10 +14434,10 @@ class _PortfolioAddAccountDialogState extends State<PortfolioAddAccountDialog> {
               const SizedBox(height: 10),
               _field(
                 controller: _tokenController,
-                label: 'Yodlee Token',
+                label: 'IBKR Flex token',
                 hint: context.tr(
-                  '复制 Yodlee 行的 Token',
-                  'Copy the Token from the Yodlee row',
+                  '复制 IBKR Yodlee 模板行的 Flex token',
+                  'Copy the Flex token from the IBKR Yodlee template row',
                 ),
                 icon: Icons.key_rounded,
                 obscure: !_showToken,
@@ -14407,10 +14455,10 @@ class _PortfolioAddAccountDialogState extends State<PortfolioAddAccountDialog> {
               const SizedBox(height: 10),
               _field(
                 controller: _queryController,
-                label: 'Yodlee Query ID',
+                label: 'Activity Flex Query ID',
                 hint: context.tr(
-                  '复制 Yodlee 行的 Query ID',
-                  'Copy the Query ID from the Yodlee row',
+                  '复制 IBKR Yodlee 模板行的 Activity Flex Query ID',
+                  'Copy the Activity Flex Query ID from the IBKR Yodlee template row',
                 ),
                 icon: Icons.tag_rounded,
                 keyboardType: TextInputType.number,
@@ -14556,8 +14604,8 @@ class _PortfolioConnectionPanelState extends State<PortfolioConnectionPanel> {
     if (token.isEmpty || queryId.isEmpty) {
       setState(() {
         _error = context.tr(
-          'Token 和 Yodlee Query ID 都要填。',
-          'Token and Yodlee Query ID are both required.',
+          'IBKR Flex token 和 Activity Flex Query ID 都要填。',
+          'IBKR Flex token and Activity Flex Query ID are both required.',
         );
         _message = null;
       });
@@ -14577,15 +14625,28 @@ class _PortfolioConnectionPanelState extends State<PortfolioConnectionPanel> {
       });
       final portfolio = asMap(payload['portfolio']);
       final connection = asMap(portfolio['connection']);
+      final status = text(connection['status']);
+      final connected =
+          ['linked', 'linked_empty'].contains(status) &&
+          !isSavedPortfolioReport(portfolio);
+      if (!connected) {
+        setState(() {
+          _error = context.tr(
+            '凭证已加密保存，但 IBKR 尚未验证成功。请检查 token、Query ID 和报告权限后重试。',
+            'Credentials were encrypted and saved, but IBKR validation did not succeed. Check the token, Query ID and report permissions, then retry.',
+          );
+          _message = null;
+        });
+        return;
+      }
       setState(() {
-        _message = text(
-          connection['message'],
-          context.tr(
-            '连接已保存，正在载入你的 portfolio。',
-            'Connection saved. Loading your portfolio.',
-          ),
+        _message = context.tr(
+          'IBKR 已验证并完成首次同步，之后会每天自动写入净值与持仓。',
+          'IBKR was verified and the first sync completed. NAV and holdings will be captured daily.',
         );
       });
+      _tokenController.clear();
+      _queryController.clear();
       await widget.onConnected();
     } catch (error) {
       setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
@@ -14638,10 +14699,10 @@ class _PortfolioConnectionPanelState extends State<PortfolioConnectionPanel> {
           final fields = [
             _connectionField(
               controller: _tokenController,
-              label: 'Yodlee Token',
+              label: 'IBKR Flex token',
               hint: context.tr(
-                '复制 Yodlee 行的 Token',
-                'Copy the Token from the Yodlee row',
+                '复制 IBKR Yodlee 模板行的 Flex token',
+                'Copy the Flex token from the IBKR Yodlee template row',
               ),
               icon: Icons.key_rounded,
               obscure: !_showToken,
@@ -14658,10 +14719,10 @@ class _PortfolioConnectionPanelState extends State<PortfolioConnectionPanel> {
             ),
             _connectionField(
               controller: _queryController,
-              label: 'Yodlee Query ID',
+              label: 'Activity Flex Query ID',
               hint: context.tr(
-                '复制 Yodlee 行的 Query ID',
-                'Copy the Query ID from the Yodlee row',
+                '复制 IBKR Yodlee 模板行的 Activity Flex Query ID',
+                'Copy the Activity Flex Query ID from the IBKR Yodlee template row',
               ),
               icon: Icons.tag_rounded,
               keyboardType: TextInputType.number,
@@ -14674,18 +14735,15 @@ class _PortfolioConnectionPanelState extends State<PortfolioConnectionPanel> {
               PanelTitle(
                 icon: Icons.lock_person_rounded,
                 kicker: 'PRIVATE PORTFOLIO',
-                title: context.tr(
-                  '首次连接 IBKR / Yodlee',
-                  'Connect IBKR / Yodlee',
-                ),
+                title: context.tr('首次连接 IBKR Flex', 'Connect IBKR Flex'),
                 palette: palette,
                 trailing: InfoChip('per-user encrypted DB', palette: palette),
               ),
               const SizedBox(height: 8),
               Text(
                 context.tr(
-                  '这个表单只在还没有注册连接时出现。保存成功后，后端会为当前登录用户加密保存配置，之后不会再要求填写 token 或 Query ID。',
-                  'This form only appears before a connection is registered. After saving, the backend encrypts the configuration for the current signed-in user, and you will not be asked for the token or Query ID again.',
+                  '只需要填写一次 IBKR Flex token 和 Activity Flex Query ID。系统会先加密保存，再实际读取一份 IBKR 报告；只有验证成功才显示“已连接”。',
+                  'Enter the IBKR Flex token and Activity Flex Query ID once. ThesisForge encrypts them, then loads a real IBKR report; “Connected” appears only after verification succeeds.',
                 ),
                 style: TextStyle(color: palette.muted, height: 1.35),
               ),
@@ -14837,16 +14895,16 @@ class _PortfolioConnectionPanelState extends State<PortfolioConnectionPanel> {
         '2',
         context.tr('复制 Yodlee 那一行', 'Copy the Yodlee row'),
         context.tr(
-          '在 Third-Party Services 表格里勾选 Yodlee，只复制这一行显示出来的 Token 和 Query ID。',
-          'Enable Yodlee in the Third-Party Services table, then copy only the Token and Query ID shown on that row.',
+          '在 Third-Party Services 表格里勾选 Yodlee。Yodlee 只是模板名称；复制这一行的 Flex token 和 Activity Flex Query ID。',
+          'Enable Yodlee in the Third-Party Services table. Yodlee is only the template name; copy that row’s Flex token and Activity Flex Query ID.',
         ),
       ),
       (
         '3',
         context.tr('净值曲线自动积累', 'NAV history builds automatically'),
         context.tr(
-          'IBKR 这里没有 NAV ID。系统会用同一个 Yodlee Query ID 拉组合，并每天把账户 NAV 存进你的用户库，数据够了自动画线。',
-          'There is no NAV ID in IBKR. The system uses the same Yodlee Query ID to fetch the portfolio and stores daily account NAV in your user database; the chart appears once enough history exists.',
+          'IBKR 没有单独的 NAV ID。系统使用 Activity Flex Query ID 拉取组合，每天按“账户 + 日期”更新一条 NAV，已有历史会自动合并到曲线，不会重复追加。',
+          'IBKR has no separate NAV ID. ThesisForge uses the Activity Flex Query ID and upserts one NAV row per account/date each day; existing history is merged into the curve without duplicates.',
         ),
       ),
     ];

@@ -31,6 +31,7 @@ import {
   portfolioConnectionRevision,
   portfolioConnectionAccounts,
   readPortfolioConnection,
+  readPortfolioConnectionStatus,
   readUserPortfolioReport,
   readUserPortfolioNavPoints,
   writeUserPortfolioReport,
@@ -1334,6 +1335,80 @@ function truthyPerformanceStatus(status) {
   return status?.real === true || status?.real === "true";
 }
 
+function mergeAccountNavHistory(account = {}, storedPoints = []) {
+  const byDate = new Map();
+  for (const point of storedPoints) {
+    const date = normalizeReportDate(point?.date);
+    const nav = finiteNumber(point?.nav ?? point?.value);
+    if (date && nav > 0) byDate.set(date, {date, nav, source: point?.source || "sqlite_daily_nav"});
+  }
+  // A newly fetched broker row is the most recent evidence for the same date.
+  for (const point of account.navHistory || []) {
+    const date = normalizeReportDate(point?.date);
+    const nav = finiteNumber(point?.nav ?? point?.value);
+    if (date && nav > 0) byDate.set(date, {...point, date, nav});
+  }
+  const navHistory = [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+  return {
+    ...account,
+    navHistory,
+    navHistoryStatus: {
+      source: storedPoints.length ? "broker_and_sqlite_daily_nav" : "broker_report",
+      pointCount: navHistory.length,
+      startDate: navHistory[0]?.date || "",
+      endDate: navHistory.at(-1)?.date || ""
+    }
+  };
+}
+
+function attachStoredAnalysisNavHistory(payload, {user = null, fallbackAccountId = ""} = {}) {
+  if (!user || !Array.isArray(payload.analysisAccounts) || !payload.analysisAccounts.length) return payload;
+  const brokerAccounts = payload.accounts || [];
+  const analysisAccounts = payload.analysisAccounts.map((account, index) => {
+    const accountId = textValue(
+      account.accountId || brokerAccounts[index]?.id ||
+        (payload.analysisAccounts.length === 1 ? fallbackAccountId : "")
+    );
+    if (!accountId) return account;
+    return mergeAccountNavHistory(
+      {...account, accountId},
+      readUserPortfolioNavPoints(user, accountId)
+    );
+  });
+  return {...payload, analysisAccounts};
+}
+
+function retainSavedHistoricalEvidence(payload, user) {
+  if (!user || payload?.source?.historyQueryStatus !== "error") return payload;
+  const saved = readUserPortfolioReport(user)?.payload;
+  if (!saved?.analysisAccounts?.length || !payload.analysisAccounts?.length) return payload;
+  const previous = saved.analysisAccounts;
+  const analysisAccounts = payload.analysisAccounts.map((account) => {
+    const match = previous.find((candidate) =>
+      account.accountId && candidate.accountId === account.accountId &&
+      candidate.currency === account.currency
+    ) || (previous.length === 1 && payload.analysisAccounts.length === 1 &&
+      previous[0].currency === account.currency ? previous[0] : null);
+    if (!match?.historyEvidence) return account;
+    return {
+      ...account,
+      historyEvidence: match.historyEvidence,
+      historyEvidenceStatus: "retained_from_last_verified_report"
+    };
+  });
+  return {
+    ...payload,
+    analysisAccounts,
+    source: {
+      ...payload.source,
+      warnings: [
+        ...(payload.source?.warnings || []),
+        "Current holdings were refreshed; historical trades and cash-income evidence were retained from the last verified report."
+      ]
+    }
+  };
+}
+
 export function normalizeIbkrFlexPortfolio(parsed, {
   historyParsed = null,
   historyError = null,
@@ -1444,8 +1519,12 @@ export function normalizeIbkrFlexPortfolio(parsed, {
       warnings: sourceWarnings
     }
   });
-  payload.analysisAccounts = reportAnalysisAccounts(parsed,{historyParsed});
-  return attachStoredNavHistory(attachStoredDividendCalendar(payload), {
+  payload.analysisAccounts = reportAnalysisAccounts(parsed,{historyParsed}).map((account) => ({
+    ...account,
+    accountId: account.accountId || accountId,
+    connectionId: accountConfig?.id || accountId
+  }));
+  const withStoredNav = attachStoredNavHistory(attachStoredDividendCalendar(payload), {
     accountId,
     date: statement.toDate || statement.fromDate,
     source: "IBKR Third-Party Reports / Yodlee",
@@ -1453,6 +1532,7 @@ export function normalizeIbkrFlexPortfolio(parsed, {
     captureNav,
     user: user || null
   });
+  return attachStoredAnalysisNavHistory(withStoredNav, {user, fallbackAccountId: accountId});
 }
 
 function normalizePortfolio({
@@ -1793,14 +1873,15 @@ async function loadFreshPortfolioDashboard({ user = null, captureNav = true } = 
     );
     const payloads = results
       .filter((result) => result.status === "fulfilled")
-      .map((result) => result.value);
+      .map((result) => retainSavedHistoricalEvidence(result.value, scopedUser));
     const errors = results
       .filter((result) => result.status === "rejected")
       .map((result) => result.reason);
     if (!payloads.length) throw errors[0] || new Error("All IBKR/Yodlee accounts failed to refresh.");
-    const reportErrors = [...errors, ...payloads
-      .filter(payload => payload.source?.historyQueryStatus === "error")
-      .map(() => new Error("Broker history query failed; current holdings are a partial report."))];
+    // A separate historical query is optional. Its failure must not discard a
+    // valid current holdings/NAV report or prevent today's snapshot being
+    // persisted. Only a failed current account request makes the blend partial.
+    const reportErrors = [...errors];
     let latestStatus = connectionStatus;
     if (isRealUser(user)) {
       if (portfolioConnectionRevision(user) !== connectionRevision) {
@@ -1813,7 +1894,7 @@ async function loadFreshPortfolioDashboard({ user = null, captureNav = true } = 
       } else {
         markPortfolioConnectionSync(user, { ok: true });
       }
-      latestStatus = readPortfolioConnection(user).status;
+      latestStatus = readPortfolioConnectionStatus(user);
     }
     const syncedPayloads = payloads.map((payload) => withConnectionStatus(payload, latestStatus));
     const result = syncedPayloads.length === 1 && accounts.length === 1 && !reportErrors.length
@@ -1840,24 +1921,24 @@ async function loadFreshPortfolioDashboard({ user = null, captureNav = true } = 
 function savedPortfolioReportPayload(user) {
   const saved = readUserPortfolioReport(user);
   if (!saved) return null;
-  const status = readPortfolioConnection(user).status;
+  const status = readPortfolioConnectionStatus(user);
   const message = `Broker refresh unavailable. Showing the saved report dated ${saved.reportAsOf}; not live quotes.`;
-  return {
+  return attachStoredAnalysisNavHistory({
     ...saved.payload,
     connection: {...status, status:"stale_report", lastError:message, message},
     source: {...saved.payload.source, mode:"saved_broker_report", stale:true,
       retrievedAt:saved.retrievedAt, warnings:[...(saved.payload.source.warnings || []),message]},
     freshness:{status:"stale",basis:"last_successful_broker_report",
       reportAsOf:saved.reportAsOf,retrievedAt:saved.retrievedAt,live:false}
-  };
+  }, {user});
 }
 
 function currentPortfolioReportPayload(user) {
   const saved = readUserPortfolioReport(user);
   if (!saved) return null;
-  const status = readPortfolioConnection(user).status;
+  const status = readPortfolioConnectionStatus(user);
   if (status.status === "error" || status.lastError) return savedPortfolioReportPayload(user);
-  return {
+  return attachStoredAnalysisNavHistory({
     ...saved.payload,
     connection: {...status, status: status.status === "configured" ? "linked" : status.status},
     source: {
@@ -1872,7 +1953,7 @@ function currentPortfolioReportPayload(user) {
       retrievedAt: saved.retrievedAt,
       live: false
     }
-  };
+  }, {user});
 }
 
 function portfolioDashboardCacheKey(user, includeAnalytics) {

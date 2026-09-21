@@ -418,8 +418,8 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
                             '此报告期间没有正数收入记录。',
                           )
                         : w(
-                            'Income history is not available. Sync an IBKR Activity Flex report with detailed Cash Transactions: dividends and interest. Positions are never used to estimate income.',
-                            '尚无可用收入历史。请同步包含现金交易明细、股息及利息的 IBKR 活动报表。不会用仓位推算收入。',
+                            'Received-income history is unavailable. Add Detailed Cash Transactions (dividends and interest) to the IBKR Activity Flex report. Sharadar corporate dividend events cannot prove your cash receipt, withholding or FX, so they are kept separate and positions are never used to estimate income.',
+                            '尚无实际到账收入历史。请在 IBKR Activity Flex 报告中加入 Detailed Cash Transactions（股息及利息）。Sharadar 的公司分红事件不能证明你的实际到账、预扣税或汇率，因此会与账户收入分开，也不会用仓位推算收入。',
                           )
                   : w('Allocation data is not available.', '暂无可用仓位结构数据。'),
               style: TextStyle(color: p.muted),

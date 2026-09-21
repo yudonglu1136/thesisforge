@@ -179,7 +179,6 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
           'ibkrFlexHistoryQueryId': history.text.trim(),
       });
       if (!mounted) return;
-      token.clear();
       final status = asMap(asMap(result['portfolio'])['connection'])['status'];
       if (!['linked', 'linked_empty', 'linked_partial'].contains(status)) {
         setState(
@@ -190,6 +189,7 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
         );
         return;
       }
+      token.clear();
       Navigator.of(context).pop(true);
     } catch (_) {
       if (mounted) {
@@ -232,7 +232,7 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
                 enableSuggestions: false,
                 autocorrect: false,
                 decoration: const InputDecoration(
-                  labelText: 'Flex Web Service Token',
+                  labelText: 'IBKR Flex Web Service Token',
                 ),
               ),
               const SizedBox(height: 16),
@@ -240,7 +240,10 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
                 controller: query,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  labelText: w('Activity Query ID', 'Activity Query ID'),
+                  labelText: w(
+                    'Activity Flex Query ID',
+                    'Activity Flex Query ID',
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -249,16 +252,16 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
                   labelText: w(
-                    'History Query ID · optional',
-                    '历史 Query ID · 可选',
+                    'Historical Activity Flex Query ID · optional',
+                    '历史 Activity Flex Query ID · 可选',
                   ),
                 ),
               ),
               const SizedBox(height: 16),
               Text(
                 w(
-                  'The report must include account currency, open positions, base-currency cash and NAV. For a history query, add daily NAV and cash-flow sections. Credentials are stored per user, encrypted on the server.',
-                  '报告需包含账户币种、持仓、基础币种现金与净值。历史查询需增加每日净值和入出金栏目。凭证按用户隔离，在服务器加密保存。',
+                  'Yodlee is only the third-party template name inside IBKR—not another account or API key. The Activity Flex report must include positions, base-currency NAV and Detailed Cash Transactions for received dividends and interest. Credentials are encrypted per user on the server.',
+                  'Yodlee 只是 IBKR 内的第三方报告模板名称，不是另一套账户或 API key。Activity Flex 报告需包含持仓、基础币种净值，以及用于实际股息和利息的 Detailed Cash Transactions。凭证按用户隔离并在服务器加密保存。',
                 ),
                 style: TextStyle(color: p.muted, fontSize: 12, height: 1.5),
               ),
