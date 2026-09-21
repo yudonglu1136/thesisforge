@@ -150,7 +150,7 @@ class ExplorerApi extends opportunities.OpportunityApi {
     if (path.startsWith('/api/investment/13f-insights?')) {
       if (listFails) throw StateError('fixture outage');
       return {
-        'version': 'institutional-13f-insights-v1',
+        'version': 'institutional-13f-insights-v3',
         'asOf': '2026-06-01',
         'reportDate': '2026-03-31',
         'previousReportDate': '2025-12-31',
@@ -169,6 +169,50 @@ class ExplorerApi extends opportunities.OpportunityApi {
           'reductions': 390,
           'exits': 90,
         },
+        'marketOverview': {
+          for (final segment in const [
+            'all',
+            'sp500',
+            'nasdaq100Proxy',
+            'smallCap',
+          ])
+            segment: {
+              'securities': 100,
+              'coveredSecurities': 96,
+              'institutionalValueM': 65000000.0,
+              'marketCapM': 97000000.0,
+              'institutionalOwnershipPct': 67.01,
+              'netChangeValueM': 140000.0,
+              'netChangePctMarketCap': .14,
+            },
+        },
+        'marketHistory': [
+          for (final point in const [
+            ('2025-12-31', 66.4),
+            ('2026-03-31', 67.01),
+          ])
+            {
+              'reportDate': point.$1,
+              'availableAt': '2026-05-15',
+              'segments': {
+                for (final segment in const [
+                  'all',
+                  'sp500',
+                  'nasdaq100Proxy',
+                  'smallCap',
+                ])
+                  segment: {
+                    'securities': 100,
+                    'coveredSecurities': 96,
+                    'institutionalValueM': 65000000.0,
+                    'marketCapM': 97000000.0,
+                    'institutionalOwnershipPct': point.$2,
+                    'netChangeValueM': 140000.0,
+                    'netChangePctMarketCap': .14,
+                  },
+              },
+            },
+        ],
         'rows': sampleRows()
             .map(
               (row) => {
@@ -185,7 +229,11 @@ class ExplorerApi extends opportunities.OpportunityApi {
                 'institutionalOwnershipPct': row['ticker'] == 'TEST'
                     ? 96.0
                     : 80.0,
+                'netUnitsChangeK': row['ticker'] == 'TEST' ? 180000.0 : 30000.0,
+                'netChangeValueM': row['ticker'] == 'TEST' ? 54000.0 : 1200.0,
+                'netChangePctOutstanding': row['ticker'] == 'TEST' ? 2.4 : 2.0,
                 'splitAdjustedFilers': 0,
+                'segments': const ['all', 'sp500'],
               },
             )
             .toList(),

@@ -38,6 +38,20 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     }
   }
 
+  void _select13FMarketSegment(String segment) {
+    updateUI(() {
+      insightMarketSegment = segment;
+      insightSearch = '';
+      insightSearchInput.clear();
+    });
+    final nextTicker = text(_insightStocks().firstOrNull?['ticker']);
+    if (nextTicker.isNotEmpty && nextTicker != insightTicker) {
+      unawaited(select13FInsightStock(nextTicker));
+    } else {
+      _persist13FInsights();
+    }
+  }
+
   void _persist13FInsights() => replaceBrowserQuery({
     'insightQuarter': insightQuarter,
     'insightAction': insightAction == 'increased' ? null : insightAction,
@@ -45,6 +59,9 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     'insightRank': insightStockRanking == 'holders'
         ? null
         : insightStockRanking,
+    'insightSegment': insightMarketSegment == 'all'
+        ? null
+        : insightMarketSegment,
     'insightLimit': insightInstitutionLimit == 8
         ? null
         : '$insightInstitutionLimit',
@@ -199,13 +216,28 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     final query = insightSearch.trim().toLowerCase();
     final rows = asList(institutional13f?['rows']).where((row) {
       if (number(row[key]) <= 0) return false;
+      if (insightMarketSegment != 'all' &&
+          !(row['segments'] as List? ?? const []).contains(
+            insightMarketSegment,
+          )) {
+        return false;
+      }
       return query.isEmpty ||
           '${row['ticker']} ${row['name']}'.toLowerCase().contains(query);
     }).toList();
     rows.sort((a, b) {
-      final primary = insightStockRanking == 'shares'
-          ? number(b['currentUnitsK']).compareTo(number(a['currentUnitsK']))
-          : number(b['holders']).compareTo(number(a['holders']));
+      final primary = switch (insightStockRanking) {
+        'shares' => number(
+          b['currentUnitsK'],
+        ).compareTo(number(a['currentUnitsK'])),
+        'netShares' => number(
+          b['netUnitsChangeK'],
+        ).abs().compareTo(number(a['netUnitsChangeK']).abs()),
+        'netPct' => number(
+          b['netChangePctOutstanding'],
+        ).abs().compareTo(number(a['netChangePctOutstanding']).abs()),
+        _ => number(b['holders']).compareTo(number(a['holders'])),
+      };
       if (primary != 0) return primary;
       final count = number(b[key]).compareTo(number(a[key]));
       if (count != 0) return count;
@@ -321,6 +353,8 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
         ),
       if (data != null) ...[
         const SizedBox(height: 14),
+        _insightMarketPulse(),
+        const SizedBox(height: 22),
         _insightActionCards(),
         const SizedBox(height: 22),
         _insightWorkbench(),
@@ -335,8 +369,8 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: label(
-                'Common-stock positions only. New and exited positions compare adjacent quarter-end books; increases and reductions compare split-adjusted reported units. Counts use the full SF3 filer universe, while the detail panel shows the largest reporting institutions. 13F disclosures are delayed and do not reveal trade dates or execution prices.',
-                '仅统计普通股持仓。新建仓与清仓比较相邻季末组合；加仓与减仓按拆股调整后的申报股数比较。排名计数覆盖完整 SF3 机构范围，右侧明细展示动作规模最大的申报机构。13F 存在披露延迟，不提供实际交易日期或成交价。',
+                'Common-stock positions only. The market pulse divides aggregate reported value by the sum of unique covered securities’ quarter-end Sharadar market capitalizations. New and exited positions compare adjacent quarter-end books; increases and reductions compare split-adjusted reported units. Net change is valued at the current quarter implied price. Sharadar does not provide a reliable free-float field here, so percentage rankings use total shares outstanding. Counts use the full SF3 filer universe, while detail rows are bounded. 13F disclosures are delayed and do not reveal trade dates or execution prices.',
+                '仅统计普通股持仓。宏观脉搏用机构申报持股总市值除以覆盖股票的 Sharadar 季末总市值。新建仓与清仓比较相邻季末组合；加仓与减仓按拆股调整后的申报股数比较；净变化按本季度隐含价格折算。当前数据没有可靠的自由流通股字段，因此比例排名使用总股本。计数覆盖完整 SF3 机构范围，明细行做有界展示。13F 存在披露延迟，不提供实际交易日期或成交价。',
                 size: 12,
               ),
             ),
@@ -345,6 +379,227 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       ],
     ];
   }
+
+  String _percentagePoints(dynamic value, {int digits = 2}) {
+    final parsed = nullableNumber(value);
+    return parsed == null ? '—' : '${parsed.toStringAsFixed(digits)}%';
+  }
+
+  String _insightSegmentName(String id) => switch (id) {
+    'sp500' => w('S&P 500 · SPY universe', '标普 500 · SPY 范围'),
+    'nasdaq100Proxy' => w('Nasdaq-100 proxy', '纳斯达克 100 代理篮子'),
+    'smallCap' => w('US small cap', '美国小盘股'),
+    _ => w('All covered equities', '全市场覆盖股票'),
+  };
+
+  Widget _insightMarketPulse() {
+    final overview = asMap(
+      asMap(institutional13f?['marketOverview'])[insightMarketSegment],
+    );
+    final history = asList(institutional13f?['marketHistory'])
+        .map((item) {
+          final segment = asMap(asMap(item['segments'])[insightMarketSegment]);
+          return _InsightHistoryPoint(
+            reportDate: text(item['reportDate']),
+            holders: nullableNumber(segment['institutionalOwnershipPct']),
+            sharesK: nullableNumber(segment['institutionalValueM']),
+            ownershipPct: nullableNumber(segment['netChangePctMarketCap']),
+          );
+        })
+        .where((point) => point.holders != null)
+        .toList();
+    final prior = history.length > 1
+        ? history[history.length - 2].holders
+        : null;
+    final latest = nullableNumber(overview['institutionalOwnershipPct']);
+    final change = latest == null || prior == null ? null : latest - prior;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: p.panel,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: p.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: p.accent.withValues(alpha: .1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(Icons.public, color: p.accent, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      w('Institutional ownership pulse', '机构持股宏观脉搏'),
+                      style: TextStyle(
+                        color: p.text,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    label(
+                      'Aggregate reported common-stock value as a share of covered market capitalization',
+                      '机构申报普通股总市值占覆盖股票总市值的比例',
+                      size: 11,
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _percentagePoints(latest),
+                    style: TextStyle(
+                      color: p.accent,
+                      fontSize: 25,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (change != null)
+                    Text(
+                      '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)} ${w('pp QoQ', '个百分点 环比')}',
+                      style: TextStyle(
+                        color: change >= 0 ? p.accent : p.secondary,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final segment in const [
+                'all',
+                'sp500',
+                'nasdaq100Proxy',
+                'smallCap',
+              ])
+                ChoiceChip(
+                  key: ValueKey('13f-segment-$segment'),
+                  label: Text(_insightSegmentName(segment)),
+                  selected: insightMarketSegment == segment,
+                  onSelected: (_) => _select13FMarketSegment(segment),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (_, constraints) {
+              final chart = SizedBox(
+                height: 190,
+                child: _InsightHistoryInteractiveChart(
+                  points: history,
+                  series: _InsightHistorySeries.holders,
+                  accent: p.accent,
+                  secondary: p.secondary,
+                  grid: p.border,
+                  panel: p.card,
+                  textColor: p.text,
+                  muted: p.muted,
+                  quarterLabel: reportQuarterLabel,
+                  tooltipLines: (point) => [
+                    '${w('Institutional ownership', '机构持股占比')} ${_percentagePoints(point.holders)}',
+                    '${w('Reported value', '申报持股市值')} ${_usdMillions(point.sharesK)}',
+                  ],
+                ),
+              );
+              final facts = Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _insightPulseFact(
+                    w('Reported institutional value', '机构申报持股市值'),
+                    _usdMillions(overview['institutionalValueM']),
+                  ),
+                  _insightPulseFact(
+                    w('Covered market cap', '覆盖股票总市值'),
+                    _usdMillions(overview['marketCapM']),
+                  ),
+                  _insightPulseFact(
+                    w('Quarterly net change', '本季净增减'),
+                    _usdMillions(overview['netChangeValueM']),
+                    color: number(overview['netChangeValueM']) >= 0
+                        ? p.accent
+                        : p.secondary,
+                  ),
+                  _insightPulseFact(
+                    w('Coverage', '覆盖范围'),
+                    '${_integer(overview['coveredSecurities'])} / ${_integer(overview['securities'])}',
+                  ),
+                ],
+              );
+              if (constraints.maxWidth < 760) {
+                return Column(
+                  children: [chart, const SizedBox(height: 12), facts],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 7, child: chart),
+                  const SizedBox(width: 20),
+                  Expanded(flex: 3, child: facts),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 9),
+          label(
+            insightMarketSegment == 'nasdaq100Proxy'
+                ? 'Proxy basket: the 100 largest non-financial Nasdaq listings by quarter-end market cap; not official QQQ holdings.'
+                : 'Uses quarter-end Sharadar market capitalization. Ratios use shares outstanding, not free float.',
+            insightMarketSegment == 'nasdaq100Proxy'
+                ? '代理篮子：按季末市值选取纳斯达克最大的 100 家非金融公司，并非 QQQ 官方成分。'
+                : '使用 Sharadar 季末市值；比例分母为总股本，不是自由流通股。',
+            size: 10,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _insightPulseFact(String title, String value, {Color? color}) =>
+      Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: p.card.withValues(alpha: .7),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: p.border),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(color: p.muted, fontSize: 10),
+              ),
+            ),
+            Text(
+              value,
+              style: TextStyle(
+                color: color ?? p.text,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      );
 
   Widget _insightActionCards() => LayoutBuilder(
     builder: (_, constraints) {
@@ -520,6 +775,26 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
               }),
             ),
             ChoiceChip(
+              key: const ValueKey('13f-rank-net-shares'),
+              avatar: const Icon(Icons.swap_vert, size: 16),
+              label: Text(w('By net change', '按净增减规模')),
+              selected: insightStockRanking == 'netShares',
+              onSelected: (_) => updateUI(() {
+                insightStockRanking = 'netShares';
+                _persist13FInsights();
+              }),
+            ),
+            ChoiceChip(
+              key: const ValueKey('13f-rank-net-pct'),
+              avatar: const Icon(Icons.percent, size: 16),
+              label: Text(w('By % outstanding', '按占总股本比例')),
+              selected: insightStockRanking == 'netPct',
+              onSelected: (_) => updateUI(() {
+                insightStockRanking = 'netPct';
+                _persist13FInsights();
+              }),
+            ),
+            ChoiceChip(
               key: const ValueKey('13f-rank-shares'),
               avatar: const Icon(Icons.stacked_line_chart, size: 16),
               label: Text(w('By shares held', '按机构持股数')),
@@ -551,14 +826,29 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           ),
           label(
             insightPerspective == 'stocks'
-                ? insightStockRanking == 'shares'
-                      ? w('Ranked by aggregate reported shares', '按机构申报持股总数排名')
-                      : w('Ranked by holder count', '按持有机构数量排名')
+                ? switch (insightStockRanking) {
+                    'shares' => w(
+                      'Ranked by aggregate reported shares',
+                      '按机构申报持股总数排名',
+                    ),
+                    'netShares' => w(
+                      'Ranked by absolute net reported share change',
+                      '按机构申报股数净变化的绝对规模排名',
+                    ),
+                    'netPct' => w(
+                      'Ranked by net change as % of shares outstanding',
+                      '按净变化占总股本比例排名',
+                    ),
+                    _ => w('Ranked by holder count', '按持有机构数量排名'),
+                  }
                 : w('Ranked by reported position changes', '按申报仓位动作数量排名'),
             insightPerspective == 'stocks'
-                ? insightStockRanking == 'shares'
-                      ? '按机构申报持股总数排名'
-                      : '按持有机构数量排名'
+                ? switch (insightStockRanking) {
+                    'shares' => '按机构申报持股总数排名',
+                    'netShares' => '按机构申报股数净变化的绝对规模排名',
+                    'netPct' => '按净变化占总股本比例排名',
+                    _ => '按持有机构数量排名',
+                  }
                 : '按申报仓位动作数量排名',
             size: 11,
           ),
@@ -596,7 +886,8 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
         color = _insightColor(insightAction);
     final compact = MediaQuery.sizeOf(context).width < 620;
     final actionWidth = compact ? 50.0 : 94.0;
-    final sharesWidth = compact ? 60.0 : 82.0;
+    final netWidth = compact ? 64.0 : 84.0;
+    final ratioWidth = compact ? 54.0 : 72.0;
     final holdersWidth = compact ? 48.0 : 72.0;
     return Container(
       decoration: BoxDecoration(
@@ -623,8 +914,12 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                   ),
                 ),
                 SizedBox(
-                  width: sharesWidth,
-                  child: label('Shares held', '机构持股', size: 11),
+                  width: netWidth,
+                  child: label('Net value', '净变化市值', size: 11),
+                ),
+                SizedBox(
+                  width: ratioWidth,
+                  child: label('% shares', '占总股本', size: 11),
                 ),
                 SizedBox(
                   width: holdersWidth,
@@ -690,14 +985,28 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                         ),
                       ),
                       SizedBox(
-                        width: sharesWidth,
+                        width: netWidth,
                         child: Text(
-                          _reportedShares(row['currentUnitsK']),
+                          _usdMillions(row['netChangeValueM']),
                           style: TextStyle(
-                            color: insightStockRanking == 'shares'
-                                ? p.accent
+                            color: insightStockRanking == 'netShares'
+                                ? color
                                 : p.text,
-                            fontWeight: insightStockRanking == 'shares'
+                            fontWeight: insightStockRanking == 'netShares'
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: ratioWidth,
+                        child: Text(
+                          _percentagePoints(row['netChangePctOutstanding']),
+                          style: TextStyle(
+                            color: insightStockRanking == 'netPct'
+                                ? color
+                                : p.text,
+                            fontWeight: insightStockRanking == 'netPct'
                                 ? FontWeight.w700
                                 : FontWeight.w400,
                           ),

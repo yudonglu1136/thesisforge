@@ -37,6 +37,7 @@
     "test:server": "node --test server/*.test.js",
     "test:performance": "node --test server/apiProxy.test.js server/jsonTransport.test.js server/publicHealthService.test.js server/publicHealthWorker.test.js server/valuationClient.summary.test.js scripts/static-performance-budget.test.mjs scripts/performance-tools.test.mjs",
     "bench:api": "node scripts/benchmark-api.mjs",
+    "bench:13f": "node scripts/benchmark-13f-insights.mjs",
     "bench:bundle": "node scripts/benchmark-bundle.mjs",
     "summarize:performance": "node scripts/summarize-performance-runs.mjs",
     "check:performance": "node scripts/check-performance-budget.mjs",

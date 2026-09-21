@@ -84,6 +84,35 @@ test('13F insights prefers the compact append-only v2 artifact',()=>{
   assert.equal(result.coverage.currentFilers,9000);
 });
 
+test('13F v3 loads market history and per-security detail without embedding the full detail book',()=>{
+  const source=fixture();
+  source.db.exec(`CREATE TABLE institutional_13f_insight_snapshots_v2(
+    report_date TEXT,source_generation TEXT,available_at TEXT,generated_at TEXT,
+    payload_hash TEXT,payload_gzip BLOB,PRIMARY KEY(report_date,source_generation));
+    CREATE TABLE institutional_13f_insight_details_v1(
+      report_date TEXT,source_generation TEXT,ticker TEXT,payload_hash TEXT,payload_gzip BLOB,
+      PRIMARY KEY(report_date,source_generation,ticker));
+    CREATE TABLE institutional_13f_market_history_v1(
+      report_date TEXT,source_generation TEXT,segment TEXT,available_at TEXT,securities INTEGER,
+      covered_securities INTEGER,institutional_value_m REAL,market_cap_m REAL,
+      institutional_ownership_pct REAL,net_change_value_m REAL,net_change_pct_market_cap REAL,
+      PRIMARY KEY(report_date,source_generation,segment));`);
+  for(const [date,available,holders] of [['2026-03-31','2026-05-15',6200],['2026-06-30','2026-08-14',6220]]) {
+    const payload=JSON.stringify({version:'institutional-13f-insights-v3',reportDate:date,availableAt:available,
+      coverage:{currentFilers:9000,securities:8000},rows:[{ticker:'MSFT',increases:3000,holders,currentUnitsK:7200000}],institutions:[],
+      marketOverview:{all:{institutionalOwnershipPct:80}}});
+    source.db.prepare('INSERT INTO institutional_13f_insight_snapshots_v2 VALUES(?,?,?,?,?,?)').run(date,'v3',available,'2026-09-21T00:00:00Z',date,gzipSync(payload));
+    source.db.prepare('INSERT INTO institutional_13f_market_history_v1 VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(date,'v3','all',available,8000,7000,80,100,80,2,2);
+  }
+  source.db.prepare('INSERT INTO institutional_13f_insight_details_v1 VALUES(?,?,?,?,?)')
+    .run('2026-06-30','v3','MSFT','detail',gzipSync(JSON.stringify({increased:[{investorId:'VANGRD'}]})));
+  const result=institutional13fInsights(source,'2026-09-18');
+  assert.equal(result.version,'institutional-13f-insights-v3');
+  assert.equal(result.details.MSFT.increased[0].investorId,'VANGRD');
+  assert.deepEqual(result.marketHistory.map(row=>row.reportDate),['2026-03-31','2026-06-30']);
+  assert.equal(result.marketHistory[1].segments.all.institutionalOwnershipPct,80);
+});
+
 test('13F insights may be mounted as a separate read-only artifact',t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'tf-13f-source-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const research=path.join(dir,'research.sqlite'),insights=path.join(dir,'insights.sqlite');

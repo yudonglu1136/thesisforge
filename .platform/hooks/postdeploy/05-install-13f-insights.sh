@@ -71,7 +71,7 @@ if h.hexdigest() != expected_sha:
     raise SystemExit("13f_sidecar_hash_mismatch")
 manifest = json.load(open(manifest_path, encoding="utf-8"))
 if (
-    manifest.get("version") != "institutional-13f-artifact-v2"
+    manifest.get("version") != "institutional-13f-artifact-v3"
     or manifest.get("releaseId") != release_id
     or manifest.get("state") != "verified"
     or manifest.get("table") != "institutional_13f_insight_snapshots_v2"
@@ -85,7 +85,13 @@ if (
 connection = sqlite3.connect(f"file:{database}?mode=ro&immutable=1", uri=True)
 try:
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    if tables != {"institutional_13f_insight_snapshots_v2"}:
+    expected_tables = {
+        "institutional_13f_insight_snapshots_v2",
+        "institutional_13f_insight_details_v1",
+        "institutional_13f_market_history_v1",
+        "institutional_13f_security_history_v1",
+    }
+    if tables != expected_tables:
         raise SystemExit("13f_sidecar_unexpected_tables")
     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise SystemExit("13f_sidecar_integrity_failed")
@@ -99,7 +105,15 @@ try:
           GROUP BY report_date,source_generation HAVING n>1
         )
     """).fetchone()[0]
-    if rows != manifest.get("rows") or rows < 1 or duplicates != 0:
+    detail_rows = connection.execute("SELECT count(*) FROM institutional_13f_insight_details_v1").fetchone()[0]
+    market_rows = connection.execute("SELECT count(*) FROM institutional_13f_market_history_v1").fetchone()[0]
+    security_history_rows = connection.execute("SELECT count(*) FROM institutional_13f_security_history_v1").fetchone()[0]
+    if (
+        rows != manifest.get("rows") or rows < 1 or duplicates != 0
+        or detail_rows != manifest.get("detailRows") or detail_rows < 1
+        or market_rows != manifest.get("marketRows") or market_rows < 1
+        or security_history_rows != manifest.get("securityHistoryRows") or security_history_rows < 1
+    ):
         raise SystemExit("13f_sidecar_rows_invalid")
 finally:
     connection.close()

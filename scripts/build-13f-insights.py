@@ -19,7 +19,7 @@ from pathlib import Path
 import duckdb
 
 
-METHOD_VERSION = "institutional-13f-insights-v2"
+METHOD_VERSION = "institutional-13f-insights-v3"
 DETAIL_SECURITY_LIMIT = 750
 DETAIL_PER_ACTION = 50
 
@@ -28,7 +28,8 @@ def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fact-os", default="data/fact_os/fact_os.duckdb")
     parser.add_argument("--database", default="server/data/guru-analysis.sqlite")
-    parser.add_argument("--quarters", type=int, default=8)
+    parser.add_argument("--quarters", type=int, default=20)
+    parser.add_argument("--detail-quarters", type=int, default=8)
     return parser.parse_args()
 
 
@@ -97,7 +98,33 @@ def action_cte(current: str, previous: str) -> str:
     """
 
 
-def snapshot(con: duckdb.DuckDBPyConnection, current: str, previous: str, observed_at: str) -> dict:
+def aggregate_market(rows: list[dict], segment: str) -> dict:
+    selected = [row for row in rows if segment in row["segments"]]
+    covered = [
+        row for row in selected
+        if row.get("marketCapM") and row.get("currentValueM") is not None
+    ]
+    market_cap = sum(row["marketCapM"] for row in covered)
+    institutional_value = sum(row["currentValueM"] for row in covered)
+    net_value = sum(row.get("netChangeValueM") or 0 for row in covered)
+    return {
+        "securities": len(selected),
+        "coveredSecurities": len(covered),
+        "institutionalValueM": institutional_value,
+        "marketCapM": market_cap,
+        "institutionalOwnershipPct": None if not market_cap else institutional_value / market_cap * 100,
+        "netChangeValueM": net_value,
+        "netChangePctMarketCap": None if not market_cap else net_value / market_cap * 100,
+    }
+
+
+def snapshot(
+    con: duckdb.DuckDBPyConnection,
+    current: str,
+    previous: str,
+    observed_at: str,
+    include_details: bool,
+) -> tuple[dict, dict]:
     cte = action_cte(current, previous)
     coverage = con.execute(
         f"""{cte}
@@ -128,6 +155,22 @@ def snapshot(con: duckdb.DuckDBPyConnection, current: str, previous: str, observ
           QUALIFY row_number() OVER(
             PARTITION BY ticker ORDER BY reportperiod DESC,date ASC,lastupdated DESC
           )=1
+        ), market_caps AS (
+          SELECT ticker,marketcap AS market_cap_m
+          FROM daily
+          WHERE date<='{current}' AND date>='{(dt.date.fromisoformat(current) - dt.timedelta(days=7)).isoformat()}'
+            AND marketcap>0
+          QUALIFY row_number() OVER(PARTITION BY ticker ORDER BY date DESC)=1
+        ), listing AS (
+          SELECT ticker,exchange,sector,scalemarketcap
+          FROM tickers WHERE "table"='SF1'
+          QUALIFY row_number() OVER(PARTITION BY ticker ORDER BY lastupdated DESC)=1
+        ), nasdaq_rank AS (
+          SELECT l.ticker,row_number() OVER(ORDER BY m.market_cap_m DESC,l.ticker) AS rank
+          FROM listing l JOIN market_caps m USING(ticker)
+          WHERE l.exchange='NASDAQ' AND coalesce(l.sector,'')<>'Financial Services'
+        ), sp500_members AS (
+          SELECT ticker FROM sp500 WHERE date='{current}' AND action='historical'
         )
         SELECT j.ticker,max(n.name) AS issuer_name,
           count(*) FILTER(WHERE current_units>0) AS holders,
@@ -140,9 +183,17 @@ def snapshot(con: duckdb.DuckDBPyConnection, current: str, previous: str, observ
           sum(current_units) AS total_current_units,
           sum(adjusted_previous_units) AS total_previous_units,
           count(*) FILTER(WHERE split_factor<>1) AS split_adjusted,
-          max(s.shares_outstanding_k) AS shares_outstanding_k
+          max(s.shares_outstanding_k) AS shares_outstanding_k,
+          max(m.market_cap_m) AS market_cap_m,
+          bool_or(sp.ticker IS NOT NULL) AS is_sp500,
+          bool_or(nq.rank<=100) AS is_nasdaq_100_proxy,
+          bool_or(l.scalemarketcap='3 - Small') AS is_small_cap
         FROM joined j LEFT JOIN names n USING(ticker)
         LEFT JOIN share_counts s USING(ticker)
+        LEFT JOIN market_caps m USING(ticker)
+        LEFT JOIN listing l USING(ticker)
+        LEFT JOIN nasdaq_rank nq USING(ticker)
+        LEFT JOIN sp500_members sp USING(ticker)
         GROUP BY j.ticker"""
     ).fetchall()
     securities = []
@@ -152,6 +203,19 @@ def snapshot(con: duckdb.DuckDBPyConnection, current: str, previous: str, observ
             None if not shares_outstanding_k or row[9] is None
             else row[9] / shares_outstanding_k * 100
         )
+        net_units_k = (row[9] or 0) - (row[10] or 0)
+        implied_price = None if not row[9] else row[7] * 1000 / row[9]
+        net_change_value_m = None if implied_price is None else net_units_k * implied_price / 1000
+        net_change_pct_outstanding = (
+            None if not shares_outstanding_k else net_units_k / shares_outstanding_k * 100
+        )
+        segments = ["all"]
+        if row[14]:
+            segments.append("sp500")
+        if row[15]:
+            segments.append("nasdaq100Proxy")
+        if row[16]:
+            segments.append("smallCap")
         securities.append({
             "ticker": row[0], "name": None if row[1] in (None, "None") else row[1],
             "holders": row[2], "newPositions": row[3], "increases": row[4],
@@ -159,7 +223,12 @@ def snapshot(con: duckdb.DuckDBPyConnection, current: str, previous: str, observ
             "previousValueM": row[8], "currentUnitsK": row[9],
             "previousUnitsK": row[10], "splitAdjustedFilers": row[11],
             "sharesOutstandingK": shares_outstanding_k,
+            "marketCapM": row[13],
             "institutionalOwnershipPct": institutional_ownership_pct,
+            "netUnitsChangeK": net_units_k,
+            "netChangeValueM": net_change_value_m,
+            "netChangePctOutstanding": net_change_pct_outstanding,
+            "segments": segments,
             "adds": row[3] + row[4], "trims": row[5] + row[6],
             "netFilers": row[3] + row[4] - row[5] - row[6],
         })
@@ -189,7 +258,7 @@ def snapshot(con: duckdb.DuckDBPyConnection, current: str, previous: str, observ
     institutions.sort(key=lambda row: (-(row["adds"] + row["trims"]), row["name"]))
 
     details = {}
-    if priority:
+    if include_details and priority:
         values = ",".join("?" for _ in priority)
         detail_rows = con.execute(
             f"""{cte}, ranked AS (
@@ -215,7 +284,11 @@ def snapshot(con: duckdb.DuckDBPyConnection, current: str, previous: str, observ
                 "splitAdjusted": row[10] != 1,
             })
 
-    return {
+    market_overview = {
+        segment: aggregate_market(securities, segment)
+        for segment in ("all", "sp500", "nasdaq100Proxy", "smallCap")
+    }
+    summary = {
         "version": METHOD_VERSION,
         "reportDate": current,
         "previousReportDate": previous,
@@ -228,16 +301,25 @@ def snapshot(con: duckdb.DuckDBPyConnection, current: str, previous: str, observ
         },
         "rows": securities,
         "institutions": institutions,
-        "details": details,
+        "marketOverview": market_overview,
+        "marketSegments": [
+            {"id": "all", "label": "All covered US equities", "basis": "All covered common-stock securities with a quarter-end market capitalization"},
+            {"id": "sp500", "label": "S&P 500 (SPY universe)", "basis": "Sharadar point-in-time S&P 500 constituent snapshot"},
+            {"id": "nasdaq100Proxy", "label": "Nasdaq-100 proxy", "basis": "Largest 100 non-financial Nasdaq listings by quarter-end market capitalization; proxy, not official QQQ holdings"},
+            {"id": "smallCap", "label": "US small cap", "basis": "Sharadar small-cap scale classification"},
+        ],
         "methodology": {
             "universe": "All Sharadar SF3 institutional SHR positions in the selected report quarter",
             "classification": "Quarter-over-quarter reported units, adjusted for split actions between quarter ends",
             "availability": "Quarter-end aggregate; shared availability uses the 45-day 13F deadline because SF3 does not retain each filing timestamp",
-            "units": "reported holdings and shares outstanding are thousands; values are USD millions; institutionalOwnershipPct is a percentage",
-            "ownership": "Aggregate reported institutional units divided by the latest ARQ basic shares and reported share factor available by the shared 13F cutoff; unavailable denominators remain null and are not inferred",
+            "units": "reported holdings and shares outstanding are thousands; values are USD millions; ownership and net-change ratios are percentages",
+            "ownership": "Aggregate reported institutional units divided by the latest ARQ basic shares and reported share factor available by the shared 13F cutoff; Sharadar does not provide a reliable free-float field, so the denominator is shares outstanding and unavailable denominators remain null",
+            "marketOverview": "Aggregate reported common-stock value divided by the sum of unique covered securities' quarter-end Sharadar market capitalizations; it is a coverage-weighted ownership gauge, not total fund AUM or a free-float measure",
+            "netChange": "Split-adjusted net reported share change valued at the current quarter's aggregate implied price; netChangePctOutstanding uses total shares outstanding, not free float",
             "detailPolicy": f"Largest {DETAIL_PER_ACTION} reporting institutions per action for leading securities; counts use the full universe",
         },
     }
+    return summary, details
 
 
 def main() -> int:
@@ -251,12 +333,18 @@ def main() -> int:
             "partitions": catalog["datasets"][key]["partitions"],
             "state": catalog["datasets"][key]["state"],
         }
-        for key in ("holdings", "holdings_ticker", "holdings_investor", "actions", "fundamentals")
+        for key in (
+            "holdings", "holdings_ticker", "holdings_investor", "actions",
+            "fundamentals", "daily", "tickers", "sp500",
+        )
     }
     source_generation = compact_hash({"method": METHOD_VERSION, "source": source})
     observed_at = max(
         catalog["datasets"][key]["state"]["last_success"]
-        for key in ("holdings", "holdings_ticker", "holdings_investor", "actions", "fundamentals")
+        for key in (
+            "holdings", "holdings_ticker", "holdings_investor", "actions",
+            "fundamentals", "daily", "tickers", "sp500",
+        )
     )
     duck = duckdb.connect(str(fact_path), read_only=True)
     dates = [str(row[0]) for row in duck.execute(
@@ -280,6 +368,48 @@ def main() -> int:
       )
     """)
     sql.execute("CREATE INDEX IF NOT EXISTS institutional_13f_insights_v2_available_idx ON institutional_13f_insight_snapshots_v2(available_at,report_date)")
+    sql.execute("""
+      CREATE TABLE IF NOT EXISTS institutional_13f_insight_details_v1(
+        report_date TEXT NOT NULL,
+        source_generation TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        payload_gzip BLOB NOT NULL,
+        PRIMARY KEY(report_date,source_generation,ticker)
+      )
+    """)
+    sql.execute("CREATE INDEX IF NOT EXISTS institutional_13f_details_v1_lookup_idx ON institutional_13f_insight_details_v1(report_date,ticker,source_generation)")
+    sql.execute("""
+      CREATE TABLE IF NOT EXISTS institutional_13f_market_history_v1(
+        report_date TEXT NOT NULL,
+        source_generation TEXT NOT NULL,
+        segment TEXT NOT NULL,
+        available_at TEXT NOT NULL,
+        securities INTEGER NOT NULL,
+        covered_securities INTEGER NOT NULL,
+        institutional_value_m REAL,
+        market_cap_m REAL,
+        institutional_ownership_pct REAL,
+        net_change_value_m REAL,
+        net_change_pct_market_cap REAL,
+        PRIMARY KEY(report_date,source_generation,segment)
+      )
+    """)
+    sql.execute("CREATE INDEX IF NOT EXISTS institutional_13f_market_history_v1_available_idx ON institutional_13f_market_history_v1(available_at,report_date,segment)")
+    sql.execute("""
+      CREATE TABLE IF NOT EXISTS institutional_13f_security_history_v1(
+        report_date TEXT NOT NULL,
+        source_generation TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        available_at TEXT NOT NULL,
+        holders INTEGER,
+        institutional_shares_k REAL,
+        shares_outstanding_k REAL,
+        institutional_ownership_pct REAL,
+        PRIMARY KEY(report_date,source_generation,ticker)
+      )
+    """)
+    sql.execute("CREATE INDEX IF NOT EXISTS institutional_13f_security_history_v1_lookup_idx ON institutional_13f_security_history_v1(ticker,report_date,available_at)")
     before = sql.execute("SELECT count(*) FROM institutional_13f_insight_snapshots_v2").fetchone()[0]
     inserted = []
     generated_at = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -289,21 +419,84 @@ def main() -> int:
             "SELECT payload_hash FROM institutional_13f_insight_snapshots_v2 WHERE report_date=? AND source_generation=?",
             (current, source_generation),
         ).fetchone()
-        if exists:
+        detail_count = sql.execute(
+            "SELECT count(*) FROM institutional_13f_insight_details_v1 WHERE report_date=? AND source_generation=?",
+            (current, source_generation),
+        ).fetchone()[0]
+        market_count = sql.execute(
+            "SELECT count(*) FROM institutional_13f_market_history_v1 WHERE report_date=? AND source_generation=?",
+            (current, source_generation),
+        ).fetchone()[0]
+        security_history_count = sql.execute(
+            "SELECT count(*) FROM institutional_13f_security_history_v1 WHERE report_date=? AND source_generation=?",
+            (current, source_generation),
+        ).fetchone()[0]
+        include_details = index < max(0, args.detail_quarters)
+        if exists and market_count == 4 and security_history_count > 0 and (not include_details or detail_count > 0):
             continue
-        payload = snapshot(duck, current, previous, observed_at)
+        payload, details = snapshot(duck, current, previous, observed_at, include_details)
         encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
         raw = encoded.encode()
         compressed = gzip.compress(raw, compresslevel=9, mtime=0)
         payload_hash = hashlib.sha256(raw).hexdigest()
         with sql:
-            sql.execute(
-                "INSERT INTO institutional_13f_insight_snapshots_v2 VALUES(?,?,?,?,?,?)",
-                (current, source_generation, payload["availableAt"], generated_at, payload_hash, compressed),
-            )
+            if not exists:
+                sql.execute(
+                    "INSERT INTO institutional_13f_insight_snapshots_v2 VALUES(?,?,?,?,?,?)",
+                    (current, source_generation, payload["availableAt"], generated_at, payload_hash, compressed),
+                )
+            if include_details and detail_count == 0:
+                for ticker, detail in details.items():
+                    detail_raw = json.dumps(detail, separators=(",", ":"), ensure_ascii=False).encode()
+                    sql.execute(
+                        "INSERT INTO institutional_13f_insight_details_v1 VALUES(?,?,?,?,?)",
+                        (
+                            current,
+                            source_generation,
+                            ticker,
+                            hashlib.sha256(detail_raw).hexdigest(),
+                            gzip.compress(detail_raw, compresslevel=9, mtime=0),
+                        ),
+                    )
+            if market_count == 0:
+                for segment, metrics in payload["marketOverview"].items():
+                    sql.execute(
+                        "INSERT INTO institutional_13f_market_history_v1 VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            current,
+                            source_generation,
+                            segment,
+                            payload["availableAt"],
+                            metrics["securities"],
+                            metrics["coveredSecurities"],
+                            metrics["institutionalValueM"],
+                            metrics["marketCapM"],
+                            metrics["institutionalOwnershipPct"],
+                            metrics["netChangeValueM"],
+                            metrics["netChangePctMarketCap"],
+                        ),
+                    )
+            if security_history_count == 0:
+                sql.executemany(
+                    "INSERT INTO institutional_13f_security_history_v1 VALUES(?,?,?,?,?,?,?,?)",
+                    [
+                        (
+                            current,
+                            source_generation,
+                            row["ticker"],
+                            payload["availableAt"],
+                            row["holders"],
+                            row["currentUnitsK"],
+                            row["sharesOutstandingK"],
+                            row["institutionalOwnershipPct"],
+                        )
+                        for row in payload["rows"]
+                    ],
+                )
         inserted.append({
             "reportDate": current, "payloadHash": payload_hash,
             "bytes": len(raw), "compressedBytes": len(compressed),
+            "detailRows": len(details),
         })
     after = sql.execute("SELECT count(*) FROM institutional_13f_insight_snapshots_v2").fetchone()[0]
     duplicates = sql.execute("""
@@ -313,10 +506,20 @@ def main() -> int:
         GROUP BY report_date,source_generation HAVING n>1
       )
     """).fetchone()[0]
+    detail_duplicates = sql.execute("""
+      SELECT count(*) FROM (
+        SELECT report_date,source_generation,ticker,count(*) n
+        FROM institutional_13f_insight_details_v1
+        GROUP BY report_date,source_generation,ticker HAVING n>1
+      )
+    """).fetchone()[0]
     replay = sql.execute(
         "SELECT count(*) FROM institutional_13f_insight_snapshots_v2 WHERE source_generation=?",
         (source_generation,),
     ).fetchone()[0]
+    detail_rows = sql.execute("SELECT count(*) FROM institutional_13f_insight_details_v1").fetchone()[0]
+    market_rows = sql.execute("SELECT count(*) FROM institutional_13f_market_history_v1").fetchone()[0]
+    security_history_rows = sql.execute("SELECT count(*) FROM institutional_13f_security_history_v1").fetchone()[0]
     sql.execute("PRAGMA optimize")
     sql.close()
     duck.close()
@@ -329,7 +532,11 @@ def main() -> int:
         "inserted": inserted,
         "sameInputRows": replay,
         "duplicateNaturalKeys": duplicates,
-        "status": "verified" if duplicates == 0 and after >= before else "failed",
+        "detailRows": detail_rows,
+        "marketHistoryRows": market_rows,
+        "securityHistoryRows": security_history_rows,
+        "duplicateDetailNaturalKeys": detail_duplicates,
+        "status": "verified" if duplicates == 0 and detail_duplicates == 0 and after >= before else "failed",
     }
     receipt_path = fact_path.parent / "audit" / "13f-insights-build-latest.json"
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")

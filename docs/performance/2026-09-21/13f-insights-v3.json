@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-21T01:11:39.358Z",
+  "inputs": {
+    "samples": 60,
+    "asOf": "2026-09-18",
+    "quarter": "2026-06-30",
+    "ticker": "MSFT"
+  },
+  "baseline": {
+    "database": "/private/tmp/tf-13f-release.SW1DLD/artifact/13f-insights.sqlite",
+    "databaseBytes": 88240128,
+    "responseBytes": 3549907,
+    "gzipBytes": 440256,
+    "cold": {
+      "samples": 60,
+      "p50Ms": 1318.1045000000013,
+      "p95Ms": 1368.859541999991,
+      "minMs": 1255.2572910000017,
+      "maxMs": 1487.303209
+    },
+    "warm": {
+      "samples": 60,
+      "p50Ms": 43.87129100000311,
+      "p95Ms": 54.0827500000014,
+      "minMs": 26.38812499999767,
+      "maxMs": 55.24679200000537
+    }
+  },
+  "current": {
+    "database": "/Users/yudonglu/Documents/thesisforge/data/releases/thesisforge-20260920-v3/13f-insights-20260921-v3/13f-insights.sqlite",
+    "databaseBytes": 164843520,
+    "responseBytes": 3832360,
+    "gzipBytes": 644446,
+    "cold": {
+      "samples": 60,
+      "p50Ms": 33.53133399999933,
+      "p95Ms": 36.025708999994094,
+      "minMs": 31.360874999998487,
+      "maxMs": 41.3934159999917
+    },
+    "warm": {
+      "samples": 60,
+      "p50Ms": 17.521708000000217,
+      "p95Ms": 21.716665999992983,
+      "minMs": 16.549417000001995,
+      "maxMs": 22.634958999988157
+    }
+  },
+  "improvement": {
+    "coldP50Pct": 97.45609441436554,
+    "coldP95Pct": 97.3681953557223,
+    "warmP50Pct": 60.06110693209603,
+    "warmP95Pct": 59.845484928202765,
+    "responseBytesPct": -7.95663097652981
+  }
+}
