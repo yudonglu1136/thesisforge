@@ -1,10 +1,14 @@
 // A saved report is useful during an outage, but is not a successful new sync.
 export function portfolioSyncResult(portfolio, now = new Date()) {
+  const connectionStatus = portfolio?.connection?.status;
   const degraded = portfolio?.freshness?.status === "stale"
-    || portfolio?.connection?.status === "stale_report"
-    || portfolio?.connection?.status === "linked_partial";
-  const failed = portfolio?.connection?.status === "error";
-  const ok = !degraded && !failed;
+    || connectionStatus === "stale_report"
+    || connectionStatus === "linked_partial";
+  // Absence of an error is not proof of a verified broker refresh. Only the
+  // two complete connection states can authorize a success message.
+  const linked = connectionStatus === "linked" || connectionStatus === "linked_empty";
+  const failed = !degraded && !linked;
+  const ok = linked && !degraded;
   const income = portfolio?.analysisAccounts?.length
     ? portfolio.analysisAccounts.every((account) => account?.historyEvidence?.incomeStatus === "ready")
       ? "ready"

@@ -3,6 +3,7 @@ import {localOwnerPortfolio} from './portfolioSnapshotStore.js';
 import {portfolioMarketContext,portfolioValuations} from './portfolioRisk.js';
 import {portfolioHome} from './portfolioHome.js';
 import {portfolioGuruContext,portfolioGuruActivity,portfolioGuruBooks} from './portfolioGuruActivity.js';
+import {portfolioSyncResult} from './portfolioSyncResult.js';
 
 const n = x => finite(x) ? x : null;
 const sum = xs => xs.reduce((s, x) => s + x, 0);
@@ -178,8 +179,10 @@ export function buildPortfolioAnalysis(source, payload, asOf, options={}) {
 }
 
 export function registerPortfolioAnalysisRoute(app, service, loadPortfolio) {
-  app.get('/api/investment/portfolio-analysis', async (req, res) => {
+  const respond = forceRefresh => async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
+    res.vary('Authorization');
+    res.vary('Accept-Encoding');
     if (!req.user?.id) return res.status(401).json({error: 'unauthorized'});
     try {
       const asOf = service.date(req.query.asOf);
@@ -190,8 +193,11 @@ export function registerPortfolioAnalysisRoute(app, service, loadPortfolio) {
       const home=req.query.scope==='home';
       const loadStarted=performance.now();
       const payload = local??await loadPortfolio({
-        user: {id: req.user.id},
-        forceRefresh: false,
+        // Keep the complete server-authenticated identity. In particular, an
+        // authorized admin portfolio context must resolve to the same private
+        // store here and in /api/portfolio/sync.
+        user: req.user,
+        forceRefresh,
         preferSaved: true,
         includeAnalytics: !home
       });
@@ -200,10 +206,26 @@ export function registerPortfolioAnalysisRoute(app, service, loadPortfolio) {
       if(!Number.isFinite(rate)||rate<0||rate>.2)return res.status(400).json({error:'invalid_risk_free_rate'});
       if(req.query.scope!==undefined&&req.query.scope!=='home')return res.status(400).json({error:'invalid_portfolio_scope'});
       const buildStarted=performance.now();
-      const result=buildPortfolioAnalysis(service.source, payload, asOf,{riskFreeRate:rate,home});
+      const analysis=buildPortfolioAnalysis(service.source, payload, asOf,{riskFreeRate:rate,home});
+      const result={
+        ...analysis,
+        // Connection metadata lets the client distinguish an unconfigured
+        // account from a configured connection whose broker refresh failed.
+        ...(payload?.connection?{connection:payload.connection}:{}),
+      };
+      if(forceRefresh){
+        const sync=portfolioSyncResult(payload).response;
+        // The analysis was built from this exact payload. Do not duplicate the
+        // full private report in the response or make the client issue a
+        // second, potentially divergent read.
+        const {portfolio:_portfolio,...syncStatus}=sync;
+        result.sync=syncStatus;
+      }
       const buildMs=performance.now()-buildStarted;
       res.setHeader('Server-Timing',`portfolio-read;dur=${loadMs.toFixed(1)}, portfolio-build;dur=${buildMs.toFixed(1)}`);
       res.json(result);
     } catch (e) { res.status(e.status ?? 503).json({error: 'portfolio_analysis_unavailable'}); }
-  });
+  };
+  app.get('/api/investment/portfolio-analysis',respond(false));
+  app.post('/api/investment/portfolio-analysis/sync',respond(true));
 }

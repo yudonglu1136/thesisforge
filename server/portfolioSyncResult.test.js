@@ -31,10 +31,16 @@ test("partial first reports remain visible without claiming complete synchroniza
   assert.equal(Object.hasOwn(result.response, "syncedAt"), false);
 });
 test("failed connections without a saved report are failed, not success", () => {
-  const result = portfolioSyncResult({ connection: { status: "error" } });
-  assert.equal(result.status, "failed");
-  assert.equal(result.response.ok, false);
-  assert.equal(Object.hasOwn(result.response, "syncedAt"), false);
+  for (const payload of [
+    { connection: { status: "error" } },
+    { connection: { status: "configured" } },
+    { source: { mode: "sample" } }
+  ]) {
+    const result = portfolioSyncResult(payload);
+    assert.equal(result.status, "failed");
+    assert.equal(result.response.ok, false);
+    assert.equal(Object.hasOwn(result.response, "syncedAt"), false);
+  }
 });
 test("the actual sync route derives both job status and response from the same result", () => {
   const source = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8");

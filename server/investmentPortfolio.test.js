@@ -113,9 +113,12 @@ test('API owner comes from auth only; private no-store; development preview cann
     const dev=await fetch(url,{headers:{'x-test-user':'local-dev-user'}});assert.equal((await dev.json()).status,'preview_account');assert.equal(calls.length,0);
     const r=await fetch(url,{headers:{'x-test-user':'bob'}});assert.equal(r.status,200);assert.match(r.headers.get('cache-control'),/private, no-store/);assert.match(r.headers.get('server-timing'),/portfolio-read/);assert.equal((await r.json()).status,'account_required');
     const home=await fetch(`${url}&scope=home`,{headers:{'x-test-user':'bob'}});assert.equal(home.status,200);await home.json();
+    const synced=await fetch(`${url.replace('/portfolio-analysis?','/portfolio-analysis/sync?')}&scope=home`,{method:'POST',headers:{'x-test-user':'bob'}});
+    assert.equal(synced.status,200);const syncedBody=await synced.json();assert.equal(syncedBody.sync.ok,false);assert.equal(Object.hasOwn(syncedBody.sync,'portfolio'),false);
     assert.deepEqual(calls,[
-      {user:{id:'bob'},forceRefresh:false,preferSaved:true,includeAnalytics:true},
-      {user:{id:'bob'},forceRefresh:false,preferSaved:true,includeAnalytics:false}
+      {user:{id:'bob',adminPortfolioHash:'a'.repeat(40)},forceRefresh:false,preferSaved:true,includeAnalytics:true},
+      {user:{id:'bob',adminPortfolioHash:'a'.repeat(40)},forceRefresh:false,preferSaved:true,includeAnalytics:false},
+      {user:{id:'bob',adminPortfolioHash:'a'.repeat(40)},forceRefresh:true,preferSaved:true,includeAnalytics:false}
     ]);
   }finally{await new Promise(r=>server.close(r));}
 });

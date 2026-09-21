@@ -88,6 +88,7 @@ class HomeApi extends fixtures.PortfolioApi {
 
 class ConnectedHomeApi extends HomeApi {
   int syncs = 0;
+  bool failSync = false;
 
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
@@ -109,9 +110,32 @@ class ConnectedHomeApi extends HomeApi {
     String path,
     Map<String, dynamic> body,
   ) async {
-    if (path == '/api/portfolio/sync') {
+    if (path.startsWith('/api/investment/portfolio-analysis/sync?')) {
       syncs += 1;
-      return {'ok': true, 'portfolio': result('2026-08-28')};
+      if (failSync) {
+        return {
+          'version': 'portfolio-research-v1',
+          'asOf': '2026-08-28',
+          'status': 'connection_error',
+          'groups': const [],
+          'connection': {
+            'configured': true,
+            'status': 'error',
+          },
+          'sync': {
+            'ok': false,
+            'connection': {'configured': true, 'status': 'error'},
+          },
+        };
+      }
+      return {
+        ...result('2026-08-28'),
+        'sync': {
+          'ok': true,
+          'historyStatus': 'ready',
+          'incomeStatus': 'cash_transactions_required',
+        },
+      };
     }
     throw StateError('Unexpected write: $path');
   }
@@ -371,6 +395,28 @@ void main() {
       expect(api.syncs, 1);
       expect(
         find.textContaining('Holdings and NAV were refreshed'),
+        findsOneWidget,
+      );
+      expect(t.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'configured sync failure stays in the saved connection flow, not onboarding',
+    (t) async {
+      final api = ConnectedHomeApi()..failSync = true;
+      await mount(t, api);
+
+      await fixtures.tap(t, find.byKey(const ValueKey('home-sync-now')));
+
+      expect(api.syncs, 1);
+      expect(
+        find.text('Your IBKR connection is saved, but it needs attention.'),
+        findsOneWidget,
+      );
+      expect(find.text('Connect IBKR'), findsNothing);
+      expect(find.byKey(const ValueKey('portfolio-retry-sync')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('portfolio-review-connection')),
         findsOneWidget,
       );
       expect(t.takeException(), isNull);

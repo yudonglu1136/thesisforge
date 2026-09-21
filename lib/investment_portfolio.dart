@@ -111,28 +111,48 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
 
   Future<void> syncConnectedPortfolio() async {
     if (portfolioSyncing) return;
+    final request = ++serial;
     setState(() {
       portfolioSyncing = true;
       portfolioActionMessage = null;
       portfolioActionError = null;
     });
     try {
-      final result = await widget.api.postJson('/api/portfolio/sync', {});
-      if (!mounted) return;
-      if (result['ok'] != true) {
-        final report = asMap(result['portfolio']);
-        final saved = isSavedPortfolioReport(report);
+      // Sync and render the exact same verified broker payload in one request.
+      // A follow-up GET could otherwise resolve a different cache generation
+      // and incorrectly replace a configured account with onboarding.
+      final result = await widget.api.postJson(
+        '/api/investment/portfolio-analysis/sync?asOf=${widget.asOf}&riskFreeRate=$riskFreeRate${widget.homeMode ? '&scope=home' : ''}',
+        {},
+      );
+      if (!mounted || request != serial) return;
+      if (result['asOf'] != widget.asOf ||
+          result['version'] != 'portfolio-research-v1') {
+        throw StateError('portfolio_contract_mismatch');
+      }
+      final sync = asMap(result['sync']);
+      final groups = asList(result['groups']);
+      setState(() {
+        data = result;
+        loading = false;
+        failed = false;
+        if (!groups.any((g) => text(g['currency']) == selectedCurrency)) {
+          selectedCurrency = text(groups.firstOrNull?['currency']);
+        }
+      });
+      if (sync['ok'] != true) {
+        final saved = isSavedPortfolioReport(result);
         setState(() {
           portfolioActionError = saved
-              ? savedPortfolioReportNotice(report, context.language)
+              ? savedPortfolioReportNotice(result, context.language)
               : w(
-                  'IBKR did not complete a new sync. Your last saved portfolio is unchanged.',
-                  'IBKR 未完成新的同步，上一份已保存组合保持不变。',
+                  'IBKR did not return a verified report. Your connection is still saved; review it and retry.',
+                  'IBKR 未返回可验证的报告。连接仍已保存，请检查后重试。',
                 );
         });
       } else {
-        final incomeStatus = text(result['incomeStatus']);
-        final historyStatus = text(result['historyStatus']);
+        final incomeStatus = text(sync['incomeStatus']);
+        final historyStatus = text(sync['historyStatus']);
         setState(() {
           portfolioActionMessage = incomeStatus == 'ready'
               ? w(
@@ -150,7 +170,6 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
                 );
         });
       }
-      await load();
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -574,6 +593,46 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
   Widget emptyState() {
     final status = data?['status'];
     final preview = status == 'preview_account';
+    final connectionIssue =
+        status == 'connection_error' || status == 'report_inputs_unavailable';
+    if (connectionIssue) {
+      return panel([
+        Icon(Icons.sync_problem_rounded, color: p.secondary, size: 38),
+        const SizedBox(height: 18),
+        title(
+          'Your IBKR connection is saved, but it needs attention.',
+          '你的 IBKR 连接已保存，但目前需要处理。',
+        ),
+        const SizedBox(height: 12),
+        copy(
+          status == 'report_inputs_unavailable'
+              ? 'IBKR returned a report, but it did not contain the verified account and position fields needed here. Review the Flex Query fields, then retry. You do not need to enter the token again.'
+              : 'The latest broker refresh did not return a verified portfolio. Review the saved connection or retry the same connection; the app will not ask you to reconnect as if no credentials existed.',
+          status == 'report_inputs_unavailable'
+              ? 'IBKR 已返回报告，但缺少这里所需的已验证账户和持仓字段。请检查 Flex Query 字段后重试，无需重新填写 Token。'
+              : '最近一次券商刷新没有返回可验证的组合。请检查已保存连接或直接重试；系统不会再把它误判成“尚未连接”。',
+        ),
+        const SizedBox(height: 18),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            FilledButton.icon(
+              key: const ValueKey('portfolio-retry-sync'),
+              onPressed: portfolioSyncing ? null : syncConnectedPortfolio,
+              icon: const Icon(Icons.cloud_sync_rounded, size: 17),
+              label: Text(w('Retry sync', '重试同步')),
+            ),
+            OutlinedButton.icon(
+              key: const ValueKey('portfolio-review-connection'),
+              onPressed: managePortfolioConnection,
+              icon: const Icon(Icons.settings_outlined, size: 17),
+              label: Text(w('Review saved connection', '检查已保存连接')),
+            ),
+          ],
+        ),
+      ]);
+    }
     return panel([
       Icon(Icons.account_balance_wallet_outlined, color: p.accent, size: 38),
       const SizedBox(height: 18),
