@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-21T08:57:59.150Z",
+  "inputs": {
+    "runs": 3,
+    "samplesPerRun": 60,
+    "asOf": "2026-09-18",
+    "quarter": "2026-06-30",
+    "ticker": "GOOGL"
+  },
+  "baseline": {
+    "release": "13f-insights-20260921-v7",
+    "databaseBytes": 177000448,
+    "responseBytes": 65736,
+    "coldP50Ms": 27.025959,
+    "coldP95Ms": 37.049042,
+    "warmP50Ms": 0.091,
+    "warmP95Ms": 0.097125
+  },
+  "current": {
+    "release": "13f-insights-20260921-v8",
+    "databaseBytes": 215646208,
+    "responseBytes": 64546,
+    "coldP50Ms": 26.559125,
+    "coldP95Ms": 32.425,
+    "warmP50Ms": 0.092083,
+    "warmP95Ms": 0.118959
+  },
+  "changePct": {
+    "databaseBytes": 21.8337,
+    "responseBytes": -1.8103,
+    "coldP50": -1.7274,
+    "coldP95": -12.4809,
+    "warmP50": 1.1901,
+    "warmP95": 22.4803
+  },
+  "gate": {
+    "criticalColdP95RegressionLimitPct": 5,
+    "passed": true
+  }
+}

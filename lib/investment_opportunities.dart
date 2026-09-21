@@ -1083,7 +1083,9 @@ extension _InvestmentOpportunities on _InvestmentWorkspaceState {
     final r = watchComparison!,
         watch = asMap(r['watch']),
         then = asMap(watch['baseline']),
-        now = asMap(r['now']);
+        now = asMap(r['now']),
+        saved13f = asMap(watch['researchEvidence']),
+        current13f = asMap(r['institutionalEvidence']);
     final currency = text(asMap(then['price'])['currency']);
     String amount(dynamic v, [String? unit]) => nullableNumber(v) == null
         ? '—'
@@ -1101,6 +1103,50 @@ extension _InvestmentOpportunities on _InvestmentWorkspaceState {
           '${then['asOf']} → $asOf · 原始观察保持不变',
           size: 13,
         ),
+        if (saved13f.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: p.accent.withValues(alpha: .06),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: p.accent.withValues(alpha: .35)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                label(
+                  'SAVED 13F RESEARCH OBSERVATION',
+                  '已保存的 13F 研究观察',
+                  size: 9,
+                  color: p.accent,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _insightBehaviorHeadline(text(saved13f['headlineKey'])),
+                  style: TextStyle(
+                    color: p.text,
+                    fontWeight: FontWeight.w700,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                label(
+                  '${reportQuarterLabel(text(saved13f['reportDate']))} · ${w('frozen with', '保存')} ${asList(saved13f['importantChanges']).length} ${w('important changes', '项重要变动')}',
+                  '${reportQuarterLabel(text(saved13f['reportDate']))} · 保存 ${asList(saved13f['importantChanges']).length} 项重要变动',
+                  size: 10,
+                ),
+                if (current13f.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    '${w('Latest comparable quarter', '最新可比季度')} ${reportQuarterLabel(text(current13f['reportDate']))} · ${_insightBehaviorHeadline(text(current13f['headlineKey']))}',
+                    style: TextStyle(color: p.muted, fontSize: 11, height: 1.4),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 20),
         for (final row in [
           (

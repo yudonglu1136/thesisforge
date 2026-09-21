@@ -145,6 +145,7 @@ List<Map<String, dynamic>> sampleRows() => [
 
 class ExplorerApi extends opportunities.OpportunityApi {
   bool listFails = false;
+  bool behaviorAnalysis = true;
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
     if (path.startsWith('/api/investment/13f-insights?')) {
@@ -324,6 +325,89 @@ class ExplorerApi extends opportunities.OpportunityApi {
                 'comparisonBasis': 'prior_reported_position_value',
               },
             ],
+            if (behaviorAnalysis)
+              'analysis': {
+                'methodVersion': 'institutional-behavior-v1',
+                'headlineKey': 'net_increase_balanced_breadth',
+                'evidence': {
+                  'breadth': {
+                    'increases': 430,
+                    'reductions': 390,
+                    'netBreadth': 40,
+                  },
+                  'shares': {
+                    'netUnitsChangeK': 180000.0,
+                    'netChangePctOutstanding': 2.4,
+                  },
+                  'weights': {
+                    'weightUpCount': 7,
+                    'weightDownCount': 3,
+                    'largestWeightIncreaseBps': 80.0,
+                  },
+                },
+                'importantChanges': [
+                  {
+                    'investorId': 'BLACKROCK',
+                    'name': 'BlackRock Inc.',
+                    'action': 'increased',
+                    'unitsChangeK': 12000.0,
+                    'currentWeight': .018,
+                    'previousWeight': .010,
+                    'weightChangeBps': 80.0,
+                    'reportedValueChangeM': 500.0,
+                    'tags': ['shares_and_weight_up', 'consecutive_increase'],
+                    'continuity': 'increased_3_quarters',
+                    'consecutiveDirectionQuarters': 3,
+                    'trajectory': [
+                      {
+                        'reportDate': '2025-12-31',
+                        'status': 'reported',
+                        'unitsK': 8000.0,
+                        'weight': .008,
+                      },
+                      {
+                        'reportDate': '2026-03-31',
+                        'status': 'reported',
+                        'unitsK': 10000.0,
+                        'weight': .010,
+                      },
+                      {
+                        'reportDate': '2026-06-30',
+                        'status': 'reported',
+                        'unitsK': 22000.0,
+                        'weight': .018,
+                      },
+                    ],
+                  },
+                  {
+                    'investorId': 'REDUCER',
+                    'name': 'Reducer Capital',
+                    'action': 'reduced',
+                    'unitsChangeK': -5000.0,
+                    'currentWeight': .02,
+                    'previousWeight': .03,
+                    'weightChangeBps': -100.0,
+                    'reportedValueChangeM': -300.0,
+                    'tags': ['core_position_reduction'],
+                    'continuity': 'reduced_2_quarters',
+                    'consecutiveDirectionQuarters': 2,
+                    'trajectory': [
+                      {
+                        'reportDate': '2026-03-31',
+                        'status': 'reported',
+                        'unitsK': 15000.0,
+                        'weight': .03,
+                      },
+                      {
+                        'reportDate': '2026-06-30',
+                        'status': 'reported',
+                        'unitsK': 10000.0,
+                        'weight': .02,
+                      },
+                    ],
+                  },
+                ],
+              },
           },
         },
       };
@@ -573,6 +657,18 @@ void main() {
           ),
           findsWidgets,
         );
+        expect(
+          find.byKey(const ValueKey('13f-evidence-headline')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('13f-changes-worth-researching')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('13f-research-bridge')),
+          findsOneWidget,
+        );
         expect(tester.takeException(), isNull);
       });
     }
@@ -593,7 +689,7 @@ void main() {
   testWidgets(
     'exit ranking shows exited amount instead of a meaningless minus 100 percent',
     (tester) async {
-      await mountExplorer(tester, ExplorerApi());
+      await mountExplorer(tester, ExplorerApi()..behaviorAnalysis = false);
       await tapKey(tester, '13f-action-exited');
       expect(
         find.textContaining('Prior-quarter reported position'),

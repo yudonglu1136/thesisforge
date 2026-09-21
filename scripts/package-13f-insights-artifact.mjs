@@ -58,8 +58,8 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
   } finally {db.close();}
   const bytes=fs.statSync(file).size,sha256=hash(file);
   const runtimeDirectory=path.join(runtimeRoot,releaseId),runtimeFile=path.join(runtimeDirectory,path.basename(file));
-  const manifest={version:'institutional-13f-artifact-v4',releaseId,state:'verified',generatedAt:new Date().toISOString(),rows:rows.length,detailRows:details.length,marketRows:marketRows.length,securityHistoryRows:securityHistoryRows.length,table,
-    source:{path:source,table,methodVersion:'institutional-13f-insights-v4'},
+  const manifest={version:'institutional-13f-artifact-v5',releaseId,state:'verified',generatedAt:new Date().toISOString(),rows:rows.length,detailRows:details.length,marketRows:marketRows.length,securityHistoryRows:securityHistoryRows.length,table,
+    source:{path:source,table,methodVersion:'institutional-13f-insights-v5'},
     checks:{integrity:'ok',foreignKeyCheck:'ok',naturalKeyUniqueness:'pass',privateDataExcluded:true},
     file:{path:runtimeFile,bytes,sha256}};
   fs.writeFileSync(path.join(output,'manifest.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx',mode:0o600});

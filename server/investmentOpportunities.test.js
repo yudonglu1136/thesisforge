@@ -167,6 +167,23 @@ test('save needs no scenario, is idempotent, immutable, owner-scoped and survive
   const reopened=new InvestmentStore(storeFile);assert.equal(reopened.get('alice',w.id).baseline.asOf,'2026-06-01');reopened.close();
   assert.throws(()=>saveWatch(service,'alice',{...body,ticker:'A.B'}));
 });
+test('13F research watch freezes only bounded dated evidence for later review',t=>{
+  const {service}=fixture(t),watch=saveWatch(service,'alice',{
+    operationId:'watch_13f_evidence_001',ticker:'TEST',asOf:'2026-06-01',origin:'13f_insight',
+    researchEvidence:{methodVersion:'institutional-behavior-v1',headlineKey:'net_increase_balanced_breadth',
+      reportDate:'2026-03-31',previousReportDate:'2025-12-31',availableAt:'2026-05-15',
+      evidence:{breadth:{adds:3,trims:2},shares:{netUnitsChangeK:50},weights:{importantChangesEvaluated:2},ignored:['x']},
+      importantChanges:[{investorId:'manager-1',name:'Manager One',action:'increased',unitsChangeK:20,
+        currentWeight:.04,previousWeight:.03,weightChangeBps:100,
+        continuity:'increased_3_quarters',consecutiveDirectionQuarters:3,tags:['shares_and_weight_up']},
+      ],unbounded:'discard me'},
+  });
+  assert.equal(watch.origin,'13f_insight');
+  assert.equal(watch.researchEvidence.kind,'institutional_13f_analysis');
+  assert.equal(watch.researchEvidence.reportDate,'2026-03-31');
+  assert.equal(watch.researchEvidence.importantChanges[0].consecutiveDirectionQuarters,3);
+  assert.equal('unbounded' in watch.researchEvidence,false);
+});
 test('review separates price/model change, detects new filings, records acknowledgment without overwriting original',t=>{
   const {service,store}=fixture(t),w=saveWatch(service,'alice',{operationId:'watch_operation_001',ticker:'TEST',asOf:'2026-06-01'});
   const r=reviewWatch(service,'alice',w.id,'2026-08-28');assert.equal(r.status,'new_evidence');

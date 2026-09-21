@@ -6,6 +6,7 @@ import { valueTrend } from './investmentValueTrend.js';
 import { valuationModelRoute } from './valuationModelRoute.js';
 import { opportunityQuality } from './investmentQuality.js';
 import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrices.js';
+import { institutional13fInsightDetail } from './institutional13fInsights.js';
 
 const parse = r => r ? JSON.parse(r.payload_json) : null;
 const scalar = v => finite(v) ? v : null;
@@ -14,6 +15,48 @@ const readCaches=new WeakMap();
 const median = a => { const s=a.filter(finite).sort((a,b)=>a-b); return s.length ? (s[Math.floor((s.length-1)/2)]+s[Math.floor(s.length/2)])/2 : null; };
 const common = h => h.holdingBucket ? h.holdingBucket==='common_long' : String(h.id??'').endsWith('-COMMON') && (!h.shareType || is13fCommonLongHolding(h));
 const symbol = h => /^[A-Z][A-Z0-9.-]{0,14}$/.test(h.ticker??'') ? h.ticker : null;
+const boundedText = (value,limit=160) => typeof value==='string'?value.slice(0,limit):null;
+
+function bounded13fResearchEvidence(value) {
+  if(!value||typeof value!=='object'||Array.isArray(value))return null;
+  const number=value=>finite(value)?value:null;
+  const evidence=Object.fromEntries(['breadth','shares','weights'].flatMap(key=>{
+    const row=value.evidence?.[key];
+    return row&&typeof row==='object'&&!Array.isArray(row)?[[key,Object.fromEntries(
+      Object.entries(row).slice(0,12).map(([field,item])=>[boundedText(field,60),
+        typeof item==='string'?boundedText(item):number(item)]).filter(([field])=>field)
+    )]]:[];
+  }));
+  const importantChanges=Array.isArray(value.importantChanges)?value.importantChanges.slice(0,10).map(row=>({
+    investorId:boundedText(row?.investorId,80),name:boundedText(row?.name,160),
+    action:boundedText(row?.action,40),unitsChangeK:number(row?.unitsChangeK),
+    currentWeight:number(row?.currentWeight),previousWeight:number(row?.previousWeight),
+    weightChangeBps:number(row?.weightChangeBps),
+    continuity:boundedText(row?.continuity,60),
+    consecutiveDirectionQuarters:number(row?.consecutiveDirectionQuarters),
+    tags:Array.isArray(row?.tags)?row.tags.slice(0,6).map(tag=>boundedText(tag,60)).filter(Boolean):[],
+  })).filter(row=>row.investorId&&row.name):[];
+  return {
+    kind:'institutional_13f_analysis',methodVersion:boundedText(value.methodVersion,80),
+    headlineKey:boundedText(value.headlineKey,80),reportDate:boundedText(value.reportDate,10),
+    previousReportDate:boundedText(value.previousReportDate,10),availableAt:boundedText(value.availableAt,32),
+    evidence,importantChanges,
+  };
+}
+
+function current13fResearchEvidence(source,ticker,asOf) {
+  try {
+    const detail=institutional13fInsightDetail(source,ticker,asOf),analysis=detail.details?.analysis;
+    if(!analysis)return null;
+    return bounded13fResearchEvidence({
+      ...analysis,reportDate:detail.reportDate,previousReportDate:detail.previousReportDate,
+      availableAt:detail.availableAt,
+    });
+  } catch(error) {
+    if(error?.status===422||String(error?.message??'').startsWith('institutional_13f_'))return null;
+    throw error;
+  }
+}
 
 // Read model only. Never imports filings, changes valuations, or refreshes curves.
 export function opportunityBooks(source, asOf, reportDate = null) {
@@ -267,18 +310,23 @@ export function reviewWatch(service,owner,id,date) {
   const priceComparable=!!then.price?.currency&&then.price.currency===now.price?.currency;
   const newFilings=now.evidence.filter(e=>!compared.evidence.some(o=>o.guruId===e.guruId&&o.accession===e.accession));
   const financialChanged=now.snapshot?.source.hash!==compared.snapshot?.source.hash;
-  return {watch,asOf,now,newFilings,financialChanged,comparable,
+  const institutionalEvidence=watch.origin==='13f_insight'
+    ?current13fResearchEvidence(service.source,watch.ticker,asOf):null;
+  const institutionalChanged=!!institutionalEvidence&&institutionalEvidence.reportDate!==watch.researchEvidence?.reportDate;
+  return {watch,asOf,now,newFilings,financialChanged,institutionalEvidence,institutionalChanged,comparable,
     modelChange:comparable?change(now.published.fairValue,then.published.fairValue):null,
     priceChange:priceComparable?change(now.price?.value,then.price?.value):null,
     metrics:['revenueGrowth','operatingMargin','fcfMargin'].map(key=>({key,then:then.snapshot?.metrics[key]??null,now:now.snapshot?.metrics[key]??null})),
-    status:now.unavailable?'data_unavailable':newFilings.length||financialChanged?'new_evidence':'unchanged',
-    lastReviewedAt:latest?.asOf??null,comparisonId:signature({id,asOf,now})};
+    status:now.unavailable?'data_unavailable':newFilings.length||financialChanged||institutionalChanged?'new_evidence':'unchanged',
+    lastReviewedAt:latest?.asOf??null,comparisonId:signature({id,asOf,now,institutionalEvidence})};
 }
 
 export function saveWatch(service,owner,body) {
   const ticker=tickerKey(body.ticker),asOf=service.date(body.asOf);
   return service.store.write(owner,'watch',ticker,body.operationId,body,()=>({baseline:watchBaseline(service.source,ticker,asOf,body.reportDate??null),
-    origin:['holdings','adds','trims','value'].includes(body.origin)?body.origin:'holdings',retrospective:true}));
+    origin:['holdings','adds','trims','value','13f_insight'].includes(body.origin)?body.origin:'holdings',
+    researchEvidence:body.origin==='13f_insight'?bounded13fResearchEvidence(body.researchEvidence):null,
+    retrospective:true}));
 }
 
 export function saveWatchReview(service,owner,body) {

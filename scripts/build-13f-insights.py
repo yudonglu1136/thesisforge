@@ -3,7 +3,9 @@
 
 The source-of-truth SF3 Parquet archive remains outside the runtime database.
 Each snapshot ranks the complete institutional universe while retaining only a
-bounded set of the largest filer examples per security/action for UI detail.
+bounded set of filer examples per security/action for raw UI detail. The
+research analysis is calculated before truncation, then stores only the
+important changes and their bounded trajectories.
 """
 
 from __future__ import annotations
@@ -19,9 +21,11 @@ from pathlib import Path
 import duckdb
 
 
-METHOD_VERSION = "institutional-13f-insights-v4"
+METHOD_VERSION = "institutional-13f-insights-v5"
 DETAIL_SECURITY_LIMIT = 750
 DETAIL_PER_ACTION = 50
+ANALYSIS_PER_DIRECTION = 10
+ANALYSIS_HISTORY_QUARTERS = 8
 
 
 def arguments() -> argparse.Namespace:
@@ -126,6 +130,7 @@ def snapshot(
     share_basis_date: str,
     observed_at: str,
     include_details: bool,
+    history_dates: list[str],
 ) -> tuple[dict, dict]:
     cte = action_cte(current, previous)
     coverage = con.execute(
@@ -327,6 +332,208 @@ def snapshot(
                 "splitAdjusted": row[10] != 1,
             })
 
+        analysis_rows = con.execute(
+            f"""{cte}, basis_splits AS (
+              SELECT ticker,product(value) AS factor
+              FROM actions
+              WHERE action='split' AND date>'{current}' AND date<='{share_basis_date}'
+                AND value IS NOT NULL AND value>0
+              GROUP BY ticker
+            ), ranked_analysis AS (
+              SELECT ticker,reported_action,investorid,
+                coalesce(current_investor_name,previous_investor_name) investor_name,
+                current_units*coalesce(bs.factor,1) current_units_basis,
+                adjusted_previous_units*coalesce(bs.factor,1) previous_units_basis,
+                current_value,previous_value,
+                current_value/nullif(current_book_value,0) current_weight,
+                previous_value/nullif(previous_book_value,0) previous_weight,
+                coalesce(bs.factor,1) share_basis_factor,
+                CASE WHEN reported_action IN ('new','increased') THEN 'adding' ELSE 'reducing' END direction,
+                row_number() OVER(
+                  PARTITION BY ticker,CASE WHEN reported_action IN ('new','increased') THEN 'adding' ELSE 'reducing' END
+                  ORDER BY abs(coalesce(current_value,0)-coalesce(previous_value,0)) DESC,
+                    greatest(coalesce(current_value,0),coalesce(previous_value,0)) DESC,investorid
+                ) analysis_rank
+              FROM joined LEFT JOIN basis_splits bs USING(ticker)
+              WHERE reported_action IN ('new','increased','reduced','exited')
+                AND ticker IN ({values})
+            )
+            SELECT ticker,reported_action,investorid,investor_name,
+              current_units_basis,previous_units_basis,current_value,previous_value,
+              current_weight,previous_weight,share_basis_factor,direction
+            FROM ranked_analysis WHERE analysis_rank<=?
+            ORDER BY ticker,direction,analysis_rank""",
+            [*sorted(priority), ANALYSIS_PER_DIRECTION],
+        ).fetchall()
+
+        candidates = sorted({(row[0], row[2]) for row in analysis_rows})
+        trajectories: dict[tuple[str, str], list[dict]] = {key: [] for key in candidates}
+        bounded_history_dates = history_dates[:ANALYSIS_HISTORY_QUARTERS]
+        if candidates and bounded_history_dates:
+            con.execute("CREATE OR REPLACE TEMP TABLE analysis_candidates(ticker VARCHAR,investorid VARCHAR)")
+            con.executemany("INSERT INTO analysis_candidates VALUES(?,?)", candidates)
+            date_values = ",".join("?" for _ in bounded_history_dates)
+            trajectory_rows = con.execute(
+                f"""WITH position AS (
+                  SELECT h.date,h.ticker,h.investorid,sum(h.units) units,sum(h.value) holding_value
+                  FROM holdings h JOIN analysis_candidates c USING(ticker,investorid)
+                  WHERE h.securitytype='SHR' AND h.date IN ({date_values})
+                  GROUP BY h.date,h.ticker,h.investorid
+                ), filer AS (
+                  SELECT hi.date,hi.investorid,hi.investorname,hi.shrvalue
+                  FROM holdings_investor hi
+                  WHERE hi.date IN ({date_values})
+                    AND hi.investorid IN (SELECT DISTINCT investorid FROM analysis_candidates)
+                ), dates(report_date) AS (VALUES {','.join('(?)' for _ in bounded_history_dates)})
+                SELECT d.report_date,c.ticker,c.investorid,f.investorname,f.shrvalue,
+                  p.units,p.holding_value
+                FROM analysis_candidates c CROSS JOIN dates d
+                LEFT JOIN filer f ON f.date=d.report_date AND f.investorid=c.investorid
+                LEFT JOIN position p ON p.date=d.report_date AND p.ticker=c.ticker AND p.investorid=c.investorid
+                ORDER BY c.ticker,c.investorid,d.report_date""",
+                [*bounded_history_dates, *bounded_history_dates, *bounded_history_dates],
+            ).fetchall()
+            candidate_tickers = sorted({ticker for ticker, _ in candidates})
+            split_values = ",".join("?" for _ in candidate_tickers)
+            split_rows = con.execute(
+                f"""SELECT ticker,date,value FROM actions
+                    WHERE action='split' AND ticker IN ({split_values})
+                      AND date>? AND date<=? AND value IS NOT NULL AND value>0
+                    ORDER BY ticker,date""",
+                [*candidate_tickers, min(bounded_history_dates), share_basis_date],
+            ).fetchall()
+            splits: dict[str, list[tuple[str, float]]] = {}
+            for ticker, action_date, factor in split_rows:
+                splits.setdefault(ticker, []).append((str(action_date), float(factor)))
+            for report_date, ticker, investor_id, investor_name, book_value, units, holding_value in trajectory_rows:
+                report_date = str(report_date)
+                factor = 1.0
+                for action_date, split_factor in splits.get(ticker, []):
+                    if action_date > report_date:
+                        factor *= split_factor
+                filer_reported = book_value is not None
+                status = "reported" if units is not None else "no_position" if filer_reported else "filer_missing"
+                trajectories[(ticker, investor_id)].append({
+                    "reportDate": report_date,
+                    "status": status,
+                    "unitsK": None if units is None else units * factor,
+                    "weight": None if holding_value is None or not book_value else holding_value / book_value,
+                    "shareBasisFactor": factor,
+                })
+            con.execute("DROP TABLE analysis_candidates")
+
+        security_by_ticker = {row["ticker"]: row for row in securities}
+        changes_by_ticker: dict[str, list[dict]] = {}
+        for row in analysis_rows:
+            ticker, action, investor_id, investor_name = row[:4]
+            current_units, previous_units, current_value, previous_value = row[4:8]
+            current_weight, previous_weight = row[8:10]
+            trajectory = trajectories.get((ticker, investor_id), [])
+            direction = 1 if action in ("new", "increased") else -1
+            consecutive = 0
+            for index in range(len(trajectory) - 1, 0, -1):
+                now, prior = trajectory[index], trajectory[index - 1]
+                if now["status"] != "reported" or prior["status"] != "reported":
+                    break
+                delta = (now["unitsK"] or 0) - (prior["unitsK"] or 0)
+                base = abs(prior["unitsK"] or 0)
+                threshold = max(base * 0.001, 1e-9)
+                if (direction > 0 and delta > threshold) or (direction < 0 and delta < -threshold):
+                    consecutive += 1
+                else:
+                    break
+            units_change = (current_units or 0) - (previous_units or 0)
+            weight_change_bps = None
+            if current_weight is not None and previous_weight is not None:
+                weight_change_bps = (current_weight - previous_weight) * 10000
+            reported_value_change = (
+                current_value - previous_value
+                if current_value is not None and previous_value is not None
+                else current_value if action == "new"
+                else -previous_value if action == "exited" and previous_value is not None
+                else None
+            )
+            tags = []
+            if action == "new" and (current_weight or 0) >= 0.005:
+                tags.append("meaningful_new_position")
+            if action == "increased" and weight_change_bps is not None:
+                tags.append("shares_and_weight_up" if weight_change_bps > 0 else "shares_up_weight_down")
+            if action in ("reduced", "exited") and (previous_weight or 0) >= 0.02:
+                tags.append("core_position_reduction")
+            if action == "increased" and consecutive >= 3:
+                tags.append("consecutive_increase")
+            continuity = (
+                "new_position" if action == "new"
+                else "exit_after_hold" if action == "exited"
+                else f"{action}_{min(consecutive, 3)}_quarters" if consecutive
+                else "single_quarter_change"
+            )
+            changes_by_ticker.setdefault(ticker, []).append({
+                "investorId": investor_id,
+                "name": investor_name or investor_id,
+                "action": action,
+                "direction": row[11],
+                "currentUnitsK": current_units,
+                "previousUnitsK": previous_units,
+                "unitsChangeK": units_change,
+                "currentValueM": current_value,
+                "previousValueM": previous_value,
+                "reportedValueChangeM": reported_value_change,
+                "currentWeight": current_weight,
+                "previousWeight": previous_weight,
+                "weightChangeBps": weight_change_bps,
+                "continuity": continuity,
+                "consecutiveDirectionQuarters": consecutive,
+                "tags": tags,
+                "trajectory": trajectory,
+            })
+
+        for ticker, changes in changes_by_ticker.items():
+            security = security_by_ticker[ticker]
+            changed_filers = security["adds"] + security["trims"]
+            breadth_close = abs(security["netFilers"]) <= max(10, changed_filers * 0.1)
+            units_direction = "increase" if (security["netUnitsChangeK"] or 0) > 0 else "decrease" if (security["netUnitsChangeK"] or 0) < 0 else "flat"
+            breadth_direction = "balanced" if breadth_close else "positive" if security["netFilers"] > 0 else "negative"
+            previous_total = security.get("previousUnitsK")
+            weight_divergences = sum(
+                1 for change in changes
+                if (change["action"] == "increased" and (change["weightChangeBps"] or 0) < 0)
+            )
+            details.setdefault(ticker, {})["analysis"] = {
+                "methodVersion": "institutional-behavior-v1",
+                "headlineKey": f"{breadth_direction}_breadth_net_{units_direction}",
+                "evidence": {
+                    "breadth": {
+                        "adds": security["adds"], "trims": security["trims"],
+                        "netFilers": security["netFilers"], "changedFilers": changed_filers,
+                        "addsPct": None if not changed_filers else security["adds"] / changed_filers,
+                    },
+                    "shares": {
+                        "netUnitsChangeK": security["netUnitsChangeK"],
+                        "netChangePctPrior": None if not previous_total else security["netUnitsChangeK"] / previous_total * 100,
+                        "netChangePctOutstanding": security["netChangePctOutstanding"],
+                        "shareBasisDate": share_basis_date,
+                    },
+                    "weights": {
+                        "importantChangesEvaluated": len(changes),
+                        "sharesUpWeightDown": weight_divergences,
+                    },
+                },
+                "importantChanges": changes,
+                "coverage": {
+                    "completeComparablePopulationEvaluated": True,
+                    "importantChangeSelection": "top_absolute_reported_value_change_per_direction",
+                    "perDirection": ANALYSIS_PER_DIRECTION,
+                    "trajectoryQuarters": len(bounded_history_dates),
+                    "thresholds": {"meaningfulNewWeight": 0.005, "corePreviousWeight": 0.02, "consecutiveQuarters": 3},
+                },
+                "researchQuestionKeys": [
+                    "cash_conversion_with_institutional_change",
+                    "operating_evidence_divergence",
+                    "price_vs_model_since_disclosure",
+                ],
+            }
+
     market_overview = {
         segment: aggregate_market(securities, segment)
         for segment in ("all", "sp500", "nasdaq100Proxy", "smallCap")
@@ -361,7 +568,7 @@ def snapshot(
             "ownership": "Split-normalized aggregate reported institutional units divided by the latest ARQ basic shares multiplied by the provider share factor; Sharadar does not provide a reliable free-float field, so the denominator is shares outstanding and unavailable denominators remain null",
             "marketOverview": "Aggregate reported common-stock value divided by the sum of unique covered securities' quarter-end Sharadar market capitalizations; it is a coverage-weighted ownership gauge, not total fund AUM or a free-float measure",
             "netChange": "Split-adjusted net reported share change valued at the current quarter's aggregate implied price; netChangePctOutstanding uses total shares outstanding, not free float",
-            "detailPolicy": f"Largest {DETAIL_PER_ACTION} reporting institutions per action for leading securities; counts use the full universe",
+            "detailPolicy": f"Raw rows retain the largest {DETAIL_PER_ACTION} reporting institutions per action for leading securities; behavioral evidence and important-change selection are calculated on the complete comparable population before truncation",
         },
     }
     return summary, details
@@ -507,7 +714,13 @@ def main() -> int:
         if exists and market_count == 4 and security_history_count > 0 and security_value_count == security_history_count and (not include_details or detail_count > 0):
             continue
         payload, details = snapshot(
-            duck, current, previous, share_basis_date, observed_at, include_details
+            duck,
+            current,
+            previous,
+            share_basis_date,
+            observed_at,
+            include_details,
+            selected[index : index + ANALYSIS_HISTORY_QUARTERS],
         )
         encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
         raw = encoded.encode()

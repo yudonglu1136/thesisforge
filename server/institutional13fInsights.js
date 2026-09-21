@@ -112,8 +112,9 @@ function lazyDetail(source, selected, ticker, payload) {
 
 function normalizeDetail(detail,institutions=[]) {
   const filings=new Map((institutions??[]).map(row=>[row.investorId,row]));
-  return Object.fromEntries(Object.entries(detail).map(([action,rows])=>[
-    action,(rows??[]).filter(row=>{
+  return Object.fromEntries(Object.entries(detail).map(([action,rows])=>{
+    if (!Array.isArray(rows)) return [action,rows];
+    return [action,rows.filter(row=>{
       const filing=filings.get(row.investorId);
       // Older artifacts may contain every prior holding as an "exit" when the
       // filer itself is absent in the current SF3 quarter (and vice versa for a
@@ -139,7 +140,7 @@ function normalizeDetail(detail,institutions=[]) {
             :'split_adjusted_reported_units',
       };
     }),
-  ]));
+  ];}));
 }
 
 function marketHistory(source, visible, selected) {
@@ -385,7 +386,12 @@ export function institutional13fInsightDetail(source, ticker, asOf, reportDate =
   const row=payload.rows.find(item=>item.ticker===ticker);
   assert(row,'institutional_13f_security_not_found');
   return {
-    version:payload.version,asOf,reportDate:payload.reportDate,ticker,row,
+    version:payload.version,asOf,reportDate:payload.reportDate,
+    previousReportDate:payload.previousReportDate??null,
+    availableAt:payload.availableAt??selected.available_at,
+    sourceObservedAt:payload.sourceObservedAt??null,
+    sourceGeneration:selected.source_generation,
+    ticker,row,
     details:{
       ...lazyDetail(source,selected,ticker,payload),
       history:securityHistory(source,visible,selected,payload,ticker),

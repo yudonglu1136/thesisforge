@@ -1209,6 +1209,451 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     );
   }
 
+  String _insightBehaviorHeadline(String key) {
+    if (key == 'balanced_breadth_net_increase') {
+      return w(
+        'Adding and reducing breadth is close, while reported shares increased. Trace the source of the increase and whether important filers also raised portfolio weight.',
+        '本季增减机构数接近，但申报持股净增加。值得追查增量来源，以及主要增持机构是否同步提高组合权重。',
+      );
+    }
+    if (key == 'balanced_breadth_net_decrease') {
+      return w(
+        'Adding and reducing breadth is close, while reported shares decreased. Trace which important filers drove the reduction.',
+        '本季增减机构数接近，但申报持股净减少。值得追查减量来源，以及核心机构是否同步降低组合权重。',
+      );
+    }
+    final positive = key.startsWith('positive');
+    final sharesUp = key.endsWith('increase');
+    if (positive == sharesUp) {
+      return positive
+          ? w(
+              'More institutions added and aggregate reported shares increased. Inspect whether the move is broad and meaningful inside the leading filers’ portfolios.',
+              '更多机构选择增持，汇总申报股数也上升。下一步要确认增量是否广泛，以及对主要机构自身组合是否重要。',
+            )
+          : w(
+              'More institutions reduced and aggregate reported shares declined. Inspect the largest reductions and whether they came from core positions.',
+              '更多机构选择减持，汇总申报股数也下降。下一步要检查主要减持是否来自核心仓位。',
+            );
+    }
+    return w(
+      'Institution breadth and aggregate shares point in different directions. Treat the quarter as a disagreement worth investigating, not a consensus signal.',
+      '机构数量与汇总股数方向相反。本季更像值得调查的分歧，而不是一致信号。',
+    );
+  }
+
+  Widget _insightEvidenceDisclosure({
+    required Key key,
+    required IconData icon,
+    required String title,
+    required String summary,
+    required List<Widget> details,
+  }) => Container(
+    key: key,
+    decoration: BoxDecoration(
+      color: p.card.withValues(alpha: .52),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: p.border),
+    ),
+    child: ExpansionTile(
+      leading: Icon(icon, color: p.accent, size: 18),
+      iconColor: p.accent,
+      collapsedIconColor: p.muted,
+      title: Text(
+        title,
+        style: TextStyle(color: p.text, fontWeight: FontWeight.w700),
+      ),
+      subtitle: Text(summary, style: TextStyle(color: p.muted, fontSize: 11)),
+      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      children: details,
+    ),
+  );
+
+  String _insightActionLabel(String action) => switch (action) {
+    'new' => w('New', '新建'),
+    'reduced' => w('Reduced', '减持'),
+    'exited' => w('Exited', '清仓'),
+    _ => w('Increased', '增持'),
+  };
+
+  String _insightContinuityLabel(Map<String, dynamic> change) {
+    final continuity = text(change['continuity']);
+    final consecutive = number(change['consecutiveDirectionQuarters']).round();
+    if (continuity == 'new_position') return w('New position', '首次建仓');
+    if (continuity == 'exit_after_hold') {
+      return w('Exited after holding', '持有后退出');
+    }
+    if (consecutive >= 3) {
+      return w('$consecutive consecutive quarters', '连续 $consecutive 个季度');
+    }
+    if (consecutive > 0) {
+      return w('Repeated for $consecutive quarter(s)', '连续变化 $consecutive 个季度');
+    }
+    return w('Single-quarter change', '单季度变化');
+  }
+
+  String _insightTagLabel(String tag) => switch (tag) {
+    'meaningful_new_position' => w('Higher-weight new position', '较大权重新建'),
+    'shares_and_weight_up' => w('Shares & weight up', '股数与权重同升'),
+    'shares_up_weight_down' => w('Shares up · weight down', '股数增加但权重下降'),
+    'consecutive_increase' => w('Consecutive increase', '连续增持'),
+    'core_position_reduction' => w('Core position reduced', '核心仓位减持'),
+    _ => tag,
+  };
+
+  void _showInstitutionTrajectory(Map<String, dynamic> change) {
+    final history = asList(change['trajectory']);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: p.panel,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: .76,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(text(change['name']), style: deskHeading(20)),
+                const SizedBox(height: 4),
+                label(
+                  '${_insightActionLabel(text(change['action']))} · ${_insightContinuityLabel(change)}',
+                  '${_insightActionLabel(text(change['action']))} · ${_insightContinuityLabel(change)}',
+                  size: 12,
+                  color: _insightColor(text(change['action'])),
+                ),
+                const SizedBox(height: 8),
+                label(
+                  'Shares use the current split-adjusted basis. Portfolio weight is within each filer’s reported common-stock book.',
+                  '股数按当前拆股口径展示；组合权重为该机构申报普通股组合内的权重。',
+                  size: 11,
+                ),
+                const SizedBox(height: 14),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: history.length,
+                    separatorBuilder: (_, _) =>
+                        Divider(color: p.border, height: 1),
+                    itemBuilder: (_, index) {
+                      final point = history[index],
+                          status = text(point['status']);
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 78,
+                              child: Text(
+                                reportQuarterLabel(text(point['reportDate'])),
+                                style: TextStyle(
+                                  color: p.text,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: status == 'reported'
+                                  ? Text(
+                                      '${_sharesFromThousands(point['unitsK'])} · ${pct(point['weight'])}',
+                                      style: TextStyle(color: p.text),
+                                    )
+                                  : Text(
+                                      status == 'filer_missing'
+                                          ? w(
+                                              'Filing not comparable',
+                                              '该季申报不可比',
+                                            )
+                                          : w('No reported position', '未申报该仓位'),
+                                      style: TextStyle(color: p.muted),
+                                    ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _insightImportantChangeRow(Map<String, dynamic> change) {
+    final action = text(change['action']);
+    final weightBps = nullableNumber(change['weightChangeBps']);
+    final tags = asList(
+      change['tags'],
+    ).map((tag) => _insightTagLabel(text(tag))).toList();
+    return InkWell(
+      key: ValueKey('13f-change-${text(change['investorId'])}'),
+      onTap: () => _showInstitutionTrajectory(change),
+      borderRadius: BorderRadius.circular(7),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: p.border)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    text(change['name']),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: p.text,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _insightColor(action).withValues(alpha: .1),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    _insightActionLabel(action),
+                    style: TextStyle(
+                      color: _insightColor(action),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 5),
+                Icon(Icons.chevron_right, size: 18, color: p.muted),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 18,
+              runSpacing: 6,
+              children: [
+                label(
+                  '${w('Share change', '股数变化')} ${_sharesFromThousands(change['unitsChangeK'])}',
+                  '${w('Share change', '股数变化')} ${_sharesFromThousands(change['unitsChangeK'])}',
+                  size: 10,
+                  color: p.text,
+                ),
+                label(
+                  '${w('Portfolio weight', '组合权重')} ${pct(change['previousWeight'])} → ${pct(change['currentWeight'])}${weightBps == null ? '' : ' (${weightBps >= 0 ? '+' : ''}${weightBps.toStringAsFixed(1)} bp)'}',
+                  '${w('Portfolio weight', '组合权重')} ${pct(change['previousWeight'])} → ${pct(change['currentWeight'])}${weightBps == null ? '' : ' (${weightBps >= 0 ? '+' : ''}${weightBps.toStringAsFixed(1)} bp)'}',
+                  size: 10,
+                  color: p.text,
+                ),
+                label(
+                  '${w('Reported value change', '申报市值变化')} ${_usdMillions(change['reportedValueChangeM'])}',
+                  '${w('Reported value change', '申报市值变化')} ${_usdMillions(change['reportedValueChangeM'])}',
+                  size: 10,
+                  color: p.text,
+                ),
+                label(
+                  _insightContinuityLabel(change),
+                  _insightContinuityLabel(change),
+                  size: 10,
+                  color: p.muted,
+                ),
+              ],
+            ),
+            if (tags.isNotEmpty) ...[
+              const SizedBox(height: 7),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  for (final tag in tags)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: p.accent.withValues(alpha: .08),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        tag,
+                        style: TextStyle(
+                          color: p.accent,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _save13FResearchObservation(
+    Map<String, dynamic> analysis,
+  ) => command(() async {
+    await widget.api.postJson('/api/investment/watches', {
+      'operationId': op(),
+      'ticker': insightTicker,
+      'asOf': asOf,
+      'reportDate': insightQuarter,
+      'origin': '13f_insight',
+      'researchEvidence': {
+        'methodVersion': analysis['methodVersion'],
+        'headlineKey': analysis['headlineKey'],
+        'reportDate': insightQuarter,
+        'previousReportDate': institutional13f?['previousReportDate'],
+        'availableAt': institutional13f?['availableAt'],
+        'evidence': analysis['evidence'],
+        'importantChanges': asList(analysis['importantChanges'])
+            .take(6)
+            .map(
+              (row) => {
+                'investorId': row['investorId'],
+                'name': row['name'],
+                'action': row['action'],
+                'unitsChangeK': row['unitsChangeK'],
+                'currentWeight': row['currentWeight'],
+                'previousWeight': row['previousWeight'],
+                'weightChangeBps': row['weightChangeBps'],
+                'continuity': row['continuity'],
+                'consecutiveDirectionQuarters':
+                    row['consecutiveDirectionQuarters'],
+                'tags': row['tags'],
+              },
+            )
+            .toList(),
+      },
+    });
+    await loadHome();
+    if (mounted) {
+      updateUI(
+        () => notice = w(
+          '$insightTicker saved with its dated 13F evidence for a future quarterly review.',
+          '$insightTicker 已连同当时的 13F 证据保存，后续季度可复核。',
+        ),
+      );
+    }
+  });
+
+  Widget _insightResearchBridge(Map<String, dynamic> analysis) {
+    final saved = asList(
+      home?['watches'],
+    ).any((row) => row['ticker'] == insightTicker);
+    final evidence = {
+      'kind': 'institutional_13f_analysis',
+      'reportDate': insightQuarter,
+      'availableAt': institutional13f?['availableAt'],
+      'headlineKey': analysis['headlineKey'],
+    };
+    return Container(
+      key: const ValueKey('13f-research-bridge'),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: p.card.withValues(alpha: .52),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: p.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            w(
+              'Test the institutional move against the business.',
+              '把机构行为放回公司基本面验证。',
+            ),
+            style: TextStyle(
+              color: p.text,
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 8),
+          for (final question in [
+            w(
+              'Did cash conversion improve alongside the reported position change?',
+              '持股变化时，现金转化是否同步改善？',
+            ),
+            w(
+              'If institutions reduced while operating metrics improved, where is the disagreement?',
+              '机构减持但经营指标改善，分歧在哪里？',
+            ),
+            w(
+              'Has price already reflected the change in the published model value since disclosure?',
+              '披露之后，价格是否已经反映模型价值的变化？',
+            ),
+          ])
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                '• $question',
+                style: TextStyle(color: p.muted, fontSize: 12, height: 1.4),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => unawaited(
+                  loadCompany(
+                    insightTicker,
+                    origin: '13f_insight',
+                    evidence: evidence,
+                    initialSection: 'financials',
+                  ),
+                ),
+                icon: const Icon(Icons.receipt_long_outlined, size: 16),
+                label: Text(w('Financial evidence', '查看财报证据')),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => unawaited(
+                  loadCompany(
+                    insightTicker,
+                    origin: '13f_insight',
+                    evidence: evidence,
+                    initialSection: 'value',
+                  ),
+                ),
+                icon: const Icon(Icons.calculate_outlined, size: 16),
+                label: Text(w('Valuation assumptions', '查看估值假设')),
+              ),
+              FilledButton.icon(
+                onPressed: busy || saved
+                    ? null
+                    : () => unawaited(_save13FResearchObservation(analysis)),
+                icon: Icon(
+                  saved ? Icons.bookmark : Icons.bookmark_border,
+                  size: 16,
+                ),
+                label: Text(
+                  w(
+                    saved ? 'Observation saved' : 'Save research observation',
+                    saved ? '已保存研究观察' : '保存研究观察',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _insightStockDetail() {
     final row = asList(
       institutional13f?['rows'],
@@ -1222,6 +1667,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       ]);
     }
     final detail = asMap(asMap(institutional13f?['details'])[insightTicker]);
+    final analysis = asMap(detail['analysis']);
     final detailIsLoading = insightDetailLoading.contains(
       _insightDetailCacheKey(insightTicker),
     );
@@ -1259,6 +1705,90 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             ],
           ),
           const SizedBox(height: 16),
+          if (analysis.isNotEmpty) ...[
+            Container(
+              key: const ValueKey('13f-evidence-headline'),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: p.accent.withValues(alpha: .07),
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: p.accent.withValues(alpha: .42)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  label(
+                    'EVIDENCE-BASED READ',
+                    '基于证据的本季判断',
+                    size: 9,
+                    color: p.accent,
+                  ),
+                  const SizedBox(height: 7),
+                  Text(
+                    _insightBehaviorHeadline(text(analysis['headlineKey'])),
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  label(
+                    '${reportQuarterLabel(insightQuarter)} vs ${reportQuarterLabel(text(institutional13f?['previousReportDate']))} · ${w('13F filings are delayed snapshots, not live trades.', '13F 是延迟披露的持仓快照，不是实时交易。')}',
+                    '${reportQuarterLabel(insightQuarter)} 对比 ${reportQuarterLabel(text(institutional13f?['previousReportDate']))} · 13F 是延迟披露的持仓快照，不是实时交易。',
+                    size: 10,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            _insightEvidenceDisclosure(
+              key: const ValueKey('13f-evidence-breadth'),
+              icon: Icons.groups_2_outlined,
+              title: w('Breadth of the move', '增减广度'),
+              summary:
+                  '${_integer(asMap(asMap(analysis['evidence'])['breadth'])['adds'])} ${w('adding', '增加方向')} · ${_integer(asMap(asMap(analysis['evidence'])['breadth'])['trims'])} ${w('reducing', '减少方向')}',
+              details: [
+                label(
+                  '${w('Net breadth', '净广度')} ${_integer(asMap(asMap(analysis['evidence'])['breadth'])['netFilers'])} · ${w('Adding share of changed filers', '增加方向占发生变化机构')} ${pct(asMap(asMap(analysis['evidence'])['breadth'])['addsPct'])}',
+                  '${w('Net breadth', '净广度')} ${_integer(asMap(asMap(analysis['evidence'])['breadth'])['netFilers'])} · ${w('Adding share of changed filers', '增加方向占发生变化机构')} ${pct(asMap(asMap(analysis['evidence'])['breadth'])['addsPct'])}',
+                  size: 11,
+                ),
+              ],
+            ),
+            const SizedBox(height: 7),
+            _insightEvidenceDisclosure(
+              key: const ValueKey('13f-evidence-shares'),
+              icon: Icons.stacked_line_chart,
+              title: w('Net reported share change', '股数净变化'),
+              summary:
+                  '${_sharesFromThousands(asMap(asMap(analysis['evidence'])['shares'])['netUnitsChangeK'])} · ${number(asMap(asMap(analysis['evidence'])['shares'])['netChangePctPrior']).toStringAsFixed(2)}% ${w('of prior reported shares', '占上季申报股数')}',
+              details: [
+                label(
+                  '${w('As % of shares outstanding', '占总股本变化')} ${number(asMap(asMap(analysis['evidence'])['shares'])['netChangePctOutstanding']).toStringAsFixed(2)}% · ${w('split-adjusted basis', '拆股折算口径')} ${text(asMap(asMap(analysis['evidence'])['shares'])['shareBasisDate'])}',
+                  '${w('As % of shares outstanding', '占总股本变化')} ${number(asMap(asMap(analysis['evidence'])['shares'])['netChangePctOutstanding']).toStringAsFixed(2)}% · ${w('split-adjusted basis', '拆股折算口径')} ${text(asMap(asMap(analysis['evidence'])['shares'])['shareBasisDate'])}',
+                  size: 11,
+                ),
+              ],
+            ),
+            const SizedBox(height: 7),
+            _insightEvidenceDisclosure(
+              key: const ValueKey('13f-evidence-weight'),
+              icon: Icons.balance_outlined,
+              title: w('Portfolio-weight evidence', '重要机构组合权重'),
+              summary:
+                  '${_integer(asMap(asMap(analysis['evidence'])['weights'])['importantChangesEvaluated'])} ${w('important changes reviewed', '项重要变动')} · ${_integer(asMap(asMap(analysis['evidence'])['weights'])['sharesUpWeightDown'])} ${w('shares-up / weight-down divergences', '项股数增加但权重下降')}',
+              details: [
+                label(
+                  'Weight is measured inside each filer’s reported common-stock portfolio; it is not total fund AUM.',
+                  '权重分母是各机构申报的普通股组合，不代表其完整基金 AUM。',
+                  size: 11,
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+          ],
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -1298,136 +1828,176 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           else
             _insightHistoryCharts(detail),
           const SizedBox(height: 18),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      w(
-                        'Institution ranking · ${_insightName(insightAction).toLowerCase()}',
-                        '机构排名 · ${_insightName(insightAction)}',
-                      ),
-                      style: TextStyle(
-                        color: p.text,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    label(
-                      insightAction == 'exited'
-                          ? 'Largest prior-quarter reported positions first'
-                          : 'Largest reported positions first',
-                      insightAction == 'exited'
-                          ? '按上季被清仓的申报仓位金额由大到小'
-                          : '按申报仓位规模由大到小',
-                      size: 10,
-                    ),
-                  ],
-                ),
-              ),
-              DropdownButton<int>(
-                key: const ValueKey('13f-institution-limit'),
-                value: insightInstitutionLimit,
-                dropdownColor: p.card,
-                underline: const SizedBox.shrink(),
-                items: [
-                  for (final count in const [8, 20, 50])
-                    DropdownMenuItem(
-                      value: count,
-                      child: Text(
-                        w('Top $count', '前 $count 家'),
-                        style: TextStyle(color: p.text, fontSize: 12),
-                      ),
-                    ),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  updateUI(() {
-                    insightInstitutionLimit = value;
-                    _persist13FInsights();
-                  });
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (asList(detail[insightAction]).isEmpty)
-            label(
-              'No bounded detail rows for this security; aggregate counts still use the full universe.',
-              '该证券暂无明细样本，但汇总数量仍使用全量机构。',
-              size: 12,
-            ),
-          for (final institution in asList(
-            detail[insightAction],
-          ).take(insightInstitutionLimit))
-            Builder(
-              builder: (context) {
-                final activityValue =
-                    institution['activityValueM'] ??
-                    (insightAction == 'exited'
-                        ? institution['previousValueM']
-                        : institution['currentValueM']);
-                final change = nullableNumber(institution['changePct']);
-                final isEntryOrExit =
-                    insightAction == 'new' || insightAction == 'exited';
-                final amountLabel = insightAction == 'exited'
-                    ? w('Prior-quarter reported position', '上季申报仓位')
-                    : insightAction == 'new'
-                    ? w('New reported position', '新建仓金额')
-                    : w('Current reported position', '本季申报仓位');
-                return Container(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  decoration: BoxDecoration(
-                    border: Border(bottom: BorderSide(color: p.border)),
-                  ),
-                  child: Row(
+          if (analysis.isNotEmpty) ...[
+            Row(
+              key: const ValueKey('13f-changes-worth-researching'),
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              text(institution['name']),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: p.text,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            Text(
-                              isEntryOrExit
-                                  ? amountLabel
-                                  : '$amountLabel · ${_usdMillions(activityValue)}',
-                              style: TextStyle(color: p.muted, fontSize: 10),
-                            ),
-                          ],
+                      Text(
+                        w('Changes worth researching', '值得研究的变动'),
+                        style: TextStyle(
+                          color: p.text,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
                         ),
                       ),
-                      if (isEntryOrExit &&
-                          nullableNumber(activityValue) != null)
-                        Text(
-                          _usdMillions(activityValue),
-                          style: TextStyle(
-                            color: _insightColor(insightAction),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        )
-                      else if (change != null)
-                        Text(
-                          pct(change),
-                          style: TextStyle(
-                            color: _insightColor(insightAction),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                      const SizedBox(height: 3),
+                      label(
+                        'Adds and reductions are shown together. Selected from the complete comparable population by absolute reported value change.',
+                        '同时展示重要增持与减持；先在完整可比机构中计算，再按申报市值绝对变化选取。',
+                        size: 10,
+                      ),
                     ],
                   ),
-                );
-              },
+                ),
+                label(
+                  '${asList(analysis['importantChanges']).length} ${w('changes', '项')}',
+                  '${asList(analysis['importantChanges']).length} ${w('changes', '项')}',
+                  size: 10,
+                  color: p.accent,
+                ),
+              ],
             ),
+            const SizedBox(height: 8),
+            for (final change in asList(analysis['importantChanges']))
+              _insightImportantChangeRow(change),
+            const SizedBox(height: 18),
+            _insightResearchBridge(analysis),
+          ] else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        w(
+                          'Institution ranking · ${_insightName(insightAction).toLowerCase()}',
+                          '机构排名 · ${_insightName(insightAction)}',
+                        ),
+                        style: TextStyle(
+                          color: p.text,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      label(
+                        insightAction == 'exited'
+                            ? 'Largest prior-quarter reported positions first'
+                            : 'Largest reported positions first',
+                        insightAction == 'exited'
+                            ? '按上季被清仓的申报仓位金额由大到小'
+                            : '按申报仓位规模由大到小',
+                        size: 10,
+                      ),
+                    ],
+                  ),
+                ),
+                DropdownButton<int>(
+                  key: const ValueKey('13f-institution-limit'),
+                  value: insightInstitutionLimit,
+                  dropdownColor: p.card,
+                  underline: const SizedBox.shrink(),
+                  items: [
+                    for (final count in const [8, 20, 50])
+                      DropdownMenuItem(
+                        value: count,
+                        child: Text(
+                          w('Top $count', '前 $count 家'),
+                          style: TextStyle(color: p.text, fontSize: 12),
+                        ),
+                      ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    updateUI(() {
+                      insightInstitutionLimit = value;
+                      _persist13FInsights();
+                    });
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (asList(detail[insightAction]).isEmpty)
+              label(
+                'No bounded detail rows for this security; aggregate counts still use the full universe.',
+                '该证券暂无明细样本，但汇总数量仍使用全量机构。',
+                size: 12,
+              ),
+            for (final institution in asList(
+              detail[insightAction],
+            ).take(insightInstitutionLimit))
+              Builder(
+                builder: (context) {
+                  final activityValue =
+                      institution['activityValueM'] ??
+                      (insightAction == 'exited'
+                          ? institution['previousValueM']
+                          : institution['currentValueM']);
+                  final change = nullableNumber(institution['changePct']);
+                  final isEntryOrExit =
+                      insightAction == 'new' || insightAction == 'exited';
+                  final amountLabel = insightAction == 'exited'
+                      ? w('Prior-quarter reported position', '上季申报仓位')
+                      : insightAction == 'new'
+                      ? w('New reported position', '新建仓金额')
+                      : w('Current reported position', '本季申报仓位');
+                  return Container(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      border: Border(bottom: BorderSide(color: p.border)),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                text(institution['name']),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: p.text,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              Text(
+                                isEntryOrExit
+                                    ? amountLabel
+                                    : '$amountLabel · ${_usdMillions(activityValue)}',
+                                style: TextStyle(color: p.muted, fontSize: 10),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (isEntryOrExit &&
+                            nullableNumber(activityValue) != null)
+                          Text(
+                            _usdMillions(activityValue),
+                            style: TextStyle(
+                              color: _insightColor(insightAction),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          )
+                        else if (change != null)
+                          Text(
+                            pct(change),
+                            style: TextStyle(
+                              color: _insightColor(insightAction),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+          ],
           if (number(row['splitAdjustedFilers']) > 0) ...[
             const SizedBox(height: 12),
             label(

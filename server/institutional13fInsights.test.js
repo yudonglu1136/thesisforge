@@ -149,7 +149,7 @@ test('13F insights prefers the compact append-only v2 artifact',()=>{
   assert.equal(result.coverage.currentFilers,9000);
 });
 
-test('13F v4 loads split-normalized share history without embedding the full detail book',()=>{
+test('13F v5 loads split-normalized history and preserves the bounded behavior analysis',()=>{
   const source=fixture();
   source.db.exec(`CREATE TABLE institutional_13f_insight_snapshots_v2(
     report_date TEXT,source_generation TEXT,available_at TEXT,generated_at TEXT,
@@ -170,7 +170,7 @@ test('13F v4 loads split-normalized share history without embedding the full det
   for(const [date,available,holders] of [['2026-03-31','2026-05-15',6200],['2026-06-30','2026-08-14',6220]]) {
     const currentValueM=date==='2026-06-30'?80:70;
     const splitFactor=date==='2026-06-30'?1:20;
-    const payload=JSON.stringify({version:'institutional-13f-insights-v4',reportDate:date,availableAt:available,shareBasisDate:'2026-06-30',
+    const payload=JSON.stringify({version:'institutional-13f-insights-v5',reportDate:date,previousReportDate:'2025-12-31',availableAt:available,shareBasisDate:'2026-06-30',
       coverage:{currentFilers:9000,securities:8000},rows:[{ticker:'MSFT',increases:3000,holders,currentValueM,currentUnitsK:7200000}],institutions:[],
       marketOverview:{all:{institutionalOwnershipPct:80}}});
     source.db.prepare('INSERT INTO institutional_13f_insight_snapshots_v2 VALUES(?,?,?,?,?,?)').run(date,'v3',available,'2026-09-21T00:00:00Z',date,gzipSync(payload));
@@ -179,10 +179,17 @@ test('13F v4 loads split-normalized share history without embedding the full det
       .run(date,'v3','MSFT',available,holders,currentValueM,7200000,splitFactor,7430000,95.6);
   }
   source.db.prepare('INSERT INTO institutional_13f_insight_details_v1 VALUES(?,?,?,?,?)')
-    .run('2026-06-30','v3','MSFT','detail',gzipSync(JSON.stringify({increased:[{investorId:'VANGRD'}]})));
+    .run('2026-06-30','v3','MSFT','detail',gzipSync(JSON.stringify({
+      increased:[{investorId:'VANGRD'}],
+      analysis:{methodVersion:'institutional-behavior-v1',headlineKey:'net_increase_balanced_breadth',
+        evidence:{breadth:{increases:3000,reductions:2900},shares:{netUnitsChangeK:10},weights:{weightUpCount:6,weightDownCount:4}},
+        importantChanges:[{investorId:'VANGRD',name:'Vanguard',action:'increased',unitsChangeK:10,currentWeight:.04,previousWeight:.03,
+          continuity:{direction:'increased',consecutiveQuarters:3},trajectory:[{reportDate:'2026-06-30',status:'reported',unitsK:100,weight:.04}]}]},
+    })));
   const result=institutional13fInsights(source,'2026-09-18',null,'MSFT');
-  assert.equal(result.version,'institutional-13f-insights-v4');
+  assert.equal(result.version,'institutional-13f-insights-v5');
   assert.equal(result.details.MSFT.increased[0].investorId,'VANGRD');
+  assert.equal(result.details.MSFT.analysis.importantChanges[0].continuity.consecutiveQuarters,3);
   assert.deepEqual(result.marketHistory.map(row=>row.reportDate),['2026-03-31','2026-06-30']);
   assert.equal(result.marketHistory[1].segments.all.institutionalOwnershipPct,80);
   assert.deepEqual(result.details.MSFT.history.map(row=>row.institutionalValueM),[70,80]);

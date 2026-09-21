@@ -463,7 +463,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       discoveryOrigin = origin;
       sourceGuruIds.clear();
       entryEvidence = evidence;
-      if (evidence != null) sourceGuruIds.add(text(evidence['guruId']));
+      final evidenceGuruId = text(evidence?['guruId']);
+      if (evidenceGuruId.isNotEmpty) sourceGuruIds.add(evidenceGuruId);
       ticker = symbol.trim().toUpperCase();
       search.text = ticker;
       page = 'research';

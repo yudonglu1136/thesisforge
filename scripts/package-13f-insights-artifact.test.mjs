@@ -19,7 +19,7 @@ test('packages compact summaries with lazy details and market history',t=>{
   db.prepare('INSERT INTO institutional_13f_market_history_v1 VALUES(?,?,?,?,?,?,?,?,?,?,?)').run('2026-06-30','g','all','2026-08-14',1,1,80,100,80,2,2);
   db.prepare('INSERT INTO institutional_13f_security_history_v1 VALUES(?,?,?,?,?,?,?,?,?,?)').run('2026-06-30','g','MSFT','2026-08-14',1,10,20,20,20,100);db.close();
   const manifest=packageInstitutional13fArtifact({source,output,releaseId:'13f-insights-20260921-v3',runtimeRoot:'/var/app/data/13f-insights/releases'});
-  a.equal(manifest.version,'institutional-13f-artifact-v4');a.equal(manifest.rows,1);a.equal(manifest.detailRows,1);a.equal(manifest.marketRows,1);a.equal(manifest.securityHistoryRows,1);
+  a.equal(manifest.version,'institutional-13f-artifact-v5');a.equal(manifest.rows,1);a.equal(manifest.detailRows,1);a.equal(manifest.marketRows,1);a.equal(manifest.securityHistoryRows,1);
   const artifact=new DatabaseSync(path.join(output,'13f-insights.sqlite'),{readOnly:true});
   a.equal(artifact.prepare('SELECT count(*) count FROM institutional_13f_insight_snapshots_v2').get().count,1);
   a.equal(artifact.prepare('SELECT count(*) count FROM institutional_13f_insight_details_v1').get().count,1);
