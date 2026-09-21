@@ -482,7 +482,7 @@ export async function loadDividendCalendarForTickers(tickerInputs = [], options 
         amount: row.value,
         currency: "USD",
         amountKind: "split_adjusted_per_share",
-        perShare: false,
+        perShare: true,
         status: "historical",
         source: "sharadar_actions",
         sourceLabel: "Sharadar corporate actions",

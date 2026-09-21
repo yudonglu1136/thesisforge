@@ -204,21 +204,16 @@ void main() {
           find.text(lang == AppLanguage.en ? 'Set my assumptions' : '设定我的假设'),
           findsNothing,
         );
-        for (final tab in [
-          lang == AppLanguage.en ? 'Valuation' : '估值',
-          lang == AppLanguage.en ? 'Financials & sources' : '财务与来源',
-          lang == AppLanguage.en ? 'Decisions' : '决策',
-        ]) {
-          await t.ensureVisible(find.text(tab));
-          await t.tap(find.text(tab));
+        for (final tab in ['value', 'financials', 'records']) {
+          await t.tap(find.byKey(ValueKey('research-tab-$tab')));
           await t.pumpAndSettle();
           expect(t.takeException(), isNull);
         }
         expect(
           find.text(
             lang == AppLanguage.en
-                ? 'Keep the idea. Do not force a decision.'
-                : '保留线索，不强行决策。',
+                ? 'Save a falsifiable research record'
+                : '保存可证伪的研究记录',
           ),
           findsOneWidget,
         );
@@ -268,11 +263,12 @@ void main() {
     },
   );
   testWidgets(
-    'range controls filter real dates and selected report does not issue a new model request',
+    'range controls filter real dates and selected report loads only its model ledger',
     (t) async {
       final api = ResearchApi();
       await mount(t, api);
       final reads = api.reads.length;
+      await t.ensureVisible(find.widgetWithText(ChoiceChip, '1Y'));
       await t.tap(find.widgetWithText(ChoiceChip, '1Y'));
       await t.pumpAndSettle();
       expect(find.byType(ValuationTrendChart), findsNothing);
@@ -301,7 +297,8 @@ void main() {
             .selectedQuarterKey,
         '-2025-04-20',
       );
-      expect(api.reads.length, reads);
+      expect(api.reads.length, reads + 1);
+      expect(api.reads.last, contains('/published-model?asOf=2025-04-20'));
       expect(api.calls, isEmpty);
     },
   );
@@ -338,6 +335,7 @@ void main() {
       find.text('Not enough observations in this range. Try All.'),
       findsOneWidget,
     );
+    await t.ensureVisible(find.widgetWithText(ChoiceChip, 'All'));
     await t.tap(find.widgetWithText(ChoiceChip, 'All'));
     await t.pumpAndSettle();
     expect(
@@ -362,10 +360,15 @@ void main() {
     (t) async {
       final api = ResearchApi()..readOnly = false;
       await mount(t, api);
-      await t.tap(find.text('Valuation'));
+      await t.tap(find.byKey(const ValueKey('research-tab-value')));
       await t.pumpAndSettle();
+      await t.ensureVisible(find.text('My DCF'));
+      await t.tap(find.text('My DCF'));
+      await t.pumpAndSettle();
+      await t.ensureVisible(find.widgetWithText(TextButton, 'Bear'));
       await t.tap(find.widgetWithText(TextButton, 'Bear'));
       await t.pumpAndSettle();
+      await t.ensureVisible(find.text('Switch company'));
       await t.tap(find.text('Switch company'));
       await t.pumpAndSettle();
       await t.enterText(
@@ -381,6 +384,7 @@ void main() {
       expect(find.text('Your scenario'), findsOneWidget);
       expect(api.reads.where((p) => p.contains('/research/ISRG')), isEmpty);
       final before = api.reads.where((p) => p.contains('/research/')).length;
+      await t.ensureVisible(find.text('Switch company'));
       await t.tap(find.text('Switch company'));
       await t.pumpAndSettle();
       await t.tap(find.text('Test fixture'));

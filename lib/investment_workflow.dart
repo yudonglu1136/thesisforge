@@ -37,6 +37,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   late final SemanticsHandle semanticsHandle;
   late String page, asOf;
   String section = 'evidence',
+      valuationSection = 'published',
       ticker = '',
       template = 'Base',
       decisionAction = '',
@@ -47,6 +48,12 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   final sourceGuruIds = <String>{};
   final researchRecentTickers = <String>[];
   Map<String, dynamic>? home, company, calculation, review;
+  Map<String, dynamic>? researchFundamental,
+      researchInstitution,
+      researchDocumentsData,
+      researchRecordsData;
+  bool researchPanelLoading = false;
+  String? researchPanelError;
   Map<String, dynamic> assumptions = {};
   bool busy = false, ownership = false, priority = false;
   bool ruleEnabled = false, draftDirty = false, reviewOriginal = false;
@@ -104,13 +111,31 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       targetReturn = TextEditingController(text: '10');
   final reviewNotes = TextEditingController();
   String reverseVariable = 'growth';
-  final growth = List.generate(5, (_) => TextEditingController());
-  final revenue = List.generate(5, (_) => TextEditingController());
+  String personalDcfMethod = 'parent_fcfe';
+  int forecastHorizon = 5;
+  final growth = List.generate(10, (_) => TextEditingController());
+  final revenue = List.generate(10, (_) => TextEditingController());
   final hypothesis = TextEditingController();
   final valuationTableScroll = ScrollController();
-  final margin = List.generate(5, (_) => TextEditingController());
-  final ke = TextEditingController(), terminal = TextEditingController();
+  final margin = List.generate(10, (_) => TextEditingController());
+  final ebitMargin = List.generate(10, (_) => TextEditingController());
+  final cashTaxRate = List.generate(10, (_) => TextEditingController());
+  final dnaMargin = List.generate(10, (_) => TextEditingController());
+  final capexMargin = List.generate(10, (_) => TextEditingController());
+  final nwcInvestmentMargin = List.generate(10, (_) => TextEditingController());
+  final researchQuestion = TextEditingController(),
+      researchSupport = TextEditingController(),
+      researchOpposition = TextEditingController(),
+      researchInvalidation = TextEditingController(),
+      researchReviewDate = TextEditingController();
+  final ke = TextEditingController(),
+      wacc = TextEditingController(),
+      terminal = TextEditingController(),
+      netDebt = TextEditingController(),
+      nci = TextEditingController(),
+      nonOperatingAssets = TextEditingController();
   final displayedRatios = <TextEditingController, (String, double)>{};
+  Map<String, dynamic>? fcfeAssumptionsCache, fcffAssumptionsCache;
   bool inspectInputs = false;
   String researchRange = '5Y', researchReport = '';
   String researchHolderId = '', holderQuery = '';
@@ -178,7 +203,6 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     dateInput.text = asOf;
     ticker = widget.initialTicker;
     search.text = ticker;
-    unawaited(loadHome());
     final query = widget.initialQuery ?? readBrowserQuery();
     ticker = researchEntryTicker(page, ticker, query['candidate']);
     search.text = ticker;
@@ -278,6 +302,14 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         }.contains(query['discoverTab'])
         ? query['discoverTab']!
         : 'gurus';
+    // Guru consensus owns a compact, cacheable bootstrap payload. Loading the
+    // full home dashboard here previously added an unrelated database pass to
+    // first paint. Screens that consume home state still request it normally.
+    if (page == 'home' ||
+        page == 'research' ||
+        (page == 'discover' && discoveryTab == 'gurus')) {
+      unawaited(loadHome());
+    }
     opportunityQuarter = query['quarter'] ?? '';
     managerDesk = query['workspace'] == 'manager';
     homeResearchDesk = managerDesk || query['workspace'] == 'research';
@@ -295,7 +327,6 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     }
     if (page == 'discover') {
       if (discoveryTab == 'gurus') unawaited(load13FInsights());
-      if (discoveryTab == 'managers') unawaited(loadDiscovery());
       if (text(query['guru']).isNotEmpty) {
         unawaited(
           loadGuru(
@@ -345,12 +376,26 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       reversePrice,
       targetReturn,
       reviewNotes,
+      researchQuestion,
+      researchSupport,
+      researchOpposition,
+      researchInvalidation,
+      researchReviewDate,
       ke,
+      wacc,
       terminal,
+      netDebt,
+      nci,
+      nonOperatingAssets,
       ...growth,
       ...revenue,
       hypothesis,
       ...margin,
+      ...ebitMargin,
+      ...cashTaxRate,
+      ...dnaMargin,
+      ...capexMargin,
+      ...nwcInvestmentMargin,
     ]) {
       c.dispose();
     }
@@ -379,8 +424,14 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       'filing': value == 'discover' ? selectedQuarter : null,
       'holding': value == 'discover' ? selectedHolding : null,
     });
-    if (((value == 'discover' && discoveryTab == 'managers') ||
-            (value == 'home' && homeResearchDesk)) &&
+    if (value == 'home' && home == null) {
+      unawaited(loadHome());
+    }
+    if (value == 'research' && home == null) {
+      unawaited(loadHome());
+    }
+    if (value == 'home' &&
+        homeResearchDesk &&
         discoveryData == null &&
         !discoveryLoading) {
       unawaited(loadDiscovery());
@@ -438,6 +489,12 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       busy = true;
       error = null;
       company = null;
+      researchFundamental = null;
+      researchInstitution = null;
+      researchDocumentsData = null;
+      researchRecordsData = null;
+      researchPanelLoading = false;
+      researchPanelError = null;
       review = null;
       scenarioId = null;
       scenarioParentId = null;
@@ -448,6 +505,11 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       calculationPending = false;
       calculationFailure = null;
       assumptions = {};
+      personalDcfMethod = 'parent_fcfe';
+      fcfeAssumptionsCache = null;
+      fcffAssumptionsCache = null;
+      forecastHorizon = 5;
+      valuationSection = 'published';
       draftDirty = false;
       worksheetHead = null;
       worksheetRetry = null;
@@ -528,8 +590,9 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
             [
               'evidence',
               'financials',
+              'institutions',
               'value',
-              'decision',
+              'records',
             ].contains(initialSection)
             ? initialSection!
             : 'evidence';
@@ -537,6 +600,10 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         scenarioName.text = 'Base';
         inspectInputs = false;
         assumptions = asMap(asMap(data['templates'])['Base']);
+        researchFundamental = asMap(data['fundamental']).isEmpty
+            ? null
+            : asMap(data['fundamental']);
+        researchRecordsData = {'rows': asList(data['researchRecords'])};
         worksheetHead = data['worksheetHead'] as String?;
         final saved = asList(data['scenarios']);
         final active = asMap(data['activeWorksheet']);
@@ -590,13 +657,67 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   }
 
   void fillAssumptions() {
-    for (var i = 0; i < 5; i++) {
-      displayOptionalRatio(growth[i], (assumptions['growth'] as List?)?[i]);
-      displayOptionalRatio(margin[i], (assumptions['margin'] as List?)?[i]);
+    personalDcfMethod = assumptions['method'] == 'operating_fcff'
+        ? 'operating_fcff'
+        : 'parent_fcfe';
+    final storedGrowth = assumptions['growth'] as List?;
+    final storedMargin = assumptions['margin'] as List?;
+    forecastHorizon =
+        (nullableNumber(assumptions['horizonYears']) ??
+                storedGrowth?.length.toDouble() ??
+                5)
+            .round();
+    if (forecastHorizon != 10) forecastHorizon = 5;
+    for (var i = 0; i < 10; i++) {
+      displayOptionalRatio(
+        growth[i],
+        storedGrowth != null && i < storedGrowth.length
+            ? storedGrowth[i]
+            : null,
+      );
+      displayOptionalRatio(
+        margin[i],
+        storedMargin != null && i < storedMargin.length
+            ? storedMargin[i]
+            : null,
+      );
+      for (final entry in [
+        (ebitMargin, assumptions['ebitMargin'] as List?),
+        (cashTaxRate, assumptions['cashTaxRate'] as List?),
+        (dnaMargin, assumptions['dnaMargin'] as List?),
+        (capexMargin, assumptions['capexMargin'] as List?),
+        (nwcInvestmentMargin, assumptions['nwcInvestmentMargin'] as List?),
+      ]) {
+        displayOptionalRatio(
+          entry.$1[i],
+          entry.$2 != null && i < entry.$2!.length ? entry.$2![i] : null,
+        );
+      }
     }
     displayRatio(ke, number(assumptions['ke']));
+    displayRatio(wacc, number(assumptions['wacc']));
     displayRatio(terminal, number(assumptions['g']));
-    targetReturn.text = (number(assumptions['ke']) * 100).toStringAsFixed(2);
+    netDebt.text = number(assumptions['netDebtM']).toStringAsFixed(2);
+    nci.text = number(assumptions['nciM']).toStringAsFixed(2);
+    nonOperatingAssets.text = number(
+      assumptions['nonOperatingAssetsM'],
+    ).toStringAsFixed(2);
+    final discount = personalDcfMethod == 'operating_fcff'
+        ? number(assumptions['wacc'])
+        : number(assumptions['ke']);
+    targetReturn.text = (discount * 100).toStringAsFixed(2);
+    if (personalDcfMethod == 'operating_fcff' &&
+        !const {
+          'growth',
+          'mature_ebit_margin',
+          'reinvestment',
+        }.contains(reverseVariable)) {
+      reverseVariable = 'growth';
+    }
+    if (personalDcfMethod == 'parent_fcfe' &&
+        !const {'growth', 'terminal_margin'}.contains(reverseVariable)) {
+      reverseVariable = 'growth';
+    }
     syncRevenueInputs();
   }
 
@@ -624,13 +745,58 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     return value == null || !value.isFinite ? null : value / 100;
   }
 
-  Map<String, dynamic> edited() => {
-    ...assumptions,
-    'growth': growth.map(editedRatio).toList(),
-    'margin': margin.map(editedRatio).toList(),
-    'ke': editedRatio(ke),
-    'g': editedRatio(terminal),
-  };
+  double? editedAmount(TextEditingController c) {
+    final value = double.tryParse(c.text.trim());
+    return value != null && value.isFinite ? value : null;
+  }
+
+  Map<String, dynamic> edited() {
+    final common = {
+      'horizonYears': forecastHorizon,
+      'growth': growth.take(forecastHorizon).map(editedRatio).toList(),
+      'g': editedRatio(terminal),
+    };
+    if (personalDcfMethod == 'operating_fcff') {
+      return {
+        'method': 'operating_fcff',
+        'discountType': 'WACC',
+        'ownership': 'enterprise',
+        'timing': 'year_end',
+        ...common,
+        'ebitMargin': ebitMargin
+            .take(forecastHorizon)
+            .map(editedRatio)
+            .toList(),
+        'cashTaxRate': cashTaxRate
+            .take(forecastHorizon)
+            .map(editedRatio)
+            .toList(),
+        'dnaMargin': dnaMargin.take(forecastHorizon).map(editedRatio).toList(),
+        'capexMargin': capexMargin
+            .take(forecastHorizon)
+            .map(editedRatio)
+            .toList(),
+        'nwcInvestmentMargin': nwcInvestmentMargin
+            .take(forecastHorizon)
+            .map(editedRatio)
+            .toList(),
+        'wacc': editedRatio(wacc),
+        'netDebtM': editedAmount(netDebt),
+        'nciM': editedAmount(nci),
+        'nonOperatingAssetsM': editedAmount(nonOperatingAssets),
+      };
+    }
+    return {
+      'method': 'parent_fcfe',
+      'discountType': 'Ke',
+      'ownership': 'parent_common',
+      'timing': 'year_end',
+      ...common,
+      'margin': margin.take(forecastHorizon).map(editedRatio).toList(),
+      'ke': editedRatio(ke),
+    };
+  }
+
   void scheduleCalculation() {
     calculationSerial++;
     setState(() {
@@ -1263,8 +1429,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       card([
         title('What do you believe?', '你相信什么？'),
         label(
-          'Five forward years · parent FCFE / Ke · year-end discounting · no second debt or NCI deduction. All rate inputs are percentages.',
-          '未来五年 · 母公司 FCFE / Ke · 年末折现 · 不重复扣债务或少数权益。比率输入均为百分数。',
+          '$forecastHorizon forward years · parent FCFE / Ke · year-end discounting · no second debt or NCI deduction. All rate inputs are percentages.',
+          '未来 $forecastHorizon 年 · 母公司 FCFE / Ke · 年末折现 · 不重复扣债务或少数权益。比率输入均为百分数。',
         ),
         const SizedBox(height: 14),
         Wrap(
@@ -1295,7 +1461,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           '基准保留平台现金流路径，不含 DCF 后调整。悲观/乐观在支持边界内按增长 ±5pp、现金流率 ±3pp、Ke ∓1pp 压测。这些是可编辑模板，不是管理层指引。',
         ),
         const SizedBox(height: 14),
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < forecastHorizon; i++)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Wrap(
@@ -1437,8 +1603,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           ),
         ),
         label(
-          'Growth solve fixes margins and g. Terminal-margin solve fixes growth and years 1–4 margins. Target return is the discount rate, not a promised return.',
-          '增长求解固定现金流率和 g；终值率求解固定增长和前四年现金流率。要求回报率作为折现率，不是回报承诺。',
+          'Growth solve fixes margins and g. Terminal-margin solve fixes growth and years 1–${forecastHorizon - 1} margins. Target return is the discount rate, not a promised return.',
+          '增长求解固定现金流率和 g；终值率求解固定增长和前 ${forecastHorizon - 1} 年现金流率。要求回报率作为折现率，不是回报承诺。',
         ),
         ExpansionTile(
           title: Text(w('Sensitivity: Ke × terminal growth', '敏感性：Ke × 永续增长')),

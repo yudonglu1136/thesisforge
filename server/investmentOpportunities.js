@@ -136,6 +136,100 @@ export function opportunityValuations(source,asOf,tickers=null) {
   return result;
 }
 
+const modelParameterDefinitions=Object.freeze({
+  valuationRevenue:['Forward revenue used','currency_m'],
+  evSalesMultiple:['EV / sales multiple','multiple'],
+  normalizedNetIncome:['Normalized net income','currency_m'],
+  normalizedMargin:['Normalized net margin','percent_points'],
+  targetPE:['Target P / E','multiple'],
+  valuationFreeCashFlow:['FCFE starting cash flow','currency_m'],
+  targetFCFYield:['Target FCF yield','ratio_percent'],
+  sharesM:['Diluted shares','shares_m'],
+  netCashM:['Net cash / (debt)','currency_m'],
+  discountRate:['Discount rate','ratio_percent'],
+  terminalGrowth:['Terminal growth','ratio_percent'],
+  initialGrowth:['Initial DCF growth','ratio_percent'],
+  terminalValueShare:['Terminal value share','ratio_percent'],
+});
+
+function modelParameter(key,value) {
+  const definition=modelParameterDefinitions[key];
+  if(!definition||!finite(value))return null;
+  return {key,label:definition[0],value,format:definition[1]};
+}
+
+function componentParameterKeys(key) {
+  if(/sales/i.test(key))return ['valuationRevenue','evSalesMultiple','netCashM','sharesM'];
+  if(/earnings|eps|income/i.test(key))return ['normalizedNetIncome','normalizedMargin','targetPE','sharesM'];
+  if(/dcf|fcfe|cash.flow/i.test(key))return ['valuationFreeCashFlow','discountRate','terminalGrowth','initialGrowth','terminalValueShare','sharesM'];
+  if(/yield/i.test(key))return ['valuationFreeCashFlow','targetFCFYield','sharesM'];
+  return ['valuationRevenue','normalizedNetIncome','valuationFreeCashFlow','sharesM'];
+}
+
+// Compact, read-only explanation of the exact published model observation.
+// It deliberately exposes only the scalar inputs needed to reproduce each
+// method output; full evidence blobs and transcript excerpts stay on demand in
+// Research. Missing inputs stay missing instead of being inferred.
+export function opportunityValuationBreakdown(source,ticker,asOf) {
+  ticker=tickerKey(ticker);isoDate(asOf);
+  const row=source.db.prepare(`SELECT as_of_date,model_version,fiscal_period,input_json,output_json
+    FROM valuation_pit_model_runs
+    WHERE ticker=? AND as_of_date<=? AND financial_available_at<=as_of_date
+      AND (guidance_max_observed_at IS NULL OR guidance_max_observed_at<=as_of_date)
+    ORDER BY as_of_date DESC,model_version DESC,fiscal_period DESC,rowid DESC LIMIT 1`).get(ticker,asOf);
+  if(!row)return null;
+  const input=JSON.parse(row.input_json),output=JSON.parse(row.output_json);
+  const score=input.valuationSemantics?.scoreInputs??{};
+  const dcf=score.equityDcf??{};
+  const values={...score,
+    discountRate:dcf.discountRate,terminalGrowth:dcf.terminalGrowth,
+    initialGrowth:dcf.initialGrowth,terminalValueShare:dcf.terminalValueShare,
+  };
+  const weights=score.methodWeights??{};
+  const components=(Array.isArray(output.methodOutputs)?output.methodOutputs:[])
+    .filter(item=>item&&item.key!=='method-weighting'&&item.key!=='growth-margin-inputs')
+    .map(item=>{
+      const weight=finite(weights[item.key])?weights[item.key]:null;
+      const methodOutput=finite(item.value)?item.value:null;
+      const parameters=componentParameterKeys(String(item.key??''))
+        .map(key=>modelParameter(key,values[key])).filter(Boolean);
+      const steps=[];
+      if(/earnings|income/i.test(String(item.key))&&finite(score.normalizedNetIncome)&&finite(score.sharesM)&&finite(score.targetPE)){
+        steps.push({label:'Normalized net income / diluted shares',formula:'normalizedNetIncome ÷ sharesM',inputs:{normalizedNetIncome:score.normalizedNetIncome,sharesM:score.sharesM},output:score.normalizedNetIncome/score.sharesM,unit:'earnings_per_share'});
+        steps.push({label:'Normalized EPS × target P/E',formula:'normalizedNetIncome ÷ sharesM × targetPE',inputs:{normalizedNetIncome:score.normalizedNetIncome,sharesM:score.sharesM,targetPE:score.targetPE},output:score.normalizedNetIncome/score.sharesM*score.targetPE,unit:'value_per_share'});
+      }
+      if(/dcf|fcfe|cash.flow/i.test(String(item.key))&&dcf?.annualCashFlows){
+        steps.push({label:'Explicit FCFE present value',formula:'sum(FCFE[t] ÷ (1 + Ke)^t)',output:dcf.presentValueM-dcf.terminalPresentValueM,unit:'currency_m'});
+        steps.push({label:'Terminal present value',formula:'terminalValueM ÷ (1 + Ke)^N',output:dcf.terminalPresentValueM,unit:'currency_m'});
+      }
+      return {
+      key:String(item.key??''),label:String(item.label??item.key??''),
+      status:methodOutput===null?'not_applicable':weight===0?'excluded':'included',
+      output:methodOutput,format:item.format??'number',description:item.description??null,
+      weight,contribution:finite(methodOutput)&&finite(weight)?methodOutput*weight:0,
+      exclusionReason:methodOutput===null?item.description??'The stored snapshot did not produce this method.':weight===0?'Stored published weight is zero.':null,
+      parameters,steps,
+    };});
+  const weighted=components.filter(item=>finite(item.output)&&finite(item.weight));
+  const weightedValue=weighted.length?weighted.reduce((total,item)=>total+item.contribution,0):null;
+  const fairValue=scalar(output.fairValue);
+  const reconciliationDifference=finite(weightedValue)&&finite(fairValue)?fairValue-weightedValue:null;
+  return {
+    modelVersion:row.model_version,availableAt:row.as_of_date,period:row.fiscal_period,
+    currency:input.sourceRecord?.currency??null,
+    method:output.method??input.valuationSemantics?.fairValueFormula??null,
+    formula:input.valuationSemantics?.fairValueFormula??output.method??null,
+    fairValue,components,weightedValue,
+    postModelAdjustments:finite(reconciliationDifference)&&Math.abs(reconciliationDifference)>1e-10
+      ?[{key:'stored_post_method_adjustment',amount:reconciliationDifference,status:'stored_output_residual',source:'published snapshot'}]:[],
+    reconciliationDifference,
+    reconciliationStatus:finite(reconciliationDifference)&&Math.abs(reconciliationDifference)<=1e-8?'reconciled':'review_required',
+    precision:'calculations use stored full precision; presentation rounding is display only',
+    historicalParameterPolicy:'Only fields stored in this snapshot are returned. Missing historical weights or profile inputs remain missing.',
+    priceExcludedFromFairValue:input.valuationSemantics?.priceExcludedFromFairValue===true,
+  };
+}
+
 // Extract only the dated price series, not the large transcripts and model
 // history in each snapshot. No current quote is substituted for a missing date.
 function opportunityPrices(source,tickers,asOf) {
@@ -224,7 +318,7 @@ export function buildGuruHoldingsMatrix(source,asOf,reportDate=null) {
     return {...row,managerCount:held.length,medianWeight:median(held.map(m=>m.weight)),
       newPositions,increases,reductions,exits,adds:newPositions+increases,trims:reductions+exits};
   }).sort((a,b)=>b.managerCount-a.managerCount || (b.medianWeight??0)-(a.medianWeight??0) || a.ticker.localeCompare(b.ticker));
-  const result={version:'guru-holdings-matrix-v1',asOf,reportDate:data.reportDate,quarters:data.quarters,
+  const result={version:'guru-holdings-matrix-v2',asOf,reportDate:data.reportDate,quarters:data.quarters,
     coverage:{eligibleManagers:data.eligibleManagers,reportedManagers:data.books.length,fullBooks:data.books.filter(b=>b.full).length,
       extractedBooks:data.books.filter(b=>!b.full).length,total:rows.length,
       scope:data.books.every(b=>b.full)?'full_current_books':'includes_historical_extracts'},rows};

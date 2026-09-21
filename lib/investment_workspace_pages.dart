@@ -70,6 +70,14 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
   void selectSection(String next) {
     updateUI(() => section = next);
     navigate('research');
+    if (next == 'financials' &&
+        (researchDocumentsData == null || researchFundamental == null)) {
+      unawaited(loadResearchPanel('financials'));
+    } else if (next == 'institutions' && researchInstitution == null) {
+      unawaited(loadResearchPanel('institutions'));
+    } else if (next == 'records' && researchRecordsData == null) {
+      unawaited(loadResearchPanel('records'));
+    }
   }
 
   Future<void> enterTerminal({String mode = 'guru'}) async {
@@ -175,6 +183,8 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
     },
   );
 
+  // Legacy route helpers remain for old saved URLs while Research owns the new flow.
+  // ignore: unused_element
   List<Widget> valueWorkspace() =>
       assumptions.isEmpty ? detailedValueView() : personalValueWorkspace();
 
@@ -193,6 +203,7 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
         a,
   );
 
+  // ignore: unused_element
   List<Widget> decisionPage() => [
     card([
       title('What do you want to do?', '你准备怎么做？'),
@@ -351,6 +362,7 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
     ]),
   ];
 
+  // ignore: unused_element
   List<Widget> comparisonPage() {
     if (review == null) return [];
     final original = asMap(review?['decision']),

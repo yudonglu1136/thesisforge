@@ -5,24 +5,15 @@ import 'package:guru_analysis_terminal/main.dart';
 
 final testIncome = <String, dynamic>{
   'status': 'ready',
-  'fromDate': '2026-01-01',
+  'fromDate': '2025-09-09',
   'toDate': '2026-09-09',
+  'annualAmount': 100,
   'grossReceived': 100,
-  'reversals': -2,
+  'coveredHoldings': 3,
+  'eligibleHoldings': 3,
+  'unavailableTickers': <String>[],
   'byType': [
-    {'id': 'dividends', 'category': 'dividends', 'amount': 60, 'weight': .6},
-    {
-      'id': 'bond_interest',
-      'category': 'bond_interest',
-      'amount': 30,
-      'weight': .3,
-    },
-    {
-      'id': 'cash_interest',
-      'category': 'cash_interest',
-      'amount': 10,
-      'weight': .1,
-    },
+    {'id': 'dividends', 'category': 'dividends', 'amount': 100, 'weight': 1.0},
   ],
   'byInstrument': [
     {
@@ -31,20 +22,26 @@ final testIncome = <String, dynamic>{
       'category': 'dividends',
       'amount': 60,
       'weight': .6,
+      'quantity': 100,
+      'perShare': .6,
     },
     {
-      'id': 'int-BOND',
-      'ticker': 'BOND',
-      'category': 'bond_interest',
+      'id': 'div-BBB',
+      'ticker': 'BBB',
+      'category': 'dividends',
       'amount': 30,
       'weight': .3,
+      'quantity': 60,
+      'perShare': .5,
     },
     {
-      'id': 'int-CASH',
-      'ticker': 'CASH',
-      'category': 'cash_interest',
+      'id': 'div-CCC',
+      'ticker': 'CCC',
+      'category': 'dividends',
       'amount': 10,
       'weight': .1,
+      'quantity': 20,
+      'perShare': .5,
     },
   ],
 };
@@ -100,9 +97,7 @@ Widget donut({bool hidden = false, Map<String, dynamic>? income}) =>
         'sectors': [
           {'name': 'Unclassified', 'weight': 1, 'value': 1000},
         ],
-        'home': {
-          'history': {'income': income ?? testIncome},
-        },
+        'home': {'trailingDividends': income ?? testIncome},
       },
     );
 String detail(WidgetTester t) => t
@@ -174,7 +169,7 @@ void main() {
     },
   );
   testWidgets(
-    'Income changes the actual slices to dividend/bond/cash receipts with dated provenance',
+    'TTM dividends use Sharadar holding estimates with dated provenance',
     (t) async {
       await mount(t, donut());
       expect(
@@ -184,25 +179,23 @@ void main() {
       await tap(t, find.byKey(const ValueKey('allocation-income')));
       expect(find.byKey(const ValueKey('allocation-legend-AAA')), findsNothing);
       expect(
-        find.byKey(const ValueKey('allocation-legend-bond_interest')),
+        find.byKey(const ValueKey('allocation-legend-div-AAA')),
         findsOneWidget,
       );
       expect(
-        find.text('Report period · 2026-01-01 → 2026-09-09'),
+        find.text(
+          'Sharadar trailing 12 months · 2025-09-09 → 2026-09-09 · 3/3 holdings covered',
+        ),
         findsOneWidget,
       );
-      await tap(
-        t,
-        find.byKey(const ValueKey('allocation-legend-bond_interest')),
-      );
-      expect(detail(t), contains('Bond interest · 30.0% · USD 30'));
-      await tap(t, find.text('Income sources'));
+      await tap(t, find.byKey(const ValueKey('allocation-legend-div-AAA')));
+      expect(detail(t), contains('AAA · Dividends · 60.0% · USD 60'));
+      expect(detail(t), contains('100 current shares × USD 0.60 TTM / share'));
+      await tap(t, find.text('Income type'));
       expect(
-        find.byKey(const ValueKey('allocation-legend-int-BOND')),
+        find.byKey(const ValueKey('allocation-legend-dividends')),
         findsOneWidget,
       );
-      await tap(t, find.byKey(const ValueKey('allocation-legend-int-BOND')));
-      expect(detail(t), contains('BOND · Bond interest · 30.0% · USD 30'));
       await tap(t, find.byKey(const ValueKey('allocation-position')));
       expect(
         find.byKey(const ValueKey('allocation-legend-AAA')),
@@ -225,7 +218,7 @@ void main() {
         .map((key) => t.getTopLeft(find.byKey(key)).dy)
         .toList(growable: false);
     expect(tops.toSet().length, 1);
-    expect(find.text('Dividends & interest'), findsOneWidget);
+    expect(find.text('TTM dividends'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
   for (final hidden in [false, true]) {
@@ -234,10 +227,7 @@ void main() {
       (t) async {
         await mount(t, donut(hidden: hidden));
         await tap(t, find.byKey(const ValueKey('allocation-income')));
-        await tap(
-          t,
-          find.byKey(const ValueKey('allocation-legend-bond_interest')),
-        );
+        await tap(t, find.byKey(const ValueKey('allocation-legend-div-BBB')));
         final pointer = await t.createGesture(kind: PointerDeviceKind.mouse);
         await pointer.addPointer(location: Offset.zero);
         final ring = find.byKey(const ValueKey('portfolio-allocation-donut'));
@@ -247,11 +237,11 @@ void main() {
               Offset((size / 2 - 14) * .707, -(size / 2 - 14) * .707),
         );
         await t.pumpAndSettle();
-        expect(detail(t), contains('Dividends · 60.0%'));
+        expect(detail(t), contains('AAA · Dividends · 60.0%'));
         expect(detail(t).contains('USD 60'), !hidden);
         await pointer.moveTo(const Offset(5, 5));
         await t.pumpAndSettle();
-        expect(detail(t), contains('Bond interest · 30.0%'));
+        expect(detail(t), contains('BBB · Dividends · 30.0%'));
         if (hidden) {
           expect(
             t
@@ -271,36 +261,38 @@ void main() {
       },
     );
   }
-  testWidgets(
-    'missing and zero income states never substitute holding weights',
-    (t) async {
-      await mount(t, donut(income: {}));
-      await tap(t, find.byKey(const ValueKey('allocation-income')));
-      expect(
-        find.textContaining('Received-income history is unavailable.'),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('portfolio-allocation-donut')),
-        findsNothing,
-      );
-      await mount(
-        t,
-        donut(
-          income: {
-            'status': 'ready',
-            'grossReceived': 0,
-            'byType': [],
-            'byInstrument': [],
-          },
-        ),
-      );
-      expect(
-        find.text('No positive income receipts in this report period.'),
-        findsOneWidget,
-      );
-    },
-  );
+  testWidgets('missing and zero income states never substitute holding weights', (
+    t,
+  ) async {
+    await mount(t, donut(income: {}));
+    await tap(t, find.byKey(const ValueKey('allocation-income')));
+    expect(
+      find.textContaining('Trailing dividend facts are unavailable'),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('portfolio-allocation-donut')),
+      findsNothing,
+    );
+    await mount(
+      t,
+      donut(
+        income: {
+          'status': 'ready',
+          'annualAmount': 0,
+          'grossReceived': 0,
+          'byType': [],
+          'byInstrument': [],
+        },
+      ),
+    );
+    expect(
+      find.text(
+        'No positive Sharadar dividend events were reported in the trailing 12 months.',
+      ),
+      findsOneWidget,
+    );
+  });
   for (final lang in AppLanguage.values) {
     testWidgets('income and source modes fit mobile 150% text ${lang.name}', (
       t,
@@ -313,14 +305,12 @@ void main() {
         scale: 1.5,
       );
       await tap(t, find.byKey(const ValueKey('allocation-income')));
-      await tap(
-        t,
-        find.byKey(const ValueKey('allocation-legend-bond_interest')),
-      );
+      await tap(t, find.byKey(const ValueKey('allocation-legend-div-BBB')));
       expect(t.takeException(), isNull);
+      await tap(t, find.text(lang == AppLanguage.en ? 'Income type' : '收入类型'));
       await tap(
         t,
-        find.text(lang == AppLanguage.en ? 'Income sources' : '收入来源'),
+        find.text(lang == AppLanguage.en ? 'Dividend holdings' : '股息来源持仓'),
       );
       expect(t.takeException(), isNull);
     });

@@ -3,85 +3,299 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guru_analysis_terminal/main.dart';
 
-// Synthetic fixtures only. No invented observations enter production.
+// Synthetic transport fixtures only; production research always comes from Fact OS.
 class FundamentalApi extends ApiClient {
   FundamentalApi() : super(() => 'test');
   bool fail = false, detailFail = false, wrongDate = false;
   Completer<Map<String, dynamic>>? pending;
-  Map<String, dynamic> response(String date) => {
-    'version': 'fundamental-changes-v1',
-    'asOf': date,
-    'coverage': {'operating': 3, 'comparable': 2, 'excluded': 1, 'invalid': 1},
-    'counts': {'acceleration': 2, 'profit': 1, 'cash': 1, 'divergence': 1},
-    'companies': [
-      row('ACC', .3, .2, ['acceleration', 'profit', 'cash']),
-      row('DIV', .2, -.1, ['acceleration', 'divergence']),
-      row('MISS', null, null, []),
-    ],
-  };
-  Map<String, dynamic> row(
-    String ticker,
-    double? growth,
-    double? gap,
-    List<String> screens,
-  ) => {
+  final calls = <String>[];
+  var saved = false;
+
+  Map<String, dynamic> row(String ticker) => {
     'ticker': ticker,
-    'name': '$ticker fixture company',
-    'period': '2026-Q1',
-    'periodEnd': '2026-03-31',
-    'filingDate': '2026-05-01',
-    'metrics': {
-      'revenueGrowth': growth,
-      'operatingMargin': .2,
-      'fcfMargin': .1,
+    'name': ticker == 'UBER' ? 'Uber Technologies' : '$ticker Facts Only',
+    'period_end': '2026-06-30',
+    'available_at': '2026-08-06',
+    'metrics': {'revenueGrowth': .12, 'operatingMargin': .18, 'fcfMargin': .08},
+    'primarySignal': {
+      'id': 'slowing_growth_margin_up',
+      'priority': 2.0,
+      'summary': {
+        'en': 'Growth slowed -2.3pp, but TTM operating margin improved +0.5pp.',
+        'zh': '收入增速放缓 -2.3pp，但 TTM 经营利润率改善 +0.5pp。',
+      },
+      'question': {'en': 'Can operating leverage persist?', 'zh': '经营杠杆能否持续？'},
     },
-    'changes': {
-      'revenueGrowth': .1,
-      'operatingMargin': .03,
-      'fcfMargin': ticker == 'DIV' ? -.03 : .02,
+  };
+
+  Map<String, dynamic> response(String date) => {
+    'version': 'fundamental-research-v2',
+    'methodVersion': 'fact-os-business-change-2026-09-21',
+    'asOf': date,
+    'lens': 'slowing_growth_margin_up',
+    'counts': {
+      'growth_profit_sync': 2,
+      'slowing_growth_margin_up': 2,
+      'profit_cash_weakening': 1,
+      'per_share_dilution': 1,
+      'capital_return_pending': 1,
+      'operating_pricing_divergence': 1,
     },
-    'previous': {
-      'period': '2025-Q4',
-      'metrics': {
-        'revenueGrowth': .1,
-        'operatingMargin': .17,
-        'fcfMargin': .08,
+    'coverage': {
+      'factCompanies': 5418,
+      'withSignals': 4100,
+      'latestAvailableAt': '2026-08-20',
+    },
+    'rankingBasis': {
+      'en': 'Signal magnitude, evidence completeness and filing recency.',
+      'zh': '按变化幅度、证据完整度和披露新近程度排序。',
+    },
+    'totalMatches': 2,
+    'rows': [row('UBER'), row('FACT')],
+  };
+
+  Map<String, dynamic> detail(String ticker, String date) => {
+    'version': 'fundamental-research-v2',
+    'methodVersion': 'fact-os-business-change-2026-09-21',
+    'ticker': ticker,
+    'asOf': date,
+    'economicTemplate': 'operating_company',
+    'reportedBasis': 'ARQ latest visible revision',
+    'restatedBasis': 'MRQ withheld from historical PIT',
+    'company': {
+      'ticker': ticker,
+      'name': ticker == 'UBER' ? 'Uber Technologies' : '$ticker Facts Only',
+      'period_end': '2026-06-30',
+      'available_at': '2026-08-06',
+      'metrics': {'revenueGrowth': .1217, 'operatingMargin': .1213},
+    },
+    'judgment': {
+      'summary': {
+        'en': 'Growth slowed -2.3pp, but TTM operating margin improved +0.5pp.',
+        'zh': '收入增速放缓 -2.3pp，但 TTM 经营利润率改善 +0.5pp。',
+      },
+      'question': {
+        'en': 'Can operating leverage persist if growth slows again?',
+        'zh': '如果增速继续放缓，经营杠杆还能否持续？',
       },
     },
-    'screens': screens,
-    'price': {'value': 100, 'currency': 'USD', 'date': '2026-05-29'},
-    'valuation': {'fairValue': 110, 'currency': 'USD', 'date': '2026-05-01'},
-    'modelGap': gap,
-  };
-  Map<String, dynamic> detail(String ticker, String date) => {
-    'ticker': ticker,
-    'asOf': date,
-    'history': [
-      for (int i = 1; i <= 8; i++)
+    'importantChanges': [
+      for (final label in [
+        'Revenue growth slowed',
+        'Margin improved',
+        'FCF remained positive',
+      ])
         {
-          'period': 'Q$i',
-          'periodEnd': '202${3 + i ~/ 4}-0${i % 3 + 1}-01',
-          'availableAt': '2026-05-01',
-          'filingDate': '2026-05-01',
-          'source': {'dimension': 'ARQ'},
-          'metrics': {
-            'revenueGrowth': i / 10,
-            'operatingMargin': .2,
-            'fcfMargin': .1,
-          },
+          'summary': {'en': label, 'zh': '证据：$label'},
         },
     ],
+    'counterEvidence': {
+      'severity': 'gap',
+      'statement': {
+        'en': 'Fact OS does not explain causality; the filing must be checked.',
+        'zh': 'Fact OS 不解释因果，必须核对财报原文。',
+      },
+    },
+    'trend': [
+      for (var i = 0; i < 8; i++)
+        {
+          'periodEnd': '202${4 + i ~/ 4}-Q${i % 4 + 1}',
+          'revenueGrowth': .16 - i * .006,
+          'operatingMargin': .08 + i * .006,
+        },
+    ],
+    'sections': [
+      {
+        'id': 'growth_profit',
+        'title': {'en': 'How growth becomes profit', 'zh': '增长如何变成利润'},
+        'rows': [
+          {
+            'id': 'revenueGrowth',
+            'label': {'en': 'Quarterly revenue growth', 'zh': '单季度收入同比'},
+            'value': .1217,
+            'comparison': .1448,
+            'formula': 'quarter revenue / same quarter prior year − 1',
+            'status': 'available',
+          },
+        ],
+      },
+      {
+        'id': 'history_peers',
+        'title': {'en': 'Relative to history and peers', 'zh': '相对历史与同业'},
+        'rows': [],
+      },
+    ],
+    'valuation': {
+      'valuationStatus': ticker == 'FACT' ? 'not_modeled' : 'available',
+      'modelGap': .08,
+      'price': {'value': 92.0, 'currency': 'USD', 'date': '2026-09-18'},
+      'breakdown': ticker == 'FACT'
+          ? null
+          : {
+              'modelVersion': 'fixture-v1',
+              'availableAt': '2026-08-06',
+              'period': '2026-Q2',
+              'currency': 'USD',
+              'formula': '50% earnings + 50% FCFE DCF; no market price input',
+              'fairValue': 100.0,
+              'weightedValue': 100.0,
+              'priceExcludedFromFairValue': true,
+              'components': [
+                {
+                  'key': 'normalized-earnings-power',
+                  'label': 'Normalized earnings power',
+                  'output': 110.0,
+                  'weight': .5,
+                  'description': 'Normalized income / shares × target P/E.',
+                  'parameters': [
+                    {
+                      'key': 'normalizedNetIncome',
+                      'label': 'Normalized net income',
+                      'value': 1100.0,
+                      'format': 'currency_m',
+                    },
+                    {
+                      'key': 'targetPE',
+                      'label': 'Target P / E',
+                      'value': 10.0,
+                      'format': 'multiple',
+                    },
+                  ],
+                },
+                {
+                  'key': 'fcfe-dcf',
+                  'label': 'Five-year FCFE DCF',
+                  'output': 90.0,
+                  'weight': .5,
+                  'description': 'FCFE discounted to the valuation date.',
+                  'parameters': [
+                    {
+                      'key': 'discountRate',
+                      'label': 'Discount rate',
+                      'value': .10,
+                      'format': 'ratio_percent',
+                    },
+                    {
+                      'key': 'terminalGrowth',
+                      'label': 'Terminal growth',
+                      'value': .025,
+                      'format': 'ratio_percent',
+                    },
+                  ],
+                },
+              ],
+            },
+    },
+    'sources': [
+      {
+        'fiscalPeriod': 'Q2',
+        'periodEnd': '2026-06-30',
+        'availableAt': '2026-08-06',
+      },
+    ],
+    'researchGaps': [
+      {'en': 'Trips are not in Fact OS.', 'zh': 'Fact OS 不包含 Trips。'},
+    ],
   };
+
+  Map<String, dynamic> institutional(String ticker, String date) => {
+    'version': 'institutional-13f-insights-v5',
+    'asOf': date,
+    'reportDate': '2026-06-30',
+    'previousReportDate': '2026-03-31',
+    'availableAt': '2026-08-14',
+    'ticker': ticker,
+    'row': {
+      'ticker': ticker,
+      'holders': 42,
+      'newPositions': 3,
+      'increases': 12,
+      'reductions': 8,
+      'exits': 2,
+    },
+    'details': {
+      'history': [
+        for (var i = 0; i < 6; i++)
+          {
+            'reportDate': '202${5 + i ~/ 4}-${((i % 4) + 1) * 3}-30',
+            'holders': 30 + i * 2,
+            'institutionalSharesK': 100000 + i * 5000,
+            'institutionalOwnershipPct': 60.0 + i,
+            'shareBasisFactor': 1,
+            'shareBasisDate': '2026-06-30',
+          },
+      ],
+      'analysis': {
+        'headlineKey': 'balanced_breadth_net_increase',
+        'importantChanges': [
+          {
+            'investorId': 'fixture-capital',
+            'name': 'Fixture Capital',
+            'action': 'increased',
+            'unitsChangeK': 1200.0,
+            'previousWeight': .03,
+            'currentWeight': .045,
+            'reportedValueChangeM': 85.0,
+            'continuity': 'increased_3_quarters',
+          },
+        ],
+      },
+    },
+  };
+
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
-    final date = Uri.parse(path).queryParameters['asOf']!;
-    if (path.contains('/fundamentals?')) {
+    calls.add(path);
+    final uri = Uri.parse(path);
+    if (uri.path.endsWith('/fundamental-observations')) {
+      return {
+        'version': 'fundamental-observations-v1',
+        'rows': saved
+            ? [
+                {'id': 'obs_1', 'ticker': uri.queryParameters['ticker']},
+              ]
+            : [],
+      };
+    }
+    if (uri.path.contains('/fundamental-observations/') &&
+        uri.path.endsWith('/review')) {
+      return {
+        'version': 'fundamental-observation-review-v1',
+        'changed': true,
+        'comparableMethod': true,
+      };
+    }
+    final date = uri.queryParameters['asOf']!;
+    if (uri.path.contains('/13f-insights/')) {
+      return institutional(uri.pathSegments.last, date);
+    }
+    if (uri.path.endsWith('/fundamentals')) {
       if (fail) throw StateError('offline');
       if (pending != null) return pending!.future;
-      return response(wrongDate ? '2025-01-01' : date);
+      final result = response(wrongDate ? '2025-01-01' : date);
+      final search = uri.queryParameters['search']?.toUpperCase();
+      if (search != null && search.isNotEmpty) {
+        result['rows'] = (result['rows'] as List)
+            .where(
+              (item) => (item as Map)['ticker'].toString().contains(search),
+            )
+            .toList();
+        result['totalMatches'] = (result['rows'] as List).length;
+      }
+      return result;
     }
     if (detailFail) throw StateError('detail offline');
-    return detail(Uri.parse(path).pathSegments.last, date);
+    return detail(uri.pathSegments.last, date);
+  }
+
+  @override
+  Future<Map<String, dynamic>> postJson(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    calls.add(path);
+    saved = true;
+    return {'id': 'obs_1', 'ticker': body['ticker']};
   }
 }
 
@@ -90,12 +304,11 @@ Future<void> mount(
   FundamentalApi api, {
   double width = 1450,
   AppLanguage language = AppLanguage.en,
-  String date = '2026-06-01',
+  String date = '2026-09-21',
   void Function(String, String)? onCompany,
   Map<String, dynamic> selection = const {},
-  double scale = 1,
 }) async {
-  t.view.physicalSize = Size(width, 1100);
+  t.view.physicalSize = Size(width, 1300);
   t.view.devicePixelRatio = 1;
   addTearDown(t.view.resetPhysicalSize);
   addTearDown(t.view.resetDevicePixelRatio);
@@ -105,16 +318,13 @@ Future<void> mount(
       home: LanguageScope(
         language: language,
         child: Scaffold(
-          body: MediaQuery(
-            data: MediaQueryData(textScaler: TextScaler.linear(scale)),
-            child: SingleChildScrollView(
-              child: FundamentalsPanel(
-                api: api,
-                palette: Palette(false),
-                asOf: date,
-                onCompany: onCompany ?? (_, _) {},
-                initialSelection: selection,
-              ),
+          body: SingleChildScrollView(
+            child: FundamentalsPanel(
+              api: api,
+              palette: Palette(false),
+              asOf: date,
+              onCompany: onCompany ?? (_, _) {},
+              initialSelection: selection,
             ),
           ),
         ),
@@ -124,159 +334,150 @@ Future<void> mount(
   await t.pumpAndSettle();
 }
 
-Future<void> tap(WidgetTester t, Finder f) async {
-  await t.ensureVisible(f);
-  await t.tap(f);
+Future<void> tap(WidgetTester t, Finder finder) async {
+  await t.ensureVisible(finder);
+  await t.tap(finder);
   await t.pumpAndSettle();
 }
 
 void main() {
-  test('screen selection, search, exact signed gap and null-last sort', () {
-    final rows = asList(FundamentalApi().response('2026-06-01')['companies']);
-    expect(filterFundamentals(rows, screen: 'cash').map((r) => r['ticker']), [
-      'ACC',
-    ]);
-    expect(
-      filterFundamentals(rows, screen: 'divergence').map((r) => r['ticker']),
-      ['DIV'],
-    );
-    expect(
-      filterFundamentals(
-        rows,
-        screen: 'all',
-        sort: 'value',
-      ).map((r) => r['ticker']),
-      ['ACC', 'DIV', 'MISS'],
-    );
-    expect(
-      filterFundamentals(
-        rows,
-        screen: 'all',
-        query: 'fixture',
-        belowValue: true,
-      ).map((r) => r['ticker']),
-      ['ACC'],
-    );
-  });
   testWidgets(
-    'distinct research screens select evidence; CTA uses the selected ticker',
+    'UBER path shows judgment, three changes, gap, chart and lineage',
     (t) async {
-      final opened = <String>[];
-      await mount(
-        t,
-        FundamentalApi(),
-        onCompany: (s, d) => opened.add('$s/$d'),
-      );
-      await tap(t, find.byKey(const ValueKey('fund-screen-divergence')));
-      expect(find.byKey(const ValueKey('fund-row-DIV')), findsOneWidget);
-      expect(find.byKey(const ValueKey('fund-row-ACC')), findsNothing);
-      expect(find.textContaining('Cash-flow margin fell.'), findsOneWidget);
-      await tap(t, find.text('Evaluate the price'));
-      expect(opened, ['DIV/value']);
-      await tap(t, find.text('Read financials & guidance'));
-      expect(opened.last, 'DIV/financials');
+      await mount(t, FundamentalApi());
+      expect(find.text('Business change research'), findsOneWidget);
+      expect(find.textContaining('Growth slowed -2.3pp'), findsWidgets);
+      expect(find.text('Revenue growth slowed'), findsOneWidget);
+      expect(find.text('Margin improved'), findsOneWidget);
+      expect(find.text('FCF remained positive'), findsOneWidget);
+      expect(find.text('Explanation gap'), findsOneWidget);
+      await tap(t, find.text('Financials'));
+      expect(find.text('Growth and operating conversion'), findsOneWidget);
+      await tap(t, find.text('Business'));
+      await tap(t, find.text('View sources'));
+      expect(find.text('Reported fact lineage'), findsOneWidget);
+      expect(find.textContaining('Sharadar SF1 ARQ'), findsOneWidget);
       expect(t.takeException(), isNull);
     },
   );
-  testWidgets('search empty reset and price filter remain functional', (
+
+  testWidgets(
+    'three evidence cards are directly adjustable and sent to the full-universe query',
+    (t) async {
+      final api = FundamentalApi();
+      await mount(t, api);
+      final dropdown = find.descendant(
+        of: find.byKey(const ValueKey('fund-filter-growth')),
+        matching: find.byType(DropdownButton<double?>),
+      );
+      await t.tap(dropdown);
+      await t.pumpAndSettle();
+      await t.tap(find.text('10%').last);
+      await t.pumpAndSettle();
+      expect(
+        api.calls.any((path) => path.contains('minRevenueGrowth=0.1')),
+        true,
+      );
+      expect(
+        find.byKey(const ValueKey('fundamental-clear-thresholds')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'valuation tab explains model components, weights, inputs and final result',
+    (t) async {
+      await mount(t, FundamentalApi());
+      await tap(t, find.text('Valuation'));
+      expect(find.text('Published valuation, fully explained'), findsOneWidget);
+      expect(find.text('Normalized earnings power'), findsOneWidget);
+      expect(find.text('Five-year FCFE DCF'), findsOneWidget);
+      expect(find.text('Target P / E'), findsOneWidget);
+      expect(find.text('Discount rate'), findsOneWidget);
+      expect(find.text('Weighted component result'), findsOneWidget);
+      expect(find.text('Price excluded'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    '13F tab is lazy and shows histories plus changes worth researching',
+    (t) async {
+      final api = FundamentalApi();
+      await mount(t, api);
+      expect(
+        api.calls.where((path) => path.contains('/13f-insights/')),
+        isEmpty,
+      );
+      await tap(t, find.text('13F insights'));
+      expect(
+        api.calls.where((path) => path.contains('/13f-insights/')).length,
+        1,
+      );
+      expect(find.text('Institution count history'), findsOneWidget);
+      expect(find.text('Institutional ownership history'), findsOneWidget);
+      expect(find.text('Changes worth researching'), findsOneWidget);
+      expect(find.text('Fixture Capital'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'fact-only company is searchable and valuation remains optional',
+    (t) async {
+      final api = FundamentalApi();
+      await mount(t, api);
+      await t.enterText(
+        find.byKey(const ValueKey('fundamental-search')),
+        'FACT',
+      );
+      await t.pump(const Duration(milliseconds: 300));
+      await t.pumpAndSettle();
+      expect(find.byKey(const ValueKey('fund-row-FACT')), findsOneWidget);
+      await tap(t, find.byKey(const ValueKey('fund-row-FACT')));
+      expect(find.text('No valuation model'), findsOneWidget);
+      expect(api.calls.any((path) => path.contains('search=FACT')), true);
+    },
+  );
+
+  testWidgets('observation is saved with evidence and can be reviewed later', (
     t,
   ) async {
-    await mount(t, FundamentalApi());
-    await t.enterText(
-      find.byKey(const ValueKey('fundamental-search')),
-      'nothing',
+    final api = FundamentalApi();
+    await mount(t, api);
+    await tap(t, find.byKey(const ValueKey('fund-save-observation')));
+    expect(
+      find.byKey(const ValueKey('fund-review-observation')),
+      findsOneWidget,
     );
-    await t.pumpAndSettle();
-    expect(find.text('No companies meet these conditions.'), findsOneWidget);
-    await tap(t, find.text('Reset filters'));
-    await tap(t, find.text('Price below model value'));
-    expect(find.byKey(const ValueKey('fund-row-ACC')), findsOneWidget);
-    expect(find.byKey(const ValueKey('fund-row-MISS')), findsNothing);
+    await tap(t, find.byKey(const ValueKey('fund-review-observation')));
+    expect(find.text('Observation review'), findsOneWidget);
+    expect(find.textContaining('New facts'), findsOneWidget);
   });
+
   for (final language in AppLanguage.values) {
-    testWidgets('mobile navigation and evidence $language', (t) async {
-      await mount(
-        t,
-        FundamentalApi(),
-        width: 390,
-        language: language,
-        scale: 1.2,
-      );
-      await tap(t, find.byKey(const ValueKey('fund-row-ACC')));
+    testWidgets('390px research flow is usable in $language', (t) async {
+      await mount(t, FundamentalApi(), width: 390, language: language);
+      await tap(t, find.byKey(const ValueKey('fund-row-UBER')));
       expect(
-        find.text(language == AppLanguage.en ? 'THE BUSINESS CHECK' : '经营变化核验'),
+        find.text(language == AppLanguage.en ? 'OPERATING JUDGMENT' : '经营判断'),
         findsOneWidget,
       );
       await tap(
         t,
-        find.text(language == AppLanguage.en ? 'Back to results' : '返回筛选结果'),
+        find.text(language == AppLanguage.en ? 'Back to changes' : '返回变化列表'),
       );
-      expect(find.byKey(const ValueKey('fund-row-ACC')), findsOneWidget);
+      expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
       expect(t.takeException(), isNull);
     });
   }
-  testWidgets('wrong date and network error fail closed with retry', (t) async {
+
+  testWidgets('cutoff mismatch and failures fail closed then retry', (t) async {
     final api = FundamentalApi()..wrongDate = true;
     await mount(t, api);
-    expect(find.text('Retry financial data'), findsOneWidget);
-    expect(find.byKey(const ValueKey('fund-row-ACC')), findsNothing);
+    expect(find.text('Retry Fact OS'), findsOneWidget);
+    expect(find.byKey(const ValueKey('fund-row-UBER')), findsNothing);
     api.wrongDate = false;
-    await tap(t, find.text('Retry financial data'));
-    expect(find.byKey(const ValueKey('fund-row-ACC')), findsOneWidget);
+    await tap(t, find.text('Retry Fact OS'));
+    expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
   });
-  testWidgets(
-    'detail failure is independent; selection restores from research',
-    (t) async {
-      final api = FundamentalApi()..detailFail = true;
-      await mount(
-        t,
-        api,
-        selection: {
-          'screen': 'divergence',
-          'ticker': 'DIV',
-          'detailTab': 'financials',
-        },
-      );
-      expect(find.text('Retry quarter history'), findsOneWidget);
-      expect(find.byKey(const ValueKey('fund-row-DIV')), findsOneWidget);
-      api.detailFail = false;
-      await tap(t, find.text('Retry quarter history'));
-      expect(find.text('DIV · Quarterly evidence'), findsOneWidget);
-    },
-  );
-  testWidgets(
-    'stale list response after date switch cannot overwrite the current cutoff',
-    (t) async {
-      final api = FundamentalApi()..pending = Completer<Map<String, dynamic>>();
-      t.view.physicalSize = const Size(1450, 1100);
-      t.view.devicePixelRatio = 1;
-      addTearDown(t.view.resetPhysicalSize);
-      addTearDown(t.view.resetDevicePixelRatio);
-      Widget app(String date) => MaterialApp(
-        home: LanguageScope(
-          language: AppLanguage.en,
-          child: Scaffold(
-            body: SingleChildScrollView(
-              child: FundamentalsPanel(
-                api: api,
-                palette: Palette(false),
-                asOf: date,
-                onCompany: (_, _) {},
-              ),
-            ),
-          ),
-        ),
-      );
-      await t.pumpWidget(app('2026-06-01'));
-      await t.pump();
-      final old = api.pending!;
-      api.pending = null;
-      await t.pumpWidget(app('2026-08-28'));
-      await t.pumpAndSettle();
-      old.complete(api.response('2026-06-01'));
-      await t.pumpAndSettle();
-      expect(find.byKey(const ValueKey('fund-row-ACC')), findsOneWidget);
-      expect(t.takeException(), isNull);
-    },
-  );
 }

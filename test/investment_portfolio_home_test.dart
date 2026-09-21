@@ -118,10 +118,7 @@ class ConnectedHomeApi extends HomeApi {
           'asOf': '2026-08-28',
           'status': 'connection_error',
           'groups': const [],
-          'connection': {
-            'configured': true,
-            'status': 'error',
-          },
+          'connection': {'configured': true, 'status': 'error'},
           'sync': {
             'ok': false,
             'connection': {'configured': true, 'status': 'error'},
@@ -414,7 +411,10 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Connect IBKR'), findsNothing);
-      expect(find.byKey(const ValueKey('portfolio-retry-sync')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('portfolio-retry-sync')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('portfolio-review-connection')),
         findsOneWidget,

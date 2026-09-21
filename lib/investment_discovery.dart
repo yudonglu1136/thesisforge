@@ -108,9 +108,6 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
                   if (tab.$1 == 'gurus' && institutional13f == null) {
                     unawaited(load13FInsights());
                   }
-                  if (tab.$1 == 'managers' && discoveryData == null) {
-                    unawaited(loadDiscovery());
-                  }
                   if (const {'fundamentals', 'valueflow'}.contains(tab.$1) &&
                       opportunities == null) {
                     unawaited(loadOpportunities());
@@ -122,7 +119,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
       ),
     ),
     const SizedBox(height: 16),
-    if (discoveryLoading || guruLoading)
+    if ((discoveryLoading && discoveryTab != 'managers') || guruLoading)
       const LinearProgressIndicator(minHeight: 2),
     if (discoveryError != null)
       card([

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "portfolio-first-paint",
+  "generatedAt": "2026-09-21T13:13:42.431Z",
+  "inputs": {
+    "database": "data/releases/thesisforge-20260920-v3/research.sqlite",
+    "strategy": "data/releases/thesisforge-20260920-v3/strategy.sqlite",
+    "asOf": "2026-09-20",
+    "tickers": ["GOOG", "NVDA", "PLTR", "ISRG", "AVGO", "MSFT", "AMZN"],
+    "samples": 60
+  },
+  "before": {
+    "scope": "full-universe valuation load on first paint",
+    "samples": 3,
+    "medianMs": 1294.462083,
+    "p95Ms": 1294.462083,
+    "minMs": 1275.526417,
+    "maxMs": 1624.117458
+  },
+  "after": {
+    "scope": "portfolio-only summary build",
+    "samples": 3,
+    "medianMs": 25.60187499999938,
+    "p95Ms": 25.60187499999938,
+    "minMs": 24.624416999999994,
+    "maxMs": 25.930290999999897
+  },
+  "improvementPct": 98.02219969698415,
+  "warmSummary": {
+    "samples": 60,
+    "medianMs": 5.974875000000793,
+    "p95Ms": 6.552333000000544,
+    "minMs": 5.74487500000032,
+    "maxMs": 18.18145900000036
+  },
+  "limitations": [
+    "Local read-only benchmark; not production network latency.",
+    "Synthetic holdings contain no private portfolio data."
+  ]
+}

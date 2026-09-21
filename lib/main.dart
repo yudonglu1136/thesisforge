@@ -49,7 +49,6 @@ part 'investment_strategy_chart.dart';
 part 'investment_value_flow.dart';
 part 'investment_fundamentals.dart';
 part 'investment_fundamental_rules.dart';
-part 'investment_fundamental_desk.dart';
 part 'investment_hedge.dart';
 part 'investment_strategy_hedge.dart';
 

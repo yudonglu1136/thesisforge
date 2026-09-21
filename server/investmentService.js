@@ -1,9 +1,10 @@
-import { assert, finite, isoDate, calculateScenario, reverseScenario, sensitivity, validateRules, evaluateRules, CALC_VERSION, RULE_VERSION, overlap } from './investmentMath.js';
+import { assert, finite, isoDate, calculateScenario, reverseScenario, operatingIsoValueCurve, sensitivity, validateRules, evaluateRules, CALC_VERSION, RULE_VERSION, overlap } from './investmentMath.js';
 import { tickerKey } from './investmentSource.js';
 import { reviewWatch, buildOpportunities } from './investmentOpportunities.js';
 import { valueFlowTaxonomy } from './investmentValueFlow.js';
 import { buildFundamentals, FUNDAMENTALS_VERSION } from './investmentFundamentals.js';
 import { worksheetState, saveWorksheet } from './investmentDrafts.js';
+import { buildResearchWorkbench } from './researchWorkbench.js';
 
 const selectedManagers=['gavin-baker','bill-ackman','stanley-druckenmiller'];
 export const SHADOW_RULES=Object.freeze({version:'guru-top3-disclosure-preview-v1',managers:selectedManagers,topN:3,rank:'reported_common_long_value_desc_then_ticker',duplicate:'aggregate_CUSIP_then_union_ticker',weight:'equal_unique_security',rebalance:'first_market_session_after_public_availability',costBps:10,valuationFilter:false});
@@ -11,10 +12,11 @@ export const SHADOW_RULES=Object.freeze({version:'guru-top3-disclosure-preview-v
 export class InvestmentService {
   constructor(source,store,today=()=>new Date().toISOString().slice(0,10)) {Object.assign(this,{source,store,today});}
   date(value) { const date=isoDate(value??this.today());assert(date<=this.today(),'future_as_of');return date; }
-  research(owner,ticker,date) {
-    const company=this.source.company(ticker,this.date(date));
-    return {...company,...worksheetState(this.store,owner,company.ticker,company.asOf),scenarios:this.store.list(owner,'scenario').filter(x=>x.ticker===company.ticker&&x.asOf<=company.asOf),decisions:this.store.list(owner,'decision').filter(x=>x.ticker===company.ticker&&x.decisionDate<=company.asOf)};
+  guruDirectory(owner) {
+    const follows=new Map(this.store.list(owner,'follow').map(x=>[x.guruId,x.followed]));
+    return this.source.guruCatalog().map(g=>({...g,followed:follows.get(g.id)??false}));
   }
+  research(owner,ticker,date) {return buildResearchWorkbench(this,owner,ticker,date);}
   saveWorksheet(owner,body) {return saveWorksheet(this,owner,body);}
   calculate(body) {
     const company=this.source.company(tickerKey(body.ticker),this.date(body.asOf));
@@ -30,7 +32,9 @@ export class InvestmentService {
       try {return [name,calculateScenario(company.base,assumptions).fairValue];}
       catch(error){if(!error.status)throw error;return [name,null];}
     }));
-    return {result,templateResults,sensitivity:sensitivity(company.base,body.assumptions),reverse,snapshotId:company.snapshot.id};
+    const isoValueCurve=body.assumptions?.method==='operating_fcff'&&finite(price)
+      ?operatingIsoValueCurve(company.base,body.assumptions,price):null;
+    return {result,templateResults,sensitivity:sensitivity(company.base,body.assumptions),reverse,isoValueCurve,snapshotId:company.snapshot.id};
   }
   saveScenario(owner,body) {
     return this.store.write(owner,'scenario',tickerKey(body.ticker),body.operationId,body,()=>{
@@ -41,9 +45,10 @@ export class InvestmentService {
       assert(body.hypothesis===undefined||(typeof body.hypothesis==='string'&&body.hypothesis.length<=4000),'invalid_hypothesis');
       if(body.parentId){ const p=this.store.get(owner,body.parentId,'scenario');assert(p.ticker===c.ticker,'scenario_ticker_mismatch'); }
       const versions=this.store.list(owner,'scenario').filter(x=>x.ticker===c.ticker);
+      const result=calculateScenario(c.base,body.assumptions);
       return {version:versions.length+1,name:body.name.trim(),hypothesis:body.hypothesis??'',asOf:c.asOf,parentId:body.parentId??null,snapshot:c.snapshot,assumptions:body.assumptions,
         templateReconciliation:c.templateReconciliation??null,
-        calcVersion:CALC_VERSION,result:calculateScenario(c.base,body.assumptions),ownershipConfirmed:true};
+        calcVersion:result.calcVersion??CALC_VERSION,result,ownershipConfirmed:true};
     });
   }
   saveDecision(owner,body) {
@@ -205,20 +210,18 @@ export class InvestmentService {
         if(c.reviewRequired&&(newPeriod||newGuru))attention.push({ticker:d.ticker,decisionId:d.decisionId,period:c.now.snapshot.period,triggers:c.triggers,guruChanges:c.guruChanges});
       }catch(error){attention.push({ticker:d.ticker,decisionId:d.decisionId,status:'data_unavailable',reason:error.message});}
     }
-    const follows=new Map(this.store.list(owner,'follow').map(x=>[x.guruId,x.followed]));
     const watches=[...new Map(this.store.list(owner,'watch').filter(w=>w.baseline.asOf<=asOf).map(w=>[w.ticker,w])).values()].map(w=>{
       try {const r=reviewWatch(this,owner,w.id,asOf);return {id:w.id,ticker:w.ticker,asOf:w.baseline.asOf,status:r.status,modelChange:r.modelChange,priceChange:r.priceChange,newFilings:r.newFilings.length,lastReviewedAt:r.lastReviewedAt};}
       catch(e){return {id:w.id,ticker:w.ticker,asOf:w.baseline.asOf,status:'data_unavailable',modelChange:null,priceChange:null,newFilings:0,lastReviewedAt:null};}
     });
     return {asOf,attention,watches,discovery:this.source.discovery(asOf),discoveryRule:'Latest public PIT quarterly revenue YoY >= 15%; alphabetical; not a recommendation.',
-      gurus:this.source.guruCatalog().map(x=>({...x,followed:follows.get(x.id)??false})),decisions:this.heads(owner,asOf),portfolio:this.portfolio(owner,asOf)};
+      gurus:this.guruDirectory(owner),decisions:this.heads(owner,asOf),portfolio:this.portfolio(owner,asOf)};
   }
   discover(owner,date) {
     const asOf=this.date(date);
-    const follows=new Map(this.store.list(owner,'follow').map(x=>[x.guruId,x.followed]));
-    const gurus=this.source.guruCatalog().map(g=>{
+    const gurus=this.guruDirectory(owner).map(g=>{
       const latest=this.source.guruHistory(g.id,asOf).at(-1);
-      return {...g,followed:follows.get(g.id)??false,latest:latest?{
+      return {...g,latest:latest?{
         reportDate:latest.reportDate,availableAt:latest.filingDate,quarter:latest.quarterLabel,
         accession:latest.accessionNumber,reported13fValue:latest.reported13fValue??null,
         positionCount:latest.positionCount??null,topHoldings:(latest.topHoldings??[]).slice(0,3),

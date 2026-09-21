@@ -70,7 +70,7 @@ Future<void> mountHolders(
 }) async {
   await research.mount(t, api, size: size, lang: lang);
   final tab = find.text(
-    lang == AppLanguage.en ? 'Financials & sources' : '财务与来源',
+    lang == AppLanguage.en ? 'Announcements & financials' : '公告与财务',
   );
   await t.ensureVisible(tab);
   await t.tap(tab);

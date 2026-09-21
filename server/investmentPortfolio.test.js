@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { analysePortfolio, registerPortfolioAnalysisRoute } from './investmentPortfolio.js';
+import { analysePortfolio, attachPortfolioTrailingDividends, registerPortfolioAnalysisRoute } from './investmentPortfolio.js';
 import { isoDate } from './investmentMath.js';
 
 const asOf='2026-08-28';
@@ -93,6 +93,35 @@ test('future Guru disclosures are excluded',()=>{
 test('sector unknown and portfolio reconciliation remain visible',()=>{
   const p=base();p.analysisAccounts[0].reportedNav=3010;const g=run(p).groups[0];near(g.reconciliation,-10);assert.equal(g.sectors[0].name,'Unclassified');
 });
+test('trailing dividends sum Sharadar split-adjusted per-share events and multiply current verified shares',()=>{
+  const analysis=run();
+  attachPortfolioTrailingDividends(analysis,{status:{source:'sharadar_fact_os',unavailable:[{ticker:'CCC'}]},events:[
+    {ticker:'AAA',date:'2025-08-01',amount:9},
+    {ticker:'AAA',date:'2025-09-15',amount:.25},
+    {ticker:'AAA',date:'2026-03-15',amount:.30},
+    {ticker:'BBB',date:'2026-02-01',amount:1},
+    {ticker:'BBB',date:'2026-02-01',amount:-.1},
+  ]},{asOf:'2026-08-28',startDate:'2025-08-28'});
+  const income=analysis.groups[0].home.trailingDividends;
+  near(income.annualAmount,25.5);
+  assert.equal(income.eventCount,3);
+  assert.equal(income.coveredHoldings,2);
+  assert.equal(income.eligibleHoldings,3);
+  assert.deepEqual(income.unavailableTickers,['CCC']);
+  assert.deepEqual(income.byInstrument.map(row=>row.ticker),['BBB','AAA']);
+  near(income.byInstrument.find(row=>row.ticker==='AAA').perShare,.55);
+  near(income.byInstrument.find(row=>row.ticker==='AAA').amount,5.5);
+  near(income.byInstrument.find(row=>row.ticker==='BBB').amount,20);
+  near(income.byInstrument.reduce((total,row)=>total+row.weight,0),1);
+  assert.match(income.basis,/current_verified_shares/);
+  assert.match(income.source,/sharadar_actions/);
+});
+test('trailing dividends fail closed when Sharadar facts are unavailable',()=>{
+  const analysis=run();
+  attachPortfolioTrailingDividends(analysis,{status:{source:'sqlite_dividend_calendar'},events:[{ticker:'AAA',date:'2026-01-01',amount:99}]},{asOf});
+  const income=analysis.groups[0].home.trailingDividends;
+  assert.equal(income.status,'unavailable');assert.equal(income.annualAmount,null);assert.deepEqual(income.byInstrument,[]);
+});
 test('zero and negative NAV never get misleading percentage outputs',()=>{
   for(const cash of [-2500,-3000]){const p=base();p.analysisAccounts[0].positions[3].localValue=cash;const g=run(p).groups[0];assert.equal(g.valuation.netImpact,null);assert.equal(g.positions[0].netWeight,null);}
 });
@@ -112,11 +141,13 @@ test('API owner comes from auth only; private no-store; development preview cann
     assert.equal((await fetch(url)).status,401);
     const dev=await fetch(url,{headers:{'x-test-user':'local-dev-user'}});assert.equal((await dev.json()).status,'preview_account');assert.equal(calls.length,0);
     const r=await fetch(url,{headers:{'x-test-user':'bob'}});assert.equal(r.status,200);assert.match(r.headers.get('cache-control'),/private, no-store/);assert.match(r.headers.get('server-timing'),/portfolio-read/);assert.equal((await r.json()).status,'account_required');
+    const summary=await fetch(`${url}&scope=summary`,{headers:{'x-test-user':'bob'}});assert.equal(summary.status,200);assert.equal((await summary.json()).status,'account_required');
     const home=await fetch(`${url}&scope=home`,{headers:{'x-test-user':'bob'}});assert.equal(home.status,200);await home.json();
     const synced=await fetch(`${url.replace('/portfolio-analysis?','/portfolio-analysis/sync?')}&scope=home`,{method:'POST',headers:{'x-test-user':'bob'}});
     assert.equal(synced.status,200);const syncedBody=await synced.json();assert.equal(syncedBody.sync.ok,false);assert.equal(Object.hasOwn(syncedBody.sync,'portfolio'),false);
     assert.deepEqual(calls,[
-      {user:{id:'bob',adminPortfolioHash:'a'.repeat(40)},forceRefresh:false,preferSaved:true,includeAnalytics:true},
+      {user:{id:'bob',adminPortfolioHash:'a'.repeat(40)},forceRefresh:false,preferSaved:true,includeAnalytics:false},
+      {user:{id:'bob',adminPortfolioHash:'a'.repeat(40)},forceRefresh:false,preferSaved:true,includeAnalytics:false},
       {user:{id:'bob',adminPortfolioHash:'a'.repeat(40)},forceRefresh:false,preferSaved:true,includeAnalytics:false},
       {user:{id:'bob',adminPortfolioHash:'a'.repeat(40)},forceRefresh:true,preferSaved:true,includeAnalytics:false}
     ]);

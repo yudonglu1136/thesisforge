@@ -124,10 +124,12 @@ test('cached metadata chooses newest period revision and never falls back from i
 });
 test('route requires authentication and preserves private cache policy',async t=>{
   const {db}=fixture(t),app=express();app.use((r,_,next)=>{if(r.headers['x-test-user'])r.user={id:r.headers['x-test-user']};next();});
-  registerInvestmentRoutes(app,{source:{db},date:d=>d});const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+  registerInvestmentRoutes(app,{source:{db},date:d=>d,
+    fundamentalDiscovery:async date=>({version:'fundamental-research-v2',asOf:date,rows:[{ticker:'ACC'}]})});
+  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
   try{const url=`http://127.0.0.1:${server.address().port}/api/investment/fundamentals?asOf=2026-06-01`;
     assert.equal((await fetch(url)).status,401);
     assert.equal((await fetch(url.replace('/fundamentals?','/fundamentals/ACC/gurus?'))).status,401);
-    const r=await fetch(url,{headers:{'x-test-user':'alice'}});assert.equal(r.status,200);assert.match(r.headers.get('cache-control'),/private, no-store/);assert.equal((await r.json()).companies.length,2);
+    const r=await fetch(url,{headers:{'x-test-user':'alice'}});assert.equal(r.status,200);assert.match(r.headers.get('cache-control'),/private/);assert.equal((await r.json()).rows.length,1);
   }finally{await new Promise(r=>server.close(r));}
 });

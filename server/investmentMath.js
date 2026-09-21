@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { buildParentEconomicFcfeDcf } from './lsegValuationOverlay.js';
 
-export const CALC_VERSION = 'investment-fcfe-v1';
+export const CALC_VERSION = 'investment-dcf-v2-horizon';
+export const LEGACY_CALC_VERSION = 'investment-fcfe-v1';
 export const RULE_VERSION = 'investment-rules-v1';
 export function assert(ok, code) { if (!ok) throw Object.assign(new Error(code), { status: 422 }); }
 export const finite = v => typeof v === 'number' && Number.isFinite(v);
@@ -23,19 +23,87 @@ export function percentile(value, history) {
   return finite(value) && samples.length >= 4 ? samples.filter(x => x <= value).length / samples.length : null;
 }
 
+const arrayOf = (value, horizon, predicate) =>
+  Array.isArray(value) && value.length === horizon && value.every(predicate);
+
+export function validateOperatingScenario(a) {
+  assert(a && a.method === 'operating_fcff' && a.discountType === 'WACC', 'fcff_requires_WACC');
+  assert(a.timing === 'year_end' && a.ownership === 'enterprise', 'unsupported_cashflow_basis');
+  assert(finite(a.wacc) && a.wacc >= .04 && a.wacc <= .30, 'invalid_WACC');
+  assert(finite(a.g) && a.g >= 0 && a.g <= .05 && a.wacc - a.g >= .015, 'invalid_terminal_spread');
+  const horizon = a.horizonYears ?? a.growth?.length;
+  assert(horizon === 5 || horizon === 10, 'invalid_forecast_horizon');
+  assert(arrayOf(a.growth, horizon, x => finite(x) && x > -.95 && x <= 2), 'invalid_growth_path');
+  assert(arrayOf(a.ebitMargin, horizon, x => finite(x) && x >= -1 && x <= 1), 'invalid_ebit_margin_path');
+  assert(arrayOf(a.cashTaxRate, horizon, x => finite(x) && x >= 0 && x <= .6), 'invalid_cash_tax_path');
+  assert(arrayOf(a.dnaMargin, horizon, x => finite(x) && x >= 0 && x <= 1), 'invalid_dna_path');
+  assert(arrayOf(a.capexMargin, horizon, x => finite(x) && x >= 0 && x <= 2), 'invalid_capex_path');
+  assert(arrayOf(a.nwcInvestmentMargin, horizon, x => finite(x) && x >= -1 && x <= 1), 'invalid_nwc_path');
+  for (const key of ['netDebtM', 'nciM', 'nonOperatingAssetsM'])
+    assert(finite(a[key] ?? 0), `invalid_${key}`);
+}
+
+export function calculateOperatingScenario(base, a) {
+  validateOperatingScenario(a);
+  assert(finite(base.revenueM) && base.revenueM > 0 && finite(base.sharesM) && base.sharesM > 0, 'missing_or_invalid_actual_base');
+  let revenue = base.revenueM;
+  const forecast = a.growth.map((growth, index) => {
+    revenue *= 1 + growth;
+    const ebitM = revenue * a.ebitMargin[index];
+    // Losses do not create an invented cash-tax benefit. A user who has
+    // verified NOL value can express it in non-operating assets explicitly.
+    const cashTaxM = Math.max(0, ebitM) * a.cashTaxRate[index];
+    const nopatM = ebitM - cashTaxM;
+    const dnaM = revenue * a.dnaMargin[index];
+    const capexM = revenue * a.capexMargin[index];
+    const nwcInvestmentM = revenue * a.nwcInvestmentMargin[index];
+    const fcffM = nopatM + dnaM - capexM - nwcInvestmentM;
+    const year = index + 1;
+    const discountFactor = (1 + a.wacc) ** year;
+    return {year, growth, revenueM: revenue, ebitMargin: a.ebitMargin[index], ebitM,
+      cashTaxRate: a.cashTaxRate[index], cashTaxM, nopatM, dnaM, capexM,
+      nwcInvestmentM, fcffM, discountFactor, pvM: fcffM / discountFactor};
+  });
+  const explicitPvM = forecast.reduce((sum, row) => sum + row.pvM, 0);
+  const terminalCashFlowM = forecast.at(-1).fcffM * (1 + a.g);
+  const terminalValueM = terminalCashFlowM / (a.wacc - a.g);
+  const terminalPvM = terminalValueM / ((1 + a.wacc) ** forecast.length);
+  const enterpriseValueM = explicitPvM + terminalPvM;
+  const netDebtM = a.netDebtM ?? 0;
+  const nciM = a.nciM ?? 0;
+  const nonOperatingAssetsM = a.nonOperatingAssetsM ?? 0;
+  const equityValueM = enterpriseValueM - netDebtM - nciM + nonOperatingAssetsM;
+  const fairValue = equityValueM / base.sharesM;
+  const financingNeedM = forecast.reduce((sum, row) => sum + Math.max(0, -row.fcffM), 0);
+  return {calcVersion:'investment-fcff-v1-horizon',method:'operating_fcff',currency:base.currency,
+    horizonYears:forecast.length,terminalYear:forecast.length,
+    formula:`Revenue → EBIT → cash operating tax → NOPAT + D&A - capex - ΔNWC = FCFF; enterprise value = explicit PV + terminal PV; equity value = enterprise value - net debt - NCI + non-operating assets; per share = equity value / shares`,
+    forecast,fairValue,enterpriseValueM,equityValueM,explicitPvM,terminalCashFlowM,
+    terminalValueM,terminalPvM,terminalShare:enterpriseValueM===0?null:terminalPvM/enterpriseValueM,
+    netDebtM,nciM,nonOperatingAssetsM,financingNeedM,
+    negativeExplicitYears:forecast.filter(row=>row.fcffM<0).map(row=>row.year),
+    signature:signature({calcVersion:'investment-fcff-v1-horizon',base,assumptions:a})};
+}
+
 export function validateScenario(a) {
+  if (a?.method === 'operating_fcff') return validateOperatingScenario(a);
   assert(a && a.method === 'parent_fcfe' && a.discountType === 'Ke', 'fcfe_requires_Ke');
   assert(a.timing === 'year_end' && a.ownership === 'parent_common', 'unsupported_cashflow_basis');
   assert(finite(a.ke) && a.ke >= .04 && a.ke <= .30, 'invalid_Ke');
   assert(finite(a.g) && a.g >= 0 && a.g <= .05 && a.ke - a.g >= .015, 'invalid_terminal_spread');
-  assert(Array.isArray(a.growth) && a.growth.length === 5 && a.growth.every(x => finite(x) && x > -.95 && x <= 2), 'invalid_growth_path');
-  assert(Array.isArray(a.margin) && a.margin.length === 5 && a.margin.every(x => finite(x) && x > 0 && x <= .9), 'invalid_fcfe_margin_path');
+  const horizon=a.horizonYears??a.growth?.length;
+  assert(horizon===5||horizon===10,'invalid_forecast_horizon');
+  assert(Array.isArray(a.growth) && a.growth.length === horizon && a.growth.every(x => finite(x) && x > -.95 && x <= 2), 'invalid_growth_path');
+  // Negative explicit-period FCFE is economically possible. It is preserved
+  // and reported as a financing need instead of being clipped to zero.
+  assert(Array.isArray(a.margin) && a.margin.length === horizon && a.margin.every(x => finite(x) && x >= -.9 && x <= .9), 'invalid_fcfe_margin_path');
   assert(!('netDebtDeduction' in a) && !('nciDeduction' in a) && !('dividendAddition' in a), 'duplicate_equity_claim_adjustment');
 }
 
 // This is an explicit user sandbox, not a replacement for the issuer's released
 // blended valuation. Growth/margins are assumptions; revenue and shares are PIT.
 export function calculateScenario(base, a) {
+  if (a?.method === 'operating_fcff') return calculateOperatingScenario(base, a);
   validateScenario(a);
   assert(finite(base.revenueM) && base.revenueM > 0 && finite(base.sharesM) && base.sharesM > 0, 'missing_or_invalid_actual_base');
   let revenue = base.revenueM;
@@ -43,38 +111,149 @@ export function calculateScenario(base, a) {
     revenue *= 1 + growth;
     return { year: i+1, growth, revenueM: revenue, fcfeMargin: a.margin[i], fcfeM: revenue * a.margin[i] };
   });
-  const dcf = buildParentEconomicFcfeDcf({
-    annualFcfeM: forecast.map(x => ({ year:x.year, valueM:x.fcfeM })),
-    costOfEquity:a.ke, terminalGrowth:a.g, sharesM:base.sharesM,
-  });
+  const annualCashFlows=forecast.map(x=>({
+    year:x.year,valueM:x.fcfeM,discountFactor:(1+a.ke)**x.year,
+    presentValueM:x.fcfeM/((1+a.ke)**x.year),
+  }));
+  const explicitPresentValueM=annualCashFlows.reduce((sum,row)=>sum+row.presentValueM,0);
+  const terminalCashFlowM=forecast.at(-1).fcfeM*(1+a.g);
+  const terminalValueM=terminalCashFlowM/(a.ke-a.g);
+  const terminalPresentValueM=terminalValueM/((1+a.ke)**forecast.length);
+  const equityValueM=explicitPresentValueM+terminalPresentValueM;
+  const fairValue=equityValueM/base.sharesM;
+  const financingNeedM=forecast.reduce((sum,row)=>sum+Math.max(0,-row.fcfeM),0);
   return {
     calcVersion: CALC_VERSION, currency: base.currency,
-    formula:'FCFE[t] = Revenue[0] × product(1 + growth[1..t]) × margin[t]; PV = sum(FCFE[t]/(1+Ke)^t) + FCFE[5]*(1+g)/(Ke-g)/(1+Ke)^5; per share = PV/shares',
-    forecast:forecast.map((x,i) => ({ ...x, discountFactor: dcf.annualCashFlows[i].discountFactor, pvM:dcf.annualCashFlows[i].presentValueM })),
-    fairValue:dcf.fairValue, equityValueM:dcf.equityValueM,
-    explicitPvM:dcf.explicitPresentValueM, terminalValueM:dcf.terminalValueM,
-    terminalPvM:dcf.terminalPresentValueM, terminalShare:dcf.terminalValueShare,
+    horizonYears:forecast.length,terminalYear:forecast.length,
+    formula:`FCFE[t] = Revenue[0] × product(1 + growth[1..t]) × margin[t]; PV = sum(FCFE[t]/(1+Ke)^t) + FCFE[${forecast.length}]*(1+g)/(Ke-g)/(1+Ke)^${forecast.length}; per share = PV/shares`,
+    forecast:forecast.map((x,i) => ({ ...x, discountFactor: annualCashFlows[i].discountFactor, pvM:annualCashFlows[i].presentValueM })),
+    fairValue,equityValueM,
+    explicitPvM:explicitPresentValueM,terminalCashFlowM,terminalValueM,
+    terminalPvM:terminalPresentValueM,terminalShare:equityValueM===0?null:terminalPresentValueM/equityValueM,
+    financingNeedM,negativeExplicitYears:forecast.filter(row=>row.fcfeM<0).map(row=>row.year),
     netDebtDeductedM:0, nciDeductedM:0,
     signature:signature({ calcVersion:CALC_VERSION, base, assumptions:a }),
   };
 }
 
 export function reverseScenario(base, a, price, variable = 'growth', targetReturn = a.ke) {
+  if (a?.method === 'operating_fcff')
+    return reverseOperatingScenario(base, a, price, variable, targetReturn ?? a.wacc);
   assert(finite(price) && price > 0, 'invalid_reverse_price');
   assert(variable === 'growth' || variable === 'terminal_margin', 'invalid_reverse_variable');
-  const run = v => calculateScenario(base, { ...a, ke:targetReturn,
-    ...(variable === 'growth' ? { growth:Array(5).fill(v) } : { margin:[...a.margin.slice(0,4),v] }),
-  }).fairValue;
+  const horizon=a.horizonYears??a.growth.length;
+  const runScenario = v => calculateScenario(base, { ...a,horizonYears:horizon,ke:targetReturn,
+    ...(variable === 'growth' ? { growth:Array(horizon).fill(v) } : { margin:[...a.margin.slice(0,horizon-1),v] }),
+  });
+  const run=v=>runScenario(v).fairValue;
   let low = variable === 'growth' ? -.5 : .001;
   let high = variable === 'growth' ? 1 : .9;
   const bounds = [low,high];
-  if (run(low) > price || run(high) < price) return { status:'outside_bounds', variable, bounds, targetReturn, price, value:null };
-  for (let i=0;i<90;i++) { const m=(low+high)/2; if(run(m)<price) low=m; else high=m; }
-  const value=(low+high)/2;
-  return { status:'solved', variable, value, targetReturn, price, residual:run(value)-price, bounds,
-    fixed: variable === 'growth' ? 'All five FCFE margins and g fixed; solve constant annual revenue growth.' : 'Revenue growth and years 1–4 margins fixed; solve year 5 and perpetual FCFE margin.' };
+  const samples=240,points=[];
+  for(let i=0;i<=samples;i++){
+    const value=low+(high-low)*i/samples;
+    const fairValue=run(value);
+    if(finite(fairValue))points.push({value,fairValue,residual:fairValue-price});
+  }
+  const brackets=[];
+  for(let i=1;i<points.length;i++){
+    const left=points[i-1],right=points[i];
+    if(left.residual===0)brackets.push([left.value,left.value]);
+    else if(left.residual*right.residual<0)brackets.push([left.value,right.value]);
+  }
+  const roots=[];
+  for(const bracket of brackets){
+    let [aLow,aHigh]=bracket;
+    if(aLow!==aHigh)for(let i=0;i<90;i++){
+      const mid=(aLow+aHigh)/2;
+      if((run(aLow)-price)*(run(mid)-price)<=0)aHigh=mid;else aLow=mid;
+    }
+    const value=(aLow+aHigh)/2;
+    if(!roots.some(root=>Math.abs(root-value)<1e-8))roots.push(value);
+  }
+  const monotonic=points.slice(1).every((point,index)=>point.fairValue>=points[index].fairValue)
+    ||points.slice(1).every((point,index)=>point.fairValue<=points[index].fairValue);
+  if(!roots.length)return {status:'outside_bounds',variable,bounds,targetReturn,price,value:null,
+    diagnostics:{converged:false,rootCount:0,monotonic,samples,rangeValues:points.length?{low:points[0].fairValue,high:points.at(-1).fairValue}:null}};
+  if(roots.length>1)return {status:'multiple_solutions',variable,bounds,targetReturn,price,value:null,
+    roots:roots.map(value=>({value,residual:run(value)-price})),diagnostics:{converged:false,rootCount:roots.length,monotonic,samples}};
+  const value=roots[0],scenario=runScenario(value),residual=scenario.fairValue-price;
+  return { status:'solved', variable, value, targetReturn, price, residual, bounds,scenario,
+    diagnostics:{converged:Math.abs(residual)<=Math.max(1e-8,price*1e-9),rootCount:1,monotonic,samples,verifiedForwardValue:scenario.fairValue},
+    fixed: variable === 'growth' ? `All ${horizon} FCFE margins, Ke and g fixed; solve one constant annual revenue-growth parameter.` : `Revenue growth and years 1–${horizon-1} margins fixed; solve year ${horizon} and perpetual FCFE margin.` };
+}
+
+function solveOneParameter({runScenario, price, variable, bounds, fixed}) {
+  const [low,high]=bounds,samples=320,points=[];
+  for(let i=0;i<=samples;i++){
+    const value=low+(high-low)*i/samples;
+    try { const scenario=runScenario(value);points.push({value,fairValue:scenario.fairValue,residual:scenario.fairValue-price,scenario}); }
+    catch(error){if(!error.status)throw error;}
+  }
+  const brackets=[];
+  for(let i=1;i<points.length;i++){
+    const left=points[i-1],right=points[i];
+    if(left.residual===0)brackets.push([left.value,left.value]);
+    else if(left.residual*right.residual<0)brackets.push([left.value,right.value]);
+  }
+  const roots=[];
+  for(const bracket of brackets){
+    let [aLow,aHigh]=bracket;
+    if(aLow!==aHigh)for(let i=0;i<100;i++){
+      const mid=(aLow+aHigh)/2;
+      if((runScenario(aLow).fairValue-price)*(runScenario(mid).fairValue-price)<=0)aHigh=mid;else aLow=mid;
+    }
+    const value=(aLow+aHigh)/2;
+    if(!roots.some(root=>Math.abs(root-value)<1e-8))roots.push(value);
+  }
+  const monotonic=points.slice(1).every((point,index)=>point.fairValue>=points[index].fairValue)
+    ||points.slice(1).every((point,index)=>point.fairValue<=points[index].fairValue);
+  if(!roots.length)return {status:'outside_bounds',variable,bounds,price,value:null,
+    diagnostics:{converged:false,rootCount:0,monotonic,samples,rangeValues:points.length?{low:Math.min(...points.map(x=>x.fairValue)),high:Math.max(...points.map(x=>x.fairValue))}:null}};
+  if(roots.length>1)return {status:'multiple_solutions',variable,bounds,price,value:null,
+    roots:roots.map(value=>({value,residual:runScenario(value).fairValue-price})),diagnostics:{converged:false,rootCount:roots.length,monotonic,samples}};
+  const value=roots[0],scenario=runScenario(value),residual=scenario.fairValue-price;
+  return {status:'solved',variable,value,price,residual,bounds,scenario,fixed,
+    diagnostics:{converged:Math.abs(residual)<=Math.max(1e-8,price*1e-9),rootCount:1,monotonic,samples,verifiedForwardValue:scenario.fairValue}};
+}
+
+export function reverseOperatingScenario(base, a, price, variable='growth', targetReturn=a.wacc) {
+  assert(finite(price) && price > 0, 'invalid_reverse_price');
+  assert(['growth','mature_ebit_margin','reinvestment'].includes(variable), 'invalid_reverse_variable');
+  const horizon=a.horizonYears??a.growth.length;
+  const runScenario=value=>calculateOperatingScenario(base,{...a,wacc:targetReturn,
+    ...(variable==='growth'?{growth:Array(horizon).fill(value)}:{}),
+    ...(variable==='mature_ebit_margin'?{ebitMargin:Array.from({length:horizon},(_,i)=>a.ebitMargin[0]+(value-a.ebitMargin[0])*i/(horizon-1))}:{}),
+    ...(variable==='reinvestment'?{nwcInvestmentMargin:Array(horizon).fill(value)}:{}),
+  });
+  const bounds=variable==='growth'?[-.5,1]:variable==='mature_ebit_margin'?[-.5,.8]:[-.5,.8];
+  const fixed=variable==='growth'
+    ? 'EBIT margin, cash tax, D&A, capex, reinvestment, WACC and terminal growth fixed; solve one constant revenue-growth parameter.'
+    : variable==='mature_ebit_margin'
+    ? 'Revenue growth and cash conversion fixed; solve one mature EBIT margin with a linear transition from Year 1.'
+    : 'Revenue growth, EBIT margin, tax, D&A, capex, WACC and terminal growth fixed; solve one ΔNWC/revenue parameter.';
+  return {...solveOneParameter({runScenario,price,variable,bounds,fixed}),targetReturn};
+}
+
+export function operatingIsoValueCurve(base,a,price,{growthRange=[-.1,.5],marginRange=[-.1,.5],steps=25}={}) {
+  assert(finite(price)&&price>0,'invalid_reverse_price');
+  assert(Number.isInteger(steps)&&steps>=5&&steps<=100,'invalid_curve_steps');
+  const horizon=a.horizonYears??a.growth.length,points=[];
+  for(let i=0;i<=steps;i++){
+    const growth=growthRange[0]+(growthRange[1]-growthRange[0])*i/steps;
+    const solved=reverseOperatingScenario(base,{...a,growth:Array(horizon).fill(growth)},price,'mature_ebit_margin',a.wacc);
+    if(solved.status==='solved'&&solved.value>=marginRange[0]&&solved.value<=marginRange[1])
+      points.push({growth,matureEbitMargin:solved.value,residual:solved.residual,verifiedValue:solved.scenario.fairValue});
+  }
+  return {status:points.length?'calculated':'no_solutions_in_bounds',price,growthRange,marginRange,points,
+    note:'Each point is one growth/mature-margin combination that reproduces price; the market price does not identify a unique operating forecast.'};
 }
 export function sensitivity(base,a) {
+  if(a?.method==='operating_fcff')return [-.01,0,.01].flatMap(dw=>[-.005,0,.005].map(dg=>{
+    const wacc=a.wacc+dw,g=a.g+dg;
+    try{return {wacc,g,fairValue:calculateOperatingScenario(base,{...a,wacc,g}).fairValue};}
+    catch{return {wacc,g,fairValue:null};}
+  }));
   return [-.01,0,.01].flatMap(dk => [-.005,0,.005].map(dg => {
     const ke=a.ke+dk,g=a.g+dg;
     try { return {ke,g,fairValue:calculateScenario(base,{...a,ke,g}).fairValue}; }

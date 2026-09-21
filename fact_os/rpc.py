@@ -11,7 +11,9 @@ from .repository import FactRepository, MissingData, PITUnavailable
 METHODS = frozenset({
     'get_coverage',
     'resolve_security', 'get_price', 'get_price_history', 'get_prices',
-    'get_fundamentals', 'get_latest_fundamentals', 'get_dividends', 'get_metric', 'get_metric_history',
+    'get_fundamentals', 'get_latest_fundamentals', 'get_fundamental_change_universe',
+    'get_fundamental_company_index',
+    'get_fundamental_research', 'get_dividends', 'get_metric', 'get_metric_history',
     'get_institutional_holdings', 'get_institutional_ownership_history',
     'get_holder_changes', 'get_investors', 'resolve_investor',
     'get_investor_history', 'get_investor_portfolio', 'get_investor_changes',
@@ -41,7 +43,11 @@ def required_tables(repo, method, args, kwargs):
         if dataset not in ('stocks', 'funds'):
             raise ValueError('explicit canonical stock or fund dataset required')
         return {'tickers', dataset}
-    if method in ('get_fundamentals', 'get_latest_fundamentals'):
+    if method in ('get_fundamentals', 'get_latest_fundamentals', 'get_fundamental_research'):
+        return {'tickers', 'fundamentals'}
+    if method == 'get_fundamental_change_universe':
+        return {'tickers', 'fundamentals', 'stocks'}
+    if method == 'get_fundamental_company_index':
         return {'tickers', 'fundamentals'}
     if method in ('get_metric', 'get_metric_history'):
         from .registry import METRICS

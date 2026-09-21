@@ -4,19 +4,33 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
-import { calculateScenario, reverseScenario, signature, ratio, percentile, evaluateRules, compareGuruShares, overlap, isoDate, sleeveRisk, personalScenarioPackage, scenarioTemplates, validateScenario } from './investmentMath.js';
+import { calculateScenario, reverseScenario, calculateOperatingScenario, reverseOperatingScenario, operatingIsoValueCurve, signature, ratio, percentile, evaluateRules, compareGuruShares, overlap, isoDate, sleeveRisk, personalScenarioPackage, scenarioTemplates, validateScenario } from './investmentMath.js';
 import { assertLineage, sourceNode, InvestmentSource } from './investmentSource.js';
 import { DatabaseSync } from 'node:sqlite';
 import { InvestmentStore } from './investmentStore.js';
 import { InvestmentService } from './investmentService.js';
 import { registerInvestmentRoutes } from './investmentRoutes.js';
+import { compactResearchSeries } from './researchWorkbench.js';
 
 const base={revenueM:1000,sharesM:100,currency:'USD'};
 const assumptions={method:'parent_fcfe',discountType:'Ke',ownership:'parent_common',timing:'year_end',ke:.1,g:.025,growth:Array(5).fill(.1),margin:Array(5).fill(.2)};
+const operating={method:'operating_fcff',discountType:'WACC',ownership:'enterprise',timing:'year_end',
+  horizonYears:5,wacc:.1,g:.025,growth:Array(5).fill(.1),ebitMargin:Array(5).fill(.2),
+  cashTaxRate:Array(5).fill(.25),dnaMargin:Array(5).fill(.04),capexMargin:Array(5).fill(.06),
+  nwcInvestmentMargin:Array(5).fill(.01),netDebtM:100,nciM:20,nonOperatingAssetsM:10};
 const rule={metric:'revenueGrowth',operator:'lt',threshold:.3,consecutive:2,scope:'new_financial_periods',severity:'review'};
 const row=(periodEnd,availableAt,value)=>({period:periodEnd,periodEnd,availableAt,metrics:{revenueGrowth:value},source:{dataset:'synthetic test fixture'}});
 const tmp=()=>fs.mkdtempSync(path.join(os.tmpdir(),'tf-workflow-test-'));
 const near=(a,b)=>strict.ok(Math.abs(a-b)<1e-8,`${a} != ${b}`);
+
+test('research overview price sampling is bounded and preserves both endpoints',()=>{
+  const rows=Array.from({length:901},(_,i)=>({date:`point-${i}`,close:i}));
+  const compact=compactResearchSeries(rows,360);
+  strict.equal(compact.length,360);
+  strict.equal(compact[0],rows[0]);
+  strict.equal(compact.at(-1),rows.at(-1));
+  strict.ok(compact.every((row,index)=>index===0||rows.indexOf(row)>rows.indexOf(compact[index-1])));
+});
 
 test('issuer-authored periodEndDate is supported without inventing a fiscal date or accepting a future date',()=>{
   const source=(record)=>({fiscal_period:'2026-Q2',financial_available_at:'2026-07-30',as_of_date:'2026-07-30',model_version:'fixture',
@@ -33,6 +47,71 @@ test('FCFE reproduces independent hand calculation and excludes debt/NCI',()=>{
   const terminal=322.102*1.025/.075/1.1**5;
   near(r.fairValue,(explicit+terminal)/100);near(r.explicitPvM,1000);near(r.forecast[4].fcfeM,322.102);
   strict.equal(r.netDebtDeductedM,0);strict.equal(r.nciDeductedM,0);
+});
+test('ten-year FCFE preserves every explicit year and matches an independent hand calculation',()=>{
+  const ten={...assumptions,horizonYears:10,growth:Array(10).fill(.05),margin:Array(10).fill(.15)};
+  const r=calculateScenario(base,ten);
+  let revenue=base.revenueM,explicit=0,lastFcfe=0;
+  for(let year=1;year<=10;year++){
+    revenue*=1.05;lastFcfe=revenue*.15;explicit+=lastFcfe/1.1**year;
+  }
+  const terminal=lastFcfe*1.025/(.1-.025)/1.1**10;
+  strict.equal(r.forecast.length,10);strict.equal(r.terminalYear,10);
+  near(r.explicitPvM,explicit);near(r.terminalPvM,terminal);
+  near(r.fairValue,(explicit+terminal)/base.sharesM);
+});
+test('negative explicit FCFE remains negative and is disclosed as a financing need',()=>{
+  const margins=[-.2,-.1,.02,.08,.15];
+  const r=calculateScenario(base,{...assumptions,margin:margins});
+  strict.deepEqual(r.negativeExplicitYears,[1,2]);
+  strict.ok(r.forecast[0].fcfeM<0&&r.forecast[1].fcfeM<0);
+  near(r.financingNeedM,-r.forecast[0].fcfeM-r.forecast[1].fcfeM);
+});
+test('ten-year reverse DCF substitutes back into the same forward engine',()=>{
+  const ten={...assumptions,horizonYears:10,growth:Array(10).fill(.075),margin:Array(10).fill(.18)};
+  const price=calculateScenario(base,ten).fairValue;
+  const solved=reverseScenario(base,ten,price,'growth');
+  strict.equal(solved.status,'solved');strict.equal(solved.scenario.horizonYears,10);
+  near(solved.value,.075);near(solved.diagnostics.verifiedForwardValue,price);
+  near(solved.residual,0);
+});
+test('operating FCFF bridge matches an independent five-year hand calculation',()=>{
+  const r=calculateOperatingScenario(base,operating);
+  let revenue=1000,explicit=0,last=0;
+  for(let year=1;year<=5;year++){
+    revenue*=1.1;
+    const ebit=revenue*.2,nopat=ebit-ebit*.25;
+    last=nopat+revenue*.04-revenue*.06-revenue*.01;
+    explicit+=last/1.1**year;
+    near(r.forecast[year-1].fcffM,last);
+  }
+  const terminal=last*1.025/(.1-.025)/1.1**5;
+  near(r.explicitPvM,explicit);near(r.terminalPvM,terminal);
+  near(r.enterpriseValueM,explicit+terminal);
+  near(r.equityValueM,explicit+terminal-100-20+10);
+  near(r.fairValue,r.equityValueM/100);
+});
+test('operating FCFF supports ten years and preserves early financing need',()=>{
+  const a={...operating,horizonYears:10,growth:Array(10).fill(.05),ebitMargin:[-.2,-.1,...Array(8).fill(.2)],
+    cashTaxRate:Array(10).fill(.25),dnaMargin:Array(10).fill(.02),capexMargin:Array(10).fill(.12),nwcInvestmentMargin:Array(10).fill(.03)};
+  const r=calculateScenario(base,a);
+  strict.equal(r.forecast.length,10);strict.deepEqual(r.negativeExplicitYears,[1,2]);
+  strict.ok(r.financingNeedM>0);strict.ok(r.forecast[0].cashTaxM===0);
+  near(r.equityValueM,r.enterpriseValueM-a.netDebtM-a.nciM+a.nonOperatingAssetsM);
+});
+test('operating reverse DCF solves one variable, verifies forward value, and reports bounds',()=>{
+  const price=calculateScenario(base,operating).fairValue;
+  for(const variable of ['growth','mature_ebit_margin','reinvestment']){
+    const r=reverseOperatingScenario(base,operating,price,variable);
+    strict.equal(r.status,'solved');near(r.scenario.fairValue,price);near(r.residual,0);
+  }
+  strict.equal(reverseOperatingScenario(base,operating,1e9,'growth').status,'outside_bounds');
+});
+test('growth and mature-margin iso-value curve exposes non-unique price explanations',()=>{
+  const price=calculateScenario(base,operating).fairValue;
+  const curve=operatingIsoValueCurve(base,operating,price,{growthRange:[.05,.15],marginRange:[0,.5],steps:10});
+  strict.equal(curve.status,'calculated');strict.ok(curve.points.length>1);
+  curve.points.forEach(point=>near(point.verifiedValue,price));
 });
 test('repeatable exact output and key-order independent signature',()=>{
   strict.deepEqual(calculateScenario(base,assumptions),calculateScenario(base,structuredClone(assumptions)));
@@ -359,7 +438,9 @@ test('HTTP routes require identity, ignore supplied owner, and do not cache priv
     strict.match(r.headers.get('cache-control'),/no-store/);strict.deepEqual((await r.json()).scenarios,[]);strict.ok(a.id);
     const holdings=await fetch(url+'/api/investment/guru-holdings?asOf=2026-06-01',{headers:{'x-test-user':'alice'}});
     strict.equal(holdings.status,200);strict.match(holdings.headers.get('cache-control'),/max-age=300/);
-    strict.ok(holdings.headers.get('etag'));await holdings.arrayBuffer();
+    strict.ok(holdings.headers.get('etag'));const holdingsPayload=await holdings.json();
+    strict.ok(Array.isArray(holdingsPayload.gurus));
+    strict.ok(holdingsPayload.gurus.every(g=>typeof g.followed==='boolean'));
   }finally{await new Promise(r=>server.close(r));store.close();}
 });
 

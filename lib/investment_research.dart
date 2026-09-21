@@ -49,6 +49,17 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   List<Map<String, dynamic>> get researchHistory =>
       researchDatedRows(asList(company?['history']), 'availableAt', asOf);
 
+  bool get researchHasPlatformModel {
+    final coverage = asMap(company?['coverage'])['platformModel'];
+    if (coverage == 'available') return true;
+    if (coverage != null) return false;
+    // Older stored/test payloads predate explicit coverage. Preserve their
+    // real model path only when model evidence is actually present.
+    return assumptions.isNotEmpty ||
+        nullableNumber(asMap(company?['published'])['fairValue']) != null ||
+        asList(asMap(company?['publishedBreakdown'])['components']).isNotEmpty;
+  }
+
   List<Widget> refinedResearch() {
     if (company == null) return researchEntry();
     final desktop = MediaQuery.sizeOf(context).width >= 1100;
@@ -109,7 +120,9 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                 ),
                 researchWatchButton(),
                 researchTag(
-                  assumptions.isEmpty
+                  asMap(company?['coverage'])['platformModel'] != 'available'
+                      ? w('Fact OS · no platform model', 'Fact OS · 暂无平台模型')
+                      : assumptions.isEmpty
                       ? w('Published model · read-only', '平台模型 · 只读')
                       : w('Scenario modelling available', '支持情景建模'),
                   p.muted,
@@ -120,33 +133,35 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         ),
       ),
       Container(
+        key: const ValueKey('research-primary-nav'),
         decoration: BoxDecoration(
           border: Border(bottom: BorderSide(color: p.border)),
         ),
         padding: EdgeInsets.symmetric(horizontal: pad),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              for (final tab in [
-                ('evidence', 'Overview', '概览'),
-                ('value', 'Valuation', '估值'),
-                ('financials', 'Financials & sources', '财务与来源'),
-                ('decision', 'Decisions', '决策'),
-                if (review != null) ('review', 'Review', '复核'),
-              ])
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final tabs = [
+              ('evidence', 'Research overview', '研究总览'),
+              ('financials', 'Announcements & financials', '公告与财务'),
+              ('institutions', 'Institutional holdings', '机构持仓'),
+              ('value', 'Valuation workspace', '估值工作台'),
+              ('records', 'Research records', '研究记录'),
+            ];
+            final buttons = [
+              for (final tab in tabs)
                 Semantics(
                   selected: section == tab.$1,
                   child: TextButton(
+                    key: ValueKey('research-tab-${tab.$1}'),
                     style: TextButton.styleFrom(
                       foregroundColor: section == tab.$1 ? p.accent : p.muted,
                       shape: const RoundedRectangleBorder(),
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 20,
+                        horizontal: 14,
+                        vertical: 16,
                       ),
                     ),
-                    onPressed: () => selectSection(tab.$1),
+                    onPressed: () => selectResearchSection(tab.$1),
                     child: Text(
                       w(tab.$2, tab.$3),
                       style: TextStyle(
@@ -158,69 +173,50 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                     ),
                   ),
                 ),
-            ],
-          ),
+            ];
+            return Wrap(spacing: 2, runSpacing: 0, children: buttons);
+          },
         ),
       ),
-      if (section == 'value' && assumptions.isNotEmpty)
-        ...valueWorkspace()
-      else
-        Padding(
-          padding: EdgeInsets.all(pad),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (section == 'evidence') ...researchOverview(),
-              if (section == 'financials') ...[
-                EarningsResearchPanel(
-                  api: widget.api,
-                  ticker: ticker,
-                  asOf: asOf,
-                  palette: p,
-                  history: researchHistory,
-                  onOpenValuation: () => selectSection('value'),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 6, bottom: 14),
-                  child: label(
-                    'Latest company evidence · ${snap['period']} · The quarter selector above applies only to earnings research.',
-                    '最新公司证据 · ${snap['period']} · 上方季度选择只作用于财报会研究。',
-                    size: 12,
-                  ),
-                ),
-                ...evidenceView(includeHistory: false),
-              ],
-              if (section == 'value') ...[
-                title('Inside the published model.', '拆解平台模型。'),
-                label(
-                  'Inspect the method and its limits before treating a model gap as an opportunity.',
-                  '先检查方法与局限，再判断模型价差是否构成机会。',
-                ),
-                const SizedBox(height: 20),
-                pageColumns(
-                  researchChart(),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [researchModelCard(), researchCountercase()],
-                  ),
-                  sideWidth: 330,
-                ),
-                researchGuidance(),
-              ],
-              if (section == 'decision' && assumptions.isNotEmpty)
-                ...decisionPage(),
-              if (section == 'decision' && assumptions.isEmpty)
-                researchReadOnlyDecision(),
-              if (section == 'review') ...comparisonPage(),
-              const SizedBox(height: 14),
-              label(
-                'Research only · Model estimates are not expected returns · No orders are placed.',
-                '仅供研究 · 模型估计不等于预期收益 · 不执行交易',
-                size: 11,
+      Padding(
+        padding: EdgeInsets.all(pad),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (section == 'evidence') ...researchOverview(),
+            if (section == 'financials') ...[
+              researchDocumentsPanel(),
+              const SizedBox(height: 18),
+              EarningsResearchPanel(
+                api: widget.api,
+                ticker: ticker,
+                asOf: asOf,
+                palette: p,
+                history: researchHistory,
+                onOpenValuation: () => selectSection('value'),
               ),
+              Padding(
+                padding: const EdgeInsets.only(top: 6, bottom: 14),
+                child: label(
+                  'Latest company evidence · ${snap['period']} · The quarter selector above applies only to earnings research.',
+                  '最新公司证据 · ${snap['period']} · 上方季度选择只作用于财报会研究。',
+                  size: 12,
+                ),
+              ),
+              ...evidenceView(includeHistory: false),
             ],
-          ),
+            if (section == 'institutions') researchInstitutionPanel(),
+            if (section == 'value') ...researchValuationWorkspace(),
+            if (section == 'records') researchRecordsPanel(),
+            const SizedBox(height: 14),
+            label(
+              'Research only · Model estimates are not expected returns · No orders are placed.',
+              '仅供研究 · 模型估计不等于预期收益 · 不执行交易',
+              size: 11,
+            ),
+          ],
         ),
+      ),
     ];
   }
 
@@ -290,6 +286,732 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     }
   }
 
+  void selectResearchSection(String next) {
+    selectSection(next);
+    if (next == 'financials' &&
+        (researchDocumentsData == null || researchFundamental == null)) {
+      unawaited(loadResearchPanel('financials'));
+    } else if (next == 'institutions' && researchInstitution == null) {
+      unawaited(loadResearchPanel('institutions'));
+    } else if (next == 'records' && researchRecordsData == null) {
+      unawaited(loadResearchPanel('records'));
+    }
+  }
+
+  Future<void> loadResearchPanel(String panel) async {
+    if (researchPanelLoading || ticker.isEmpty) return;
+    final symbol = ticker, cutoff = asOf, serial = requestSerial;
+    updateUI(() {
+      researchPanelLoading = true;
+      researchPanelError = null;
+    });
+    try {
+      if (panel == 'financials') {
+        final values = await Future.wait([
+          widget.api.getJson(
+            '/api/investment/research/${Uri.encodeComponent(symbol)}/documents?asOf=$cutoff',
+          ),
+          if (researchFundamental == null)
+            widget.api.getJson(
+              '/api/investment/research/${Uri.encodeComponent(symbol)}/fundamentals?asOf=$cutoff',
+            )
+          else
+            Future.value(researchFundamental!),
+        ]);
+        if (!mounted || serial != requestSerial) return;
+        updateUI(() {
+          researchDocumentsData = values[0];
+          researchFundamental = values[1];
+        });
+      } else if (panel == 'institutions') {
+        final value = await widget.api.getJson(
+          '/api/investment/research/${Uri.encodeComponent(symbol)}/institutions?asOf=$cutoff',
+        );
+        if (!mounted || serial != requestSerial) return;
+        updateUI(() => researchInstitution = value);
+      } else if (panel == 'records') {
+        final value = await widget.api.getJson(
+          '/api/investment/research/${Uri.encodeComponent(symbol)}/records?asOf=$cutoff',
+        );
+        if (!mounted || serial != requestSerial) return;
+        updateUI(() => researchRecordsData = value);
+      }
+    } catch (e) {
+      if (mounted && serial == requestSerial) {
+        updateUI(() => researchPanelError = e.toString());
+      }
+    } finally {
+      if (mounted && serial == requestSerial) {
+        updateUI(() => researchPanelLoading = false);
+      }
+    }
+  }
+
+  Widget researchPanelState() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      if (researchPanelLoading) const LinearProgressIndicator(),
+      if (researchPanelError != null)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: label(
+            'This research layer could not be loaded. Existing evidence remains visible.',
+            '这一研究层暂时无法载入，已有证据仍然保留显示。',
+            color: p.secondary,
+          ),
+        ),
+    ],
+  );
+
+  Future<void> loadHistoricalPublishedModel(String modelAsOf) async {
+    final selectedTicker = ticker;
+    try {
+      final payload = await widget.api.getJson(
+        '/api/investment/research/${Uri.encodeComponent(selectedTicker)}/published-model?asOf=${Uri.encodeQueryComponent(modelAsOf)}',
+      );
+      if (!mounted || ticker != selectedTicker || researchReport.isEmpty) {
+        return;
+      }
+      final breakdown = asMap(payload['breakdown']);
+      updateUI(() {
+        company = {...?company, 'publishedBreakdown': breakdown};
+      });
+    } catch (e) {
+      if (mounted && ticker == selectedTicker) {
+        updateUI(() => researchPanelError = e.toString());
+      }
+    }
+  }
+
+  Widget researchEvidenceSidebar() {
+    final dates = asMap(company?['researchDates']);
+    final coverage = asMap(company?['coverage']);
+    return card([
+      label('EVIDENCE CONTEXT', '证据上下文', size: 10, color: p.accent),
+      const SizedBox(height: 10),
+      for (final item in [
+        ('Research cutoff', '研究截止日', dates['cutoff'] ?? asOf),
+        ('Financial period', '财报所属期', dates['financialPeriod']),
+        ('Disclosure date', '披露日期', dates['disclosureDate']),
+        ('Price date', '价格日期', dates['priceDate']),
+        ('Model date', '模型日期', dates['modelDate']),
+      ])
+        Padding(
+          padding: const EdgeInsets.only(bottom: 9),
+          child: Row(
+            children: [
+              Expanded(child: label(item.$1, item.$2, size: 11)),
+              Text(
+                text(item.$3, '—'),
+                style: TextStyle(color: p.text, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+      Divider(color: p.border),
+      label(
+        coverage['platformModel'] == 'available'
+            ? 'Platform model available; personal scenarios remain separate.'
+            : 'No platform model. Facts, filings, holdings and notes remain researchable.',
+        coverage['platformModel'] == 'available'
+            ? '平台模型可用；个人情景始终单独保存。'
+            : '暂无平台模型；仍可研究事实、公告、持仓并保存记录。',
+        size: 11,
+      ),
+    ]);
+  }
+
+  Widget researchDocumentsPanel() {
+    final documents = asList(researchDocumentsData?['rows']);
+    final fundamental = researchFundamental;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        researchPanelState(),
+        pageColumns(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              title('Announcements & reported facts', '公告与已报告事实'),
+              label(
+                'A filing clue, a verified source link and readable source text are three different coverage states.',
+                '公告分类线索、已验证原文链接、可读取正文是三种不同覆盖状态。',
+              ),
+              const SizedBox(height: 16),
+              if (documents.isEmpty && !researchPanelLoading)
+                card([
+                  label(
+                    'No announcement catalog is available at this cutoff.',
+                    '该截止日暂无公告目录。',
+                  ),
+                ]),
+              for (final document in documents.take(12))
+                card([
+                  Row(
+                    children: [
+                      researchTag(text(document['form'], '—'), p.muted),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          text(document['title']),
+                          style: deskHeading(15),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  label(
+                    'Period ${text(document['reportPeriod'], '—')} · Published ${text(document['publishedAt'], '—')} · ${text(document['contentStatus'])}',
+                    '所属期 ${text(document['reportPeriod'], '—')} · 披露 ${text(document['publishedAt'], '—')} · ${text(document['contentStatus'])}',
+                    size: 11,
+                  ),
+                  const SizedBox(height: 6),
+                  label(
+                    'No stored body: no source-text summary is generated.',
+                    '未存正文：不生成基于原文的摘要。',
+                    size: 11,
+                    color: p.secondary,
+                  ),
+                  if (Uri.tryParse(text(document['sourceUrl']))?.scheme ==
+                      'https')
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: () =>
+                            openBrowserPath(text(document['sourceUrl'])),
+                        icon: const Icon(Icons.open_in_new, size: 14),
+                        label: Text(w('Open verified source', '打开已验证来源')),
+                      ),
+                    ),
+                ]),
+              if (fundamental != null) ...[
+                const SizedBox(height: 18),
+                title('Financial evidence by research question', '按研究问题组织财务证据'),
+                for (final section in asList(fundamental['sections']))
+                  ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    title: Text(
+                      text(
+                        asMap(
+                          section['title'],
+                        )[context.language == AppLanguage.zh ? 'zh' : 'en'],
+                      ),
+                      style: deskHeading(15),
+                    ),
+                    children: [
+                      for (final row in asList(section['rows']))
+                        ListTile(
+                          dense: true,
+                          title: Text(
+                            text(
+                              asMap(row['label'])[context.language ==
+                                      AppLanguage.zh
+                                  ? 'zh'
+                                  : 'en'],
+                            ),
+                          ),
+                          subtitle: Text(
+                            '${text(row['formula'])} · ${text(row['status'])}',
+                          ),
+                          trailing: Text(
+                            nullableNumber(row['value']) == null
+                                ? '—'
+                                : formatNumber(number(row['value'])),
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
+            ],
+          ),
+          researchEvidenceSidebar(),
+          sideWidth: 330,
+        ),
+      ],
+    );
+  }
+
+  Widget researchInstitutionPanel() {
+    final data = researchInstitution;
+    final details = asMap(data?['details']);
+    final history = asList(details['history']);
+    final institutions = <Map<String, dynamic>>[
+      for (final action in ['new', 'increased', 'reduced', 'exited'])
+        for (final row in asList(details[action])) {...row, 'action': action},
+    ];
+    final historyLimit = researchRange == 'All'
+        ? history.length
+        : researchRange == '10Y'
+        ? 40
+        : 20;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        researchPanelState(),
+        title('Institutional ownership evidence', '机构持仓证据'),
+        label(
+          'Reported shares are split-normalized where verified. 13F is delayed disclosure, not live trading or actual fund flow.',
+          '股数在可验证时按拆股统一口径。13F 是滞后披露，不是实时交易或真实资金流。',
+        ),
+        const SizedBox(height: 16),
+        pageColumns(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (data == null && !researchPanelLoading)
+                card([
+                  label(
+                    'No covered 13F security record is available at this cutoff.',
+                    '该截止日暂无覆盖的 13F 个股记录。',
+                  ),
+                ]),
+              if (data != null)
+                card([
+                  Wrap(
+                    spacing: 18,
+                    runSpacing: 12,
+                    children: [
+                      researchTag(
+                        '${asMap(data['row'])['holders'] ?? '—'} ${w('holders', '家机构')}',
+                        p.accent,
+                      ),
+                      researchTag(
+                        '${text(data['reportDate'])} ${w('holdings period', '持仓所属期')}',
+                        p.muted,
+                      ),
+                      researchTag(
+                        '${text(data['availableAt'])} ${w('proxy availability', '代理可见日')}',
+                        p.secondary,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  label(
+                    'The SF3 quarter-end + 45 day availability field is a proxy when an actual filing timestamp is unavailable.',
+                    '缺少真实申报时间时，SF3 季末 +45 天仅作为可见日期代理。',
+                    size: 11,
+                  ),
+                ]),
+              if (history.isNotEmpty)
+                card([
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          w('All-institution history', '全机构历史'),
+                          style: deskHeading(17),
+                        ),
+                      ),
+                      for (final range in ['5Y', '10Y', 'All'])
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: ChoiceChip(
+                            label: Text(
+                              range == 'All' ? w('All', '全部') : range,
+                            ),
+                            selected: researchRange == range,
+                            onSelected: (_) =>
+                                updateUI(() => researchRange = range),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  dataTable(
+                    [
+                      w('Quarter', '季度'),
+                      w('Institutions', '机构数'),
+                      w('Split-adjusted shares', '拆股调整股数'),
+                      w('% outstanding', '占流通股'),
+                    ],
+                    [
+                      for (final row in history.reversed.take(historyLimit))
+                        [
+                          text(row['reportDate']),
+                          text(row['holders'], '—'),
+                          formatNumber(number(row['institutionalSharesK'])),
+                          pct(
+                            row['institutionalOwnershipPct'] == null
+                                ? null
+                                : number(row['institutionalOwnershipPct']) /
+                                      100,
+                          ),
+                        ],
+                    ],
+                  ),
+                ]),
+              if (institutions.isNotEmpty)
+                card([
+                  Text(
+                    w('Comparable institution detail', '可比机构明细'),
+                    style: deskHeading(17),
+                  ),
+                  label(
+                    'Complete pagination is retained by the 13F v5 detail payload; missing filings are not converted to zero holdings.',
+                    '13F v5 明细保留完整分页；整份申报缺失不会被当成零持仓。',
+                    size: 11,
+                  ),
+                  for (final row in institutions.take(30))
+                    ListTile(
+                      dense: true,
+                      title: Text(
+                        text(
+                          row['name'],
+                          text(row['manager'], text(row['investorId'], '—')),
+                        ),
+                      ),
+                      subtitle: Text(
+                        '${text(row['action'])} · ${w('Shares', '股数')} ${nullableNumber(row['currentUnitsK']) == null ? '—' : formatNumber(number(row['currentUnitsK']))} · ${w('Portfolio weight', '组合权重')} ${pct(row['currentWeight'])}',
+                      ),
+                      trailing: Text(
+                        row['action'] == 'exited'
+                            ? money(row['activityValueM'])
+                            : pct(row['weightChange']),
+                      ),
+                    ),
+                ]),
+            ],
+          ),
+          researchEvidenceSidebar(),
+          sideWidth: 330,
+        ),
+      ],
+    );
+  }
+
+  List<Widget> researchValuationWorkspace() {
+    final breakdown = asMap(company?['publishedBreakdown']);
+    return [
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final tab in [
+            ('published', 'Published model', '已发布模型'),
+            ('personal', 'My DCF', '我的 DCF'),
+            ('reverse', 'Reverse DCF', '反向 DCF'),
+          ])
+            ChoiceChip(
+              label: Text(w(tab.$2, tab.$3)),
+              selected: valuationSection == tab.$1,
+              onSelected: (_) => updateUI(() => valuationSection = tab.$1),
+            ),
+        ],
+      ),
+      const SizedBox(height: 18),
+      if (valuationSection == 'published') researchPublishedLedger(breakdown),
+      if (valuationSection == 'personal' && assumptions.isEmpty)
+        card([
+          title('No personal DCF starting point', '暂无个人 DCF 起点'),
+          label(
+            'The company remains fully researchable. This snapshot does not support the generic parent-FCFE worksheet.',
+            '该公司仍可完整研究，但此快照不适用通用母公司 FCFE 表。',
+          ),
+        ]),
+      if (valuationSection == 'personal' && assumptions.isNotEmpty)
+        ...personalValueWorkspace(),
+      if (valuationSection == 'reverse' && assumptions.isEmpty)
+        card([
+          label(
+            'Reverse DCF requires a supported personal cash-flow model and a comparable price.',
+            '反向 DCF 需要受支持的个人现金流模型及可比价格。',
+          ),
+        ]),
+      if (valuationSection == 'reverse' && assumptions.isNotEmpty)
+        researchReversePanel(),
+    ];
+  }
+
+  Widget researchPublishedLedger(Map<String, dynamic> breakdown) {
+    final components = asList(breakdown['components']);
+    return pageColumns(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          title('Published-model reconciliation', '已发布模型逐项对账'),
+          label(
+            'Every stored method remains visible. An unavailable method is not displayed as a zero valuation.',
+            '所有已存方法均保留显示；不可用方法不会被显示为估值为零。',
+          ),
+          const SizedBox(height: 16),
+          if (breakdown.isEmpty)
+            card([
+              label(
+                'No published valuation exists for this company at the research cutoff.',
+                '该公司在研究截止日没有已发布估值。',
+              ),
+            ]),
+          for (final method in components)
+            card([
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(text(method['label']), style: deskHeading(17)),
+                  ),
+                  researchTag(
+                    text(method['status']),
+                    method['status'] == 'included' ? p.accent : p.secondary,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 24,
+                runSpacing: 12,
+                children: [
+                  valuationSummary(
+                    method['output'] == null ? 'N/A' : money(method['output']),
+                    'Standalone output',
+                    '独立输出',
+                  ),
+                  valuationSummary(
+                    method['weight'] == null
+                        ? 'Missing'
+                        : pct(method['weight']),
+                    'Actual stored weight',
+                    '实际存储权重',
+                  ),
+                  valuationSummary(
+                    method['status'] == 'included'
+                        ? money(method['contribution'])
+                        : w('Excluded', '未采用'),
+                    'Weighted contribution',
+                    '加权贡献',
+                  ),
+                ],
+              ),
+              if (method['exclusionReason'] != null) ...[
+                const SizedBox(height: 10),
+                label(
+                  text(method['exclusionReason']),
+                  text(method['exclusionReason']),
+                  color: p.secondary,
+                  size: 11,
+                ),
+              ],
+              for (final step in asList(method['steps']))
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(text(step['label'])),
+                  subtitle: Text(text(step['formula'])),
+                  trailing: Text(
+                    nullableNumber(step['output']) == null
+                        ? '—'
+                        : formatNumber(number(step['output'])),
+                  ),
+                ),
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                title: Text(w('Inputs and source periods', '输入与来源期间')),
+                children: [
+                  for (final input in asList(method['parameters']))
+                    ListTile(
+                      dense: true,
+                      title: Text(text(input['label'])),
+                      subtitle: Text(text(input['key'])),
+                      trailing: Text(
+                        nullableNumber(input['value']) == null
+                            ? '—'
+                            : formatNumber(number(input['value'])),
+                      ),
+                    ),
+                ],
+              ),
+            ]),
+          if (breakdown.isNotEmpty)
+            card([
+              dataTable(
+                [w('Reconciliation', '对账'), w('Per share', '每股')],
+                [
+                  [
+                    w('Weighted method value', '子模型加权值'),
+                    money(breakdown['weightedValue']),
+                  ],
+                  [
+                    w('Stored post-method adjustments', '已存后置调整'),
+                    money(
+                      asList(breakdown['postModelAdjustments']).fold<double>(
+                        0,
+                        (sum, row) => sum + number(row['amount']),
+                      ),
+                    ),
+                  ],
+                  [
+                    w('Final published value', '最终已发布价值'),
+                    money(breakdown['fairValue']),
+                  ],
+                ],
+              ),
+              label(
+                '${text(breakdown['modelVersion'])} · ${text(breakdown['availableAt'])} · ${text(breakdown['reconciliationStatus'])}',
+                '${text(breakdown['modelVersion'])} · ${text(breakdown['availableAt'])} · ${text(breakdown['reconciliationStatus'])}',
+                size: 11,
+              ),
+            ]),
+        ],
+      ),
+      researchEvidenceSidebar(),
+      sideWidth: 330,
+    );
+  }
+
+  Widget researchReversePanel() {
+    final reverse = asMap(calculation?['reverse']);
+    final scenario = asMap(reverse['scenario']);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        title('What operating path explains the price?', '什么经营路径能够解释当前价格？'),
+        label(
+          'One variable is solved at a time. All other assumptions remain fixed and visible; this is not analyst consensus.',
+          '每次只反推一个变量，其余假设固定且可见；这不是分析师共识。',
+        ),
+        const SizedBox(height: 16),
+        valuationDiagnostics(asMap(calculation?['result'])),
+        if (reverse.isNotEmpty)
+          card([
+            label('SOLVER DIAGNOSTICS', '求解诊断', size: 10, color: p.accent),
+            const SizedBox(height: 10),
+            Text(text(reverse['status']), style: deskHeading(20)),
+            label(
+              '${w('Roots', '根数量')} ${asMap(reverse['diagnostics'])['rootCount'] ?? 0} · ${w('Residual', '价格残差')} ${nullableNumber(reverse['residual']) == null ? '—' : formatNumber(number(reverse['residual']))}',
+              '${w('Roots', '根数量')} ${asMap(reverse['diagnostics'])['rootCount'] ?? 0} · ${w('Residual', '价格残差')} ${nullableNumber(reverse['residual']) == null ? '—' : formatNumber(number(reverse['residual']))}',
+            ),
+            if (text(reverse['fixed']).isNotEmpty)
+              label(text(reverse['fixed']), text(reverse['fixed']), size: 11),
+            if (scenario.isNotEmpty)
+              dataTable(
+                [
+                  w('Year', '年度'),
+                  w('Revenue', '收入'),
+                  personalDcfMethod == 'operating_fcff' ? 'FCFF' : 'FCFE',
+                  w('PV', '现值'),
+                ],
+                [
+                  for (final row in asList(scenario['forecast']))
+                    [
+                      text(row['year']),
+                      formatNumber(number(row['revenueM'])),
+                      formatNumber(
+                        number(
+                          row[personalDcfMethod == 'operating_fcff'
+                              ? 'fcffM'
+                              : 'fcfeM'],
+                        ),
+                      ),
+                      formatNumber(number(row['pvM'])),
+                    ],
+                ],
+              ),
+          ]),
+      ],
+    );
+  }
+
+  Widget researchRecordsPanel() {
+    final rows = asList(researchRecordsData?['rows']);
+    return pageColumns(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          researchPanelState(),
+          title('Save a falsifiable research record', '保存可证伪的研究记录'),
+          label(
+            'A valuation model is optional. Save the question, both sides of the evidence, the failure condition and review date.',
+            '估值模型不是前提；保存研究问题、正反证据、失效条件与复核日期。',
+          ),
+          const SizedBox(height: 16),
+          card([
+            input(
+              researchQuestion,
+              'Research question',
+              '研究问题',
+              changed: (_) => updateUI(() {}),
+            ),
+            input(researchSupport, 'Supporting evidence', '支持证据'),
+            input(researchOpposition, 'Opposing evidence / gap', '反对证据 / 解释缺口'),
+            input(researchInvalidation, 'Invalidation condition', '失效条件'),
+            input(
+              researchReviewDate,
+              'Review date · YYYY-MM-DD',
+              '复核日期 · YYYY-MM-DD',
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: button(
+                'Save research record',
+                '保存研究记录',
+                researchQuestion.text.trim().isEmpty
+                    ? null
+                    : () => unawaited(saveResearchRecord()),
+                primary: true,
+              ),
+            ),
+          ]),
+          for (final row in rows.reversed)
+            card([
+              Text(text(row['question']), style: deskHeading(16)),
+              const SizedBox(height: 8),
+              label(
+                '${text(row['asOf'])} · ${w('Review', '复核')} ${text(row['reviewDate'], '—')}',
+                '${text(row['asOf'])} · ${w('Review', '复核')} ${text(row['reviewDate'], '—')}',
+                size: 11,
+              ),
+              if (text(row['supportingEvidence']).isNotEmpty)
+                label(
+                  '${w('Support', '支持')} · ${text(row['supportingEvidence'])}',
+                  '${w('Support', '支持')} · ${text(row['supportingEvidence'])}',
+                  size: 12,
+                ),
+              if (text(row['opposingEvidence']).isNotEmpty)
+                label(
+                  '${w('Counter', '反证')} · ${text(row['opposingEvidence'])}',
+                  '${w('Counter', '反证')} · ${text(row['opposingEvidence'])}',
+                  size: 12,
+                  color: p.secondary,
+                ),
+            ]),
+        ],
+      ),
+      researchEvidenceSidebar(),
+      sideWidth: 330,
+    );
+  }
+
+  Future<void> saveResearchRecord() async {
+    final question = researchQuestion.text.trim();
+    if (question.isEmpty) return;
+    try {
+      await widget.api.postJson('/api/investment/research-records', {
+        'operationId': op(),
+        'ticker': ticker,
+        'asOf': asOf,
+        'question': question,
+        'supportingEvidence': researchSupport.text,
+        'opposingEvidence': researchOpposition.text,
+        'invalidationCondition': researchInvalidation.text,
+        'reviewDate': researchReviewDate.text.trim().isEmpty
+            ? null
+            : researchReviewDate.text.trim(),
+        'evidenceRefs': <String>[],
+        'personalScenarioId': scenarioId,
+        'impliedScenario': asMap(calculation?['reverse']).isEmpty
+            ? null
+            : asMap(calculation?['reverse']),
+      });
+      researchQuestion.clear();
+      researchSupport.clear();
+      researchOpposition.clear();
+      researchInvalidation.clear();
+      researchReviewDate.clear();
+      await loadResearchPanel('records');
+    } catch (e) {
+      if (mounted) updateUI(() => researchPanelError = e.toString());
+    }
+  }
+
   Widget researchTag(String text, Color color) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
     decoration: BoxDecoration(
@@ -303,6 +1025,13 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   );
 
   Widget researchWatchButton() {
+    if (!researchHasPlatformModel) {
+      return OutlinedButton.icon(
+        onPressed: () => selectResearchSection('records'),
+        icon: const Icon(Icons.note_add_outlined, size: 16),
+        label: Text(w('Save research note', '保存研究记录')),
+      );
+    }
     final saved = asList(home?['watches']).any((r) => r['ticker'] == ticker);
     return OutlinedButton.icon(
       onPressed: busy || saved
@@ -336,12 +1065,12 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
 
   List<Widget> researchOverview() => [
     pageColumns(
-      researchChart(),
       Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [researchLatestChange(), researchNextStep()],
+        children: [researchFactInsight(), researchNextStep()],
       ),
-      sideWidth: 310,
+      researchEvidenceSidebar(),
+      sideWidth: 330,
     ),
     const SizedBox(height: 4),
     researchMetricStrip(),
@@ -349,7 +1078,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     pageColumns(
       Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [researchGuidance(), researchHolders()],
+        children: [researchChart(), researchGuidance(), researchHolders()],
       ),
       Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -358,6 +1087,53 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
       sideWidth: 350,
     ),
   ];
+
+  Widget researchFactInsight() {
+    final fact = researchFundamental;
+    final judgment = asMap(fact?['judgment']);
+    final counter = asMap(fact?['counterEvidence']);
+    final changes = asList(fact?['importantChanges']);
+    if (judgment.isEmpty) return researchLatestChange();
+    final language = context.language == AppLanguage.zh ? 'zh' : 'en';
+    String translated(dynamic value) =>
+        text(asMap(value)[language], text(value));
+    return card([
+      label(
+        'EVIDENCE-BASED OBSERVATION',
+        '基于证据的核心观察',
+        size: 10,
+        color: p.accent,
+      ),
+      const SizedBox(height: 10),
+      Text(translated(judgment['summary']), style: deskHeading(20)),
+      const SizedBox(height: 16),
+      for (final change in changes.take(3))
+        ListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.trending_up, size: 17, color: p.accent),
+          title: Text(translated(change['summary'])),
+          subtitle: Text(asList(change['evidence']).map(text).join(' · ')),
+        ),
+      Divider(color: p.border),
+      label(
+        'Counter-evidence / explanation gap',
+        '反证 / 解释缺口',
+        size: 10,
+        color: p.secondary,
+      ),
+      const SizedBox(height: 6),
+      label(
+        translated(counter['statement']),
+        translated(counter['statement']),
+        color: p.secondary,
+      ),
+      const SizedBox(height: 12),
+      label('Next question', '下一步研究问题', size: 10, color: p.accent),
+      const SizedBox(height: 6),
+      label(translated(judgment['question']), translated(judgment['question'])),
+    ]);
+  }
 
   Widget researchChart() {
     final all = researchHistory;
@@ -397,6 +1173,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     final change = node == null ? null : researchValueChange(node, prev);
     final price = asMap(asMap(company?['snapshot'])['price']);
     final published = asMap(company?['published']);
+    final hasPlatformModel = researchHasPlatformModel;
     final px = nullableNumber(price['value']),
         fv = nullableNumber(published['fairValue']);
     final matchedCurrency =
@@ -409,24 +1186,32 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
       Row(
         children: [
           Expanded(
-            child: Text(w('Price & value', '价格与价值'), style: deskHeading(18)),
+            child: Text(
+              hasPlatformModel
+                  ? w('Price & value', '价格与价值')
+                  : w('Price context', '价格背景'),
+              style: deskHeading(18),
+            ),
           ),
-          researchTag(w('Published model', '平台模型'), p.accent),
+          researchTag(
+            hasPlatformModel
+                ? w('Published model', '平台模型')
+                : w('Fact OS · model unavailable', 'Fact OS · 暂无模型'),
+            hasPlatformModel ? p.accent : p.muted,
+          ),
         ],
       ),
       const SizedBox(height: 18),
       LayoutBuilder(
-        builder: (_, c) => Wrap(
-          spacing: 12,
-          runSpacing: 14,
-          children: [
-            for (final m in [
-              (
-                money(price['value']),
-                w('Market price', '市场价格'),
-                text(price['date']),
-                p.text,
-              ),
+        builder: (_, c) {
+          final summaries = [
+            (
+              money(price['value']),
+              w('Market price', '市场价格'),
+              text(price['date']),
+              p.text,
+            ),
+            if (hasPlatformModel) ...[
               (
                 money(published['fairValue']),
                 w('Published blended value', '已发布综合估值'),
@@ -439,30 +1224,37 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                 w('Value / price − 1', '估值 / 价格 − 1'),
                 p.muted,
               ),
-            ])
-              SizedBox(
-                width: (c.maxWidth - 24) / 3,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      height: c.maxWidth < 480 ? 30 : 16,
-                      child: label(m.$2, m.$2, size: 11),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      m.$1,
-                      style: deskHeading(
-                        c.maxWidth < 480 ? 22 : 29,
-                      ).copyWith(color: m.$4),
-                    ),
-                    const SizedBox(height: 4),
-                    label(m.$3, m.$3, size: 10),
-                  ],
+            ],
+          ];
+          return Wrap(
+            spacing: 12,
+            runSpacing: 14,
+            children: [
+              for (final m in summaries)
+                SizedBox(
+                  width: hasPlatformModel ? (c.maxWidth - 24) / 3 : c.maxWidth,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        height: c.maxWidth < 480 ? 30 : 16,
+                        child: label(m.$2, m.$2, size: 11),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        m.$1,
+                        style: deskHeading(
+                          c.maxWidth < 480 ? 22 : 29,
+                        ).copyWith(color: m.$4),
+                      ),
+                      const SizedBox(height: 4),
+                      label(m.$3, m.$3, size: 10),
+                    ],
+                  ),
                 ),
-              ),
-          ],
-        ),
+            ],
+          );
+        },
       ),
       const SizedBox(height: 18),
       Wrap(
@@ -481,7 +1273,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
             ),
           const SizedBox(width: 8),
           homeChartLegend(p.muted, 'Price', '股价'),
-          homeChartLegend(p.accent, 'Fair value', '公允价值'),
+          if (hasPlatformModel) homeChartLegend(p.accent, 'Fair value', '公允价值'),
         ],
       ),
       const SizedBox(height: 10),
@@ -490,7 +1282,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
           height: MediaQuery.sizeOf(context).width < 600 ? 225 : 240,
           child: ValuationTrendChart(
             history: [
-              for (final h in visible)
+              for (final h in hasPlatformModel ? visible : const [])
                 {
                   'asOfDate': h['availableAt'],
                   'fairValue': h['publishedFairValue'],
@@ -562,8 +1354,8 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         ),
       ],
       label(
-        'Model history: ${all.isEmpty ? '—' : all.first['availableAt']} · ${prices.length} price samples: ${prices.isEmpty ? '—' : prices.first['date']} – ${prices.isEmpty ? '—' : prices.last['date']}',
-        '模型历史：${all.isEmpty ? '—' : all.first['availableAt']} · ${prices.length} 个股价样本：${prices.isEmpty ? '—' : prices.first['date']} – ${prices.isEmpty ? '—' : prices.last['date']}',
+        '${hasPlatformModel ? 'Model history: ${all.isEmpty ? '—' : all.first['availableAt']} · ' : ''}${prices.length} price samples: ${prices.isEmpty ? '—' : prices.first['date']} – ${prices.isEmpty ? '—' : prices.last['date']}',
+        '${hasPlatformModel ? '模型历史：${all.isEmpty ? '—' : all.first['availableAt']} · ' : ''}${prices.length} 个股价样本：${prices.isEmpty ? '—' : prices.first['date']} – ${prices.isEmpty ? '—' : prices.last['date']}',
         size: 10,
       ),
       if (node != null) ...[
@@ -589,32 +1381,44 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                 ),
               ),
           ],
-          onChanged: (v) => updateUI(() {
-            researchReport = v ?? '';
-            researchRange = 'All';
-            researchWindow = null;
-          }),
+          onChanged: (v) {
+            final selected = v ?? '';
+            updateUI(() {
+              researchReport = selected;
+              researchRange = 'All';
+              researchWindow = null;
+            });
+            final selectedNode = all
+                .where((h) => researchReportKey(h) == selected)
+                .firstOrNull;
+            final selectedDate = text(selectedNode?['availableAt']);
+            if (hasPlatformModel && selectedDate.isNotEmpty) {
+              unawaited(loadHistoricalPublishedModel(selectedDate));
+            }
+          },
         ),
         const SizedBox(height: 10),
         Wrap(
           spacing: 12,
           runSpacing: 6,
           children: [
-            label(
-              'Value ${money(node['publishedFairValue'])}',
-              '估值 ${money(node['publishedFairValue'])}',
-              size: 12,
-              color: p.accent,
-            ),
-            label(
-              change == null
-                  ? 'Prior model not comparable'
-                  : '${change >= 0 ? '+' : ''}${pct(change)} vs prior node',
-              change == null
-                  ? '前期模型不可比较'
-                  : '较前期模型 ${change >= 0 ? '+' : ''}${pct(change)}',
-              size: 12,
-            ),
+            if (hasPlatformModel) ...[
+              label(
+                'Value ${money(node['publishedFairValue'])}',
+                '估值 ${money(node['publishedFairValue'])}',
+                size: 12,
+                color: p.accent,
+              ),
+              label(
+                change == null
+                    ? 'Prior model not comparable'
+                    : '${change >= 0 ? '+' : ''}${pct(change)} vs prior node',
+                change == null
+                    ? '前期模型不可比较'
+                    : '较前期模型 ${change >= 0 ? '+' : ''}${pct(change)}',
+                size: 12,
+              ),
+            ],
           ],
         ),
         label(
@@ -708,32 +1512,54 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     ]);
   }
 
-  Widget researchNextStep() => card([
-    label('YOUR NEXT STEP', '下一步研究', size: 10, color: p.accent),
-    const SizedBox(height: 10),
-    Text(w('Does the price make sense?', '这个价格合理吗？'), style: deskHeading(18)),
-    const SizedBox(height: 10),
-    label(
-      assumptions.isEmpty
-          ? 'Read the published method, inspect the evidence, then save a dated watch.'
-          : 'Test growth and cash-flow assumptions, then save your own scenario.',
-      assumptions.isEmpty ? '查看平台方法，核对证据，再保存带日期的观察。' : '检验增长与现金流假设，再保存你自己的情景。',
-      size: 12,
-    ),
-    const SizedBox(height: 14),
-    button(
-      assumptions.isEmpty ? 'Inspect published model' : 'Set my assumptions',
-      assumptions.isEmpty ? '检查平台模型' : '设定我的假设',
-      () => selectSection('value'),
-      primary: true,
-    ),
-    const SizedBox(height: 8),
-    button(
-      'Review financial evidence',
-      '检查财务证据',
-      () => selectSection('financials'),
-    ),
-  ]);
+  Widget researchNextStep() {
+    final hasPlatformModel = researchHasPlatformModel;
+    return card([
+      label('YOUR NEXT STEP', '下一步研究', size: 10, color: p.accent),
+      const SizedBox(height: 10),
+      Text(
+        hasPlatformModel
+            ? w('Does the price make sense?', '这个价格合理吗？')
+            : w('What evidence closes the gap?', '还缺什么证据？'),
+        style: deskHeading(18),
+      ),
+      const SizedBox(height: 10),
+      label(
+        hasPlatformModel
+            ? assumptions.isEmpty
+                  ? 'Read the published method, inspect the evidence, then save a dated watch.'
+                  : 'Test growth and cash-flow assumptions, then save your own scenario.'
+            : 'Review the reported facts and source coverage, then save a dated research question. No valuation is inferred.',
+        hasPlatformModel
+            ? assumptions.isEmpty
+                  ? '查看平台方法，核对证据，再保存带日期的观察。'
+                  : '检验增长与现金流假设，再保存你自己的情景。'
+            : '检查已报告事实和来源覆盖，再保存带日期的研究问题；系统不会推断不存在的估值。',
+        size: 12,
+      ),
+      const SizedBox(height: 14),
+      button(
+        hasPlatformModel
+            ? assumptions.isEmpty
+                  ? 'Inspect published model'
+                  : 'Set my assumptions'
+            : 'Review financial evidence',
+        hasPlatformModel
+            ? assumptions.isEmpty
+                  ? '检查平台模型'
+                  : '设定我的假设'
+            : '检查财务证据',
+        () => selectSection(hasPlatformModel ? 'value' : 'financials'),
+        primary: true,
+      ),
+      const SizedBox(height: 8),
+      button(
+        hasPlatformModel ? 'Review financial evidence' : 'Save research note',
+        hasPlatformModel ? '检查财务证据' : '保存研究记录',
+        () => selectSection(hasPlatformModel ? 'financials' : 'records'),
+      ),
+    ]);
+  }
 
   Widget researchMetricStrip() => LayoutBuilder(
     builder: (_, bounds) => Wrap(
@@ -988,6 +1814,24 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
 
   Widget researchModelCard() {
     final published = asMap(company?['published']);
+    if (!researchHasPlatformModel) {
+      return card([
+        Text(w('Model coverage', '模型覆盖'), style: deskHeading(18)),
+        const SizedBox(height: 12),
+        label(
+          'No platform valuation is stored for this company at the research cutoff. Financial facts, filings, holdings and research records remain available; no value or model gap is inferred.',
+          '研究截止日暂无该公司的平台估值。财务事实、公告、持仓和研究记录仍可使用；系统不会推断估值或模型价差。',
+          size: 12,
+          color: p.secondary,
+        ),
+        const SizedBox(height: 12),
+        button(
+          'Save a research question',
+          '保存研究问题',
+          () => selectSection('records'),
+        ),
+      ]);
+    }
     return card([
       Text(w('Know what the model says', '理解模型口径'), style: deskHeading(18)),
       const SizedBox(height: 14),
@@ -1043,6 +1887,8 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     ]);
   }
 
+  // Retained for replaying legacy read-only decision records.
+  // ignore: unused_element
   Widget researchReadOnlyDecision() => card([
     title('Keep the idea. Do not force a decision.', '保留线索，不强行决策。'),
     label(

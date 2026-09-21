@@ -19,6 +19,8 @@ List<Map<String, dynamic>> portfolioAllocationSlices(
               'weight': r['weight'],
               if (r['value'] != null) 'value': r['value'],
               if (r['category'] != null) 'category': r['category'],
+              if (r['quantity'] != null) 'quantity': r['quantity'],
+              if (r['perShare'] != null) 'perShare': r['perShare'],
               if (r['ticker'] != null && nameKey != 'ticker')
                 'ticker': r['ticker'],
             },
@@ -89,7 +91,7 @@ class PortfolioAllocationChart extends StatefulWidget {
 
 class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
   bool sectors = false;
-  bool income = false, incomeTypes = true;
+  bool income = false, incomeTypes = false;
   String? selected;
   String? hovered;
   String w(String en, String zh) => context.tr(zh, en);
@@ -105,9 +107,7 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
   @override
   Widget build(BuildContext context) {
     final p = widget.palette;
-    final received = asMap(
-      asMap(asMap(widget.group['home'])['history'])['income'],
-    );
+    final received = asMap(asMap(widget.group['home'])['trailingDividends']);
     final slices = portfolioAllocationSlices(
       income
           ? received['status'] == 'ready'
@@ -163,6 +163,12 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
       '${(number(s['weight']) * 100).toStringAsFixed(1)}%',
       if (!widget.hideAmounts && nullableNumber(s['value']) != null)
         '${widget.group['currency']} ${formatNumber(number(s['value']))}',
+      if (income &&
+          !incomeTypes &&
+          !widget.hideAmounts &&
+          nullableNumber(s['quantity']) != null &&
+          nullableNumber(s['perShare']) != null)
+        '${formatNumber(number(s['quantity']))} ${w('current shares', '当前股数')} × USD ${number(s['perShare']).toStringAsFixed(2)} ${w('TTM / share', '过去12个月每股')}',
     ].join(' · ');
     final selectedWeight = active >= 0
         ? number(slices[active]['weight'])
@@ -221,7 +227,7 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
                         active >= 0
                             ? label(slices[active])
                             : income
-                            ? w('Income received', '已收收入')
+                            ? w('Estimated TTM dividends', '估算过去12个月股息')
                             : w('Top 5', '前五大'),
                         maxLines: 2,
                         textAlign: TextAlign.center,
@@ -231,7 +237,7 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
                       FittedBox(
                         child: Text(
                           income && active < 0 && !widget.hideAmounts
-                              ? formatNumber(number(received['grossReceived']))
+                              ? formatNumber(number(received['annualAmount']))
                               : selectedWeight == null
                               ? '—'
                               : '${(selectedWeight * 100).toStringAsFixed(1)}%',
@@ -349,7 +355,7 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
               const SizedBox(width: 8),
               ChoiceChip(
                 key: const ValueKey('allocation-income'),
-                label: Text(w('Dividends & interest', '股息与利息')),
+                label: Text(w('TTM dividends', '过去12个月股息')),
                 selected: income,
                 onSelected: (_) => setState(() {
                   income = true;
@@ -363,7 +369,9 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
               ChoiceChip(
                 key: const ValueKey('allocation-breakdown-primary'),
                 label: Text(
-                  income ? w('Income sources', '收入来源') : w('Holdings', '持仓'),
+                  income
+                      ? w('Dividend holdings', '股息来源持仓')
+                      : w('Holdings', '持仓'),
                 ),
                 selected: income ? !incomeTypes : !sectors,
                 onSelected: (_) => setState(() {
@@ -380,7 +388,7 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
               ChoiceChip(
                 key: const ValueKey('allocation-breakdown-secondary'),
                 label: Text(
-                  income ? w('Income types', '收入类型') : w('Sectors', '行业'),
+                  income ? w('Income type', '收入类型') : w('Sectors', '行业'),
                 ),
                 selected: income ? incomeTypes : sectors,
                 onSelected: (_) => setState(() {
@@ -400,8 +408,8 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
           const SizedBox(height: 12),
           Text(
             w(
-              'Report period · ${text(received['fromDate'], '—')} → ${text(received['toDate'], '—')}',
-              '报告期间 · ${text(received['fromDate'], '—')} → ${text(received['toDate'], '—')}',
+              'Sharadar trailing 12 months · ${text(received['fromDate'], '—')} → ${text(received['toDate'], '—')} · ${text(received['coveredHoldings'], '—')}/${text(received['eligibleHoldings'], '—')} holdings covered',
+              'Sharadar 过去12个月 · ${text(received['fromDate'], '—')} → ${text(received['toDate'], '—')} · 覆盖 ${text(received['coveredHoldings'], '—')}/${text(received['eligibleHoldings'], '—')} 项持仓',
             ),
             style: TextStyle(color: p.muted, fontSize: 11),
           ),
@@ -414,12 +422,12 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
               income
                   ? received['status'] == 'ready'
                         ? w(
-                            'No positive income receipts in this report period.',
-                            '此报告期间没有正数收入记录。',
+                            'No positive Sharadar dividend events were reported in the trailing 12 months.',
+                            'Sharadar 在过去12个月未记录正数股息事件。',
                           )
                         : w(
-                            'Received-income history is unavailable. Add Detailed Cash Transactions (dividends and interest) to the IBKR Activity Flex report. Sharadar corporate dividend events cannot prove your cash receipt, withholding or FX, so they are kept separate and positions are never used to estimate income.',
-                            '尚无实际到账收入历史。请在 IBKR Activity Flex 报告中加入 Detailed Cash Transactions（股息及利息）。Sharadar 的公司分红事件不能证明你的实际到账、预扣税或汇率，因此会与账户收入分开，也不会用仓位推算收入。',
+                            'Trailing dividend facts are unavailable for these holdings. No legacy provider or broker receipt was substituted.',
+                            '这些持仓缺少过去12个月股息事实，未使用旧数据源或券商到账记录替代。',
                           )
                   : w('Allocation data is not available.', '暂无可用仓位结构数据。'),
               style: TextStyle(color: p.muted),
@@ -505,8 +513,8 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
         Text(
           income
               ? w(
-                  'Positive cash receipts before tax, fees and reversals; includes income from former holdings. Not a yield or forecast. Bond interest may include traded accrued interest.',
-                  '税费及冲正前的正数现金收入，包含已清仓资产的收入；不是收益率或预测。债券利息可能包含交易应计利息。',
+                  'Estimate = current verified shares × the sum of Sharadar split-adjusted dividend-per-share events over the trailing 12 months. Ex-date basis; not broker cash received, future dividends, withholding tax or FX.',
+                  '估算值 = 当前已核验股数 × Sharadar 过去12个月拆股调整后每股股息事件之和。按除息日统计，不代表券商实际到账、未来股息、预扣税或汇率结果。',
                 )
               : w(
                   'Positive non-cash exposure. Cash and shorts are separate.',
@@ -525,6 +533,14 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
                     'Income reversals excluded: ${widget.group['currency']} ${formatNumber(number(received['reversals']))}',
                     '未计入图中的收入冲正：${widget.group['currency']} ${formatNumber(number(received['reversals']))}',
                   ),
+            style: TextStyle(color: p.secondary, fontSize: 11),
+          ),
+        if (income && asList(received['unavailableTickers']).isNotEmpty)
+          Text(
+            w(
+              'Not covered: ${asList(received['unavailableTickers']).map((row) => text(row)).join(', ')}',
+              '未覆盖：${asList(received['unavailableTickers']).map((row) => text(row)).join('、')}',
+            ),
             style: TextStyle(color: p.secondary, fontSize: 11),
           ),
         if (sectors && !income)

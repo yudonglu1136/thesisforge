@@ -174,6 +174,56 @@ class RepositoryTest(unittest.TestCase):
             self.assertIsNone(fact['payment_date'])
             self.assertFalse(fact['cash_accounting_ready'])
 
+    def test_fundamental_research_is_bounded_pit_and_never_mixes_restated_rows(self):
+        self.put('fundamentals', [
+            ['NEW', 'ARQ', '2024-05-01', '2024-03-31', 100, 10, '2024-05-01'],
+            ['NEW', 'ARQ', '2024-05-03', '2024-03-31', 101, 11, '2024-05-03'],
+            ['NEW', 'ARQ', '2024-08-01', '2024-06-30', 120, 13, '2024-08-01'],
+            ['NEW', 'ARY', '2024-02-01', '2023-12-31', 400, 40, '2024-02-01'],
+            ['NEW', 'MRY', '2023-12-31', '2023-12-31', 999, 99, '2026-01-01'],
+        ], scope='verified_full_bulk')
+        with FactRepository(self.store.root) as repo:
+            early = repo.get_fundamental_research('NEW', '2024-05-02')
+            self.assertEqual(early['quarterly'][0]['revenue'], 100)
+            current = repo.get_fundamental_research('NEW', '2024-09-01', quarters=4, years=2)
+            self.assertEqual([row['revenue'] for row in current['quarterly']], [120, 101])
+            self.assertEqual([row['revenue'] for row in current['annual']], [400])
+            self.assertEqual(current['restated_basis'], 'withheld_in_historical_pit; MRQ/MRY are not mixed with as-reported facts')
+            self.assertEqual(current['quarterly'][0]['pit_basis'], 'as_reported_filing_date_day_precision')
+            with self.assertRaises(ValueError):
+                repo.get_fundamental_research('NEW', '2024-09-01', quarters=100)
+
+    def test_fundamental_company_index_is_pit_bounded_and_model_independent(self):
+        self.put('fundamentals', [
+            ['NEW', 'ARQ', '2024-05-01', '2024-03-31', 100, 10, '2024-05-01'],
+            ['NEW', 'ARQ', '2024-08-01', '2024-06-30', 120, 13, '2024-08-01'],
+        ], scope='verified_full_bulk')
+        with FactRepository(self.store.root) as repo:
+            early = repo.get_fundamental_company_index('2024-05-02')
+            self.assertEqual(early['version'], 'fact-fundamental-company-index-v1')
+            self.assertEqual(early['companies'][0]['available_at'], date(2024, 5, 1))
+            self.assertEqual(early['companies'][0]['period_end'], date(2024, 3, 31))
+            current = repo.get_fundamental_company_index('2024-09-01')
+            self.assertEqual(current['companies'][0]['period_end'], date(2024, 6, 30))
+
+    def test_fundamental_change_metrics_preserve_missing_and_semantic_names(self):
+        points = []
+        for rank in range(1, 9):
+            points.append({'quarter_rank': rank, 'revenue': 100 - rank,
+                           'opinc': 20 - rank, 'ebit': 21 - rank,
+                           'netinccmn': 10 - rank, 'ncfo': 15 - rank,
+                           'capex': -(5 + rank), 'fcf': 9 - rank,
+                           'sbcomp': 2, 'ncfcommon': -3, 'ncfdiv': -1,
+                           'intexp': -1, 'shareswadil': 100 + rank,
+                           'invcap': 200 + rank})
+        metrics = FactRepository._quarter_metrics(points)
+        self.assertIn('netCommonFinancing', metrics)
+        self.assertIn('preTaxCapitalReturn', metrics)
+        self.assertNotIn('grossBuybacks', metrics)
+        self.assertNotIn('roic', metrics)
+        points[2]['fcf'] = None
+        self.assertIsNone(FactRepository._quarter_metrics(points)['fcfMargin'])
+
     def test_official_master_routes_funds_not_provider_fallback(self):
         self.put('tickers', [['funds', 30, 'ETF', '', '2024-06-01', 'Index fund', '2024-06-01', '', '']])
         self.put('funds', [['ETF', '2024-01-02', 50, 49, 50, '2024-01-03']])

@@ -8,12 +8,17 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
       'user_defined_cashflow_path';
 
   void copyFirstForecastYear() {
-    final firstGrowth = editedRatio(growth.first),
-        firstMargin = editedRatio(margin.first);
-    if (firstGrowth == null || firstMargin == null) return;
-    for (var i = 1; i < 5; i++) {
+    final firstGrowth = editedRatio(growth.first);
+    if (firstGrowth == null) return;
+    final paths = personalDcfMethod == 'operating_fcff'
+        ? [ebitMargin, cashTaxRate, dnaMargin, capexMargin, nwcInvestmentMargin]
+        : [margin];
+    if (paths.any((path) => editedRatio(path.first) == null)) return;
+    for (var i = 1; i < forecastHorizon; i++) {
       displayRatio(growth[i], firstGrowth);
-      displayRatio(margin[i], firstMargin);
+      for (final path in paths) {
+        displayRatio(path[i], editedRatio(path.first)!);
+      }
     }
     syncRevenueInputs();
     scheduleCalculation();
@@ -170,34 +175,87 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
   }
 
   String? valuationInputProblem() {
-    for (var i = 0; i < 5; i++) {
-      final g = editedRatio(growth[i]), m = editedRatio(margin[i]);
+    for (var i = 0; i < forecastHorizon; i++) {
+      final g = editedRatio(growth[i]);
       if (g == null || !g.isFinite || g <= -.95 || g > 2) {
         return w(
           'Year ${i + 1}: enter revenue growth above −95% and no more than 200%. Blank or invalid revenue is not zero.',
           '第 ${i + 1} 年：收入增长率须大于 −95%、不超过 200%。空白或无效收入不视为零。',
         );
       }
-      if (m == null || !m.isFinite || m <= 0 || m > .9) {
-        return w(
-          'Year ${i + 1}: FCFE margin must be above 0% and no more than 90%. This model does not support negative-FCFE turnaround cases.',
-          '第 ${i + 1} 年：FCFE 率须大于 0%、不超过 90%。本模型不支持负现金流扭亏情景。',
-        );
+      if (personalDcfMethod == 'parent_fcfe') {
+        final m = editedRatio(margin[i]);
+        if (m == null || !m.isFinite || m < -.9 || m > .9) {
+          return w(
+            'Year ${i + 1}: FCFE margin must be between −90% and 90%. Negative explicit cash flow is preserved as a financing need.',
+            '第 ${i + 1} 年：FCFE 率须在 −90% 至 90% 之间。显性期负现金流会保留并列为融资需求。',
+          );
+        }
+      } else {
+        final values = [
+          editedRatio(ebitMargin[i]),
+          editedRatio(cashTaxRate[i]),
+          editedRatio(dnaMargin[i]),
+          editedRatio(capexMargin[i]),
+          editedRatio(nwcInvestmentMargin[i]),
+        ];
+        if (values.any((v) => v == null || !v.isFinite)) {
+          return w(
+            'Year ${i + 1}: every operating-driver input is required; a blank value is not zero.',
+            '第 ${i + 1} 年：所有经营驱动参数都必须填写；空白不视为零。',
+          );
+        }
+        final ranges = [
+          (-1.0, 1.0),
+          (0.0, .6),
+          (0.0, 1.0),
+          (0.0, 2.0),
+          (-1.0, 1.0),
+        ];
+        for (var j = 0; j < values.length; j++) {
+          if (values[j]! < ranges[j].$1 || values[j]! > ranges[j].$2) {
+            return w(
+              'Year ${i + 1}: an operating-driver assumption is outside the disclosed supported range.',
+              '第 ${i + 1} 年：经营驱动假设超出已披露的支持范围。',
+            );
+          }
+        }
       }
     }
-    return valuationRateProblem(ke) ?? valuationRateProblem(terminal);
+    if (personalDcfMethod == 'operating_fcff' &&
+        [
+          netDebt,
+          nci,
+          nonOperatingAssets,
+        ].any((c) => editedAmount(c) == null)) {
+      return w(
+        'Complete the equity bridge. Blank net debt, NCI or non-operating assets are not assumed to be zero.',
+        '请完整填写股权价值桥。净债务、少数股东权益或非经营资产留空时不会被视为零。',
+      );
+    }
+    return valuationRateProblem(
+          personalDcfMethod == 'operating_fcff' ? wacc : ke,
+        ) ??
+        valuationRateProblem(terminal);
   }
 
   String? valuationRateProblem(TextEditingController controller) {
-    final discount = editedRatio(ke), perpetual = editedRatio(terminal);
-    if (controller == ke) {
+    final discount = editedRatio(
+          personalDcfMethod == 'operating_fcff' ? wacc : ke,
+        ),
+        perpetual = editedRatio(terminal);
+    if (controller == ke || controller == wacc) {
       if (discount == null ||
           !discount.isFinite ||
           discount < .04 ||
           discount > .30) {
         return w(
-          'Cost of equity must be between 4% and 30%.',
-          '股权资本成本须在 4%–30% 之间。',
+          personalDcfMethod == 'operating_fcff'
+              ? 'WACC must be between 4% and 30%.'
+              : 'Cost of equity must be between 4% and 30%.',
+          personalDcfMethod == 'operating_fcff'
+              ? 'WACC 须在 4%–30% 之间。'
+              : '股权资本成本须在 4%–30% 之间。',
         );
       }
       return null;
@@ -223,7 +281,9 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
     final awaitingInputs =
         independentValuation &&
         growth.every((c) => c.text.isEmpty) &&
-        margin.every((c) => c.text.isEmpty);
+        (personalDcfMethod == 'operating_fcff'
+            ? ebitMargin.every((c) => c.text.isEmpty)
+            : margin.every((c) => c.text.isEmpty));
     final message = problem != null
         ? (awaitingInputs
               ? w(
@@ -284,7 +344,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
 
   void syncRevenueInputs({int from = 0}) {
     double? value = nullableNumber(asMap(company?['base'])['revenueM']);
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < forecastHorizon; i++) {
       final rate = editedRatio(growth[i]);
       value = value != null && rate != null ? value * (1 + rate) : null;
       if (i >= from) revenue[i].text = value?.toStringAsFixed(2) ?? '';
@@ -304,6 +364,111 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
       growth[index].clear();
     }
     syncRevenueInputs(from: index + 1);
+    scheduleCalculation();
+  }
+
+  void setForecastHorizon(int years) {
+    if (years == forecastHorizon || (years != 5 && years != 10)) return;
+    if (years == 10) {
+      final lastGrowth =
+          editedRatio(growth[4]) ?? editedRatio(terminal) ?? .025;
+      final terminalGrowth = editedRatio(terminal) ?? .025;
+      final paths = personalDcfMethod == 'operating_fcff'
+          ? [
+              ebitMargin,
+              cashTaxRate,
+              dnaMargin,
+              capexMargin,
+              nwcInvestmentMargin,
+            ]
+          : [margin];
+      for (var i = 5; i < 10; i++) {
+        final step = (i - 4) / 5;
+        if (growth[i].text.isEmpty) {
+          displayRatio(
+            growth[i],
+            lastGrowth + (terminalGrowth - lastGrowth) * step,
+          );
+        }
+        for (final path in paths) {
+          if (path[i].text.isEmpty) {
+            displayRatio(path[i], editedRatio(path[4]) ?? 0);
+          }
+        }
+      }
+    }
+    updateUI(() => forecastHorizon = years);
+    syncRevenueInputs();
+    scheduleCalculation();
+  }
+
+  double? researchMetricValue(String key) {
+    for (final row in asList(company?['metrics'])) {
+      if (row['key'] == key) return nullableNumber(row['value']);
+    }
+    return nullableNumber(asMap(asMap(company?['snapshot'])['metrics'])[key]);
+  }
+
+  void switchPersonalDcfMethod(String next) {
+    if (next == personalDcfMethod) return;
+    if (personalDcfMethod == 'operating_fcff') {
+      fcffAssumptionsCache = edited();
+    } else {
+      fcfeAssumptionsCache = edited();
+    }
+    Map<String, dynamic> target;
+    if (next == 'operating_fcff') {
+      final cached = fcffAssumptionsCache;
+      if (cached != null) {
+        target = cached;
+      } else {
+        final sourceGrowth = growth
+            .take(forecastHorizon)
+            .map((c) => editedRatio(c) ?? .025)
+            .toList();
+        final op = (researchMetricValue('operatingMargin') ?? .15).clamp(
+          -1.0,
+          1.0,
+        );
+        final base = asMap(company?['base']);
+        target = {
+          'method': 'operating_fcff',
+          'discountType': 'WACC',
+          'ownership': 'enterprise',
+          'timing': 'year_end',
+          'horizonYears': forecastHorizon,
+          'growth': sourceGrowth,
+          'ebitMargin': List.filled(forecastHorizon, op),
+          'cashTaxRate': List.filled(forecastHorizon, .25),
+          'dnaMargin': List.filled(forecastHorizon, .04),
+          'capexMargin': List.filled(forecastHorizon, .05),
+          'nwcInvestmentMargin': List.filled(forecastHorizon, .01),
+          'wacc': .10,
+          'g': editedRatio(terminal) ?? .025,
+          'netDebtM': nullableNumber(base['netDebtM']) ?? 0,
+          'nciM': nullableNumber(base['nciM']) ?? 0,
+          'nonOperatingAssetsM':
+              nullableNumber(base['nonOperatingAssetsM']) ?? 0,
+        };
+      }
+    } else {
+      target =
+          fcfeAssumptionsCache ?? asMap(asMap(company?['templates'])['Base']);
+    }
+    calculationTimer?.cancel();
+    calculationSerial++;
+    updateUI(() {
+      assumptions = Map<String, dynamic>.from(target);
+      personalDcfMethod = next;
+      reverseVariable = 'growth';
+      template = 'Custom';
+      scenarioId = null;
+      ownership = false;
+      draftDirty = true;
+      calculation = null;
+      notice = null;
+    });
+    fillAssumptions();
     scheduleCalculation();
   }
 
@@ -422,13 +587,57 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                     ),
                     const SizedBox(height: 8),
                     label(
-                      'Reported TTM CFO − capex: ${asMap(company?["base"])["fcfM"] == null ? '—' : formatNumber(number(asMap(company?["base"])["fcfM"]))} ${text(company?["currency"])}m · context only, not verified parent FCFE. Ke 10% / g 2.5% are editable illustrative defaults.',
-                      '报告 TTM CFO − 资本开支：${asMap(company?["base"])["fcfM"] == null ? '—' : formatNumber(number(asMap(company?["base"])["fcfM"]))} ${text(company?["currency"])} 百万，仅作背景，并非已验证母公司 FCFE。Ke 10% / g 2.5% 为可修改的示例参数。',
+                      personalDcfMethod == 'operating_fcff'
+                          ? 'Operating drivers and the enterprise-to-equity bridge are editable assumptions. WACC 9% / g 2.5% are illustrative defaults; a zero bridge input means “assumed zero pending evidence,” not a known fact.'
+                          : 'Reported TTM CFO − capex: ${asMap(company?["base"])["fcfM"] == null ? '—' : formatNumber(number(asMap(company?["base"])["fcfM"]))} ${text(company?["currency"])}m · context only, not verified parent FCFE. Ke 10% / g 2.5% are editable illustrative defaults.',
+                      personalDcfMethod == 'operating_fcff'
+                          ? '经营驱动和企业价值到股权价值桥均为可修改假设。WACC 9% / g 2.5% 是示例默认值；桥接项为零表示“缺少证据时暂按零假设”，并非已知事实。'
+                          : '报告 TTM CFO − 资本开支：${asMap(company?["base"])["fcfM"] == null ? '—' : formatNumber(number(asMap(company?["base"])["fcfM"]))} ${text(company?["currency"])} 百万，仅作背景，并非已验证母公司 FCFE。Ke 10% / g 2.5% 为可修改的示例参数。',
                       size: 12,
                     ),
                   ],
                 ),
               ),
+            Container(
+              key: const ValueKey('personal-dcf-method-selector'),
+              padding: const EdgeInsets.all(14),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: p.panel,
+                border: Border.all(color: p.border),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  label('Cash-flow model', '现金流模型', color: p.text),
+                  ChoiceChip(
+                    key: const ValueKey('dcf-method-fcfe'),
+                    label: Text(w('Simplified FCFE', '简化 FCFE')),
+                    selected: personalDcfMethod == 'parent_fcfe',
+                    onSelected: (_) => switchPersonalDcfMethod('parent_fcfe'),
+                  ),
+                  ChoiceChip(
+                    key: const ValueKey('dcf-method-fcff'),
+                    label: Text(w('Operating FCFF', '经营驱动 FCFF')),
+                    selected: personalDcfMethod == 'operating_fcff',
+                    onSelected: (_) =>
+                        switchPersonalDcfMethod('operating_fcff'),
+                  ),
+                  label(
+                    personalDcfMethod == 'operating_fcff'
+                        ? 'Revenue → EBIT → cash tax → NOPAT + D&A − capex − ΔNWC → FCFF → enterprise-to-equity bridge.'
+                        : 'Revenue × parent-common FCFE margin. This mode does not manufacture an EBIT bridge.',
+                    personalDcfMethod == 'operating_fcff'
+                        ? '收入 → EBIT → 现金税 → NOPAT + 折旧摊销 − 资本开支 − ΔNWC → FCFF → 企业价值到股权价值桥。'
+                        : '收入 × 母公司普通股 FCFE 率。本模式不会凭空生成 EBIT 桥。',
+                    size: 11,
+                  ),
+                ],
+              ),
+            ),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
               decoration: BoxDecoration(
@@ -678,6 +887,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
   }
 
   Widget valuationForecastGrid(Map<String, dynamic> result) {
+    final operating = personalDcfMethod == 'operating_fcff';
     final base = asMap(company?['base']);
     final snap = asMap(company?['snapshot']);
     final forecasts = asList(result['forecast']);
@@ -725,17 +935,39 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
         ),
       ],
     );
-    final rowNames = [
-      (
-        w('Forecast driver', '预测指标'),
-        text(company?['currency']) + w(' millions', ' 百万'),
-      ),
-      (w('Revenue', '营业收入'), w('Editable amount', '可编辑金额')),
-      (w('Revenue growth', '收入增长率'), w('Linked to revenue', '与收入联动')),
-      (w('FCFE margin', 'FCFE 率'), w('Parent common · %', '母公司普通股 · %')),
-      (w('Free cash flow', '自由现金流'), w('Revenue × margin', '收入 × 现金流率')),
-      (w('Present value', '折现现值'), w('At your cost of equity', '按你的股权成本折现')),
-    ];
+    final rowNames = operating
+        ? [
+            (
+              w('Forecast driver', '预测指标'),
+              text(company?['currency']) + w(' millions', ' 百万'),
+            ),
+            (w('Revenue', '营业收入'), w('Editable amount', '可编辑金额')),
+            (w('Revenue growth', '收入增长率'), w('Linked to revenue', '与收入联动')),
+            (w('EBIT margin', 'EBIT 利润率'), w('Operating assumption', '经营假设')),
+            (
+              w('Cash tax rate', '现金税率'),
+              w('Applied to positive EBIT', '仅作用于正 EBIT'),
+            ),
+            (w('D&A / revenue', '折旧摊销 / 收入'), w('Non-cash add-back', '非现金加回')),
+            (w('Capex / revenue', '资本开支 / 收入'), w('Cash investment', '现金投入')),
+            (w('ΔNWC / revenue', 'ΔNWC / 收入'), w('Reinvestment path', '再投资路径')),
+            (w('FCFF', 'FCFF'), w('Deterministic bridge', '确定性计算桥')),
+            (w('Present value', '折现现值'), w('At your WACC', '按你的 WACC 折现')),
+          ]
+        : [
+            (
+              w('Forecast driver', '预测指标'),
+              text(company?['currency']) + w(' millions', ' 百万'),
+            ),
+            (w('Revenue', '营业收入'), w('Editable amount', '可编辑金额')),
+            (w('Revenue growth', '收入增长率'), w('Linked to revenue', '与收入联动')),
+            (w('FCFE margin', 'FCFE 率'), w('Parent common · %', '母公司普通股 · %')),
+            (w('Free cash flow', '自由现金流'), w('Revenue × margin', '收入 × 现金流率')),
+            (
+              w('Present value', '折现现值'),
+              w('At your cost of equity', '按你的股权成本折现'),
+            ),
+          ];
     return Container(
       decoration: BoxDecoration(
         color: p.panel,
@@ -757,7 +989,10 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        w('Five-year forecast', '五年预测'),
+                        w(
+                          '$forecastHorizon-year forecast',
+                          '$forecastHorizon 年预测',
+                        ),
                         style: TextStyle(
                           color: p.text,
                           fontSize: 18,
@@ -805,6 +1040,13 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
+                for (final years in [5, 10])
+                  ChoiceChip(
+                    key: ValueKey('forecast-horizon-$years'),
+                    label: Text('${years}Y'),
+                    selected: forecastHorizon == years,
+                    onSelected: (_) => setForecastHorizon(years),
+                  ),
                 label(
                   worksheetMemoryEnabled
                       ? '1  Adjust the filled assumptions   →   2  See your DCF change   →   3  Edits save automatically'
@@ -818,7 +1060,17 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                   key: const ValueKey('forecast-copy-year-one'),
                   onPressed:
                       editedRatio(growth.first) != null &&
-                          editedRatio(margin.first) != null
+                          (operating
+                              ? [
+                                  ebitMargin,
+                                  cashTaxRate,
+                                  dnaMargin,
+                                  capexMargin,
+                                  nwcInvestmentMargin,
+                                ].every(
+                                  (path) => editedRatio(path.first) != null,
+                                )
+                              : editedRatio(margin.first) != null)
                       ? copyFirstForecastYear
                       : null,
                   icon: const Icon(Icons.content_copy, size: 15),
@@ -832,7 +1084,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
               final labelWidth = bounds.maxWidth < 480 ? 116.0 : 156.0;
               final dataWidth = math.max(
                 bounds.maxWidth - labelWidth,
-                690.0 * textScale,
+                (forecastHorizon == 10 ? 1280.0 : 690.0) * textScale,
               );
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -916,7 +1168,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                                     actual: true,
                                     header: true,
                                   ),
-                                  for (var i = 0; i < 5; i++)
+                                  for (var i = 0; i < forecastHorizon; i++)
                                     cell(
                                       heading(
                                         'Model year ${i + 1}',
@@ -935,7 +1187,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                                     plain(amount(base['revenueM'])),
                                     actual: true,
                                   ),
-                                  for (var i = 0; i < 5; i++)
+                                  for (var i = 0; i < forecastHorizon; i++)
                                     cell(
                                       valuationCell(
                                         revenue[i],
@@ -949,7 +1201,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                               TableRow(
                                 children: [
                                   cell(plain('—'), actual: true),
-                                  for (var i = 0; i < 5; i++)
+                                  for (var i = 0; i < forecastHorizon; i++)
                                     cell(
                                       valuationCell(growth[i], i, 'growth', () {
                                         syncRevenueInputs();
@@ -958,31 +1210,69 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                                     ),
                                 ],
                               ),
-                              TableRow(
-                                children: [
-                                  cell(plain('—'), actual: true),
-                                  for (var i = 0; i < 5; i++)
-                                    cell(
-                                      valuationCell(
-                                        margin[i],
-                                        i,
-                                        'FCFE margin',
-                                        scheduleCalculation,
+                              if (!operating)
+                                TableRow(
+                                  children: [
+                                    cell(plain('—'), actual: true),
+                                    for (var i = 0; i < forecastHorizon; i++)
+                                      cell(
+                                        valuationCell(
+                                          margin[i],
+                                          i,
+                                          'FCFE margin',
+                                          scheduleCalculation,
+                                        ),
                                       ),
-                                    ),
-                                ],
-                              ),
+                                  ],
+                                ),
+                              if (operating)
+                                for (final row in [
+                                  (
+                                    ebitMargin,
+                                    'EBIT margin',
+                                    researchMetricValue('operatingMargin'),
+                                  ),
+                                  (cashTaxRate, 'cash tax rate', null),
+                                  (dnaMargin, 'D&A / revenue', null),
+                                  (capexMargin, 'capex / revenue', null),
+                                  (nwcInvestmentMargin, 'ΔNWC / revenue', null),
+                                ])
+                                  TableRow(
+                                    children: [
+                                      cell(
+                                        plain(
+                                          row.$3 == null ? '—' : pct(row.$3),
+                                        ),
+                                        actual: true,
+                                      ),
+                                      for (var i = 0; i < forecastHorizon; i++)
+                                        cell(
+                                          valuationCell(
+                                            row.$1[i],
+                                            i,
+                                            row.$2,
+                                            scheduleCalculation,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
                               TableRow(
                                 children: [
                                   cell(
-                                    plain(amount(base['fcfM'])),
+                                    plain(
+                                      operating ? '—' : amount(base['fcfM']),
+                                    ),
                                     actual: true,
                                   ),
-                                  for (var i = 0; i < 5; i++)
+                                  for (var i = 0; i < forecastHorizon; i++)
                                     cell(
                                       plain(
                                         forecasts.length > i
-                                            ? amount(forecasts[i]['fcfeM'])
+                                            ? amount(
+                                                forecasts[i][operating
+                                                    ? 'fcffM'
+                                                    : 'fcfeM'],
+                                              )
                                             : '—',
                                         color: p.text,
                                       ),
@@ -992,7 +1282,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                               TableRow(
                                 children: [
                                   cell(plain('—'), actual: true),
-                                  for (var i = 0; i < 5; i++)
+                                  for (var i = 0; i < forecastHorizon; i++)
                                     cell(
                                       plain(
                                         forecasts.length > i
@@ -1025,8 +1315,12 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                 ),
                 const SizedBox(height: 6),
                 label(
-                  'Five annual periods from the cutoff, paid at each period end — not reported fiscal years. TTM cash flow is CFO − capex, not verified parent FCFE.',
-                  '从基准日起的五个年度期末折现，并非公司已报告财年。实际 TTM 现金流为 CFO 减资本开支，尚非已核验的母公司 FCFE。',
+                  operating
+                      ? '$forecastHorizon annual periods from the cutoff, paid at each period end. The editable operating paths are analyst assumptions, not issuer guidance.'
+                      : '$forecastHorizon annual periods from the cutoff, paid at each period end — not reported fiscal years. TTM cash flow is CFO − capex, not verified parent FCFE.',
+                  operating
+                      ? '从基准日起的 $forecastHorizon 个年度期末折现。可编辑经营路径属于分析假设，并非公司指引。'
+                      : '从基准日起的 $forecastHorizon 个年度期末折现，并非公司已报告财年。实际 TTM 现金流为 CFO 减资本开支，尚非已核验的母公司 FCFE。',
                   size: 11,
                 ),
               ],
@@ -1047,9 +1341,16 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
     final en = 'Year ${year + 1} $metric${amount ? ' m' : ' %'}';
     final metricZh = amount
         ? '收入 百万'
-        : metric == 'growth'
-        ? '增长 %'
-        : 'FCFE 率 %';
+        : {
+                'growth': '增长 %',
+                'FCFE margin': 'FCFE 率 %',
+                'EBIT margin': 'EBIT 利润率 %',
+                'cash tax rate': '现金税率 %',
+                'D&A / revenue': '折旧摊销 / 收入 %',
+                'capex / revenue': '资本开支 / 收入 %',
+                'ΔNWC / revenue': 'ΔNWC / 收入 %',
+              }[metric] ??
+              '$metric %';
     final zh = '第 ${year + 1} 年$metricZh';
     return TextField(
       key: ValueKey('forecast-$en'),
@@ -1091,6 +1392,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
 
   Widget valuationSourceBridge() {
     final bridge = asMap(company?['templateReconciliation']);
+    final operating = personalDcfMethod == 'operating_fcff';
     return card([
       title('Know your starting point', '清楚你的起点'),
       label(
@@ -1103,15 +1405,20 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
       ),
       const SizedBox(height: 12),
       label(
-        independentValuation
-            ? 'The starting growth anchor fades to 2.5% in Year 5. Cash conversion uses a positive historical cycle margin, then positive TTM margin; if neither is available, 3% is an illustrative assumption. These are editable hypotheses, not verified parent FCFE or issuer forecasts. Negative forecast cash flows are not supported.'
+        operating
+            ? 'Revenue growth and every operating driver are editable analyst assumptions. Zero-valued equity-bridge inputs are explicit defaults until supported by evidence; they are not inferred facts.'
+            : independentValuation
+            ? 'The starting growth anchor fades to 2.5% by the selected horizon. Cash conversion uses a historical cycle margin, then TTM margin; if neither is available, 3% is an illustrative assumption. These are editable hypotheses, not verified parent FCFE or issuer forecasts. Negative forecast cash flows are preserved and disclosed as financing needs.'
             : 'Revenue uses the stored normalized growth assumption, fading to terminal growth. FCFE margins are derived to reproduce the published cash-flow path before post-DCF adjustments, not independently forecast margins or management guidance.',
-        independentValuation
-            ? '起始增长率逐年收敛至第 5 年的 2.5%。现金流率优先取正的历史周期值，其次正的 TTM 值；均不可用时，3% 仅为示例假设。这些均可修改，并非已验证母公司 FCFE 或管理层预测。暂不支持预测期负现金流。'
+        operating
+            ? '收入增长及每项经营驱动均为可编辑的分析假设。股权价值桥中的零值是等待证据支持的明确默认假设，不是推导出的事实。'
+            : independentValuation
+            ? '起始增长率逐年收敛至所选预测期末的 2.5%。现金流率优先取历史周期值，其次 TTM 值；均不可用时，3% 仅为示例假设。这些均可修改，并非已验证母公司 FCFE 或管理层预测。预测期负现金流会保留并显示融资需求。'
             : '收入采用已存的标准化增长假设，逐年收敛至终值增长率。FCFE 率由平台现金流路径除以预测收入反推，不是独立预测的利润率，也不是管理层指引；不含 DCF 后的附加调整。',
         size: 12,
       ),
-      if (independentValuation &&
+      if (!operating &&
+          independentValuation &&
           asMap(bridge['startingForecast']).isNotEmpty) ...[
         const SizedBox(height: 10),
         label(
@@ -1131,8 +1438,12 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
       ],
       const SizedBox(height: 10),
       label(
-        'FCFE margin is after tax, interest, capex, working capital and ownership adjustments — not operating margin. No extra debt/NCI deduction, dividend or buyback addition.',
-        'FCFE 率已扣税、利息、资本开支、营运资本及归属调整，不是营业利润率。不重复扣债务、少数股权或叠加分红回购。',
+        operating
+            ? 'FCFF is discounted at WACC to enterprise value; net debt and NCI are deducted once, and non-operating assets are added once, before dividing by shares.'
+            : 'FCFE margin is after tax, interest, capex, working capital and ownership adjustments — not operating margin. No extra debt/NCI deduction, dividend or buyback addition.',
+        operating
+            ? 'FCFF 按 WACC 折现为企业价值；净债务和少数股东权益仅扣除一次，非经营资产仅加回一次，再除以股数。'
+            : 'FCFE 率已扣税、利息、资本开支、营运资本及归属调整，不是营业利润率。不重复扣债务、少数股权或叠加分红回购。',
         size: 12,
       ),
       TextButton.icon(
@@ -1166,13 +1477,17 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
           ),
           if (!saved && seed['firstGrowth'] != null)
             label(
-              'Starting revenue growth ${pct(seed['firstGrowth'])} → ${pct(seed['finalGrowth'])} in Year 5. ${independentValuation ? 'Cash conversion is an editable starting assumption.' : 'FCFE margins reconcile the existing cash-flow forecast; the starting DCF is unchanged.'}',
-              '起始收入增长 ${pct(seed['firstGrowth'])} → 第 5 年 ${pct(seed['finalGrowth'])}。${independentValuation ? '现金流率为可修改的起始假设。' : 'FCFE 率反推以核对原现金流预测，起始 DCF 不变。'}',
+              personalDcfMethod == 'operating_fcff'
+                  ? 'Starting revenue growth ${pct(seed['firstGrowth'])} → ${pct(seed['finalGrowth'])} in Year $forecastHorizon. EBIT, tax, reinvestment and the equity bridge are editable analyst assumptions.'
+                  : 'Starting revenue growth ${pct(seed['firstGrowth'])} → ${pct(seed['finalGrowth'])} in Year $forecastHorizon. ${independentValuation ? 'Cash conversion is an editable starting assumption.' : 'FCFE margins reconcile the existing cash-flow forecast; the starting DCF is unchanged.'}',
+              personalDcfMethod == 'operating_fcff'
+                  ? '起始收入增长 ${pct(seed['firstGrowth'])} → 第 $forecastHorizon 年 ${pct(seed['finalGrowth'])}。EBIT、税率、再投资和股权价值桥均为可修改的分析假设。'
+                  : '起始收入增长 ${pct(seed['firstGrowth'])} → 第 $forecastHorizon 年 ${pct(seed['finalGrowth'])}。${independentValuation ? '现金流率为可修改的起始假设。' : 'FCFE 率反推以核对原现金流预测，起始 DCF 不变。'}',
               size: 11,
             ),
           label(
-            'Five rolling model years from $asOf, not the issuer’s fiscal years. Missing guidance is not 0%.',
-            '从 $asOf 起算的五个滚动预测年度，不是公司财年。缺少指引不等于 0%。',
+            '$forecastHorizon rolling model years from $asOf, not the issuer’s fiscal years. Missing guidance is not 0%.',
+            '从 $asOf 起算的 $forecastHorizon 个滚动预测年度，不是公司财年。缺少指引不等于 0%。',
             size: 11,
           ),
           if (audit['annualRevenueCount'] == 0)
@@ -1196,17 +1511,25 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
   Widget valuationTerminalSummary(Map<String, dynamic> result) => card([
     title('Terminal value', '终值'),
     label(
-      'Year 6 onward · valued at the end of Year 5',
-      '第 6 年及以后 · 在第 5 年末估值',
+      'Year ${forecastHorizon + 1} onward · valued at the end of Year $forecastHorizon',
+      '第 ${forecastHorizon + 1} 年及以后 · 在第 $forecastHorizon 年末估值',
       size: 12,
     ),
     const SizedBox(height: 16),
     LayoutBuilder(
       builder: (_, bounds) {
         final values = [
-          ('Terminal value · Y5', '第 5 年末终值', result['terminalValueM']),
+          (
+            'Terminal value · Y$forecastHorizon',
+            '第 $forecastHorizon 年末终值',
+            result['terminalValueM'],
+          ),
           ('Terminal present value', '终值折现现值', result['terminalPvM']),
-          ('Years 1–5 present value', '第 1–5 年现金流现值', result['explicitPvM']),
+          (
+            'Years 1–$forecastHorizon present value',
+            '第 1–$forecastHorizon 年现金流现值',
+            result['explicitPvM'],
+          ),
           ('Terminal share of DCF', '终值占 DCF 比例', result['terminalShare']),
         ];
         final columns = bounds.maxWidth < 700 ? 2 : 4;
@@ -1243,13 +1566,21 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
     ),
     const SizedBox(height: 16),
     label(
-      'Amounts in ${text(company?['currency'])} millions. TV = Year 5 FCFE × (1 + g) ÷ (Ke − g); PV(TV) = TV ÷ (1 + Ke)⁵.',
-      '金额单位：百万 ${text(company?['currency'])}。终值 = 第 5 年 FCFE × (1 + g) ÷ (Ke − g)；终值现值 = 终值 ÷ (1 + Ke)⁵。',
+      personalDcfMethod == 'operating_fcff'
+          ? 'Amounts in ${text(company?['currency'])} millions. TV = Year $forecastHorizon FCFF × (1 + g) ÷ (WACC − g); PV(TV) = TV ÷ (1 + WACC)^$forecastHorizon.'
+          : 'Amounts in ${text(company?['currency'])} millions. TV = Year $forecastHorizon FCFE × (1 + g) ÷ (Ke − g); PV(TV) = TV ÷ (1 + Ke)^$forecastHorizon.',
+      personalDcfMethod == 'operating_fcff'
+          ? '金额单位：百万 ${text(company?['currency'])}。终值 = 第 $forecastHorizon 年 FCFF × (1 + g) ÷ (WACC − g)；终值现值 = 终值 ÷ (1 + WACC)^$forecastHorizon。'
+          : '金额单位：百万 ${text(company?['currency'])}。终值 = 第 $forecastHorizon 年 FCFE × (1 + g) ÷ (Ke − g)；终值现值 = 终值 ÷ (1 + Ke)^$forecastHorizon。',
       size: 12,
     ),
     label(
-      'DCF = (Years 1–5 PV + terminal PV) ÷ shares. g is perpetual growth, not next year’s revenue growth.',
-      'DCF =（第 1–5 年现值 + 终值现值）÷ 股数。g 是永续增长，不是下一年的收入增长。',
+      personalDcfMethod == 'operating_fcff'
+          ? 'Equity value = enterprise value − net debt − NCI + non-operating assets; per-share value = equity value ÷ shares.'
+          : 'DCF = (Years 1–$forecastHorizon PV + terminal PV) ÷ shares. g is perpetual growth, not next year’s revenue growth.',
+      personalDcfMethod == 'operating_fcff'
+          ? '股权价值 = 企业价值 − 净债务 − 少数股东权益 + 非经营资产；每股价值 = 股权价值 ÷ 股数。'
+          : 'DCF =（第 1–$forecastHorizon 年现值 + 终值现值）÷ 股数。g 是永续增长，不是下一年的收入增长。',
       size: 12,
     ),
   ]);
@@ -1279,8 +1610,12 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
         ),
         const SizedBox(height: 16),
         label(
-          'Mechanical templates, not predictions. Reverse growth solves one constant five-year rate with all margins fixed.',
-          '机械模板不是预测，反向估值固定现金流率，求解五年恒定增长率。',
+          personalDcfMethod == 'operating_fcff'
+              ? 'Reverse DCF solves one operating parameter at a time and re-runs the same forward FCFF engine. It is not consensus.'
+              : 'Mechanical templates, not predictions. Reverse growth solves one constant $forecastHorizon-year rate with all margins fixed.',
+          personalDcfMethod == 'operating_fcff'
+              ? '反向 DCF 每次只求解一个经营参数，并使用同一 FCFF 正向引擎回代；它不是市场共识。'
+              : '机械模板不是预测，反向估值固定现金流率，求解 $forecastHorizon 年恒定增长率。',
           size: 12,
         ),
         const SizedBox(height: 16),
@@ -1302,10 +1637,25 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
               numeric: true,
               changed: (_) => scheduleCalculation(),
             ),
-            for (final v in [
-              ('growth', 'Solve growth', '反推增长'),
-              ('terminal_margin', 'Solve final margin', '反推末期率'),
-            ])
+            for (final v
+                in personalDcfMethod == 'operating_fcff'
+                    ? [
+                        ('growth', 'Solve growth', '反推增长'),
+                        (
+                          'mature_ebit_margin',
+                          'Solve mature EBIT margin',
+                          '反推成熟 EBIT 利润率',
+                        ),
+                        (
+                          'reinvestment',
+                          'Solve ΔNWC / revenue',
+                          '反推 ΔNWC / 收入',
+                        ),
+                      ]
+                    : [
+                        ('growth', 'Solve growth', '反推增长'),
+                        ('terminal_margin', 'Solve final margin', '反推末期率'),
+                      ])
               ChoiceChip(
                 label: Text(w(v.$2, v.$3)),
                 selected: reverseVariable == v.$1,
@@ -1331,11 +1681,16 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
           [w('Component', '组成'), '${text(company?['currency'])} m'],
           [
             [
-              w('Explicit FCFE present value', '显性 FCFE 现值'),
+              personalDcfMethod == 'operating_fcff'
+                  ? w('Explicit FCFF present value', '显性 FCFF 现值')
+                  : w('Explicit FCFE present value', '显性 FCFE 现值'),
               nullableNumber(result['explicitPvM'])?.toStringAsFixed(2) ?? '—',
             ],
             [
-              w('Terminal value at Year 5', '第 5 年末终值'),
+              w(
+                'Terminal value at Year $forecastHorizon',
+                '第 $forecastHorizon 年末终值',
+              ),
               nullableNumber(result['terminalValueM'])?.toStringAsFixed(2) ??
                   '—',
             ],
@@ -1347,17 +1702,74 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
               w('Terminal share of value', '终值占比'),
               pct(result['terminalShare']),
             ],
-            [w('Net debt deducted again', '再次扣除净债务'), '0'],
-            [w('NCI deducted again', '再次扣除少数股东权益'), '0'],
+            if (personalDcfMethod == 'operating_fcff') ...[
+              [
+                w('Enterprise value', '企业价值'),
+                nullableNumber(
+                      result['enterpriseValueM'],
+                    )?.toStringAsFixed(2) ??
+                    '—',
+              ],
+              [
+                w('Net debt deducted', '扣除净债务'),
+                nullableNumber(result['netDebtM'])?.toStringAsFixed(2) ?? '—',
+              ],
+              [
+                w('NCI deducted', '扣除少数股东权益'),
+                nullableNumber(result['nciM'])?.toStringAsFixed(2) ?? '—',
+              ],
+              [
+                w('Non-operating assets added', '加回非经营资产'),
+                nullableNumber(
+                      result['nonOperatingAssetsM'],
+                    )?.toStringAsFixed(2) ??
+                    '—',
+              ],
+              [
+                w('Equity value', '股权价值'),
+                nullableNumber(result['equityValueM'])?.toStringAsFixed(2) ??
+                    '—',
+              ],
+            ] else ...[
+              [w('Net debt deducted again', '再次扣除净债务'), '0'],
+              [w('NCI deducted again', '再次扣除少数股东权益'), '0'],
+            ],
           ],
         ),
         dataTable(
-          ['Ke', 'g', w('Value / share', '每股价值')],
+          [
+            personalDcfMethod == 'operating_fcff' ? 'WACC' : 'Ke',
+            'g',
+            w('Value / share', '每股价值'),
+          ],
           [
             for (final r in asList(calculation?['sensitivity']))
-              [pct(r['ke']), pct(r['g']), money(r['fairValue'])],
+              [
+                pct(r[personalDcfMethod == 'operating_fcff' ? 'wacc' : 'ke']),
+                pct(r['g']),
+                money(r['fairValue']),
+              ],
           ],
         ),
+        if (personalDcfMethod == 'operating_fcff' &&
+            asList(asMap(calculation?['isoValueCurve'])['points']).isNotEmpty)
+          dataTable(
+            [
+              w('Revenue growth', '收入增长'),
+              w('Mature EBIT margin', '成熟 EBIT 利润率'),
+              w('Forward-check value', '回代价值'),
+            ],
+            [
+              for (final row in asList(
+                asMap(calculation?['isoValueCurve'])['points'],
+              ))
+                [
+                  pct(row['growth']),
+                  pct(row['matureEbitMargin']),
+                  money(row['verifiedValue']),
+                ],
+            ],
+          ),
       ],
     ),
   ]);

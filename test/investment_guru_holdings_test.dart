@@ -50,6 +50,7 @@ class HoldingsApi extends study.StudyApi {
     'reportDate': q,
     'quarters': ['2026-06-30', '2026-03-31'],
     'coverage': {'scope': 'full_current_books', 'reportedManagers': 3},
+    'gurus': gurus,
     'rows': holdings,
   };
   @override
@@ -314,12 +315,16 @@ void main() {
     final api = HoldingsApi();
     await mount(t, api, desk: true);
     expect(find.byType(GuruHoldingsMatrix), findsOneWidget);
+    expect(find.byType(GuruStudyPanel), findsNothing);
+    expect(find.text('Load comparison'), findsOneWidget);
+    expect(api.paths.where((path) => path.contains('/guru-study')), isEmpty);
+    expect(find.textContaining('All Gurus'), findsOneWidget);
+    expect(find.text('Consensus'), findsOneWidget);
+    await study.tap(t, find.byKey(const ValueKey('matrix-study-link')));
     expect(find.byType(GuruStudyPanel), findsOneWidget);
     expect(find.text('Turnover vs annualized return'), findsOneWidget);
     expect(find.text('Turnover vs Sharpe'), findsOneWidget);
-    expect(find.text('All Gurus'), findsOneWidget);
-    expect(find.text('Consensus'), findsOneWidget);
-    await study.tap(t, find.byKey(const ValueKey('matrix-study-link')));
+    expect(api.paths.any((path) => path.contains('/guru-study')), isTrue);
     expect(api.posts, 0);
     expect(t.takeException(), isNull);
   });
@@ -330,6 +335,7 @@ void main() {
       Map<String, dynamic>? saved;
       await mount(t, HoldingsApi(), desk: true, selection: (v) => saved = v);
       await study.tap(t, find.byKey(const ValueKey('matrix-concentrated')));
+      await study.tap(t, find.byKey(const ValueKey('matrix-study-link')));
       await study.tap(t, find.byKey(const ValueKey('study-point-cagr-third')));
       expect(saved?['inspecting'], 'third');
       expect((saved?['holdings'] as Map?)?['concentrated'], true);

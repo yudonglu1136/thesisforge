@@ -8,7 +8,7 @@ import { InvestmentSource } from './investmentSource.js';
 import { InvestmentStore } from './investmentStore.js';
 import { InvestmentService } from './investmentService.js';
 import { fundamentalGuruQuarter } from './investmentFundamentals.js';
-import { buildGuruHoldingsMatrix, buildOpportunities, opportunityCompanySummary, opportunityValuations, opportunityTimeline, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
+import { buildGuruHoldingsMatrix, buildOpportunities, opportunityCompanySummary, opportunityValuationBreakdown, opportunityValuations, opportunityTimeline, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-10,`${a} != ${b}`);
 
 test('trend uses distinct visible fiscal quarters, preserves latest pair, and never borrows future data', t => {
@@ -92,6 +92,49 @@ test('selected-company detail computes only that ticker and retains dated eviden
   near(detail.modelGap,.2);assert.equal(detail.valuationStatus,'available');assert.equal(detail.events.length,6);
   const missing=opportunityCompanySummary(source,'MISS','2026-08-28');
   assert.equal(missing.valuation,null);assert.equal(missing.price.value,null);assert.equal(missing.modelGap,null);
+});
+
+test('published valuation breakdown exposes exact component outputs, weights and bounded inputs',t=>{
+  const {source,db}=fixture(t);
+  const row=db.prepare("SELECT input_json FROM valuation_pit_model_runs WHERE ticker='TEST' AND as_of_date='2026-07-20'").get();
+  const input=JSON.parse(row.input_json);
+  input.valuationSemantics.scoreInputs={valuationRevenue:1000,evSalesMultiple:5,
+    normalizedNetIncome:120,normalizedMargin:.12,targetPE:20,valuationFreeCashFlow:100,
+    sharesM:100,methodWeights:{'ev-sales-equity-value':.6,'normalized-earnings-power':.4}};
+  db.prepare("UPDATE valuation_pit_model_runs SET input_json=?,output_json=? WHERE ticker='TEST' AND as_of_date='2026-07-20'")
+    .run(JSON.stringify(input),JSON.stringify({fairValue:56,method:'fixture blend',methodOutputs:[
+      {key:'ev-sales-equity-value',label:'EV sales',value:60,format:'currency',description:'fixture'},
+      {key:'normalized-earnings-power',label:'Earnings',value:50,format:'currency',description:'fixture'},
+    ]}));
+  const result=opportunityValuationBreakdown(source,'TEST','2026-08-28');
+  assert.equal(result.components.length,2);assert.equal(result.components[0].weight,.6);
+  assert.equal(result.components[0].parameters.find(row=>row.key==='evSalesMultiple').value,5);
+  assert.equal(result.weightedValue,56);assert.equal(result.reconciliationDifference,0);
+  assert.equal(result.fairValue,56);assert.equal(result.modelVersion,'v1');
+});
+
+test('AMZN Q2 published ledger keeps unavailable DCF separate and reconciles the exact earnings value',t=>{
+  const {source,db}=fixture(t);
+  const row=db.prepare("SELECT input_json FROM valuation_pit_model_runs WHERE ticker='TEST' AND as_of_date='2026-07-20'").get();
+  const input=JSON.parse(row.input_json);
+  input.valuationSemantics.scoreInputs={
+    normalizedNetIncome:90592.07222972096,sharesM:10903,targetPE:28.366266291421454,
+    methodWeights:{'normalized-earnings-power':1,'fcfe-dcf':0},equityDcf:null,
+  };
+  const fairValue=235.6928225956114;
+  db.prepare("UPDATE valuation_pit_model_runs SET input_json=?,output_json=? WHERE ticker='TEST' AND as_of_date='2026-07-20'")
+    .run(JSON.stringify(input),JSON.stringify({fairValue,method:'published AMZN 2026-Q2 fixture',methodOutputs:[
+      {key:'normalized-earnings-power',label:'Normalized earnings power',value:235.69282259561143,format:'currency'},
+      {key:'fcfe-dcf',label:'FCFE DCF',value:null,format:'currency',description:'No supported DCF at this node'},
+    ]}));
+  const result=opportunityValuationBreakdown(source,'TEST','2026-08-28');
+  const earnings=result.components.find(row=>row.key==='normalized-earnings-power');
+  const dcf=result.components.find(row=>row.key==='fcfe-dcf');
+  near(earnings.steps.at(-1).output,fairValue);assert.equal(earnings.weight,1);
+  assert.equal(dcf.output,null);assert.equal(dcf.weight,0);assert.equal(dcf.status,'not_applicable');
+  near(result.weightedValue,235.69282259561143);near(result.fairValue,fairValue);
+  near(result.reconciliationDifference,-2.842170943040401e-14);
+  assert.equal(result.reconciliationStatus,'reconciled');
 });
 
 test('fundamentals Guru drilldown stays exact to ticker, quarter and public cutoff',t=>{

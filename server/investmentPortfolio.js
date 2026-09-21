@@ -4,6 +4,7 @@ import {portfolioMarketContext,portfolioValuations} from './portfolioRisk.js';
 import {portfolioHome} from './portfolioHome.js';
 import {portfolioGuruContext,portfolioGuruActivity,portfolioGuruBooks} from './portfolioGuruActivity.js';
 import {portfolioSyncResult} from './portfolioSyncResult.js';
+import {loadDividendCalendarForTickers} from './dividendClient.js';
 
 const n = x => finite(x) ? x : null;
 const sum = xs => xs.reduce((s, x) => s + x, 0);
@@ -12,6 +13,91 @@ const day = v => { try { return isoDate(String(v ?? '').slice(0, 10)); } catch {
 const symbol = v => /^[A-Z][A-Z0-9.-]{0,14}$/.test(v ?? '') ? v : null;
 const currency = v => /^[A-Z]{3}$/.test(v ?? '') ? v : null;
 const empty = (status, asOf) => ({version: 'portfolio-research-v1', status, asOf, groups: [], managers: [], positions: []});
+
+function dividendReadTimeoutMs() {
+  const configured=Number(process.env.PORTFOLIO_DIVIDEND_READ_TIMEOUT_MS);
+  return Number.isFinite(configured)?Math.max(250,Math.min(10_000,configured)):2_500;
+}
+
+function withDeadline(promise,ms) {
+  let timer;
+  const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('portfolio_dividend_read_timeout'),{code:'portfolio_dividend_read_timeout'})),ms);});
+  return Promise.race([promise,timeout]).finally(()=>clearTimeout(timer));
+}
+
+function trailingYearStart(asOf) {
+  const value=new Date(`${isoDate(asOf)}T00:00:00Z`);
+  value.setUTCFullYear(value.getUTCFullYear()-1);
+  return value.toISOString().slice(0,10);
+}
+
+function eligibleDividendPositions(analysis) {
+  return analysis.groups.flatMap(group=>group.positions.filter(position=>{
+    if(position.kind!=='equity'||!(position.quantity>0)||!(position.price>0)||!(position.value>0)||!(position.fxRateToBase>0))return false;
+    const expected=position.quantity*position.price*position.fxRateToBase;
+    return Math.abs(expected-position.value)<=Math.max(1,Math.abs(position.value)*.01);
+  }).map(position=>({...position,baseCurrency:group.currency,quoteCurrency:position.currency})));
+}
+
+// This is a transparent current-holdings estimate, not broker cash income.
+// Sharadar ACTIONS dividend values are already adjusted to the current share
+// basis, so current verified shares can be multiplied by the trailing sum
+// without manufacturing a split jump.
+export function attachPortfolioTrailingDividends(analysis,calendar,{asOf,startDate=trailingYearStart(asOf)}={}) {
+  const endDate=isoDate(asOf);
+  const sharadar=calendar?.status?.source==='sharadar_fact_os';
+  const unavailable=new Set((calendar?.status?.unavailable??[]).map(row=>row.ticker));
+  const eventsByTicker=new Map();
+  if(sharadar)for(const event of calendar.events??[]){
+    const ticker=symbol(event.ticker),amount=n(event.amount),eventDate=day(event.exDate??event.date);
+    if(!ticker||!(amount>0)||!eventDate||eventDate<startDate||eventDate>endDate)continue;
+    const rows=eventsByTicker.get(ticker)??[];rows.push({...event,date:eventDate,amount});eventsByTicker.set(ticker,rows);
+  }
+  for(const group of analysis.groups??[]) {
+    const byTicker=new Map();
+    for(const position of group.positions??[]) {
+      if(position.kind!=='equity'||!(position.quantity>0)||!(position.price>0)||!(position.value>0)||!(position.fxRateToBase>0))continue;
+      const expected=position.quantity*position.price*position.fxRateToBase;
+      if(Math.abs(expected-position.value)>Math.max(1,Math.abs(position.value)*.01))continue;
+      const ticker=symbol(position.ticker);if(!ticker)continue;
+      const previous=byTicker.get(ticker);
+      byTicker.set(ticker,{ticker,name:position.name||ticker,sector:position.sector||'Unclassified',
+        quantity:(previous?.quantity??0)+position.quantity,
+        value:(previous?.value??0)+position.value,
+        fxNumerator:(previous?.fxNumerator??0)+position.quantity*position.fxRateToBase});
+    }
+    const rows=[];
+    for(const holding of byTicker.values()) {
+      const events=eventsByTicker.get(holding.ticker)??[];
+      const perShare=sum(events.map(event=>event.amount));
+      const averageFx=holding.quantity>0?holding.fxNumerator/holding.quantity:null;
+      const amount=perShare>0&&averageFx>0?perShare*holding.quantity*averageFx:0;
+      if(amount>0)rows.push({id:`dividends:${holding.ticker}`,ticker:holding.ticker,name:holding.name,
+        category:'dividends',sector:holding.sector,amount,perShare,quantity:holding.quantity,
+        eventCount:events.length,value:amount});
+    }
+    rows.sort((a,b)=>b.amount-a.amount||a.ticker.localeCompare(b.ticker));
+    const total=sum(rows.map(row=>row.amount));
+    const weight=amount=>total>0?amount/total:0;
+    const byInstrument=rows.map(row=>({...row,weight:weight(row.amount)}));
+    const bySectorMap=new Map();
+    for(const row of rows)bySectorMap.set(row.sector,(bySectorMap.get(row.sector)??0)+row.amount);
+    const bySector=[...bySectorMap].map(([name,amount])=>({id:name,name,category:'dividends',amount,value:amount,weight:weight(amount)}))
+      .sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name));
+    const eligible=[...byTicker.keys()];
+    const covered=sharadar?eligible.filter(ticker=>!unavailable.has(ticker)).length:0;
+    group.home.trailingDividends={status:sharadar?'ready':'unavailable',fromDate:startDate,toDate:endDate,
+      annualAmount:sharadar?total:null,grossReceived:sharadar?total:null,eventCount:sharadar?rows.reduce((count,row)=>count+row.eventCount,0):0,
+      estimatedYield:sharadar&&group.longValue>0?total/group.longValue:null,
+      coveredHoldings:covered,eligibleHoldings:eligible.length,unavailableTickers:eligible.filter(ticker=>unavailable.has(ticker)),
+      byInstrument:sharadar?byInstrument:[],bySector:sharadar?bySector:[],
+      byType:sharadar&&total>0?[{id:'dividends',category:'dividends',amount:total,value:total,weight:1}]:[],
+      basis:'current_verified_shares_x_trailing_12_month_sharadar_split_adjusted_dividend_per_share_sum',
+      source:'sharadar_actions_ex_date_not_broker_cash_receipt',
+      actualReceiptStatus:group.home?.history?.income?.status??'income_history_required'};
+  }
+  return analysis;
+}
 
 // No sample/legacy operator portfolio can be re-labelled as an account owner.
 // The broker adapter supplies untouched report inputs, before display heuristics.
@@ -163,18 +249,21 @@ export function buildPortfolioAnalysis(source, payload, asOf, options={}) {
   // Don't load public research when the private source is missing.
   const preliminary = analysePortfolio(payload, {asOf});
   if (!preliminary.groups.length) return preliminary;
-  const valuations = portfolioValuations(source, asOf);
+  const portfolioTickers=[...new Set(preliminary.groups.flatMap(g=>g.positions.map(p=>p.ticker)).filter(symbol))];
+  const valuations = portfolioValuations(source, asOf,portfolioTickers);
   const sectors = new Map();
   const query = source.db.prepare("SELECT json_extract(payload_json,'$.sector') sector FROM valuation_ticker_snapshots WHERE ticker=?");
   for (const t of new Set(preliminary.groups.flatMap(g=>g.positions.map(p=>p.ticker)))) {
     const sector = query.get(t)?.sector;
     if (sector) sectors.set(t, sector);
   }
-  // Reuse disclosed books for the actual holdings only. Home still skips the
-  // unrelated whole-book overlap matrix and retrospective risk simulation.
-  const guruCoverage=portfolioGuruBooks(source,asOf);
+  // The first paint must never scan the 13F warehouse. Guru comparison and
+  // retrospective market context are background enhancements of the same
+  // verified account payload.
+  const guruCoverage=options.summary?{books:[]} : portfolioGuruBooks(source,asOf);
   const analysis=analysePortfolio(payload,{asOf,valuations,sectors,books:guruCoverage.books,guruCoverage,includeComparisons:!options.home});
-  if(options.home) return analysis;
+  analysis.detailLevel=options.summary?'summary':options.home?'home':'detail';
+  if(options.home||options.summary) return analysis;
   return portfolioMarketContext(source,analysis,payload,asOf,options);
 }
 
@@ -190,7 +279,9 @@ export function registerPortfolioAnalysisRoute(app, service, loadPortfolio) {
       if (req.user.id === 'local-dev-user'&&!local) return res.json(empty('preview_account', asOf));
       // Never accept an owner ID/adminPortfolioHash in query/body. Ownership
       // comes exclusively from authentication, not a frontend-selected account.
-      const home=req.query.scope==='home';
+      const scope=req.query.scope??'detail';
+      if(!['home','summary','detail'].includes(scope))return res.status(400).json({error:'invalid_portfolio_scope'});
+      const home=scope==='home',summary=scope==='summary';
       const loadStarted=performance.now();
       const payload = local??await loadPortfolio({
         // Keep the complete server-authenticated identity. In particular, an
@@ -199,14 +290,32 @@ export function registerPortfolioAnalysisRoute(app, service, loadPortfolio) {
         user: req.user,
         forceRefresh,
         preferSaved: true,
-        includeAnalytics: !home
+        // This route owns its dated valuation/risk analysis. Loading the older
+        // dashboard analytics here duplicated valuation, price-history and
+        // dividend work before the actual analysis even began.
+        includeAnalytics: false
       });
       const loadMs=performance.now()-loadStarted;
       const rate=req.query.riskFreeRate===undefined?.04:Number(req.query.riskFreeRate);
       if(!Number.isFinite(rate)||rate<0||rate>.2)return res.status(400).json({error:'invalid_risk_free_rate'});
-      if(req.query.scope!==undefined&&req.query.scope!=='home')return res.status(400).json({error:'invalid_portfolio_scope'});
       const buildStarted=performance.now();
-      const analysis=buildPortfolioAnalysis(service.source, payload, asOf,{riskFreeRate:rate,home});
+      const analysis=buildPortfolioAnalysis(service.source, payload, asOf,{riskFreeRate:rate,home,summary});
+      const buildMs=performance.now()-buildStarted;
+      const dividendStarted=performance.now();
+      if(!summary&&analysis.groups?.length){
+        try{
+          // Fact OS readers share a bounded queue. A long fundamental scan may
+          // be ahead of this request, but Portfolio must still return usable
+          // account data instead of waiting for that queue for up to minutes.
+          const calendar=await withDeadline(loadDividendCalendarForTickers(eligibleDividendPositions(analysis),{
+            startDate:trailingYearStart(asOf),endDate:asOf,
+          }),dividendReadTimeoutMs());
+          attachPortfolioTrailingDividends(analysis,calendar,{asOf});
+        }catch{
+          attachPortfolioTrailingDividends(analysis,{status:{source:'unavailable'},events:[]},{asOf});
+        }
+      }
+      const dividendMs=performance.now()-dividendStarted;
       const result={
         ...analysis,
         // Connection metadata lets the client distinguish an unconfigured
@@ -221,8 +330,9 @@ export function registerPortfolioAnalysisRoute(app, service, loadPortfolio) {
         const {portfolio:_portfolio,...syncStatus}=sync;
         result.sync=syncStatus;
       }
-      const buildMs=performance.now()-buildStarted;
-      res.setHeader('Server-Timing',`portfolio-read;dur=${loadMs.toFixed(1)}, portfolio-build;dur=${buildMs.toFixed(1)}`);
+      const totalMs=performance.now()-loadStarted;
+      res.setHeader('Server-Timing',`portfolio-read;dur=${loadMs.toFixed(1)}, portfolio-build;dur=${buildMs.toFixed(1)}, portfolio-dividends;dur=${dividendMs.toFixed(1)}, total;dur=${totalMs.toFixed(1)}`);
+      if(totalMs>1_000)console.warn('[portfolio-analysis] slow request',{scope,forceRefresh,totalMs:Number(totalMs.toFixed(1)),loadMs:Number(loadMs.toFixed(1)),buildMs:Number(buildMs.toFixed(1)),dividendMs:Number(dividendMs.toFixed(1)),groups:analysis.groups?.length??0});
       res.json(result);
     } catch (e) { res.status(e.status ?? 503).json({error: 'portfolio_analysis_unavailable'}); }
   };

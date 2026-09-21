@@ -9,25 +9,46 @@ import { registerPortfolioAnalysisRoute } from './investmentPortfolio.js';
 import { registerStrategyLabRoutes } from './strategyLabRoutes.js';
 import { registerHedgeRoutes } from './hedgeRoutes.js';
 import { buildValueFlow } from './investmentValueFlow.js';
-import { buildFundamentals, fundamentalGuruQuarter } from './investmentFundamentals.js';
+import { fundamentalGuruQuarter } from './investmentFundamentals.js';
 import { buildGuruHoldingsMatrix, buildOpportunities, opportunityCompanySummary, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
 import { institutional13fInsights, institutional13fInsightDetail } from './institutional13fInsights.js';
+import { buildFundamentalDiscovery, buildFundamentalCompany, saveFundamentalObservation,
+  listFundamentalObservations, reviewFundamentalObservation } from './fundamentalResearch.js';
+import { researchDocuments, researchFundamentals, researchInstitutions, researchPublishedModel,
+  saveResearchRecord, listResearchRecords } from './researchWorkbench.js';
 
 export function registerInvestmentRoutes(app,service) {
-  function route(method,path,handler,{cacheControl='private, no-store'}={}) {app[method]('/api/investment'+path,(req,res)=>{
+  function route(method,path,handler,{cacheControl='private, no-store'}={}) {app[method]('/api/investment'+path,async (req,res)=>{
     res.setHeader('Cache-Control',cacheControl);
     if(!req.user?.id)return res.status(401).json({error:'unauthorized'});
-    try {res.json(handler(req.user.id,req));}catch(e){res.status(e.status??500).json({error:e.status?e.message:'investment_request_failed'});}
+    try {res.json(await handler(req.user.id,req));}catch(e){res.status(e.status??500).json({error:e.status?e.message:'investment_request_failed'});}
   });}
   route('get','/home',(owner,r)=>service.home(owner,r.query.asOf));
   route('get','/discover',(owner,r)=>service.discover(owner,r.query.asOf));
   route('get','/guru-study',(_,r)=>guruStudy(service.source,service.date(r.query.asOf),r.query.period??'common'));
-  route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf)));
+  route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
+    search:r.query.search,limit:r.query.limit,
+  }));
   route('get','/value-flow',(_,r)=>buildValueFlow(service.source,service.date(r.query.asOf)));
-  route('get','/fundamentals',(_,r)=>buildFundamentals(service.source,service.date(r.query.asOf)));
+  route('get','/fundamentals',(_,r)=>(service.fundamentalDiscovery??buildFundamentalDiscovery)(service.date(r.query.asOf),{
+    lens:r.query.lens,search:r.query.search,limit:r.query.limit,
+    minRevenueGrowth:r.query.minRevenueGrowth,minOperatingMargin:r.query.minOperatingMargin,
+    minFcfMargin:r.query.minFcfMargin,
+  }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
+  route('get','/fundamentals/:ticker',(_,r)=>(service.fundamentalCompany??buildFundamentalCompany)(service.source,r.params.ticker,service.date(r.query.asOf),{lens:r.query.lens}),
+    {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/fundamentals/:ticker/gurus',(_,r)=>fundamentalGuruQuarter(service.source,r.params.ticker,service.date(r.query.asOf),r.query.quarter??null));
+  route('get','/fundamental-observations',(owner,r)=>listFundamentalObservations(service,owner,r.query.ticker??null));
+  route('post','/fundamental-observations',(owner,r)=>saveFundamentalObservation(service,owner,r.body));
+  route('get','/fundamental-observations/:id/review',(owner,r)=>reviewFundamentalObservation(service,owner,r.params.id,r.query.asOf));
   route('get','/opportunities',(_,r)=>buildOpportunities(service.source,service.date(r.query.asOf),r.query.quarter??null));
-  route('get','/guru-holdings',(_,r)=>buildGuruHoldingsMatrix(service.source,service.date(r.query.asOf),r.query.quarter??null),
+  route('get','/guru-holdings',(owner,r)=>({
+    ...buildGuruHoldingsMatrix(service.source,service.date(r.query.asOf),r.query.quarter??null),
+    // The first Guru screen only needs this compact directory. Bundling it
+    // avoids blocking the matrix on the much broader Discover payload while
+    // preserving owner-scoped follow state.
+    gurus:service.guruDirectory(owner),
+  }),
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/13f-insights',(_,r)=>institutional13fInsights(service.source,service.date(r.query.asOf),r.query.quarter??null,{
     ticker:r.query.ticker,action:r.query.action,rank:r.query.rank,segment:r.query.segment,
@@ -42,7 +63,13 @@ export function registerInvestmentRoutes(app,service) {
   route('post','/watch-reviews',(owner,r)=>saveWatchReview(service,owner,r.body));
   route('get','/gurus/:id',(_,r)=>service.source.guruDetail(r.params.id,service.date(r.query.asOf)));
   route('get','/research/:ticker',(owner,r)=>service.research(owner,r.params.ticker,r.query.asOf));
+  route('get','/research/:ticker/documents',(_,r)=>researchDocuments(service.source,r.params.ticker,service.date(r.query.asOf)));
+  route('get','/research/:ticker/fundamentals',(_,r)=>researchFundamentals(service,r.params.ticker,r.query.asOf));
+  route('get','/research/:ticker/institutions',(_,r)=>researchInstitutions(service,r.params.ticker,r.query.asOf,r.query.quarter??null));
+  route('get','/research/:ticker/published-model',(_,r)=>researchPublishedModel(service,r.params.ticker,r.query.asOf));
+  route('get','/research/:ticker/records',(owner,r)=>listResearchRecords(service,owner,r.params.ticker));
   route('get','/research/:ticker/earnings',(_,r)=>earningsResearch(service.source,r.params.ticker,service.date(r.query.asOf),r.query.period));
+  route('post','/research-records',(owner,r)=>saveResearchRecord(service,owner,r.body));
   route('post','/calculate',(_,r)=>service.calculate(r.body));
   route('post','/valuation-drafts',(owner,r)=>service.saveWorksheet(owner,r.body));
   route('post','/scenarios',(owner,r)=>service.saveScenario(owner,r.body));

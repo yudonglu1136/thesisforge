@@ -412,6 +412,241 @@ class FactRepository:
             result[ticker] = fact
         return result
 
+    _FUNDAMENTAL_RESEARCH_FIELDS = (
+        'ticker', 'dimension', 'calendardate', 'date', 'reportperiod', 'fiscalperiod',
+        'lastupdated', 'revenue', 'gp', 'opinc', 'ebit', 'netinccmn', 'ncfo', 'capex',
+        'fcf', 'sbcomp', 'rnd', 'sgna', 'sharesbas', 'shareswa', 'shareswadil',
+        'ncfcommon', 'ncfdiv', 'invcap', 'debt', 'cashneq', 'intexp',
+        'workingcapital', 'assets', 'equity', 'deposits', 'roic', 'dps', 'currency',
+    )
+
+    @staticmethod
+    def _finite_number(value):
+        return value if isinstance(value, (int, float)) and math.isfinite(value) else None
+
+    @classmethod
+    def _research_point(cls, row, lineage):
+        point = {field: row.get(field) for field in cls._FUNDAMENTAL_RESEARCH_FIELDS if field in row}
+        point.update({'period_end': row['reportperiod'], 'available_at': row['date'],
+                      'pit_basis': 'as_reported_filing_date_day_precision',
+                      'provenance': lineage})
+        return point
+
+    @classmethod
+    def _quarter_metrics(cls, points):
+        """Deterministic, null-preserving metrics from comparable reported quarters."""
+        by_rank = {point['quarter_rank']: point for point in points}
+
+        def n(rank, field):
+            return cls._finite_number(by_rank.get(rank, {}).get(field))
+
+        def sum4(start, field):
+            values = [n(rank, field) for rank in range(start, start + 4)]
+            return sum(values) if all(value is not None for value in values) else None
+
+        def ratio(a, b):
+            return a / b if a is not None and b is not None and b != 0 else None
+
+        def growth(a, b):
+            return a / b - 1 if a is not None and b is not None and b > 0 else None
+
+        latest, year_ago = by_rank.get(1), by_rank.get(5)
+        previous, previous_year = by_rank.get(2), by_rank.get(6)
+        current = {field: sum4(1, field) for field in
+                   ('revenue', 'gp', 'opinc', 'ebit', 'netinccmn', 'ncfo', 'capex',
+                    'fcf', 'sbcomp', 'rnd', 'sgna', 'ncfcommon', 'ncfdiv', 'intexp')}
+        prior_q = {field: sum4(2, field) for field in current}
+        prior_y = {field: sum4(5, field) for field in current}
+        latest_shares = n(1, 'shareswadil') or n(1, 'sharesbas')
+        year_shares = n(5, 'shareswadil') or n(5, 'sharesbas')
+        current_eps = ratio(current['netinccmn'], latest_shares)
+        prior_eps = ratio(prior_y['netinccmn'], year_shares)
+        current_invcap, prior_invcap = n(1, 'invcap'), n(5, 'invcap')
+        average_invcap = (current_invcap + prior_invcap) / 2 if current_invcap is not None and prior_invcap is not None else None
+        return {
+            'revenueGrowth': growth(n(1, 'revenue'), n(5, 'revenue')),
+            'priorRevenueGrowth': growth(n(2, 'revenue'), n(6, 'revenue')),
+            'ttmRevenue': current['revenue'], 'ttmRevenuePriorQuarter': prior_q['revenue'],
+            'ttmRevenuePriorYear': prior_y['revenue'],
+            'grossMargin': ratio(current['gp'], current['revenue']),
+            'grossMarginPriorQuarter': ratio(prior_q['gp'], prior_q['revenue']),
+            'operatingMargin': ratio(current['opinc'], current['revenue']),
+            'operatingMarginPriorQuarter': ratio(prior_q['opinc'], prior_q['revenue']),
+            'operatingMarginPriorYear': ratio(prior_y['opinc'], prior_y['revenue']),
+            'cfoMargin': ratio(current['ncfo'], current['revenue']),
+            'cfoMarginPriorYear': ratio(prior_y['ncfo'], prior_y['revenue']),
+            'fcfMargin': ratio(current['fcf'], current['revenue']),
+            'fcfMarginPriorYear': ratio(prior_y['fcf'], prior_y['revenue']),
+            'sbcMargin': ratio(current['sbcomp'], current['revenue']),
+            'capexIntensity': ratio(abs(current['capex']) if current['capex'] is not None else None, current['revenue']),
+            'capexIntensityPriorYear': ratio(abs(prior_y['capex']) if prior_y['capex'] is not None else None, prior_y['revenue']),
+            'dilutedSharesGrowth': growth(latest_shares, year_shares),
+            'netIncomeGrowth': growth(current['netinccmn'], prior_y['netinccmn']),
+            'perShareIncomeGrowth': growth(current_eps, prior_eps),
+            'netCommonFinancing': current['ncfcommon'],
+            'netDividendCashFlow': current['ncfdiv'],
+            'preTaxCapitalReturn': ratio(current['ebit'], average_invcap),
+            'vendorReportedRoic': n(1, 'roic'),
+            'debt': n(1, 'debt'), 'cash': n(1, 'cashneq'),
+            'interestCoverage': ratio(current['ebit'], abs(current['intexp']) if current['intexp'] is not None else None),
+            'latestQuarterRevenue': n(1, 'revenue'),
+            'latestQuarterOperatingIncome': n(1, 'opinc'),
+            'latestQuarterFcf': n(1, 'fcf'),
+            'latestDilutedShares': latest_shares,
+            'ttmOperatingIncome': current['opinc'], 'ttmCfo': current['ncfo'],
+            'ttmFcf': current['fcf'], 'ttmSbc': current['sbcomp'],
+            'quarterCount': len(points),
+            'annualComparisonReady': latest is not None and year_ago is not None,
+            'sequentialComparisonReady': latest is not None and previous is not None,
+            'priorSequentialYearReady': previous is not None and previous_year is not None,
+        }
+
+    def get_fundamental_change_universe(self, as_of, *, limit=6000):
+        """One compact PIT scan for discovery; no valuation-model dependency."""
+        self._require('fundamentals')
+        self._master()
+        limit = int(limit)
+        if limit < 1 or limit > 10000:
+            raise ValueError('fundamental universe limit must be between 1 and 10000')
+        cutoff = _date(as_of)
+        prior_date = cutoff - timedelta(days=365)
+        price_start = prior_date - timedelta(days=35)
+        fields = ','.join('f.' + ident(field) for field in self._FUNDAMENTAL_RESEARCH_FIELDS if field != 'currency')
+        fields += ',f._ingestion_run,f._observed_at,f._quality_issues'
+        rows = self._rows(f'''WITH revisions AS (
+              SELECT {fields}, ROW_NUMBER() OVER (
+                PARTITION BY f.ticker,f.reportperiod ORDER BY f.date DESC,f.lastupdated DESC
+              ) revision_rank
+              FROM fundamentals f
+              WHERE f.dimension='ARQ' AND f.date<=? AND f.reportperiod<=f.date AND f.reportperiod<=?
+            ), ranked AS (
+              SELECT *,ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY reportperiod DESC,date DESC) quarter_rank
+              FROM revisions WHERE revision_rank=1
+            ), master AS (
+              SELECT ticker,name,exchange,category,sector,industry,sicsector,sicindustry,currency,location,
+                permaticker,lastquarter,lastpricedate,secfilings,companysite
+              FROM _master WHERE "table"='SF1' AND COALESCE(isdelisted,'N')='N'
+              QUALIFY ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY lastupdated DESC,permaticker DESC)=1
+            ), eligible AS (
+              SELECT ranked.ticker FROM ranked JOIN master USING(ticker)
+              WHERE quarter_rank=1 ORDER BY reportperiod DESC,ranked.ticker LIMIT ?
+            ), prices AS (
+              SELECT stocks.ticker,
+                arg_max(close,date) current_price,
+                arg_max(close,date) FILTER (WHERE date<=?) prior_price
+              FROM stocks JOIN eligible USING(ticker)
+              WHERE date BETWEEN ? AND ? AND close IS NOT NULL AND close>0
+              GROUP BY stocks.ticker
+            )
+            SELECT ranked.*,master.name,master.exchange,master.category,master.sector,master.industry,
+              master.sicsector,master.sicindustry,master.currency,master.location,master.permaticker,
+              master.lastquarter,master.lastpricedate,master.secfilings,master.companysite,
+              prices.current_price,prices.prior_price
+            FROM ranked JOIN eligible USING(ticker) LEFT JOIN master USING(ticker)
+              LEFT JOIN prices USING(ticker)
+            WHERE quarter_rank<=8 ORDER BY ticker,quarter_rank''',
+            [as_of, as_of, limit, prior_date, price_start, cutoff])
+        grouped = {}
+        for row in rows:
+            grouped.setdefault(row['ticker'], []).append(row)
+        companies = []
+        for ticker, points in grouped.items():
+            latest = points[0]
+            metrics = self._quarter_metrics(points)
+            companies.append({
+                'ticker': ticker, 'name': latest.get('name') or ticker,
+                'exchange': latest.get('exchange'), 'category': latest.get('category'),
+                'sector': latest.get('sector'), 'industry': latest.get('industry'),
+                'sicsector': latest.get('sicsector'), 'sicindustry': latest.get('sicindustry'),
+                'currency': latest.get('currency'), 'location': latest.get('location'),
+                'security_id': f"sharadar:security:{latest['permaticker']}" if latest.get('permaticker') is not None else None,
+                'period_end': latest['reportperiod'], 'available_at': latest['date'],
+                'fiscal_period': latest.get('fiscalperiod'), 'metrics': metrics,
+                'market': {'currentPrice': latest.get('current_price'),
+                           'priorYearPrice': latest.get('prior_price'),
+                           'priceReturn': (latest['current_price'] / latest['prior_price'] - 1)
+                           if self._finite_number(latest.get('current_price')) is not None and
+                              self._finite_number(latest.get('prior_price')) is not None and latest['prior_price'] > 0 else None,
+                           'priceBasis': 'Sharadar split-adjusted close',
+                           'comparisonDate': prior_date.isoformat()},
+                'source': {'dataset': 'SF1', 'dimension': 'ARQ',
+                           'period_end': latest['reportperiod'], 'available_at': latest['date'],
+                           'pit_basis': 'as_reported_latest_visible_revision',
+                           'catalog_generation': self.generation,
+                           'provenance': self._lineage('fundamentals', latest)},
+            })
+        return {'version': 'fact-fundamental-universe-v1', 'as_of': str(as_of),
+                'catalog_generation': self.generation, 'companies': companies}
+
+    def get_fundamental_company_index(self, as_of, *, search='', limit=120):
+        """Compact Fact OS company search pool; no prices, metrics or model dependency."""
+        self._require('fundamentals')
+        self._master()
+        limit = int(limit)
+        if limit < 1 or limit > 500:
+            raise ValueError('fundamental company index limit must be between 1 and 500')
+        search = str(search or '').strip().lower()
+        if len(search) > 80:
+            raise ValueError('fundamental company search too long')
+        pattern = f'%{search}%'
+        rows = self._rows('''WITH latest AS (
+              SELECT f.ticker,f.reportperiod,f.date,ROW_NUMBER() OVER(
+                PARTITION BY f.ticker ORDER BY f.reportperiod DESC,f.date DESC,f.lastupdated DESC
+              ) rank
+              FROM fundamentals f
+              WHERE f.dimension='ARQ' AND f.date<=? AND f.reportperiod<=f.date AND f.reportperiod<=?
+            ), master AS (
+              SELECT ticker,name,permaticker
+              FROM _master WHERE "table" IN ('SF1','stocks')
+              QUALIFY ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY
+                CASE WHEN "table"='SF1' THEN 0 ELSE 1 END,lastupdated DESC,permaticker DESC)=1
+            )
+            SELECT latest.ticker,master.name,latest.reportperiod,latest.date,master.permaticker
+            FROM latest JOIN master USING(ticker) WHERE latest.rank=1
+              AND (?='' OR lower(latest.ticker) LIKE ? OR lower(master.name) LIKE ?)
+            ORDER BY CASE WHEN lower(latest.ticker)=? THEN 0
+              WHEN lower(latest.ticker) LIKE ? THEN 1
+              WHEN lower(master.name) LIKE ? THEN 2 ELSE 3 END,latest.ticker LIMIT ?''',
+            [as_of, as_of, search, pattern, pattern, search, f'{search}%', f'{search}%', limit])
+        return {'version': 'fact-fundamental-company-index-v1', 'as_of': str(as_of),
+                'catalog_generation': self.generation, 'companies': [{
+                    'ticker': row['ticker'], 'name': row.get('name') or row['ticker'],
+                    'period_end': row['reportperiod'],
+                    'available_at': row['date'],
+                    'security_id': f"sharadar:security:{row['permaticker']}"
+                    if row.get('permaticker') is not None else None,
+                } for row in rows]}
+
+    def get_fundamental_research(self, ticker, as_of, *, quarters=16, years=8):
+        """Bounded source facts for one company; restated dimensions are never mixed into PIT."""
+        quarters, years = int(quarters), int(years)
+        if not 4 <= quarters <= 40 or not 1 <= years <= 20:
+            raise ValueError('invalid fundamental research history bound')
+        identity = self.resolve_security(ticker)
+        self._master()
+        rows = self._security_rows('fundamentals', identity,
+            "dimension IN ('ARQ','ARY') AND date<=? AND reportperiod<=date AND reportperiod<=?",
+            [as_of, as_of], 'dimension,reportperiod,date')
+        latest = {}
+        for row in rows:
+            latest[(row['dimension'], row['reportperiod'])] = row
+        quarterly = sorted((row for (dimension, _), row in latest.items() if dimension == 'ARQ'),
+                           key=lambda row: (row['reportperiod'], row['date']), reverse=True)[:quarters]
+        annual = sorted((row for (dimension, _), row in latest.items() if dimension == 'ARY'),
+                        key=lambda row: (row['reportperiod'], row['date']), reverse=True)[:years]
+        masters = self._rows("SELECT * FROM _master WHERE permaticker=? AND \"table\"='SF1' ORDER BY lastupdated DESC", [identity['permaticker']])
+        master = masters[0] if masters else {}
+        return {
+            'version': 'fact-fundamental-research-v1', 'as_of': str(as_of),
+            'ticker': identity['ticker'], 'identity': identity,
+            'company': {key: master.get(key) for key in ('name','exchange','category','sector','industry','sicsector','sicindustry','currency','location','companysite','secfilings')},
+            'quarterly': [self._research_point(row, self._lineage('fundamentals', row)) for row in quarterly],
+            'annual': [self._research_point(row, self._lineage('fundamentals', row)) for row in annual],
+            'reported_basis': 'ARQ/ARY latest revision visible by the requested as-of date',
+            'restated_basis': 'withheld_in_historical_pit; MRQ/MRY are not mixed with as-reported facts',
+            'catalog_generation': self.generation,
+        }
+
     def get_fundamentals(self, ticker, dimension='ART', *, as_of=None):
         if dimension not in DIMENSIONS:
             raise ValueError('invalid dimension')

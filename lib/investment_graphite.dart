@@ -663,7 +663,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
             size: 12,
             color: p.accent,
           ),
-        if (!independentValuation)
+        if (!independentValuation && personalDcfMethod == 'parent_fcfe')
           Container(
             padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
@@ -727,13 +727,64 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
           changed: (_) => editHypothesisMetadata(),
         ),
         const SizedBox(height: 14),
-        scenarioRate(ke, 'Cost of equity (Ke)', '股权资本成本 (Ke)'),
+        scenarioRate(
+          personalDcfMethod == 'operating_fcff' ? wacc : ke,
+          personalDcfMethod == 'operating_fcff'
+              ? 'Weighted average cost of capital (WACC)'
+              : 'Cost of equity (Ke)',
+          personalDcfMethod == 'operating_fcff'
+              ? '加权平均资本成本 (WACC)'
+              : '股权资本成本 (Ke)',
+        ),
         scenarioRate(terminal, 'Terminal growth (g)', '永续增长 (g)'),
         label(
-          'Model range: g 0%–5%; Ke − g ≥ 1.5pp.',
-          '模型范围：g 0%–5%；Ke − g ≥ 1.5 个百分点。',
+          personalDcfMethod == 'operating_fcff'
+              ? 'Model range: g 0%–5%; WACC − g ≥ 1.5pp.'
+              : 'Model range: g 0%–5%; Ke − g ≥ 1.5pp.',
+          personalDcfMethod == 'operating_fcff'
+              ? '模型范围：g 0%–5%；WACC − g ≥ 1.5 个百分点。'
+              : '模型范围：g 0%–5%；Ke − g ≥ 1.5 个百分点。',
           size: 11,
         ),
+        if (personalDcfMethod == 'operating_fcff') ...[
+          const SizedBox(height: 12),
+          label(
+            'Enterprise-to-equity bridge · ${text(company?['currency'])} millions',
+            '企业价值到股权价值桥 · ${text(company?['currency'])} 百万',
+            size: 12,
+            color: p.accent,
+          ),
+          input(
+            netDebt,
+            'Net debt',
+            '净债务',
+            numeric: true,
+            width: double.infinity,
+            changed: (_) => scheduleCalculation(),
+          ),
+          input(
+            nci,
+            'Non-controlling interests',
+            '少数股东权益',
+            numeric: true,
+            width: double.infinity,
+            changed: (_) => scheduleCalculation(),
+          ),
+          input(
+            nonOperatingAssets,
+            'Non-operating assets',
+            '非经营资产',
+            numeric: true,
+            width: double.infinity,
+            changed: (_) => scheduleCalculation(),
+          ),
+          label(
+            'Zero is an explicit editable assumption, not a verified fact. Review the evidence before saving.',
+            '零是明确、可修改的假设，不代表已核验事实；保存前请检查证据。',
+            size: 10,
+            color: p.secondary,
+          ),
+        ],
         valuationCalculationState(compact: true),
         const SizedBox(height: 12),
         label(
@@ -758,10 +809,18 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
         const SizedBox(height: 4),
         label(
           reverseVariable == 'growth'
-              ? 'Annual revenue growth for 5 years · at ${targetReturn.text}% required return'
+              ? 'Annual revenue growth for $forecastHorizon years · at ${targetReturn.text}% required return'
+              : personalDcfMethod == 'operating_fcff'
+              ? reverseVariable == 'mature_ebit_margin'
+                    ? 'Required mature EBIT margin · at ${targetReturn.text}% WACC'
+                    : 'Required ΔNWC / revenue · at ${targetReturn.text}% WACC'
               : 'Required terminal margin · at ${targetReturn.text}% return',
           reverseVariable == 'growth'
-              ? '未来 5 年每年收入增长 · 要求回报 ${targetReturn.text}%'
+              ? '未来 $forecastHorizon 年每年收入增长 · 要求回报 ${targetReturn.text}%'
+              : personalDcfMethod == 'operating_fcff'
+              ? reverseVariable == 'mature_ebit_margin'
+                    ? '所需成熟期 EBIT 利润率 · WACC ${targetReturn.text}%'
+                    : '所需 ΔNWC / 收入 · WACC ${targetReturn.text}%'
               : '所需终值现金流率 · 要求回报 ${targetReturn.text}%',
           size: 13,
         ),
@@ -902,8 +961,12 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                         dialogSetState(() => confirmed = v ?? false),
                     title: Text(
                       w(
-                        'I have reviewed parent-common FCFE ownership. Taxes, interest, capex and working capital are already in my FCFE margin.',
-                        '我已检查母公司普通股的 FCFE 归属，现金流率已包含税、利息、资本支出和营运资本。',
+                        personalDcfMethod == 'operating_fcff'
+                            ? 'I have reviewed the operating assumptions and the enterprise-to-equity bridge, including net debt and NCI.'
+                            : 'I have reviewed parent-common FCFE ownership. Taxes, interest, capex and working capital are already in my FCFE margin.',
+                        personalDcfMethod == 'operating_fcff'
+                            ? '我已检查经营假设及企业价值到股权价值桥，包括净债务和少数股东权益。'
+                            : '我已检查母公司普通股的 FCFE 归属，现金流率已包含税、利息、资本支出和营运资本。',
                       ),
                       style: TextStyle(color: p.muted, fontSize: 14),
                     ),

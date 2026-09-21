@@ -119,7 +119,12 @@ Future<void> open(
     ),
   );
   await t.pumpAndSettle();
-  await t.tap(find.text(language == AppLanguage.en ? 'Valuation' : '估值'));
+  await t.tap(find.byKey(const ValueKey('research-tab-value')));
+  await t.pumpAndSettle();
+  await t.ensureVisible(
+    find.text(language == AppLanguage.en ? 'My DCF' : '我的 DCF'),
+  );
+  await t.tap(find.text(language == AppLanguage.en ? 'My DCF' : '我的 DCF'));
   await t.pumpAndSettle();
 }
 
@@ -143,6 +148,43 @@ Future<void> save(WidgetTester t) async {
 }
 
 void main() {
+  testWidgets(
+    'operating FCFF editor exposes the full bridge and retains ten-year paths',
+    (t) async {
+      final api = PersonalApi();
+      await open(t, api, size: const Size(1487, 1058));
+      await t.ensureVisible(find.byKey(const ValueKey('dcf-method-fcff')));
+      await t.tap(find.byKey(const ValueKey('dcf-method-fcff')));
+      await t.pump(const Duration(milliseconds: 500));
+      await t.pumpAndSettle();
+      expect(find.text('Operating FCFF'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('forecast-Year 1 EBIT margin %')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Enterprise-to-equity bridge · USD millions'),
+        findsOneWidget,
+      );
+      final calculation = api.calls.lastWhere(
+        (call) => call.$1.endsWith('/calculate'),
+      );
+      expect(
+        (calculation.$2['assumptions'] as Map)['method'],
+        'operating_fcff',
+      );
+      await t.ensureVisible(find.byKey(const ValueKey('forecast-horizon-10')));
+      await t.tap(find.byKey(const ValueKey('forecast-horizon-10')));
+      await t.pump(const Duration(milliseconds: 500));
+      await t.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('forecast-Year 10 capex / revenue %')),
+        findsOneWidget,
+      );
+      expect(t.takeException(), isNull);
+    },
+  );
+
   for (final language in AppLanguage.values) {
     testWidgets(
       'prefill is labeled as model years and assumptions, not missing zero guidance $language',
@@ -341,7 +383,7 @@ void main() {
       expect(find.text('4,000m'), findsOneWidget);
       expect(find.text('2,400m'), findsOneWidget);
       expect(find.text('80.00%'), findsOneWidget);
-      expect(find.textContaining('TV ÷ (1 + Ke)⁵'), findsOneWidget);
+      expect(find.textContaining('PV(TV) = TV ÷ (1 + Ke)^5'), findsOneWidget);
       expect(t.takeException(), isNull);
     },
   );
@@ -533,15 +575,12 @@ void main() {
     },
   );
   testWidgets(
-    'Ke terminal spread and unsupported negative FCFE give actionable validation',
+    'negative explicit FCFE is preserved while invalid Ke spread is rejected',
     (t) async {
       final api = PersonalApi();
       await open(t, api);
       await edit(t, cell('FCFE margin %', 3), '-5');
-      expect(
-        find.textContaining('does not support negative-FCFE'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('FCFE margin must be between'), findsNothing);
       await edit(t, cell('FCFE margin %', 3), '20');
       await edit(
         t,
@@ -551,6 +590,27 @@ void main() {
       expect(find.textContaining('1.5 percentage points'), findsOneWidget);
     },
   );
+  testWidgets('5Y and 10Y switching preserves the extended forecast', (
+    t,
+  ) async {
+    await open(t, PersonalApi());
+    final tenYear = find.byKey(const ValueKey('forecast-horizon-10'));
+    final fiveYear = find.byKey(const ValueKey('forecast-horizon-5'));
+    await t.ensureVisible(tenYear);
+    await t.tap(tenYear);
+    await t.pumpAndSettle();
+    expect(cell('growth %', 10), findsOneWidget);
+    await edit(t, cell('growth %', 10), '3.75');
+    await t.ensureVisible(fiveYear);
+    await t.tap(fiveYear);
+    await t.pumpAndSettle();
+    expect(cell('growth %', 10), findsNothing);
+    await t.ensureVisible(tenYear);
+    await t.tap(tenYear);
+    await t.pumpAndSettle();
+    expect(t.widget<TextField>(cell('growth %', 10)).controller?.text, '3.75');
+    expect(t.takeException(), isNull);
+  });
   testWidgets(
     'hypothesis saves with the current owner version and reload restores numbers and reasoning',
     (t) async {

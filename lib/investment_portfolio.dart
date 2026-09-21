@@ -29,6 +29,7 @@ class PortfolioResearchPanel extends StatefulWidget {
 class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
   Map<String, dynamic>? data;
   bool loading = true, failed = false;
+  bool detailsLoading = false, detailsFailed = false;
   bool portfolioSyncing = false;
   String? portfolioActionMessage, portfolioActionError;
   String tab = 'overview', selectedCurrency = '', manager = '', query = '';
@@ -80,11 +81,11 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
     setState(() {
       loading = true;
       failed = false;
-      data = null;
+      detailsFailed = false;
     });
     try {
       final result = await widget.api.getJson(
-        '/api/investment/portfolio-analysis?asOf=${widget.asOf}&riskFreeRate=$riskFreeRate${widget.homeMode ? '&scope=home' : ''}',
+        '/api/investment/portfolio-analysis?asOf=${widget.asOf}&riskFreeRate=$riskFreeRate&scope=${widget.homeMode ? 'home' : 'summary'}',
       );
       if (!mounted || request != serial) return;
       if (result['asOf'] != widget.asOf ||
@@ -94,16 +95,46 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
       setState(() {
         data = result;
         loading = false;
+        detailsLoading =
+            !widget.homeMode && asList(result['groups']).isNotEmpty;
         final groups = asList(result['groups']);
         if (!groups.any((g) => text(g['currency']) == selectedCurrency)) {
           selectedCurrency = text(groups.firstOrNull?['currency']);
         }
       });
+      if (!widget.homeMode && asList(result['groups']).isNotEmpty) {
+        unawaited(loadDetails(request));
+      }
     } catch (_) {
       if (mounted && request == serial) {
         setState(() {
           loading = false;
           failed = true;
+        });
+      }
+    }
+  }
+
+  Future<void> loadDetails(int request) async {
+    try {
+      final result = await widget.api.getJson(
+        '/api/investment/portfolio-analysis?asOf=${widget.asOf}&riskFreeRate=$riskFreeRate&scope=detail',
+      );
+      if (!mounted || request != serial) return;
+      if (result['asOf'] != widget.asOf ||
+          result['version'] != 'portfolio-research-v1') {
+        throw StateError('portfolio_contract_mismatch');
+      }
+      setState(() {
+        data = result;
+        detailsLoading = false;
+        detailsFailed = false;
+      });
+    } catch (_) {
+      if (mounted && request == serial) {
+        setState(() {
+          detailsLoading = false;
+          detailsFailed = true;
         });
       }
     }
@@ -122,7 +153,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
       // A follow-up GET could otherwise resolve a different cache generation
       // and incorrectly replace a configured account with onboarding.
       final result = await widget.api.postJson(
-        '/api/investment/portfolio-analysis/sync?asOf=${widget.asOf}&riskFreeRate=$riskFreeRate${widget.homeMode ? '&scope=home' : ''}',
+        '/api/investment/portfolio-analysis/sync?asOf=${widget.asOf}&riskFreeRate=$riskFreeRate&scope=${widget.homeMode ? 'home' : 'summary'}',
         {},
       );
       if (!mounted || request != serial) return;
@@ -136,10 +167,15 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
         data = result;
         loading = false;
         failed = false;
+        detailsLoading = !widget.homeMode && groups.isNotEmpty;
+        detailsFailed = false;
         if (!groups.any((g) => text(g['currency']) == selectedCurrency)) {
           selectedCurrency = text(groups.firstOrNull?['currency']);
         }
       });
+      if (!widget.homeMode && groups.isNotEmpty) {
+        unawaited(loadDetails(request));
+      }
       if (sync['ok'] != true) {
         final saved = isSavedPortfolioReport(result);
         setState(() {
@@ -470,13 +506,13 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
           ),
           const SizedBox(height: 12),
         ],
-        if (loading)
+        if (loading && data == null)
           panel([
             const LinearProgressIndicator(),
             const SizedBox(height: 16),
             copy('Reading your connected portfolio…', '正在读取你已有的账户持仓…'),
           ])
-        else if (failed)
+        else if (failed && data == null)
           panel([
             title('Portfolio could not be loaded', '组合暂时读取失败'),
             const SizedBox(height: 10),
@@ -557,10 +593,55 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
             ],
           ),
           const SizedBox(height: 16),
+          if (detailsLoading) ...[
+            LinearProgressIndicator(
+              value: .65,
+              minHeight: 2,
+              color: p.accent,
+              backgroundColor: p.border,
+            ),
+            const SizedBox(height: 8),
+            copy(
+              'Holdings are ready. Loading risk, Guru comparisons and trailing dividends in the background…',
+              '持仓已经载入，正在后台补充风险、大佬比较和过去12个月股息…',
+              size: 11,
+            ),
+            const SizedBox(height: 12),
+          ] else if (detailsFailed) ...[
+            Wrap(
+              spacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                copy(
+                  'Holdings are available; optional research detail did not finish.',
+                  '持仓已可用，附加研究暂未完成。',
+                  color: p.secondary,
+                  size: 11,
+                ),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      detailsLoading = true;
+                      detailsFailed = false;
+                    });
+                    unawaited(loadDetails(serial));
+                  },
+                  child: Text(w('Retry details', '重试附加分析')),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+          ],
           if (tab == 'overview') portfolioDesk(group),
           if (tab == 'holdings') portfolioHoldingsTable(group),
-          if (tab == 'risk') riskView(group),
-          if (tab == 'gurus') gurus(group),
+          if (tab == 'risk')
+            detailsLoading && group['risk'] == null
+                ? detailLoadingPanel()
+                : riskView(group),
+          if (tab == 'gurus')
+            detailsLoading && asList(group['comparisons']).isEmpty
+                ? detailLoadingPanel()
+                : gurus(group),
           const SizedBox(height: 20),
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
@@ -586,6 +667,15 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
       ],
     );
   }
+
+  Widget detailLoadingPanel() => panel([
+    const LinearProgressIndicator(),
+    const SizedBox(height: 14),
+    copy(
+      'Your holdings are already available. This research layer is loading separately.',
+      '持仓已经可以查看，这一研究层正在单独载入。',
+    ),
+  ]);
 
   String asListDates(dynamic dates) => dates is List
       ? dates.map((d) => d ?? w('Unknown', '未知')).join(' / ')

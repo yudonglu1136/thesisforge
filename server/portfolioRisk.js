@@ -20,14 +20,17 @@ function cacheFor(source) {
   return c;
 }
 function remember(map,key,value,limit){if(map.size>=limit)map.delete(map.keys().next().value);map.set(key,value);return value;}
-export function portfolioValuations(source,date) {
+export function portfolioValuations(source,date,tickers=null) {
   const cache=cacheFor(source).models;
-  if(cache.has(date))return cache.get(date);
-  const models=opportunityValuations(source,date);
+  const selected=tickers?[...new Set(tickers.filter(Boolean))].sort():null;
+  const requested=selected?[...new Set(selected.flatMap(t=>t==='GOOG'?['GOOG','GOOGL']:[t]))]:null;
+  const key=selected?`${date}:${selected.join(',')}`:`${date}:*`;
+  if(cache.has(key))return cache.get(key);
+  const models=opportunityValuations(source,date,requested);
   // Reuse the platform's reviewed share-class map, not a fuzzy ticker guess.
   if(!models.has('GOOG')&&sp500CanonicalTicker('GOOG')==='GOOGL'&&models.get('GOOGL')?.currency==='USD')
     models.set('GOOG',{...models.get('GOOGL'),modelTicker:'GOOGL',claimPolicy:'Shared Alphabet economic per-share model; no voting-rights premium modelled.'});
-  return remember(cache,date,models,4);
+  return remember(cache,key,models,64);
 }
 export function returnStatistics(returns,benchmark,{riskFreeRate=.04,minObservations=60}={}) {
   if(returns.length!==benchmark.length||returns.length<minObservations||!returns.every(x=>finite(x)&&x>-1)||!benchmark.every(x=>finite(x)&&x>-1))return {status:'insufficient_aligned_returns',observations:returns.length};

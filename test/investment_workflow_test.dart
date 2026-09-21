@@ -400,7 +400,10 @@ Future<WorkflowTestApi> mountResearch(WidgetTester tester) async {
     ),
   );
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Valuation'));
+  await tester.tap(find.byKey(const ValueKey('research-tab-value')));
+  await tester.pumpAndSettle();
+  await tester.ensureVisible(find.text('My DCF'));
+  await tester.tap(find.text('My DCF'));
   await tester.pumpAndSettle();
   return api;
 }
@@ -849,18 +852,13 @@ void main() {
     }
   }
   testWidgets(
-    'decision has no default action, no implicit position and no default rule',
+    'research records do not imply a trade, position or monitoring rule',
     (tester) async {
       await mountResearch(tester);
-      await tester.tap(find.text('Decisions'));
+      await tester.tap(find.text('Research records'));
       await tester.pumpAndSettle();
       for (final a in ['Watch', 'Pass', 'Invest']) {
-        expect(
-          tester
-              .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, a))
-              .selected,
-          isFalse,
-        );
+        expect(find.widgetWithText(ChoiceChip, a), findsNothing);
       }
       expect(find.widgetWithText(TextField, 'Research units'), findsNothing);
       expect(
@@ -868,38 +866,16 @@ void main() {
         findsNothing,
       );
       expect(
-        tester
-            .widget<CheckboxListTile>(
-              find.widgetWithText(
-                CheckboxListTile,
-                'Add a fundamental review rule',
-              ),
-            )
-            .value,
-        isFalse,
+        find.widgetWithText(TextField, 'Research question'),
+        findsOneWidget,
       );
       expect(
         tester
             .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Record decision snapshot'),
+              find.widgetWithText(FilledButton, 'Save research record'),
             )
             .onPressed,
         isNull,
-      );
-      await tester.tap(find.text('Invest'));
-      await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<TextField>(find.widgetWithText(TextField, 'Research units'))
-            .controller!
-            .text,
-        isEmpty,
-      );
-      await tester.tap(find.text('Pass'));
-      await tester.pumpAndSettle();
-      expect(
-        find.widgetWithText(TextField, 'Target portfolio weight %'),
-        findsNothing,
       );
       expect(tester.takeException(), isNull);
     },
@@ -1035,7 +1011,14 @@ void main() {
             expect(find.text('ThesisForge'), findsOneWidget);
             if (page == 'research') {
               await tester.tap(
-                find.text(language == AppLanguage.en ? 'Valuation' : '估值'),
+                find.byKey(const ValueKey('research-tab-value')),
+              );
+              await tester.pumpAndSettle();
+              await tester.ensureVisible(
+                find.text(language == AppLanguage.en ? 'My DCF' : '我的 DCF'),
+              );
+              await tester.tap(
+                find.text(language == AppLanguage.en ? 'My DCF' : '我的 DCF'),
               );
               await tester.pumpAndSettle();
               expect(tester.takeException(), isNull);

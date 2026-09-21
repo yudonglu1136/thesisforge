@@ -47,6 +47,7 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
   List<Map<String, dynamic>> companies = [];
   bool loading = true, failed = false;
   int active = 0, request = 0;
+  Timer? searchTimer;
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
   double get rowHeight => math.max(
@@ -67,6 +68,7 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
     query.dispose();
     searchFocus.dispose();
     resultsScroll.dispose();
+    searchTimer?.cancel();
     super.dispose();
   }
 
@@ -77,8 +79,11 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
       failed = false;
     });
     try {
+      final search = Uri.encodeQueryComponent(query.text.trim());
       final data = await widget.api
-          .getJson('/api/investment/companies?asOf=${widget.asOf}')
+          .getJson(
+            '/api/investment/companies?asOf=${widget.asOf}&search=$search&limit=120',
+          )
           .timeout(const Duration(seconds: 12));
       if (!mounted || serial != request) return;
       if (data['asOf'] != widget.asOf || data['companies'] is! List) {
@@ -91,7 +96,7 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
         if (!RegExp(r'^[A-Z][A-Z0-9.\-]{0,14}$').hasMatch(symbol) ||
             date.length != 10 ||
             date.compareTo(widget.asOf) > 0 ||
-            r['coverage'] != 'stored_model' ||
+            !const {'stored_model', 'fact_os_only'}.contains(r['coverage']) ||
             !seen.add(symbol)) {
           throw StateError('invalid_company_index');
         }
@@ -124,6 +129,8 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
   void changeQuery(String _) {
     setState(() => active = 0);
     if (resultsScroll.hasClients) resultsScroll.jumpTo(0);
+    searchTimer?.cancel();
+    searchTimer = Timer(const Duration(milliseconds: 220), load);
   }
 
   void choose(String symbol) => Navigator.of(context).pop(symbol);
@@ -248,7 +255,15 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
                             tooltip: w('Clear search', '清空搜索'),
                             onPressed: () {
                               query.clear();
-                              changeQuery('');
+                              searchTimer?.cancel();
+                              setState(() => active = 0);
+                              if (resultsScroll.hasClients) {
+                                resultsScroll.jumpTo(0);
+                              }
+                              // Clearing is an explicit request to restore the
+                              // dated directory, so do not make the user wait
+                              // through the typing debounce.
+                              unawaited(load());
                               searchFocus.requestFocus();
                             },
                             icon: Icon(
@@ -345,13 +360,18 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
                         Icons.search_off,
                         w('No matching companies', '没有匹配的公司'),
                         w(
-                          'Try a company name or ticker. Only models available by ${widget.asOf} are listed.',
-                          '请尝试公司名或股票代码。仅列出 ${widget.asOf} 及之前有模型记录的公司。',
+                          'Try a company name or ticker. Fact OS companies remain available even without a platform valuation.',
+                          '请尝试公司名或股票代码。即使暂无平台估值，Fact OS 公司仍可研究。',
                         ),
                         hasQuery ? w('Clear search', '清空搜索') : null,
                         () {
                           query.clear();
-                          changeQuery('');
+                          searchTimer?.cancel();
+                          setState(() => active = 0);
+                          if (resultsScroll.hasClients) {
+                            resultsScroll.jumpTo(0);
+                          }
+                          unawaited(load());
                           searchFocus.requestFocus();
                         },
                       )
@@ -453,8 +473,14 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
                                                 const SizedBox(height: 3),
                                                 Text(
                                                   w(
-                                                    'Model · ${r['availableAt']}',
-                                                    '模型 · ${r['availableAt']}',
+                                                    r['coverage'] ==
+                                                            'stored_model'
+                                                        ? 'Model · ${r['availableAt']}'
+                                                        : 'Facts · ${r['availableAt']}',
+                                                    r['coverage'] ==
+                                                            'stored_model'
+                                                        ? '模型 · ${r['availableAt']}'
+                                                        : '财务事实 · ${r['availableAt']}',
                                                   ),
                                                   style: style(
                                                     10,

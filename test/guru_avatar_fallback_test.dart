@@ -4,8 +4,13 @@ import 'package:guru_analysis_terminal/main.dart';
 void main() {
   test('catalog without avatar still resolves canonical local portrait', () {
     for (final id in [
-      'bill-ackman', 'li-lu', 'warren-buffett',
-      'william-heard', 'evan-mcgoff', 'michael-cuggino', 'john-stamas',
+      'bill-ackman',
+      'li-lu',
+      'warren-buffett',
+      'william-heard',
+      'evan-mcgoff',
+      'michael-cuggino',
+      'john-stamas',
     ]) {
       expect(
         resolvedGuruAvatarUrl({'id': id, 'avatarUrl': null}),

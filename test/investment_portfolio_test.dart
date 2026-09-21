@@ -8,6 +8,7 @@ class PortfolioApi extends ApiClient {
   PortfolioApi() : super(() => 'fixture');
   bool fail = false, preview = false, wrong = false, partial = false;
   Completer<Map<String, dynamic>>? pending;
+  Completer<Map<String, dynamic>>? detailPending;
   final reads = <String>[];
   Map<String, dynamic> result(String asOf) => {
     'version': 'portfolio-research-v1',
@@ -111,6 +112,12 @@ class PortfolioApi extends ApiClient {
   Future<Map<String, dynamic>> getJson(String path) async {
     reads.add(path);
     if (fail) throw StateError('offline');
+    if (Uri.parse(path).queryParameters['scope'] == 'detail' &&
+        detailPending != null) {
+      final p = detailPending!;
+      detailPending = null;
+      return p.future;
+    }
     if (pending != null) {
       final p = pending!;
       pending = null;
@@ -183,10 +190,31 @@ void main() {
       expect(find.text('Holdings & model structure'), findsOneWidget);
       expect(find.text('Model architecture'), findsOneWidget);
       expect(find.text('Current → model'), findsOneWidget);
-      expect(api.reads.single, contains('/portfolio-analysis?asOf=2026-08-28'));
+      expect(api.reads, hasLength(2));
+      expect(api.reads.first, contains('scope=summary'));
+      expect(api.reads.last, contains('scope=detail'));
       expect(t.takeException(), isNull);
     },
   );
+  testWidgets('summary renders while optional detail is still pending', (
+    t,
+  ) async {
+    final detail = Completer<Map<String, dynamic>>();
+    final api = PortfolioApi()..detailPending = detail;
+    await mount(t, api);
+    expect(find.textContaining('USD 3,000'), findsOneWidget);
+    expect(
+      find.textContaining('Holdings are ready. Loading risk'),
+      findsOneWidget,
+    );
+    detail.complete(api.result('2026-08-28'));
+    await t.pumpAndSettle();
+    expect(
+      find.textContaining('Holdings are ready. Loading risk'),
+      findsNothing,
+    );
+    expect(t.takeException(), isNull);
+  });
   testWidgets('development preview never falls back to sample holdings', (
     t,
   ) async {
@@ -247,7 +275,9 @@ void main() {
     api.fail = false;
     await tap(t, find.text('Try again'));
     expect(find.textContaining('USD 3,000'), findsOneWidget);
-    expect(api.reads.length, 2);
+    expect(api.reads.length, 3);
+    expect(api.reads[1], contains('scope=summary'));
+    expect(api.reads[2], contains('scope=detail'));
   });
   testWidgets('wrong cutoff response is rejected', (t) async {
     await mount(t, PortfolioApi()..wrong = true);

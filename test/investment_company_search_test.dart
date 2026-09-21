@@ -143,7 +143,9 @@ void main() {
         await t.pumpAndSettle();
         expect(find.text('ISRG'), findsOneWidget);
         expect(find.text('NVDA'), findsNothing);
-        expect(api.reads, ['/api/investment/companies?asOf=2026-08-28']);
+        expect(api.reads.length, 2);
+        expect(api.reads.first, contains('search=&limit=120'));
+        expect(api.reads.last, contains('search=Intuitive&limit=120'));
         await t.tap(find.text('ISRG'));
         await t.pumpAndSettle();
         expect(selected, 'ISRG');
@@ -189,7 +191,10 @@ void main() {
       await t.tap(find.byTooltip('Clear search'));
       await t.pumpAndSettle();
       expect(find.text('Browse companies · 4'), findsOneWidget);
-      expect(api.reads.length, 1);
+      // Clearing before the debounce fires cancels the obsolete remote query
+      // and immediately restores the bounded directory.
+      expect(api.reads.length, 2);
+      expect(api.reads.last, contains('search=&limit=120'));
     },
   );
   testWidgets('failure, retry and explicit loading do not change selection', (

@@ -31,10 +31,21 @@ class GuruDiscoveryDesk extends StatefulWidget {
 class _GuruDiscoveryDeskState extends State<GuruDiscoveryDesk> {
   final studyKey = GlobalKey(), holdingsKey = GlobalKey();
   late Map<String, dynamic> selection;
+  late List<Map<String, dynamic>> gurus;
+  bool showStudy = false;
   @override
   void initState() {
     super.initState();
     selection = {...widget.initialSelection};
+    gurus = widget.gurus;
+  }
+
+  @override
+  void didUpdateWidget(covariant GuruDiscoveryDesk oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.gurus.isNotEmpty && widget.gurus != oldWidget.gurus) {
+      gurus = widget.gurus;
+    }
   }
 
   void reveal(GlobalKey key) {
@@ -48,6 +59,13 @@ class _GuruDiscoveryDeskState extends State<GuruDiscoveryDesk> {
     }
   }
 
+  void openStudy() {
+    if (!showStudy) {
+      setState(() => showStudy = true);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => reveal(studyKey));
+  }
+
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -57,7 +75,11 @@ class _GuruDiscoveryDeskState extends State<GuruDiscoveryDesk> {
         api: widget.api,
         palette: widget.palette,
         asOf: widget.asOf,
-        gurus: widget.gurus,
+        gurus: gurus,
+        onCatalog: (value) {
+          if (value.isEmpty || identical(value, gurus)) return;
+          setState(() => gurus = value);
+        },
         initialSelection: asMap(selection['holdings']),
         onSelection: (value) {
           selection['holdings'] = value;
@@ -65,7 +87,7 @@ class _GuruDiscoveryDeskState extends State<GuruDiscoveryDesk> {
         },
         onExplore: widget.onExplore,
         onCompany: widget.onCompany,
-        onStudy: () => reveal(studyKey),
+        onStudy: openStudy,
       ),
       const SizedBox(height: 28),
       Row(
@@ -89,27 +111,60 @@ class _GuruDiscoveryDeskState extends State<GuruDiscoveryDesk> {
         ],
       ),
       const SizedBox(height: 8),
-      Text(
-        context.tr(
-          '保留你的学习清单。点击图点与头像联动，再深入季度持仓。',
-          'Keep your study shortlist. Select a chart point or portrait, then explore quarterly holdings.',
+      if (!showStudy)
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: widget.palette.panel,
+            border: Border.all(color: widget.palette.border),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.insights_outlined, color: widget.palette.accent),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  context.tr(
+                    '按需加载换手率、复合收益与夏普对比，不影响上方持仓首屏。',
+                    'Load turnover, CAGR and Sharpe comparisons on demand without delaying holdings.',
+                  ),
+                  style: TextStyle(fontSize: 13, color: widget.palette.muted),
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                key: const ValueKey('load-guru-study'),
+                onPressed: openStudy,
+                icon: const Icon(Icons.play_arrow, size: 18),
+                label: Text(context.tr('加载对比', 'Load comparison')),
+              ),
+            ],
+          ),
+        )
+      else ...[
+        Text(
+          context.tr(
+            '保留你的学习清单。点击图点与头像联动，再深入季度持仓。',
+            'Keep your study shortlist. Select a chart point or portrait, then explore quarterly holdings.',
+          ),
+          style: TextStyle(fontSize: 13, color: widget.palette.muted),
         ),
-        style: TextStyle(fontSize: 13, color: widget.palette.muted),
-      ),
-      const SizedBox(height: 16),
-      GuruStudyPanel(
-        api: widget.api,
-        palette: widget.palette,
-        asOf: widget.asOf,
-        gurus: widget.gurus,
-        initialSelection: selection,
-        onSelection: (value) {
-          selection = {...value, 'holdings': selection['holdings']};
-          widget.onSelection?.call({...selection});
-        },
-        onExplore: widget.onExplore,
-        onFollow: widget.onFollow,
-      ),
+        const SizedBox(height: 16),
+        GuruStudyPanel(
+          api: widget.api,
+          palette: widget.palette,
+          asOf: widget.asOf,
+          gurus: gurus,
+          initialSelection: selection,
+          onSelection: (value) {
+            selection = {...value, 'holdings': selection['holdings']};
+            widget.onSelection?.call({...selection});
+          },
+          onExplore: widget.onExplore,
+          onFollow: widget.onFollow,
+        ),
+      ],
     ],
   );
 }
@@ -183,6 +238,7 @@ class GuruHoldingsMatrix extends StatefulWidget {
     required this.onStudy,
     this.initialSelection = const {},
     this.onSelection,
+    this.onCatalog,
   });
   final ApiClient api;
   final Palette palette;
@@ -193,6 +249,7 @@ class GuruHoldingsMatrix extends StatefulWidget {
   final VoidCallback onStudy;
   final Map<String, dynamic> initialSelection;
   final ValueChanged<Map<String, dynamic>>? onSelection;
+  final ValueChanged<List<Map<String, dynamic>>>? onCatalog;
   @override
   State<GuruHoldingsMatrix> createState() => _GuruHoldingsMatrixState();
 }
@@ -201,6 +258,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
   final managerSearch = TextEditingController(),
       stockSearch = TextEditingController();
   final horizontal = ScrollController();
+  Timer? companyDetailTimer;
   Map<String, dynamic>? data;
   final Map<String, Map<String, dynamic>> companyDetails = {};
   List<String> selected = [];
@@ -228,6 +286,11 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
       ? '—'
       : '${signed && number(value) > 0 ? '+' : ''}${(number(value) * 100).toStringAsFixed(2)}%';
   List<Map<String, dynamic>> get rows => asList(data?['rows']);
+  List<Map<String, dynamic>> get availableGurus {
+    final embedded = asList(data?['gurus']);
+    return embedded.isNotEmpty ? embedded : widget.gurus;
+  }
+
   List<Map<String, dynamic>> get matches => filterGuruMatrix(
     rows,
     selected.toSet(),
@@ -238,10 +301,10 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
   Map<String, dynamic> get current =>
       matches.where((r) => r['ticker'] == ticker).firstOrNull ?? {};
   Map<String, dynamic> manager(String id) =>
-      widget.gurus.where((g) => g['id'] == id).firstOrNull ??
+      availableGurus.where((g) => g['id'] == id).firstOrNull ??
       {'id': id, 'name': id};
   List<String> get validSelected =>
-      selected.where((id) => widget.gurus.any((g) => g['id'] == id)).toList();
+      selected.where((id) => availableGurus.any((g) => g['id'] == id)).toList();
   String qLabel(String value) => value.length < 7
       ? value
       : '${value.substring(0, 4)} Q${(int.parse(value.substring(5, 7)) + 2) ~/ 3}';
@@ -289,6 +352,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
 
   @override
   void dispose() {
+    companyDetailTimer?.cancel();
     managerSearch.dispose();
     stockSearch.dispose();
     horizontal.dispose();
@@ -317,8 +381,15 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     });
     remember();
     if (ticker.isNotEmpty && ticker != previousTicker) {
-      unawaited(loadCompanyDetail(ticker));
+      scheduleCompanyDetail(ticker);
     }
+  }
+
+  void scheduleCompanyDetail(String symbol) {
+    companyDetailTimer?.cancel();
+    companyDetailTimer = Timer(const Duration(milliseconds: 180), () {
+      if (mounted && ticker == symbol) unawaited(loadCompanyDetail(symbol));
+    });
   }
 
   Future<void> loadCompanyDetail(String symbol) async {
@@ -347,17 +418,19 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     });
     try {
       final next = await widget.api.getJson(
-        '/api/investment/guru-holdings?asOf=$cutoff${target.isEmpty ? '' : '&quarter=$target'}',
+        '/api/investment/guru-holdings?asOf=$cutoff${target.isEmpty ? '' : '&quarter=$target'}&bootstrap=guru-directory-v1',
       );
       if (!mounted || serial != request || cutoff != widget.asOf) return;
       if (next['asOf'] != cutoff ||
           (target.isNotEmpty && next['reportDate'] != target)) {
         throw StateError('mismatched disclosure date');
       }
+      final embeddedGurus = asList(next['gurus']);
       update(() {
         data = next;
         quarter = text(next['reportDate']);
       }, reset: true);
+      if (embeddedGurus.isNotEmpty) widget.onCatalog?.call(embeddedGurus);
     } catch (_) {
       if (mounted && serial == request) setState(() => failed = true);
     } finally {
@@ -543,8 +616,8 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
             ),
             Text(
               w(
-                '${asMap(data?['coverage'])['reportedManagers'] ?? '—'} managers in this disclosure view · All ${widget.gurus.length} profiles remain available below.',
-                '此披露视图包含 ${asMap(data?['coverage'])['reportedManagers'] ?? '—'} 位经理 · 下方保留全部 ${widget.gurus.length} 个资料。',
+                '${asMap(data?['coverage'])['reportedManagers'] ?? '—'} managers in this disclosure view · All ${availableGurus.length} profiles remain available below.',
+                '此披露视图包含 ${asMap(data?['coverage'])['reportedManagers'] ?? '—'} 位经理 · 下方保留全部 ${availableGurus.length} 个资料。',
               ),
               style: s(11, false, p.muted),
             ),
@@ -585,7 +658,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
   );
 
   Widget rail() {
-    final catalog = widget.gurus.where((g) {
+    final catalog = availableGurus.where((g) {
       final structure = asMap(g['capitalStructure']);
       return (capitalFilter == 'all' ||
               structure['category'] == capitalFilter) &&
@@ -607,8 +680,8 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
         children: [
           Text(
             w(
-              'All Gurus (${widget.gurus.length})',
-              '全部 Guru（${widget.gurus.length}）',
+              'All Gurus (${availableGurus.length})',
+              '全部 Guru（${availableGurus.length}）',
             ),
             style: s(17, true),
           ),
@@ -668,7 +741,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
             children: [
               TextButton(
                 onPressed: () => update(() {
-                  selected = widget.gurus.map((g) => text(g['id'])).toList();
+                  selected = availableGurus.map((g) => text(g['id'])).toList();
                   managerPage = 0;
                 }, reset: true),
                 child: Text(
