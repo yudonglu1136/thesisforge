@@ -1,6 +1,56 @@
 pyenv: cannot rehash: /Users/yudonglu/.pyenv/shims isn't writable
 # ThesisForge — Graphite workspace QA
 
+## Current acceptance: split-safe 13F institutional value history — 2026-09-21
+
+Final result: **passed**.
+
+Scope: correct the selected-stock ownership history without redesigning the
+accepted 13F Insights page. Quarter-to-quarter bars must compare aggregate
+reported institutional value, not raw share counts, so a stock split cannot
+create a false economic jump. The amber series remains reported institutional
+value as a percentage of company market capitalization.
+
+### Visual evidence
+
+- Reported share-based state:
+  `/var/folders/3k/0wsqd58n6w71n8tyql0t09fc0000gn/T/codex-clipboard-cf1c6548-30af-45c1-905e-2f26abd45745.png`.
+- Browser-rendered implementation:
+  `/private/tmp/thesisforge-13f-amount-history.jpg`.
+- Both images were opened and inspected together. The accepted render retains
+  the existing two-chart hierarchy and interaction model, but the right chart
+  now identifies the teal bars as `Amount`, shows a money-scaled left axis and
+  reports the latest PIT value in the card header.
+
+### Findings and resolution
+
+- [Resolved P1] Aggregate shares are not comparable through splits. The teal
+  history series now uses the quarter's aggregate 13F reported amount
+  (`currentValueM`) and formats its axis and tooltip in USD millions, billions
+  or trillions.
+- [Resolved P1] Existing production sidecars do not yet carry the new amount
+  column. The server enriches only the requested security from the canonical
+  PIT snapshots, while the append-only artifact builder adds and backfills the
+  column by the existing natural key. No duplicate snapshot or holding rows are
+  inserted.
+- [Resolved P2] Compatibility enrichment initially re-read compressed history
+  for every security. A bounded, amount-only snapshot index now reuses those
+  values without retaining every full payload. On the real 20-quarter artifact,
+  the first compatibility read was about 0.38 seconds, the next distinct stocks
+  were about 3–4ms and a repeated stock was below 1ms after warm-up.
+- The title, subtitle, legend and hover labels consistently say institutional
+  value/amount. This acceptance supersedes earlier QA wording that described
+  the teal ownership-history bars as raw reported shares.
+- No remaining P0/P1/P2 issue in the requested flow.
+
+### Verification
+
+- Browser direct-load verification rendered NVDA with 20 PIT quarters,
+  `$3.3T · 69.2%` in the header, `Amount` in the legend, and dollar y-axis
+  labels. The page loaded without a refresh or an intermediate stock click.
+- Server and artifact focused tests: **10 passed**. Flutter 13F suite:
+  **16 passed**. `flutter analyze`: no issues. Production Flutter build: passed.
+
 ## Current acceptance: Portfolio IBKR sync, dividend views and legacy-route retirement — 2026-09-21
 
 Final result: **passed**.

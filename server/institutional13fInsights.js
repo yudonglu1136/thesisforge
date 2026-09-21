@@ -8,8 +8,11 @@ const parse = row => {
 };
 
 const selectedPayloadCache = new WeakMap();
+const snapshotValueCache = new WeakMap();
+const securityHistoryCache = new WeakMap();
 const historyIndexCache = new WeakMap();
 const tableAvailabilityCache = new WeakMap();
+const tableColumnCache = new WeakMap();
 const summaryResponseCache = new WeakMap();
 
 function cacheEntries(cache, source) {
@@ -47,6 +50,17 @@ function selectedPayload(source,row) {
   return payload;
 }
 
+function snapshotValues(source,row,payload=null) {
+  const entries=cacheEntries(snapshotValueCache,source);
+  const key=snapshotKey(row);
+  if (entries.has(key)) return entries.get(key);
+  const data=payload??selectedPayload(source,row);
+  const values=new Map((data?.rows??[]).flatMap(item=>item?.ticker&&item.currentValueM!=null
+    ?[[item.ticker,item.currentValueM]]:[]));
+  setBounded(entries,key,values,24);
+  return values;
+}
+
 function tableExists(source,name) {
   const db=source.insightsDb??source.db;
   let tables=tableAvailabilityCache.get(source);
@@ -57,6 +71,16 @@ function tableExists(source,name) {
     tableAvailabilityCache.set(source,tables);
   }
   return tables.has(name);
+}
+
+function tableColumns(source,name) {
+  let tables=tableColumnCache.get(source);
+  if (!tables) {tables=new Map();tableColumnCache.set(source,tables);}
+  if (!tables.has(name)) {
+    const db=source.insightsDb??source.db;
+    tables.set(name,new Set(db.prepare(`PRAGMA table_info(${name})`).all().map(row=>row.name)));
+  }
+  return tables.get(name);
 }
 
 function visibleRows(db,table,asOf) {
@@ -155,10 +179,16 @@ function visibleSnapshot(source, asOf, reportDate = null) {
 
 function securityHistory(source, visible, selected, selectedData, ticker) {
   const db=source.insightsDb??source.db;
+  const bounded=visible.filter(row=>row.report_date<=selected.report_date);
+  const cacheKey=`${bounded.map(snapshotKey).join(';')}|${ticker}`;
+  const cached=cacheEntries(securityHistoryCache,source);
+  if (cached.has(cacheKey)) return cached.get(cacheKey);
   if (tableExists(source,'institutional_13f_security_history_v1')) {
-    return db.prepare(`SELECT h.report_date reportDate,h.available_at availableAt,h.holders,
+    const hasValue=tableColumns(source,'institutional_13f_security_history_v1').has('institutional_value_m');
+    const history=db.prepare(`SELECT h.report_date reportDate,h.available_at availableAt,h.holders,
       h.institutional_shares_k institutionalSharesK,h.shares_outstanding_k sharesOutstandingK,
-      h.institutional_ownership_pct institutionalOwnershipPct
+      h.institutional_ownership_pct institutionalOwnershipPct,
+      ${hasValue?'h.institutional_value_m':'NULL'} institutionalValueM
       FROM institutional_13f_security_history_v1 h
       JOIN institutional_13f_insight_snapshots_v2 s
         ON s.report_date=h.report_date AND s.source_generation=h.source_generation
@@ -166,11 +196,28 @@ function securityHistory(source, visible, selected, selectedData, ticker) {
         AND s.generated_at=(SELECT max(n.generated_at) FROM institutional_13f_insight_snapshots_v2 n
           WHERE n.report_date=s.report_date AND n.available_at<=?)
       ORDER BY h.report_date`).all(ticker,selected.report_date,selected.available_at,selected.available_at);
+    if (history.every(row=>row.institutionalValueM!=null)) {
+      setBounded(cached,cacheKey,history,96);
+      return history;
+    }
+    const values=new Map();
+    for (const snapshot of [...bounded].reverse()) {
+      const value=snapshotValues(source,snapshot,snapshot===selected?selectedData:null).get(ticker);
+      if (value!=null) values.set(snapshot.report_date,value);
+    }
+    const enriched=history.map(row=>({...row,
+      institutionalValueM:row.institutionalValueM??values.get(row.reportDate)??null,
+    }));
+    setBounded(cached,cacheKey,enriched,96);
+    return enriched;
   }
-  const bounded=visible.filter(row=>row.report_date<=selected.report_date);
   const key=bounded.map(snapshotKey).join(';');
   const entries=cacheEntries(historyIndexCache,source);
-  if (entries.has(key)) return entries.get(key).get(ticker)??[];
+  if (entries.has(key)) {
+    const history=entries.get(key).get(ticker)??[];
+    setBounded(cached,cacheKey,history,96);
+    return history;
+  }
   const histories=new Map();
   for (const snapshot of [...bounded].reverse()) {
     const payload=snapshot===selected ? selectedData : selectedPayload(source,snapshot);
@@ -181,6 +228,7 @@ function securityHistory(source, visible, selected, selectedData, ticker) {
         reportDate:payload.reportDate??snapshot.report_date,
         availableAt:payload.availableAt??snapshot.available_at,
         holders:row.holders??null,
+        institutionalValueM:row.currentValueM??null,
         institutionalSharesK:row.currentUnitsK??null,
         sharesOutstandingK:row.sharesOutstandingK??null,
         institutionalOwnershipPct:row.institutionalOwnershipPct??null,
@@ -189,7 +237,9 @@ function securityHistory(source, visible, selected, selectedData, ticker) {
     }
   }
   setBounded(entries,key,histories,1);
-  return histories.get(ticker)??[];
+  const history=histories.get(ticker)??[];
+  setBounded(cached,cacheKey,history,96);
+  return history;
 }
 
 const actionKey=action=>({new:'newPositions',reduced:'reductions',exited:'exits'}[action]??'increases');

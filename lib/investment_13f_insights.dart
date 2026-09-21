@@ -187,20 +187,6 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     return '\$${n.toStringAsFixed(1)}M';
   }
 
-  String _reportedShares(dynamic value) {
-    final thousands = nullableNumber(value);
-    if (thousands == null) return '—';
-    final shares = thousands * 1000;
-    if (shares.abs() >= 1000000000) {
-      return '${(shares / 1000000000).toStringAsFixed(2)}B';
-    }
-    if (shares.abs() >= 1000000) {
-      return '${(shares / 1000000).toStringAsFixed(1)}M';
-    }
-    if (shares.abs() >= 1000) return '${(shares / 1000).toStringAsFixed(0)}K';
-    return _integer(shares);
-  }
-
   List<Map<String, dynamic>> _insightStocks() {
     final key = _insightKey(insightAction);
     final query = insightSearch.trim().toLowerCase();
@@ -376,7 +362,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           return _InsightHistoryPoint(
             reportDate: text(item['reportDate']),
             holders: nullableNumber(segment['institutionalOwnershipPct']),
-            sharesK: nullableNumber(segment['institutionalValueM']),
+            amountM: nullableNumber(segment['institutionalValueM']),
             ownershipPct: nullableNumber(segment['netChangePctMarketCap']),
           );
         })
@@ -489,7 +475,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                   quarterLabel: reportQuarterLabel,
                   tooltipLines: (point) => [
                     '${w('Institutional ownership', '机构持股占比')} ${_percentagePoints(point.holders)}',
-                    '${w('Reported value', '申报持股市值')} ${_usdMillions(point.sharesK)}',
+                    '${w('Reported value', '申报持股市值')} ${_usdMillions(point.amountM)}',
                   ],
                 ),
               );
@@ -1012,7 +998,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             (item) => _InsightHistoryPoint(
               reportDate: text(item['reportDate']),
               holders: nullableNumber(item['holders']),
-              sharesK: nullableNumber(item['institutionalSharesK']),
+              amountM: nullableNumber(item['institutionalValueM']),
               ownershipPct: nullableNumber(item['institutionalOwnershipPct']),
             ),
           )
@@ -1031,7 +1017,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     final available = points.where(
       (point) => series == _InsightHistorySeries.holders
           ? point.holders != null
-          : point.sharesK != null,
+          : point.amountM != null,
     );
     final latest = available.lastOrNull;
     final start = points.firstOrNull?.reportDate ?? '';
@@ -1071,7 +1057,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                 Text(
                   series == _InsightHistorySeries.holders
                       ? '${_integer(latest.holders)} ${w('filers', '家')}'
-                      : '${_reportedShares(latest.sharesK)}${latest.ownershipPct == null ? '' : ' · ${latest.ownershipPct!.toStringAsFixed(1)}%'}',
+                      : '${_usdMillions(latest.amountM)}${latest.ownershipPct == null ? '' : ' · ${latest.ownershipPct!.toStringAsFixed(1)}%'}',
                   style: TextStyle(
                     color: p.accent,
                     fontWeight: FontWeight.w700,
@@ -1100,7 +1086,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                 series: series,
                 primaryScale: series == _InsightHistorySeries.holders
                     ? _InsightAxisScale.count
-                    : _InsightAxisScale.shares,
+                    : _InsightAxisScale.money,
                 accent: p.accent,
                 secondary: p.secondary,
                 grid: p.border,
@@ -1111,13 +1097,13 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                 tooltipLines: (point) => series == _InsightHistorySeries.holders
                     ? ['${_integer(point.holders)} ${w('filers', '家机构')}']
                     : [
-                        '${w('Shares', '持股数')} ${_reportedShares(point.sharesK)}',
+                        '${w('Amount', '持仓金额')} ${_usdMillions(point.amountM)}',
                         '${w('% market cap', '占总市值')} ${point.ownershipPct == null ? '—' : '${point.ownershipPct!.toStringAsFixed(2)}%'}',
                       ],
               ),
             ),
           const SizedBox(height: 7),
-          if (series == _InsightHistorySeries.shares) ...[
+          if (series == _InsightHistorySeries.amount) ...[
             Wrap(
               alignment: WrapAlignment.center,
               spacing: 9,
@@ -1128,7 +1114,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                   children: [
                     Container(width: 12, height: 2, color: p.accent),
                     const SizedBox(width: 4),
-                    label('Shares', '持股数', size: 9),
+                    label('Amount', '持仓金额', size: 9),
                   ],
                 ),
                 Row(
@@ -1174,18 +1160,18 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           points: points,
           series: _InsightHistorySeries.holders,
         );
-        final shares = _insightHistoryCard(
+        final amount = _insightHistoryCard(
           key: const ValueKey('13f-ownership-history-chart'),
-          titleEn: 'Institutional ownership history',
-          titleZh: '机构持股与占总市值变化',
-          subtitleEn: 'Aggregate reported shares · % of company market cap',
-          subtitleZh: '机构申报持股总数 · 机构持股市值占公司总市值',
+          titleEn: 'Institutional value history',
+          titleZh: '机构持仓金额与占总市值变化',
+          subtitleEn: 'Aggregate reported value · % of company market cap',
+          subtitleZh: '机构申报持仓金额 · 机构持仓金额占公司总市值',
           points: points,
-          series: _InsightHistorySeries.shares,
+          series: _InsightHistorySeries.amount,
         );
         if (constraints.maxWidth < 520) {
           return Column(
-            children: [holders, const SizedBox(height: 12), shares],
+            children: [holders, const SizedBox(height: 12), amount],
           );
         }
         return Row(
@@ -1193,7 +1179,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           children: [
             Expanded(child: holders),
             const SizedBox(width: 12),
-            Expanded(child: shares),
+            Expanded(child: amount),
           ],
         );
       },
@@ -1428,21 +1414,21 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       );
 }
 
-enum _InsightHistorySeries { holders, shares }
+enum _InsightHistorySeries { holders, amount }
 
-enum _InsightAxisScale { count, percent, shares }
+enum _InsightAxisScale { count, percent, money }
 
 class _InsightHistoryPoint {
   const _InsightHistoryPoint({
     required this.reportDate,
     required this.holders,
-    required this.sharesK,
+    required this.amountM,
     required this.ownershipPct,
   });
 
   final String reportDate;
   final double? holders;
-  final double? sharesK;
+  final double? amountM;
   final double? ownershipPct;
 }
 
@@ -1486,7 +1472,7 @@ class _InsightHistoryInteractiveChartState
   void _selectAt(double dx, double width) {
     if (widget.points.isEmpty || width <= 10) return;
     const leftAxis = 42.0;
-    final rightAxis = widget.series == _InsightHistorySeries.shares
+    final rightAxis = widget.series == _InsightHistorySeries.amount
         ? 40.0
         : 8.0;
     final plotWidth = math.max(1.0, width - leftAxis - rightAxis);
@@ -1624,7 +1610,7 @@ class _InsightHistoryPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     const leftAxis = 42.0;
-    final rightAxis = series == _InsightHistorySeries.shares ? 40.0 : 8.0;
+    final rightAxis = series == _InsightHistorySeries.amount ? 40.0 : 8.0;
     final chart = Rect.fromLTWH(
       leftAxis,
       7,
@@ -1634,7 +1620,7 @@ class _InsightHistoryPainter extends CustomPainter {
     final double? Function(_InsightHistoryPoint) primaryRead =
         series == _InsightHistorySeries.holders
         ? (point) => point.holders
-        : (point) => point.sharesK;
+        : (point) => point.amountM;
     final primaryBounds = _bounds(primaryRead, primaryScale);
     final gridPaint = Paint()
       ..color = grid.withValues(alpha: .72)
@@ -1652,7 +1638,7 @@ class _InsightHistoryPainter extends CustomPainter {
         Offset(chart.left - 5, y),
         alignRight: true,
       );
-      if (series == _InsightHistorySeries.shares) {
+      if (series == _InsightHistorySeries.amount) {
         _drawAxisLabel(
           canvas,
           '${(ratio * 100).round()}%',
@@ -1670,7 +1656,7 @@ class _InsightHistoryPainter extends CustomPainter {
         fill: true,
       );
     } else {
-      _drawBars(canvas, chart, (point) => point.sharesK, primaryBounds, accent);
+      _drawBars(canvas, chart, (point) => point.amountM, primaryBounds, accent);
       _drawSeries(canvas, chart, (point) => point.ownershipPct, (
         min: 0,
         max: 100,
@@ -1714,7 +1700,16 @@ class _InsightHistoryPainter extends CustomPainter {
 
   String _formatAxis(double value, _InsightAxisScale scale) {
     if (scale == _InsightAxisScale.percent) return '${value.round()}%';
-    final display = scale == _InsightAxisScale.shares ? value * 1000 : value;
+    if (scale == _InsightAxisScale.money) {
+      if (value.abs() >= 1000000) {
+        return '\$${(value / 1000000).toStringAsFixed(1)}T';
+      }
+      if (value.abs() >= 1000) {
+        return '\$${(value / 1000).toStringAsFixed(value % 1000 == 0 ? 0 : 1)}B';
+      }
+      return '\$${value.toStringAsFixed(value % 1 == 0 ? 0 : 1)}M';
+    }
+    final display = value;
     if (display.abs() >= 1000000000) {
       return '${(display / 1000000000).toStringAsFixed(display % 1000000000 == 0 ? 0 : 1)}B';
     }
@@ -1786,7 +1781,7 @@ class _InsightHistoryPainter extends CustomPainter {
               Color,
             )
           >[
-            ((point) => point.sharesK, primaryBounds, accent),
+            ((point) => point.amountM, primaryBounds, accent),
             ((point) => point.ownershipPct, (min: 0, max: 100), secondary),
           ];
     for (final entry in reads) {

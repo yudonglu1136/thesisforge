@@ -285,6 +285,7 @@ class ExplorerApi extends opportunities.OpportunityApi {
                 'reportDate': '2025-12-31',
                 'availableAt': '2026-02-14',
                 'holders': 3,
+                'institutionalValueM': 64000.0,
                 'institutionalSharesK': 6800000.0,
                 'institutionalOwnershipPct': 91.0,
               },
@@ -292,6 +293,7 @@ class ExplorerApi extends opportunities.OpportunityApi {
                 'reportDate': '2026-03-31',
                 'availableAt': '2026-05-15',
                 'holders': 4,
+                'institutionalValueM': 72000.0,
                 'institutionalSharesK': 7200000.0,
                 'institutionalOwnershipPct': 96.0,
               },
@@ -547,6 +549,10 @@ void main() {
         expect(
           find.byKey(const ValueKey('13f-ownership-history-chart')),
           findsOneWidget,
+        );
+        expect(
+          find.text(language == AppLanguage.en ? 'Amount' : '持仓金额'),
+          findsWidgets,
         );
         expect(tester.takeException(), isNull);
       });

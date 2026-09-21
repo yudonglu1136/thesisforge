@@ -17,8 +17,8 @@ function fixture() {
   const payload = (reportDate,offset) => JSON.stringify({
     version:'institutional-13f-insights-v2',reportDate,coverage:{currentFilers:8581,securities:7926},
     rows:[
-      {ticker:'MSFT',increases:2841,holders:6200+offset,currentUnitsK:7100000+offset,sharesOutstandingK:7430000,institutionalOwnershipPct:95.6},
-      {ticker:'NVDA',increases:2780,holders:5900+offset,currentUnitsK:2100000+offset,sharesOutstandingK:2440000,institutionalOwnershipPct:86.1},
+      {ticker:'MSFT',increases:2841,holders:6200+offset,currentValueM:3200000+offset,currentUnitsK:7100000+offset,sharesOutstandingK:7430000,institutionalOwnershipPct:95.6},
+      {ticker:'NVDA',increases:2780,holders:5900+offset,currentValueM:2800000+offset,currentUnitsK:2100000+offset,sharesOutstandingK:2440000,institutionalOwnershipPct:86.1},
     ],institutions:[{investorId:'BLKROK',name:'BLACKROCK'}],
     details:{MSFT:{increased:[{investorId:'BLKROK'}]},NVDA:{increased:[{investorId:'VANGRD'}]}}
   });
@@ -39,6 +39,7 @@ test('13F insights exposes all-filer snapshots without a Guru selection',()=>{
   assert.deepEqual(Object.keys(result.details),['MSFT']);
   assert.deepEqual(result.details.MSFT.history.map(row=>row.reportDate),['2026-03-31','2026-06-30']);
   assert.equal(result.details.MSFT.history[1].institutionalOwnershipPct,95.6);
+  assert.equal(result.details.MSFT.history[1].institutionalValueM,3200020);
   assert.equal(JSON.stringify(result).includes('VANGRD'),false);
 });
 
@@ -119,13 +120,19 @@ test('13F v3 loads market history and per-security detail without embedding the 
       report_date TEXT,source_generation TEXT,segment TEXT,available_at TEXT,securities INTEGER,
       covered_securities INTEGER,institutional_value_m REAL,market_cap_m REAL,
       institutional_ownership_pct REAL,net_change_value_m REAL,net_change_pct_market_cap REAL,
-      PRIMARY KEY(report_date,source_generation,segment));`);
+      PRIMARY KEY(report_date,source_generation,segment));
+    CREATE TABLE institutional_13f_security_history_v1(
+      report_date TEXT,source_generation TEXT,ticker TEXT,available_at TEXT,holders INTEGER,
+      institutional_shares_k REAL,shares_outstanding_k REAL,institutional_ownership_pct REAL,
+      PRIMARY KEY(report_date,source_generation,ticker));`);
   for(const [date,available,holders] of [['2026-03-31','2026-05-15',6200],['2026-06-30','2026-08-14',6220]]) {
+    const currentValueM=date==='2026-06-30'?80:70;
     const payload=JSON.stringify({version:'institutional-13f-insights-v3',reportDate:date,availableAt:available,
-      coverage:{currentFilers:9000,securities:8000},rows:[{ticker:'MSFT',increases:3000,holders,currentUnitsK:7200000}],institutions:[],
+      coverage:{currentFilers:9000,securities:8000},rows:[{ticker:'MSFT',increases:3000,holders,currentValueM,currentUnitsK:7200000}],institutions:[],
       marketOverview:{all:{institutionalOwnershipPct:80}}});
     source.db.prepare('INSERT INTO institutional_13f_insight_snapshots_v2 VALUES(?,?,?,?,?,?)').run(date,'v3',available,'2026-09-21T00:00:00Z',date,gzipSync(payload));
     source.db.prepare('INSERT INTO institutional_13f_market_history_v1 VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(date,'v3','all',available,8000,7000,80,100,80,2,2);
+    source.db.prepare('INSERT INTO institutional_13f_security_history_v1 VALUES(?,?,?,?,?,?,?,?)').run(date,'v3','MSFT',available,holders,7200000,7430000,95.6);
   }
   source.db.prepare('INSERT INTO institutional_13f_insight_details_v1 VALUES(?,?,?,?,?)')
     .run('2026-06-30','v3','MSFT','detail',gzipSync(JSON.stringify({increased:[{investorId:'VANGRD'}]})));
@@ -134,6 +141,7 @@ test('13F v3 loads market history and per-security detail without embedding the 
   assert.equal(result.details.MSFT.increased[0].investorId,'VANGRD');
   assert.deepEqual(result.marketHistory.map(row=>row.reportDate),['2026-03-31','2026-06-30']);
   assert.equal(result.marketHistory[1].segments.all.institutionalOwnershipPct,80);
+  assert.deepEqual(result.details.MSFT.history.map(row=>row.institutionalValueM),[70,80]);
 });
 
 test('13F insights may be mounted as a separate read-only artifact',t=>{

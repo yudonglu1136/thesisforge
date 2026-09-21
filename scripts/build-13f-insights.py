@@ -403,12 +403,20 @@ def main() -> int:
         ticker TEXT NOT NULL,
         available_at TEXT NOT NULL,
         holders INTEGER,
+        institutional_value_m REAL,
         institutional_shares_k REAL,
         shares_outstanding_k REAL,
         institutional_ownership_pct REAL,
         PRIMARY KEY(report_date,source_generation,ticker)
       )
     """)
+    security_history_columns = {
+        row[1] for row in sql.execute("PRAGMA table_info(institutional_13f_security_history_v1)")
+    }
+    if "institutional_value_m" not in security_history_columns:
+        sql.execute(
+            "ALTER TABLE institutional_13f_security_history_v1 ADD COLUMN institutional_value_m REAL"
+        )
     sql.execute("CREATE INDEX IF NOT EXISTS institutional_13f_security_history_v1_lookup_idx ON institutional_13f_security_history_v1(ticker,report_date,available_at)")
     before = sql.execute("SELECT count(*) FROM institutional_13f_insight_snapshots_v2").fetchone()[0]
     inserted = []
@@ -431,8 +439,12 @@ def main() -> int:
             "SELECT count(*) FROM institutional_13f_security_history_v1 WHERE report_date=? AND source_generation=?",
             (current, source_generation),
         ).fetchone()[0]
+        security_value_count = sql.execute(
+            "SELECT count(*) FROM institutional_13f_security_history_v1 WHERE report_date=? AND source_generation=? AND institutional_value_m IS NOT NULL",
+            (current, source_generation),
+        ).fetchone()[0]
         include_details = index < max(0, args.detail_quarters)
-        if exists and market_count == 4 and security_history_count > 0 and (not include_details or detail_count > 0):
+        if exists and market_count == 4 and security_history_count > 0 and security_value_count == security_history_count and (not include_details or detail_count > 0):
             continue
         payload, details = snapshot(duck, current, previous, observed_at, include_details)
         encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
@@ -478,7 +490,10 @@ def main() -> int:
                     )
             if security_history_count == 0:
                 sql.executemany(
-                    "INSERT INTO institutional_13f_security_history_v1 VALUES(?,?,?,?,?,?,?,?)",
+                    """INSERT INTO institutional_13f_security_history_v1(
+                      report_date,source_generation,ticker,available_at,holders,institutional_value_m,
+                      institutional_shares_k,shares_outstanding_k,institutional_ownership_pct
+                    ) VALUES(?,?,?,?,?,?,?,?,?)""",
                     [
                         (
                             current,
@@ -486,10 +501,21 @@ def main() -> int:
                             row["ticker"],
                             payload["availableAt"],
                             row["holders"],
+                            row["currentValueM"],
                             row["currentUnitsK"],
                             row["sharesOutstandingK"],
                             row["institutionalOwnershipPct"],
                         )
+                        for row in payload["rows"]
+                    ],
+                )
+            elif security_value_count < security_history_count:
+                sql.executemany(
+                    """UPDATE institutional_13f_security_history_v1
+                       SET institutional_value_m=?
+                       WHERE report_date=? AND source_generation=? AND ticker=?""",
+                    [
+                        (row["currentValueM"], current, source_generation, row["ticker"])
                         for row in payload["rows"]
                     ],
                 )

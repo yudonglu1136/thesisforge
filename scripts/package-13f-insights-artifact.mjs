@@ -41,8 +41,8 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
     for(const row of details)insertDetail.run(row.report_date,row.source_generation,row.ticker,row.payload_hash,row.payload_gzip);
     const insertMarket=db.prepare(`INSERT INTO ${marketTable}(report_date,source_generation,segment,available_at,securities,covered_securities,institutional_value_m,market_cap_m,institutional_ownership_pct,net_change_value_m,net_change_pct_market_cap) VALUES(?,?,?,?,?,?,?,?,?,?,?)`);
     for(const row of marketRows)insertMarket.run(row.report_date,row.source_generation,row.segment,row.available_at,row.securities,row.covered_securities,row.institutional_value_m,row.market_cap_m,row.institutional_ownership_pct,row.net_change_value_m,row.net_change_pct_market_cap);
-    const insertSecurityHistory=db.prepare(`INSERT INTO ${securityHistoryTable}(report_date,source_generation,ticker,available_at,holders,institutional_shares_k,shares_outstanding_k,institutional_ownership_pct) VALUES(?,?,?,?,?,?,?,?)`);
-    for(const row of securityHistoryRows)insertSecurityHistory.run(row.report_date,row.source_generation,row.ticker,row.available_at,row.holders,row.institutional_shares_k,row.shares_outstanding_k,row.institutional_ownership_pct);
+    const insertSecurityHistory=db.prepare(`INSERT INTO ${securityHistoryTable}(report_date,source_generation,ticker,available_at,holders,institutional_value_m,institutional_shares_k,shares_outstanding_k,institutional_ownership_pct) VALUES(?,?,?,?,?,?,?,?,?)`);
+    for(const row of securityHistoryRows)insertSecurityHistory.run(row.report_date,row.source_generation,row.ticker,row.available_at,row.holders,row.institutional_value_m,row.institutional_shares_k,row.shares_outstanding_k,row.institutional_ownership_pct);
     db.exec('COMMIT;VACUUM');
     if(db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')fail('13f_artifact_integrity_failed');
     if(db.prepare('PRAGMA foreign_key_check').all().length)fail('13f_artifact_foreign_key_failed');
