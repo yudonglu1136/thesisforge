@@ -111,6 +111,11 @@ test('API owner comes from auth only; private no-store; development preview cann
   try{
     assert.equal((await fetch(url)).status,401);
     const dev=await fetch(url,{headers:{'x-test-user':'local-dev-user'}});assert.equal((await dev.json()).status,'preview_account');assert.equal(calls.length,0);
-    const r=await fetch(url,{headers:{'x-test-user':'bob'}});assert.equal(r.status,200);assert.match(r.headers.get('cache-control'),/private, no-store/);assert.equal((await r.json()).status,'account_required');assert.deepEqual(calls,[{user:{id:'bob'},forceRefresh:false}]);
+    const r=await fetch(url,{headers:{'x-test-user':'bob'}});assert.equal(r.status,200);assert.match(r.headers.get('cache-control'),/private, no-store/);assert.match(r.headers.get('server-timing'),/portfolio-read/);assert.equal((await r.json()).status,'account_required');
+    const home=await fetch(`${url}&scope=home`,{headers:{'x-test-user':'bob'}});assert.equal(home.status,200);await home.json();
+    assert.deepEqual(calls,[
+      {user:{id:'bob'},forceRefresh:false,preferSaved:true,includeAnalytics:true},
+      {user:{id:'bob'},forceRefresh:false,preferSaved:true,includeAnalytics:false}
+    ]);
   }finally{await new Promise(r=>server.close(r));}
 });

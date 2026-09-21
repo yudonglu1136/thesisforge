@@ -488,14 +488,16 @@ async function attachPortfolioAnalytics(payload) {
         return ticker && !ticker.startsWith("CASH") && finiteNumber(holding.value) > 0;
       });
 
-    const analyticsRows = [];
     const returnsByTicker = new Map();
     const weightsByTicker = new Map();
     let pricedWeight = 0;
     let modelWeight = 0;
     let weightedForwardReturn = 0;
 
-    for (const holding of investableHoldings) {
+    // Price history is independent per holding. Read the local Fact OS series
+    // concurrently so a cold portfolio load pays the slowest lookup once,
+    // instead of the sum of every position lookup.
+    const analyticsRows = await Promise.all(investableHoldings.map(async (holding) => {
       const ticker = normalizeTicker(holding.ticker);
       const valuation = buildValuationOverlay(holding, valuationForHolding(valuationMap, holding));
       let priceSymbol = "";
@@ -520,16 +522,7 @@ async function attachPortfolioAnalytics(payload) {
       const weight = finiteNumber(holding.weight);
       const forwardReturn = modelImpliedForwardReturn({ valuation, trailingReturn });
       const coverage = pricePoints.length >= 120 ? "full" : pricePoints.length >= 40 ? "partial" : "limited";
-
-      if (map.size) {
-        returnsByTicker.set(ticker, map);
-        weightsByTicker.set(ticker, weight);
-        pricedWeight += weight;
-      }
-      if (valuation.covered) modelWeight += weight;
-      if (Number.isFinite(forwardReturn)) weightedForwardReturn += weight * forwardReturn;
-
-      analyticsRows.push({
+      return {
         ticker,
         name: holding.name || valuation.name || ticker,
         logoUrl: holding.logoUrl || `/api/logo/${ticker}`,
@@ -541,8 +534,21 @@ async function attachPortfolioAnalytics(payload) {
         forwardExpectedReturn: Number.isFinite(forwardReturn) ? forwardReturn : null,
         expectedContribution: Number.isFinite(forwardReturn) ? weight * forwardReturn : null,
         pricePointCount: pricePoints.length,
-        coverage
-      });
+        coverage,
+        returnMap: map
+      };
+    }));
+
+    for (const row of analyticsRows) {
+      if (row.returnMap.size) {
+        returnsByTicker.set(row.ticker, row.returnMap);
+        weightsByTicker.set(row.ticker, row.weight);
+        pricedWeight += row.weight;
+      }
+      if (row.valuation.covered) modelWeight += row.weight;
+      if (Number.isFinite(row.forwardExpectedReturn)) {
+        weightedForwardReturn += row.weight * row.forwardExpectedReturn;
+      }
     }
 
     const allReturnDates = [...new Set(
@@ -642,7 +648,7 @@ async function attachPortfolioAnalytics(payload) {
         },
         holdings: analyticsRows
           .sort((left, right) => finiteNumber(right.value) - finiteNumber(left.value))
-          .map((row) => ({
+          .map(({returnMap: _returnMap, ...row}) => ({
             ...row,
             valuationGapLabel: row.valuation?.label || "No model",
             valuationGapLabelZh: row.valuation?.labelZh || "无估值",
@@ -1846,11 +1852,50 @@ function savedPortfolioReportPayload(user) {
   };
 }
 
-export async function loadPortfolioDashboard({ forceRefresh = false, user = null, captureNav = true } = {}) {
-  const cacheKey = portfolioCacheKey(user);
+function currentPortfolioReportPayload(user) {
+  const saved = readUserPortfolioReport(user);
+  if (!saved) return null;
+  const status = readPortfolioConnection(user).status;
+  if (status.status === "error" || status.lastError) return savedPortfolioReportPayload(user);
+  return {
+    ...saved.payload,
+    connection: {...status, status: status.status === "configured" ? "linked" : status.status},
+    source: {
+      ...saved.payload.source,
+      userScoped: true,
+      retrievedAt: saved.retrievedAt
+    },
+    freshness: {
+      status: "current_report",
+      basis: "last_successful_broker_report",
+      reportAsOf: saved.reportAsOf,
+      retrievedAt: saved.retrievedAt,
+      live: false
+    }
+  };
+}
+
+function portfolioDashboardCacheKey(user, includeAnalytics) {
+  const key = portfolioCacheKey(user);
+  return includeAnalytics ? key : `${key}:report-only`;
+}
+
+export async function loadPortfolioDashboard({
+  forceRefresh = false,
+  user = null,
+  captureNav = true,
+  preferSaved = true,
+  includeAnalytics = true
+} = {}) {
+  const cacheKey = portfolioDashboardCacheKey(user, includeAnalytics);
+  if (forceRefresh) portfolioCache.delete(portfolioDashboardCacheKey(user, false));
   return portfolioCache.load(cacheKey, async () => {
   try {
-    const payload = await attachPortfolioAnalytics(await loadFreshPortfolioDashboard({ user, captureNav }));
+    const stored = !forceRefresh && preferSaved && isRealUser(user)
+      ? currentPortfolioReportPayload(user)
+      : null;
+    const report = stored || await loadFreshPortfolioDashboard({ user, captureNav });
+    const payload = includeAnalytics ? await attachPortfolioAnalytics(report) : report;
     return { value: payload, ttlMs: portfolioCacheTtlMs };
   } catch (error) {
     if (isRealUser(user) && error.code !== "portfolio_connection_changed") {
@@ -1858,7 +1903,10 @@ export async function loadPortfolioDashboard({ forceRefresh = false, user = null
     }
     if (isRealUser(user)) {
       const saved = savedPortfolioReportPayload(user);
-      if (saved) return {value:await attachPortfolioAnalytics(saved),ttlMs:Math.min(portfolioCacheTtlMs,60_000)};
+      if (saved) return {
+        value:includeAnalytics ? await attachPortfolioAnalytics(saved) : saved,
+        ttlMs:Math.min(portfolioCacheTtlMs,60_000)
+      };
     }
     const status = isRealUser(user) ? readPortfolioConnection(user).status : {};
     const fallbackPayload = isRealUser(user)
@@ -1879,7 +1927,7 @@ export async function loadPortfolioDashboard({ forceRefresh = false, user = null
             mode: "fallback"
           }
         };
-    const payload = await attachPortfolioAnalytics(fallbackPayload);
+    const payload = includeAnalytics ? await attachPortfolioAnalytics(fallbackPayload) : fallbackPayload;
     return { value: payload, ttlMs: Math.min(portfolioCacheTtlMs, 60_000) };
   }
   }, { forceRefresh });
@@ -1887,6 +1935,7 @@ export async function loadPortfolioDashboard({ forceRefresh = false, user = null
 
 export function clearPortfolioCache(user = null) {
   portfolioCache.delete(portfolioCacheKey(user));
+  portfolioCache.delete(portfolioDashboardCacheKey(user, false));
 }
 
 // The scheduled path uses the same per-owner loader as the authenticated Sync

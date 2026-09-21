@@ -115,6 +115,20 @@ test('successful broker load persists; outage after restart returns the dated re
   assert.equal(absent.source.mode,'error');assert.equal(absent.holdings.length,0);
 });
 
+test('ordinary portfolio reads use the saved owner report without contacting the broker',async()=>{
+  const user={id:'persistence-fast-read'};store.savePortfolioConnection(user,config());
+  store.writeUserPortfolioReport(user,payload(),options(user));
+  clearPortfolioCache(user);
+  let brokerRequests=0;
+  globalThis.fetch=async()=>{brokerRequests+=1;throw new Error('ordinary reads must not contact IBKR');};
+  const saved=await loadPortfolioDashboard({user,includeAnalytics:false});
+  assert.equal(brokerRequests,0);
+  assert.equal(saved.freshness.status,'current_report');
+  assert.equal(saved.freshness.reportAsOf,'2026-09-09');
+  assert.equal(saved.connection.status,'linked');
+  assert.equal(saved.holdings[0].ticker,'AAA');
+});
+
 test('history query failure retains the last complete report; first-ever partial is not persisted',async()=>{
   const connection={...config(),ibkrFlexHistoryQueryId:'987654'};
   const existing={id:'persistence-history-existing'},first={id:'persistence-history-first'};

@@ -187,11 +187,23 @@ export function registerPortfolioAnalysisRoute(app, service, loadPortfolio) {
       if (req.user.id === 'local-dev-user'&&!local) return res.json(empty('preview_account', asOf));
       // Never accept an owner ID/adminPortfolioHash in query/body. Ownership
       // comes exclusively from authentication, not a frontend-selected account.
-      const payload = local??await loadPortfolio({user: {id: req.user.id}, forceRefresh: false});
+      const home=req.query.scope==='home';
+      const loadStarted=performance.now();
+      const payload = local??await loadPortfolio({
+        user: {id: req.user.id},
+        forceRefresh: false,
+        preferSaved: true,
+        includeAnalytics: !home
+      });
+      const loadMs=performance.now()-loadStarted;
       const rate=req.query.riskFreeRate===undefined?.04:Number(req.query.riskFreeRate);
       if(!Number.isFinite(rate)||rate<0||rate>.2)return res.status(400).json({error:'invalid_risk_free_rate'});
       if(req.query.scope!==undefined&&req.query.scope!=='home')return res.status(400).json({error:'invalid_portfolio_scope'});
-      res.json(buildPortfolioAnalysis(service.source, payload, asOf,{riskFreeRate:rate,home:req.query.scope==='home'}));
+      const buildStarted=performance.now();
+      const result=buildPortfolioAnalysis(service.source, payload, asOf,{riskFreeRate:rate,home});
+      const buildMs=performance.now()-buildStarted;
+      res.setHeader('Server-Timing',`portfolio-read;dur=${loadMs.toFixed(1)}, portfolio-build;dur=${buildMs.toFixed(1)}`);
+      res.json(result);
     } catch (e) { res.status(e.status ?? 503).json({error: 'portfolio_analysis_unavailable'}); }
   });
 }
