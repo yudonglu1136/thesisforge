@@ -202,10 +202,12 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
       stockSearch = TextEditingController();
   final horizontal = ScrollController();
   Map<String, dynamic>? data;
+  final Map<String, Map<String, dynamic>> companyDetails = {};
   List<String> selected = [];
   String quarter = '',
       ticker = '',
       focusedGuru = '',
+      capitalFilter = 'all',
       mode = 'weight',
       sort = 'holders';
   bool loading = true,
@@ -255,6 +257,18 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     quarter = text(v['quarter']);
     ticker = text(v['ticker']);
     focusedGuru = text(v['focusedGuru'], selected.firstOrNull ?? '');
+    final savedCapitalFilter = text(v['capitalFilter'], 'all');
+    capitalFilter =
+        {
+          'all',
+          'permanent',
+          'owner_controlled',
+          'mixed',
+          'external_client',
+          'archived',
+        }.contains(savedCapitalFilter)
+        ? savedCapitalFilter
+        : 'all';
     mode = text(v['mode'], 'weight');
     sort = text(v['sort'], 'holders');
     concentrated = v['concentrated'] == true;
@@ -268,6 +282,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     if (old.asOf != widget.asOf || old.api != widget.api) {
       quarter = '';
       data = null;
+      companyDetails.clear();
       unawaited(load());
     }
   }
@@ -285,12 +300,14 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     'quarter': quarter,
     'ticker': ticker,
     'focusedGuru': focusedGuru,
+    'capitalFilter': capitalFilter,
     'mode': mode,
     'sort': sort,
     'concentrated': concentrated,
     'query': stockSearch.text,
   });
   void update(VoidCallback action, {bool reset = false}) {
+    final previousTicker = ticker;
     setState(() {
       action();
       if (reset) stockPage = 0;
@@ -299,6 +316,26 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
       }
     });
     remember();
+    if (ticker.isNotEmpty && ticker != previousTicker) {
+      unawaited(loadCompanyDetail(ticker));
+    }
+  }
+
+  Future<void> loadCompanyDetail(String symbol) async {
+    if (companyDetails.containsKey(symbol)) return;
+    final cutoff = widget.asOf;
+    try {
+      final detail = await widget.api.getJson(
+        '/api/investment/opportunities/${Uri.encodeComponent(symbol)}?asOf=$cutoff',
+      );
+      if (!mounted || cutoff != widget.asOf || detail['ticker'] != symbol) {
+        return;
+      }
+      setState(() => companyDetails[symbol] = detail);
+    } catch (_) {
+      // Ownership remains usable when a company has no compatible model or
+      // dated price. The detail panel keeps those values explicitly unknown.
+    }
   }
 
   Future<void> load() async {
@@ -310,7 +347,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     });
     try {
       final next = await widget.api.getJson(
-        '/api/investment/opportunities?asOf=$cutoff${target.isEmpty ? '' : '&quarter=$target'}',
+        '/api/investment/guru-holdings?asOf=$cutoff${target.isEmpty ? '' : '&quarter=$target'}',
       );
       if (!mounted || serial != request || cutoff != widget.asOf) return;
       if (next['asOf'] != cutoff ||
@@ -537,7 +574,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 SizedBox(
-                  height: 320 * MediaQuery.textScalerOf(context).scale(1),
+                  height: 430 * MediaQuery.textScalerOf(context).scale(1),
                   child: rail(),
                 ),
                 const SizedBox(height: 12),
@@ -548,13 +585,14 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
   );
 
   Widget rail() {
-    final catalog = widget.gurus
-        .where(
-          (g) => '${g['name']} ${g['entityName']}'.toLowerCase().contains(
+    final catalog = widget.gurus.where((g) {
+      final structure = asMap(g['capitalStructure']);
+      return (capitalFilter == 'all' ||
+              structure['category'] == capitalFilter) &&
+          '${g['name']} ${g['entityName']}'.toLowerCase().contains(
             managerSearch.text.trim().toLowerCase(),
-          ),
-        )
-        .toList();
+          );
+    }).toList();
     catalog.sort((a, b) {
       final ai = selected.indexOf(text(a['id']));
       final bi = selected.indexOf(text(b['id']));
@@ -580,6 +618,51 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
             'Search Guru name',
             '搜索 Guru 姓名',
             () => setState(() {}),
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            key: ValueKey('guru-capital-filter-$capitalFilter'),
+            initialValue: capitalFilter,
+            isExpanded: true,
+            style: s(11),
+            dropdownColor: p.panel,
+            decoration: InputDecoration(
+              labelText: w('Capital structure', '资本结构'),
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 9,
+              ),
+            ),
+            items:
+                [
+                      ('all', w('All structures', '全部结构')),
+                      ('permanent', w('Permanent capital', '永续资本')),
+                      (
+                        'owner_controlled',
+                        w('Owner / family capital', '所有者 / 家族资本'),
+                      ),
+                      ('mixed', w('Mixed capital', '混合资本')),
+                      (
+                        'external_client',
+                        w('External / client capital', '外部 / 客户资本'),
+                      ),
+                      ('archived', w('Historical vehicle', '历史载体')),
+                    ]
+                    .map(
+                      (e) => DropdownMenuItem(value: e.$1, child: Text(e.$2)),
+                    )
+                    .toList(),
+            onChanged: (value) =>
+                update(() => capitalFilter = value ?? 'all', reset: true),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            w(
+              'Permanent means no ordinary outside-investor redemption. Family capital and mixed managers are shown separately.',
+              '“永续”仅指没有普通外部投资者赎回机制；家族资本与混合型机构单独列示。',
+            ),
+            style: s(10, false, p.muted),
           ),
           Wrap(
             children: [
@@ -615,8 +698,30 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                       final g = catalog[i],
                           id = text(g['id']),
                           active = selected.contains(id);
+                      final structure = asMap(g['capitalStructure']);
+                      final category = text(
+                        structure['category'],
+                        'unclassified',
+                      );
+                      final capitalLabel = w(
+                        text(structure['label'], 'Not classified'),
+                        text(structure['labelZh'], '尚未分类'),
+                      );
+                      final capitalDetail = w(
+                        text(
+                          structure['detail'],
+                          'This capital structure has not been verified.',
+                        ),
+                        text(structure['detailZh'], '该资本结构尚未核实。'),
+                      );
+                      final capitalColor = switch (category) {
+                        'permanent' => p.accent,
+                        'mixed' => p.secondary,
+                        'owner_controlled' => const Color(0xFF76BCEB),
+                        _ => p.muted,
+                      };
                       return SizedBox(
-                        height: 39,
+                        height: 52,
                         child: Row(
                           children: [
                             SizedBox(
@@ -647,11 +752,28 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                     avatar(g, 28),
                                     const SizedBox(width: 8),
                                     Expanded(
-                                      child: Text(
-                                        text(g['name']),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: s(12),
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            text(g['name']),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: s(12),
+                                          ),
+                                          Tooltip(
+                                            message: capitalDetail,
+                                            child: Text(
+                                              capitalLabel,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: s(9, false, capitalColor),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
@@ -1240,8 +1362,10 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
   Widget companyDetail() {
     final row = current,
         people = asList(row['managers']),
-        price = asMap(row['price']),
-        value = asMap(row['valuation']);
+        detail =
+            companyDetails[text(row['ticker'])] ?? const <String, dynamic>{},
+        price = asMap(detail['price']),
+        value = asMap(detail['valuation']);
     final adds = people
         .where((m) => {'new', 'increased'}.contains(m['action']))
         .toList();
@@ -1336,7 +1460,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                 metric(
                   'Model / price − 1',
                   '模型 / 股价 − 1',
-                  row['modelGap'],
+                  detail['modelGap'],
                   '',
                   ratio: true,
                 ),

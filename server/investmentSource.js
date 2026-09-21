@@ -3,6 +3,8 @@ import { assert, finite, ratio, change, isoDate, signature, percentile, personal
 import { researchGuidanceReview } from './investmentGuidance.js';
 import { valuationModelRoute } from './valuationModelRoute.js';
 import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrices.js';
+import { gurus } from './gurus.js';
+import { guruCapitalStructure } from './guruCapitalStructures.js';
 
 export const SOURCE_ADAPTER_VERSION='investment-pit-adapter-v1';
 const metricNames=['revenueGrowth','operatingMargin','fcfMargin','capexIntensity'];
@@ -50,6 +52,7 @@ export class InvestmentSource {
     this.insightsDb=insightsFile?new DatabaseSync(insightsFile,{readOnly:true}):null;
     this.insightsDb?.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');
     this.companyCache=new Map(); this.cacheGeneration=null;
+    this.guruExposureCache=new Map(); this.guruExposureGeneration=null;
   }
   close(){this.insightsDb?.close();this.db.close();}
   availableTickers() { return this.db.prepare('SELECT DISTINCT ticker FROM valuation_pit_model_runs ORDER BY ticker').all().map(x=>x.ticker); }
@@ -128,9 +131,22 @@ export class InvestmentSource {
     return eligible.sort((a,b)=>compare(a.ticker,b.ticker));
   }
   guruCatalog() {
-    return this.db.prepare('SELECT guru_id,payload_json FROM guru_exposure_snapshots ORDER BY guru_id').all().map(r=>{
-      const p=readJson(r);return {id:r.guru_id,name:p.guru?.name??r.guru_id,entityName:p.guru?.entityName??'',avatar:p.guru?.avatarUrl??`/guru-avatars/${r.guru_id}.png`};
+    const configured=new Map(gurus.map(g=>[g.id,g]));
+    return this.db.prepare('SELECT guru_id FROM guru_exposure_snapshots ORDER BY guru_id').all().map(r=>{
+      const g=configured.get(r.guru_id);
+      if(g)return {id:g.id,name:g.name,entityName:g.entityName??'',avatar:`/guru-avatars/${g.id}.png`,capitalStructure:guruCapitalStructure(g)};
+      // Test fixtures and future staged managers can exist before the catalog
+      // lands. Parse only that exceptional row, never all large histories.
+      const p=this.guruExposure(r.guru_id);
+      return {id:r.guru_id,name:p?.guru?.name??r.guru_id,entityName:p?.guru?.entityName??'',avatar:p?.guru?.avatarUrl??`/guru-avatars/${r.guru_id}.png`,capitalStructure:guruCapitalStructure(r.guru_id)};
     });
+  }
+  guruExposure(guruId) {
+    const generation=this.db.prepare('PRAGMA data_version').get().data_version;
+    if(generation!==this.guruExposureGeneration){this.guruExposureCache.clear();this.guruExposureGeneration=generation;}
+    if(this.guruExposureCache.has(guruId))return this.guruExposureCache.get(guruId);
+    const payload=readJson(this.db.prepare('SELECT payload_json FROM guru_exposure_snapshots WHERE guru_id=?').get(guruId));
+    this.guruExposureCache.set(guruId,payload);return payload;
   }
   guruDetail(guruId,asOf) {
     isoDate(asOf);
@@ -142,7 +158,7 @@ export class InvestmentSource {
       coverage:'reported_top_holdings_and_largest_changes_only',retrospective:true};
   }
   guruHistory(guruId,asOf) {
-    const p=readJson(this.db.prepare('SELECT payload_json FROM guru_exposure_snapshots WHERE guru_id=?').get(guruId));
+    const p=this.guruExposure(guruId);
     return (p?.history??[]).filter(r=>r.filingDate && r.filingDate<=asOf && r.reportDate<=r.filingDate).sort((a,b)=>compare(a.filingDate,b.filingDate)||compare(a.accessionNumber,b.accessionNumber));
   }
   guruEvidence(ticker,asOf) {

@@ -1,0 +1,42 @@
+{
+  "schema": "thesisforge-guru-holdings-benchmark-v1",
+  "runtime": "v26.7.0",
+  "database": "data/releases/thesisforge-20260920-v3/research.sqlite",
+  "asOf": "2026-09-21",
+  "samples": 60,
+  "concurrency": 20,
+  "baseline": {
+    "name": "full-opportunities",
+    "samples": 60,
+    "concurrency": 20,
+    "quarters": 12,
+    "wall": {
+      "medianMs": 7760.820707999999,
+      "p95Ms": 14602.774083,
+      "maxMs": 16433.741792
+    },
+    "server": {
+      "medianMs": 597.8361249999998,
+      "p95Ms": 1068.6798330000001,
+      "maxMs": 2622.2039999999997
+    }
+  },
+  "optimized": {
+    "name": "guru-holdings-matrix",
+    "samples": 60,
+    "concurrency": 20,
+    "quarters": 12,
+    "wall": {
+      "medianMs": 134.81462500000634,
+      "p95Ms": 180.2531250000029,
+      "maxMs": 193.6028340000048
+    },
+    "server": {
+      "medianMs": 6.410624999996799,
+      "p95Ms": 9.904834000000847,
+      "maxMs": 55.866375000005064
+    }
+  },
+  "p95Improvement": 0.9876562409323413,
+  "semanticHashesEqual": true
+}

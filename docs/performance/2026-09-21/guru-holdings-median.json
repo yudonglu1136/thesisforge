@@ -1,0 +1,38 @@
+{
+  "schema": "thesisforge-guru-holdings-benchmark-median-v1",
+  "runtime": "v26.7.0",
+  "database": "data/releases/thesisforge-20260920-v3/research.sqlite",
+  "asOf": "2026-09-21",
+  "runs": 3,
+  "samplesPerRun": 60,
+  "concurrency": 20,
+  "quarters": 12,
+  "baseline": {
+    "name": "full-opportunities",
+    "wallMedianMs": 7454.909625,
+    "wallP95Ms": 13534.528583,
+    "serverP95Ms": 1080.591125
+  },
+  "optimized": {
+    "name": "guru-holdings-matrix",
+    "wallMedianMs": 135.124375,
+    "wallP95Ms": 166.59275,
+    "serverP95Ms": 10.040667
+  },
+  "wallP95Improvement": 0.987691278,
+  "serverP95Improvement": 0.99070817,
+  "semanticHashesEqual": true,
+  "payload": {
+    "rows": 655,
+    "identityBytes": 836159,
+    "gzipBytes": 83858,
+    "brotliBytes": 57686,
+    "gzipSavings": 0.899710462,
+    "semanticHash": "81ad2b9ae4eaf0e5fddaef22051dffafe5b1aea0968620f94182a4d13a61ea0e"
+  },
+  "limitations": [
+    "Local benchmark; it does not claim production network latency.",
+    "The baseline and optimized paths run in the same revision and are compared on the exact ownership projection consumed by the Guru matrix.",
+    "Twelve report quarters intentionally exceed both bounded read caches."
+  ]
+}

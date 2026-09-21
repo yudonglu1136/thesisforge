@@ -124,7 +124,8 @@ function fakeSource() {
     const snapshot={ticker,asOf,period:later?'2026-Q2':'2026-Q1',periodEnd:later?'2026-06-30':'2026-03-31',availableAt:later?'2026-07-20':'2026-04-20',base:b,metrics,price:{value:50,date:asOf,currency:'USD'},source:{hash:'test'}};
     return {ticker,asOf,base:b,snapshot:{...snapshot,id:signature(snapshot)},templates:{Base:assumptions},provenance:[],history:[row('2026-03-31','2026-04-20',.4),row('2026-06-30','2026-07-20',.2)]};
   };
-  return {company:data,price:(_,asOf)=>({value:50,date:asOf,currency:'USD'}),discovery:()=>[],guruCatalog:()=>[],guruHistory:()=>[]};
+  return {company:data,price:(_,asOf)=>({value:50,date:asOf,currency:'USD'}),discovery:()=>[],guruCatalog:()=>[],guruHistory:()=>[],
+    db:{prepare:sql=>sql==='PRAGMA data_version'?{get:()=>({data_version:1})}:{all:()=>[]}}};
 }
 function setup(){const file=path.join(tmp(),'decisions.sqlite'),store=new InvestmentStore(file,()=> '2026-09-08T12:00:00.000Z'),service=new InvestmentService(fakeSource(),store,()=> '2026-09-08');return{file,store,service};}
 
@@ -352,7 +353,14 @@ test('paper position changes invalidate unreconciled cost lots',()=>{
 test('HTTP routes require identity, ignore supplied owner, and do not cache private payloads',async()=>{
   const{service:s,store}=setup();const app=express();app.use(express.json());app.use((r,_,next)=>{if(r.headers['x-test-user'])r.user={id:r.headers['x-test-user']};next();});registerInvestmentRoutes(app,s);
   const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const url=`http://127.0.0.1:${server.address().port}`;
-  try{strict.equal((await fetch(url+'/api/investment/home')).status,401);const a=save(s);const r=await fetch(url+'/api/investment/research/ISRG?asOf=2026-06-01&owner=alice',{headers:{'x-test-user':'bob'}});strict.match(r.headers.get('cache-control'),/no-store/);strict.deepEqual((await r.json()).scenarios,[]);strict.ok(a.id);}finally{await new Promise(r=>server.close(r));store.close();}
+  try{
+    strict.equal((await fetch(url+'/api/investment/home')).status,401);const a=save(s);
+    const r=await fetch(url+'/api/investment/research/ISRG?asOf=2026-06-01&owner=alice',{headers:{'x-test-user':'bob'}});
+    strict.match(r.headers.get('cache-control'),/no-store/);strict.deepEqual((await r.json()).scenarios,[]);strict.ok(a.id);
+    const holdings=await fetch(url+'/api/investment/guru-holdings?asOf=2026-06-01',{headers:{'x-test-user':'alice'}});
+    strict.equal(holdings.status,200);strict.match(holdings.headers.get('cache-control'),/max-age=300/);
+    strict.ok(holdings.headers.get('etag'));await holdings.arrayBuffer();
+  }finally{await new Promise(r=>server.close(r));store.close();}
 });
 
 test('multi-method FCFE worksheet preserves cash flows and discloses post-DCF adjustments',()=>{

@@ -8,7 +8,7 @@ import { InvestmentSource } from './investmentSource.js';
 import { InvestmentStore } from './investmentStore.js';
 import { InvestmentService } from './investmentService.js';
 import { fundamentalGuruQuarter } from './investmentFundamentals.js';
-import { buildOpportunities, opportunityValuations, opportunityTimeline, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
+import { buildGuruHoldingsMatrix, buildOpportunities, opportunityCompanySummary, opportunityValuations, opportunityTimeline, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-10,`${a} != ${b}`);
 
 test('trend uses distinct visible fiscal quarters, preserves latest pair, and never borrows future data', t => {
@@ -74,6 +74,24 @@ test('institutional activity aggregates exact claims once per manager and includ
   assert.equal(row.valuation.previousFairValue,60);
   assert.equal(row.valuation.previousDate,'2026-04-20');
   assert.equal(r.coverage.fullBooks,3);assert.equal(r.coverage.extractedBooks,0);
+});
+test('Guru matrix preserves ownership semantics without loading universe valuations',t=>{
+  const {source}=fixture(t),matrix=buildGuruHoldingsMatrix(source,'2026-08-28');
+  const full=buildOpportunities(source,'2026-08-28');
+  const project=r=>({ticker:r.ticker,managerCount:r.managerCount,medianWeight:r.medianWeight,
+    newPositions:r.newPositions,increases:r.increases,reductions:r.reductions,exits:r.exits,adds:r.adds,trims:r.trims,
+    managers:r.managers.map(m=>({guruId:m.guruId,shares:m.shares,weight:m.weight,action:m.action}))});
+  assert.deepEqual(matrix.rows.map(project),full.rows.map(project));
+  assert.ok(matrix.rows.every(r=>!('valuation' in r)&&!('price' in r)&&!('quality' in r)));
+  const copy=buildGuruHoldingsMatrix(source,'2026-08-28');copy.rows[0].ticker='MUTATED';
+  assert.notEqual(buildGuruHoldingsMatrix(source,'2026-08-28').rows[0].ticker,'MUTATED');
+});
+test('selected-company detail computes only that ticker and retains dated evidence',t=>{
+  const {source}=fixture(t),detail=opportunityCompanySummary(source,'TEST','2026-08-28');
+  assert.equal(detail.ticker,'TEST');assert.equal(detail.valuation.fairValue,66);assert.equal(detail.price.value,55);
+  near(detail.modelGap,.2);assert.equal(detail.valuationStatus,'available');assert.equal(detail.events.length,6);
+  const missing=opportunityCompanySummary(source,'MISS','2026-08-28');
+  assert.equal(missing.valuation,null);assert.equal(missing.price.value,null);assert.equal(missing.modelGap,null);
 });
 
 test('fundamentals Guru drilldown stays exact to ticker, quarter and public cutoff',t=>{

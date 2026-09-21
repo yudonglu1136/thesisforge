@@ -56,13 +56,23 @@ class HoldingsApi extends study.StudyApi {
   Future<Map<String, dynamic>> getJson(String path) async {
     paths.add(path);
     final u = Uri.parse(path);
-    if (u.path.endsWith('/opportunities')) {
+    if (u.path.endsWith('/guru-holdings')) {
       if (delayedHoldings != null) return delayedHoldings!.future;
       if (this.fail) throw StateError('fixture');
       return book(
         u.queryParameters['asOf']!,
         u.queryParameters['quarter'] ?? '2026-06-30',
       );
+    }
+    if (u.path.contains('/opportunities/')) {
+      return {
+        'ticker': u.pathSegments.last,
+        'asOf': u.queryParameters['asOf'],
+        'price': {'value': 100, 'currency': 'USD', 'date': '2026-08-28'},
+        'valuation': {'fairValue': 80, 'currency': 'USD', 'date': '2026-07-01'},
+        'modelGap': -.2,
+        'events': <Map<String, dynamic>>[],
+      };
     }
     if (u.path.contains('/gurus/')) {
       return {
@@ -179,6 +189,8 @@ void main() {
       await study.tap(t, find.byKey(const ValueKey('matrix-research')));
       expect(company, 'STK1');
       expect(api.posts, 0);
+      expect(api.paths.any((p) => p.contains('/guru-holdings?')), isTrue);
+      expect(api.paths.any((p) => p.contains('/opportunities/GOOGL?')), isTrue);
       expect(t.takeException(), isNull);
     },
   );
@@ -221,6 +233,23 @@ void main() {
       expect(t.takeException(), isNull);
     },
   );
+
+  testWidgets('capital structure filter is conservative and persisted', (
+    t,
+  ) async {
+    final api = HoldingsApi();
+    Map<String, dynamic>? saved;
+    await mount(t, api, selection: (value) => saved = value);
+    await study.tap(t, find.text('All structures'));
+    await study.tap(t, find.text('Permanent capital').last);
+    expect(find.byKey(const ValueKey('matrix-portrait-third')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('matrix-portrait-bill-ackman')),
+      findsNothing,
+    );
+    expect(saved?['capitalFilter'], 'permanent');
+    expect(t.takeException(), isNull);
+  });
 
   for (final size in [(390.0, 1.0), (1280.0, 1.0), (390.0, 1.5)]) {
     testWidgets('responsive layout ${size.$1} scale ${size.$2}', (t) async {

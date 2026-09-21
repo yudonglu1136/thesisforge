@@ -21,6 +21,31 @@ class StudyApi extends ApiClient {
         'name': x.$2,
         'entityName': 'Fixture Management',
         'followed': false,
+        'capitalStructure': {
+          'category': x.$1 == 'third'
+              ? 'permanent'
+              : x.$1 == 'fourth'
+              ? 'owner_controlled'
+              : x.$1 == 'bill-ackman'
+              ? 'mixed'
+              : 'external_client',
+          'label': x.$1 == 'third'
+              ? 'Permanent capital'
+              : x.$1 == 'fourth'
+              ? 'Owner / family capital'
+              : x.$1 == 'bill-ackman'
+              ? 'Mixed capital'
+              : 'External / client capital',
+          'labelZh': x.$1 == 'third'
+              ? '永续资本'
+              : x.$1 == 'fourth'
+              ? '所有者 / 家族资本'
+              : x.$1 == 'bill-ackman'
+              ? '混合资本'
+              : '外部 / 客户资本',
+          'detail': 'Fixture capital structure.',
+          'detailZh': '测试资本结构。',
+        },
       },
   ];
   Map<String, dynamic> response(String date, String period) => {

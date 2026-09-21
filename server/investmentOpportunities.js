@@ -46,13 +46,16 @@ export function opportunityBooks(source, asOf, reportDate = null) {
   return {asOf,reportDate:selected,quarters,eligibleManagers:eligible.length,books};
 }
 
-export function opportunityValuations(source,asOf) {
+export function opportunityValuations(source,asOf,tickers=null) {
+  const selected=tickers?.map(tickerKey)??null;
+  if(selected?.length===0)return new Map();
+  const tickerClause=selected?` AND ticker IN (${selected.map(()=>'?').join(',')})`:'';
   // Bounded scalar extraction: no per-stock company()/transcript blob loading.
   const rows=source.db.prepare(`WITH visible AS (
     SELECT rowid rid,ticker,as_of_date,model_version,
       ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY as_of_date DESC,model_version DESC,fiscal_period DESC,rowid DESC) n,
       ROW_NUMBER() OVER(PARTITION BY ticker,fiscal_period ORDER BY as_of_date DESC,model_version DESC,rowid DESC) quarter_n
-    FROM valuation_pit_model_runs WHERE as_of_date<=? AND financial_available_at<=as_of_date
+    FROM valuation_pit_model_runs WHERE as_of_date<=?${tickerClause} AND financial_available_at<=as_of_date
       AND (guidance_max_observed_at IS NULL OR guidance_max_observed_at<=as_of_date)),
     quarters AS (SELECT rid,ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY as_of_date DESC,model_version DESC,rid DESC) qn
       FROM visible WHERE quarter_n=1)
@@ -64,7 +67,7 @@ export function opportunityValuations(source,asOf) {
       json_extract(input_json,'$.valuationSemantics.scoreInputs') score
     FROM visible JOIN valuation_pit_model_runs p ON p.rowid=visible.rid
       LEFT JOIN quarters ON quarters.rid=visible.rid
-    WHERE n<=2 OR qn<=8 ORDER BY p.ticker,n`).all(asOf);
+    WHERE n<=2 OR qn<=8 ORDER BY p.ticker,n`).all(asOf,...(selected??[]));
   const result=new Map();
   const histories=new Map();
   for(const r of rows) {
@@ -110,6 +113,20 @@ function opportunityPrices(source,tickers,asOf) {
   return result;
 }
 
+export function opportunityCompanySummary(source,ticker,asOf) {
+  ticker=tickerKey(ticker);isoDate(asOf);
+  const valuation=opportunityValuations(source,asOf,[ticker]).get(ticker)??null;
+  const price=opportunityPrices(source,[ticker],asOf).get(ticker)??
+    {value:null,date:null,source:null,currency:null};
+  const comparable=finite(valuation?.fairValue)&&valuation.fairValue>0&&finite(price.value)&&price.value>0&&
+    !!valuation?.currency&&valuation.currency===price.currency;
+  return {ticker,asOf,price,valuation,
+    modelGap:comparable?change(valuation.fairValue,price.value):null,
+    valuationStatus:!finite(valuation?.fairValue)||valuation.fairValue<=0?'not_modeled':
+      !finite(price.value)||price.value<=0?'price_unavailable':!comparable?'currency_unverified':'available',
+    events:opportunityTimeline(source,ticker,asOf)};
+}
+
 // Shared by Discover and the owner's portfolio. Public evidence only; no
 // valuation/quality universe needs to be loaded just to inspect Guru ownership.
 export function opportunityOwnership(books) {
@@ -142,6 +159,34 @@ export function opportunityOwnership(books) {
     }
   }
   return byTicker;
+}
+
+// The Guru consensus matrix needs ownership only. Keeping it on the full
+// opportunities route used to make first paint wait for every PIT valuation,
+// quality factor and price history (roughly 40x the actual ownership work on
+// the production snapshot).
+export function buildGuruHoldingsMatrix(source,asOf,reportDate=null) {
+  const generation=source.db.prepare('PRAGMA data_version').get().data_version;
+  let cache=readCaches.get(source);
+  if(!cache||cache.generation!==generation){cache={generation,rows:new Map()};readCaches.set(source,cache);}
+  const key=`guru-matrix:${asOf}:${reportDate??''}`;
+  if(cache.rows.has(key))return structuredClone(cache.rows.get(key));
+  const data=opportunityBooks(source,asOf,reportDate), byTicker=opportunityOwnership(data.books);
+  const rows=[...byTicker.values()].map(row=>{
+    const held=row.managers.filter(m=>m.shares>0);
+    const newPositions=row.managers.filter(m=>m.action==='new').length;
+    const increases=row.managers.filter(m=>m.action==='increased').length;
+    const reductions=row.managers.filter(m=>m.action==='reduced').length;
+    const exits=row.managers.filter(m=>m.action==='sold_out').length;
+    return {...row,managerCount:held.length,medianWeight:median(held.map(m=>m.weight)),
+      newPositions,increases,reductions,exits,adds:newPositions+increases,trims:reductions+exits};
+  }).sort((a,b)=>b.managerCount-a.managerCount || (b.medianWeight??0)-(a.medianWeight??0) || a.ticker.localeCompare(b.ticker));
+  const result={version:'guru-holdings-matrix-v1',asOf,reportDate:data.reportDate,quarters:data.quarters,
+    coverage:{eligibleManagers:data.eligibleManagers,reportedManagers:data.books.length,fullBooks:data.books.filter(b=>b.full).length,
+      extractedBooks:data.books.filter(b=>!b.full).length,total:rows.length,
+      scope:data.books.every(b=>b.full)?'full_current_books':'includes_historical_extracts'},rows};
+  if(cache.rows.size>=8)cache.rows.delete(cache.rows.keys().next().value);
+  cache.rows.set(key,result);return structuredClone(result);
 }
 
 export function buildOpportunities(source,asOf,reportDate=null) {
