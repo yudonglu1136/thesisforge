@@ -55,10 +55,8 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
   void _persist13FInsights() => replaceBrowserQuery({
     'insightQuarter': insightQuarter,
     'insightAction': insightAction == 'increased' ? null : insightAction,
-    'insightView': insightPerspective == 'stocks' ? null : insightPerspective,
-    'insightRank': insightStockRanking == 'holders'
-        ? null
-        : insightStockRanking,
+    'insightView': null,
+    'insightRank': insightStockRanking == 'amount' ? null : insightStockRanking,
     'insightSegment': insightMarketSegment == 'all'
         ? null
         : insightMarketSegment,
@@ -227,37 +225,21 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     }).toList();
     rows.sort((a, b) {
       final primary = switch (insightStockRanking) {
-        'shares' => number(
-          b['currentUnitsK'],
-        ).compareTo(number(a['currentUnitsK'])),
-        'netShares' => number(
-          b['netUnitsChangeK'],
-        ).abs().compareTo(number(a['netUnitsChangeK']).abs()),
-        'netPct' => number(
+        'shareChange' => number(
           b['netChangePctOutstanding'],
         ).abs().compareTo(number(a['netChangePctOutstanding']).abs()),
-        _ => number(b['holders']).compareTo(number(a['holders'])),
+        'institutions' => number(b['holders']).compareTo(number(a['holders'])),
+        'sharesHeldPct' => number(
+          b['institutionalOwnershipPct'],
+        ).compareTo(number(a['institutionalOwnershipPct'])),
+        _ => number(
+          b['netChangeValueM'],
+        ).abs().compareTo(number(a['netChangeValueM']).abs()),
       };
       if (primary != 0) return primary;
       final count = number(b[key]).compareTo(number(a[key]));
       if (count != 0) return count;
       return text(a['ticker']).compareTo(text(b['ticker']));
-    });
-    return rows;
-  }
-
-  List<Map<String, dynamic>> _insightInstitutions() {
-    final key = _insightKey(insightAction);
-    final query = insightSearch.trim().toLowerCase();
-    final rows = asList(institutional13f?['institutions']).where((row) {
-      if (number(row[key]) <= 0) return false;
-      return query.isEmpty ||
-          '${row['name']} ${row['investorId']}'.toLowerCase().contains(query);
-    }).toList();
-    rows.sort((a, b) {
-      final count = number(b[key]).compareTo(number(a[key]));
-      if (count != 0) return count;
-      return number(b['currentValueM']).compareTo(number(a['currentValueM']));
     });
     return rows;
   }
@@ -369,8 +351,8 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: label(
-                'Common-stock positions only. The market pulse divides aggregate reported value by the sum of unique covered securities’ quarter-end Sharadar market capitalizations. New and exited positions compare adjacent quarter-end books; increases and reductions compare split-adjusted reported units. Net change is valued at the current quarter implied price. Sharadar does not provide a reliable free-float field here, so percentage rankings use total shares outstanding. Counts use the full SF3 filer universe, while detail rows are bounded. 13F disclosures are delayed and do not reveal trade dates or execution prices.',
-                '仅统计普通股持仓。宏观脉搏用机构申报持股总市值除以覆盖股票的 Sharadar 季末总市值。新建仓与清仓比较相邻季末组合；加仓与减仓按拆股调整后的申报股数比较；净变化按本季度隐含价格折算。当前数据没有可靠的自由流通股字段，因此比例排名使用总股本。计数覆盖完整 SF3 机构范围，明细行做有界展示。13F 存在披露延迟，不提供实际交易日期或成交价。',
+                'Common-stock positions only. The market pulse divides aggregate reported value by the sum of unique covered securities’ quarter-end Sharadar market capitalizations. New and exited positions compare adjacent quarter-end books; increases and reductions compare split-adjusted reported units. Net change is valued at the current quarter implied price. Percentage rankings divide net reported value change or aggregate institutional value by quarter-end Sharadar market capitalization; at the same implied price this is equivalent to using total shares outstanding, not free float. Counts use the full SF3 filer universe, while detail rows are bounded. 13F disclosures are delayed and do not reveal trade dates or execution prices.',
+                '仅统计普通股持仓。宏观脉搏用机构申报持股总市值除以覆盖股票的 Sharadar 季末总市值。新建仓与清仓比较相邻季末组合；加仓与减仓按拆股调整后的申报股数比较；净变化按本季度隐含价格折算。比例排名以机构净变化市值或机构持股市值除以 Sharadar 季末总市值；在相同隐含价格下等价于使用总股本，而非自由流通股。计数覆盖完整 SF3 机构范围，明细行做有界展示。13F 存在披露延迟，不提供实际交易日期或成交价。',
                 size: 12,
               ),
             ),
@@ -505,6 +487,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                 child: _InsightHistoryInteractiveChart(
                   points: history,
                   series: _InsightHistorySeries.holders,
+                  primaryScale: _InsightAxisScale.percent,
                   accent: p.accent,
                   secondary: p.secondary,
                   grid: p.border,
@@ -742,69 +725,45 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           ChoiceChip(
-            key: const ValueKey('13f-view-stocks'),
-            label: Text(w('Stocks', '按股票')),
-            selected: insightPerspective == 'stocks',
+            key: const ValueKey('13f-rank-amount'),
+            avatar: const Icon(Icons.attach_money, size: 16),
+            label: Text(w('By amount', '按变动金额')),
+            selected: insightStockRanking == 'amount',
             onSelected: (_) => updateUI(() {
-              insightPerspective = 'stocks';
-              insightSearch = '';
-              insightSearchInput.clear();
+              insightStockRanking = 'amount';
               _persist13FInsights();
             }),
           ),
           ChoiceChip(
-            key: const ValueKey('13f-view-institutions'),
-            label: Text(w('Institutions', '按机构')),
-            selected: insightPerspective == 'institutions',
+            key: const ValueKey('13f-rank-share-change'),
+            avatar: const Icon(Icons.swap_vert, size: 16),
+            label: Text(w('By share change', '按市值占比变化')),
+            selected: insightStockRanking == 'shareChange',
             onSelected: (_) => updateUI(() {
-              insightPerspective = 'institutions';
-              insightSearch = '';
-              insightSearchInput.clear();
+              insightStockRanking = 'shareChange';
               _persist13FInsights();
             }),
           ),
-          if (insightPerspective == 'stocks') ...[
-            ChoiceChip(
-              key: const ValueKey('13f-rank-holders'),
-              avatar: const Icon(Icons.account_balance_outlined, size: 16),
-              label: Text(w('By institutions', '按机构数量')),
-              selected: insightStockRanking == 'holders',
-              onSelected: (_) => updateUI(() {
-                insightStockRanking = 'holders';
-                _persist13FInsights();
-              }),
-            ),
-            ChoiceChip(
-              key: const ValueKey('13f-rank-net-shares'),
-              avatar: const Icon(Icons.swap_vert, size: 16),
-              label: Text(w('By net change', '按净增减规模')),
-              selected: insightStockRanking == 'netShares',
-              onSelected: (_) => updateUI(() {
-                insightStockRanking = 'netShares';
-                _persist13FInsights();
-              }),
-            ),
-            ChoiceChip(
-              key: const ValueKey('13f-rank-net-pct'),
-              avatar: const Icon(Icons.percent, size: 16),
-              label: Text(w('By % outstanding', '按占总股本比例')),
-              selected: insightStockRanking == 'netPct',
-              onSelected: (_) => updateUI(() {
-                insightStockRanking = 'netPct';
-                _persist13FInsights();
-              }),
-            ),
-            ChoiceChip(
-              key: const ValueKey('13f-rank-shares'),
-              avatar: const Icon(Icons.stacked_line_chart, size: 16),
-              label: Text(w('By shares held', '按机构持股数')),
-              selected: insightStockRanking == 'shares',
-              onSelected: (_) => updateUI(() {
-                insightStockRanking = 'shares';
-                _persist13FInsights();
-              }),
-            ),
-          ],
+          ChoiceChip(
+            key: const ValueKey('13f-rank-institutions'),
+            avatar: const Icon(Icons.account_balance_outlined, size: 16),
+            label: Text(w('By institutions', '按机构数量')),
+            selected: insightStockRanking == 'institutions',
+            onSelected: (_) => updateUI(() {
+              insightStockRanking = 'institutions';
+              _persist13FInsights();
+            }),
+          ),
+          ChoiceChip(
+            key: const ValueKey('13f-rank-shares-held-pct'),
+            avatar: const Icon(Icons.percent, size: 16),
+            label: Text(w('By shares held %', '按机构持股占比')),
+            selected: insightStockRanking == 'sharesHeldPct',
+            onSelected: (_) => updateUI(() {
+              insightStockRanking = 'sharesHeldPct';
+              _persist13FInsights();
+            }),
+          ),
           SizedBox(
             width: 330,
             child: TextField(
@@ -813,9 +772,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
               decoration: InputDecoration(
                 isDense: true,
                 prefixIcon: const Icon(Icons.search, size: 19),
-                hintText: insightPerspective == 'stocks'
-                    ? w('Search company or ticker', '搜索公司或代码')
-                    : w('Search institution', '搜索机构'),
+                hintText: w('Search company or ticker', '搜索公司或代码'),
                 border: const OutlineInputBorder(),
               ),
               onChanged: (value) => updateUI(() {
@@ -825,31 +782,30 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             ),
           ),
           label(
-            insightPerspective == 'stocks'
-                ? switch (insightStockRanking) {
-                    'shares' => w(
-                      'Ranked by aggregate reported shares',
-                      '按机构申报持股总数排名',
-                    ),
-                    'netShares' => w(
-                      'Ranked by absolute net reported share change',
-                      '按机构申报股数净变化的绝对规模排名',
-                    ),
-                    'netPct' => w(
-                      'Ranked by net change as % of shares outstanding',
-                      '按净变化占总股本比例排名',
-                    ),
-                    _ => w('Ranked by holder count', '按持有机构数量排名'),
-                  }
-                : w('Ranked by reported position changes', '按申报仓位动作数量排名'),
-            insightPerspective == 'stocks'
-                ? switch (insightStockRanking) {
-                    'shares' => '按机构申报持股总数排名',
-                    'netShares' => '按机构申报股数净变化的绝对规模排名',
-                    'netPct' => '按净变化占总股本比例排名',
-                    _ => '按持有机构数量排名',
-                  }
-                : '按申报仓位动作数量排名',
+            switch (insightStockRanking) {
+              'shareChange' => w(
+                'Ranked by net reported value change as % of company market cap',
+                '按机构申报净变化市值占公司总市值比例排名',
+              ),
+              'institutions' => w(
+                'Ranked by reporting institution count',
+                '按持有机构数量排名',
+              ),
+              'sharesHeldPct' => w(
+                'Ranked by reported institutional value as % of company market cap',
+                '按 13F 机构持股市值占公司总市值比例排名',
+              ),
+              _ => w(
+                'Ranked by absolute quarterly net reported value change',
+                '按季度机构申报净变化市值绝对额排名',
+              ),
+            },
+            switch (insightStockRanking) {
+              'shareChange' => '按机构申报净变化市值占公司总市值比例排名',
+              'institutions' => '按持有机构数量排名',
+              'sharesHeldPct' => '按 13F 机构持股市值占公司总市值比例排名',
+              _ => '按季度机构申报净变化市值绝对额排名',
+            },
             size: 11,
           ),
         ],
@@ -858,12 +814,8 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       LayoutBuilder(
         builder: (_, constraints) {
           final wide = constraints.maxWidth >= 1040;
-          final list = insightPerspective == 'stocks'
-              ? _insightStockList()
-              : _insightInstitutionList();
-          final detail = insightPerspective == 'stocks'
-              ? _insightStockDetail()
-              : _insightInstitutionDetail();
+          final list = _insightStockList();
+          final detail = _insightStockDetail();
           if (!wide) {
             return Column(children: [list, const SizedBox(height: 16), detail]);
           }
@@ -881,14 +833,12 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
   );
 
   Widget _insightStockList() {
-    final rows = _insightStocks(),
-        key = _insightKey(insightAction),
-        color = _insightColor(insightAction);
+    final rows = _insightStocks(), color = _insightColor(insightAction);
     final compact = MediaQuery.sizeOf(context).width < 620;
-    final actionWidth = compact ? 50.0 : 94.0;
-    final netWidth = compact ? 64.0 : 84.0;
-    final ratioWidth = compact ? 54.0 : 72.0;
-    final holdersWidth = compact ? 48.0 : 72.0;
+    final amountWidth = compact ? 64.0 : 88.0;
+    final changeWidth = compact ? 54.0 : 78.0;
+    final holdersWidth = compact ? 48.0 : 70.0;
+    final heldWidth = compact ? 52.0 : 72.0;
     return Container(
       decoration: BoxDecoration(
         color: p.panel,
@@ -906,24 +856,20 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
               children: [
                 Expanded(child: label('Company', '公司', size: 11)),
                 SizedBox(
-                  width: actionWidth,
-                  child: label(
-                    _insightName(insightAction),
-                    _insightName(insightAction),
-                    size: 11,
-                  ),
+                  width: amountWidth,
+                  child: label('Amount', '变动金额', size: 11),
                 ),
                 SizedBox(
-                  width: netWidth,
-                  child: label('Net value', '净变化市值', size: 11),
-                ),
-                SizedBox(
-                  width: ratioWidth,
-                  child: label('% shares', '占总股本', size: 11),
+                  width: changeWidth,
+                  child: label('Share change', '市值占比变化', size: 11),
                 ),
                 SizedBox(
                   width: holdersWidth,
                   child: label('Institutions', '机构数', size: 11),
+                ),
+                SizedBox(
+                  width: heldWidth,
+                  child: label('Shares held %', '机构持股占比', size: 11),
                 ),
               ],
             ),
@@ -975,38 +921,28 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                         ),
                       ),
                       SizedBox(
-                        width: actionWidth,
-                        child: Text(
-                          _integer(row[key]),
-                          style: TextStyle(
-                            color: color,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      SizedBox(
-                        width: netWidth,
+                        width: amountWidth,
                         child: Text(
                           _usdMillions(row['netChangeValueM']),
                           style: TextStyle(
-                            color: insightStockRanking == 'netShares'
+                            color: insightStockRanking == 'amount'
                                 ? color
                                 : p.text,
-                            fontWeight: insightStockRanking == 'netShares'
+                            fontWeight: insightStockRanking == 'amount'
                                 ? FontWeight.w700
                                 : FontWeight.w400,
                           ),
                         ),
                       ),
                       SizedBox(
-                        width: ratioWidth,
+                        width: changeWidth,
                         child: Text(
                           _percentagePoints(row['netChangePctOutstanding']),
                           style: TextStyle(
-                            color: insightStockRanking == 'netPct'
+                            color: insightStockRanking == 'shareChange'
                                 ? color
                                 : p.text,
-                            fontWeight: insightStockRanking == 'netPct'
+                            fontWeight: insightStockRanking == 'shareChange'
                                 ? FontWeight.w700
                                 : FontWeight.w400,
                           ),
@@ -1017,74 +953,30 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                         child: Text(
                           _integer(row['holders']),
                           style: TextStyle(
-                            color: insightStockRanking == 'holders'
+                            color: insightStockRanking == 'institutions'
                                 ? p.accent
                                 : p.text,
-                            fontWeight: insightStockRanking == 'holders'
+                            fontWeight: insightStockRanking == 'institutions'
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: heldWidth,
+                        child: Text(
+                          _percentagePoints(row['institutionalOwnershipPct']),
+                          style: TextStyle(
+                            color: insightStockRanking == 'sharesHeldPct'
+                                ? p.accent
+                                : p.text,
+                            fontWeight: insightStockRanking == 'sharesHeldPct'
                                 ? FontWeight.w700
                                 : FontWeight.w400,
                           ),
                         ),
                       ),
                     ],
-                  ),
-                ),
-              ),
-            ),
-          if (rows.length > 100)
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: label(
-                'Showing top 100 of ${_integer(rows.length)} matches.',
-                '显示 ${_integer(rows.length)} 个匹配中的前 100 个。',
-                size: 11,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _insightInstitutionList() {
-    final rows = _insightInstitutions(),
-        key = _insightKey(insightAction),
-        color = _insightColor(insightAction);
-    return Container(
-      decoration: BoxDecoration(
-        color: p.panel,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: p.border),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          for (final row in rows.take(100))
-            Material(
-              color: row['investorId'] == insightInvestor
-                  ? p.accent.withValues(alpha: .11)
-                  : Colors.transparent,
-              child: ListTile(
-                key: ValueKey('13f-institution-${row['investorId']}'),
-                onTap: () => updateUI(() {
-                  insightInvestor = text(row['investorId']);
-                  _persist13FInsights();
-                }),
-                title: Text(
-                  text(row['name']),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: p.text, fontWeight: FontWeight.w600),
-                ),
-                subtitle: Text(
-                  '${_integer(row['holdings'])} ${w('reported stocks', '只申报股票')} · ${_usdMillions(row['currentValueM'])}',
-                  style: TextStyle(color: p.muted, fontSize: 11),
-                ),
-                trailing: Text(
-                  _integer(row[key]),
-                  style: TextStyle(
-                    color: color,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16,
                   ),
                 ),
               ),
@@ -1195,6 +1087,9 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
               child: _InsightHistoryInteractiveChart(
                 points: points,
                 series: series,
+                primaryScale: series == _InsightHistorySeries.holders
+                    ? _InsightAxisScale.count
+                    : _InsightAxisScale.shares,
                 accent: p.accent,
                 secondary: p.secondary,
                 grid: p.border,
@@ -1206,7 +1101,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                     ? ['${_integer(point.holders)} ${w('filers', '家机构')}']
                     : [
                         '${w('Shares', '持股数')} ${_reportedShares(point.sharesK)}',
-                        '${w('% outstanding', '占总股本')} ${point.ownershipPct == null ? '—' : '${point.ownershipPct!.toStringAsFixed(2)}%'}',
+                        '${w('% market cap', '占总市值')} ${point.ownershipPct == null ? '—' : '${point.ownershipPct!.toStringAsFixed(2)}%'}',
                       ],
               ),
             ),
@@ -1230,7 +1125,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                   children: [
                     Container(width: 12, height: 2, color: p.secondary),
                     const SizedBox(width: 4),
-                    label('% outstanding', '占总股本', size: 9),
+                    label('% market cap', '占总市值', size: 9),
                   ],
                 ),
               ],
@@ -1271,9 +1166,9 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
         final shares = _insightHistoryCard(
           key: const ValueKey('13f-ownership-history-chart'),
           titleEn: 'Institutional ownership history',
-          titleZh: '机构持股与占总股本变化',
-          subtitleEn: 'Aggregate reported shares · % of shares outstanding',
-          subtitleZh: '机构申报持股总数 · 占当时总股本比例',
+          titleZh: '机构持股与占总市值变化',
+          subtitleEn: 'Aggregate reported shares · % of company market cap',
+          subtitleZh: '机构申报持股总数 · 机构持股市值占公司总市值',
           points: points,
           series: _InsightHistorySeries.shares,
         );
@@ -1495,60 +1390,6 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     );
   }
 
-  Widget _insightInstitutionDetail() {
-    final row = asList(
-      institutional13f?['institutions'],
-    ).where((item) => item['investorId'] == insightInvestor).firstOrNull;
-    if (row == null) {
-      return card([
-        label(
-          'Select an institution to inspect its quarterly activity.',
-          '选择一家机构查看季度动作。',
-        ),
-      ]);
-    }
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: p.panel,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: p.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Icon(Icons.account_balance_outlined, color: p.accent, size: 32),
-          const SizedBox(height: 10),
-          Text(text(row['name']), style: deskHeading(21)),
-          const SizedBox(height: 4),
-          label(
-            '${text(row['investorId'])} · ${_usdMillions(row['currentValueM'])} ${w('reported common-stock value', '普通股申报市值')}',
-            '${text(row['investorId'])} · ${_usdMillions(row['currentValueM'])} 普通股申报市值',
-            size: 12,
-          ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _insightMetric('Holdings', '持仓', row['holdings'], p.text),
-              _insightMetric('New', '新建', row['newPositions'], p.accent),
-              _insightMetric('Added', '加仓', row['increases'], p.accent),
-              _insightMetric('Reduced', '减仓', row['reductions'], p.secondary),
-              _insightMetric('Exited', '清仓', row['exits'], p.secondary),
-            ],
-          ),
-          const SizedBox(height: 16),
-          label(
-            'Institution rankings use its complete common-stock quarter comparison. Select Stocks to inspect company-level filer examples.',
-            '机构排名使用其完整普通股季度对比；切换到“按股票”可查看单只股票的机构明细。',
-            size: 12,
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _insightMetric(String en, String zh, dynamic value, Color color) =>
       Container(
         width: 112,
@@ -1578,6 +1419,8 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
 
 enum _InsightHistorySeries { holders, shares }
 
+enum _InsightAxisScale { count, percent, shares }
+
 class _InsightHistoryPoint {
   const _InsightHistoryPoint({
     required this.reportDate,
@@ -1596,6 +1439,7 @@ class _InsightHistoryInteractiveChart extends StatefulWidget {
   const _InsightHistoryInteractiveChart({
     required this.points,
     required this.series,
+    required this.primaryScale,
     required this.accent,
     required this.secondary,
     required this.grid,
@@ -1608,6 +1452,7 @@ class _InsightHistoryInteractiveChart extends StatefulWidget {
 
   final List<_InsightHistoryPoint> points;
   final _InsightHistorySeries series;
+  final _InsightAxisScale primaryScale;
   final Color accent;
   final Color secondary;
   final Color grid;
@@ -1629,7 +1474,12 @@ class _InsightHistoryInteractiveChartState
 
   void _selectAt(double dx, double width) {
     if (widget.points.isEmpty || width <= 10) return;
-    final ratio = ((dx - 5) / (width - 10)).clamp(0.0, 1.0);
+    const leftAxis = 42.0;
+    final rightAxis = widget.series == _InsightHistorySeries.shares
+        ? 40.0
+        : 8.0;
+    final plotWidth = math.max(1.0, width - leftAxis - rightAxis);
+    final ratio = ((dx - leftAxis) / plotWidth).clamp(0.0, 1.0);
     final index = (ratio * (widget.points.length - 1)).round();
     if (hoveredIndex == index && pointerX == dx) return;
     setState(() {
@@ -1666,9 +1516,11 @@ class _InsightHistoryInteractiveChartState
                   painter: _InsightHistoryPainter(
                     points: widget.points,
                     series: widget.series,
+                    primaryScale: widget.primaryScale,
                     accent: widget.accent,
                     secondary: widget.secondary,
                     grid: widget.grid,
+                    muted: widget.muted,
                     hoverIndex: index,
                   ),
                 ),
@@ -1741,39 +1593,161 @@ class _InsightHistoryPainter extends CustomPainter {
   const _InsightHistoryPainter({
     required this.points,
     required this.series,
+    required this.primaryScale,
     required this.accent,
     required this.secondary,
     required this.grid,
+    required this.muted,
     required this.hoverIndex,
   });
 
   final List<_InsightHistoryPoint> points;
   final _InsightHistorySeries series;
+  final _InsightAxisScale primaryScale;
   final Color accent;
   final Color secondary;
   final Color grid;
+  final Color muted;
   final int? hoverIndex;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final chart = Rect.fromLTWH(5, 5, size.width - 10, size.height - 10);
+    const leftAxis = 42.0;
+    final rightAxis = series == _InsightHistorySeries.shares ? 40.0 : 8.0;
+    final chart = Rect.fromLTWH(
+      leftAxis,
+      7,
+      math.max(1.0, size.width - leftAxis - rightAxis),
+      math.max(1.0, size.height - 14),
+    );
+    final double? Function(_InsightHistoryPoint) primaryRead =
+        series == _InsightHistorySeries.holders
+        ? (point) => point.holders
+        : (point) => point.sharesK;
+    final primaryBounds = _bounds(primaryRead, primaryScale);
     final gridPaint = Paint()
       ..color = grid.withValues(alpha: .72)
       ..strokeWidth = 1;
-    for (var index = 0; index < 4; index++) {
-      final y = chart.top + chart.height * index / 3;
+    for (var index = 0; index <= 4; index++) {
+      final ratio = index / 4;
+      final y = chart.bottom - chart.height * ratio;
       canvas.drawLine(Offset(chart.left, y), Offset(chart.right, y), gridPaint);
+      _drawAxisLabel(
+        canvas,
+        _formatAxis(
+          primaryBounds.min + (primaryBounds.max - primaryBounds.min) * ratio,
+          primaryScale,
+        ),
+        Offset(chart.left - 5, y),
+        alignRight: true,
+      );
+      if (series == _InsightHistorySeries.shares) {
+        _drawAxisLabel(
+          canvas,
+          '${(ratio * 100).round()}%',
+          Offset(chart.right + 5, y),
+        );
+      }
     }
     if (series == _InsightHistorySeries.holders) {
-      _drawSeries(canvas, chart, (point) => point.holders, accent, fill: true);
+      _drawSeries(
+        canvas,
+        chart,
+        (point) => point.holders,
+        primaryBounds,
+        accent,
+        fill: true,
+      );
     } else {
-      _drawBars(canvas, chart, (point) => point.sharesK, accent);
-      _drawSeries(canvas, chart, (point) => point.ownershipPct, secondary);
+      _drawBars(canvas, chart, (point) => point.sharesK, primaryBounds, accent);
+      _drawSeries(canvas, chart, (point) => point.ownershipPct, (
+        min: 0,
+        max: 100,
+      ), secondary);
     }
-    _drawHover(canvas, chart);
+    _drawHover(canvas, chart, primaryBounds);
   }
 
-  void _drawHover(Canvas canvas, Rect chart) {
+  ({double min, double max}) _bounds(
+    double? Function(_InsightHistoryPoint) read,
+    _InsightAxisScale scale,
+  ) {
+    if (scale == _InsightAxisScale.percent) return (min: 0, max: 100);
+    final values = points
+        .map(read)
+        .whereType<double>()
+        .where((value) => value.isFinite && value >= 0)
+        .toList();
+    if (values.isEmpty) return (min: 0, max: 1);
+    return (min: 0, max: _niceCeiling(values.reduce(math.max) * 1.06));
+  }
+
+  double _niceCeiling(double value) {
+    if (!value.isFinite || value <= 0) return 1;
+    final roughStep = value / 4;
+    final magnitude = math
+        .pow(10, (math.log(roughStep) / math.ln10).floor())
+        .toDouble();
+    final normalized = roughStep / magnitude;
+    final niceStep = normalized <= 1
+        ? 1
+        : normalized <= 2
+        ? 2
+        : normalized <= 2.5
+        ? 2.5
+        : normalized <= 5
+        ? 5
+        : 10;
+    return niceStep * magnitude * 4;
+  }
+
+  String _formatAxis(double value, _InsightAxisScale scale) {
+    if (scale == _InsightAxisScale.percent) return '${value.round()}%';
+    final display = scale == _InsightAxisScale.shares ? value * 1000 : value;
+    if (display.abs() >= 1000000000) {
+      return '${(display / 1000000000).toStringAsFixed(display % 1000000000 == 0 ? 0 : 1)}B';
+    }
+    if (display.abs() >= 1000000) {
+      return '${(display / 1000000).toStringAsFixed(display % 1000000 == 0 ? 0 : 1)}M';
+    }
+    if (display.abs() >= 1000) {
+      return '${(display / 1000).toStringAsFixed(display % 1000 == 0 ? 0 : 1)}K';
+    }
+    return display.round().toString();
+  }
+
+  void _drawAxisLabel(
+    Canvas canvas,
+    String value,
+    Offset anchor, {
+    bool alignRight = false,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: value,
+        style: TextStyle(
+          color: muted,
+          fontSize: 8,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    painter.paint(
+      canvas,
+      Offset(
+        alignRight ? anchor.dx - painter.width : anchor.dx,
+        anchor.dy - painter.height / 2,
+      ),
+    );
+  }
+
+  void _drawHover(
+    Canvas canvas,
+    Rect chart,
+    ({double min, double max}) primaryBounds,
+  ) {
     final index = hoverIndex;
     if (index == null || index < 0 || index >= points.length) return;
     final x = points.length == 1
@@ -1787,18 +1761,28 @@ class _InsightHistoryPainter extends CustomPainter {
         ..strokeWidth = 1,
     );
     final reads = series == _InsightHistorySeries.holders
-        ? <(double? Function(_InsightHistoryPoint), Color)>[
-            ((point) => point.holders, accent),
-          ]
-        : <(double? Function(_InsightHistoryPoint), Color)>[
-            ((point) => point.sharesK, accent),
-            ((point) => point.ownershipPct, secondary),
+        ? <
+            (
+              double? Function(_InsightHistoryPoint),
+              ({double min, double max}),
+              Color,
+            )
+          >[((point) => point.holders, primaryBounds, accent)]
+        : <
+            (
+              double? Function(_InsightHistoryPoint),
+              ({double min, double max}),
+              Color,
+            )
+          >[
+            ((point) => point.sharesK, primaryBounds, accent),
+            ((point) => point.ownershipPct, (min: 0, max: 100), secondary),
           ];
     for (final entry in reads) {
-      final offset = _seriesOffset(chart, index, entry.$1);
+      final offset = _seriesOffset(chart, index, entry.$1, entry.$2);
       if (offset == null) continue;
       canvas.drawCircle(offset, 5.2, Paint()..color = grid);
-      canvas.drawCircle(offset, 3.1, Paint()..color = entry.$2);
+      canvas.drawCircle(offset, 3.1, Paint()..color = entry.$3);
     }
   }
 
@@ -1806,26 +1790,17 @@ class _InsightHistoryPainter extends CustomPainter {
     Rect chart,
     int index,
     double? Function(_InsightHistoryPoint) read,
+    ({double min, double max}) bounds,
   ) {
-    final values = <(int, double)>[];
-    for (var itemIndex = 0; itemIndex < points.length; itemIndex++) {
-      final value = read(points[itemIndex]);
-      if (value != null && value.isFinite) values.add((itemIndex, value));
-    }
     final value = read(points[index]);
-    if (value == null || !value.isFinite || values.isEmpty) return null;
-    final rawMin = values.map((item) => item.$2).reduce(math.min);
-    final rawMax = values.map((item) => item.$2).reduce(math.max);
-    final spread = rawMax - rawMin;
-    final padding = spread == 0
-        ? math.max(rawMax.abs() * .08, 1)
-        : spread * .12;
-    final minValue = rawMin - padding;
-    final maxValue = rawMax + padding;
+    if (value == null || !value.isFinite) return null;
     final x = points.length == 1
         ? chart.center.dx
         : chart.left + chart.width * index / (points.length - 1);
-    final ratio = (value - minValue) / (maxValue - minValue);
+    final ratio = ((value - bounds.min) / (bounds.max - bounds.min)).clamp(
+      0.0,
+      1.0,
+    );
     return Offset(x, chart.bottom - ratio * chart.height);
   }
 
@@ -1833,6 +1808,7 @@ class _InsightHistoryPainter extends CustomPainter {
     Canvas canvas,
     Rect chart,
     double? Function(_InsightHistoryPoint) read,
+    ({double min, double max}) bounds,
     Color color,
   ) {
     final values = <(int, double)>[];
@@ -1841,14 +1817,6 @@ class _InsightHistoryPainter extends CustomPainter {
       if (value != null && value.isFinite) values.add((index, value));
     }
     if (values.isEmpty) return;
-    final rawMin = values.map((item) => item.$2).reduce(math.min);
-    final rawMax = values.map((item) => item.$2).reduce(math.max);
-    final spread = rawMax - rawMin;
-    final padding = spread == 0
-        ? math.max(rawMax.abs() * .08, 1)
-        : spread * .12;
-    final minValue = rawMin - padding;
-    final maxValue = rawMax + padding;
     final barWidth = math.min(
       24.0,
       chart.width / math.max(points.length * 1.8, 1),
@@ -1861,7 +1829,10 @@ class _InsightHistoryPainter extends CustomPainter {
       final x = points.length == 1
           ? chart.center.dx
           : chart.left + chart.width * item.$1 / (points.length - 1);
-      final ratio = (item.$2 - minValue) / (maxValue - minValue);
+      final ratio = ((item.$2 - bounds.min) / (bounds.max - bounds.min)).clamp(
+        0.0,
+        1.0,
+      );
       final y = chart.bottom - ratio * chart.height;
       final bar = RRect.fromRectAndRadius(
         Rect.fromLTRB(x - barWidth / 2, y, x + barWidth / 2, chart.bottom),
@@ -1880,6 +1851,7 @@ class _InsightHistoryPainter extends CustomPainter {
     Canvas canvas,
     Rect chart,
     double? Function(_InsightHistoryPoint) read,
+    ({double min, double max}) bounds,
     Color color, {
     bool fill = false,
   }) {
@@ -1889,19 +1861,14 @@ class _InsightHistoryPainter extends CustomPainter {
       if (value != null && value.isFinite) values.add((index, value));
     }
     if (values.isEmpty) return;
-    final rawMin = values.map((item) => item.$2).reduce(math.min);
-    final rawMax = values.map((item) => item.$2).reduce(math.max);
-    final spread = rawMax - rawMin;
-    final padding = spread == 0
-        ? math.max(rawMax.abs() * .08, 1)
-        : spread * .12;
-    final minValue = rawMin - padding;
-    final maxValue = rawMax + padding;
     Offset offset((int, double) item) {
       final x = points.length == 1
           ? chart.center.dx
           : chart.left + chart.width * item.$1 / (points.length - 1);
-      final ratio = (item.$2 - minValue) / (maxValue - minValue);
+      final ratio = ((item.$2 - bounds.min) / (bounds.max - bounds.min)).clamp(
+        0.0,
+        1.0,
+      );
       return Offset(x, chart.bottom - ratio * chart.height);
     }
 
@@ -1939,8 +1906,10 @@ class _InsightHistoryPainter extends CustomPainter {
   bool shouldRepaint(covariant _InsightHistoryPainter oldDelegate) =>
       oldDelegate.points != points ||
       oldDelegate.series != series ||
+      oldDelegate.primaryScale != primaryScale ||
       oldDelegate.accent != accent ||
       oldDelegate.secondary != secondary ||
       oldDelegate.grid != grid ||
+      oldDelegate.muted != muted ||
       oldDelegate.hoverIndex != hoverIndex;
 }

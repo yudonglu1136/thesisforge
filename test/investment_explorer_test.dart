@@ -503,7 +503,18 @@ void main() {
           find.byKey(const ValueKey('13f-action-increased')),
           findsOneWidget,
         );
-        expect(find.byKey(const ValueKey('13f-view-stocks')), findsOneWidget);
+        for (final key in const [
+          '13f-rank-amount',
+          '13f-rank-share-change',
+          '13f-rank-institutions',
+          '13f-rank-shares-held-pct',
+        ]) {
+          expect(find.byKey(ValueKey(key)), findsOneWidget);
+        }
+        expect(
+          find.byKey(const ValueKey('13f-view-institutions')),
+          findsNothing,
+        );
         expect(tester.takeException(), isNull);
         await tester.ensureVisible(
           find.byKey(const ValueKey('13f-stock-TEST')),
@@ -535,34 +546,34 @@ void main() {
     expect(find.byKey(const ValueKey('13f-stock-ISRG')), findsNothing);
     expect(tester.takeException(), isNull);
   });
-  testWidgets(
-    'stock search and institution ranking use the all-filer payload',
-    (tester) async {
-      await mountExplorer(tester, ExplorerApi());
-      final input = find.byKey(const ValueKey('13f-search'));
-      await tester.ensureVisible(input);
-      await tester.enterText(input, 'intuitive');
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('13f-stock-ISRG')), findsOneWidget);
-      expect(find.byKey(const ValueKey('13f-stock-TEST')), findsNothing);
-      await tester.enterText(input, '');
-      await tester.pumpAndSettle();
-      await tapKey(tester, '13f-view-institutions');
-      expect(
-        find.byKey(const ValueKey('13f-institution-BLACKROCK')),
-        findsOneWidget,
-      );
-      expect(find.text('13F Insights'), findsWidgets);
-    },
-  );
-  testWidgets('stock ranking switches between institution and share count', (
+  testWidgets('stock search stays on the four stock-ranking dimensions', (
     tester,
   ) async {
     await mountExplorer(tester, ExplorerApi());
-    expect(find.byKey(const ValueKey('13f-rank-holders')), findsOneWidget);
-    expect(find.byKey(const ValueKey('13f-rank-shares')), findsOneWidget);
-    await tapKey(tester, '13f-rank-shares');
-    expect(find.textContaining('aggregate reported shares'), findsOneWidget);
+    final input = find.byKey(const ValueKey('13f-search'));
+    await tester.ensureVisible(input);
+    await tester.enterText(input, 'intuitive');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('13f-stock-ISRG')), findsOneWidget);
+    expect(find.byKey(const ValueKey('13f-stock-TEST')), findsNothing);
+    expect(find.byKey(const ValueKey('13f-view-institutions')), findsNothing);
+  });
+  testWidgets('stock ranking exposes the four defined economic dimensions', (
+    tester,
+  ) async {
+    await mountExplorer(tester, ExplorerApi());
+    expect(find.byKey(const ValueKey('13f-rank-amount')), findsOneWidget);
+    expect(find.byKey(const ValueKey('13f-rank-share-change')), findsOneWidget);
+    expect(find.byKey(const ValueKey('13f-rank-institutions')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('13f-rank-shares-held-pct')),
+      findsOneWidget,
+    );
+    await tapKey(tester, '13f-rank-shares-held-pct');
+    expect(
+      find.textContaining('reported institutional value as %'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
   testWidgets('list failure has a recoverable retry', (tester) async {

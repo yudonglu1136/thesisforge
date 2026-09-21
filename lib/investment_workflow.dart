@@ -136,7 +136,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   String insightQuarter = '',
       insightAction = 'increased',
       insightPerspective = 'stocks',
-      insightStockRanking = 'holders',
+      insightStockRanking = 'amount',
       insightMarketSegment = 'all',
       insightTicker = '',
       insightInvestor = '',
@@ -243,13 +243,14 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         }.contains(query['insightAction'])
         ? query['insightAction']!
         : 'increased';
-    insightPerspective = query['insightView'] == 'institutions'
-        ? 'institutions'
-        : 'stocks';
-    insightStockRanking =
-        const {'shares', 'netShares', 'netPct'}.contains(query['insightRank'])
-        ? query['insightRank']!
-        : 'holders';
+    insightPerspective = 'stocks';
+    insightStockRanking = switch (query['insightRank']) {
+      'amount' || 'netShares' => 'amount',
+      'shareChange' || 'netPct' => 'shareChange',
+      'institutions' || 'holders' => 'institutions',
+      'sharesHeldPct' || 'shares' => 'sharesHeldPct',
+      _ => 'amount',
+    };
     insightMarketSegment =
         const {
           'sp500',
