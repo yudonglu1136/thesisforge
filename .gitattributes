@@ -1,1 +1,4 @@
 docs/ export-ignore
+scripts/export-ontology-strategy-social.mjs export-ignore
+scripts/export-pltr-ontology-case-study.mjs export-ignore
+scripts/export-pltr-ontology-graph-screenshot.mjs export-ignore
