@@ -33,7 +33,13 @@ function openSource(databasePath) {
 }
 
 function read(source, asOf, quarter, ticker) {
-  return JSON.stringify(institutional13fInsights(source, asOf, quarter, ticker));
+  return JSON.stringify(institutional13fInsights(source, asOf, quarter, {
+    ticker,
+    action: 'increased',
+    rank: 'amount',
+    segment: 'all',
+    limit: 100,
+  }));
 }
 
 function benchmark(databasePath, { samples, asOf, quarter, ticker }) {

@@ -19,23 +19,13 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       {'reduced', 'exited'}.contains(action) ? p.secondary : p.accent;
 
   void _select13FInsightAction(String action) {
-    final key = _insightKey(action);
-    final ranked =
-        asList(
-            institutional13f?['rows'],
-          ).where((row) => number(row[key]) > 0).toList()
-          ..sort((a, b) => number(b[key]).compareTo(number(a[key])));
-    final ticker = text(ranked.firstOrNull?['ticker']);
     updateUI(() {
       insightAction = action;
       insightSearch = '';
       insightSearchInput.clear();
     });
-    if (ticker.isNotEmpty) {
-      unawaited(select13FInsightStock(ticker));
-    } else {
-      _persist13FInsights();
-    }
+    _persist13FInsights();
+    unawaited(load13FInsights());
   }
 
   void _select13FMarketSegment(String segment) {
@@ -44,12 +34,8 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       insightSearch = '';
       insightSearchInput.clear();
     });
-    final nextTicker = text(_insightStocks().firstOrNull?['ticker']);
-    if (nextTicker.isNotEmpty && nextTicker != insightTicker) {
-      unawaited(select13FInsightStock(nextTicker));
-    } else {
-      _persist13FInsights();
-    }
+    _persist13FInsights();
+    unawaited(load13FInsights());
   }
 
   void _persist13FInsights() => replaceBrowserQuery({
@@ -88,11 +74,21 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     });
     try {
       final selected = quarter ?? insightQuarter;
-      final requestedTicker = insightTicker.isEmpty
-          ? ''
-          : '&ticker=$insightTicker';
+      final query = <String, String>{
+        'asOf': cutoff,
+        if (selected.isNotEmpty) 'quarter': selected,
+        'action': insightAction,
+        'rank': insightStockRanking,
+        'segment': insightMarketSegment,
+        'limit': '100',
+        if (insightSearch.trim().isNotEmpty) 'search': insightSearch.trim(),
+        if (insightTicker.isNotEmpty) 'ticker': insightTicker,
+      };
       final data = await widget.api.getJson(
-        '/api/investment/13f-insights?asOf=$cutoff${selected.isEmpty ? '' : '&quarter=$selected'}$requestedTicker',
+        Uri(
+          path: '/api/investment/13f-insights',
+          queryParameters: query,
+        ).toString(),
       );
       if (!mounted || serial != insightSerial || cutoff != asOf) return;
       updateUI(() {
@@ -112,10 +108,6 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
         final cacheKey = _insightDetailCacheKey(insightTicker, insightQuarter);
         final cached = insightDetailCache[cacheKey];
         if (cached != null) _merge13FInsightDetail(insightTicker, cached);
-        final institutions = asList(data['institutions']);
-        if (!institutions.any((row) => row['investorId'] == insightInvestor)) {
-          insightInvestor = text(institutions.firstOrNull?['investorId']);
-        }
       });
       _persist13FInsights();
       final loaded = asMap(asMap(institutional13f?['details'])[insightTicker]);
@@ -619,8 +611,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
 
   Widget _insightActionCard(String action) {
     final key = _insightKey(action), color = _insightColor(action);
-    final rows = asList(institutional13f?['rows'])
-      ..sort((a, b) => number(b[key]).compareTo(number(a[key])));
+    final rows = asList(asMap(institutional13f?['actionLeaders'])[action]);
     final total = asMap(institutional13f?['activity'])[key];
     final selected = insightAction == action;
     return Material(
@@ -729,40 +720,44 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             avatar: const Icon(Icons.attach_money, size: 16),
             label: Text(w('By amount', '按变动金额')),
             selected: insightStockRanking == 'amount',
-            onSelected: (_) => updateUI(() {
-              insightStockRanking = 'amount';
+            onSelected: (_) {
+              updateUI(() => insightStockRanking = 'amount');
               _persist13FInsights();
-            }),
+              unawaited(load13FInsights());
+            },
           ),
           ChoiceChip(
             key: const ValueKey('13f-rank-share-change'),
             avatar: const Icon(Icons.swap_vert, size: 16),
             label: Text(w('By share change', '按市值占比变化')),
             selected: insightStockRanking == 'shareChange',
-            onSelected: (_) => updateUI(() {
-              insightStockRanking = 'shareChange';
+            onSelected: (_) {
+              updateUI(() => insightStockRanking = 'shareChange');
               _persist13FInsights();
-            }),
+              unawaited(load13FInsights());
+            },
           ),
           ChoiceChip(
             key: const ValueKey('13f-rank-institutions'),
             avatar: const Icon(Icons.account_balance_outlined, size: 16),
             label: Text(w('By institutions', '按机构数量')),
             selected: insightStockRanking == 'institutions',
-            onSelected: (_) => updateUI(() {
-              insightStockRanking = 'institutions';
+            onSelected: (_) {
+              updateUI(() => insightStockRanking = 'institutions');
               _persist13FInsights();
-            }),
+              unawaited(load13FInsights());
+            },
           ),
           ChoiceChip(
             key: const ValueKey('13f-rank-shares-held-pct'),
             avatar: const Icon(Icons.percent, size: 16),
             label: Text(w('By shares held %', '按机构持股占比')),
             selected: insightStockRanking == 'sharesHeldPct',
-            onSelected: (_) => updateUI(() {
-              insightStockRanking = 'sharesHeldPct';
+            onSelected: (_) {
+              updateUI(() => insightStockRanking = 'sharesHeldPct');
               _persist13FInsights();
-            }),
+              unawaited(load13FInsights());
+            },
           ),
           SizedBox(
             width: 330,
@@ -775,10 +770,17 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                 hintText: w('Search company or ticker', '搜索公司或代码'),
                 border: const OutlineInputBorder(),
               ),
-              onChanged: (value) => updateUI(() {
-                insightSearch = value;
-                _persist13FInsights();
-              }),
+              onChanged: (value) {
+                updateUI(() => insightSearch = value);
+                insightSearchTimer?.cancel();
+                insightSearchTimer = Timer(
+                  const Duration(milliseconds: 250),
+                  () {
+                    _persist13FInsights();
+                    unawaited(load13FInsights());
+                  },
+                );
+              },
             ),
           ),
           label(
@@ -987,6 +989,15 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
               child: label(
                 'Showing top 100 of ${_integer(rows.length)} matches.',
                 '显示 ${_integer(rows.length)} 个匹配中的前 100 个。',
+                size: 11,
+              ),
+            ),
+          if (number(institutional13f?['totalMatches']) > rows.length)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: label(
+                'Showing the first ${_integer(rows.length)} of ${_integer(institutional13f?['totalMatches'])} server-ranked matches.',
+                '显示服务端排名的前 ${_integer(rows.length)} 个，共 ${_integer(institutional13f?['totalMatches'])} 个匹配结果。',
                 size: 11,
               ),
             ),

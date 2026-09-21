@@ -169,6 +169,23 @@ class ExplorerApi extends opportunities.OpportunityApi {
           'reductions': 390,
           'exits': 90,
         },
+        'actionLeaders': {
+          for (final action in const ['new', 'increased', 'reduced', 'exited'])
+            action: sampleRows()
+                .where(
+                  (row) =>
+                      (row[switch (action) {
+                            'new' => 'newPositions',
+                            'reduced' => 'reductions',
+                            'exited' => 'exits',
+                            _ => 'increases',
+                          }]
+                          as num) >
+                      0,
+                )
+                .take(2)
+                .toList(),
+        },
         'marketOverview': {
           for (final segment in const [
             'all',
@@ -237,6 +254,8 @@ class ExplorerApi extends opportunities.OpportunityApi {
               },
             )
             .toList(),
+        'totalMatches': sampleRows().length,
+        'rowLimit': 100,
         'institutions': [
           {
             'investorId': 'BLACKROCK',

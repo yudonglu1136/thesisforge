@@ -29,7 +29,7 @@ function fixture() {
 
 test('13F insights exposes all-filer snapshots without a Guru selection',()=>{
   const source=fixture();
-  const result=institutional13fInsights(source,'2026-09-18');
+  const result=institutional13fInsights(source,'2026-09-18',null,'MSFT');
   assert.equal(result.reportDate,'2026-06-30');
   assert.equal(result.coverage.currentFilers,8581);
   assert.equal(result.coverage.scope,'all_sf3_institutional_filers');
@@ -40,6 +40,29 @@ test('13F insights exposes all-filer snapshots without a Guru selection',()=>{
   assert.deepEqual(result.details.MSFT.history.map(row=>row.reportDate),['2026-03-31','2026-06-30']);
   assert.equal(result.details.MSFT.history[1].institutionalOwnershipPct,95.6);
   assert.equal(JSON.stringify(result).includes('VANGRD'),false);
+});
+
+test('13F summary route is bounded, ranked and omits the retired institution directory',()=>{
+  const source=fixture();
+  const result=institutional13fInsights(source,'2026-09-18',null,{
+    action:'increased',rank:'institutions',segment:'all',limit:20,
+  });
+  assert.deepEqual(result.rows.map(row=>row.ticker),['MSFT','NVDA']);
+  assert.equal(result.totalMatches,2);
+  assert.equal(result.rowLimit,20);
+  assert.equal('institutions' in result,false);
+  assert.deepEqual(result.details,{});
+  assert.equal(result.actionLeaders.increased[0].ticker,'MSFT');
+});
+
+test('13F summary search, action, segment and percentage rank stay server bounded',()=>{
+  const source=fixture();
+  const result=institutional13fInsights(source,'2026-09-18',null,{
+    action:'increased',rank:'sharesHeldPct',segment:'all',search:'nvd',limit:20,
+  });
+  assert.deepEqual(result.rows.map(row=>row.ticker),['NVDA']);
+  assert.equal(result.totalMatches,1);
+  assert.equal(result.rows[0].institutionalOwnershipPct,86.1);
 });
 
 test('13F insights keeps the requested stock and its chart history aligned',()=>{
@@ -79,7 +102,7 @@ test('13F insights prefers the compact append-only v2 artifact',()=>{
   });
   source.db.prepare('INSERT INTO institutional_13f_insight_snapshots_v2 VALUES(?,?,?,?,?,?)')
     .run('2026-06-30','v2','2026-08-14','2026-09-20T00:00:00Z','v2hash',gzipSync(payload));
-  const result=institutional13fInsights(source,'2026-09-18');
+  const result=institutional13fInsights(source,'2026-09-18',null,'MSFT');
   assert.equal(result.version,'institutional-13f-insights-v2');
   assert.equal(result.coverage.currentFilers,9000);
 });
@@ -106,7 +129,7 @@ test('13F v3 loads market history and per-security detail without embedding the 
   }
   source.db.prepare('INSERT INTO institutional_13f_insight_details_v1 VALUES(?,?,?,?,?)')
     .run('2026-06-30','v3','MSFT','detail',gzipSync(JSON.stringify({increased:[{investorId:'VANGRD'}]})));
-  const result=institutional13fInsights(source,'2026-09-18');
+  const result=institutional13fInsights(source,'2026-09-18',null,'MSFT');
   assert.equal(result.version,'institutional-13f-insights-v3');
   assert.equal(result.details.MSFT.increased[0].investorId,'VANGRD');
   assert.deepEqual(result.marketHistory.map(row=>row.reportDate),['2026-03-31','2026-06-30']);

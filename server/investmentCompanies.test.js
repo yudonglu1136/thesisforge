@@ -59,3 +59,26 @@ test('company catalog stays authenticated, read-only and private/no-store',()=>{
   assert.equal(headers['Cache-Control'],'private, no-store');
   assert.equal(source.db.prepare('SELECT total_changes() n').get().n,before);source.db.close();
 });
+test('bounded 13F summaries are privately reusable without changing other investment routes',()=>{
+  const routes=new Map(),app={get:(p,h)=>routes.set(p,h),post:()=>{}};
+  const source=fixture();
+  source.db.exec(`CREATE TABLE institutional_13f_insight_snapshots(
+    report_date TEXT,source_generation TEXT,available_at TEXT,generated_at TEXT,
+    payload_hash TEXT,payload_json TEXT,PRIMARY KEY(report_date,source_generation));`);
+  source.db.prepare('INSERT INTO institutional_13f_insight_snapshots VALUES(?,?,?,?,?,?)').run(
+    '2026-06-30','g1','2026-08-14','2026-09-20','hash',JSON.stringify({
+      version:'institutional-13f-insights-v3',reportDate:'2026-06-30',
+      coverage:{currentFilers:1,securities:1},rows:[{ticker:'TEST',increases:1,holders:1}],
+      institutions:[],details:{},
+    }),
+  );
+  registerInvestmentRoutes(app,{source,date:d=>d});
+  const headers={};let body;
+  const res={setHeader:(k,v)=>headers[k]=v,status:()=>res,json:v=>body=v};
+  routes.get('/api/investment/13f-insights')({
+    user:{id:'alice'},query:{asOf:'2026-09-18',action:'increased',rank:'amount',limit:'100'},
+  },res);
+  assert.equal(body.rows.length,1);
+  assert.equal(headers['Cache-Control'],'private, max-age=300, stale-while-revalidate=3600');
+  source.db.close();
+});

@@ -9,6 +9,8 @@ const parse = row => {
 
 const selectedPayloadCache = new WeakMap();
 const historyIndexCache = new WeakMap();
+const tableAvailabilityCache = new WeakMap();
+const summaryResponseCache = new WeakMap();
 
 function cacheEntries(cache, source) {
   let entries=cache.get(source);
@@ -34,22 +36,32 @@ function selectedPayload(source,row) {
   const entries=cacheEntries(selectedPayloadCache,source);
   const key=snapshotKey(row);
   if (entries.has(key)) return entries.get(key);
-  const payload=parse(row);
-  setBounded(entries,key,payload,1);
+  const db=source.insightsDb??source.db;
+  const compressed=row.snapshot_table.endsWith('_v2');
+  const payloadColumn=compressed?'payload_gzip':'payload_json';
+  const payload=parse(db.prepare(`SELECT ${payloadColumn} FROM ${row.snapshot_table}
+    WHERE report_date=? AND source_generation=? AND generated_at=?`).get(
+    row.report_date,row.source_generation,row.generated_at,
+  ));
+  setBounded(entries,key,payload,8);
   return payload;
 }
 
-function tableExists(db,name) {
-  return Boolean(db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"
-  ).get(name));
+function tableExists(source,name) {
+  const db=source.insightsDb??source.db;
+  let tables=tableAvailabilityCache.get(source);
+  if (!tables) {
+    tables=new Set(db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table'"
+    ).all().map(row=>row.name));
+    tableAvailabilityCache.set(source,tables);
+  }
+  return tables.has(name);
 }
 
 function visibleRows(db,table,asOf) {
-  const compressed=table.endsWith('_v2');
-  const payload=compressed ? 'payload_gzip' : 'payload_json';
   return db.prepare(`
-    SELECT report_date,source_generation,available_at,generated_at,payload_hash,${payload}
+    SELECT report_date,source_generation,available_at,generated_at,payload_hash
     FROM ${table} s
     WHERE available_at<=?
       AND generated_at=(
@@ -57,12 +69,12 @@ function visibleRows(db,table,asOf) {
         WHERE n.report_date=s.report_date AND n.available_at<=?
       )
     ORDER BY report_date DESC
-  `).all(asOf,asOf);
+  `).all(asOf,asOf).map(row=>({...row,snapshot_table:table}));
 }
 
 function lazyDetail(source, selected, ticker, payload) {
   const db=source.insightsDb??source.db;
-  if (tableExists(db,'institutional_13f_insight_details_v1')) {
+  if (tableExists(source,'institutional_13f_insight_details_v1')) {
     const row=db.prepare(`SELECT payload_gzip FROM institutional_13f_insight_details_v1
       WHERE report_date=? AND source_generation=? AND ticker=?`).get(
       selected.report_date,selected.source_generation,ticker,
@@ -74,27 +86,36 @@ function lazyDetail(source, selected, ticker, payload) {
 
 function marketHistory(source, visible, selected) {
   const db=source.insightsDb??source.db;
-  if (!tableExists(db,'institutional_13f_market_history_v1')) return [];
-  const history=[];
-  for (const row of [...visible].reverse()) {
-    if (row.report_date>selected.report_date) continue;
-    const metrics=db.prepare(`SELECT segment,securities,covered_securities,institutional_value_m,
-      market_cap_m,institutional_ownership_pct,net_change_value_m,net_change_pct_market_cap
-      FROM institutional_13f_market_history_v1
-      WHERE report_date=? AND source_generation=? ORDER BY segment`).all(row.report_date,row.source_generation);
-    if (!metrics.length) continue;
-    history.push({
-      reportDate:row.report_date,
-      availableAt:row.available_at,
-      segments:Object.fromEntries(metrics.map(item=>[item.segment,{
+  if (!tableExists(source,'institutional_13f_market_history_v1')) return [];
+  const bounded=visible.filter(row=>row.report_date<=selected.report_date);
+  const visibleByKey=new Map(bounded.map(row=>[
+    `${row.report_date}|${row.source_generation}`,row,
+  ]));
+  const grouped=new Map();
+  const metrics=db.prepare(`SELECT report_date,source_generation,segment,securities,covered_securities,
+    institutional_value_m,market_cap_m,institutional_ownership_pct,net_change_value_m,
+    net_change_pct_market_cap FROM institutional_13f_market_history_v1
+    WHERE report_date<=? ORDER BY report_date,segment`).all(selected.report_date);
+  for (const item of metrics) {
+    const key=`${item.report_date}|${item.source_generation}`;
+    if (!visibleByKey.has(key)) continue;
+    const segmentRows=grouped.get(key)??[];
+    segmentRows.push(item);
+    grouped.set(key,segmentRows);
+  }
+  return [...bounded].reverse().flatMap(row=>{
+    const items=grouped.get(`${row.report_date}|${row.source_generation}`)??[];
+    if (!items.length) return [];
+    return [{
+      reportDate:row.report_date, availableAt:row.available_at,
+      segments:Object.fromEntries(items.map(item=>[item.segment,{
         securities:item.securities,coveredSecurities:item.covered_securities,
         institutionalValueM:item.institutional_value_m,marketCapM:item.market_cap_m,
         institutionalOwnershipPct:item.institutional_ownership_pct,
         netChangeValueM:item.net_change_value_m,netChangePctMarketCap:item.net_change_pct_market_cap,
       }])),
-    });
-  }
-  return history;
+    }];
+  });
 }
 
 function compactRows(rows=[]) {
@@ -105,15 +126,8 @@ function compactRows(rows=[]) {
     currentUnitsK:row.currentUnitsK??null,netUnitsChangeK:row.netUnitsChangeK??null,
     netChangeValueM:row.netChangeValueM??null,
     netChangePctOutstanding:row.netChangePctOutstanding??null,
+    institutionalOwnershipPct:row.institutionalOwnershipPct??null,
     splitAdjustedFilers:row.splitAdjustedFilers??0,segments:row.segments??['all'],
-  }));
-}
-
-function compactInstitutions(rows=[]) {
-  return rows.map(row=>({
-    investorId:row.investorId,name:row.name,holdings:row.holdings??0,
-    newPositions:row.newPositions??0,increases:row.increases??0,
-    reductions:row.reductions??0,exits:row.exits??0,currentValueM:row.currentValueM??null,
   }));
 }
 
@@ -124,7 +138,7 @@ function visibleSnapshot(source, asOf, reportDate = null) {
   const tables=[
     'institutional_13f_insight_snapshots_v2',
     'institutional_13f_insight_snapshots',
-  ].filter(table=>tableExists(db,table));
+  ].filter(table=>tableExists(source,table));
   assert(tables.length, 'institutional_13f_insights_unavailable');
   let visible=[];
   for (const table of tables) {
@@ -141,7 +155,7 @@ function visibleSnapshot(source, asOf, reportDate = null) {
 
 function securityHistory(source, visible, selected, selectedData, ticker) {
   const db=source.insightsDb??source.db;
-  if (tableExists(db,'institutional_13f_security_history_v1')) {
+  if (tableExists(source,'institutional_13f_security_history_v1')) {
     return db.prepare(`SELECT h.report_date reportDate,h.available_at availableAt,h.holders,
       h.institutional_shares_k institutionalSharesK,h.shares_outstanding_k sharesOutstandingK,
       h.institutional_ownership_pct institutionalOwnershipPct
@@ -159,7 +173,7 @@ function securityHistory(source, visible, selected, selectedData, ticker) {
   if (entries.has(key)) return entries.get(key).get(ticker)??[];
   const histories=new Map();
   for (const snapshot of [...bounded].reverse()) {
-    const payload=snapshot===selected ? selectedData : parse(snapshot);
+    const payload=snapshot===selected ? selectedData : selectedPayload(source,snapshot);
     for (const row of payload?.rows??[]) {
       if (!row?.ticker) continue;
       const history=histories.get(row.ticker)??[];
@@ -178,23 +192,72 @@ function securityHistory(source, visible, selected, selectedData, ticker) {
   return histories.get(ticker)??[];
 }
 
-export function institutional13fInsights(source, asOf, reportDate = null, ticker = null) {
+const actionKey=action=>({new:'newPositions',reduced:'reductions',exited:'exits'}[action]??'increases');
+
+function queryOptions(input) {
+  if (typeof input==='string') return queryOptions({ticker:input,includeDetail:true});
+  const value=input&&typeof input==='object'?input:{};
+  const action=['new','increased','reduced','exited'].includes(value.action)?value.action:'increased';
+  const rank=['amount','shareChange','institutions','sharesHeldPct'].includes(value.rank)?value.rank:'amount';
+  const segment=['all','sp500','nasdaq100Proxy','smallCap'].includes(value.segment)?value.segment:'all';
+  const search=String(value.search??'').trim().slice(0,80).toLowerCase();
+  const parsedLimit=Number.parseInt(value.limit,10);
+  const limit=Number.isInteger(parsedLimit)?Math.min(200,Math.max(20,parsedLimit)):100;
+  const ticker=typeof value.ticker==='string'&&/^[A-Z][A-Z0-9.-]{0,14}$/.test(value.ticker)
+    ?value.ticker:null;
+  return {action,rank,segment,search,limit,ticker,includeDetail:Boolean(value.includeDetail)};
+}
+
+function rankedRows(rows,options) {
+  const key=actionKey(options.action);
+  const filtered=rows.filter(row=>(row[key]??0)>0
+    &&(options.segment==='all'||(row.segments??[]).includes(options.segment))
+    &&(!options.search||`${row.ticker??''} ${row.name??''}`.toLowerCase().includes(options.search)));
+  const metric=row=>options.rank==='shareChange'?Math.abs(row.netChangePctOutstanding??0)
+    :options.rank==='institutions'?(row.holders??0)
+      :options.rank==='sharesHeldPct'?(row.institutionalOwnershipPct??0)
+        :Math.abs(row.netChangeValueM??0);
+  filtered.sort((left,right)=>metric(right)-metric(left)
+    ||(right[key]??0)-(left[key]??0)
+    ||String(left.ticker).localeCompare(String(right.ticker)));
+  return filtered;
+}
+
+function actionLeaders(rows) {
+  return Object.fromEntries(['new','increased','reduced','exited'].map(action=>{
+    const key=actionKey(action);
+    const leaders=[...rows].filter(row=>(row[key]??0)>0)
+      .sort((left,right)=>(right[key]??0)-(left[key]??0)
+        ||String(left.ticker).localeCompare(String(right.ticker)))
+      .slice(0,2);
+    return [action,compactRows(leaders)];
+  }));
+}
+
+export function institutional13fInsights(source, asOf, reportDate = null, input = null) {
+  const options=queryOptions(input);
   const {payload,selected,visible,quarters}=visibleSnapshot(source,asOf,reportDate);
-  const mostIncreased=payload.rows.reduce((best,row)=>(row.increases??0)>(best?.increases??-1)?row:best,null);
-  const selectedTicker=typeof ticker==='string' && /^[A-Z][A-Z0-9.-]{0,14}$/.test(ticker)
-    ? ticker
-    : mostIncreased?.ticker;
-  const boundedDetails=selectedTicker
+  const responseKey=`${snapshotKey(selected)}|${asOf}|${options.action}|${options.rank}|${options.segment}|${options.search}|${options.limit}|${options.ticker??''}|${options.includeDetail}`;
+  const responseEntries=cacheEntries(summaryResponseCache,source);
+  if (responseEntries.has(responseKey)) return responseEntries.get(responseKey);
+  const matches=rankedRows(payload.rows??[],options);
+  const requestedRow=options.ticker
+    ?matches.find(row=>row.ticker===options.ticker)
+    :null;
+  const selectedTicker=requestedRow?.ticker??matches[0]?.ticker??null;
+  const boundedDetails=options.includeDetail&&selectedTicker
     ? {[selectedTicker]:{
       ...lazyDetail(source,selected,selectedTicker,payload),
       history:securityHistory(source,visible,selected,payload,selectedTicker),
     }}
     : {};
   const {details:allDetails,rows,institutions,...summary}=payload;
-  return {
+  const response={
     ...summary,
-    rows:compactRows(rows),
-    institutions:compactInstitutions(institutions),
+    rows:compactRows(matches.slice(0,options.limit)),
+    totalMatches:matches.length,
+    rowLimit:options.limit,
+    actionLeaders:actionLeaders(rows??[]),
     asOf,
     selectedTicker,
     quarters,
@@ -207,6 +270,8 @@ export function institutional13fInsights(source, asOf, reportDate = null, ticker
       selectedGuruCount: null,
     },
   };
+  setBounded(responseEntries,responseKey,response,96);
+  return response;
 }
 
 export function institutional13fInsightDetail(source, ticker, asOf, reportDate = null) {

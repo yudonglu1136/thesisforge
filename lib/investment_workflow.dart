@@ -143,6 +143,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       insightSearch = '',
       insightError = '';
   int insightInstitutionLimit = 8;
+  Timer? insightSearchTimer;
   final Map<String, Map<String, dynamic>> insightDetailCache = {};
   final Set<String> insightDetailLoading = {};
   final discoverDetailKey = GlobalKey();
@@ -328,6 +329,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     semanticsHandle.dispose();
     calculationTimer?.cancel();
     worksheetTimer?.cancel();
+    insightSearchTimer?.cancel();
     for (final c in [
       search,
       holderSearch,

@@ -14,8 +14,8 @@ import { buildOpportunities, opportunityTimeline, saveWatch, reviewWatch, saveWa
 import { institutional13fInsights, institutional13fInsightDetail } from './institutional13fInsights.js';
 
 export function registerInvestmentRoutes(app,service) {
-  function route(method,path,handler) {app[method]('/api/investment'+path,(req,res)=>{
-    res.setHeader('Cache-Control','private, no-store');
+  function route(method,path,handler,{cacheControl='private, no-store'}={}) {app[method]('/api/investment'+path,(req,res)=>{
+    res.setHeader('Cache-Control',cacheControl);
     if(!req.user?.id)return res.status(401).json({error:'unauthorized'});
     try {res.json(handler(req.user.id,req));}catch(e){res.status(e.status??500).json({error:e.status?e.message:'investment_request_failed'});}
   });}
@@ -27,8 +27,12 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/fundamentals',(_,r)=>buildFundamentals(service.source,service.date(r.query.asOf)));
   route('get','/fundamentals/:ticker/gurus',(_,r)=>fundamentalGuruQuarter(service.source,r.params.ticker,service.date(r.query.asOf),r.query.quarter??null));
   route('get','/opportunities',(_,r)=>buildOpportunities(service.source,service.date(r.query.asOf),r.query.quarter??null));
-  route('get','/13f-insights',(_,r)=>institutional13fInsights(service.source,service.date(r.query.asOf),r.query.quarter??null,r.query.ticker??null));
-  route('get','/13f-insights/:ticker',(_,r)=>institutional13fInsightDetail(service.source,r.params.ticker,service.date(r.query.asOf),r.query.quarter??null));
+  route('get','/13f-insights',(_,r)=>institutional13fInsights(service.source,service.date(r.query.asOf),r.query.quarter??null,{
+    ticker:r.query.ticker,action:r.query.action,rank:r.query.rank,segment:r.query.segment,
+    search:r.query.search,limit:r.query.limit,
+  }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
+  route('get','/13f-insights/:ticker',(_,r)=>institutional13fInsightDetail(service.source,r.params.ticker,service.date(r.query.asOf),r.query.quarter??null),
+    {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/opportunities/:ticker',(_,r)=>({ticker:r.params.ticker,asOf:service.date(r.query.asOf),events:opportunityTimeline(service.source,r.params.ticker,service.date(r.query.asOf))}));
   route('post','/watches',(owner,r)=>saveWatch(service,owner,r.body));
   route('get','/watches/:id',(owner,r)=>reviewWatch(service,owner,r.params.id,r.query.asOf));
