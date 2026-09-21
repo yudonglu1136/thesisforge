@@ -307,6 +307,17 @@ class ExplorerApi extends opportunities.OpportunityApi {
                 'changePct': .1,
               },
             ],
+            'exited': [
+              {
+                'investorId': 'EXITED',
+                'name': 'Exited Capital',
+                'currentValueM': null,
+                'previousValueM': 425.0,
+                'activityValueM': 425.0,
+                'changePct': null,
+                'comparisonBasis': 'prior_reported_position_value',
+              },
+            ],
           },
         },
       };
@@ -571,6 +582,20 @@ void main() {
     expect(find.byKey(const ValueKey('13f-stock-ISRG')), findsNothing);
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+    'exit ranking shows exited amount instead of a meaningless minus 100 percent',
+    (tester) async {
+      await mountExplorer(tester, ExplorerApi());
+      await tapKey(tester, '13f-action-exited');
+      expect(
+        find.textContaining('Prior-quarter reported position'),
+        findsOneWidget,
+      );
+      expect(find.textContaining(r'$425.0M'), findsWidgets);
+      expect(find.text('-100.00%'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets('stock search stays on the four stock-ranking dimensions', (
     tester,
   ) async {

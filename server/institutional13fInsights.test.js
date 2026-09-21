@@ -83,6 +83,47 @@ test('13F security detail is lazy and quarter-bound',()=>{
   assert.throws(()=>institutional13fInsightDetail(source,'UNKNOWN','2026-09-18'),/institutional_13f_security_not_found/);
 });
 
+test('13F exited institutions compare prior reported value instead of repeating minus 100 percent',()=>{
+  const source=fixture();
+  const current=source.db.prepare("SELECT payload_json FROM institutional_13f_insight_snapshots WHERE report_date='2026-06-30'").get();
+  const payload=JSON.parse(current.payload_json);
+  payload.institutions.push({investorId:'EXIT',name:'Exited Capital',currentValueM:1000,previousValueM:1200});
+  source.db.prepare("UPDATE institutional_13f_insight_snapshots SET payload_json=? WHERE report_date='2026-06-30'").run(JSON.stringify(payload));
+  source.db.exec(`CREATE TABLE institutional_13f_insight_details_v1(
+    report_date TEXT,source_generation TEXT,ticker TEXT,payload_hash TEXT,payload_gzip BLOB,
+    PRIMARY KEY(report_date,source_generation,ticker));`);
+  source.db.prepare('INSERT INTO institutional_13f_insight_details_v1 VALUES(?,?,?,?,?)').run(
+    '2026-06-30','g1','MSFT','exit-detail',gzipSync(JSON.stringify({exited:[{
+      investorId:'EXIT',name:'Exited Capital',currentValueM:null,previousValueM:425,
+      currentUnitsK:null,previousUnitsK:10,changePct:-1,
+    }]})),
+  );
+  const result=institutional13fInsightDetail(source,'MSFT','2026-09-18','2026-06-30');
+  const exit=result.details.exited[0];
+  assert.equal(exit.activityValueM,425);
+  assert.equal(exit.reportedValueChangeM,-425);
+  assert.equal(exit.changePct,null);
+  assert.equal(exit.comparisonBasis,'prior_reported_position_value');
+});
+
+test('13F detail does not infer exits when an entire filer is missing this quarter',()=>{
+  const source=fixture();
+  const current=source.db.prepare("SELECT payload_json FROM institutional_13f_insight_snapshots WHERE report_date='2026-06-30'").get();
+  const payload=JSON.parse(current.payload_json);
+  payload.institutions.push({investorId:'MISSING',name:'Missing Filing',currentValueM:null,previousValueM:900});
+  source.db.prepare("UPDATE institutional_13f_insight_snapshots SET payload_json=? WHERE report_date='2026-06-30'").run(JSON.stringify(payload));
+  source.db.exec(`CREATE TABLE institutional_13f_insight_details_v1(
+    report_date TEXT,source_generation TEXT,ticker TEXT,payload_hash TEXT,payload_gzip BLOB,
+    PRIMARY KEY(report_date,source_generation,ticker));`);
+  source.db.prepare('INSERT INTO institutional_13f_insight_details_v1 VALUES(?,?,?,?,?)').run(
+    '2026-06-30','g1','MSFT','missing-detail',gzipSync(JSON.stringify({exited:[{
+      investorId:'MISSING',name:'Missing Filing',previousValueM:425,changePct:-1,
+    }]})),
+  );
+  const result=institutional13fInsightDetail(source,'MSFT','2026-09-18','2026-06-30');
+  assert.deepEqual(result.details.exited,[]);
+});
+
 test('13F insights honors the PIT availability cutoff and exact quarter',()=>{
   const source=fixture();
   const prior=institutional13fInsights(source,'2026-06-01');

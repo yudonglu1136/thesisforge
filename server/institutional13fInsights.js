@@ -98,14 +98,48 @@ function visibleRows(db,table,asOf) {
 
 function lazyDetail(source, selected, ticker, payload) {
   const db=source.insightsDb??source.db;
+  let detail;
   if (tableExists(source,'institutional_13f_insight_details_v1')) {
     const row=db.prepare(`SELECT payload_gzip FROM institutional_13f_insight_details_v1
       WHERE report_date=? AND source_generation=? AND ticker=?`).get(
       selected.report_date,selected.source_generation,ticker,
     );
-    if (row?.payload_gzip) return parse(row)??{};
+    if (row?.payload_gzip) detail=parse(row)??{};
   }
-  return payload.details?.[ticker]??{};
+  detail??=payload.details?.[ticker]??{};
+  return normalizeDetail(detail,payload.institutions);
+}
+
+function normalizeDetail(detail,institutions=[]) {
+  const filings=new Map((institutions??[]).map(row=>[row.investorId,row]));
+  return Object.fromEntries(Object.entries(detail).map(([action,rows])=>[
+    action,(rows??[]).filter(row=>{
+      const filing=filings.get(row.investorId);
+      // Older artifacts may contain every prior holding as an "exit" when the
+      // filer itself is absent in the current SF3 quarter (and vice versa for a
+      // newly appearing filer). A missing whole filing is not a position move.
+      return !filing||(filing.currentValueM!=null&&filing.previousValueM!=null);
+    }).map(row=>{
+      const current=Number.isFinite(row.currentValueM)?row.currentValueM:null;
+      const previous=Number.isFinite(row.previousValueM)?row.previousValueM:null;
+      const activityValueM=action==='exited'?previous:current;
+      const reportedValueChangeM=current!=null&&previous!=null?current-previous
+        :action==='new'?current
+          :action==='exited'&&previous!=null?-previous:null;
+      return {...row,
+        activityValueM,
+        reportedValueChangeM,
+        // A complete exit is mechanically -100% by definition. Repeating that
+        // number for every exited filer is not a useful comparison metric and
+        // was easily misread as a portfolio return. Exits are compared by the
+        // prior-quarter reported position value instead.
+        changePct:['increased','reduced'].includes(action)?row.changePct:null,
+        comparisonBasis:action==='exited'?'prior_reported_position_value'
+          :action==='new'?'current_reported_position_value'
+            :'split_adjusted_reported_units',
+      };
+    }),
+  ]));
 }
 
 function marketHistory(source, visible, selected) {

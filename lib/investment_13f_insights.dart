@@ -1293,8 +1293,12 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                     ),
                     const SizedBox(height: 2),
                     label(
-                      'Largest reported positions first',
-                      '按申报仓位规模由大到小',
+                      insightAction == 'exited'
+                          ? 'Largest prior-quarter reported positions first'
+                          : 'Largest reported positions first',
+                      insightAction == 'exited'
+                          ? '按上季被清仓的申报仓位金额由大到小'
+                          : '按申报仓位规模由大到小',
                       size: 10,
                     ),
                   ],
@@ -1335,43 +1339,71 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           for (final institution in asList(
             detail[insightAction],
           ).take(insightInstitutionLimit))
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: p.border)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+            Builder(
+              builder: (context) {
+                final activityValue =
+                    institution['activityValueM'] ??
+                    (insightAction == 'exited'
+                        ? institution['previousValueM']
+                        : institution['currentValueM']);
+                final change = nullableNumber(institution['changePct']);
+                final isEntryOrExit =
+                    insightAction == 'new' || insightAction == 'exited';
+                final amountLabel = insightAction == 'exited'
+                    ? w('Prior-quarter reported position', '上季申报仓位')
+                    : insightAction == 'new'
+                    ? w('New reported position', '新建仓金额')
+                    : w('Current reported position', '本季申报仓位');
+                return Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    border: Border(bottom: BorderSide(color: p.border)),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              text(institution['name']),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: p.text,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              isEntryOrExit
+                                  ? amountLabel
+                                  : '$amountLabel · ${_usdMillions(activityValue)}',
+                              style: TextStyle(color: p.muted, fontSize: 10),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (isEntryOrExit &&
+                          nullableNumber(activityValue) != null)
                         Text(
-                          text(institution['name']),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          _usdMillions(activityValue),
                           style: TextStyle(
-                            color: p.text,
+                            color: _insightColor(insightAction),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      else if (change != null)
+                        Text(
+                          pct(change),
+                          style: TextStyle(
+                            color: _insightColor(insightAction),
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        Text(
-                          '${_usdMillions(institution['currentValueM'] ?? institution['previousValueM'])} ${w('reported value', '申报市值')}',
-                          style: TextStyle(color: p.muted, fontSize: 10),
-                        ),
-                      ],
-                    ),
+                    ],
                   ),
-                  if (nullableNumber(institution['changePct']) != null)
-                    Text(
-                      pct(institution['changePct']),
-                      style: TextStyle(
-                        color: _insightColor(insightAction),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                ],
-              ),
+                );
+              },
             ),
           if (number(row['splitAdjustedFilers']) > 0) ...[
             const SizedBox(height: 12),

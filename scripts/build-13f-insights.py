@@ -83,6 +83,7 @@ def action_cte(current: str, previous: str) -> str:
           pi.investorname previous_investor_name,
           ci.shrvalue current_book_value,pi.shrvalue previous_book_value,
           CASE
+            WHEN ci.investorid IS NULL OR pi.investorid IS NULL THEN 'not_comparable'
             WHEN p.units IS NULL AND c.units>0 THEN 'new'
             WHEN c.units IS NULL AND p.units>0 THEN 'exited'
             WHEN c.units>p.units*coalesce(s.factor,1)*1.001 THEN 'increased'
@@ -132,7 +133,7 @@ def snapshot(
           (SELECT count(*) FROM holdings_investor WHERE date='{current}') current_filers,
           (SELECT count(*) FROM holdings_investor WHERE date='{previous}') previous_filers,
           count(DISTINCT ticker) securities,
-          count(*) comparable_positions,
+          count(*) FILTER(WHERE reported_action<>'not_comparable') comparable_positions,
           count(*) FILTER(WHERE reported_action='new') new_positions,
           count(*) FILTER(WHERE reported_action='increased') increases,
           count(*) FILTER(WHERE reported_action='reduced') reductions,
@@ -182,6 +183,8 @@ def snapshot(
           sum(previous_value) AS total_previous_value,
           sum(current_units) AS total_current_units,
           sum(adjusted_previous_units) AS total_previous_units,
+          sum(current_units) FILTER(WHERE reported_action<>'not_comparable') AS comparable_current_units,
+          sum(adjusted_previous_units) FILTER(WHERE reported_action<>'not_comparable') AS comparable_previous_units,
           count(*) FILTER(WHERE split_factor<>1) AS split_adjusted,
           max(s.shares_outstanding_k) AS shares_outstanding_k,
           max(m.market_cap_m) AS market_cap_m,
@@ -198,32 +201,32 @@ def snapshot(
     ).fetchall()
     securities = []
     for row in security_rows:
-        shares_outstanding_k = row[12]
+        shares_outstanding_k = row[14]
         institutional_ownership_pct = (
             None if not shares_outstanding_k or row[9] is None
             else row[9] / shares_outstanding_k * 100
         )
-        net_units_k = (row[9] or 0) - (row[10] or 0)
+        net_units_k = (row[11] or 0) - (row[12] or 0)
         implied_price = None if not row[9] else row[7] * 1000 / row[9]
         net_change_value_m = None if implied_price is None else net_units_k * implied_price / 1000
         net_change_pct_outstanding = (
             None if not shares_outstanding_k else net_units_k / shares_outstanding_k * 100
         )
         segments = ["all"]
-        if row[14]:
-            segments.append("sp500")
-        if row[15]:
-            segments.append("nasdaq100Proxy")
         if row[16]:
+            segments.append("sp500")
+        if row[17]:
+            segments.append("nasdaq100Proxy")
+        if row[18]:
             segments.append("smallCap")
         securities.append({
             "ticker": row[0], "name": None if row[1] in (None, "None") else row[1],
             "holders": row[2], "newPositions": row[3], "increases": row[4],
             "reductions": row[5], "exits": row[6], "currentValueM": row[7],
             "previousValueM": row[8], "currentUnitsK": row[9],
-            "previousUnitsK": row[10], "splitAdjustedFilers": row[11],
+            "previousUnitsK": row[10], "splitAdjustedFilers": row[13],
             "sharesOutstandingK": shares_outstanding_k,
-            "marketCapM": row[13],
+            "marketCapM": row[15],
             "institutionalOwnershipPct": institutional_ownership_pct,
             "netUnitsChangeK": net_units_k,
             "netChangeValueM": net_change_value_m,
@@ -266,7 +269,7 @@ def snapshot(
                 PARTITION BY ticker,reported_action
                 ORDER BY greatest(coalesce(current_value,0),coalesce(previous_value,0)) DESC,investorid
               ) detail_rank
-              FROM joined WHERE reported_action<>'unchanged' AND ticker IN ({values})
+              FROM joined WHERE reported_action IN ('new','increased','reduced','exited') AND ticker IN ({values})
             )
             SELECT ticker,reported_action,investorid,coalesce(current_investor_name,previous_investor_name),
               current_units,adjusted_previous_units,current_value,previous_value,
@@ -275,12 +278,34 @@ def snapshot(
             [*sorted(priority), DETAIL_PER_ACTION],
         ).fetchall()
         for row in detail_rows:
+            action = row[1]
+            current_value = row[6]
+            previous_value = row[7]
+            activity_value = previous_value if action == "exited" else current_value
+            if current_value is not None and previous_value is not None:
+                reported_value_change = current_value - previous_value
+            elif action == "new":
+                reported_value_change = current_value
+            elif action == "exited" and previous_value is not None:
+                reported_value_change = -previous_value
+            else:
+                reported_value_change = None
             details.setdefault(row[0], {}).setdefault(row[1], []).append({
                 "investorId": row[2], "name": row[3] or row[2],
                 "currentUnitsK": row[4], "previousUnitsK": row[5],
-                "currentValueM": row[6], "previousValueM": row[7],
+                "currentValueM": current_value, "previousValueM": previous_value,
                 "currentWeight": row[8], "previousWeight": row[9],
-                "changePct": None if not row[5] else (row[4] or 0) / row[5] - 1,
+                "activityValueM": activity_value,
+                "reportedValueChangeM": reported_value_change,
+                "changePct": (
+                    None if action not in ("increased", "reduced") or not row[5]
+                    else (row[4] or 0) / row[5] - 1
+                ),
+                "comparisonBasis": (
+                    "prior_reported_position_value" if action == "exited"
+                    else "current_reported_position_value" if action == "new"
+                    else "split_adjusted_reported_units"
+                ),
                 "splitAdjusted": row[10] != 1,
             })
 
