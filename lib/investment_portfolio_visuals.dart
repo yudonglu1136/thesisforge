@@ -332,54 +332,69 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          children: [
-            for (final mode in [false, true])
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
               ChoiceChip(
-                key: ValueKey(
-                  mode ? 'allocation-income' : 'allocation-position',
-                ),
-                label: Text(mode ? w('Income', '收入') : w('Position', '仓位')),
-                selected: income == mode,
+                key: const ValueKey('allocation-position'),
+                label: Text(w('Position', '仓位')),
+                selected: !income,
                 onSelected: (_) => setState(() {
-                  income = mode;
+                  income = false;
                   selected = null;
                   hovered = null;
                 }),
               ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          children: [
-            for (final mode in [false, true])
-              if (!income)
-                ChoiceChip(
-                  label: Text(mode ? w('Sectors', '行业') : w('Holdings', '持仓')),
-                  selected: sectors == mode,
-                  onSelected: (_) => setState(() {
-                    sectors = mode;
-                    selected = null;
-                    hovered = null;
-                  }),
-                )
-              else
-                ChoiceChip(
-                  label: Text(
-                    mode ? w('Income type', '收入类型') : w('By source', '按来源'),
-                  ),
-                  selected: incomeTypes == mode,
-                  onSelected: (_) => setState(() {
-                    incomeTypes = mode;
-                    selected = null;
-                    hovered = null;
-                  }),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                key: const ValueKey('allocation-income'),
+                label: Text(w('Dividends & interest', '股息与利息')),
+                selected: income,
+                onSelected: (_) => setState(() {
+                  income = true;
+                  selected = null;
+                  hovered = null;
+                }),
+              ),
+              const SizedBox(width: 12),
+              Container(width: 1, height: 24, color: p.border),
+              const SizedBox(width: 12),
+              ChoiceChip(
+                key: const ValueKey('allocation-breakdown-primary'),
+                label: Text(
+                  income ? w('Income sources', '收入来源') : w('Holdings', '持仓'),
                 ),
-          ],
+                selected: income ? !incomeTypes : !sectors,
+                onSelected: (_) => setState(() {
+                  if (income) {
+                    incomeTypes = false;
+                  } else {
+                    sectors = false;
+                  }
+                  selected = null;
+                  hovered = null;
+                }),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                key: const ValueKey('allocation-breakdown-secondary'),
+                label: Text(
+                  income ? w('Income types', '收入类型') : w('Sectors', '行业'),
+                ),
+                selected: income ? incomeTypes : sectors,
+                onSelected: (_) => setState(() {
+                  if (income) {
+                    incomeTypes = true;
+                  } else {
+                    sectors = true;
+                  }
+                  selected = null;
+                  hovered = null;
+                }),
+              ),
+            ],
+          ),
         ),
         if (income) ...[
           const SizedBox(height: 12),

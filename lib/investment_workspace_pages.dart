@@ -74,35 +74,7 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
 
   Future<void> enterTerminal({String mode = 'guru'}) async {
     if (!await allowLeaveDraft() || !mounted) return;
-    final proceed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(w('Open the full terminal?', '打开完整终端？')),
-        content: Text(
-          w(
-            'The original terminal keeps the full Guru backtests, free date-range controls and industry graph. It uses its own latest cached data, not the $asOf cutoff in this workspace. Check its chart dates before comparing.',
-            '原终端保留完整大佬回测、自由区间和行业图谱。它使用自身最新缓存，不使用本工作区的 $asOf 截止日。比较前请核对曲线日期。',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(w('Stay here', '留在这里')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(w('Open latest-data terminal', '打开最新数据终端')),
-          ),
-        ],
-      ),
-    );
-    if (proceed == true && mounted) {
-      if (widget.onLegacyView != null) {
-        widget.onLegacyView!(mode);
-      } else {
-        widget.onLegacy();
-      }
-    }
+    navigate(mode == 'portfolio' ? 'book' : 'discover');
   }
 
   Widget sourceBreadcrumb() {
@@ -597,7 +569,6 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
         cutoffControl: dateControl(),
         onCompany: (symbol, section) =>
             unawaited(loadCompany(symbol, initialSection: section)),
-        onAccounts: () => widget.onLegacyView?.call('portfolio'),
         onGuru: (id, filing) {
           discoveryTab = 'managers';
           navigate('discover');

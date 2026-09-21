@@ -306,11 +306,6 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                 child: Text(context.language == AppLanguage.en ? '中文' : 'EN'),
               ),
               const Spacer(),
-              IconButton(
-                tooltip: w('Open legacy terminal', '打开原终端'),
-                onPressed: () => unawaited(enterTerminal()),
-                icon: Icon(Icons.dashboard_outlined, color: p.muted, size: 20),
-              ),
               if (widget.onLogout != null)
                 IconButton(
                   tooltip: w('Sign out', '退出登录'),
@@ -353,11 +348,6 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                       : AppLanguage.en,
                 ),
                 child: Text(context.language == AppLanguage.en ? '中文' : 'EN'),
-              ),
-              IconButton(
-                tooltip: w('Open legacy terminal', '打开原终端'),
-                onPressed: () => unawaited(enterTerminal()),
-                icon: Icon(Icons.dashboard_outlined, color: p.muted, size: 20),
               ),
               if (widget.onLogout != null)
                 IconButton(

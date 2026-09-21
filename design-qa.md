@@ -1,6 +1,72 @@
 pyenv: cannot rehash: /Users/yudonglu/.pyenv/shims isn't writable
 # ThesisForge — Graphite workspace QA
 
+## Current acceptance: Portfolio IBKR sync, dividend views and legacy-route retirement — 2026-09-21
+
+Final result: **passed**.
+
+Scope: keep the accepted Snowball-inspired Portfolio hierarchy while completing
+the missing operational layer. The new ThesisForge Portfolio now owns IBKR
+connection management, explicit refresh, daily per-user sync, and broker-
+reported dividend/interest allocation. No Portfolio action may return users to
+the retired Guru Intelligence interface.
+
+### Visual evidence
+
+- Reported icon and control defects:
+  `/var/folders/3k/0wsqd58n6w71n8tyql0t09fc0000gn/T/codex-clipboard-115315d8-b139-4b82-a00c-2dc35584ce72.png`
+  and
+  `/var/folders/3k/0wsqd58n6w71n8tyql0t09fc0000gn/T/codex-clipboard-6639ed4c-51e3-424d-be92-eb629efcd47a.png`.
+- Retired-interface reference:
+  `/var/folders/3k/0wsqd58n6w71n8tyql0t09fc0000gn/T/codex-clipboard-33903e4f-884e-40fa-80bc-37803b828681.png`.
+- Browser-rendered verification at 1600x1000 confirmed that legacy
+  `?view=portfolio` bookmarks render the new Portfolio desk, the old-terminal
+  launcher is absent, the signed-out state remains intentionally private, and
+  the browser console has no warnings or errors.
+- Synthetic broker fixtures were used only in widget tests to verify the
+  authenticated account cards and allocation controls. No sample holdings were
+  added to the application.
+
+### Findings and resolution
+
+- [Resolved P1] Account value and realized P&L used icon glyphs that compiled
+  to empty boxes in the web bundle. Both now use Material glyphs already
+  exercised elsewhere in the app and have explicit widget assertions.
+- [Resolved P1] Position/Income and Holdings/Sectors wrapped into two unrelated
+  rows. All four choices now form one horizontally scrollable control rail;
+  the labels change coherently between Holdings/Sectors and Income
+  sources/Income types.
+- [Resolved P1] “Income” was ambiguous. It is now “Dividends & interest” and is
+  backed only by dated IBKR Cash Transactions. Dividend, bond-interest and
+  cash-interest receipts retain their category, instrument, report period and
+  transaction-date reported FX. Missing report sections remain unavailable;
+  values are never estimated from yield data.
+- [Resolved P1] Portfolio management navigated to the retired product. The new
+  page now contains an in-place IBKR connection dialog and a distinct Sync now
+  action. Legacy `portfolio` and `guru` bookmarks migrate to the new Portfolio
+  and Discover routes, and all visible old-terminal launchers are removed.
+- [Resolved P1] The scheduled NAV recorder used a process-wide legacy identity.
+  It now enumerates only configured production users, calls the same
+  authenticated per-user loader as Sync now, captures NAV into that user's
+  isolated database, clears only that user's cache, and logs aggregate counts
+  without PII. The default cadence is once per 24 hours.
+- [Resolved P2] Sync success and degraded/stale outcomes were invisible. The
+  new page preserves the last saved report, presents an explicit result notice,
+  and never replaces it with an incomplete refresh.
+- No remaining P0/P1/P2 issue in the requested flow.
+
+### Interaction, responsive and verification checks
+
+- The four allocation controls share one y-position at desktop width and stay
+  available through horizontal scrolling at 390px with 150% text scaling.
+- New-page connection management and explicit sync were verified without a
+  legacy callback. The summary icons, exact income slices, income provenance,
+  privacy mode and portfolio reload path remain covered.
+- Flutter focused suite: **46 passed**. Node portfolio sync/income/cache suite:
+  **17 passed**; the localhost HTTP test also passed outside the restricted
+  socket sandbox. Launch-prep suite: **32 passed**. `flutter analyze`: no
+  issues. Production Flutter build: passed with workflow marker verified.
+
 ## Current acceptance: 13F history loading, switching and hover — 2026-09-21
 
 Final result: **passed**.

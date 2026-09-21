@@ -196,7 +196,7 @@ void main() {
         find.byKey(const ValueKey('allocation-legend-bond_interest')),
       );
       expect(detail(t), contains('Bond interest · 30.0% · USD 30'));
-      await tap(t, find.text('By source'));
+      await tap(t, find.text('Income sources'));
       expect(
         find.byKey(const ValueKey('allocation-legend-int-BOND')),
         findsOneWidget,
@@ -211,6 +211,23 @@ void main() {
       expect(t.takeException(), isNull);
     },
   );
+  testWidgets('all four allocation controls stay on one horizontal rail', (
+    t,
+  ) async {
+    await mount(t, donut(), size: const Size(900, 1000));
+    final keys = [
+      const ValueKey('allocation-position'),
+      const ValueKey('allocation-income'),
+      const ValueKey('allocation-breakdown-primary'),
+      const ValueKey('allocation-breakdown-secondary'),
+    ];
+    final tops = keys
+        .map((key) => t.getTopLeft(find.byKey(key)).dy)
+        .toList(growable: false);
+    expect(tops.toSet().length, 1);
+    expect(find.text('Dividends & interest'), findsOneWidget);
+    expect(t.takeException(), isNull);
+  });
   for (final hidden in [false, true]) {
     testWidgets(
       'donut hover updates slice/readout, mouse exit restores pinned selection; privacy=$hidden',
@@ -301,7 +318,10 @@ void main() {
         find.byKey(const ValueKey('allocation-legend-bond_interest')),
       );
       expect(t.takeException(), isNull);
-      await tap(t, find.text(lang == AppLanguage.en ? 'By source' : '按来源'));
+      await tap(
+        t,
+        find.text(lang == AppLanguage.en ? 'Income sources' : '收入来源'),
+      );
       expect(t.takeException(), isNull);
     });
   }

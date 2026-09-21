@@ -1769,16 +1769,17 @@ class _TerminalHomeState extends State<TerminalHome>
   }
 
   void _changeMode(String mode) {
-    if (mode == 'admin' && !_adminEnabled) return;
+    final next = normalizeRouteMode(mode);
+    if (next == 'admin' && !_adminEnabled) return;
     setState(() {
-      _mode = mode;
+      _mode = next;
       _secondaryError = null;
     });
     _persistRouteState();
-    if (shouldLoadGuruDashboard(mode, _guruPayload) && !_loadingGurus) {
+    if (shouldLoadGuruDashboard(next, _guruPayload) && !_loadingGurus) {
       unawaited(_loadGurus());
-    } else if (mode != 'guru') {
-      unawaited(_loadSecondary(mode));
+    } else if (next != 'guru') {
+      unawaited(_loadSecondary(next));
     }
   }
 
@@ -26153,6 +26154,10 @@ String normalizeRouteMode(String? value, {String? path}) {
   // never issue retired API requests or treat Discover as a valuation module.
   if (isRetiredModuleRoute(mode, path: path)) {
     return investmentWorkflowEnabled ? 'discover' : 'guru';
+  }
+  if (investmentWorkflowEnabled) {
+    if (mode == 'portfolio') return 'book';
+    if (mode == 'guru') return 'discover';
   }
   if (isInvestmentMode(mode)) return mode;
   return const {'guru', 'valuation', 'portfolio', 'admin'}.contains(mode)

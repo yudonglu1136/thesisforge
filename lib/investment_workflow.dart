@@ -1883,7 +1883,11 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           ),
           primary: true,
         ),
-        button('Open existing terminal', '打开现有终端', widget.onLegacy),
+        button(
+          'Open the new research workspace',
+          '打开新版研究工作台',
+          () => navigate('discover'),
+        ),
       ]),
     ];
   }

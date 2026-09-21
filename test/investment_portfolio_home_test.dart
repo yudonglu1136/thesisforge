@@ -86,6 +86,37 @@ class HomeApi extends fixtures.PortfolioApi {
   };
 }
 
+class ConnectedHomeApi extends HomeApi {
+  int syncs = 0;
+
+  @override
+  Future<Map<String, dynamic>> getJson(String path) async {
+    if (path == '/api/portfolio/connection') {
+      reads.add(path);
+      return {
+        'registered': true,
+        'configured': true,
+        'status': 'linked',
+        'provider': 'ibkr_flex',
+        'accounts': const [],
+      };
+    }
+    return super.getJson(path);
+  }
+
+  @override
+  Future<Map<String, dynamic>> postJson(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    if (path == '/api/portfolio/sync') {
+      syncs += 1;
+      return {'ok': true, 'portfolio': result('2026-08-28')};
+    }
+    throw StateError('Unexpected write: $path');
+  }
+}
+
 class HomeWorkflowApi extends workflow.DiscoveryFixtureApi {
   final reads = <String>[];
   @override
@@ -126,7 +157,6 @@ Future<void> mount(
                   homeMode: true,
                   onCompany: onCompany ?? (_, _) {},
                   onDetails: onDetails ?? () {},
-                  onAccounts: () {},
                   onGuru: (_, _) {},
                 ),
               ),
@@ -326,6 +356,31 @@ void main() {
       expect(details, 1);
     },
   );
+  testWidgets(
+    'new portfolio owns IBKR management and sync without a legacy route',
+    (t) async {
+      final api = ConnectedHomeApi();
+      await mount(t, api);
+
+      await fixtures.tap(t, find.byKey(const ValueKey('home-manage-ibkr')));
+      expect(find.text('Manage IBKR connection'), findsOneWidget);
+      expect(find.text('Open existing terminal'), findsNothing);
+      await fixtures.tap(t, find.byTooltip('Close'));
+
+      await fixtures.tap(t, find.byKey(const ValueKey('home-sync-now')));
+      expect(api.syncs, 1);
+      expect(
+        find.textContaining('Holdings, NAV and reported dividend cash flows'),
+        findsOneWidget,
+      );
+      expect(t.takeException(), isNull);
+    },
+  );
+  testWidgets('summary cards render account and realized P&L icons', (t) async {
+    await mount(t, HomeApi()..pnlHistory = true);
+    expect(find.byIcon(Icons.account_balance_wallet_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.receipt_long_rounded), findsOneWidget);
+  });
   testWidgets(
     'empty and failed account never substitute Guru holdings or sample curves',
     (t) async {

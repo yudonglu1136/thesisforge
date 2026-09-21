@@ -9,7 +9,6 @@ class PortfolioResearchPanel extends StatefulWidget {
     required this.palette,
     required this.asOf,
     required this.onCompany,
-    required this.onAccounts,
     required this.onGuru,
     this.homeMode = false,
     this.onDetails,
@@ -20,7 +19,6 @@ class PortfolioResearchPanel extends StatefulWidget {
   final String asOf;
   final void Function(String ticker, String section) onCompany;
   final void Function(String id, String filing) onGuru;
-  final VoidCallback onAccounts;
   final bool homeMode;
   final VoidCallback? onDetails;
   final Widget? cutoffControl;
@@ -31,6 +29,8 @@ class PortfolioResearchPanel extends StatefulWidget {
 class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
   Map<String, dynamic>? data;
   bool loading = true, failed = false;
+  bool portfolioSyncing = false;
+  String? portfolioActionMessage, portfolioActionError;
   String tab = 'overview', selectedCurrency = '', manager = '', query = '';
   int serial = 0;
   int holdingLimit = 20, comparisonLimit = 20;
@@ -107,6 +107,149 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
         });
       }
     }
+  }
+
+  Future<void> syncConnectedPortfolio() async {
+    if (portfolioSyncing) return;
+    setState(() {
+      portfolioSyncing = true;
+      portfolioActionMessage = null;
+      portfolioActionError = null;
+    });
+    try {
+      final result = await widget.api.postJson('/api/portfolio/sync', {});
+      if (!mounted) return;
+      if (result['ok'] != true) {
+        final report = asMap(result['portfolio']);
+        final saved = isSavedPortfolioReport(report);
+        setState(() {
+          portfolioActionError = saved
+              ? savedPortfolioReportNotice(report, context.language)
+              : w(
+                  'IBKR did not complete a new sync. Your last saved portfolio is unchanged.',
+                  'IBKR 未完成新的同步，上一份已保存组合保持不变。',
+                );
+        });
+      } else {
+        setState(() {
+          portfolioActionMessage = w(
+            'IBKR sync completed. Holdings, NAV and reported dividend cash flows were refreshed.',
+            'IBKR 同步完成，持仓、净值及已报告股息现金流已更新。',
+          );
+        });
+      }
+      await load();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          portfolioActionError = w(
+            'IBKR sync could not be completed. Your saved portfolio was not replaced.',
+            'IBKR 同步未完成，已保存的组合没有被替换。',
+          );
+        });
+      }
+    } finally {
+      if (mounted) setState(() => portfolioSyncing = false);
+    }
+  }
+
+  Future<void> managePortfolioConnection() async {
+    Map<String, dynamic> connection;
+    try {
+      connection = await widget.api.getJson('/api/portfolio/connection');
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          portfolioActionError = w(
+            'The IBKR connection settings could not be loaded.',
+            '暂时无法读取 IBKR 连接设置。',
+          );
+        });
+      }
+      return;
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, updateDialog) {
+          Future<void> refreshConnection() async {
+            final next = await widget.api.getJson('/api/portfolio/connection');
+            if (dialogContext.mounted) {
+              updateDialog(() => connection = next);
+            }
+            if (mounted) await load();
+          }
+
+          final registered =
+              truthy(connection['registered']) ||
+              truthy(connection['configured']);
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.all(18),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 940, maxHeight: 780),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: panelDecoration(p),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: title(
+                            'Manage IBKR connection',
+                            '管理 IBKR 连接',
+                            20,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: w('Close', '关闭'),
+                          onPressed: () => Navigator.pop(dialogContext),
+                          icon: Icon(Icons.close_rounded, color: p.muted),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: registered
+                            ? PortfolioConnectionStatusPanel(
+                                connection: connection,
+                                api: widget.api,
+                                palette: p,
+                                onRefresh: refreshConnection,
+                              )
+                            : PortfolioConnectionPanel(
+                                connection: connection,
+                                api: widget.api,
+                                palette: p,
+                                onConnected: refreshConnection,
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget portfolioSyncNotice() {
+    final error = portfolioActionError;
+    final message = portfolioActionMessage;
+    if (error == null && message == null) return const SizedBox.shrink();
+    return PortfolioDataNotice(
+      icon: error == null
+          ? Icons.cloud_done_rounded
+          : Icons.error_outline_rounded,
+      text: error ?? message!,
+      palette: p,
+    );
   }
 
   TextStyle heading([double size = 20]) => TextStyle(
@@ -240,27 +383,54 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
                   data?['status'] == 'preview_account' ||
                       data?['source'] == 'local_owner_broker_snapshot'
                   ? () => openBrowserPath(
-                      'https://www.thesisforge.tech/?view=portfolio&lang=${appLanguageCode(context.language)}',
+                      'https://www.thesisforge.tech/?view=book&lang=${appLanguageCode(context.language)}',
                     )
-                  : widget.onAccounts,
-              icon: const Icon(Icons.account_balance_outlined, size: 17),
+                  : managePortfolioConnection,
+              icon: const Icon(Icons.settings_outlined, size: 17),
               label: Text(
                 data?['status'] == 'preview_account'
                     ? w('Open online Portfolio', '打开线上 Portfolio')
                     : data?['source'] == 'local_owner_broker_snapshot'
                     ? w('Open live account', '打开线上账户')
-                    : w('Manage accounts', '管理账户'),
+                    : w('Manage IBKR', '管理 IBKR'),
+              ),
+            ),
+            FilledButton.icon(
+              key: const ValueKey('portfolio-sync-now'),
+              onPressed:
+                  loading ||
+                      portfolioSyncing ||
+                      data?['status'] == 'preview_account' ||
+                      data?['source'] == 'local_owner_broker_snapshot'
+                  ? null
+                  : syncConnectedPortfolio,
+              icon: portfolioSyncing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.cloud_sync_rounded, size: 17),
+              label: Text(
+                portfolioSyncing
+                    ? w('Syncing…', '同步中…')
+                    : w('Sync now', '立即同步'),
               ),
             ),
             IconButton(
+              key: const ValueKey('portfolio-reload-analysis'),
               tooltip: w('Reload portfolio analysis', '重新读取组合分析'),
               onPressed: loading ? null : load,
-              icon: Icon(Icons.refresh, color: p.accent),
+              icon: Icon(Icons.refresh_rounded, color: p.accent),
             ),
             privacyToggle(),
           ],
         ),
         const SizedBox(height: 12),
+        if (portfolioActionError != null || portfolioActionMessage != null) ...[
+          portfolioSyncNotice(),
+          const SizedBox(height: 12),
+        ],
         if (isSavedPortfolioReport(data)) ...[
           PortfolioDataNotice(
             icon: Icons.history_rounded,
@@ -456,7 +626,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
           FilledButton.icon(
             onPressed: preview
                 ? () => openBrowserPath(
-                    'https://www.thesisforge.tech/?view=portfolio&lang=${appLanguageCode(context.language)}',
+                    'https://www.thesisforge.tech/?view=book&lang=${appLanguageCode(context.language)}',
                   )
                 : connectIbkr,
             icon: const Icon(Icons.lock_outline, size: 17),

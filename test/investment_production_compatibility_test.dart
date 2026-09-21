@@ -97,22 +97,25 @@ void main() {
     }
   }
 
-  test(
-    'legacy bookmarks retain their original portfolio and research targets',
-    () {
-      expect(normalizeRouteMode('portfolio'), 'portfolio');
-      expect(normalizeRouteMode('valuation'), 'valuation');
-      expect(normalizeRouteMode('guru'), 'guru');
-      expect(
-        normalizeRouteMode('dbmf'),
-        investmentWorkflowEnabled ? 'discover' : 'guru',
-      );
-      expect(
-        normalizeRouteMode(null),
-        investmentWorkflowEnabled ? 'home' : 'guru',
-      );
-    },
-  );
+  test('legacy product bookmarks migrate into the new ThesisForge routes', () {
+    expect(
+      normalizeRouteMode('portfolio'),
+      investmentWorkflowEnabled ? 'book' : 'portfolio',
+    );
+    expect(normalizeRouteMode('valuation'), 'valuation');
+    expect(
+      normalizeRouteMode('guru'),
+      investmentWorkflowEnabled ? 'discover' : 'guru',
+    );
+    expect(
+      normalizeRouteMode('dbmf'),
+      investmentWorkflowEnabled ? 'discover' : 'guru',
+    );
+    expect(
+      normalizeRouteMode(null),
+      investmentWorkflowEnabled ? 'home' : 'guru',
+    );
+  });
 
   if (investmentWorkflowEnabled) {
     testWidgets('retired bookmarks render Discover without retired API calls', (

@@ -27,6 +27,7 @@ import {
 } from "./tickerAliases.js";
 import {
   markPortfolioConnectionSync,
+  listAdminPortfolioUsers,
   portfolioConnectionRevision,
   portfolioConnectionAccounts,
   readPortfolioConnection,
@@ -63,6 +64,7 @@ const xmlParser = new XMLParser({
 
 const portfolioCache = new AsyncUserCache();
 let portfolioNavRecorderStarted = false;
+const productionUserId = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 
 const ibkrFlexEndpointHosts = new Set([
   "ndcdyn.interactivebrokers.com",
@@ -1887,9 +1889,58 @@ export function clearPortfolioCache(user = null) {
   portfolioCache.delete(portfolioCacheKey(user));
 }
 
+// The scheduled path uses the same per-owner loader as the authenticated Sync
+// button. It never falls back to the retired process-wide portfolio identity,
+// and it logs only aggregate counts.
+export async function syncRegisteredPortfolioUsers({
+  listUsers = listAdminPortfolioUsers,
+  loadDashboard = loadPortfolioDashboard,
+  clearCache = clearPortfolioCache
+} = {}) {
+  const inventory = await listUsers();
+  const targets = (inventory?.users || []).filter((row) =>
+    productionUserId.test(String(row?.userId || "")) &&
+    row?.connection?.configured === true
+  );
+  const result = {
+    status: targets.length ? "success" : "skipped",
+    connected: targets.length,
+    attempted: 0,
+    synced: 0,
+    degraded: 0,
+    failed: 0,
+    navPoints: 0
+  };
+  for (const target of targets) {
+    const user = { id: target.userId };
+    result.attempted += 1;
+    try {
+      clearCache(user);
+      const payload = await loadDashboard({
+        user,
+        forceRefresh: true,
+        captureNav: true
+      });
+      const current = ["live", "multi_account_live"].includes(payload?.source?.mode) &&
+        payload?.freshness?.status !== "stale" &&
+        !["error", "stale_report", "linked_partial"].includes(payload?.connection?.status);
+      if (current) result.synced += 1;
+      else result.degraded += 1;
+      result.navPoints += Number(payload?.performanceStatus?.pointCount || 0);
+    } catch (_) {
+      result.failed += 1;
+    } finally {
+      clearCache(user);
+    }
+  }
+  if (result.failed || result.degraded) result.status = "degraded";
+  return result;
+}
+
 export function startPortfolioNavRecorder({
   initialDelayMs = finiteNumber(process.env.PORTFOLIO_NAV_CAPTURE_INITIAL_DELAY_MS, 30_000),
-  intervalMs = finiteNumber(process.env.PORTFOLIO_NAV_CAPTURE_INTERVAL_MS, 6 * 60 * 60 * 1000)
+  intervalMs = finiteNumber(process.env.PORTFOLIO_NAV_CAPTURE_INTERVAL_MS, 24 * 60 * 60 * 1000),
+  syncUsers = syncRegisteredPortfolioUsers
 } = {}) {
   if (portfolioNavRecorderStarted) return;
   portfolioNavRecorderStarted = true;
@@ -1902,21 +1953,23 @@ export function startPortfolioNavRecorder({
       payload: { source: "scheduled-recorder" }
     });
     try {
-      const payload = await loadPortfolioDashboard({ forceRefresh: true });
-      const status = payload.performanceStatus || {};
+      const status = await syncUsers();
       writeBackgroundJobRun("portfolio_nav_capture", {
         startedAt,
         finishedAt: new Date().toISOString(),
-        status: "success",
+        status: status.status,
         payload: {
-          source: "scheduled-recorder",
-          navSource: status.source || "",
-          pointCount: status.pointCount || 0,
-          latestDate: status.latestDate || ""
+          source: "scheduled-user-sync",
+          connected: status.connected,
+          attempted: status.attempted,
+          synced: status.synced,
+          degraded: status.degraded,
+          failed: status.failed,
+          pointCount: status.navPoints
         }
       });
       console.log(
-        `Portfolio NAV capture complete: ${status.source || "unknown"} ${status.pointCount || 0} point(s).`
+        `Portfolio daily sync complete: ${status.synced}/${status.connected} current; ${status.degraded} degraded; ${status.failed} failed.`
       );
     } catch (error) {
       writeBackgroundJobRun("portfolio_nav_capture", {

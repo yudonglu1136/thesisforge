@@ -25,7 +25,6 @@ extension _InvestmentHome on _InvestmentWorkspaceState {
         asOf: asOf,
         homeMode: true,
         onDetails: () => navigate('book'),
-        onAccounts: () => widget.onLegacyView?.call('portfolio'),
         onCompany: (symbol, section) =>
             unawaited(loadCompany(symbol, initialSection: section)),
         onGuru: (id, filing) {

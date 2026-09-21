@@ -67,10 +67,43 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                   icon: const Icon(Icons.analytics_outlined, size: 17),
                   label: Text(w('Full analysis', '完整分析')),
                 ),
+                OutlinedButton.icon(
+                  key: const ValueKey('home-manage-ibkr'),
+                  onPressed:
+                      data?['status'] == 'preview_account' ||
+                          data?['source'] == 'local_owner_broker_snapshot'
+                      ? null
+                      : managePortfolioConnection,
+                  icon: const Icon(Icons.settings_outlined, size: 17),
+                  label: Text(w('Manage IBKR', '管理 IBKR')),
+                ),
+                FilledButton.icon(
+                  key: const ValueKey('home-sync-now'),
+                  onPressed:
+                      loading ||
+                          portfolioSyncing ||
+                          data?['status'] == 'preview_account' ||
+                          data?['source'] == 'local_owner_broker_snapshot'
+                      ? null
+                      : syncConnectedPortfolio,
+                  icon: portfolioSyncing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cloud_sync_rounded, size: 17),
+                  label: Text(
+                    portfolioSyncing
+                        ? w('Syncing…', '同步中…')
+                        : w('Sync now', '立即同步'),
+                  ),
+                ),
                 IconButton(
+                  key: const ValueKey('home-reload-portfolio'),
                   tooltip: w('Reload portfolio', '重新读取组合'),
                   onPressed: loading ? null : load,
-                  icon: Icon(Icons.sync_rounded, color: p.accent),
+                  icon: Icon(Icons.refresh_rounded, color: p.accent),
                 ),
                 privacyToggle(),
               ],
@@ -107,6 +140,10 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
             text: savedPortfolioReportNotice(data, context.language),
             palette: p,
           ),
+          const SizedBox(height: 14),
+        ],
+        if (portfolioActionError != null || portfolioActionMessage != null) ...[
+          portfolioSyncNotice(),
           const SizedBox(height: 14),
         ],
         if (loading)
@@ -185,7 +222,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                               '${text(navRows.firstOrNull?['date'], '—')} → ${text(navRows.lastOrNull?['date'], '—')} · 含转入转出，不是投资收益率',
                             )
                           : '${g['accountCount']} ${w('connected accounts', '个已连接账户')}',
-                      icon: Icons.account_balance_wallet_outlined,
+                      icon: Icons.account_balance_wallet_rounded,
                       accent: true,
                     ),
                   ),
@@ -291,7 +328,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                               ? w('Negative cash is borrowing', '负现金表示借款')
                               : w('From your broker report', '来自券商报告')),
                       icon: realized['status'] == 'ready'
-                          ? Icons.check_circle_outline_rounded
+                          ? Icons.receipt_long_rounded
                           : Icons.account_balance_outlined,
                     ),
                   ),

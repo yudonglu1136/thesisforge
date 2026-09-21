@@ -135,7 +135,6 @@ Future<void> mount(
   String date = '2026-08-28',
   void Function(String, String)? onCompany,
   void Function(String, String)? onGuru,
-  VoidCallback? onAccounts,
 }) async {
   t.view.physicalSize = size;
   t.view.devicePixelRatio = 1;
@@ -156,7 +155,6 @@ Future<void> mount(
                 asOf: date,
                 onCompany: onCompany ?? (_, _) {},
                 onGuru: onGuru ?? (_, _) {},
-                onAccounts: onAccounts ?? () {},
               ),
             ),
           ),
@@ -265,14 +263,6 @@ void main() {
       findsOneWidget,
     );
   });
-  testWidgets('account management action is distinct from a portfolio write', (
-    t,
-  ) async {
-    var opened = 0;
-    await mount(t, PortfolioApi(), onAccounts: () => opened++);
-    await tap(t, find.text('Manage accounts'));
-    expect(opened, 1);
-  });
   for (final lang in [AppLanguage.en, AppLanguage.zh]) {
     for (final scale in [1.0, 1.5]) {
       testWidgets('mobile ${lang.name} at $scale text scale all tabs fit', (
@@ -319,7 +309,6 @@ void main() {
               asOf: date,
               onCompany: (_, _) {},
               onGuru: (_, _) {},
-              onAccounts: () {},
             ),
           ),
         ),
