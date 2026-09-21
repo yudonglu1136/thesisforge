@@ -71,7 +71,7 @@ if h.hexdigest() != expected_sha:
     raise SystemExit("13f_sidecar_hash_mismatch")
 manifest = json.load(open(manifest_path, encoding="utf-8"))
 if (
-    manifest.get("version") != "institutional-13f-artifact-v3"
+    manifest.get("version") not in {"institutional-13f-artifact-v3", "institutional-13f-artifact-v5"}
     or manifest.get("releaseId") != release_id
     or manifest.get("state") != "verified"
     or manifest.get("table") != "institutional_13f_insight_snapshots_v2"

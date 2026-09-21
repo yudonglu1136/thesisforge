@@ -102,7 +102,12 @@ export function validateInstitutional13fArtifact(file,manifestPath,{trustedUid=0
     ||manifestStat.size>65536)fail('institutional_13f_artifact_permissions');
   if(fs.existsSync(`${database}-wal`)&&stat(`${database}-wal`).size>0)fail('institutional_13f_artifact_pending_wal');
   const manifest=JSON.parse(fs.readFileSync(metadata,'utf8'));
-  const expectedTable=manifest.version==='institutional-13f-artifact-v3'
+  const fullArtifactVersions=new Set([
+    'institutional-13f-artifact-v3',
+    'institutional-13f-artifact-v5',
+  ]);
+  const fullArtifact=fullArtifactVersions.has(manifest.version);
+  const expectedTable=fullArtifact
     ? 'institutional_13f_insight_snapshots_v2'
     : manifest.version==='institutional-13f-artifact-v2'
     ? 'institutional_13f_insight_snapshots_v2'
@@ -117,13 +122,13 @@ export function validateInstitutional13fArtifact(file,manifestPath,{trustedUid=0
     ||!Number.isSafeInteger(manifest.rows)||manifest.rows<1)fail('institutional_13f_manifest_invalid');
   const digest=crypto.createHash('sha256').update(fs.readFileSync(database)).digest('hex');
   if(digest!==manifest.file.sha256)fail('institutional_13f_artifact_hash_mismatch');
-  const auxiliaryTables=manifest.version==='institutional-13f-artifact-v3'
+  const auxiliaryTables=fullArtifact
     ? ['institutional_13f_insight_details_v1','institutional_13f_market_history_v1','institutional_13f_security_history_v1']
     : [];
-  if(manifest.version==='institutional-13f-artifact-v3'
+  if(fullArtifact
     && (!Number.isSafeInteger(manifest.detailRows)||manifest.detailRows<1
       ||!Number.isSafeInteger(manifest.marketRows)||manifest.marketRows<1))fail('institutional_13f_manifest_invalid');
-  if(manifest.version==='institutional-13f-artifact-v3'
+  if(fullArtifact
     && (!Number.isSafeInteger(manifest.securityHistoryRows)||manifest.securityHistoryRows<1))fail('institutional_13f_manifest_invalid');
   assertTables(database,[expectedTable,...auxiliaryTables],[expectedTable,...auxiliaryTables]);
   const db=new DatabaseSync(database,{readOnly:true});

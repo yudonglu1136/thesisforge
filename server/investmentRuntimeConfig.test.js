@@ -103,6 +103,25 @@ test('13F sidecar accepts the compact v2 artifact without allowing mixed tables'
   a.throws(()=>validateInstitutional13fArtifact(file,manifestPath,{trustedUid}),/manifest_invalid/);
 });
 
+test('13F sidecar accepts the evidence-led v5 artifact with complete detail tables',t=>{
+  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'tf-13f-v5-artifact-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const file=path.join(root,'13f.sqlite'),manifestPath=path.join(root,'manifest.json'),db=new DatabaseSync(file);
+  db.exec(`CREATE TABLE institutional_13f_insight_snapshots_v2(report_date TEXT,source_generation TEXT,available_at TEXT,generated_at TEXT,payload_hash TEXT,payload_gzip BLOB,PRIMARY KEY(report_date,source_generation));
+    CREATE TABLE institutional_13f_insight_details_v1(report_date TEXT,source_generation TEXT,ticker TEXT,payload_hash TEXT,payload_gzip BLOB,PRIMARY KEY(report_date,source_generation,ticker));
+    CREATE TABLE institutional_13f_market_history_v1(report_date TEXT,source_generation TEXT,segment TEXT,PRIMARY KEY(report_date,source_generation,segment));
+    CREATE TABLE institutional_13f_security_history_v1(report_date TEXT,source_generation TEXT,ticker TEXT,PRIMARY KEY(report_date,source_generation,ticker));
+    INSERT INTO institutional_13f_insight_snapshots_v2 VALUES('2026-06-30','g','2026-08-14','2026-09-21','h',X'00');
+    INSERT INTO institutional_13f_insight_details_v1 VALUES('2026-06-30','g','MSFT','h',X'00');
+    INSERT INTO institutional_13f_market_history_v1 VALUES('2026-06-30','g','all');
+    INSERT INTO institutional_13f_security_history_v1 VALUES('2026-06-30','g','MSFT');`);db.close();
+  const bytes=fs.readFileSync(file),trustedUid=fs.statSync(file).uid;
+  const manifest={version:'institutional-13f-artifact-v5',state:'verified',rows:1,detailRows:1,marketRows:1,securityHistoryRows:1,
+    table:'institutional_13f_insight_snapshots_v2',checks:{integrity:'ok',naturalKeyUniqueness:'pass',privateDataExcluded:true},
+    file:{path:file,bytes:bytes.length,sha256:crypto.createHash('sha256').update(bytes).digest('hex')}};
+  fs.writeFileSync(manifestPath,JSON.stringify(manifest));fs.chmodSync(file,0o400);fs.chmodSync(manifestPath,0o400);
+  a.equal(validateInstitutional13fArtifact(file,manifestPath,{trustedUid}).version,'institutional-13f-artifact-v5');
+});
+
 test('reviewed manifest validates exact versions paths sizes and distinct physical files without scanning large payloads',t=>{
   const {manifest,paths,options}=fixture(t);
   a.equal(validateInvestmentRelease(manifest,paths,options),manifest);
