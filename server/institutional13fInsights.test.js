@@ -43,6 +43,51 @@ test('13F insights exposes all-filer snapshots without a Guru selection',()=>{
   assert.equal(JSON.stringify(result).includes('VANGRD'),false);
 });
 
+test('13F active scope is fail-closed and keeps its own manager analysis and history',()=>{
+  const source=fixture();
+  source.db.exec(`CREATE TABLE institutional_13f_active_snapshots_v1(
+    report_date TEXT,source_generation TEXT,available_at TEXT,generated_at TEXT,
+    payload_hash TEXT,payload_gzip BLOB,PRIMARY KEY(report_date,source_generation));
+    CREATE TABLE institutional_13f_active_details_v1(
+    report_date TEXT,source_generation TEXT,ticker TEXT,payload_hash TEXT,payload_gzip BLOB,
+    PRIMARY KEY(report_date,source_generation,ticker));`);
+  const insert=source.db.prepare('INSERT INTO institutional_13f_active_snapshots_v1 VALUES(?,?,?,?,?,?)');
+  for(const [date,available,value] of [
+    ['2026-03-31','2026-05-15',1200],['2026-06-30','2026-08-14',1450],
+  ]) {
+    const payload={
+      version:'institutional-active-13f-v1',reportDate:date,availableAt:available,
+      coverage:{scope:'conservative_active_manager_proxy',includedManagers:212,
+        classificationBuckets:{active:212,excluded_passive_index:14,excluded_bank_custody:80,excluded_unknown_mixed:500}},
+      rows:[{ticker:'META',name:'Meta',holders:65,increases:22,reductions:9,currentValueM:value,
+        currentUnitsK:value*10,sharesOutstandingK:2200000,institutionalOwnershipPct:6.2,segments:['all']}],
+      institutions:[{investorId:'FIDLTY',name:'FMR LLC',currentValueM:80000,previousValueM:76000}],
+      activeAnalysis:{summary:{activeManagers:212,activeBookValueM:1800000,medianTurnoverProxy:.08,medianTop10Weight:.42},
+        sectorRotation:[{sector:'Technology',currentWeight:.31,previousWeight:.29,weightChangePp:2}],
+        managerLeaders:[{investorId:'FIDLTY',name:'FMR LLC',turnoverProxy:.12,top10Weight:.38}]},
+    };
+    insert.run(date,'active-g1',available,'2026-09-22T00:00:00Z',`active-${date}`,gzipSync(JSON.stringify(payload)));
+  }
+  source.db.prepare('INSERT INTO institutional_13f_active_details_v1 VALUES(?,?,?,?,?)').run(
+    '2026-06-30','active-g1','META','active-detail',gzipSync(JSON.stringify({
+      increased:[{investorId:'FIDLTY',name:'FMR LLC',currentValueM:400,previousValueM:300}],
+      analysis:{headlineKey:'positive_breadth_net_increase'},
+    })),
+  );
+  const result=institutional13fInsights(source,'2026-09-18',null,{
+    scope:'active',ticker:'META',includeDetail:true,
+  });
+  assert.equal(result.version,'institutional-active-13f-v1');
+  assert.equal(result.coverage.scope,'conservative_active_manager_proxy');
+  assert.equal(result.coverage.includedManagers,212);
+  assert.equal(result.activeAnalysis.summary.medianTurnoverProxy,.08);
+  assert.deepEqual(result.details.META.history.map(row=>row.institutionalValueM),[1200,1450]);
+  assert.equal(JSON.stringify(result).includes('BLACKROCK'),false);
+  const detail=institutional13fInsightDetail(source,'META','2026-09-18',null,'active');
+  assert.equal(detail.scope,'active');
+  assert.equal(detail.details.increased[0].investorId,'FIDLTY');
+});
+
 test('13F summary route is bounded, ranked and omits the retired institution directory',()=>{
   const source=fixture();
   const result=institutional13fInsights(source,'2026-09-18',null,{

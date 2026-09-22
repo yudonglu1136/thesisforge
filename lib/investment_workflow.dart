@@ -159,6 +159,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       discoverSearch = '',
       opportunityReturnPage = 'home';
   String insightQuarter = '',
+      insightUniverse = 'all',
       insightAction = 'increased',
       insightPerspective = 'stocks',
       insightStockRanking = 'amount',
@@ -259,6 +260,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     discoverSearch = query['discoverSearch'] ?? '';
     discoverSearchInput.text = discoverSearch;
     insightQuarter = query['insightQuarter'] ?? '';
+    insightUniverse = query['insightScope'] == 'active' ? 'active' : 'all';
     insightAction =
         const {
           'new',

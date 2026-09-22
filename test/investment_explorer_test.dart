@@ -150,20 +150,87 @@ class ExplorerApi extends opportunities.OpportunityApi {
   Future<Map<String, dynamic>> getJson(String path) async {
     if (path.startsWith('/api/investment/13f-insights?')) {
       if (listFails) throw StateError('fixture outage');
+      final active = Uri.parse(path).queryParameters['scope'] == 'active';
       return {
-        'version': 'institutional-13f-insights-v3',
+        'version': active
+            ? 'institutional-active-13f-v1'
+            : 'institutional-13f-insights-v3',
         'asOf': '2026-06-01',
         'reportDate': '2026-03-31',
         'previousReportDate': '2025-12-31',
         'availableAt': '2026-05-15',
         'quarters': ['2026-03-31', '2025-12-31'],
         'coverage': {
-          'currentFilers': 8581,
+          'currentFilers': active ? 224 : 8581,
           'previousFilers': 8627,
           'securities': 3,
           'comparablePositions': 12000,
-          'scope': 'all_sf3_institutional_filers',
+          'scope': active
+              ? 'conservative_active_manager_proxy'
+              : 'all_sf3_institutional_filers',
+          if (active) 'includedManagers': 224,
+          if (active)
+            'classificationBuckets': {
+              'active': 224,
+              'excluded_passive_index': 18,
+              'excluded_bank_custody': 94,
+              'excluded_asset_owner': 27,
+              'excluded_unknown_mixed': 611,
+            },
         },
+        if (active)
+          'activeAnalysis': {
+            'summary': {
+              'activeManagers': 224,
+              'activeBookValueM': 1820000.0,
+              'medianTurnoverProxy': .083,
+              'medianTop10Weight': .461,
+            },
+            'sectorRotation': [
+              {
+                'sector': 'Technology',
+                'currentWeight': .31,
+                'previousWeight': .287,
+                'weightChangePp': 2.3,
+              },
+              {
+                'sector': 'Healthcare',
+                'currentWeight': .17,
+                'previousWeight': .181,
+                'weightChangePp': -1.1,
+              },
+            ],
+            'managerLeaders': [
+              {
+                'investorId': 'FIDLTY',
+                'name': 'FMR LLC',
+                'currentValueM': 180000.0,
+                'holdings': 920,
+                'turnoverProxy': .127,
+                'top10Weight': .382,
+                'sectorHhi': .16,
+                'largestSectorShift': {
+                  'sector': 'Technology',
+                  'weightChangePp': 1.8,
+                },
+                'topAdds': [
+                  {'ticker': 'META', 'action': 'increased'},
+                ],
+                'topTrims': [
+                  {'ticker': 'AAPL', 'action': 'reduced'},
+                ],
+              },
+            ],
+            'rotationCandidates': [
+              {
+                'investorId': 'FIDLTY',
+                'name': 'FMR LLC',
+                'turnoverProxy': .127,
+                'added': {'ticker': 'META'},
+                'reduced': {'ticker': 'AAPL'},
+              },
+            ],
+          },
         'activity': {
           'newPositions': 120,
           'increases': 430,
@@ -686,6 +753,25 @@ void main() {
     expect(find.byKey(const ValueKey('13f-stock-ISRG')), findsNothing);
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+    'active-fund lens exposes concentration, rotation and exclusions',
+    (tester) async {
+      await mountExplorer(tester, ExplorerApi());
+      await tapKey(tester, '13f-scope-active');
+      expect(
+        find.byKey(const ValueKey('13f-active-dashboard')),
+        findsOneWidget,
+      );
+      expect(find.text('Active-manager positioning'), findsOneWidget);
+      expect(find.text('FMR LLC'), findsWidgets);
+      expect(find.textContaining('Passive/index excluded'), findsOneWidget);
+      expect(find.textContaining('Median turnover proxy'), findsOneWidget);
+      expect(find.text('Technology'), findsWidgets);
+      expect(find.text('META'), findsWidgets);
+      expect(find.text('AAPL'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets(
     'exit ranking shows exited amount instead of a meaningless minus 100 percent',
     (tester) async {

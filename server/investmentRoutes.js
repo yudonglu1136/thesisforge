@@ -52,9 +52,9 @@ export function registerInvestmentRoutes(app,service) {
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/13f-insights',(_,r)=>institutional13fInsights(service.source,service.date(r.query.asOf),r.query.quarter??null,{
     ticker:r.query.ticker,action:r.query.action,rank:r.query.rank,segment:r.query.segment,
-    search:r.query.search,limit:r.query.limit,
+    search:r.query.search,limit:r.query.limit,scope:r.query.scope,
   }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
-  route('get','/13f-insights/:ticker',(_,r)=>institutional13fInsightDetail(service.source,r.params.ticker,service.date(r.query.asOf),r.query.quarter??null),
+  route('get','/13f-insights/:ticker',(_,r)=>institutional13fInsightDetail(service.source,r.params.ticker,service.date(r.query.asOf),r.query.quarter??null,r.query.scope??'all'),
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/opportunities/:ticker',(_,r)=>opportunityCompanySummary(service.source,r.params.ticker,service.date(r.query.asOf)),
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});

@@ -32,7 +32,7 @@ function setBounded(entries,key,value,limit) {
 }
 
 function snapshotKey(row) {
-  return `${row.report_date}|${row.payload_hash??row.generated_at}`;
+  return `${row.snapshot_table}|${row.report_date}|${row.payload_hash??row.generated_at}`;
 }
 
 function selectedPayload(source,row) {
@@ -40,7 +40,7 @@ function selectedPayload(source,row) {
   const key=snapshotKey(row);
   if (entries.has(key)) return entries.get(key);
   const db=source.insightsDb??source.db;
-  const compressed=row.snapshot_table.endsWith('_v2');
+  const compressed=tableColumns(source,row.snapshot_table).has('payload_gzip');
   const payloadColumn=compressed?'payload_gzip':'payload_json';
   const payload=parse(db.prepare(`SELECT ${payloadColumn} FROM ${row.snapshot_table}
     WHERE report_date=? AND source_generation=? AND generated_at=?`).get(
@@ -99,7 +99,14 @@ function visibleRows(db,table,asOf) {
 function lazyDetail(source, selected, ticker, payload) {
   const db=source.insightsDb??source.db;
   let detail;
-  if (tableExists(source,'institutional_13f_insight_details_v1')) {
+  if (selected.snapshot_table==='institutional_13f_active_snapshots_v1'
+      &&tableExists(source,'institutional_13f_active_details_v1')) {
+    const row=db.prepare(`SELECT payload_gzip FROM institutional_13f_active_details_v1
+      WHERE report_date=? AND source_generation=? AND ticker=?`).get(
+      selected.report_date,selected.source_generation,ticker,
+    );
+    if (row?.payload_gzip) detail=parse(row)??{};
+  } else if (tableExists(source,'institutional_13f_insight_details_v1')) {
     const row=db.prepare(`SELECT payload_gzip FROM institutional_13f_insight_details_v1
       WHERE report_date=? AND source_generation=? AND ticker=?`).get(
       selected.report_date,selected.source_generation,ticker,
@@ -145,6 +152,7 @@ function normalizeDetail(detail,institutions=[]) {
 
 function marketHistory(source, visible, selected) {
   const db=source.insightsDb??source.db;
+  if (selected.snapshot_table==='institutional_13f_active_snapshots_v1') return [];
   if (!tableExists(source,'institutional_13f_market_history_v1')) return [];
   const bounded=visible.filter(row=>row.report_date<=selected.report_date);
   const visibleByKey=new Map(bounded.map(row=>[
@@ -190,14 +198,14 @@ function compactRows(rows=[]) {
   }));
 }
 
-function visibleSnapshot(source, asOf, reportDate = null) {
+function visibleSnapshot(source, asOf, reportDate = null, scope = 'all') {
   isoDate(asOf);
   if (reportDate) isoDate(reportDate);
   const db=source.insightsDb??source.db;
-  const tables=[
-    'institutional_13f_insight_snapshots_v2',
-    'institutional_13f_insight_snapshots',
-  ].filter(table=>tableExists(source,table));
+  const tables=(scope==='active'
+    ?['institutional_13f_active_snapshots_v1']
+    :['institutional_13f_insight_snapshots_v2','institutional_13f_insight_snapshots'])
+    .filter(table=>tableExists(source,table));
   assert(tables.length, 'institutional_13f_insights_unavailable');
   let visible=[];
   for (const table of tables) {
@@ -218,7 +226,8 @@ function securityHistory(source, visible, selected, selectedData, ticker) {
   const cacheKey=`${bounded.map(snapshotKey).join(';')}|${ticker}`;
   const cached=cacheEntries(securityHistoryCache,source);
   if (cached.has(cacheKey)) return cached.get(cacheKey);
-  if (tableExists(source,'institutional_13f_security_history_v1')) {
+  if (selected.snapshot_table!=='institutional_13f_active_snapshots_v1'
+      &&tableExists(source,'institutional_13f_security_history_v1')) {
     const columns=tableColumns(source,'institutional_13f_security_history_v1');
     const hasValue=columns.has('institutional_value_m');
     const hasRawShares=columns.has('institutional_shares_raw_k');
@@ -310,7 +319,8 @@ function queryOptions(input) {
   const limit=Number.isInteger(parsedLimit)?Math.min(200,Math.max(20,parsedLimit)):100;
   const ticker=typeof value.ticker==='string'&&/^[A-Z][A-Z0-9.-]{0,14}$/.test(value.ticker)
     ?value.ticker:null;
-  return {action,rank,segment,search,limit,ticker,includeDetail:Boolean(value.includeDetail)};
+  const scope=value.scope==='active'?'active':'all';
+  return {action,rank,segment,search,limit,ticker,scope,includeDetail:Boolean(value.includeDetail)};
 }
 
 function rankedRows(rows,options) {
@@ -341,8 +351,8 @@ function actionLeaders(rows) {
 
 export function institutional13fInsights(source, asOf, reportDate = null, input = null) {
   const options=queryOptions(input);
-  const {payload,selected,visible,quarters}=visibleSnapshot(source,asOf,reportDate);
-  const responseKey=`${snapshotKey(selected)}|${asOf}|${options.action}|${options.rank}|${options.segment}|${options.search}|${options.limit}|${options.ticker??''}|${options.includeDetail}`;
+  const {payload,selected,visible,quarters}=visibleSnapshot(source,asOf,reportDate,options.scope);
+  const responseKey=`${snapshotKey(selected)}|${asOf}|${options.scope}|${options.action}|${options.rank}|${options.segment}|${options.search}|${options.limit}|${options.ticker??''}|${options.includeDetail}`;
   const responseEntries=cacheEntries(summaryResponseCache,source);
   if (responseEntries.has(responseKey)) return responseEntries.get(responseKey);
   const matches=rankedRows(payload.rows??[],options);
@@ -371,7 +381,9 @@ export function institutional13fInsights(source, asOf, reportDate = null, input 
     details: boundedDetails,
     coverage: {
       ...payload.coverage,
-      scope: 'all_sf3_institutional_filers',
+      scope: options.scope==='active'
+        ?(payload.coverage?.scope??'conservative_active_manager_proxy')
+        :'all_sf3_institutional_filers',
       selectedGuruCount: null,
     },
   };
@@ -379,10 +391,11 @@ export function institutional13fInsights(source, asOf, reportDate = null, input 
   return response;
 }
 
-export function institutional13fInsightDetail(source, ticker, asOf, reportDate = null) {
+export function institutional13fInsightDetail(source, ticker, asOf, reportDate = null, scope = 'all') {
   isoDate(asOf);
   assert(/^[A-Z][A-Z0-9.-]{0,14}$/.test(ticker),'invalid_ticker');
-  const {payload,visible,selected}=visibleSnapshot(source,asOf,reportDate);
+  const normalizedScope=scope==='active'?'active':'all';
+  const {payload,visible,selected}=visibleSnapshot(source,asOf,reportDate,normalizedScope);
   const row=payload.rows.find(item=>item.ticker===ticker);
   assert(row,'institutional_13f_security_not_found');
   return {
@@ -390,7 +403,7 @@ export function institutional13fInsightDetail(source, ticker, asOf, reportDate =
     previousReportDate:payload.previousReportDate??null,
     availableAt:payload.availableAt??selected.available_at,
     sourceObservedAt:payload.sourceObservedAt??null,
-    sourceGeneration:selected.source_generation,
+    sourceGeneration:selected.source_generation,scope:normalizedScope,
     ticker,row,
     details:{
       ...lazyDetail(source,selected,ticker,payload),

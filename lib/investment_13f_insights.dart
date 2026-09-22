@@ -38,8 +38,24 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     unawaited(load13FInsights());
   }
 
+  void _select13FUniverse(String universe) {
+    if (universe == insightUniverse) return;
+    updateUI(() {
+      insightUniverse = universe;
+      insightQuarter = '';
+      insightTicker = '';
+      insightInvestor = '';
+      insightSearch = '';
+      insightSearchInput.clear();
+      institutional13f = null;
+    });
+    _persist13FInsights();
+    unawaited(load13FInsights());
+  }
+
   void _persist13FInsights() => replaceBrowserQuery({
     'insightQuarter': insightQuarter,
+    'insightScope': insightUniverse == 'active' ? 'active' : null,
     'insightAction': insightAction == 'increased' ? null : insightAction,
     'insightView': null,
     'insightRank': insightStockRanking == 'amount' ? null : insightStockRanking,
@@ -55,7 +71,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
   }, replaceCurrent: true);
 
   String _insightDetailCacheKey(String ticker, [String? quarter]) =>
-      '$asOf|${quarter ?? insightQuarter}|$ticker';
+      '$asOf|$insightUniverse|${quarter ?? insightQuarter}|$ticker';
 
   void _merge13FInsightDetail(String ticker, Map<String, dynamic> detail) {
     final current = Map<String, dynamic>.from(institutional13f ?? {});
@@ -80,6 +96,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
         'action': insightAction,
         'rank': insightStockRanking,
         'segment': insightMarketSegment,
+        'scope': insightUniverse,
         'limit': '100',
         if (insightSearch.trim().isNotEmpty) 'search': insightSearch.trim(),
         if (insightTicker.isNotEmpty) 'ticker': insightTicker,
@@ -118,8 +135,12 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       if (mounted && serial == insightSerial) {
         updateUI(
           () => insightError = w(
-            'Could not load the all-institution 13F tape.',
-            '暂时无法加载全机构 13F 数据。',
+            insightUniverse == 'active'
+                ? 'Could not load the active-manager 13F view.'
+                : 'Could not load the all-institution 13F tape.',
+            insightUniverse == 'active'
+                ? '暂时无法加载主动基金 13F 视图。'
+                : '暂时无法加载全机构 13F 数据。',
           ),
         );
       }
@@ -153,7 +174,14 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     updateUI(() => insightDetailLoading.add(cacheKey));
     try {
       final data = await widget.api.getJson(
-        '/api/investment/13f-insights/${Uri.encodeComponent(ticker)}?asOf=$cutoff&quarter=$quarter',
+        Uri(
+          path: '/api/investment/13f-insights/${Uri.encodeComponent(ticker)}',
+          queryParameters: {
+            'asOf': cutoff,
+            'quarter': quarter,
+            'scope': insightUniverse,
+          },
+        ).toString(),
       );
       if (!mounted || serial != insightSerial || cutoff != asOf) return;
       final nextDetail = asMap(data['details']);
@@ -241,6 +269,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
   List<Widget> institutional13fInsightsPage() {
     final data = institutional13f;
     final coverage = asMap(data?['coverage']);
+    final active = insightUniverse == 'active';
     return [
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
@@ -256,8 +285,12 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             const SizedBox(width: 10),
             Expanded(
               child: label(
-                'Full 13F universe · Rankings use every covered institutional filer. Guru selections do not change this page.',
-                '全量 13F 机构口径 · 排名使用全部已覆盖申报机构，Guru 的选择不会影响本页。',
+                active
+                    ? 'Active-manager lens · Banks, custodians, explicit index complexes, asset owners and uncertain mixed filers are excluded by default.'
+                    : 'Full 13F universe · Rankings use every covered institutional filer. Guru selections do not change this page.',
+                active
+                    ? '主动基金视角 · 默认排除银行、托管机构、明确的指数机构、资产所有者及无法确认的混合机构。'
+                    : '全量 13F 机构口径 · 排名使用全部已覆盖申报机构，Guru 的选择不会影响本页。',
                 size: 13,
                 color: p.text,
               ),
@@ -267,10 +300,23 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       ),
       const SizedBox(height: 16),
       Wrap(
-        spacing: 18,
+        spacing: 10,
         runSpacing: 10,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
+          ChoiceChip(
+            key: const ValueKey('13f-scope-all'),
+            label: Text(w('All institutions', '全部机构')),
+            selected: !active,
+            onSelected: (_) => _select13FUniverse('all'),
+          ),
+          ChoiceChip(
+            key: const ValueKey('13f-scope-active'),
+            label: Text(w('Active funds', '主动基金')),
+            selected: active,
+            onSelected: (_) => _select13FUniverse('active'),
+          ),
+          const SizedBox(width: 4),
           if (insightQuarter.isNotEmpty)
             DropdownButton<String>(
               key: const ValueKey('13f-quarter'),
@@ -295,8 +341,12 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
               },
             ),
           label(
-            '${_integer(coverage['currentFilers'])} filers · ${_integer(coverage['securities'])} securities · ${_integer(coverage['comparablePositions'])} comparable positions',
-            '${_integer(coverage['currentFilers'])} 家申报机构 · ${_integer(coverage['securities'])} 只证券 · ${_integer(coverage['comparablePositions'])} 个可比仓位',
+            active
+                ? '${_integer(coverage['includedManagers'])} active managers · ${_integer(coverage['securities'])} securities · ${_integer(coverage['comparablePositions'])} comparable positions'
+                : '${_integer(coverage['currentFilers'])} filers · ${_integer(coverage['securities'])} securities · ${_integer(coverage['comparablePositions'])} comparable positions',
+            active
+                ? '${_integer(coverage['includedManagers'])} 家主动管理机构 · ${_integer(coverage['securities'])} 只证券 · ${_integer(coverage['comparablePositions'])} 个可比仓位'
+                : '${_integer(coverage['currentFilers'])} 家申报机构 · ${_integer(coverage['securities'])} 只证券 · ${_integer(coverage['comparablePositions'])} 个可比仓位',
             size: 12,
           ),
           label(
@@ -329,7 +379,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
         ),
       if (data != null) ...[
         const SizedBox(height: 14),
-        _insightMarketPulse(),
+        if (active) _activeFundDashboard() else _insightMarketPulse(),
         const SizedBox(height: 22),
         _insightActionCards(),
         const SizedBox(height: 22),
@@ -345,8 +395,12 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: label(
-                'Common-stock positions only. The market pulse divides aggregate reported value by the sum of unique covered securities’ quarter-end Sharadar market capitalizations. New and exited positions compare adjacent quarter-end books; increases and reductions compare split-adjusted reported units. Net change is valued at the current quarter implied price. Percentage rankings divide net reported value change or aggregate institutional value by quarter-end Sharadar market capitalization; at the same implied price this is equivalent to using total shares outstanding, not free float. Counts use the full SF3 filer universe, while detail rows are bounded. 13F disclosures are delayed and do not reveal trade dates or execution prices.',
-                '仅统计普通股持仓。宏观脉搏用机构申报持股总市值除以覆盖股票的 Sharadar 季末总市值。新建仓与清仓比较相邻季末组合；加仓与减仓按拆股调整后的申报股数比较；净变化按本季度隐含价格折算。比例排名以机构净变化市值或机构持股市值除以 Sharadar 季末总市值；在相同隐含价格下等价于使用总股本，而非自由流通股。计数覆盖完整 SF3 机构范围，明细行做有界展示。13F 存在披露延迟，不提供实际交易日期或成交价。',
+                active
+                    ? 'This is a conservative manager-level proxy, not a fund-by-fund mandate classification. Explicit passive/index complexes, banks, custodians, broker-dealers, asset owners and uncertain or mixed filers fail closed. Turnover is one-half of gross adjacent-quarter reported portfolio-weight change; sector rotation is the change in reported sector weights. Both include price and composition effects and are not verified trades or flows. Stock changes use split-adjusted reported shares. 13F disclosures are delayed.'
+                    : 'Common-stock positions only. The market pulse divides aggregate reported value by the sum of unique covered securities’ quarter-end Sharadar market capitalizations. New and exited positions compare adjacent quarter-end books; increases and reductions compare split-adjusted reported units. Net change is valued at the current quarter implied price. Percentage rankings divide net reported value change or aggregate institutional value by quarter-end Sharadar market capitalization; at the same implied price this is equivalent to using total shares outstanding, not free float. Counts use the full SF3 filer universe, while detail rows are bounded. 13F disclosures are delayed and do not reveal trade dates or execution prices.',
+                active
+                    ? '这是保守的机构级代理分类，不是逐基金的投资授权分类。明确的被动/指数机构、银行、托管、券商、资产所有者及无法确认或混合机构默认排除。换手率为相邻季度申报组合权重绝对变化之和的一半；行业轮动为申报行业权重变化。两者都包含价格和组合结构影响，不代表已验证的交易或资金流。个股变化按拆股调整后的申报股数计算，且 13F 披露存在延迟。'
+                    : '仅统计普通股持仓。宏观脉搏用机构申报持股总市值除以覆盖股票的 Sharadar 季末总市值。新建仓与清仓比较相邻季末组合；加仓与减仓按拆股调整后的申报股数比较；净变化按本季度隐含价格折算。比例排名以机构净变化市值或机构持股市值除以 Sharadar 季末总市值；在相同隐含价格下等价于使用总股本，而非自由流通股。计数覆盖完整 SF3 机构范围，明细行做有界展示。13F 存在披露延迟，不提供实际交易日期或成交价。',
                 size: 12,
               ),
             ),
@@ -367,6 +421,522 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     'smallCap' => w('US small cap', '美国小盘股'),
     _ => w('All covered equities', '全市场覆盖股票'),
   };
+
+  String _activeRatio(dynamic value, {int digits = 1}) {
+    final parsed = nullableNumber(value);
+    return parsed == null ? '—' : '${(parsed * 100).toStringAsFixed(digits)}%';
+  }
+
+  Widget _activeFundDashboard() {
+    final analysis = asMap(institutional13f?['activeAnalysis']);
+    final summary = asMap(analysis['summary']);
+    final coverage = asMap(institutional13f?['coverage']);
+    final buckets = asMap(coverage['classificationBuckets']);
+    final sectors = asList(analysis['sectorRotation']).take(6).toList();
+    final managers = asList(analysis['managerLeaders']).take(12).toList();
+    final rotations = asList(analysis['rotationCandidates']).take(6).toList();
+    return Container(
+      key: const ValueKey('13f-active-dashboard'),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: p.panel,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: p.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: p.accent.withValues(alpha: .1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(Icons.manage_search, color: p.accent, size: 21),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      w('Active-manager positioning', '主动基金持仓动向'),
+                      style: TextStyle(
+                        color: p.text,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    label(
+                      'What confirmed active managers own, changed and rotated between adjacent reported quarters',
+                      '观察已确认主动管理机构在相邻申报季度的持仓、增减与轮动',
+                      size: 11,
+                    ),
+                  ],
+                ),
+              ),
+              Tooltip(
+                message: w(
+                  'Conservative manager-level classification; uncertain and mixed filers are excluded.',
+                  '保守的机构级分类；不确定和混合机构默认排除。',
+                ),
+                child: Icon(
+                  Icons.verified_user_outlined,
+                  color: p.muted,
+                  size: 18,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 15),
+          LayoutBuilder(
+            builder: (_, constraints) {
+              final columns = constraints.maxWidth < 560
+                  ? 1
+                  : constraints.maxWidth < 980
+                  ? 2
+                  : 4;
+              final width =
+                  (constraints.maxWidth - (columns - 1) * 10) / columns;
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _activeMetricCard(
+                    width,
+                    w('Active managers', '主动管理机构'),
+                    _integer(summary['activeManagers']),
+                    w('Included after exclusions', '完成排除后的纳入数'),
+                  ),
+                  _activeMetricCard(
+                    width,
+                    w('Reported equity book', '申报股票组合'),
+                    _usdMillions(summary['activeBookValueM']),
+                    w('Aggregate quarter-end value', '季末申报市值合计'),
+                  ),
+                  _activeMetricCard(
+                    width,
+                    w('Median turnover proxy', '换手率代理中位数'),
+                    _activeRatio(summary['medianTurnoverProxy']),
+                    w('Half gross weight change', '组合权重变化绝对值之和的一半'),
+                  ),
+                  _activeMetricCard(
+                    width,
+                    w('Median Top 10 weight', '前十大集中度中位数'),
+                    _activeRatio(summary['medianTop10Weight']),
+                    w('Reported equity book', '占申报股票组合'),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: p.card.withValues(alpha: .72),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: p.border),
+            ),
+            child: Wrap(
+              spacing: 16,
+              runSpacing: 6,
+              children: [
+                label(
+                  '${w('Included', '纳入')} ${_integer(coverage['includedManagers'])}',
+                  '${w('Included', '纳入')} ${_integer(coverage['includedManagers'])}',
+                  color: p.accent,
+                  size: 11,
+                ),
+                label(
+                  '${w('Passive/index excluded', '排除被动/指数')} ${_integer(buckets['excluded_passive_index'])}',
+                  '${w('Passive/index excluded', '排除被动/指数')} ${_integer(buckets['excluded_passive_index'])}',
+                  size: 11,
+                ),
+                label(
+                  '${w('Bank/custody excluded', '排除银行/托管')} ${_integer(buckets['excluded_bank_custody'])}',
+                  '${w('Bank/custody excluded', '排除银行/托管')} ${_integer(buckets['excluded_bank_custody'])}',
+                  size: 11,
+                ),
+                label(
+                  '${w('Unknown/mixed excluded', '排除未知/混合')} ${_integer(buckets['excluded_unknown_mixed'])}',
+                  '${w('Unknown/mixed excluded', '排除未知/混合')} ${_integer(buckets['excluded_unknown_mixed'])}',
+                  size: 11,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            w('Sector concentration & rotation', '行业集中度与轮动'),
+            style: TextStyle(
+              color: p.text,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          label(
+            'Aggregate reported active-manager weight and quarter-over-quarter change',
+            '主动管理样本的申报行业权重及环比变化',
+            size: 11,
+          ),
+          const SizedBox(height: 10),
+          if (sectors.isEmpty)
+            label('Sector evidence is not available.', '暂无可用的行业证据。')
+          else
+            LayoutBuilder(
+              builder: (_, constraints) {
+                final width = constraints.maxWidth < 720
+                    ? constraints.maxWidth
+                    : (constraints.maxWidth - 10) / 2;
+                return Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  children: [
+                    for (final sector in sectors)
+                      _activeSectorRow(sector, width),
+                  ],
+                );
+              },
+            ),
+          const SizedBox(height: 20),
+          Text(
+            w('Managers worth inspecting', '值得进一步查看的主动机构'),
+            style: TextStyle(
+              color: p.text,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          label(
+            'Ranked by estimated absolute repositioning (reported book × turnover proxy). Adds and trims are reported-position changes, not verified trades.',
+            '按估算绝对调仓规模（申报组合规模 × 换手率代理）排序；加减仓是申报持仓变化，不代表已验证交易。',
+            size: 11,
+          ),
+          const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (_, constraints) {
+              final width = constraints.maxWidth < 760
+                  ? constraints.maxWidth
+                  : (constraints.maxWidth - 10) / 2;
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final manager in managers)
+                    _activeManagerCard(manager, width),
+                ],
+              );
+            },
+          ),
+          if (rotations.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Text(
+              w('Possible same-manager rotations', '同一机构的可能换股线索'),
+              style: TextStyle(
+                color: p.text,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            label(
+              'Pairs each manager’s largest reported add with its largest trim for research; no causal link is implied.',
+              '并列同一机构最大申报加仓与减仓，供研究使用；不推断两者存在因果关系。',
+              size: 11,
+            ),
+            const SizedBox(height: 8),
+            for (final rotation in rotations) _activeRotationRow(rotation),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _activeMetricCard(
+    double width,
+    String title,
+    String value,
+    String note,
+  ) => SizedBox(
+    width: width,
+    child: Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: p.card,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: p.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: TextStyle(color: p.muted, fontSize: 11)),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: TextStyle(
+              color: p.accent,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(note, style: TextStyle(color: p.muted, fontSize: 9)),
+        ],
+      ),
+    ),
+  );
+
+  Widget _activeSectorRow(Map<String, dynamic> sector, double width) {
+    final current = nullableNumber(sector['currentWeight']);
+    final change = nullableNumber(sector['weightChangePp']);
+    return SizedBox(
+      width: width,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: p.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: p.border),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    text(sector['sector'], w('Unclassified', '未分类')),
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  LinearProgressIndicator(
+                    value: current == null ? 0 : current.clamp(0, 1).toDouble(),
+                    minHeight: 3,
+                    backgroundColor: p.border,
+                    valueColor: AlwaysStoppedAnimation(p.accent),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 14),
+            Text(
+              _activeRatio(current),
+              style: TextStyle(color: p.text, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 66,
+              child: Text(
+                change == null
+                    ? '—'
+                    : '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)} pp',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  color: change == null || change >= 0 ? p.accent : p.secondary,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _activeManagerCard(Map<String, dynamic> manager, double width) {
+    final add = asMap(asList(manager['topAdds']).firstOrNull);
+    final trim = asMap(asList(manager['topTrims']).firstOrNull);
+    final sector = asMap(manager['largestSectorShift']);
+    return SizedBox(
+      width: width,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: p.card,
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: p.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              text(manager['name'], text(manager['investorId'])),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: p.text,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 12,
+              runSpacing: 4,
+              children: [
+                label(
+                  '${w('Book', '组合')} ${_usdMillions(manager['currentValueM'])}',
+                  '${w('Book', '组合')} ${_usdMillions(manager['currentValueM'])}',
+                  size: 10,
+                ),
+                label(
+                  '${w('Turnover', '换手')} ${_activeRatio(manager['turnoverProxy'])}',
+                  '${w('Turnover', '换手')} ${_activeRatio(manager['turnoverProxy'])}',
+                  size: 10,
+                ),
+                label(
+                  '${w('Top 10', '前十')} ${_activeRatio(manager['top10Weight'])}',
+                  '${w('Top 10', '前十')} ${_activeRatio(manager['top10Weight'])}',
+                  size: 10,
+                ),
+                label(
+                  '${w('Sector HHI', '行业 HHI')} ${nullableNumber(manager['sectorHhi'])?.toStringAsFixed(2) ?? '—'}',
+                  '${w('Sector HHI', '行业 HHI')} ${nullableNumber(manager['sectorHhi'])?.toStringAsFixed(2) ?? '—'}',
+                  size: 10,
+                ),
+              ],
+            ),
+            const SizedBox(height: 9),
+            Row(
+              children: [
+                Expanded(
+                  child: _activeMoveLabel(
+                    Icons.arrow_upward,
+                    w('Top add', '主要加仓'),
+                    add,
+                    p.accent,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _activeMoveLabel(
+                    Icons.arrow_downward,
+                    w('Top trim', '主要减仓'),
+                    trim,
+                    p.secondary,
+                  ),
+                ),
+              ],
+            ),
+            if (sector.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              label(
+                '${w('Largest sector shift', '最大行业变化')}: ${text(sector['sector'])} ${_signedPp(sector['weightChangePp'])}',
+                '${w('Largest sector shift', '最大行业变化')}: ${text(sector['sector'])} ${_signedPp(sector['weightChangePp'])}',
+                size: 10,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _signedPp(dynamic value) {
+    final parsed = nullableNumber(value);
+    return parsed == null
+        ? '—'
+        : '${parsed >= 0 ? '+' : ''}${parsed.toStringAsFixed(2)} pp';
+  }
+
+  Widget _activeMoveLabel(
+    IconData icon,
+    String title,
+    Map<String, dynamic> move,
+    Color color,
+  ) => Row(
+    children: [
+      Icon(icon, color: color, size: 14),
+      const SizedBox(width: 5),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: TextStyle(color: p.muted, fontSize: 9)),
+            Text(
+              text(move['ticker'], '—'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+
+  Widget _activeRotationRow(Map<String, dynamic> rotation) {
+    final added = asMap(rotation['added']);
+    final reduced = asMap(rotation['reduced']);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: p.card.withValues(alpha: .72),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: p.border),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 3,
+            child: Text(
+              text(rotation['name']),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: p.text,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              '↑ ${text(added['ticker'], '—')}',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: p.accent,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              '↓ ${text(reduced['ticker'], '—')}',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: p.secondary,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Text(
+            _activeRatio(rotation['turnoverProxy']),
+            style: TextStyle(color: p.muted, fontSize: 10),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _insightMarketPulse() {
     final overview = asMap(

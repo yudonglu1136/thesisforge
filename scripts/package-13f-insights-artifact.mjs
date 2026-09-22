@@ -11,6 +11,8 @@ const table='institutional_13f_insight_snapshots_v2';
 const detailTable='institutional_13f_insight_details_v1';
 const marketTable='institutional_13f_market_history_v1';
 const securityHistoryTable='institutional_13f_security_history_v1';
+const activeTable='institutional_13f_active_snapshots_v1';
+const activeDetailTable='institutional_13f_active_details_v1';
 
 export function packageInstitutional13fArtifact({source,output,releaseId,runtimeRoot='/var/app/data/13f-insights/releases'}) {
   if(!/^13f-insights-\d{8}-v[1-9]\d*$/.test(releaseId??''))fail('invalid_13f_release_id');
@@ -20,7 +22,7 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
   const file=path.join(output,'13f-insights.sqlite');
   const sourceDb=new DatabaseSync(source,{readOnly:true});sourceDb.exec('PRAGMA query_only=ON;PRAGMA busy_timeout=3000');
   const schema=sourceDb.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?");
-  const schemas=Object.fromEntries([table,detailTable,marketTable,securityHistoryTable].map(name=>[name,schema.get(name)?.sql]));
+  const schemas=Object.fromEntries([table,detailTable,marketTable,securityHistoryTable,activeTable,activeDetailTable].map(name=>[name,schema.get(name)?.sql]));
   if(Object.values(schemas).some(value=>!value))fail('missing_13f_source_table');
   const currentGeneration=`EXISTS(SELECT 1 FROM ${table} s WHERE s.report_date=x.report_date
     AND s.source_generation=x.source_generation AND s.generated_at=(SELECT max(n.generated_at) FROM ${table} n WHERE n.report_date=x.report_date))`;
@@ -28,6 +30,10 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
   const details=sourceDb.prepare(`SELECT x.* FROM ${detailTable} x WHERE ${currentGeneration} ORDER BY report_date,source_generation,ticker`).all();
   const marketRows=sourceDb.prepare(`SELECT x.* FROM ${marketTable} x WHERE ${currentGeneration} ORDER BY report_date,source_generation,segment`).all();
   const securityHistoryRows=sourceDb.prepare(`SELECT x.* FROM ${securityHistoryTable} x WHERE ${currentGeneration} ORDER BY report_date,source_generation,ticker`).all();
+  const activeGeneration=`EXISTS(SELECT 1 FROM ${activeTable} s WHERE s.report_date=x.report_date
+    AND s.source_generation=x.source_generation AND s.generated_at=(SELECT max(n.generated_at) FROM ${activeTable} n WHERE n.report_date=x.report_date))`;
+  const activeRows=sourceDb.prepare(`SELECT x.* FROM ${activeTable} x WHERE ${activeGeneration} ORDER BY report_date,source_generation`).all();
+  const activeDetails=sourceDb.prepare(`SELECT x.* FROM ${activeDetailTable} x WHERE ${activeGeneration} ORDER BY report_date,source_generation,ticker`).all();
   const securityHistoryColumns=sourceDb.prepare(`PRAGMA table_info(${securityHistoryTable})`).all().map(row=>row.name);
   sourceDb.close();
   const db=new DatabaseSync(file);
@@ -38,6 +44,8 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
     db.exec(`CREATE INDEX institutional_13f_details_v1_lookup_idx ON ${detailTable}(report_date,ticker,source_generation)`);
     db.exec(`CREATE INDEX institutional_13f_market_history_v1_available_idx ON ${marketTable}(available_at,report_date,segment)`);
     db.exec(`CREATE INDEX institutional_13f_security_history_v1_lookup_idx ON ${securityHistoryTable}(ticker,report_date,available_at)`);
+    db.exec(`CREATE INDEX institutional_13f_active_available_idx ON ${activeTable}(available_at,report_date)`);
+    db.exec(`CREATE INDEX institutional_13f_active_details_lookup_idx ON ${activeDetailTable}(report_date,ticker,source_generation)`);
     const insert=db.prepare(`INSERT INTO ${table}(report_date,source_generation,available_at,generated_at,payload_hash,payload_gzip) VALUES(?,?,?,?,?,?)`);
     for(const row of rows)insert.run(row.report_date,row.source_generation,row.available_at,row.generated_at,row.payload_hash,row.payload_gzip);
     const insertDetail=db.prepare(`INSERT INTO ${detailTable}(report_date,source_generation,ticker,payload_hash,payload_gzip) VALUES(?,?,?,?,?)`);
@@ -46,6 +54,10 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
     for(const row of marketRows)insertMarket.run(row.report_date,row.source_generation,row.segment,row.available_at,row.securities,row.covered_securities,row.institutional_value_m,row.market_cap_m,row.institutional_ownership_pct,row.net_change_value_m,row.net_change_pct_market_cap);
     const insertSecurityHistory=db.prepare(`INSERT INTO ${securityHistoryTable}(${securityHistoryColumns.join(',')}) VALUES(${securityHistoryColumns.map(()=>'?').join(',')})`);
     for(const row of securityHistoryRows)insertSecurityHistory.run(...securityHistoryColumns.map(column=>row[column]));
+    const insertActive=db.prepare(`INSERT INTO ${activeTable}(report_date,source_generation,available_at,generated_at,payload_hash,payload_gzip) VALUES(?,?,?,?,?,?)`);
+    for(const row of activeRows)insertActive.run(row.report_date,row.source_generation,row.available_at,row.generated_at,row.payload_hash,row.payload_gzip);
+    const insertActiveDetail=db.prepare(`INSERT INTO ${activeDetailTable}(report_date,source_generation,ticker,payload_hash,payload_gzip) VALUES(?,?,?,?,?)`);
+    for(const row of activeDetails)insertActiveDetail.run(row.report_date,row.source_generation,row.ticker,row.payload_hash,row.payload_gzip);
     db.exec('COMMIT;VACUUM');
     if(db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')fail('13f_artifact_integrity_failed');
     if(db.prepare('PRAGMA foreign_key_check').all().length)fail('13f_artifact_foreign_key_failed');
@@ -54,11 +66,13 @@ export function packageInstitutional13fArtifact({source,output,releaseId,runtime
     if(duplicates!==0||db.prepare(`SELECT count(*) count FROM ${table}`).get().count!==rows.length
       ||db.prepare(`SELECT count(*) count FROM ${detailTable}`).get().count!==details.length
       ||db.prepare(`SELECT count(*) count FROM ${marketTable}`).get().count!==marketRows.length
-      ||db.prepare(`SELECT count(*) count FROM ${securityHistoryTable}`).get().count!==securityHistoryRows.length)fail('13f_artifact_row_mismatch');
+      ||db.prepare(`SELECT count(*) count FROM ${securityHistoryTable}`).get().count!==securityHistoryRows.length
+      ||db.prepare(`SELECT count(*) count FROM ${activeTable}`).get().count!==activeRows.length
+      ||db.prepare(`SELECT count(*) count FROM ${activeDetailTable}`).get().count!==activeDetails.length)fail('13f_artifact_row_mismatch');
   } finally {db.close();}
   const bytes=fs.statSync(file).size,sha256=hash(file);
   const runtimeDirectory=path.join(runtimeRoot,releaseId),runtimeFile=path.join(runtimeDirectory,path.basename(file));
-  const manifest={version:'institutional-13f-artifact-v5',releaseId,state:'verified',generatedAt:new Date().toISOString(),rows:rows.length,detailRows:details.length,marketRows:marketRows.length,securityHistoryRows:securityHistoryRows.length,table,
+  const manifest={version:'institutional-13f-artifact-v6',releaseId,state:'verified',generatedAt:new Date().toISOString(),rows:rows.length,detailRows:details.length,marketRows:marketRows.length,securityHistoryRows:securityHistoryRows.length,activeRows:activeRows.length,activeDetailRows:activeDetails.length,table,
     source:{path:source,table,methodVersion:'institutional-13f-insights-v5'},
     checks:{integrity:'ok',foreignKeyCheck:'ok',naturalKeyUniqueness:'pass',privateDataExcluded:true},
     file:{path:runtimeFile,bytes,sha256}};
