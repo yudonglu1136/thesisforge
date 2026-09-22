@@ -41,6 +41,16 @@ class RepositoryTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_reader_spill_is_isolated_from_immutable_code_and_cleaned_after_close(self):
+        temporary=self.root/'query-spill'
+        with patch.dict('os.environ',{'FACT_OS_TEMP_ROOT':str(temporary)}):
+            with FactRepository(self.store.root) as first,FactRepository(self.store.root) as second:
+                paths=[Path(r.db.execute("SELECT current_setting('temp_directory')").fetchone()[0]) for r in (first,second)]
+                self.assertNotEqual(*paths)
+                self.assertTrue(all(p.is_relative_to(temporary) and p.is_dir() for p in paths))
+                self.assertFalse(any(p.is_relative_to(self.store.root) for p in paths))
+            self.assertTrue(all(not p.exists() for p in paths))
+
     def put(self, table, rows, scope='archive_unverified'):
         self.serial += 1
         path = self.root / f'{self.serial}.csv'

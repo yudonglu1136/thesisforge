@@ -22,6 +22,7 @@ def main():
     datetime.fromisoformat(args.scheduled_for.replace('Z','+00:00'))
     import boto3
     root=Path(os.environ['FACT_OS_ROOT']).resolve();store=Store(root)
+    os.environ['FACT_OS_TEMP_ROOT']=str(root/'staging/query-spill')
     code_file=Path(__file__).resolve().parents[2]/'CODE_COMMIT'
     code_commit=code_file.read_text().strip() if code_file.is_file() else None
     if code_commit is not None and (len(code_commit)!=40 or any(c not in 'abcdef0123456789' for c in code_commit)):

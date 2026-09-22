@@ -21,11 +21,12 @@ def tasks():
     return (
         task('canonical',TABLES,kind='read_release',schema='canonical-read-v1'),
         task('ai_insights',('tickers','fundamentals'),optional=('actions',),
-             code=('fact_os/ai_insights.py','server/aiInsightsMetrics.js','server/investmentAiInsights.js'),
+             code=('fact_os/ai_insights.py','server/aiInsightsMetrics.js','server/investmentAiInsights.js',
+                   'scripts/package-ai-insights-artifact.mjs','server/investmentRuntimeConfig.js'),
              configs=('server/config/ai-insights-universe.json',),method='ai-insights-v1'),
         task('institutional_13f',('holdings','holdings_ticker','holdings_investor','actions','fundamentals','daily','tickers','sp500'),
              code=('scripts/build-13f-insights.py','scripts/build-13f-active-insights.py','scripts/active_sector_analysis.py',
-                   'scripts/package-13f-insights-artifact.mjs'),method='institutional-13f-insights-v5',schema='institutional-13f-artifact-v7'),
+                   'scripts/package-13f-insights-artifact.mjs','server/investmentRuntimeConfig.js'),method='institutional-13f-insights-v5',schema='institutional-13f-artifact-v7'),
         # These are canonical INPUT releases, not automatic publication of
         # models/backtests, and do not mutate saved user scenarios or records.
         task('research_inputs',('tickers','fundamentals','stocks'),optional=('actions','events','descriptions'),kind='read_release'),

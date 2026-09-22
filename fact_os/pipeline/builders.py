@@ -14,7 +14,7 @@ from .registry import PROJECT
 
 def execute(command,log,timeout):
     # Keys are deliberately not inherited by derived subprocesses.
-    env={k:os.environ[k] for k in ('PATH','LANG','FACT_OS_LEASE_ROOT') if k in os.environ}
+    env={k:os.environ[k] for k in ('PATH','LANG','FACT_OS_LEASE_ROOT','FACT_OS_TEMP_ROOT') if k in os.environ}
     env['PYTHONPATH']=str(PROJECT)
     with log.open('wb') as output:
         result=subprocess.run(command,cwd=PROJECT,env=env,stdout=output,stderr=subprocess.STDOUT,timeout=timeout)

@@ -11,6 +11,7 @@ import fcntl
 import os
 from pathlib import Path
 import re
+import tempfile
 from urllib.parse import parse_qs, urlparse
 
 import duckdb
@@ -68,7 +69,7 @@ def _cik(value):
 class FactRepository:
     def __init__(self, root):
         self.root = Path(root).resolve()
-        self.db, self._reader_lock = None, None
+        self.db, self._reader_lock, self._query_temporary = None, None, None
         if not (self.root / 'manifests/catalog.json').exists() and not (self.root / 'fact_os.duckdb').exists():
             raise MissingData('local Fact OS has not been backfilled')
         # GC takes this lock exclusively before unlinking retired generations.
@@ -98,7 +99,13 @@ class FactRepository:
             if catalog.get('version') != 1:
                 raise MissingData('unsupported Fact OS catalog version')
             self.generation = hashlib.sha256(manifest_bytes).hexdigest()
-            self.db = duckdb.connect(':memory:')
+            # DuckDB's default relative spill directory would try to write into
+            # immutable application code on AWS. Each reader owns only its
+            # temporary workspace, outside canonical and installed artifacts.
+            temporary_root=os.environ.get('FACT_OS_TEMP_ROOT')
+            if temporary_root:Path(temporary_root).mkdir(parents=True,exist_ok=True)
+            self._query_temporary=tempfile.TemporaryDirectory(prefix='fact-query-',dir=temporary_root)
+            self.db = duckdb.connect(':memory:',config={'temp_directory':self._query_temporary.name})
             self.db.execute("SET memory_limit='512MB'")
             self.db.execute('SET threads=2')
             try:
@@ -155,6 +162,9 @@ class FactRepository:
                 fcntl.flock(self._reader_lock, fcntl.LOCK_UN)
                 self._reader_lock.close()
                 self._reader_lock = None
+            if self._query_temporary is not None:
+                self._query_temporary.cleanup()
+                self._query_temporary=None
 
     def _rows(self, sql, params=()):
         cur = self.db.execute(sql, params)
