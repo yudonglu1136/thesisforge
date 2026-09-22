@@ -104,3 +104,14 @@ first install). If application verification fails, restore the previous AWS
 version and point **both** public Vercel aliases to the prior deployment.
 Retain immutable data for diagnosis; do not roll back private databases or
 delete raw archives. A health-green deployment is not a data-read acceptance.
+
+### Production installation regression found during acceptance
+
+The first installation passed file checks and the real API UID's canonical
+read, but the live ACK connection was refused. The installer defaulted to the
+development port 8787 when EB's user configuration omitted `PORT`; the existing
+production loopback runners use EB's 8080 default. The installer correctly
+removed the new active pointer. Four regression tests now cover the EB default,
+explicit port, process-environment port and malformed ports. The repair changes
+only port selection; it never relaxes authentication, loopback or ACK checks.
+Retry reuses the already-verified immutable files instead of duplicating them.

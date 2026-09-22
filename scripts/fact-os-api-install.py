@@ -16,6 +16,17 @@ from fact_os.pipeline.checks import validate_canonical,validate_api_read
 from fact_os.pipeline.contracts import digest
 
 
+def api_port(config, environment=None):
+    # EB injects its platform PORT into web.service even when get-config's
+    # user environment omits it. Match the other production loopback runners;
+    # 8787 is the local development server, not the EB Node platform default.
+    environment = os.environ if environment is None else environment
+    value = str(config.get('PORT') or environment.get('PORT') or '8080')
+    if not value.isascii() or not value.isdecimal() or not 1 <= int(value) <= 65535:
+        raise ValueError('internal_ack_port_invalid')
+    return int(value)
+
+
 def main():
     if os.geteuid()!=0:raise ValueError('root_installer_required')
     parser=argparse.ArgumentParser();parser.add_argument('--bucket',required=True);parser.add_argument('--candidate-key',required=True)
@@ -71,7 +82,7 @@ def main():
         config=json.loads(subprocess.check_output(['/opt/elasticbeanstalk/bin/get-config','environment']))
         secret=config.get('INTERNAL_CRON_SECRET') or config.get('CRON_SECRET')
         if not secret:raise ValueError('internal_ack_credential_missing')
-        request=urllib.request.Request('http://127.0.0.1:'+str(config.get('PORT') or 8787)+'/api/internal/data-release',headers={'Authorization':'Bearer '+secret})
+        request=urllib.request.Request('http://127.0.0.1:'+str(api_port(config))+'/api/internal/data-release',headers={'Authorization':'Bearer '+secret})
         with urllib.request.urlopen(request,timeout=120) as response:body=json.load(response)
         if body.get('releaseId')!=installed['releaseId'] or body.get('status')!='verified' or not body.get('coverage'):
             raise ValueError('live_api_generation_mismatch')
