@@ -18,7 +18,7 @@ test('UBER-like facts produce the requested slowing-growth/margin-improvement pa
     revenueGrowth: .121729, priorRevenueGrowth: .144802,
     operatingMargin: .121317, operatingMarginPriorQuarter: .116602,
     operatingMarginPriorYear: .10, fcfMargin: .08, fcfMarginPriorYear: .07,
-  })]), { lens: 'slowing_growth_margin_up' });
+  })]), { lens: 'slowing_growth_margin_up', sort: 'change' });
   assert.equal(result.version, FUNDAMENTAL_RESEARCH_VERSION);
   assert.equal(result.methodVersion, FUNDAMENTAL_METHOD_VERSION);
   assert.equal(result.rows[0].ticker, 'UBER');
@@ -112,4 +112,18 @@ test('user evidence thresholds are applied before ranking and preserve missing a
   assert.deepEqual(result.filters, {
     minRevenueGrowth: .15, minOperatingMargin: .10, minFcfMargin: .05,
   });
+});
+
+test('browse all facts is model independent, paged, and has an explicit stable metric order', () => {
+  const input = raw([
+    company('LOW', { revenueGrowth: .03 }),
+    company('HIGH', { revenueGrowth: .25 }),
+    company('UNKNOWN', { revenueGrowth: null }, { industry: 'Banks' }),
+  ]);
+  const result = analyzeFundamentalUniverse(input, { lens: 'all', sort: 'growth', limit: 1 });
+  assert.equal(result.totalMatches, 3);
+  assert.equal(result.rows[0].ticker, 'HIGH');
+  assert.equal(result.hasMore, true);
+  assert.equal(analyzeFundamentalUniverse(input, { lens: 'all', sort: 'growth', limit: 1, offset: 1 }).rows[0].ticker, 'LOW');
+  assert.equal(analyzeFundamentalUniverse(input, { lens: 'all', sort: 'growth', offset: 2 }).rows[0].ticker, 'UNKNOWN');
 });

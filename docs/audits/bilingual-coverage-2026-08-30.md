@@ -553,3 +553,15 @@ details and coverage/methodology labels have paired EN/ZH text. Real-data deskto
 Flutter tests pass; i18n audit, analysis and production build pass. Full Flutter
 remains 568 passed / 32 pre-existing adjacent failures; no assertions removed.
 See `docs/13f-sector-visual-polish-2026-09-22.md` for exact scope and checks.
+
+### 2026-09-22 Fundamentals recovery and redesign
+
+Paired EN/ZH search-first company browser, explicit sorting, compact metrics,
+advanced thresholds, mobile research-focus selector, source explanations and
+recoverable errors. Company research remains reachable without a model.
+Real-data desktop and 390×844 flows reviewed in both languages; source dialogs,
+search, company selection and optional valuation are exercised. The 29 focused
+Fundamentals/explorer tests pass. Full Flutter has the same 32 pre-existing
+adjacent failures, with no new failing names. See
+`docs/fundamentals-recovery-redesign-2026-09-22.md` for data-runtime diagnosis,
+scoped installation, release gates and production verification limitations.

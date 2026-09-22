@@ -11,6 +11,7 @@ const LENSES = Object.freeze([
 ]);
 const UNIVERSE_CACHE_MS = 5 * 60 * 1000;
 let universeCache = null;
+let universeFlight = null;
 const n = value => finite(value) ? value : null;
 const delta = (a, b) => finite(a) && finite(b) ? a - b : null;
 const ratio = (a, b) => finite(a) && finite(b) && b !== 0 ? a / b : null;
@@ -104,12 +105,14 @@ function signalsFor(company) {
   return signals.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
 }
 
-export function analyzeFundamentalUniverse(raw, { lens = 'slowing_growth_margin_up', search = '', limit = 80,
+export function analyzeFundamentalUniverse(raw, { lens = 'all', search = '', limit = 30, offset = 0, sort = 'recent',
   minRevenueGrowth = null, minOperatingMargin = null, minFcfMargin = null } = {}) {
   assert(raw?.version === 'fact-fundamental-universe-v1', 'invalid_fundamental_fact_payload');
-  lens = LENSES.includes(lens) ? lens : LENSES[0];
+  lens = LENSES.includes(lens) ? lens : 'all';
+  sort = ['recent', 'growth', 'margin', 'cash', 'change'].includes(sort) ? sort : 'recent';
+  offset = clamp(Number.parseInt(offset, 10) || 0, 0, 10000);
   search = String(search ?? '').trim().toLowerCase().slice(0, 80);
-  limit = clamp(Number.parseInt(limit, 10) || 80, 1, 200);
+  limit = clamp(Number.parseInt(limit, 10) || 30, 1, 200);
   const threshold=value=>value==null||value===''?null:finite(Number(value))
     ?clamp(Number(value),-2,3):null;
   minRevenueGrowth=threshold(minRevenueGrowth);
@@ -125,7 +128,7 @@ export function analyzeFundamentalUniverse(raw, { lens = 'slowing_growth_margin_
       } };
   });
   let rows = companies.filter(company => !search || `${company.ticker} ${company.name}`.toLowerCase().includes(search));
-  if (!search) rows = rows.filter(company => company.signals.some(signal => signal.id === lens));
+  if (!search && lens !== 'all') rows = rows.filter(company => company.signals.some(signal => signal.id === lens));
   rows=rows.filter(company=>{
     const metrics=company.metrics??{};
     return (minRevenueGrowth==null||(finite(metrics.revenueGrowth)&&metrics.revenueGrowth>=minRevenueGrowth))
@@ -133,18 +136,30 @@ export function analyzeFundamentalUniverse(raw, { lens = 'slowing_growth_margin_
       &&(minFcfMargin==null||(finite(metrics.fcfMargin)&&metrics.fcfMargin>=minFcfMargin));
   });
   rows = rows.map(company => ({ ...company, primarySignal: company.signals.find(signal => signal.id === lens) ?? company.signals[0] ?? null }))
-    .filter(company => search || company.primarySignal)
-    .sort((a, b) => (b.primarySignal?.priority ?? -Infinity) - (a.primarySignal?.priority ?? -Infinity) ||
-      String(b.available_at).localeCompare(String(a.available_at)) || a.ticker.localeCompare(b.ticker));
+    .sort((a, b) => {
+      if (sort === 'recent' && !search && discoveryComparable(a) !== discoveryComparable(b)) {
+        return discoveryComparable(a) ? -1 : 1;
+      }
+      const field = {growth:'revenueGrowth',margin:'operatingMargin',cash:'fcfMargin'}[sort];
+      const av = field ? a.metrics[field] : a.primarySignal?.priority;
+      const bv = field ? b.metrics[field] : b.primarySignal?.priority;
+      if (sort !== 'recent') {
+        if (finite(av) !== finite(bv)) return finite(av) ? -1 : 1;
+        if (finite(av) && av !== bv) return bv - av;
+      }
+      return String(b.available_at).localeCompare(String(a.available_at)) || a.ticker.localeCompare(b.ticker);
+    });
   const counts = Object.fromEntries(LENSES.map(id => [id, companies.filter(company => company.signals.some(signal => signal.id === id)).length]));
   return { version: FUNDAMENTAL_RESEARCH_VERSION, methodVersion: FUNDAMENTAL_METHOD_VERSION,
     asOf: raw.as_of, catalogGeneration: raw.catalog_generation, lens, search,
     filters:{minRevenueGrowth,minOperatingMargin,minFcfMargin},
-    rows: rows.slice(0, limit), totalMatches: rows.length, counts,
+    rows: rows.slice(offset, offset + limit), totalMatches: rows.length, counts,
+    sort, offset, limit, hasMore: offset + limit < rows.length,
     coverage: { factCompanies: companies.length, withSignals: companies.filter(company => company.signals.length).length,
       latestAvailableAt: companies.map(company => company.available_at).filter(Boolean).sort().at(-1) ?? null },
-    rankingBasis: text('Signal magnitude, evidence completeness and filing recency; ticker is only the final tie-break.',
-      '按变化幅度、证据完整度和披露新近程度排序；股票代码只用于最终并列排序。'),
+    rankingBasis: sort === 'recent' ? text('Comparable operating histories first, then latest disclosure. All fact companies remain searchable.', '优先可比经营历史，再按最新披露排序；全部事实公司均可搜索。')
+      : sort === 'change' ? text('Signal magnitude first, then disclosure date.', '按变化幅度，再按披露日期排序。')
+      : text('Selected reported metric, highest first; missing values last. Not a stock rating.', '按所选财务指标从高到低排序；缺失值置后，不是股票评分。'),
     definitions: { reported: 'ARQ latest revision visible by as-of date', ttm: 'sum of four complete reported quarters',
       discoveryGuardrail: 'operating companies with eight comparable quarters, at least 100m reported TTM revenue, |growth|<=300% and |margin|<=200%; all fact companies remain searchable',
       missing: 'null is preserved and never treated as zero', methodVersion: FUNDAMENTAL_METHOD_VERSION } };
@@ -165,12 +180,16 @@ async function loadFundamentalUniverse(asOf) {
   const now = Date.now();
   const generation=await factGeneration();
   if (universeCache?.asOf === asOf && universeCache.generation===generation && universeCache.expiresAt > now) return universeCache.raw;
-  const raw = await queryFacts('get_fundamental_change_universe', [asOf], { limit: 6000 });
-  // Keep exactly one full-universe payload. FactRepository already owns the durable
-  // generation-aware cache; this short-lived reference avoids cloning ~13 MB for
-  // every lens/search request while preserving bounded memory and refresh cadence.
-  universeCache = { asOf, generation, expiresAt: now + UNIVERSE_CACHE_MS, raw };
-  return raw;
+  if (universeFlight?.asOf === asOf && universeFlight.generation === generation) return universeFlight.promise;
+  const promise = queryFacts('get_fundamental_change_universe', [asOf], { limit: 6000 }).then(raw => {
+    // Keep exactly one full-universe payload. FactRepository already owns the durable
+    // generation-aware cache; this short-lived reference avoids cloning ~13 MB for
+    // every lens/search request while preserving bounded memory and refresh cadence.
+    universeCache = { asOf, generation, expiresAt: now + UNIVERSE_CACHE_MS, raw };
+    return raw;
+  }).finally(() => { if (universeFlight?.promise === promise) universeFlight = null; });
+  universeFlight = { asOf, generation, promise };
+  return promise;
 }
 
 function latestReported(rows) {

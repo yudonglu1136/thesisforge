@@ -342,11 +342,61 @@ Future<void> tap(WidgetTester t, Finder finder) async {
 
 void main() {
   testWidgets(
+    'browse starts without a forced lens and keeps filters collapsed',
+    (t) async {
+      final api = FundamentalApi();
+      await mount(t, api);
+      final request = Uri.parse(
+        api.calls.firstWhere(
+          (x) => Uri.parse(x).path.endsWith('/fundamentals'),
+        ),
+      );
+      expect(request.queryParameters['lens'], 'all');
+      expect(request.queryParameters['sort'], 'recent');
+      expect(request.queryParameters['limit'], '30');
+      expect(find.byKey(const ValueKey('fund-filter-growth')), findsNothing);
+      await tap(t, find.byKey(const ValueKey('fundamental-sort')));
+      await tap(t, find.text('Revenue growth').last);
+      expect(api.calls.any((x) => x.contains('sort=growth')), isTrue);
+      expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'failed list preserves query and exposes independent company research',
+    (t) async {
+      final api = FundamentalApi()..fail = true;
+      String? opened;
+      await mount(
+        t,
+        api,
+        selection: {'query': 'UBER'},
+        onCompany: (ticker, section) => opened = '$ticker:$section',
+      );
+      expect(
+        find.text('Financial data is temporarily unavailable.'),
+        findsOneWidget,
+      );
+      await tap(t, find.text('Open in Research'));
+      expect(opened, 'UBER:financials');
+      api.fail = false;
+      await tap(t, find.text('Try again'));
+      expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'UBER path shows judgment, three changes, gap, chart and lineage',
     (t) async {
       await mount(t, FundamentalApi());
-      expect(find.text('Business change research'), findsOneWidget);
+      expect(find.text('Find your next company to research.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('fund-filter-growth')), findsNothing);
+      expect(find.byType(StockLogo), findsWidgets);
       expect(find.textContaining('Growth slowed -2.3pp'), findsWidgets);
+      await tap(
+        t,
+        find.byKey(const ValueKey('fundamental-evidence-expansion')),
+      );
       expect(find.text('Revenue growth slowed'), findsOneWidget);
       expect(find.text('Margin improved'), findsOneWidget);
       expect(find.text('FCF remained positive'), findsOneWidget);
@@ -366,6 +416,7 @@ void main() {
     (t) async {
       final api = FundamentalApi();
       await mount(t, api);
+      await tap(t, find.byKey(const ValueKey('fundamental-advanced')));
       final dropdown = find.descendant(
         of: find.byKey(const ValueKey('fund-filter-growth')),
         matching: find.byType(DropdownButton<double?>),
@@ -425,7 +476,12 @@ void main() {
     'fact-only company is searchable and valuation remains optional',
     (t) async {
       final api = FundamentalApi();
-      await mount(t, api);
+      String? opened;
+      await mount(
+        t,
+        api,
+        onCompany: (ticker, section) => opened = '$ticker:$section',
+      );
       await t.enterText(
         find.byKey(const ValueKey('fundamental-search')),
         'FACT',
@@ -436,6 +492,8 @@ void main() {
       await tap(t, find.byKey(const ValueKey('fund-row-FACT')));
       expect(find.text('No valuation model'), findsOneWidget);
       expect(api.calls.any((path) => path.contains('search=FACT')), true);
+      await tap(t, find.byKey(const ValueKey('fund-open-research')));
+      expect(opened, 'FACT:financials');
     },
   );
 
@@ -464,7 +522,7 @@ void main() {
       );
       await tap(
         t,
-        find.text(language == AppLanguage.en ? 'Back to changes' : '返回变化列表'),
+        find.text(language == AppLanguage.en ? 'Back to companies' : '返回公司列表'),
       );
       expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
       expect(t.takeException(), isNull);
@@ -474,10 +532,10 @@ void main() {
   testWidgets('cutoff mismatch and failures fail closed then retry', (t) async {
     final api = FundamentalApi()..wrongDate = true;
     await mount(t, api);
-    expect(find.text('Retry Fact OS'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
     expect(find.byKey(const ValueKey('fund-row-UBER')), findsNothing);
     api.wrongDate = false;
-    await tap(t, find.text('Retry Fact OS'));
+    await tap(t, find.text('Try again'));
     expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
   });
 }

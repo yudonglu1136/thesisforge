@@ -834,7 +834,7 @@ void main() {
       await mountExplorer(tester, ExplorerApi());
       await tester.tap(find.text('Fundamentals'));
       await tester.pumpAndSettle();
-      expect(find.text('Business change research'), findsOneWidget);
+      expect(find.text('Find your next company to research.'), findsOneWidget);
       await tester.enterText(
         find.byKey(const ValueKey('fundamental-search')),
         'absent',

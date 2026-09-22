@@ -26,7 +26,15 @@ export function registerInvestmentRoutes(app,service) {
   function route(method,path,handler,{cacheControl='private, no-store'}={}) {app[method]('/api/investment'+path,async (req,res)=>{
     res.setHeader('Cache-Control',cacheControl);
     if(!req.user?.id)return res.status(401).json({error:'unauthorized'});
-    try {res.json(await handler(req.user.id,req));}catch(e){res.status(e.status??500).json({error:e.status?e.message:'investment_request_failed'});}
+    try {res.json(await handler(req.user.id,req));}catch(e){
+      res.setHeader('Cache-Control','private, no-store');
+      if(e.name==='FactDataError') {
+        const safeCodes=['local_runtime_unavailable','local_data_unavailable','local_snapshot_changed','local_query_timeout'];
+        console.error('[investment:facts]',path,safeCodes.includes(e.code)?e.code:'local_query_failed');
+        return res.status(503).json({error:safeCodes.includes(e.code)?e.code:'local_query_failed'});
+      }
+      res.status(e.status??500).json({error:e.status?e.message:'investment_request_failed'});
+    }
   });}
   route('get','/13f-sectors/:sector',(_,r)=>institutional13fSectorDetail(service.source,r.params.sector,
     service.date(r.query.asOf),r.query.quarter??null,r.query));
@@ -42,7 +50,7 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/ai-insights/methodology',()=>aiInsights.methodology());
   route('get','/ai-insights/companies/:ticker',(_,r)=>aiInsights.company(r.params.ticker,aiQuery(r)));
   route('get','/fundamentals',(_,r)=>(service.fundamentalDiscovery??buildFundamentalDiscovery)(service.date(r.query.asOf),{
-    lens:r.query.lens,search:r.query.search,limit:r.query.limit,
+    lens:r.query.lens,search:r.query.search,limit:r.query.limit,offset:r.query.offset,sort:r.query.sort,
     minRevenueGrowth:r.query.minRevenueGrowth,minOperatingMargin:r.query.minOperatingMargin,
     minFcfMargin:r.query.minFcfMargin,
   }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});

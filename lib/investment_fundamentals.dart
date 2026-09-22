@@ -86,7 +86,10 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
   final detailAnchor = GlobalKey();
   Map<String, dynamic>? data, detail, institutionalDetail;
   List<Map<String, dynamic>> observations = const [];
-  String lens = 'slowing_growth_margin_up', ticker = '';
+  String lens = 'all', ticker = '', sort = 'recent';
+  int page = 0;
+  bool advanced = false;
+  String failureCode = '';
   String detailTab = 'business';
   bool loading = true,
       failed = false,
@@ -150,6 +153,15 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     final saved = widget.initialSelection;
     final restored = text(saved['lens'], text(saved['screen']));
     if (_fundamentalLenses.contains(restored)) lens = restored;
+    if (const [
+      'recent',
+      'growth',
+      'margin',
+      'cash',
+      'change',
+    ].contains(saved['sort'])) {
+      sort = text(saved['sort']);
+    }
     ticker = text(saved['ticker']);
     search.text = text(saved['query']);
     minGrowth = nullableNumber(saved['minRevenueGrowth']);
@@ -161,7 +173,14 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
   @override
   void didUpdateWidget(covariant FundamentalsPanel old) {
     super.didUpdateWidget(old);
-    if (old.asOf != widget.asOf || old.api != widget.api) unawaited(load());
+    if (old.asOf != widget.asOf || old.api != widget.api) {
+      page = 0;
+      detailSerial++;
+      institutionalSerial++;
+      detail = null;
+      institutionalDetail = null;
+      unawaited(load());
+    }
   }
 
   @override
@@ -178,6 +197,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     'lens': lens,
     'ticker': ticker,
     'query': search.text,
+    'sort': sort,
     'minRevenueGrowth': minGrowth,
     'minOperatingMargin': minMargin,
     'minFcfMargin': minFcfMargin,
@@ -198,7 +218,9 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
         if (minGrowth != null) 'minRevenueGrowth': '$minGrowth',
         if (minMargin != null) 'minOperatingMargin': '$minMargin',
         if (minFcfMargin != null) 'minFcfMargin': '$minFcfMargin',
-        'limit': '80',
+        'limit': '30',
+        'offset': '${page * 30}',
+        'sort': sort,
       },
     );
     try {
@@ -223,11 +245,18 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
       });
       remember();
       if (ticker.isNotEmpty) unawaited(loadDetail());
-    } catch (_) {
+    } catch (error) {
       if (mounted && id == serial) {
         setState(() {
           loading = false;
           failed = true;
+          failureCode = error.toString().contains('fundamental_cutoff_mismatch')
+              ? 'cutoff'
+              : error.toString().contains('401')
+              ? 'auth'
+              : 'unavailable';
+          data = null;
+          detail = null;
         });
       }
     }
@@ -282,7 +311,10 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
   void scheduleSearch(String _) {
     debounce?.cancel();
     debounce = Timer(const Duration(milliseconds: 260), () {
-      if (mounted) unawaited(load());
+      if (mounted) {
+        page = 0;
+        unawaited(load());
+      }
     });
   }
 
@@ -290,6 +322,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     if (value == lens) return;
     setState(() {
       lens = value;
+      page = 0;
       mobileDetail = false;
       ticker = '';
     });
@@ -386,6 +419,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     child: Text(label, style: st(10, true, color ?? p.accent)),
   );
   String lensTitle(String id) => switch (id) {
+    'all' => w('All companies', '全部公司'),
     'growth_profit_sync' => w('Growth + profit', '增长与盈利同步改善'),
     'slowing_growth_margin_up' => w(
       'Slower growth, better margin',
@@ -420,28 +454,29 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      w('Business change research', '企业经营研究工作台'),
+                      w('Find your next company to research.', '找到值得深入研究的公司'),
                       style: st(compact ? 27 : 34, true, null, 1.12),
                     ),
                     const SizedBox(height: 7),
                     Text(
                       w(
-                        'Find a change, inspect its drivers, look for contrary evidence, then test what the price assumes.',
-                        '发现经营变化，理解变化驱动，检查相反证据，再判断市场定价。',
+                        'Compare growth, profitability and cash flow. Open the facts behind any company.',
+                        '比较增长、盈利与现金流，点选公司查看财务事实与估值依据。',
                       ),
                       style: st(14, false, p.muted),
                     ),
                   ],
                 ),
               ),
-              if (!compact)
-                statusPill(w('Fact OS · reported PIT', 'Fact OS · 原始披露 PIT')),
+              if (!compact) statusPill(w('Reported financials', '已披露财务')),
             ],
           ),
           const SizedBox(height: 18),
-          _lensStrip(compact),
-          const SizedBox(height: 12),
-          _searchAndAdvanced(),
+          if (!compact || !mobileDetail) ...[
+            _searchAndAdvanced(),
+            const SizedBox(height: 10),
+            _lensStrip(compact),
+          ],
           const SizedBox(height: 12),
           if (loading)
             _loadingState()
@@ -456,7 +491,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
               child: TextButton.icon(
                 onPressed: () => setState(() => mobileDetail = false),
                 icon: const Icon(Icons.arrow_back),
-                label: Text(w('Back to changes', '返回变化列表')),
+                label: Text(w('Back to companies', '返回公司列表')),
               ),
             ),
             _detailPanel(),
@@ -466,9 +501,9 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(flex: 4, child: _resultList(false)),
+                Expanded(flex: 6, child: _resultList(false)),
                 const SizedBox(width: 16),
-                Expanded(flex: 6, child: _detailPanel()),
+                Expanded(flex: 5, child: _detailPanel()),
               ],
             ),
           const SizedBox(height: 16),
@@ -478,186 +513,177 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     },
   );
 
-  Widget _lensStrip(bool compact) => panel(
-    Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.radar, color: p.accent, size: 18),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                w('Start with a research question', '先从值得研究的变化开始'),
-                style: st(14, true),
-              ),
-            ),
-            if (!compact)
-              Text(
-                w('Not a score or buy signal', '不是评分或买入信号'),
-                style: st(11, false, p.muted),
+  Widget _lensStrip(bool compact) => compact
+      ? DropdownButtonFormField<String>(
+          key: ValueKey('fundamental-mobile-lens-$lens'),
+          initialValue: lens,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: w('Research focus', '研究方向'),
+            isDense: true,
+          ),
+          items: [
+            for (final id in ['all', ..._fundamentalLenses])
+              DropdownMenuItem(
+                value: id,
+                child: Text(lensTitle(id), style: st(12)),
               ),
           ],
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: compact ? 54 : 62,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: _fundamentalLenses.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 8),
-            itemBuilder: (_, index) {
-              final id = _fundamentalLenses[index],
-                  selected = id == lens,
-                  count = asMap(data?['counts'])[id];
-              return ChoiceChip(
-                key: ValueKey('fund-lens-$id'),
-                avatar: Icon(
-                  lensIcon(id),
-                  size: 16,
-                  color: selected ? p.background : p.muted,
-                ),
-                label: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(lensTitle(id)),
-                    if (count != null)
-                      Text(
-                        '$count',
-                        style: st(
-                          9,
-                          false,
-                          selected
-                              ? p.background.withValues(alpha: .75)
-                              : p.muted,
-                        ),
-                      ),
-                  ],
-                ),
-                selected: selected,
-                onSelected: (_) => selectLens(id),
-              );
-            },
-          ),
-        ),
-      ],
-    ),
-  );
-
-  Widget _searchAndAdvanced() => Column(
-    children: [
-      panel(
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          onChanged: (value) {
+            if (value != null) selectLens(value);
+          },
+        )
+      : Wrap(
+          spacing: 7,
+          runSpacing: 7,
           children: [
-            Row(
-              children: [
-                Icon(Icons.tune, color: p.accent, size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    w('Set your evidence thresholds', '调整你的筛选参数'),
-                    style: st(14, true),
-                  ),
-                ),
-                if ([minGrowth, minMargin, minFcfMargin].any((v) => v != null))
-                  TextButton.icon(
-                    key: const ValueKey('fundamental-clear-thresholds'),
+            for (final id in ['all', ..._fundamentalLenses])
+              ChoiceChip(
+                key: ValueKey('fund-lens-$id'),
+                label: Text(lensTitle(id), style: st(11, id == lens)),
+                selected: id == lens,
+                showCheckmark: false,
+                onSelected: (_) => selectLens(id),
+              ),
+          ],
+        );
+
+  Widget _searchAndAdvanced() => panel(
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          key: const ValueKey('fundamental-search'),
+          controller: search,
+          onChanged: scheduleSearch,
+          decoration: InputDecoration(
+            isDense: true,
+            prefixIcon: const Icon(Icons.search),
+            hintText: w(
+              'Search company or ticker · e.g. UBER, AMZN',
+              '搜索公司或代码，例如 UBER、AMZN',
+            ),
+            suffixIcon: search.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: w('Clear search', '清除搜索'),
                     onPressed: () {
-                      setState(() {
-                        minGrowth = null;
-                        minMargin = null;
-                        minFcfMargin = null;
-                      });
-                      remember();
+                      search.clear();
+                      page = 0;
                       unawaited(load());
                     },
-                    icon: const Icon(Icons.restart_alt, size: 16),
-                    label: Text(w('Clear', '清除')),
+                    icon: const Icon(Icons.close),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 9),
+        Wrap(
+          spacing: 14,
+          runSpacing: 5,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            DropdownButton<String>(
+              key: const ValueKey('fundamental-sort'),
+              value: sort,
+              isDense: true,
+              underline: const SizedBox.shrink(),
+              dropdownColor: p.panel,
+              items: [
+                for (final item in [
+                  ('recent', 'Latest reports', '最新披露'),
+                  ('growth', 'Revenue growth', '收入增速'),
+                  ('margin', 'Operating margin', '经营利润率'),
+                  ('cash', 'Free cash flow margin', '自由现金流率'),
+                  ('change', 'Largest changes', '变化幅度'),
+                ])
+                  DropdownMenuItem(
+                    value: item.$1,
+                    child: Text(w(item.$2, item.$3), style: st(12)),
                   ),
               ],
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  sort = value;
+                  page = 0;
+                });
+                remember();
+                unawaited(load());
+              },
             ),
-            const SizedBox(height: 10),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  _filterCard(
-                    key: const ValueKey('fund-filter-growth'),
-                    icon: Icons.trending_up,
-                    title: w('Revenue growth', '收入增速'),
-                    subtitle: w('Quarterly YoY', '单季度同比'),
-                    value: minGrowth,
-                    onChanged: (value) => _changeThreshold('growth', value),
-                  ),
-                  const SizedBox(width: 10),
-                  _filterCard(
-                    key: const ValueKey('fund-filter-margin'),
-                    icon: Icons.show_chart,
-                    title: w('Profitability', '盈利能力'),
-                    subtitle: w('TTM operating margin', 'TTM 经营利润率'),
-                    value: minMargin,
-                    onChanged: (value) => _changeThreshold('margin', value),
-                  ),
-                  const SizedBox(width: 10),
-                  _filterCard(
-                    key: const ValueKey('fund-filter-fcf'),
-                    icon: Icons.water_drop_outlined,
-                    title: w('Cash flow', '现金流'),
-                    subtitle: w('TTM FCF margin', 'TTM FCF 利润率'),
-                    value: minFcfMargin,
-                    onChanged: (value) => _changeThreshold('fcf', value),
-                  ),
-                ],
+            TextButton.icon(
+              key: const ValueKey('fundamental-advanced'),
+              icon: Icon(advanced ? Icons.expand_less : Icons.tune, size: 17),
+              label: Text(
+                w('Filters', '筛选条件') +
+                    ([minGrowth, minMargin, minFcfMargin].any((v) => v != null)
+                        ? ' · ${[minGrowth, minMargin, minFcfMargin].where((v) => v != null).length}'
+                        : ''),
               ),
+              onPressed: () => setState(() => advanced = !advanced),
             ),
-            const SizedBox(height: 8),
+            if ([minGrowth, minMargin, minFcfMargin].any((v) => v != null))
+              TextButton(
+                key: const ValueKey('fundamental-clear-thresholds'),
+                onPressed: () {
+                  setState(() {
+                    minGrowth = null;
+                    minMargin = null;
+                    minFcfMargin = null;
+                    page = 0;
+                  });
+                  remember();
+                  unawaited(load());
+                },
+                child: Text(w('Clear filters', '清除筛选')),
+              ),
             Text(
-              w(
-                'These are user filters on reported Fact OS metrics; they do not change the signal formulas or create a stock rating.',
-                '这些参数只筛选 Fact OS 已披露指标，不会修改信号公式，也不会生成股票评分。',
-              ),
-              style: st(9, false, p.muted),
+              w('A valuation model is not required.', '无需已有估值模型。'),
+              style: st(10, false, p.muted),
             ),
           ],
         ),
-        padding: const EdgeInsets.all(14),
-      ),
-      const SizedBox(height: 10),
-      Row(
-        children: [
-          Expanded(
-            child: TextField(
-              key: const ValueKey('fundamental-search'),
-              controller: search,
-              onChanged: scheduleSearch,
-              decoration: InputDecoration(
-                isDense: true,
-                prefixIcon: const Icon(Icons.search),
-                hintText: w(
-                  'Search every Fact OS company — valuation model not required',
-                  '搜索全部 Fact OS 公司——不要求已有估值模型',
-                ),
-                suffixIcon: search.text.isEmpty
-                    ? null
-                    : IconButton(
-                        onPressed: () {
-                          search.clear();
-                          unawaited(load());
-                        },
-                        icon: const Icon(Icons.close),
-                      ),
+        if (advanced) ...[
+          Divider(color: p.border, height: 24),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _filterCard(
+                key: const ValueKey('fund-filter-growth'),
+                icon: Icons.trending_up,
+                title: w('Revenue growth', '收入增速'),
+                subtitle: w('Quarterly YoY ≥', '单季度同比 ≥'),
+                value: minGrowth,
+                onChanged: (value) => _changeThreshold('growth', value),
               ),
-            ),
+              _filterCard(
+                key: const ValueKey('fund-filter-margin'),
+                icon: Icons.show_chart,
+                title: w('Profitability', '盈利能力'),
+                subtitle: w('TTM operating margin ≥', 'TTM 经营利润率 ≥'),
+                value: minMargin,
+                onChanged: (value) => _changeThreshold('margin', value),
+              ),
+              _filterCard(
+                key: const ValueKey('fund-filter-fcf'),
+                icon: Icons.water_drop_outlined,
+                title: w('Cash flow', '现金流'),
+                subtitle: w('TTM FCF margin ≥', 'TTM 自由现金流率 ≥'),
+                value: minFcfMargin,
+                onChanged: (value) => _changeThreshold('fcf', value),
+              ),
+            ],
           ),
         ],
-      ),
-    ],
+      ],
+    ),
+    padding: const EdgeInsets.all(14),
   );
 
   void _changeThreshold(String kind, double? value) {
     setState(() {
+      page = 0;
       if (kind == 'growth') minGrowth = value;
       if (kind == 'margin') minMargin = value;
       if (kind == 'fcf') minFcfMargin = value;
@@ -732,7 +758,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
         const LinearProgressIndicator(minHeight: 2),
         const SizedBox(height: 14),
         Text(
-          w('Scanning compact reported facts…', '正在扫描紧凑的已披露事实…'),
+          w('Loading company financials…', '正在加载公司财务…'),
           style: st(14, true),
         ),
         const SizedBox(height: 5),
@@ -751,18 +777,43 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          w('Fundamental facts could not be read.', '基本面事实暂时无法读取。'),
+          w('Financial data is temporarily unavailable.', '财务数据暂时无法连接'),
           style: st(18, true),
         ),
         const SizedBox(height: 7),
         Text(
-          w('No cached valuation-model list is substituted.', '不会用估值模型旧列表替代。'),
+          failureCode == 'cutoff'
+              ? w(
+                  'The response did not match your selected date. Retry to load a consistent view.',
+                  '数据与所选截止日不一致，请重试以加载同一日期的数据。',
+                )
+              : w(
+                  'The financial data service could not complete this request. Your filters are preserved; retry or open a company in Research.',
+                  '财务数据服务未能完成请求。筛选条件已保留，可以重试或前往 Research 查看公司。',
+                ),
           style: st(12, false, p.muted),
         ),
         const SizedBox(height: 12),
-        FilledButton(
-          onPressed: () => unawaited(load()),
-          child: Text(w('Retry Fact OS', '重试 Fact OS')),
+        Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          children: [
+            FilledButton.icon(
+              onPressed: () => unawaited(load()),
+              icon: const Icon(Icons.refresh, size: 17),
+              label: Text(w('Try again', '重新加载')),
+            ),
+            if (RegExp(
+              r'^[A-Za-z][A-Za-z0-9.-]{0,9}$',
+            ).hasMatch(search.text.trim()))
+              OutlinedButton(
+                onPressed: () => widget.onCompany(
+                  search.text.trim().toUpperCase(),
+                  'financials',
+                ),
+                child: Text(w('Open in Research', '前往公司研究')),
+              ),
+          ],
         ),
       ],
     ),
@@ -790,6 +841,8 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
               minGrowth = null;
               minMargin = null;
               minFcfMargin = null;
+              lens = 'all';
+              page = 0;
             });
             remember();
             unawaited(load());
@@ -830,6 +883,37 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
         ),
         const SizedBox(height: 12),
         for (final row in rows) _resultRow(row, compact),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '${page * 30 + 1}–${page * 30 + rows.length} / ${data?['totalMatches'] ?? rows.length}',
+                style: st(11, false, p.muted),
+              ),
+            ),
+            IconButton(
+              tooltip: w('Previous page', '上一页'),
+              onPressed: page == 0
+                  ? null
+                  : () {
+                      page--;
+                      unawaited(load());
+                    },
+              icon: const Icon(Icons.chevron_left),
+            ),
+            IconButton(
+              tooltip: w('Next page', '下一页'),
+              onPressed: data?['hasMore'] == true
+                  ? () {
+                      page++;
+                      unawaited(load());
+                    }
+                  : null,
+              icon: const Icon(Icons.chevron_right),
+            ),
+          ],
+        ),
       ],
     ),
     padding: const EdgeInsets.all(14),
@@ -883,40 +967,43 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
                 ],
               ),
               const SizedBox(height: 10),
-              Text(bi(signal['summary']), style: st(12, true)),
+              if (signal.isNotEmpty && lens != 'all')
+                Text(bi(signal['summary']), style: st(12, true)),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 10,
                 runSpacing: 5,
                 children: [
                   _miniMetric(
-                    w('Revenue', '收入'),
+                    w('Revenue YoY', '收入同比'),
                     pct(metrics['revenueGrowth']),
                   ),
                   _miniMetric(
-                    w('Op. margin', '经营利润率'),
+                    w('TTM op. margin', 'TTM 经营利润率'),
                     pct(metrics['operatingMargin'], sign: false),
                   ),
                   _miniMetric(
-                    w('FCF margin', 'FCF 率'),
+                    w('TTM FCF', 'TTM FCF 率'),
                     pct(metrics['fcfMargin'], sign: false),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.help_outline, size: 14, color: p.secondary),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      bi(signal['question']),
-                      style: st(10, false, p.secondary),
+              if (signal.isNotEmpty && lens != 'all') ...[
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.help_outline, size: 14, color: p.secondary),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        bi(signal['question']),
+                        style: st(10, false, p.secondary),
+                      ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -924,20 +1011,8 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     );
   }
 
-  Widget _tickerMark(String symbol) => Container(
-    width: 38,
-    height: 38,
-    alignment: Alignment.center,
-    decoration: BoxDecoration(
-      color: p.card,
-      borderRadius: BorderRadius.circular(9),
-      border: Border.all(color: p.border),
-    ),
-    child: Text(
-      symbol.characters.take(3).toString(),
-      style: st(10, true, p.accent),
-    ),
-  );
+  Widget _tickerMark(String symbol) =>
+      StockLogo(ticker: symbol, palette: p, size: 38);
   Widget _miniMetric(String label, String value) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
     decoration: BoxDecoration(
@@ -1000,12 +1075,15 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        Text('${detail?['ticker']}', style: st(20, true)),
                         Text(
-                          '${detail?['ticker']} · ${company['name'] ?? ''}',
-                          style: st(20, true),
+                          text(company['name']),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: st(11, false, p.muted),
                         ),
                         Text(
-                          '${company['period_end']} · ${w('publicly available', '公开可用')} ${company['available_at']} · ${detail?['economicTemplate']}',
+                          '${company['period_end']} · ${w('disclosed', '披露于')} ${company['available_at']}',
                           style: st(10, false, p.muted),
                         ),
                       ],
@@ -1018,23 +1096,55 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
               _detailTabs(),
               if (detailTab == 'business') ...[
                 const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _miniMetric(
+                      w('Revenue YoY', '收入同比'),
+                      pct(asMap(company['metrics'])['revenueGrowth']),
+                    ),
+                    _miniMetric(
+                      w('TTM op. margin', 'TTM 经营利润率'),
+                      pct(
+                        asMap(company['metrics'])['operatingMargin'],
+                        sign: false,
+                      ),
+                    ),
+                    _miniMetric(
+                      w('TTM FCF', 'TTM FCF 率'),
+                      pct(asMap(company['metrics'])['fcfMargin'], sign: false),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
                 Text(
                   w('OPERATING JUDGMENT', '经营判断'),
                   style: st(10, true, p.accent),
                 ),
                 const SizedBox(height: 6),
-                Text(bi(judgment['summary']), style: st(21, true, null, 1.25)),
-                const SizedBox(height: 12),
-                _importantChanges(),
+                Text(bi(judgment['summary']), style: st(17, true, null, 1.4)),
                 const SizedBox(height: 12),
                 _counterEvidence(),
                 const SizedBox(height: 15),
                 _researchActions(),
+                ExpansionTile(
+                  key: const ValueKey('fundamental-evidence-expansion'),
+                  tilePadding: EdgeInsets.zero,
+                  title: Text(
+                    w('Changes & evidence', '变化与证据'),
+                    style: st(12, true),
+                  ),
+                  children: [_importantChanges()],
+                ),
               ],
             ],
           ),
         ),
-        if (detailTab == 'valuation') ...[
+        if (detailTab == 'business') ...[
+          const SizedBox(height: 12),
+          _trendCard(),
+        ] else if (detailTab == 'valuation') ...[
           const SizedBox(height: 12),
           _valuationBreakdown(),
         ] else if (detailTab == 'financials') ...[
@@ -1050,36 +1160,29 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     );
   }
 
-  Widget _detailTabs() => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    child: SegmentedButton<String>(
-      key: const ValueKey('fundamental-detail-tabs'),
-      segments: [
-        ButtonSegment(
-          value: 'business',
-          icon: const Icon(Icons.fact_check_outlined, size: 16),
-          label: Text(w('Business', '经营研究')),
+  Widget _detailTabs() => Wrap(
+    key: const ValueKey('fundamental-detail-tabs'),
+    spacing: 6,
+    runSpacing: 6,
+    children: [
+      for (final item in [
+        ('business', 'Business', '经营研究'),
+        ('valuation', 'Valuation', '估值拆解'),
+        ('financials', 'Financials', '财务趋势'),
+        ('13f', '13F insights', '13F 洞察'),
+      ])
+        TextButton(
+          style: TextButton.styleFrom(
+            backgroundColor: detailTab == item.$1
+                ? p.accent.withValues(alpha: .16)
+                : p.card,
+            foregroundColor: detailTab == item.$1 ? p.accent : p.muted,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          ),
+          onPressed: () => selectDetailTab(item.$1),
+          child: Text(w(item.$2, item.$3)),
         ),
-        ButtonSegment(
-          value: 'valuation',
-          icon: const Icon(Icons.calculate_outlined, size: 16),
-          label: Text(w('Valuation', '估值拆解')),
-        ),
-        ButtonSegment(
-          value: 'financials',
-          icon: const Icon(Icons.query_stats, size: 16),
-          label: Text(w('Financials', '财务趋势')),
-        ),
-        ButtonSegment(
-          value: '13f',
-          icon: const Icon(Icons.account_balance_outlined, size: 16),
-          label: Text(w('13F insights', '13F 洞察')),
-        ),
-      ],
-      selected: {detailTab},
-      showSelectedIcon: false,
-      onSelectionChanged: (values) => selectDetailTab(values.first),
-    ),
+    ],
   );
 
   String _currencyValue(dynamic value, String currency, {int digits = 2}) {
@@ -1822,6 +1925,12 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
       spacing: 8,
       runSpacing: 8,
       children: [
+        OutlinedButton.icon(
+          key: const ValueKey('fund-open-research'),
+          onPressed: () => widget.onCompany(ticker, 'financials'),
+          icon: const Icon(Icons.open_in_new, size: 17),
+          label: Text(w('Open in Research', '进入公司研究')),
+        ),
         FilledButton.icon(
           key: const ValueKey('fund-save-observation'),
           onPressed: saving ? null : () => unawaited(_saveObservation()),
@@ -2003,7 +2112,10 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
             Text(w('Reported fact lineage', '已披露事实来源'), style: st(20, true)),
             const SizedBox(height: 5),
             Text(
-              '${detail?['reportedBasis']} · ${detail?['restatedBasis']}',
+              w(
+                'As-reported quarterly / annual facts (ARQ / ARY), using the latest revision visible by the research cutoff. Restated MRQ / MRY values are excluded from historical PIT.',
+                '使用研究截止日可见的原始报告季度／年度事实（ARQ／ARY）及其已知修订；重述的 MRQ／MRY 不会混入历史时点研究。',
+              ),
               style: st(11, false, p.muted),
             ),
             const SizedBox(height: 12),

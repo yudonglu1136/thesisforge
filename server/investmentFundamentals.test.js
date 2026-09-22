@@ -133,3 +133,18 @@ test('route requires authentication and preserves private cache policy',async t=
     const r=await fetch(url,{headers:{'x-test-user':'alice'}});assert.equal(r.status,200);assert.match(r.headers.get('cache-control'),/private/);assert.equal((await r.json()).rows.length,1);
   }finally{await new Promise(r=>server.close(r));}
 });
+
+test('missing production facts are a retryable noncached 503, not a cached opaque 500', async t => {
+  const {db}=fixture(t), app=express();
+  app.use((req,_,next)=>{req.user={id:'test'};next();});
+  registerInvestmentRoutes(app,{source:{db},date:d=>d,fundamentalDiscovery:async()=>{
+    throw Object.assign(new Error('sensitive runtime path'),{name:'FactDataError',code:'local_runtime_unavailable'});
+  }});
+  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+  try {
+    const response=await fetch(`http://127.0.0.1:${server.address().port}/api/investment/fundamentals?asOf=2026-09-22`);
+    assert.equal(response.status,503);
+    assert.match(response.headers.get('cache-control'),/no-store/);
+    assert.deepEqual(await response.json(),{error:'local_runtime_unavailable'});
+  } finally {await new Promise(r=>server.close(r));}
+});
