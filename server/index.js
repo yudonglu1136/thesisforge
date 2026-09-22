@@ -1,6 +1,7 @@
 import express from "express";
 import { dataReleaseMiddleware,dataReleaseStatus } from './dataReleaseContext.js';
 import { queryFacts } from './factRepository.js';
+import { verifyReleasedFundamentals } from './fundamentalReleaseProbe.js';
 import { enableInvestmentPreview } from './investmentRoutes.js';
 import cors from "cors";
 import fs from "node:fs";
@@ -120,7 +121,8 @@ app.get('/api/internal/data-release',requireLoopbackRequest,requireInternalCron,
     const release=dataReleaseStatus();
     if(!release)return response.status(503).json({error:'data_release_not_activated'});
     const coverage=await queryFacts('get_coverage');
-    response.json({status:'verified',releaseId:release.releaseId,groups:release.groups,coverage});
+    const fundamentals=await verifyReleasedFundamentals(new Date().toISOString().slice(0,10));
+    response.json({status:'verified',releaseId:release.releaseId,groups:release.groups,coverage,fundamentals});
   }catch{return response.status(503).json({error:'data_release_probe_failed'});}
 });
 registerRetiredProductRoutes(app);

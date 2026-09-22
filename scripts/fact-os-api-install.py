@@ -84,10 +84,11 @@ def main():
         if not secret:raise ValueError('internal_ack_credential_missing')
         request=urllib.request.Request('http://127.0.0.1:'+str(api_port(config))+'/api/internal/data-release',headers={'Authorization':'Bearer '+secret})
         with urllib.request.urlopen(request,timeout=120) as response:body=json.load(response)
-        if body.get('releaseId')!=installed['releaseId'] or body.get('status')!='verified' or not body.get('coverage'):
+        if (body.get('releaseId')!=installed['releaseId'] or body.get('status')!='verified'
+                or not body.get('coverage') or body.get('fundamentals',{}).get('status')!='ready'):
             raise ValueError('live_api_generation_mismatch')
         return {'status':'verified','releaseId':installed['releaseId'],'actualApiUserRead':True,'canonicalReadVerified':True,
-                'groups':{k:v['generationId'] for k,v in installed['groups'].items()}}
+                'groups':{k:v['generationId'] for k,v in installed['groups'].items()},'fundamentals':body['fundamentals']}
     result=install(s3,args.bucket,candidate,root,validate_group=validate,probe=probe,expected_release=expected)
     print(json.dumps(result))
 

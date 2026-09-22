@@ -68,7 +68,7 @@ PIT cutoff, page disjointness and repeatability. Local cold read: 2,656 ms.
 Three runs of 60 warm requests / concurrency 20 yielded P95 144 / 129 / 126 ms.
 These are local measurements, not claims of production latency.
 
-- Node full server regression: 1,657 passed, 15 skipped, zero failed.
+- Node final full server regression: 1,659 passed, 15 skipped, zero failed.
 - Python Fact OS regression: 200 passed.
 - Focused Fundamentals + adjacent explorer: 29 passed.
 - Full Flutter: 570 passed, 32 failures. Exact failing-test names match the
@@ -115,3 +115,12 @@ removed the new active pointer. Four regression tests now cover the EB default,
 explicit port, process-environment port and malformed ports. The repair changes
 only port selection; it never relaxes authentication, loopback or ACK checks.
 Retry reuses the already-verified immutable files instead of duplicating them.
+
+The production read-only probe then passed on 5,419 companies (the AWS canonical
+generation is newer than the local 5,418-company generation). AMZN's model value
+was 235.6928225956114 and UBER's 156.2045336056933. Production cold discovery took
+14.5 seconds; warm concurrency-20 P95 was 766 / 688 / 656 ms. To keep that cold
+scan out of the first user's visit, the authenticated loopback release ACK now
+verifies and warms the same in-process discovery function. It rejects missing,
+future-dated and wrong-cutoff results; a separate CLI process is not considered
+API prewarming. This does not add a scheduler or expose an unauthenticated route.
