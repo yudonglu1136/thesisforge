@@ -10,7 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { InvestmentStore } from './investmentStore.js';
 import { InvestmentService } from './investmentService.js';
 import { registerInvestmentRoutes } from './investmentRoutes.js';
-import { compactResearchSeries } from './researchWorkbench.js';
+import { compactResearchSeries, saveResearchRecord } from './researchWorkbench.js';
 
 const base={revenueM:1000,sharesM:100,currency:'USD'};
 const assumptions={method:'parent_fcfe',discountType:'Ke',ownership:'parent_common',timing:'year_end',ke:.1,g:.025,growth:Array(5).fill(.1),margin:Array(5).fill(.2)};
@@ -345,6 +345,42 @@ test('value-chain research saves with explicit retrospective classification prov
   const d=s.saveDecision('alice',body);
   strict.equal(d.discoveryOrigin.kind,'value_flow');strict.equal(d.discoveryOrigin.classificationVersion,'2026-08-14');strict.equal(d.discoveryOrigin.retrospectiveClassification,true);
   strict.equal(s.store.list('bob','decision').length,0);store.close();
+});
+test('AI Insights decisions retain the server-verified snapshot and no fabricated client financials',()=>{
+  const {service:s,store}=setup();const scenario=save(s);
+  s.aiInsights={company(ticker,query){
+    strict.equal(ticker,'ISRG');strict.equal(query.asOf,scenario.asOf);strict.equal(query.snapshotId,'fixture-analysis');
+    return {context:{snapshotId:'fixture-analysis',asOf:query.asOf,selectedQuarter:'2026Q1',universeVersion:'fixture-universe',methodologyVersion:'fixture-method',catalogGeneration:'fixture-catalog'},company:{sourceRevisionId:'fixture-source'}};
+  }};
+  const body={ticker:'ISRG',asOf:scenario.asOf,operationId:'ai_insights_decision_01',action:'Watch',scenarioId:scenario.id,units:0,targetWeight:0,notes:'AI research',discoveryOrigin:'ai_insights',discoveryContext:{snapshotId:'fixture-analysis',quarter:'2026Q1',window:8,group:'hardware',sort:'quality',selected:'ISRG',revenue:999,tickers:['CRDO','ALAB']}};
+  const d=s.saveDecision('alice',body);
+  strict.equal(d.discoveryOrigin.kind,'ai_insights');strict.equal(d.discoveryOrigin.snapshotId,'fixture-analysis');
+  strict.equal(d.discoveryContext.catalogGeneration,'fixture-catalog');strict.equal(d.discoveryContext.sourceRevisionId,'fixture-source');
+  strict.equal(d.discoveryContext.filters.selected,'ISRG');
+  strict.equal(d.discoveryContext.revenue,undefined);strict.deepEqual(d.discoveryContext.compareTickers,['CRDO','ALAB']);
+  strict.throws(()=>s.saveDecision('alice',{...body,operationId:'ai_insights_decision_02',discoveryContext:{}}),/ai_insights_snapshot_required/);
+  store.close();
+});
+test('AI Insights observations use server-verified source references without a valuation decision',()=>{
+  const {service:s,store}=setup();
+  s.aiInsights={company(ticker,query){
+    strict.equal(ticker,'ISRG');strict.equal(query.asOf,'2026-06-01');strict.equal(query.snapshotId,'fixture-analysis');
+    return {context:{snapshotId:'fixture-analysis',asOf:query.asOf,selectedQuarter:'2026Q1',window:8,
+      universeVersion:'fixture-universe',methodologyVersion:'fixture-method',generationId:'fixture-generation'},
+      sourceRefs:['sf1:verified-a','sf1:verified-b']};
+  }};
+  const record=saveResearchRecord(s,'alice',{operationId:'ai_research_record_01',ticker:'ISRG',asOf:'2026-06-01',
+    question:'Does revenue growth convert into cash?',supportingEvidence:'reviewed',opposingEvidence:'capex rising',
+    evidenceRefs:['client:untrusted'],discoveryOrigin:'ai_insights',
+    discoveryContext:{snapshotId:'fixture-analysis',quarter:'2026Q1',window:8,group:'hardware',tickers:['CRDO','ALAB'],revenue:999}});
+  strict.deepEqual(record.evidenceRefs,['sf1:verified-a','sf1:verified-b']);
+  strict.equal(record.discoveryContext.generationId,'fixture-generation');
+  strict.equal(record.discoveryContext.revenue,undefined);
+  strict.deepEqual(record.discoveryContext.compareTickers,['CRDO','ALAB']);
+  strict.equal(record.personalScenarioId,null);
+  strict.throws(()=>saveResearchRecord(s,'alice',{operationId:'ai_research_record_02',ticker:'ISRG',asOf:'2026-06-01',
+    question:'Invalid snapshot',discoveryOrigin:'ai_insights',discoveryContext:{}}),/ai_insights_snapshot_required/);
+  store.close();
 });
 test('fundamental workbench origins preserve evidence and support the all-company screen below 15 percent growth',t=>{
   const {service:s,store}=setup(),db=new DatabaseSync(':memory:');t.after(()=>{store.close();db.close();});

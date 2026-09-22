@@ -442,8 +442,34 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
     if (apply != true || !mounted) return;
     await command(() async {
       final previous = asOf;
-      asOf = dateInput.text;
-      await loadHome();
+      final requested = dateInput.text.trim();
+      final parsed = DateTime.tryParse(requested);
+      if (parsed == null ||
+          parsed.toIso8601String().substring(0, 10) != requested ||
+          requested.compareTo(
+                DateTime.now().toUtc().toIso8601String().substring(0, 10),
+              ) >
+              0) {
+        throw StateError(
+          w('Enter a valid date no later than today.', '请输入不晚于今天的有效日期。'),
+        );
+      }
+      asOf = requested;
+      // A snapshot is bound to one information cutoff even when the user
+      // changes the date from another Discover module or Research. Never let a
+      // hidden AI panel revive that stale generation/date tuple later.
+      aiInsightsSelection.remove('snapshotId');
+      final selectedAiQuarter = text(aiInsightsSelection['quarter']);
+      final latestAiQuarter =
+          '${parsed.year}Q${((parsed.month - 1) ~/ 3) + 1}';
+      if (selectedAiQuarter.replaceAll('-', '').compareTo(latestAiQuarter) > 0) {
+        aiInsightsSelection.remove('quarter');
+      }
+      if (page == 'discover' && discoveryTab == 'aiinsights') {
+        home = null;
+      } else {
+        await loadHome();
+      }
       if (error != null) {
         asOf = previous;
         return;

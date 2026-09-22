@@ -72,13 +72,13 @@ test('call availability and source identities are separately enforced',()=>{
   t.qaCoverage.callDate=null;t.qaCoverage.researchAvailableAt=null;
   assert.equal(visibleEarningsQa(t,'TEST','2026-Q1','2026-08-28').qa.length,0);
 });
-test('research route remains authenticated and read-only',()=>{
+test('research route remains authenticated and read-only',async()=>{
   const routes=new Map(),app={get:(p,h)=>routes.set(`GET ${p}`,h),post:()=>{}};
   const source=setup();registerInvestmentRoutes(app,{source,date:d=>d});
   const route=routes.get('GET /api/investment/research/:ticker/earnings');
   let status=200,body,headers={};const res={setHeader:(k,v)=>headers[k]=v,status:s=>{status=s;return res;},json:v=>body=v};
-  route({query:{asOf:'2026-08-28'},params:{ticker:'TEST'}},res);assert.equal(status,401);
-  status=200;route({user:{id:'alice'},query:{asOf:'2026-08-28',period:'2026-Q1'},params:{ticker:'TEST'}},res);
+  await route({query:{asOf:'2026-08-28'},params:{ticker:'TEST'}},res);assert.equal(status,401);
+  status=200;await route({user:{id:'alice'},query:{asOf:'2026-08-28',period:'2026-Q1'},params:{ticker:'TEST'}},res);
   assert.equal(status,200);assert.equal(body.selected.period,'2026-Q1');assert.equal(headers['Cache-Control'],'private, no-store');
   source.db.close();
 });

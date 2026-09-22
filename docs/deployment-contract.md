@@ -19,7 +19,11 @@ The shared `server/retiredProductRoutes.js` predicate defines the retired API
 namespace for both Vercel and direct AWS requests; responses are 410 with
 `module_retired` and `Cache-Control: no-store`, before authentication/body reads
 or upstream forwarding. The redesigned `/api/investment/*` workspace, including
-Value Flow and strategy/CTA features, and `/api/valuation/*` remain active.
+AI Insights and strategy/CTA features, and `/api/valuation/*` remain active.
+Value Flow was retired on 2026-09-22 and replaced by Discover → AI Insights.
+Old `discoverTab=valueflow` links redirect while retaining language/cutoff;
+the old `/api/investment/value-flow` API returns 410. Historical decisions keep
+their original `value_flow` provenance without retaining the online module.
 
 Legacy page links may return to the current application; they must never revive
 the old module. Old snapshot files and historical release/brand artifacts are

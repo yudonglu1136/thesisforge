@@ -6,13 +6,13 @@ test('retired modules and aliases cannot reach old snapshot APIs', () => {
   for (const route of ['/api/ontology/health','/api/ontology/overview','/api/strategies',
     '/api/strategies/legacy/snapshot','/api/decision/company/PLTR','/api/market/companies/PLTR',
     '/api/overview','/api/graph','/api/methodology','/api/timeline','/api/rankings',
-    '/api/company/PLTR','/api/snapshot','/api/dbmf?refresh=1','/API/ONTOLOGY/',
+    '/api/company/PLTR','/api/snapshot','/api/investment/value-flow','/api/dbmf?refresh=1','/API/ONTOLOGY/',
     '/api/%6fntology/overview']) assert.equal(isRetiredApiPath(route),true,route);
 });
 
 test('current research, Guru, portfolio, factor and CTA routes remain available', () => {
   for (const route of ['/api/gurus','/api/gurus/bill-ackman','/api/valuation','/api/valuation/PLTR',
-    '/api/portfolio','/api/health','/api/admin/system-health','/api/investment/discover',
+    '/api/portfolio','/api/health','/api/admin/system-health','/api/investment/discover','/api/investment/ai-insights',
     '/api/investment/strategy-lab','/api/investment/strategy-backtests','/api/marketplace',
     '/api/strategies-extra','/api/ontology-extra','/api/graphing']) assert.equal(isRetiredApiPath(route),false,route);
 });

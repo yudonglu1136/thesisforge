@@ -103,8 +103,11 @@ artifact, service start, snapshot export, or deployment dependency. Legacy page
 links may return to the current application, never to the retired module.
 Retired API paths must return 410/no-store before auth/body reads or forwarding;
 Vercel and AWS share `server/retiredProductRoutes.js` as their route predicate.
-The redesigned `/api/investment/*` workspace, Value Flow, strategies/CTA, and
-`/api/valuation/*` are not retired. Preserve historical snapshot databases and
+Value Flow was also retired by the user's explicit request on 2026-09-22;
+Discover now contains the independent AI Insights module. Legacy `valueflow`
+page links redirect to `aiinsights`; `/api/investment/value-flow` returns 410.
+The redesigned `/api/investment/*` workspace, AI Insights, strategies/CTA, and
+`/api/valuation/*` remain active. Preserve historical snapshot databases and
 dated research/brand artifacts; those archives do not require a live module.
 Never promote a Vercel deployment built from a branch other than `trunk`.
 

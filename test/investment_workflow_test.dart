@@ -105,7 +105,15 @@ class DiscoveryFixtureApi extends WorkflowTestApi {
       return {
         'asOf': Uri.parse(path).queryParameters['asOf'],
         'period': Uri.parse(path).queryParameters['period'],
-        'rows': [],
+        'rows': [
+          {
+            ...guru,
+            'basis': 'reported_13f_long_only',
+            'annualTurnover': .18,
+            'cagr': .12,
+            'sharpe': 1.1,
+          },
+        ],
         'unavailable': [],
         'range': null,
       };
@@ -628,9 +636,7 @@ void main() {
           );
           expect(
             find.text(
-              language == AppLanguage.en
-                  ? 'Your assumptions. Your valuation.'
-                  : '你的假设，你的估值。',
+              language == AppLanguage.en ? 'Valuation workspace' : '估值工作台',
             ),
             findsOneWidget,
           );
@@ -810,13 +816,21 @@ void main() {
         tester,
       ) async {
         await mountDiscovery(tester, size, language, DiscoveryFixtureApi());
-        final add = find.text(
-          language == AppLanguage.en ? 'Add a Guru' : '添加经理',
-        );
-        await tester.ensureVisible(add);
-        await tester.tap(add);
+        final loadStudy = find.byKey(const ValueKey('load-guru-study'));
+        await tester.ensureVisible(loadStudy);
+        await tester.tap(loadStudy);
         await tester.pumpAndSettle();
-        await tester.tap(find.widgetWithText(ListTile, 'Test manager'));
+        final compare = find.byKey(
+          const ValueKey('guru-directory-compare-test-manager'),
+        );
+        await tester.ensureVisible(compare);
+        await tester.tap(compare);
+        await tester.pumpAndSettle();
+        final select = find.byKey(
+          const ValueKey('guru-study-select-test-manager'),
+        );
+        await tester.ensureVisible(select);
+        await tester.tap(select);
         await tester.pumpAndSettle();
         final explore = find.text(
           language == AppLanguage.en ? 'Explore quarterly holdings' : '查看季度持仓',

@@ -25,7 +25,7 @@ test('Caddy locally retires every legacy API family and the dedicated health pro
     }
   }
   for (const path of ['/api/overview', '/api/graph', '/api/methodology', '/api/timeline',
-    '/api/rankings', '/api/snapshot', '/api/company/PLTR']) {
+    '/api/rankings', '/api/snapshot', '/api/company/PLTR', '/api/investment/value-flow']) {
     for (const route of [path, `${path}/`, `${path}?refresh=1`]) {
       assert.equal(isRetiredApiPath(route), true, route);
       assert.equal(caddyMatches(route), true, route);
@@ -40,7 +40,7 @@ test('Caddy locally retires every legacy API family and the dedicated health pro
 test('Caddy does not retire active investment, CTA, Guru, valuation or similarly named paths', () => {
   for (const route of ['/api/health', '/api/gurus', '/api/gurus/bill-ackman',
     '/api/valuation/PLTR', '/api/portfolio', '/api/admin/system-health',
-    '/api/investment/discover', '/api/investment/value-flow',
+    '/api/investment/discover', '/api/investment/ai-insights',
     '/api/investment/strategy-lab', '/api/investment/strategy-backtests',
     '/api/investment/strategy-rules', '/api/marketplace', '/api/ontology-extra',
     '/api/strategies-extra', '/api/graphing', '/api/company', '/api/company/PLTR/extra',

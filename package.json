@@ -59,7 +59,10 @@
     "fact-os:sync": "bash bin/fact-os sync",
     "audit:fact-os": ".venv-fact-os/bin/python scripts/audit-fact-os.py --sqlite-inventory --full --offline-probes --require-complete",
     "audit:fact-os-storage": ".venv-fact-os/bin/python scripts/audit-fact-os-storage.py --root data/fact_os --output data/fact_os/audit/storage-layout-latest.json",
-    "audit:storage-layout": "node scripts/audit-storage-layout.mjs"
+    "audit:storage-layout": "node scripts/audit-storage-layout.mjs",
+    "build:ai-insights": ".venv-fact-os/bin/python scripts/build-ai-insights-artifact.py",
+    "package:ai-insights": "node scripts/package-ai-insights-artifact.mjs",
+    "test:ai-insights": "node --test server/aiInsightsMetrics.test.js server/investmentAiInsights.test.js server/investmentAiInsightsRoutes.test.js scripts/package-ai-insights-artifact.test.mjs"
   },
   "dependencies": {
     "concurrently": "^10.0.3",

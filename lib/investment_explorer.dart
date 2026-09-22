@@ -113,7 +113,7 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
       final study = discoveryTab == 'managers' && selectedGuru == null;
       final opportunities = discoveryTab == 'gurus' && selectedGuru == null;
       final showTitle =
-          !{'valueflow', 'fundamentals'}.contains(discoveryTab) &&
+          !{'aiinsights', 'fundamentals'}.contains(discoveryTab) &&
           (selectedGuru == null ||
               !{'gurus', 'managers'}.contains(discoveryTab));
       return Column(
@@ -198,6 +198,20 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
   void persistDiscover() => replaceBrowserQuery({
     ...growthQuality.query,
     'discoverTab': discoveryTab,
+    for (final key in [
+      'quarter',
+      'window',
+      'tab',
+      'metric',
+      'group',
+      'sector',
+      'sort',
+      'query',
+      'selected',
+      'snapshotId',
+    ])
+      'ai_$key': aiInsightsSelection[key]?.toString(),
+    'ai_tickers': (aiInsightsSelection['tickers'] as List?)?.join(','),
     'guru': selectedGuru == null
         ? null
         : text(asMap(selectedGuru?['guru'])['id']),

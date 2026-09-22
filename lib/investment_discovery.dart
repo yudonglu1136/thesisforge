@@ -92,7 +92,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
             ('gurus', '13F Insights', '13F 洞察'),
             ('managers', 'Guru', 'Guru'),
             ('fundamentals', 'Fundamentals', '基本面'),
-            ('valueflow', 'Value Flow', '价值链'),
+            ('aiinsights', 'AI Insights', 'AI 洞察'),
           ])
             SizedBox(
               width: c.maxWidth < 650 ? math.max(0, c.maxWidth - 10) / 2 : null,
@@ -108,8 +108,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
                   if (tab.$1 == 'gurus' && institutional13f == null) {
                     unawaited(load13FInsights());
                   }
-                  if (const {'fundamentals', 'valueflow'}.contains(tab.$1) &&
-                      opportunities == null) {
+                  if (tab.$1 == 'fundamentals' && opportunities == null) {
                     unawaited(loadOpportunities());
                   }
                 },
@@ -119,9 +118,9 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
       ),
     ),
     const SizedBox(height: 16),
-    if ((discoveryLoading && discoveryTab != 'managers') || guruLoading)
+    if ((discoveryLoading && discoveryTab == 'gurus') || guruLoading)
       const LinearProgressIndicator(minHeight: 2),
-    if (discoveryError != null)
+    if (discoveryError != null && {'gurus', 'managers'}.contains(discoveryTab))
       card([
         label(
           'We could not load the disclosures. Your saved research is unchanged.',
@@ -169,24 +168,29 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
           );
         },
       ),
-    if (discoveryTab == 'valueflow')
-      ValueFlowPanel(
+    if (discoveryTab == 'aiinsights')
+      AiInsightsPanel(
         api: widget.api,
         palette: p,
         asOf: asOf,
-        initialSelection: valueFlowSelection,
-        onSelection: (selection) => valueFlowSelection = selection,
+        initialSelection: aiInsightsSelection,
+        onSelection: (selection) {
+          aiInsightsSelection = selection;
+          persistDiscover();
+        },
         onCompany: (symbol, destination) {
           opportunityReturnDate = '';
           unawaited(
             loadCompany(
               symbol,
-              origin: 'value_flow',
-              initialSection: destination,
+              origin: 'ai_insights',
+              evidence: {
+                'aiInsights': Map<String, dynamic>.from(aiInsightsSelection),
+              },
+              initialSection: destination == 'overview' ? 'evidence' : destination,
             ),
           );
         },
-        onGuru: (id) => unawaited(loadGuru(id)),
       ),
   ];
 

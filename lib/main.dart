@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -46,7 +47,8 @@ part 'investment_strategy_mix.dart';
 part 'investment_strategy_cta.dart';
 part 'investment_strategy_snapshot.dart';
 part 'investment_strategy_chart.dart';
-part 'investment_value_flow.dart';
+part 'investment_ai_insights.dart';
+part 'investment_ai_insights_export.dart';
 part 'investment_fundamentals.dart';
 part 'investment_fundamental_rules.dart';
 part 'investment_hedge.dart';

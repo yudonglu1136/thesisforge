@@ -5,7 +5,7 @@ const retiredPrefixes = [
 ];
 const retiredExactPaths = new Set([
   '/api/overview', '/api/graph', '/api/methodology', '/api/timeline',
-  '/api/rankings', '/api/snapshot'
+  '/api/rankings', '/api/snapshot', '/api/investment/value-flow'
 ]);
 
 export function isRetiredApiPath(value) {

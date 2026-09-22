@@ -8,7 +8,7 @@ import { researchCompanies } from './investmentCompanies.js';
 import { registerPortfolioAnalysisRoute } from './investmentPortfolio.js';
 import { registerStrategyLabRoutes } from './strategyLabRoutes.js';
 import { registerHedgeRoutes } from './hedgeRoutes.js';
-import { buildValueFlow } from './investmentValueFlow.js';
+import { createAiInsightsService } from './investmentAiInsights.js';
 import { fundamentalGuruQuarter } from './investmentFundamentals.js';
 import { buildGuruHoldingsMatrix, buildOpportunities, opportunityCompanySummary, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
 import { institutional13fInsights, institutional13fInsightDetail } from './institutional13fInsights.js';
@@ -18,6 +18,11 @@ import { researchDocuments, researchFundamentals, researchInstitutions, research
   saveResearchRecord, listResearchRecords } from './researchWorkbench.js';
 
 export function registerInvestmentRoutes(app,service) {
+  // One service instance owns generation caches and snapshot validation for
+  // both reads and saved research. A second route-local instance can otherwise
+  // observe another manifest generation during the same user workflow.
+  const aiInsights = service.aiInsights ??= createAiInsightsService();
+  const aiQuery = request => ({...request.query, asOf: service.date(request.query.asOf)});
   function route(method,path,handler,{cacheControl='private, no-store'}={}) {app[method]('/api/investment'+path,async (req,res)=>{
     res.setHeader('Cache-Control',cacheControl);
     if(!req.user?.id)return res.status(401).json({error:'unauthorized'});
@@ -29,7 +34,11 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
     search:r.query.search,limit:r.query.limit,
   }));
-  route('get','/value-flow',(_,r)=>buildValueFlow(service.source,service.date(r.query.asOf)));
+  route('get','/ai-insights',(_,r)=>aiInsights.overview(aiQuery(r)));
+  route('get','/ai-insights/rankings',(_,r)=>aiInsights.rankings(aiQuery(r)));
+  route('get','/ai-insights/compare',(_,r)=>aiInsights.compare(aiQuery(r)));
+  route('get','/ai-insights/methodology',()=>aiInsights.methodology());
+  route('get','/ai-insights/companies/:ticker',(_,r)=>aiInsights.company(r.params.ticker,aiQuery(r)));
   route('get','/fundamentals',(_,r)=>(service.fundamentalDiscovery??buildFundamentalDiscovery)(service.date(r.query.asOf),{
     lens:r.query.lens,search:r.query.search,limit:r.query.limit,
     minRevenueGrowth:r.query.minRevenueGrowth,minOperatingMargin:r.query.minOperatingMargin,
@@ -97,7 +106,8 @@ export function enableInvestmentPreview(app) {
   let store;
   try {store=new InvestmentStore(config.investment,undefined,{verifiedOwnersOnly:config.production});}
   catch(error){source.close();throw error;}
-  const service=new InvestmentService(source,store);
+  const aiInsights=createAiInsightsService({factRoot:config.aiInsightsRoot});
+  const service=new InvestmentService(source,store,undefined,{aiInsights});
   registerInvestmentRoutes(app,service);
   registerStrategyLabRoutes(app,service);
   registerHedgeRoutes(app,service);

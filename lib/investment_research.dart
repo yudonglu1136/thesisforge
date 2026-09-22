@@ -1622,6 +1622,9 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
             ? null
             : researchReviewDate.text.trim(),
         'evidenceRefs': <String>[],
+        'discoveryOrigin': discoveryOrigin,
+        if (discoveryOrigin == 'ai_insights')
+          'discoveryContext': asMap(entryEvidence?['aiInsights']),
         'personalScenarioId': scenarioId,
         'impliedScenario': asMap(calculation?['reverse']).isEmpty
             ? null

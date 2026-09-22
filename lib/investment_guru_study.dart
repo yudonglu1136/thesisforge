@@ -1133,6 +1133,7 @@ class _GuruStudyPanelState extends State<GuruStudyPanel> {
     ),
   );
   Widget addCard() => OutlinedButton(
+    key: const ValueKey('guru-study-add-manager'),
     onPressed: pickManager,
     style: OutlinedButton.styleFrom(padding: const EdgeInsets.all(14)),
     child: Column(
@@ -1175,6 +1176,7 @@ class _GuruStudyPanelState extends State<GuruStudyPanel> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   TextButton(
+                    key: ValueKey('guru-study-select-$id'),
                     onPressed: () => select(id, revealInList: true),
                     style: TextButton.styleFrom(
                       padding: EdgeInsets.zero,

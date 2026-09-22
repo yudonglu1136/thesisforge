@@ -94,10 +94,10 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
         '发现 / 基本面变化 / $ticker / $asOf',
       );
     }
-    if (discoveryOrigin == 'value_flow') {
+    if (discoveryOrigin == 'ai_insights') {
       source = w(
-        'Discover / AI value chain / $ticker / $asOf',
-        '发现 / AI 产业链 / $ticker / $asOf',
+        'Discover / AI Insights / $ticker / $asOf',
+        '发现 / AI 洞察 / $ticker / $asOf',
       );
     }
     if (opportunityReturnDate.isNotEmpty && ticker == opportunityTicker) {
@@ -139,8 +139,8 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
           label: Text(
             discoveryOrigin == 'fundamental_research'
                 ? w('Back to business changes', '返回经营变化')
-                : discoveryOrigin == 'value_flow'
-                ? w('Back to value chain', '返回产业链')
+                : discoveryOrigin == 'ai_insights'
+                ? w('Back to AI Insights', '返回 AI 洞察')
                 : opportunityReturnDate.isNotEmpty
                 ? w('Back to candidates', '返回候选列表')
                 : w('Discover', '发现'),

@@ -1,7 +1,9 @@
 import { assert, finite, isoDate, calculateScenario, reverseScenario, operatingIsoValueCurve, sensitivity, validateRules, evaluateRules, CALC_VERSION, RULE_VERSION, overlap } from './investmentMath.js';
 import { tickerKey } from './investmentSource.js';
 import { reviewWatch, buildOpportunities } from './investmentOpportunities.js';
-import { valueFlowTaxonomy } from './investmentValueFlow.js';
+import fs from 'node:fs';
+
+const legacyValueFlowProvenance = JSON.parse(fs.readFileSync(new URL('./config/legacy-value-flow-provenance.json', import.meta.url), 'utf8'));
 import { buildFundamentals, FUNDAMENTALS_VERSION } from './investmentFundamentals.js';
 import { worksheetState, saveWorksheet } from './investmentDrafts.js';
 import { buildResearchWorkbench } from './researchWorkbench.js';
@@ -10,7 +12,10 @@ const selectedManagers=['gavin-baker','bill-ackman','stanley-druckenmiller'];
 export const SHADOW_RULES=Object.freeze({version:'guru-top3-disclosure-preview-v1',managers:selectedManagers,topN:3,rank:'reported_common_long_value_desc_then_ticker',duplicate:'aggregate_CUSIP_then_union_ticker',weight:'equal_unique_security',rebalance:'first_market_session_after_public_availability',costBps:10,valuationFilter:false});
 
 export class InvestmentService {
-  constructor(source,store,today=()=>new Date().toISOString().slice(0,10)) {Object.assign(this,{source,store,today});}
+  constructor(source,store,today=()=>new Date().toISOString().slice(0,10),options={}) {
+    Object.assign(this,{source,store,today});
+    this.aiInsights=options.aiInsights??null;
+  }
   date(value) { const date=isoDate(value??this.today());assert(date<=this.today(),'future_as_of');return date; }
   guruDirectory(owner) {
     const follows=new Map(this.store.list(owner,'follow').map(x=>[x.guruId,x.followed]));
@@ -77,10 +82,24 @@ export class InvestmentService {
       }
       assert(sourceGuruIds.every(id=>discovery.some(g=>g.guruId===id)),'invalid_discovery_guru');
       const discoveryOrigin=body.discoveryOrigin??'direct_research';
-      assert(['direct_research','fundamental_rule','fundamental_research','guru_disclosure','value_flow'].includes(discoveryOrigin),'invalid_discovery_origin');
+      assert(['direct_research','fundamental_rule','fundamental_research','guru_disclosure','value_flow','ai_insights'].includes(discoveryOrigin),'invalid_discovery_origin');
       const fundamentalEntry=discoveryOrigin==='fundamental_research'?buildFundamentals(this.source,asOf).companies.find(r=>r.ticker===c.ticker):null;
       if(discoveryOrigin==='fundamental_research')assert(fundamentalEntry,'invalid_fundamental_company');
-      if(discoveryOrigin==='value_flow')assert(valueFlowTaxonomy.companies.some(x=>x.ticker===c.ticker),'company_not_in_value_chain');
+      let aiInsightsContext=null;
+      if(discoveryOrigin==='ai_insights') {
+        const selection=body.discoveryContext;
+        assert(selection&&typeof selection.snapshotId==='string'&&selection.snapshotId.length>0,'ai_insights_snapshot_required');
+        assert(this.aiInsights,'ai_insights_service_unavailable');
+        const analysis=this.aiInsights.company(c.ticker,{
+          asOf,quarter:selection.quarter,window:selection.window,snapshotId:selection.snapshotId,
+        });
+        aiInsightsContext={...analysis.context,ticker:c.ticker,
+          sourceRevisionId:analysis.company?.sourceRevisionId??null,
+          filters:Object.fromEntries(['tab','metric','group','sector','sort','query','selected'].filter(key=>typeof selection[key]==='string').map(key=>[key,selection[key].slice(0,120)])),
+          compareTickers:Array.isArray(selection.tickers)?selection.tickers.filter(x=>typeof x==='string'&&/^[A-Z0-9.\-]{1,12}$/.test(x)).slice(0,4):[],
+        };
+      }
+      if(discoveryOrigin==='value_flow')assert(legacyValueFlowProvenance.tickers.includes(c.ticker),'company_not_in_value_chain');
       if(discoveryOrigin==='fundamental_rule')assert(c.snapshot.metrics.revenueGrowth>=.15,'discovery_rule_not_satisfied');
       if(discoveryOrigin==='guru_disclosure')assert(sourceGuruIds.length>0,'discovery_guru_required');
       let candidateContext=null;
@@ -101,11 +120,12 @@ export class InvestmentService {
       assert(!prior || prior.units===0,'existing_position_requires_review');
       return {action:body.action,decisionDate:asOf,executionDate:null,recordType:'research_paper_position_not_order',scenario,
         snapshot:c.snapshot,price:c.snapshot.price,units:body.units,targetWeight:body.targetWeight,priority:body.priority===true,
-        discovery,candidateContext,
+        discovery,candidateContext,discoveryContext:aiInsightsContext,
         entryEvidence:body.entryEvidence?discovery.find(g=>g.guruId===body.entryEvidence.guruId&&g.accession===body.entryEvidence.accession):null,
         discoveryOrigin:{kind:discoveryOrigin,asOf,ruleVersion:discoveryOrigin==='fundamental_rule'?'quarterly-growth-15pct-v1':null,
           ...(fundamentalEntry?{ruleVersion:FUNDAMENTALS_VERSION,matchedScreens:fundamentalEntry.screens,sourceHash:fundamentalEntry.source.hash,comparisonStatus:fundamentalEntry.comparisonStatus}:{}),
-          ...(discoveryOrigin==='value_flow'?{classificationVersion:valueFlowTaxonomy.version,retrospectiveClassification:true}:{})},
+          ...(aiInsightsContext?{snapshotId:aiInsightsContext.snapshotId,universeVersion:aiInsightsContext.universeVersion,methodologyVersion:aiInsightsContext.methodologyVersion}:{}),
+          ...(discoveryOrigin==='value_flow'?{classificationVersion:legacyValueFlowProvenance.version,retrospectiveClassification:true}:{})},
         notes:body.notes,rules,ruleVersion:RULE_VERSION,retrospective:true};
     });
   }

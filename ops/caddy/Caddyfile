@@ -30,7 +30,7 @@ api.thesisforge.tech {
   # Keep this boundary aligned with server/retiredProductRoutes.js. Match
   # whole path segments, including case variants, without retiring the new
   # /api/investment/* strategies, Value Flow, valuation or Guru endpoints.
-  @retired_product path_regexp retired_product (?i)^/(ontology-health/*|api/((ontology|dbmf|strategies|decision|market)(/.*)?|(overview|graph|methodology|timeline|rankings|snapshot)/*|company/[^/]+/*))$
+  @retired_product path_regexp retired_product (?i)^/(ontology-health/*|api/((ontology|dbmf|strategies|decision|market)(/.*)?|(overview|graph|methodology|timeline|rankings|snapshot)/*|company/[^/]+/*|investment/value-flow/*))$
   handle @retired_product {
     header Cache-Control "no-store"
     header Content-Type "application/json"

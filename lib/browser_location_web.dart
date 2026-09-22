@@ -1,4 +1,25 @@
+import 'dart:async';
+import 'dart:js_interop';
+import 'dart:typed_data';
+
 import 'package:web/web.dart' as web;
+
+Future<void> downloadAiInsightsBytes(
+  Uint8List bytes,
+  String filename,
+  String mimeType,
+) async {
+  final blob = web.Blob([bytes.toJS].toJS, web.BlobPropertyBag(type: mimeType));
+  final url = web.URL.createObjectURL(blob);
+  final anchor = web.HTMLAnchorElement()
+    ..href = url
+    ..download = filename;
+  web.document.body?.append(anchor);
+  anchor.click();
+  anchor.remove();
+  // Let the browser consume the object URL before releasing its memory.
+  Timer(const Duration(seconds: 30), () => web.URL.revokeObjectURL(url));
+}
 
 // Only a display preference is persisted, never portfolio values or credentials.
 bool readPortfolioPrivacyPreference() {

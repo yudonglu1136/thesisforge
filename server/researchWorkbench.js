@@ -189,11 +189,27 @@ export function researchPublishedModel(service,ticker,date) {
 export function saveResearchRecord(service,owner,body) {
   const ticker=tickerKey(body.ticker),asOf=service.date(body.asOf);
   const clean=value=>String(value??'').trim().slice(0,4000);
-  const evidence=Array.isArray(body.evidenceRefs)?body.evidenceRefs.map(clean).filter(Boolean).slice(0,40):[];
+  let evidence=Array.isArray(body.evidenceRefs)?body.evidenceRefs.map(clean).filter(Boolean).slice(0,40):[];
+  let discoveryContext=null;
+  if(body.discoveryOrigin==='ai_insights'){
+    const supplied=body.discoveryContext;
+    assert(supplied&&typeof supplied.snapshotId==='string'&&supplied.snapshotId.length>0,'ai_insights_snapshot_required');
+    assert(service.aiInsights,'ai_insights_service_unavailable');
+    const analysis=service.aiInsights.company(ticker,{asOf,quarter:supplied.quarter,
+      window:supplied.window,snapshotId:supplied.snapshotId});
+    evidence=[...new Set(analysis.sourceRefs??[])].slice(0,40);
+    discoveryContext={...analysis.context,ticker,
+      filters:Object.fromEntries(['tab','metric','group','sector','sort','query','selected']
+        .filter(key=>typeof supplied[key]==='string').map(key=>[key,supplied[key].slice(0,120)])),
+      compareTickers:Array.isArray(supplied.tickers)
+        ?supplied.tickers.filter(value=>typeof value==='string'&&/^[A-Z0-9.\-]{1,12}$/.test(value)).slice(0,4):[]};
+  }
   assert(clean(body.question).length>0,'research_question_required');
   return service.store.write(owner,'research_record',ticker,body.operationId,body,()=>({
     asOf,question:clean(body.question),supportingEvidence:clean(body.supportingEvidence),
     opposingEvidence:clean(body.opposingEvidence),evidenceRefs:evidence,
+    discoveryOrigin:body.discoveryOrigin==='ai_insights'?'ai_insights':'direct_research',
+    discoveryContext,
     personalScenarioId:body.personalScenarioId??null,impliedScenario:body.impliedScenario??null,
     invalidationCondition:clean(body.invalidationCondition),reviewDate:body.reviewDate??null,
     status:'open',methodVersion:'research-record-v1',

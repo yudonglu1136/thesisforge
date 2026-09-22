@@ -834,16 +834,17 @@ void main() {
       await mountExplorer(tester, ExplorerApi());
       await tester.tap(find.text('Fundamentals'));
       await tester.pumpAndSettle();
-      expect(find.text('Strong businesses. Your shortlist.'), findsOneWidget);
+      expect(find.text('Business change research'), findsOneWidget);
       await tester.enterText(
         find.byKey(const ValueKey('fundamental-search')),
         'absent',
       );
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Reset filters'));
-      await tester.tap(find.text('Reset filters'));
+      final clearSearch = find.byIcon(Icons.close);
+      await tester.ensureVisible(clearSearch);
+      await tester.tap(clearSearch);
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('fund-row-ACC')), findsOneWidget);
+      expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
       expect(
         tester
             .widget<TextField>(find.byKey(const ValueKey('fundamental-search')))

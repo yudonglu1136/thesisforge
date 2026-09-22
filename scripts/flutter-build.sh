@@ -46,6 +46,7 @@ add_define() {
 
 add_define "SUPABASE_URL" "${SUPABASE_URL:-${VITE_SUPABASE_URL:-}}"
 add_define "SUPABASE_ANON_KEY" "${SUPABASE_ANON_KEY:-${VITE_SUPABASE_ANON_KEY:-}}"
+add_define "API_BASE_URL" "${API_BASE_URL:-${VITE_API_BASE_URL:-}}"
 add_define "AUTH_DEV_BYPASS" "${AUTH_DEV_BYPASS:-${VITE_AUTH_DEV_BYPASS:-false}}"
 resolved_investment_workflow="${INVESTMENT_WORKFLOW_ENABLED:-${VITE_INVESTMENT_WORKFLOW_ENABLED:-false}}"
 if [ "$resolved_investment_workflow" != "true" ] && [ "$resolved_investment_workflow" != "false" ]; then

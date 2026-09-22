@@ -323,6 +323,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         'sector',
         'sort',
         'query',
+        'selected',
         'snapshotId',
       ])
         if (query['ai_$key'] != null) key: query['ai_$key'],
@@ -593,13 +594,15 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           ),
         );
       }
-      if (evidence != null && evidence['reportDate'] == null) {
+      final sourceEvidence = asMap(evidence);
+      final evidenceGuruId = text(sourceEvidence['guruId']);
+      if (evidenceGuruId.isNotEmpty && sourceEvidence['reportDate'] == null) {
         final detail = await widget.api.getJson(
-          '/api/investment/gurus/${Uri.encodeComponent(text(evidence['guruId']))}?asOf=$asOf',
+          '/api/investment/gurus/${Uri.encodeComponent(evidenceGuruId)}?asOf=$asOf',
         );
         if (!mounted || serial != requestSerial) return;
         final filing = asList(detail['history'])
-            .where((f) => f['accessionNumber'] == evidence['accession'])
+            .where((f) => f['accessionNumber'] == sourceEvidence['accession'])
             .firstOrNull;
         if (filing == null) {
           throw StateError(
@@ -610,7 +613,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           );
         }
         entryEvidence = {
-          ...evidence,
+          ...sourceEvidence,
           'name': asMap(detail['guru'])['name'],
           'reportDate': filing['reportDate'],
           'availableAt': filing['filingDate'],
@@ -1083,6 +1086,9 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
             'quarter': savedContext['selectedQuarter'],
             'window': savedContext['window'] ?? 8,
             'snapshotId': savedContext['snapshotId'],
+            'selected':
+                asMap(savedContext['filters'])['selected'] ??
+                savedContext['ticker'],
             'tickers': savedContext['compareTickers'] ?? <String>[],
           };
           entryEvidence = {

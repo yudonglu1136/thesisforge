@@ -119,27 +119,51 @@ class _GuruDiscoveryDeskState extends State<GuruDiscoveryDesk> {
             border: Border.all(color: widget.palette.border),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Row(
-            children: [
-              Icon(Icons.insights_outlined, color: widget.palette.accent),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  context.tr(
-                    '按需加载换手率、复合收益与夏普对比，不影响上方持仓首屏。',
-                    'Load turnover, CAGR and Sharpe comparisons on demand without delaying holdings.',
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final copy = Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.insights_outlined, color: widget.palette.accent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      context.tr(
+                        '按需加载换手率、复合收益与夏普对比，不影响上方持仓首屏。',
+                        'Load turnover, CAGR and Sharpe comparisons on demand without delaying holdings.',
+                      ),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: widget.palette.muted,
+                      ),
+                    ),
                   ),
-                  style: TextStyle(fontSize: 13, color: widget.palette.muted),
-                ),
-              ),
-              const SizedBox(width: 12),
-              FilledButton.icon(
+                ],
+              );
+              final action = FilledButton.icon(
                 key: const ValueKey('load-guru-study'),
                 onPressed: openStudy,
                 icon: const Icon(Icons.play_arrow, size: 18),
                 label: Text(context.tr('加载对比', 'Load comparison')),
-              ),
-            ],
+              );
+              if (constraints.maxWidth < 520) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    copy,
+                    const SizedBox(height: 14),
+                    Align(alignment: Alignment.centerLeft, child: action),
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: copy),
+                  const SizedBox(width: 12),
+                  action,
+                ],
+              );
+            },
           ),
         )
       else ...[

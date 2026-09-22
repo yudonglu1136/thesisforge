@@ -8,7 +8,7 @@ import express from 'express';
 import { DatabaseSync } from 'node:sqlite';
 import { holdingResolutionVersion } from './cusipOverrides.js';
 import { manager13fCorporateActionCatalogVersion } from './corporateActions.js';
-import { INVESTMENT_RELEASE_VERSION, INVESTMENT_REQUIRED_SOURCE_TABLES, resolveInvestmentRuntimeConfig, validateInstitutional13fArtifact, validateInvestmentRelease, verifiedInvestmentOwner } from './investmentRuntimeConfig.js';
+import { INVESTMENT_RELEASE_VERSION, INVESTMENT_REQUIRED_SOURCE_TABLES, resolveInvestmentRuntimeConfig, validateAiInsightsArtifact, validateInstitutional13fArtifact, validateInvestmentRelease, verifiedInvestmentOwner } from './investmentRuntimeConfig.js';
 import { investmentProductionIdentity } from './investmentRoutes.js';
 import { InvestmentStore } from './investmentStore.js';
 import { portfolioResponsePrivacy } from './portfolioHttp.js';
@@ -49,16 +49,39 @@ function productionFixture(t) {
     fs.writeFileSync(f.manifestPath,JSON.stringify(f.manifest));
   };
   updateManifest();
+  const aiRoot=path.join(f.root,'ai-insights'),aiDirectory=path.join(aiRoot,'derived/ai-insights/generations');
+  fs.mkdirSync(aiDirectory,{recursive:true});
+  const aiGeneration='a'.repeat(64),aiSourceGeneration='b'.repeat(64),aiDependency='c'.repeat(64);
+  const aiArtifact={schemaVersion:1,builderVersion:'ai-insights-artifact-v3',methodologyVersion:'ai-insights-v1',
+    generationId:aiGeneration,generatedAt:'2026-09-22T00:00:00Z',sourceManifestSha256:aiSourceGeneration,
+    dependencySha256:aiDependency,universeVersion:'test',companies:[],facts:[]};
+  const aiArtifactPath=path.join(aiDirectory,`${aiGeneration}.json`),aiArtifactBytes=Buffer.from(JSON.stringify(aiArtifact));
+  fs.writeFileSync(aiArtifactPath,aiArtifactBytes);
+  const aiCurrent={schemaVersion:1,builderVersion:'ai-insights-artifact-v3',generationId:aiGeneration,
+    generatedAt:aiArtifact.generatedAt,sourceManifestSha256:aiSourceGeneration,dependencySha256:aiDependency,
+    universeVersion:'test',universeSha256:'d'.repeat(64),artifactPath:`derived/ai-insights/generations/${aiGeneration}.json`,
+    artifactSha256:crypto.createHash('sha256').update(aiArtifactBytes).digest('hex'),bytes:aiArtifactBytes.length,
+    rowCount:0,companyCount:0,inventory:{}};
+  const aiManifestPath=path.join(aiRoot,'derived/ai-insights/manifest.json'),aiSidecarPath=path.join(aiDirectory,`${aiGeneration}.manifest.json`);
+  fs.writeFileSync(aiManifestPath,JSON.stringify(aiCurrent));fs.writeFileSync(aiSidecarPath,JSON.stringify(aiCurrent));
+  const aiFiles=[aiManifestPath,aiArtifactPath,aiSidecarPath].map(file=>({relativePath:path.relative(aiRoot,file),bytes:fs.statSync(file).size,
+    sha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}));
+  const aiReleasePath=path.join(aiRoot,'release-manifest.json');
+  fs.writeFileSync(aiReleasePath,JSON.stringify({version:'ai-insights-runtime-release-v1',releaseId:'ai-insights-20260922-v1',state:'verified',
+    currentGeneration:aiGeneration,sourceManifestSha256:aiSourceGeneration,checks:{schema:'pass',privateDataExcluded:true,immutableGenerations:'pass'},files:aiFiles}));
+  for(const file of [...aiFiles.map(entry=>path.join(aiRoot,entry.relativePath)),aiReleasePath])fs.chmodSync(file,0o400);
   // The pure validator separately tests owner mismatch. Simulate the trusted
   // root installer only for this local HTTP/schema test (never in runtime).
   const originalStat=fs.statSync;t.mock.method(fs,'statSync',(file,...args)=>{
-    const result=originalStat(file,...args);if(file===f.manifestPath)result.uid=0;return result;
+    const result=originalStat(file,...args);if(file===f.manifestPath||String(file).startsWith(aiRoot))result.uid=0;
+    if(file===aiRoot)result.mode&=~0o222;return result;
   });
   const env={NODE_ENV:'production',INVESTMENT_WORKFLOW_ENABLED:'true',SQLITE_DB_PATH:legacy,USER_PORTFOLIO_DATA_DIR:users,
     INVESTMENT_SOURCE_DB_PATH:f.paths.research,INVESTMENT_DB_PATH:path.join(users,'investment.sqlite'),
     STRATEGY_DATA_DB_PATH:f.paths.strategy,STRATEGY_COMPOSITION_PRICE_DB_PATH:f.paths.composition,
-    INVESTMENT_RELEASE_MANIFEST_PATH:f.manifestPath,INVESTMENT_RELEASE_ID:f.paths.releaseId};
-  return {...f,env,updateManifest};
+    INVESTMENT_RELEASE_MANIFEST_PATH:f.manifestPath,INVESTMENT_RELEASE_ID:f.paths.releaseId,
+    AI_INSIGHTS_ROOT:aiRoot,AI_INSIGHTS_RELEASE_MANIFEST_PATH:aiReleasePath};
+  return {...f,env,updateManifest,aiRoot,aiReleasePath};
 }
 
 test('workflow stays disabled without probing files; preview accepts separate source without changing legacy roots',t=>{
@@ -164,6 +187,16 @@ test('production read-only preflight accepts the reviewed schemas without creati
   const config=resolveInvestmentRuntimeConfig(env);
   a.equal(config.production,true);a.equal(config.cutoff,'2026-09-11');a.equal(config.research,env.INVESTMENT_SOURCE_DB_PATH);
   a.deepEqual(fs.readFileSync(env.SQLITE_DB_PATH),before);a.equal(fs.existsSync(env.INVESTMENT_DB_PATH),false);
+});
+
+test('production requires a verified AI Insights release and rejects corrupt or mismatched generations',t=>{
+  const {env,aiRoot,aiReleasePath}=productionFixture(t);
+  a.throws(()=>resolveInvestmentRuntimeConfig({...env,AI_INSIGHTS_ROOT:undefined}),/ai_insights_artifact_root_required/);
+  a.throws(()=>resolveInvestmentRuntimeConfig({...env,AI_INSIGHTS_RELEASE_MANIFEST_PATH:undefined}),/ai_insights_release_manifest_required/);
+  const release=JSON.parse(fs.readFileSync(aiReleasePath,'utf8'));
+  release.currentGeneration='e'.repeat(64);
+  fs.chmodSync(aiReleasePath,0o600);fs.writeFileSync(aiReleasePath,JSON.stringify(release));fs.chmodSync(aiReleasePath,0o400);
+  a.throws(()=>validateAiInsightsArtifact(aiRoot,aiReleasePath,{trustedUid:fs.statSync(aiReleasePath).uid}),/current_generation_missing|identity_mismatch/);
 });
 
 test('production preflight rejects copied local account tables and existing broker-store destinations',t=>{

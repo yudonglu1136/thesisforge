@@ -7,6 +7,7 @@ import { openStrategyDatabase } from './strategyDatabase.js';
 
 export const INVESTMENT_RELEASE_VERSION = 'investment-runtime-release-v1';
 export const INVESTMENT_REUSED_RELEASE_VERSION = 'investment-runtime-release-v2';
+export const AI_INSIGHTS_RELEASE_VERSION = 'ai-insights-runtime-release-v1';
 export const INVESTMENT_REQUIRED_SOURCE_TABLES = Object.freeze(['valuation_pit_model_runs', 'valuation_pit_financials', 'valuation_pit_guidance',
   'valuation_ticker_snapshots', 'guru_snapshots', 'guru_exposure_snapshots', 'guru_backtests', 'price_points',
   'investment_quality_annual', 'investment_quality_metadata']);
@@ -160,6 +161,56 @@ export function validateInstitutional13fArtifact(file,manifestPath,{trustedUid=0
   return manifest;
 }
 
+export function validateAiInsightsArtifact(rootPath, releaseManifestPath, { trustedUid = 0, stat = fs.statSync } = {}) {
+  const requestedRoot = absolute(rootPath, 'ai_insights_artifact_root_required');
+  const requestedRelease = absolute(releaseManifestPath, 'ai_insights_release_manifest_required');
+  const root = canonicalExisting(requestedRoot), releasePath = canonicalExisting(requestedRelease);
+  if (!within(root, releasePath)) fail('ai_insights_artifact_path_invalid');
+  const rootStat = stat(root), releaseStat = stat(releasePath);
+  if (!rootStat.isDirectory() || !releaseStat.isFile() || rootStat.uid !== trustedUid
+    || releaseStat.uid !== trustedUid || (rootStat.mode & 0o222) || (releaseStat.mode & 0o222)
+    || releaseStat.nlink !== 1 || releaseStat.size > 1024 * 1024) fail('ai_insights_artifact_permissions');
+  const release = JSON.parse(fs.readFileSync(releasePath, 'utf8'));
+  if (release.version !== AI_INSIGHTS_RELEASE_VERSION || release.state !== 'verified'
+    || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{5,100}$/.test(release.releaseId ?? '')
+    || !/^[a-f0-9]{64}$/.test(release.currentGeneration ?? '')
+    || !/^[a-f0-9]{64}$/.test(release.sourceManifestSha256 ?? '')
+    || release.checks?.schema !== 'pass' || release.checks?.privateDataExcluded !== true
+    || release.checks?.immutableGenerations !== 'pass' || !Array.isArray(release.files)
+    || release.files.length < 3 || release.files.length > 1024) fail('ai_insights_release_manifest_invalid');
+  const listed = new Set();
+  for (const entry of release.files) {
+    if (!entry || typeof entry.relativePath !== 'string' || entry.relativePath.startsWith('/')
+      || entry.relativePath.includes('..') || !Number.isSafeInteger(entry.bytes) || entry.bytes <= 0
+      || !/^[a-f0-9]{64}$/.test(entry.sha256 ?? '')) fail('ai_insights_release_file_invalid');
+    const file = path.resolve(root, entry.relativePath);
+    if (!within(root, file) || canonicalExisting(file) !== file || listed.has(file)) fail('ai_insights_release_file_invalid');
+    const info = stat(file);
+    if (!info.isFile() || info.uid !== trustedUid || (info.mode & 0o222) || info.nlink !== 1
+      || info.size !== entry.bytes) fail('ai_insights_release_file_mismatch');
+    const sha = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    if (sha !== entry.sha256) fail('ai_insights_release_file_hash_mismatch');
+    listed.add(file);
+  }
+  const currentPath = path.join(root, 'derived/ai-insights/manifest.json');
+  const generationPath = path.join(root, 'derived/ai-insights/generations', `${release.currentGeneration}.json`);
+  const sidecarPath = path.join(root, 'derived/ai-insights/generations', `${release.currentGeneration}.manifest.json`);
+  if (![currentPath, generationPath, sidecarPath].every(file => listed.has(file))) fail('ai_insights_release_current_generation_missing');
+  const current = JSON.parse(fs.readFileSync(currentPath, 'utf8'));
+  const artifactBytes = fs.readFileSync(generationPath), artifact = JSON.parse(artifactBytes);
+  const sidecar = JSON.parse(fs.readFileSync(sidecarPath, 'utf8'));
+  if (current.schemaVersion !== 1 || current.builderVersion !== 'ai-insights-artifact-v3'
+    || current.generationId !== release.currentGeneration || artifact.schemaVersion !== 1
+    || artifact.generationId !== release.currentGeneration || sidecar.generationId !== release.currentGeneration
+    || current.sourceManifestSha256 !== release.sourceManifestSha256
+    || current.artifactSha256 !== crypto.createHash('sha256').update(artifactBytes).digest('hex')
+    || current.artifactPath !== `derived/ai-insights/generations/${release.currentGeneration}.json`)
+    fail('ai_insights_release_identity_mismatch');
+  if (release.files.some(entry => /(?:^|\/)(?:catalog\.json|warehouse\.duckdb|.*\.(?:parquet|sqlite|db))(?:$|\/)/i.test(entry.relativePath)))
+    fail('ai_insights_release_private_data_present');
+  return release;
+}
+
 export function resolveInvestmentRuntimeConfig(env = process.env) {
   if (env.INVESTMENT_WORKFLOW_ENABLED !== 'true') return null;
   const userPaths = resolveUserDataPaths(env);
@@ -169,6 +220,7 @@ export function resolveInvestmentRuntimeConfig(env = process.env) {
     strategy: env.STRATEGY_DATA_DB_PATH ? path.resolve(env.STRATEGY_DATA_DB_PATH) : null,
     composition: env.STRATEGY_COMPOSITION_PRICE_DB_PATH ? path.resolve(env.STRATEGY_COMPOSITION_PRICE_DB_PATH) : null,
     insights: env.INVESTMENT_13F_INSIGHTS_DB_PATH ? path.resolve(env.INVESTMENT_13F_INSIGHTS_DB_PATH) : null,
+    aiInsightsRoot: path.resolve(env.AI_INSIGHTS_ROOT || env.FACT_OS_ROOT || path.resolve('data/fact_os')),
     production: env.NODE_ENV === 'production', releaseId: env.INVESTMENT_RELEASE_ID ?? null };
   // Prevent attaching a private store to a public research database in every
   // environment, including aliases via symlinks or existing hard links.
@@ -187,6 +239,8 @@ export function resolveInvestmentRuntimeConfig(env = process.env) {
     ['strategy', env.STRATEGY_DATA_DB_PATH], ['composition', env.STRATEGY_COMPOSITION_PRICE_DB_PATH]]) {
     config[key] = absolute(value, 'investment_production_explicit_paths_required');
   }
+  config.aiInsightsRoot = absolute(env.AI_INSIGHTS_ROOT, 'ai_insights_artifact_root_required');
+  validateAiInsightsArtifact(config.aiInsightsRoot, env.AI_INSIGHTS_RELEASE_MANIFEST_PATH);
   if(config.insights) {
     config.insights=absolute(env.INVESTMENT_13F_INSIGHTS_DB_PATH,'institutional_13f_artifact_path_required');
     validateInstitutional13fArtifact(config.insights,env.INVESTMENT_13F_INSIGHTS_MANIFEST_PATH);
