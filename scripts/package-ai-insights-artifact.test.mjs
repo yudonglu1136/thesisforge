@@ -54,4 +54,9 @@ test('Elastic Beanstalk installer consumes the packaged release directory', () =
   a.match(hook, /source_root="\$\{download\}\/source\/\$\{release_id\}"/);
   a.match(hook, /--source "\$\{source_root\}" --target "\$\{target\}"/);
   a.doesNotMatch(hook, /--source "\$\{download\}\/source"/);
+  a.match(hook, /chmod 0755 "\$\(dirname "\$\{runtime_root\}"\)" "\$\{runtime_root\}"/);
+  a.ok(
+    hook.indexOf('chmod 0755') < hook.indexOf('if [ -e "${target}" ]'),
+    'parent traversal permissions must be repaired even when the release already exists',
+  );
 });

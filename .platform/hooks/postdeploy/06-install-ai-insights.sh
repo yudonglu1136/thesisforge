@@ -38,12 +38,16 @@ if (parsed.scheme != "https" or parsed.hostname not in allowed
 PY
 
 target="${runtime_root}/${release_id}"
+mkdir -p "${runtime_root}"
+# The installer runs as root while the Node web process runs as webapp. Keep
+# release contents read-only, but make both parent directories traversable so
+# the runtime can resolve and verify the configured immutable release.
+chmod 0755 "$(dirname "${runtime_root}")" "${runtime_root}"
 if [ -e "${target}" ]; then
   node /var/app/current/scripts/install-ai-insights-artifact.mjs --source "${target}" --target "${target}" >/dev/null
   echo "AI Insights sidecar already installed: ${release_id}"
   exit 0
 fi
-mkdir -p "${runtime_root}"
 download="$(mktemp -d "${runtime_root}/.${release_id}.download.XXXXXX")"
 trap 'rm -rf "${download}"' EXIT
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 300 \
