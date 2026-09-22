@@ -66,7 +66,14 @@ class Store:
                     CREATE TABLE IF NOT EXISTS quality_summary (
                     dataset VARCHAR PRIMARY KEY, issue_counts VARCHAR,
                     checked_at VARCHAR);
+                    CREATE TABLE IF NOT EXISTS partition_checksums (
+                    path VARCHAR PRIMARY KEY, sha256 VARCHAR, bytes BIGINT);
+                    CREATE TABLE IF NOT EXISTS source_change_events (
+                    event_id VARCHAR PRIMARY KEY, run_id VARCHAR, dataset VARCHAR,
+                    partitions VARCHAR, kind VARCHAR, status VARCHAR,
+                    committed_at VARCHAR, catalog_generation VARCHAR);
                 ''')
+                db.execute('ALTER TABLE partition_checksums ADD COLUMN IF NOT EXISTS semantic_sha256 VARCHAR')
                 yield db
                 self._publish_manifest(db)
             finally:
@@ -80,22 +87,68 @@ class Store:
             cur = db.execute('SELECT * FROM sync_state WHERE dataset=?', [table])
             names = [c[0] for c in cur.description]
             row = cur.fetchone()
+            state = dict(zip(names,row)) if row else None
+            if state:
+                # Operations are observable separately, never part of fact identity.
+                state = {k:v for k,v in state.items() if k not in ('last_success','last_error')}
+            parts = []
+            for bucket, path in db.execute('SELECT bucket,path FROM partitions WHERE dataset=? ORDER BY bucket',[table]).fetchall():
+                physical = db.execute('SELECT sha256,bytes,semantic_sha256 FROM partition_checksums WHERE path=?',[path]).fetchone()
+                if not physical or not physical[2]:
+                    file = self.root / path
+                    contract = Contract.from_ddl(table,ddl)
+                    fields = ','.join(f'{ident(c)}:={ident(c)}' for c,_ in contract.columns)
+                    # Order-independent source multiset digest: four independent
+                    # 64-bit SHA-256 lanes summed in 128-bit accumulators + count.
+                    # Neither row order nor ingestion metadata enters identity.
+                    sums = ','.join(f"sum(('0x'||substr(h,{offset},16))::UBIGINT)::VARCHAR" for offset in (1,17,33,49))
+                    summary = db.execute(f'SELECT count(*),{sums} FROM (SELECT sha256(to_json(struct_pack({fields}))) h FROM read_parquet({literal(file)}))').fetchone()
+                    semantic = hashlib.sha256(json.dumps([contract.digest,*summary]).encode()).hexdigest()
+                    physical = (checksum(file), file.stat().st_size, semantic)
+                    db.execute('INSERT OR REPLACE INTO partition_checksums VALUES (?,?,?,?)',[path,*physical])
+                parts.append({'bucket':bucket,'path':path,'sha256':physical[0],'bytes':physical[1],'semanticSha256':physical[2]})
             datasets[table] = {
                 'ddl': ddl,
-                'partitions': [{'bucket': b, 'path': p} for b,p in db.execute(
-                    'SELECT bucket,path FROM partitions WHERE dataset=? ORDER BY bucket',[table]).fetchall()],
-                'state': dict(zip(names,row)) if row else None,
+                'partitions': parts,
+                'state': state,
             }
             quality = db.execute('SELECT issue_counts FROM quality_summary WHERE dataset=?',[table]).fetchone()
             datasets[table]['quality'] = json.loads(quality[0]) if quality else {}
+            datasets[table]['contentVersion'] = hashlib.sha256(json.dumps({
+                'schema':ddl,'algorithm':'source-sha256-multiset-v1',
+                'partitions':[(p['bucket'],p['semanticSha256']) for p in parts],
+                'state':state,'quality':datasets[table]['quality'],
+            },sort_keys=True,default=str).encode()).hexdigest()
         payload = json.dumps({'version':1,'datasets':datasets},sort_keys=True,default=str)
         dest = self.root / 'manifests/catalog.json'
+        self._atomic_if_changed(dest,payload)
+        # Durable catalog first, ACK second. A crash between them is replayable.
+        generation = hashlib.sha256(payload.encode()).hexdigest()
+        db.execute("UPDATE source_change_events SET status='catalog_published',catalog_generation=? WHERE status='committed'",[generation])
+        cur = db.execute('SELECT * FROM sync_state ORDER BY dataset')
+        columns = [c[0] for c in cur.description]
+        operations = [dict(zip(columns,r)) for r in cur.fetchall()]
+        self._atomic_if_changed(self.root/'sync/status.json',json.dumps(operations,sort_keys=True,default=str))
+
+    @staticmethod
+    def _atomic_if_changed(dest, payload):
         if dest.exists() and dest.read_text() == payload:
             return
-        temp = dest.with_name('catalog-'+uuid.uuid4().hex+'.tmp')
-        with temp.open('w') as f:
-            f.write(payload);f.flush();os.fsync(f.fileno())
-        temp.replace(dest)
+        temp = dest.with_name(dest.name+'-'+uuid.uuid4().hex+'.tmp')
+        try:
+            with temp.open('w') as f:
+                f.write(payload);f.flush();os.fsync(f.fileno())
+            temp.replace(dest)
+            fd = os.open(dest.parent,os.O_RDONLY)
+            try: os.fsync(fd)
+            finally: os.close(fd)
+        finally:
+            temp.unlink(missing_ok=True)
+
+    def recover_catalog(self):
+        """Re-publish committed metadata after interruption; never fetch upstream."""
+        with self.writer():
+            pass
 
     def install_contract(self, table, ddl):
         contract = Contract.from_ddl(table, ddl)
@@ -198,6 +251,8 @@ class Store:
                 bucket_expr = 'coalesce(year(date),0)' if 'date' in contract.keys else '0'
                 buckets = [r[0] for r in db.execute(f'SELECT DISTINCT {bucket_expr} FROM incoming ORDER BY 1').fetchall()]
                 changed_partitions = 0
+                changed_buckets = []
+                previous_state = db.execute('SELECT backfill_complete FROM sync_state WHERE dataset=?',[table]).fetchone()
                 db.execute('BEGIN TRANSACTION')
                 try:
                     for bucket in buckets:
@@ -227,11 +282,22 @@ class Store:
                             if quality_rules: previous_projection += ',p._quality_issues'
                             previous_projection += ',p._ingestion_run,p._observed_at'
                             projection += f' UNION ALL SELECT {previous_projection} FROM previous p WHERE NOT EXISTS (SELECT 1 FROM chunk n WHERE {equality})'
+                            # Preserve lineage for equal keys even if other rows
+                            # in this same partition changed in the observation.
+                            same = ' AND '.join(f'p.{ident(c)} IS NOT DISTINCT FROM n.{ident(c)}' for c,_ in contract.columns)
+                            if quality_rules: same += ' AND p._quality_issues IS NOT DISTINCT FROM n._quality_issues'
+                            chunk_cols = ','.join('n.'+ident(c) for c,_ in contract.columns)
+                            if quality_rules: chunk_cols += ',n._quality_issues'
+                            projection = (f'SELECT {chunk_cols}, CASE WHEN {same} THEN p._ingestion_run ELSE {literal(run)} END AS _ingestion_run, '
+                                f'CASE WHEN {same} THEN p._observed_at ELSE {literal(observed_at)} END AS _observed_at '
+                                f'FROM chunk n LEFT JOIN previous p ON {equality} UNION ALL SELECT {previous_projection} '
+                                f'FROM previous p WHERE NOT EXISTS (SELECT 1 FROM chunk n WHERE {equality})')
                         db.execute('COPY ('+projection+') TO '+literal(dest)+" (FORMAT PARQUET, COMPRESSION ZSTD)")
                         if needs_repartition:
                             db.execute('DELETE FROM partitions WHERE dataset=?',[table])
                         db.execute('INSERT OR REPLACE INTO partitions VALUES (?,?,?)',[table,bucket,str(dest.relative_to(self.root))])
                         changed_partitions += 1
+                        changed_buckets.append(bucket)
                     paths = [str(self.root / r[0]) for r in db.execute('SELECT path FROM partitions WHERE dataset=? ORDER BY bucket',[table]).fetchall()]
                     path_sql = '['+','.join(literal(p) for p in paths)+']'
                     db.execute(f'CREATE OR REPLACE VIEW {ident(table)} AS SELECT * FROM read_parquet({path_sql}, union_by_name=true)')
@@ -250,6 +316,10 @@ class Store:
                     quality = {issue:db.execute(f'SELECT count(*) FROM {ident(table)} WHERE {condition}').fetchone()[0]
                                for issue,condition in quality_rules.items()}
                     db.execute('INSERT OR REPLACE INTO quality_summary VALUES (?,?,?)',[table,json.dumps(quality),now()])
+                    promoted = scope=='verified_full_bulk' and not (previous_state and previous_state[0])
+                    if changed_partitions or promoted:
+                        db.execute('INSERT INTO source_change_events VALUES (?,?,?,?,?,?,?,NULL)',
+                            [run,run,table,json.dumps(changed_buckets),'content' if changed_partitions else 'coverage', 'committed',now()])
                     db.execute('COMMIT')
                     return {'dataset':table,'status':'ingested' if changed_partitions else 'unchanged','input_rows':count,'local_rows':rows,'min_date':str(lo),'max_date':str(hi),'run_id':run,'quality':quality}
                 except BaseException:
@@ -263,6 +333,9 @@ class Store:
             staging.rmdir()
 
     def status(self):
+        operations=self.root/'sync/status.json'
+        if operations.exists():
+            return json.loads(operations.read_text())
         catalog=self.root/'manifests/catalog.json'
         if catalog.exists():
             return [v['state'] for _,v in sorted(json.loads(catalog.read_text())['datasets'].items()) if v.get('state')]

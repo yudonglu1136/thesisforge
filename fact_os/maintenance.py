@@ -3,6 +3,7 @@ from collections import defaultdict
 import fcntl
 import re
 import time
+import json
 
 from .contracts import TABLES
 
@@ -19,6 +20,12 @@ def collect_unreferenced(store, *, retention_days=7, apply=False):
             return {'status':'readers_active','deleted_files':0,'candidates':[]}
         try:
             referenced={str(p) for (p,) in db.execute('SELECT path FROM partitions').fetchall()}
+            # Pipeline/rollback/saved-research pins outlive an individual RPC.
+            # Invalid pins fail closed; never guess that a broken reference is unused.
+            for pin in (store.root/'sync/snapshot-pins').glob('*.json'):
+                value=json.loads(pin.read_text())
+                if not isinstance(value.get('paths'),list): raise ValueError('invalid_snapshot_pin')
+                referenced.update(value['paths'])
             groups=defaultdict(list)
             for table in TABLES:
                 directory=store.root/'parquet'/table

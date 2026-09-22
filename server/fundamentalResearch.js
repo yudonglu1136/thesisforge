@@ -1,4 +1,4 @@
-import { queryFacts, queryFactsBatch, PRICE_TYPES } from './factRepository.js';
+import { queryFacts, queryFactsBatch, PRICE_TYPES, factGeneration } from './factRepository.js';
 import { assert, finite, isoDate, signature } from './investmentMath.js';
 import { tickerKey } from './investmentSource.js';
 import { opportunityCompanySummary, opportunityValuationBreakdown } from './investmentOpportunities.js';
@@ -163,12 +163,13 @@ export async function fundamentalCompanyIndex(asOf,{search='',limit=120}={}) {
 
 async function loadFundamentalUniverse(asOf) {
   const now = Date.now();
-  if (universeCache?.asOf === asOf && universeCache.expiresAt > now) return universeCache.raw;
+  const generation=await factGeneration();
+  if (universeCache?.asOf === asOf && universeCache.generation===generation && universeCache.expiresAt > now) return universeCache.raw;
   const raw = await queryFacts('get_fundamental_change_universe', [asOf], { limit: 6000 });
   // Keep exactly one full-universe payload. FactRepository already owns the durable
   // generation-aware cache; this short-lived reference avoids cloning ~13 MB for
   // every lens/search request while preserving bounded memory and refresh cadence.
-  universeCache = { asOf, expiresAt: now + UNIVERSE_CACHE_MS, raw };
+  universeCache = { asOf, generation, expiresAt: now + UNIVERSE_CACHE_MS, raw };
   return raw;
 }
 

@@ -11,7 +11,10 @@ def main():
     p=argparse.ArgumentParser(prog='fact-os')
     p.add_argument('--root',default=os.environ.get('FACT_OS_ROOT',str(Path(__file__).resolve().parents[1]/'data/fact_os')))
     p.add_argument('--env-file',default=os.environ.get('FACT_OS_ENV_FILE',str(Path(__file__).resolve().parents[1]/'.env.local')))
-    p.add_argument('command',choices=['inspect','backfill','sync','status','import-archive','gc','ai-insights'])
+    p.add_argument('command',choices=['inspect','backfill','sync','status','import-archive','gc','ai-insights','pipeline'])
+    p.add_argument('--pipeline-action',choices=['plan','run','resume','status','reconcile'],default='run')
+    p.add_argument('--profile',default='local')
+    p.add_argument('--scheduled-for')
     p.add_argument('--tables',nargs='+',choices=TABLES,default=list(TABLES))
     p.add_argument('--archive')
     p.add_argument('--quarters',type=int,default=3)
@@ -21,6 +24,9 @@ def main():
     store=Store(args.root)
     emit=lambda x:print(json.dumps(x,default=str),flush=True)
     if args.command=='status': emit(store.status());return 0
+    if args.command=='pipeline':
+        from .pipeline.cli import pipeline_command
+        return pipeline_command(store,args,emit)
     if args.command=='ai-insights':
         from .ai_insights import build_ai_insights
         emit(build_ai_insights(store.root));return 0
@@ -29,10 +35,14 @@ def main():
         emit(collect_unreferenced(store,retention_days=args.retention_days,apply=args.apply));return 0
     if args.command=='import-archive':
         if not args.archive or len(args.tables)!=1: p.error('import requires --archive and exactly one --tables value')
-        emit(store.ingest(args.tables[0],args.archive));return 0
+        from .pipeline.cli import ingestion_lock,drain
+        with ingestion_lock(store):
+            emit(store.ingest(args.tables[0],args.archive))
+            return drain(store,args,emit)
     from .sync import Synchronizer,load_key
     sync=Synchronizer(store,load_key(args.env_file))
     errors=0
+    failed_sources=[]
     try:
         with sync.job_lock():
             if args.command=='inspect':
@@ -51,27 +61,11 @@ def main():
                     # sanitized protocol errors are emitted, never tracebacks.
                     from .sync import UpstreamError
                     code=str(e) if isinstance(e,UpstreamError) else type(e).__name__
-                    store.record_error(table,code);emit({'dataset':table,'error':code});errors+=1
-            # AI Insights depends only on issuer identity, ARQ fundamentals and
-            # the small scope-action bridge. Price-only and unrelated syncs do
-            # not rewrite financial evidence or rebuild the derived artifact.
-            ai_dependencies = {'fundamentals', 'tickers', 'actions'}
-            requested_ai_dependency = bool(ai_dependencies.intersection(args.tables))
-            states = {state['dataset']: state for state in store.status()}
-            required_ready = all(states.get(table, {}).get('backfill_complete') for table in ('fundamentals', 'tickers'))
-            if errors == 0 and not requested_ai_dependency:
-                emit({'derived':'ai-insights','status':'skipped','reason':'no_relevant_dependency_updated'})
-            elif errors == 0 and not required_ready:
-                emit({'derived':'ai-insights','status':'skipped','reason':'required_dependencies_incomplete',
-                      'required':['fundamentals','tickers']})
-            elif errors == 0:
-                try:
-                    from .ai_insights import build_ai_insights
-                    emit({'derived':'ai-insights', **build_ai_insights(store.root)})
-                except Exception as error:
-                    emit({'derived':'ai-insights','error':type(error).__name__,
-                          'status':'failed','previous_generation_retained':True})
-                    errors += 1
+                    store.record_error(table,code);emit({'dataset':table,'error':code});errors+=1;failed_sources.append(table)
+            # One batch drain for EVERY formal ingestion entry. Failed sources
+            # block their own dependent graph, not unrelated accepted inputs.
+            from .pipeline.cli import drain
+            errors += drain(store,args,emit,failed_sources)
     finally: sync.close()
     return int(errors>0)
 

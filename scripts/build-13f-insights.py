@@ -16,9 +16,12 @@ import hashlib
 import json
 import sqlite3
 import gzip
+import sys
 from pathlib import Path
 
 import duckdb
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from fact_os.repository import FactRepository
 
 
 METHOD_VERSION = "institutional-13f-insights-v5"
@@ -591,13 +594,15 @@ def main() -> int:
         )
     }
     observed_at = max(
-        catalog["datasets"][key]["state"]["last_success"]
+        str(catalog["datasets"][key]["state"].get("watermark") or catalog["datasets"][key]["state"].get("max_date") or '')
         for key in (
             "holdings", "holdings_ticker", "holdings_investor", "actions",
             "fundamentals", "daily", "tickers", "sp500",
         )
     )
-    duck = duckdb.connect(str(fact_path), read_only=True)
+    repository = FactRepository(fact_path.parent)
+    duck = repository.db
+    duck.execute("SET memory_limit='2GB'")
     dates = [str(row[0]) for row in duck.execute(
         "SELECT DISTINCT date FROM holdings WHERE securitytype='SHR' ORDER BY date DESC"
     ).fetchall()]
@@ -606,7 +611,7 @@ def main() -> int:
         raise RuntimeError("insufficient_holdings_quarters")
     latest_effective_split = duck.execute(
         "SELECT max(date) FROM actions WHERE action='split' AND date<=?",
-        [dt.date.today()],
+        [catalog['datasets']['daily']['state']['max_date']],
     ).fetchone()[0]
     share_basis_date = str(latest_effective_split or selected[0])
     source_generation = compact_hash({
@@ -825,7 +830,7 @@ def main() -> int:
     security_history_rows = sql.execute("SELECT count(*) FROM institutional_13f_security_history_v1").fetchone()[0]
     sql.execute("PRAGMA optimize")
     sql.close()
-    duck.close()
+    repository.close()
     receipt = {
         "methodVersion": METHOD_VERSION,
         "sourceGeneration": source_generation,
@@ -842,6 +847,7 @@ def main() -> int:
         "status": "verified" if duplicates == 0 and detail_duplicates == 0 and after >= before else "failed",
     }
     receipt_path = fact_path.parent / "audit" / "13f-insights-build-latest.json"
+    receipt_path.parent.mkdir(parents=True,exist_ok=True)
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps(receipt, indent=2))
     return 0 if receipt["status"] == "verified" else 1

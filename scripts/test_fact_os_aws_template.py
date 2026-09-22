@@ -25,7 +25,8 @@ class InfrastructureContractTest(unittest.TestCase):
     def test_secret_not_embedded_and_dispatch_is_fixed_document_version(self):
         self.assertNotIn('SecretString',self.resources['SharadarSecret']['Properties'])
         parameters=self.resources['StateMachine']['Properties']['Definition']['States']['Send']['Parameters']
-        self.assertEqual(parameters['DocumentVersion'],'1')
+        self.assertEqual(parameters['DocumentVersion'],{'Ref':'RunDocumentVersion'})
+        self.assertEqual(self.template['Parameters']['RunDocumentVersion']['AllowedPattern'],'^[1-9][0-9]*$')
         self.assertNotIn('commands',parameters['Parameters'])
         self.assertEqual(self.resources['StateMachine']['Properties']['StateMachineType'],'STANDARD')
 

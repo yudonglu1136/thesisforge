@@ -90,6 +90,14 @@ class AiInsightsArtifactTest(unittest.TestCase):
         self.assertEqual((stamp(manifest), stamp(artifact)), before)
         self.assertTrue(json.loads(Path(replay['auditPath']).read_text())['sameInputReplay'])
 
+    def test_first_price_date_change_is_not_a_noop(self):
+        first = self.build()
+        self.put('tickers', [['fundamentals', 10, 'TEST', 'https://www.sec.gov/Archives/edgar/data/123/', 'USD', '2024-05-01', '2026-01-01']])
+        second = self.build()
+        self.assertNotEqual(second['generationId'], first['generationId'])
+        company = json.loads(Path(second['artifactPath']).read_text())['companies'][0]
+        self.assertEqual(company['firstPriceDate'], '2024-05-01')
+
     def test_unrelated_catalog_publication_keeps_financial_identity_and_artifact(self):
         first = self.build()
         manifest = Path(first['manifestPath'])
@@ -189,30 +197,42 @@ class AiInsightsArtifactTest(unittest.TestCase):
 
 
 class AiInsightsDailyHookTest(unittest.TestCase):
+    setUp=AiInsightsArtifactTest.setUp
+    put=AiInsightsArtifactTest.put
+
     def run_cli(self, sync_error=False, artifact_error=False, tables=('fundamentals',)):
         from .__main__ import main
-        with tempfile.TemporaryDirectory() as temporary:
-            output = io.StringIO()
-            with patch('sys.argv', ['fact-os', '--root', temporary, 'sync', '--tables', *tables]), \
-                    patch('fact_os.sync.load_key', return_value='local-test-only'), \
+        from .pipeline.runner import run
+        from .pipeline.contracts import TaskSpec
+        from .ai_insights import build_ai_insights as real_build
+        spec=TaskSpec('ai_insights','derived','test','test',{},('fundamentals','tickers'),publicationGroup='ai_insights')
+        with self.store.writer() as db:
+            db.execute('UPDATE sync_state SET backfill_complete=true')
+        def fixed_build(root,**kwargs):
+            return real_build(root,universe_path=self.universe,**kwargs)
+        output=io.StringIO()
+        with patch('fact_os.ai_insights.build_ai_insights',side_effect=fixed_build) as build:
+            run(self.store,specs=[spec])
+            build.reset_mock()
+            def sync_table(table,**kwargs):
+                if sync_error: raise RuntimeError('failure')
+                if table=='fundamentals':
+                    self.put('fundamentals',[['TEST','ARQ','2024-12-01','2024-09-30','2024-09-30','2024Q3',150,150,-8,'2024-12-01']])
+                return {'dataset':table,'status':'accepted'}
+            if artifact_error: build.side_effect=ValueError('failure')
+            with patch('sys.argv',['fact-os','--root',str(self.store.root),'sync','--tables',*tables]), \
+                    patch('fact_os.sync.load_key',return_value='local-test-only'), \
                     patch('fact_os.sync.Synchronizer') as sync_class, \
-                    patch('fact_os.ai_insights.build_ai_insights') as build, \
-                    patch.object(Store, 'status', return_value=[
-                        {'dataset': 'fundamentals', 'backfill_complete': True},
-                        {'dataset': 'tickers', 'backfill_complete': True},
-                    ]), \
+                    patch('fact_os.pipeline.cli.run',side_effect=lambda store,**kw:run(store,specs=[spec],**kw)), \
                     contextlib.redirect_stdout(output):
-                sync_class.return_value.sync.side_effect = RuntimeError('failure') if sync_error else None
-                sync_class.return_value.sync.return_value = {'dataset': 'fundamentals', 'status': 'no_op'}
-                build.side_effect = ValueError('failure') if artifact_error else None
-                build.return_value = {'status': 'published'}
-                status = main()
-            return status, build.call_count, output.getvalue()
+                sync_class.return_value.sync.side_effect=sync_table
+                status=main()
+        return status,build.call_count,output.getvalue()
 
     def test_successful_daily_sync_refreshes_ai_insights(self):
         status, calls, output = self.run_cli()
         self.assertEqual((status, calls), (0, 1))
-        self.assertIn('"derived": "ai-insights"', output)
+        self.assertIn('"ai_insights": {"status": "succeeded"}', output)
 
     def test_failed_source_sync_does_not_publish_a_partial_analysis(self):
         self.assertEqual(self.run_cli(sync_error=True)[:2], (1, 0))
@@ -220,12 +240,14 @@ class AiInsightsDailyHookTest(unittest.TestCase):
     def test_price_only_sync_does_not_rebuild_ai_insights(self):
         status, calls, output = self.run_cli(tables=('daily',))
         self.assertEqual((status, calls), (0, 0))
-        self.assertIn('no_relevant_dependency_updated', output)
+        self.assertIn('"ai_insights": {"status": "unchanged"}', output)
 
     def test_derived_failure_makes_daily_job_nonzero_and_retains_old_generation(self):
         status, calls, output = self.run_cli(artifact_error=True)
         self.assertEqual((status, calls), (1, 1))
-        self.assertIn('"previous_generation_retained": true', output)
+        self.assertIn('"ai_insights": {"status": "failed"', output)
+        manifest=json.loads((self.store.root/'derived/ai-insights/manifest.json').read_text())
+        self.assertTrue((self.store.root/manifest['artifactPath']).is_file())
 
 
 if __name__ == '__main__':

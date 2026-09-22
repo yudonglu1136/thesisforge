@@ -18,10 +18,13 @@ import json
 import fcntl
 import sqlite3
 import stat
+import sys
 from pathlib import Path
 from statistics import median
 
 import duckdb
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from fact_os.repository import FactRepository
 from active_sector_analysis import sector_analysis
 
 
@@ -590,19 +593,22 @@ def build(args) -> int:
         database_path.chmod(database_path.stat().st_mode | stat.S_IWUSR)
     catalog = json.loads((fact_path.parent/"manifests"/"catalog.json").read_text())
     source_keys = ("holdings","holdings_ticker","holdings_investor","actions","fundamentals","daily","tickers","sp500")
-    source = {key: catalog["datasets"][key]["state"] for key in source_keys}
-    observed_at = max(state["last_success"] for state in source.values())
+    source = {key: {"state":catalog["datasets"][key]["state"],"contentVersion":catalog["datasets"][key].get('contentVersion'),
+                   "partitions":catalog["datasets"][key]['partitions']} for key in source_keys}
+    observed_at = max(str(item['state'].get('watermark') or item['state'].get('max_date') or '') for item in source.values())
     source_generation = compact_hash({"method": METHOD_VERSION,
         "sectorMethodHash": hashlib.sha256(Path(__file__).with_name("active_sector_analysis.py").read_bytes()).hexdigest(), "rules": {
         "passiveIds": sorted(PASSIVE_IDS), "knownActiveIds": sorted(KNOWN_ACTIVE_IDS),
         "passivePhrases": PASSIVE_PHRASES, "custodyBankPhrases": CUSTODY_BANK_PHRASES,
         "assetOwnerPhrases": ASSET_OWNER_PHRASES, "activePhrases": ACTIVE_PHRASES,
     }, "source": source})
-    duck = duckdb.connect(str(fact_path), read_only=True)
+    repository = FactRepository(fact_path.parent)
+    duck = repository.db
+    duck.execute("SET memory_limit='2GB'")
     dates = [str(row[0]) for row in duck.execute("SELECT DISTINCT date FROM holdings WHERE securitytype='SHR' ORDER BY date DESC").fetchall()]
     selected = dates[:max(1,args.quarters)+1]
     if len(selected)<2: raise RuntimeError("insufficient_holdings_quarters")
-    latest_split = duck.execute("SELECT max(date) FROM actions WHERE action='split' AND date<=?", [dt.date.today()]).fetchone()[0]
+    latest_split = duck.execute("SELECT max(date) FROM actions WHERE action='split' AND date<=?", [catalog['datasets']['daily']['state']['max_date']]).fetchone()[0]
     share_basis_date = str(latest_split or selected[0])
     sql = sqlite3.connect(database_path)
     sql.execute("PRAGMA busy_timeout=30000")
@@ -660,7 +666,7 @@ def build(args) -> int:
     sector_rows = sql.execute("SELECT count(*) FROM institutional_13f_active_sectors_v1 WHERE source_generation=?", (source_generation,)).fetchone()[0]
     after_oldest = sql.execute("SELECT min(report_date) FROM institutional_13f_active_snapshots_v1").fetchone()[0]
     sql.execute("PRAGMA optimize")
-    sql.close(); duck.close()
+    sql.close(); repository.close()
     receipt = {"methodVersion": METHOD_VERSION, "sourceGeneration": source_generation,
                "database": str(database_path), "beforeRows": before, "afterRows": after,
                "inserted": inserted, "sameInputRows": replay, "duplicateNaturalKeys": duplicates,
@@ -668,7 +674,8 @@ def build(args) -> int:
                "beforeOldest": before_oldest, "afterOldest": after_oldest,
                "shareBasisDate": share_basis_date, "sourceObservedAt": observed_at}
     stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
-    output = Path("data/fact_os/audit")/f"13f-active-insights-{stamp}-{source_generation[:12]}.json"
+    output = fact_path.parent/"audit"/f"13f-active-insights-{stamp}-{source_generation[:12]}.json"
+    output.parent.mkdir(parents=True,exist_ok=True)
     with output.open('x') as handle:
         handle.write(json.dumps(receipt,indent=2)+"\n")
     print(json.dumps({**receipt,"receipt":str(output)},indent=2))

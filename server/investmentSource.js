@@ -5,6 +5,8 @@ import { valuationModelRoute } from './valuationModelRoute.js';
 import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrices.js';
 import { gurus } from './gurus.js';
 import { guruCapitalStructure } from './guruCapitalStructures.js';
+import path from 'node:path';
+import { releaseRoot,releaseResource } from './dataReleaseContext.js';
 
 export const SOURCE_ADAPTER_VERSION='investment-pit-adapter-v1';
 const metricNames=['revenueGrowth','operatingMargin','fcfMargin','capexIntensity'];
@@ -49,12 +51,20 @@ export class InvestmentSource {
   constructor(file,{insightsFile=null}={}) {
     this.db=new DatabaseSync(file,{readOnly:true});
     this.db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');
-    this.insightsDb=insightsFile?new DatabaseSync(insightsFile,{readOnly:true}):null;
-    this.insightsDb?.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');
+    this.baseInsightsDb=insightsFile?new DatabaseSync(insightsFile,{readOnly:true}):null;
+    this.baseInsightsDb?.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');
     this.companyCache=new Map(); this.cacheGeneration=null;
     this.guruExposureCache=new Map(); this.guruExposureGeneration=null;
   }
-  close(){this.insightsDb?.close();this.db.close();}
+  get insightsDb(){
+    const root=releaseRoot('institutional_13f',null);
+    if(!root)return this.baseInsightsDb;
+    return releaseResource('13f:'+root,()=>{
+      const db=new DatabaseSync(path.join(root,'13f-insights.sqlite'),{readOnly:true});
+      db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');return db;
+    },db=>db.close());
+  }
+  close(){this.baseInsightsDb?.close();this.db.close();}
   availableTickers() { return this.db.prepare('SELECT DISTINCT ticker FROM valuation_pit_model_runs ORDER BY ticker').all().map(x=>x.ticker); }
   periods(ticker,asOf) {
     ticker=tickerKey(ticker);isoDate(asOf);

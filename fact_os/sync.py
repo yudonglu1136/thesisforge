@@ -19,6 +19,8 @@ import zipfile
 
 import httpx
 import duckdb
+import gzip
+import random
 from .contracts import TABLES
 from .store import now, checksum
 from .sync_plan import bounded_date_windows, price_date_windows
@@ -320,6 +322,7 @@ class Synchronizer:
         from .extract import complete_queries, canonical_rows_hash, ExtractionError, SplitQueryRequired
         def request(dataset,query,fields,*,split_read_timeout=False):
             for attempt in range(4):
+                retry_after=0
                 try:
                     if self.progress and os.environ.get('FACT_OS_SYNC_TRACE')=='1':
                         # Only public query bounds, never headers, URLs or keys.
@@ -342,6 +345,8 @@ class Synchronizer:
                             response=httpx.Response(200,content=b''.join(chunks))
                         else:
                             response=httpx.Response(upstream.status_code)
+                            try: retry_after=min(60,max(0,float(upstream.headers.get('retry-after','0'))))
+                            except ValueError: retry_after=0
                     if response.status_code==200:
                         rows=page_rows(response,query['format'],fields,query['limit'])
                         allowed=set(query['ticker'].split(',')) if 'ticker' in query else None
@@ -374,9 +379,30 @@ class Synchronizer:
                     if attempt==3:raise UpstreamError('sync read timeout; local history retained') from None
                 except httpx.TransportError:
                     if attempt==3:raise UpstreamError('sync transport failed; local history retained') from None
-                time.sleep(min(8,2**attempt))
+                time.sleep(max(retry_after,min(8,2**attempt))+random.uniform(0,.5))
             raise UpstreamError('sync retry limit reached')
-        fetch=lambda query:request(table,query,columns,split_read_timeout=True)
+        checkpoint_dir=self.store.root/'sync/extract-checkpoints'/table
+        checkpoint_dir.mkdir(parents=True,exist_ok=True)
+        def checkpoint_path(query):
+            identity=hashlib.sha256(json.dumps({'query':query,'schema':contract.digest},sort_keys=True).encode()).hexdigest()
+            return checkpoint_dir/(identity+'.json.gz')
+        def fetch(query):
+            checkpoint=checkpoint_path(query)
+            if checkpoint.exists():
+                value=json.loads(gzip.decompress(checkpoint.read_bytes()))
+                if value['schema']!=contract.digest or value['query']!=query or canonical_rows_hash(value['rows'],contract.keys)!=value['sha256']:
+                    raise UpstreamError('extract checkpoint integrity failed; local history retained')
+                return value['rows']
+            rows=request(table,query,columns,split_read_timeout=True)
+            # Saturated scopes are not complete and cannot become checkpoints.
+            # These rows are ALWAYS re-fetched by verify() before ingestion.
+            if len(rows)<query['limit']:
+                payload={'schema':contract.digest,'query':query,'sha256':canonical_rows_hash(rows,contract.keys),'rows':rows}
+                temporary=checkpoint.with_name(checkpoint.name+'.'+uuid.uuid4().hex+'.tmp')
+                with temporary.open('wb') as stream:
+                    stream.write(gzip.compress(json.dumps(payload,separators=(',',':')).encode(),mtime=0));stream.flush();os.fsync(stream.fileno())
+                temporary.replace(checkpoint)
+            return rows
         discoveries=[]
         def read_universe(dataset,query):
             rows=request(dataset,query,['ticker'])
@@ -428,6 +454,8 @@ class Synchronizer:
             query,expected=entry
             observed=canonical_rows_hash(request(table,query,columns),contract.keys)
             if observed!=expected:
+                checkpoint=checkpoint_path(query)
+                if checkpoint.exists(): checkpoint.replace(checkpoint.with_name(checkpoint.name+'.invalid-'+uuid.uuid4().hex))
                 scope={key:query[key] for key in ('from','to','ticker','ticker.gt','ticker.lte') if key in query}
                 raise UpstreamError('upstream changed during sync; local history retained: '+
                     json.dumps({'table':table,'scope':scope,'expected':expected[:12],'observed':observed[:12]},sort_keys=True))

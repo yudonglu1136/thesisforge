@@ -19,6 +19,8 @@ def template():
           statement(['secretsmanager:GetSecretValue'],ref('SharadarSecret')),
           {**statement(['s3:ListBucket'],sub('arn:aws:s3:::${Bucket}')),'Condition':{'StringLike':{'s3:prefix':['fact-os/*']}}},
           statement(['s3:GetObject','s3:PutObject','s3:GetObjectTagging','s3:PutObjectTagging'],sub('arn:aws:s3:::${Bucket}/fact-os/*')),
+          statement(['ssm:SendCommand'],[sub('arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:document/${InstallDocument}'),sub('arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${ApiInstanceId}')]),
+          statement(['ssm:GetCommandInvocation'],'*'),
         ])]}},
       'WorkerProfile':{'Type':'AWS::IAM::InstanceProfile','Properties':{'Roles':[ref('WorkerRole')]}},
       'WorkerSecurityGroup':{'Type':'AWS::EC2::SecurityGroup','Properties':{
@@ -58,6 +60,19 @@ systemctl enable --now amazon-ssm-agent
 ''') }}},
       'DataAttachment':{'Type':'AWS::EC2::VolumeAttachment','Properties':{
         'Device':'/dev/sdf','InstanceId':ref('Worker'),'VolumeId':ref('DataVolume')}},
+      'ApiReadPolicy':{'Type':'AWS::IAM::Policy','Properties':{**policy('fact-os-read-and-ssm',[
+        statement(['s3:GetObject'],sub('arn:aws:s3:::${Bucket}/fact-os/published/*')),
+        statement(['ssm:UpdateInstanceInformation','ssmmessages:CreateControlChannel','ssmmessages:CreateDataChannel',
+                   'ssmmessages:OpenControlChannel','ssmmessages:OpenDataChannel'],'*'),
+        ]),'Roles':[ref('ApiRoleName')]}},
+      'InstallDocument':{'Type':'AWS::SSM::Document','Properties':{'DocumentType':'Command','DocumentFormat':'JSON','UpdateMethod':'NewVersion',
+        'Content':{'schemaVersion':'2.2','description':'Fixed public Fact OS installer; no arbitrary commands or writer access',
+          'parameters':{'ReleaseKey':{'type':'String','allowedPattern':'^fact-os/published/releases/[a-f0-9]{64}\\.json$','interpolationType':'ENV_VAR'},
+                        'ExpectedRelease':{'type':'String','allowedPattern':'^([a-f0-9]{64}|none)$','interpolationType':'ENV_VAR'}},
+          'mainSteps':[{'action':'aws:runShellScript','name':'InstallFactOs','inputs':{'timeoutSeconds':'3600','runCommand':[
+            'set -eu','cd /var/app/current',
+            sub('/opt/thesisforge-fact-os/bin/python scripts/fact-os-api-install.py --bucket ${Bucket} --candidate-key "$SSM_ReleaseKey" --expected-release "$SSM_ExpectedRelease"')
+          ]}}]}}},
       'RunDocument':{'Type':'AWS::SSM::Document','Properties':{
         'DocumentType':'Command','DocumentFormat':'JSON','UpdateMethod':'NewVersion',
         'Content':{'schemaVersion':'2.2','description':'Fixed Fact OS pipeline entrypoint; no caller-provided shell commands',
@@ -66,7 +81,7 @@ systemctl enable --now amazon-ssm-agent
             'timeoutSeconds':'21600','runCommand':[
               'set -eu',
               'test -x /opt/fact-os/current/bin/fact-os-worker',
-              sub('sudo -u factos env FACT_OS_ROOT=/var/lib/fact-os/data FACT_OS_SECRET_ID=${SharadarSecret} FACT_OS_BUCKET=${Bucket} AWS_DEFAULT_REGION=${AWS::Region} /opt/fact-os/current/bin/fact-os-worker --scheduled-for "$SSM_ScheduledFor"')
+              sub('sudo -u factos env FACT_OS_ROOT=/var/lib/fact-os/data FACT_OS_SECRET_ID=${SharadarSecret} FACT_OS_BUCKET=${Bucket} FACT_OS_INSTALL_DOCUMENT=${InstallDocument} FACT_OS_INSTALL_DOCUMENT_VERSION=${InstallDocumentVersion} FACT_OS_API_INSTANCE_ID=${ApiInstanceId} AWS_DEFAULT_REGION=${AWS::Region} /opt/fact-os/current/bin/fact-os-worker --scheduled-for "$SSM_ScheduledFor"')
             ]}}]}}},
       'StateRole':{'Type':'AWS::IAM::Role','Properties':{'AssumeRolePolicyDocument':trust('states.amazonaws.com'),
         'Policies':[policy('only-fact-os-worker',[
@@ -76,7 +91,7 @@ systemctl enable --now amazon-ssm-agent
         'StateMachineType':'STANDARD','RoleArn':arn('StateRole'),
         'Definition':{'StartAt':'Send','TimeoutSeconds':22200,'States':{
           'Send':{'Type':'Task','Resource':'arn:aws:states:::aws-sdk:ssm:sendCommand',
-            'Parameters':{'DocumentName':ref('RunDocument'),'DocumentVersion':'1','InstanceIds':[ref('Worker')],
+            'Parameters':{'DocumentName':ref('RunDocument'),'DocumentVersion':ref('RunDocumentVersion'),'InstanceIds':[ref('Worker')],
                           'Parameters':{'ScheduledFor.$':'States.Array($.scheduledFor)'},'TimeoutSeconds':600},
             'ResultPath':'$.dispatch','Next':'Wait'},
           'Wait':{'Type':'Wait','Seconds':30,'Next':'Poll'},
@@ -111,10 +126,15 @@ systemctl enable --now amazon-ssm-agent
       'Parameters':{
         'Bucket':{'Type':'String'},'VpcId':{'Type':'AWS::EC2::VPC::Id'},'SubnetId':{'Type':'AWS::EC2::Subnet::Id'},
         'AvailabilityZone':{'Type':'String'},
+        'ApiRoleName':{'Type':'String','Default':'thesisforge-elasticbeanstalk-ec2-role'},
+        'ApiInstanceId':{'Type':'String','AllowedPattern':'^i-[a-f0-9]+$'},
+        'RunDocumentVersion':{'Type':'String','Default':'1','AllowedPattern':'^[1-9][0-9]*$'},
+        'InstallDocumentVersion':{'Type':'String','Default':'1','AllowedPattern':'^[1-9][0-9]*$'},
         'AmiId':{'Type':'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>','Default':'/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64'},
         'ScheduleState':{'Type':'String','Default':'DISABLED','AllowedValues':['DISABLED','ENABLED']}},
       'Resources':resources,'Outputs':{'WorkerId':{'Value':ref('Worker')},'VolumeId':{'Value':ref('DataVolume')},
-        'SecretArn':{'Value':ref('SharadarSecret')},'StateMachineArn':{'Value':arn('StateMachine')},'RunDocument':{'Value':ref('RunDocument')}}}
+        'SecretArn':{'Value':ref('SharadarSecret')},'StateMachineArn':{'Value':arn('StateMachine')},'RunDocument':{'Value':ref('RunDocument')},
+        'InstallDocument':{'Value':ref('InstallDocument')}}}
 
 
 if __name__=='__main__':

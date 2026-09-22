@@ -1,4 +1,6 @@
 import express from "express";
+import { dataReleaseMiddleware,dataReleaseStatus } from './dataReleaseContext.js';
+import { queryFacts } from './factRepository.js';
 import { enableInvestmentPreview } from './investmentRoutes.js';
 import cors from "cors";
 import fs from "node:fs";
@@ -112,6 +114,15 @@ app.use(cors({
   allowedHeaders: ["authorization", "content-type", "if-none-match"]
 }));
 installJsonTransport(app);
+app.use('/api',dataReleaseMiddleware);
+app.get('/api/internal/data-release',requireLoopbackRequest,requireInternalCron,async (_request,response)=>{
+  try {
+    const release=dataReleaseStatus();
+    if(!release)return response.status(503).json({error:'data_release_not_activated'});
+    const coverage=await queryFacts('get_coverage');
+    response.json({status:'verified',releaseId:release.releaseId,groups:release.groups,coverage});
+  }catch{return response.status(503).json({error:'data_release_probe_failed'});}
+});
 registerRetiredProductRoutes(app);
 registerGuruPriceRepairRoute(app, {
   requireInternalCron,
@@ -417,6 +428,7 @@ app.use("/api/admin", adminResponsePrivacy);
 app.use("/api", requireAuth);
 // Apply the owner gate to every current and future Admin route, before reads.
 app.use("/api/admin", requireAdmin);
+app.get('/api/admin/data-pipeline/status',(_request,response)=>response.json(dataReleaseStatus()??{status:'not_activated'}));
 app.use("/api", recordLoginActivity);
 
 function recordPortfolioRequestUser(request) {

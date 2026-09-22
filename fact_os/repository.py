@@ -8,6 +8,7 @@ import json
 import math
 import hashlib
 import fcntl
+import os
 from pathlib import Path
 import re
 from urllib.parse import parse_qs, urlparse
@@ -73,8 +74,12 @@ class FactRepository:
         # GC takes this lock exclusively before unlinking retired generations.
         # Hold it before reading the catalog, throughout the pinned snapshot.
         # Creating an advisory lock is the only on-disk mutation by a reader.
-        (self.root / 'sync').mkdir(exist_ok=True)
-        self._reader_lock = (self.root / 'sync/readers.lock').open('a')
+        # Installed releases are read-only. API leases live in a separate
+        # writable directory, keyed by immutable release root, never in Parquet.
+        lease_dir = Path(os.environ['FACT_OS_LEASE_ROOT']).resolve() if os.environ.get('FACT_OS_LEASE_ROOT') else self.root / 'sync'
+        lease_dir.mkdir(parents=True,exist_ok=True)
+        lease_name = hashlib.sha256(str(self.root).encode()).hexdigest()+'.lock' if os.environ.get('FACT_OS_LEASE_ROOT') else 'readers.lock'
+        self._reader_lock = (lease_dir / lease_name).open('a')
         try:
             fcntl.flock(self._reader_lock, fcntl.LOCK_SH)
             self._open_snapshot()

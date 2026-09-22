@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { isoDate } from './investmentMath.js';
+import { releaseRoot } from './dataReleaseContext.js';
 import { AI_INSIGHTS_METHOD_VERSION, GROWTH_COMPONENTS, QUALITY_COMPONENTS, finite,
   quarterIndex, quarterAt, quarterForDate, selectAiInsightsFacts, companyQuarter,
   scoreCompanies, aggregateQuarter, capexValue, deterministicInsights } from './aiInsightsMetrics.js';
@@ -90,11 +91,12 @@ export function aiInsightsMethodology() {
 }
 
 export function createAiInsightsService({ factRoot = process.env.FACT_OS_ROOT || DEFAULT_ROOT, artifactLoader = null, now = () => new Date() } = {}) {
-  const root = path.resolve(factRoot), artifacts = new Map(), models = new Map();
+  const fallbackRoot = path.resolve(factRoot), artifacts = new Map(), models = new Map();
   let modelBytes = 0;
 
   function loadArtifact(generation = null) {
     if (artifactLoader) return artifactLoader(generation);
+    let root=releaseRoot('ai_insights',fallbackRoot);
     let manifest;
     if (!generation) {
       try { manifest = JSON.parse(fs.readFileSync(path.join(root, 'derived/ai-insights/manifest.json'), 'utf8')); }
@@ -102,6 +104,7 @@ export function createAiInsightsService({ factRoot = process.env.FACT_OS_ROOT ||
       generation = manifest.generationId;
     }
     badRequest(typeof generation === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(generation), 'invalid_ai_insights_generation');
+    if(!fs.existsSync(path.join(root,'derived/ai-insights/generations',`${generation}.json`))) root=fallbackRoot;
     const cached = artifacts.get(generation);
     if (cached) return cached;
     const expectedPath = path.join(root, 'derived/ai-insights/generations', `${generation}.json`);

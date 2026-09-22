@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stat } from "node:fs/promises";
+import { existsSync } from 'node:fs';
+import { releaseRoot, dataReleaseId } from './dataReleaseContext.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const PRICE_TYPES = Object.freeze({
@@ -44,12 +46,18 @@ let cachedBytes = 0;
 const readCache = new Map();
 const requestKey = (request) => JSON.stringify(request);
 async function refreshGeneration() {
-  const root = path.resolve(process.env.FACT_OS_ROOT || path.join(projectRoot, "data/fact_os"));
+  const root = path.resolve(releaseRoot('canonical',process.env.FACT_OS_ROOT || path.join(projectRoot, "data/fact_os")));
   try {
     const info = await stat(path.join(root, "manifests/catalog.json"));
     const generation = `${root}:${info.mtimeMs}:${info.size}:${process.env.FACT_OS_PYTHON || "default"}`;
     if (generation !== cachedGeneration) { readCache.clear(); cachedBytes = 0; cachedGeneration = generation; }
   } catch { readCache.clear(); cachedBytes = 0; cachedGeneration = ""; }
+}
+
+export async function factGeneration() {
+  if(dataReleaseId())return dataReleaseId();
+  await refreshGeneration();
+  return cachedGeneration;
 }
 
 function cacheResponse(request, response) {
@@ -105,12 +113,15 @@ export function queryFactsBatch(requests) {
 
 function runRequest(request) {
   return new Promise((resolve, reject) => {
-    const root = path.resolve(process.env.FACT_OS_ROOT || path.join(projectRoot, "data/fact_os"));
-    const python = process.env.FACT_OS_PYTHON || path.join(projectRoot, ".venv-fact-os/bin/python");
+    const root = path.resolve(releaseRoot('canonical',process.env.FACT_OS_ROOT || path.join(projectRoot, "data/fact_os")));
+    const python = process.env.FACT_OS_PYTHON || (process.env.NODE_ENV==='production'&&existsSync('/opt/thesisforge-fact-os/bin/python')
+      ? '/opt/thesisforge-fact-os/bin/python':path.join(projectRoot, ".venv-fact-os/bin/python"));
     const child = spawn(python, ["-m", "fact_os.rpc", "--root", root], {
       cwd: projectRoot,
       // Provider keys and private user credentials are not inherited by readers.
-      env: { PATH: process.env.PATH || "/usr/bin:/bin", PYTHONUNBUFFERED: "1", LANG: "en_US.UTF-8" },
+      env: { PATH: process.env.PATH || "/usr/bin:/bin", PYTHONUNBUFFERED: "1", LANG: "en_US.UTF-8",
+        ...(process.env.FACT_OS_LEASE_ROOT?{FACT_OS_LEASE_ROOT:process.env.FACT_OS_LEASE_ROOT}:
+          dataReleaseId()?{FACT_OS_LEASE_ROOT:'/var/app/data/fact-os-leases'}:{}) },
       stdio: ["pipe", "pipe", "pipe"]
     });
     let output = ""; let finished = false;

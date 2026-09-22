@@ -193,8 +193,7 @@ def collect(repo, universe):
                 'ticker', 'dimension', 'calendardate', 'reportperiod',
                 'fiscalperiod', *FINANCIAL_FIELDS,
             )},
-            'datekey': fact['datekey'], 'currency': fact['currency'],
-            'capexStatus': fact['capexStatus'],
+            'datekey': fact['datekey'],
         })
         facts.append(fact)
     if not facts:
@@ -216,16 +215,12 @@ def _inventory(facts):
 
 def _dependency_fingerprint(companies, facts, universe_sha256):
     """Fingerprint only inputs that can change the AI analysis."""
-    company_inputs = [{
-        'ticker': row['ticker'], 'issuerId': row['issuerId'],
-        'securityId': row['securityId'], 'identityStatus': row['identityStatus'],
-        'currency': row.get('currency'), 'group': row.get('group'),
-        'sector': row.get('sector'), 'businessModelGroup': row.get('businessModelGroup'),
-        'classificationKnownAt': row.get('classificationKnownAt'),
-        'corporateActionRevisionIds': [event['sourceRevisionId'] for event in row.get('corporateActions', [])],
-    } for row in companies]
+    # Include ALL output-affecting identity/classification fields, including
+    # firstPriceDate and optional coverage; exclude only operational lineage.
+    company_inputs = [{k:v for k,v in row.items() if k != 'source'} for row in companies]
     return _hash({
         'builderVersion': BUILDER_VERSION,
+        'methodologyVersion': METHODOLOGY_VERSION,
         'universeSha256': universe_sha256,
         'companies': company_inputs,
         'financialRevisionIds': [row['sourceRevisionId'] for row in facts],
@@ -254,14 +249,15 @@ def _archive_manifest(directory, manifest):
         _atomic(path, encoded)
 
 
-def build_ai_insights(root, *, universe_path=DEFAULT_UNIVERSE):
+def build_ai_insights(root, *, universe_path=DEFAULT_UNIVERSE, source_root=None):
     root = Path(root).resolve()
+    source_root = Path(source_root or root).resolve()
     universe = load_universe(universe_path)
     registry_hash = _hash(universe)
     directory = root / 'derived/ai-insights'
     manifest_path = directory / 'manifest.json'
     audit_path = root / 'audit' / ('ai-insights-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + uuid.uuid4().hex[:8] + '.json')
-    with _writer(root), FactRepository(root) as repo:
+    with _writer(root), FactRepository(source_root) as repo:
         if not repo.generation:
             raise MissingData('AI Insights requires a published immutable catalog')
         previous = json.loads(manifest_path.read_text()) if manifest_path.exists() else None
@@ -332,7 +328,7 @@ def build_ai_insights(root, *, universe_path=DEFAULT_UNIVERSE):
             _atomic(artifact_path, artifact_bytes)
         # The writer lease should make this invariant automatic. Fail closed if
         # a non-cooperating process replaced the source catalog during the read.
-        if hashlib.sha256((root / 'manifests/catalog.json').read_bytes()).hexdigest() != repo.generation:
+        if hashlib.sha256((source_root / 'manifests/catalog.json').read_bytes()).hexdigest() != repo.generation:
             raise ValueError('canonical catalog changed during AI Insights build')
         manifest = _generation_manifest(root, artifact_path, artifact, artifact_bytes)
         receipt = {'status': 'published', 'generationId': generation, 'sourceManifestSha256': repo.generation,

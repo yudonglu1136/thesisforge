@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Root-only AWS installer; public data only, actual webapp read and API ACK."""
+import argparse
+import json
+import os
+from pathlib import Path
+import pwd
+import subprocess
+import sys
+import urllib.request
+from datetime import date
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from fact_os.pipeline.installer import install
+from fact_os.pipeline.checks import validate_canonical
+from fact_os.pipeline.contracts import digest
+
+
+def main():
+    if os.geteuid()!=0:raise ValueError('root_installer_required')
+    parser=argparse.ArgumentParser();parser.add_argument('--bucket',required=True);parser.add_argument('--candidate-key',required=True)
+    parser.add_argument('--expected-release',required=True,help='Exact previous root release id, or none for first install')
+    args=parser.parse_args()
+    import boto3
+    s3=boto3.client('s3')
+    if not args.candidate_key.startswith('fact-os/published/releases/') or not args.candidate_key.endswith('.json'):raise ValueError('release_key_invalid')
+    candidate=json.loads(s3.get_object(Bucket=args.bucket,Key=args.candidate_key)['Body'].read())
+    if digest({k:candidate[k] for k in ('schemaVersion','groups')})!=candidate['releaseId']:raise ValueError('release_identity_invalid')
+    root=Path('/var/app/data/fact-os');active=root/'active.json'
+    expected=None if args.expected_release=='none' else args.expected_release
+    lease=Path('/var/app/data/fact-os-leases');lease.mkdir(exist_ok=True)
+    account=pwd.getpwnam('webapp');os.chown(lease,account.pw_uid,account.pw_gid);lease.chmod(0o700)
+    os.environ['FACT_OS_LEASE_ROOT']=str(root/'installer-leases')
+    def validate(name,path,manifest):
+        if name == 'canonical':
+            validate_canonical(path,manifest['requiredMatrix']);return
+        if name in ('research_inputs','strategy_inputs'):
+            value=json.loads((path/'inputs.json').read_text())
+            if value.get('schemaVersion')!='fact-os-input-vector-v1' or value.get('inputs')!=manifest['inputVector']:
+                raise ValueError('canonical_input_vector_invalid')
+            return
+        if name=='ai_insights':
+            script="import {validateAiInsightsArtifact} from './server/investmentRuntimeConfig.js'; validateAiInsightsArtifact(process.argv[1],process.argv[1]+'/release-manifest.json');"
+        elif name=='institutional_13f':
+            script="import {validateInstitutional13fArtifact} from './server/investmentRuntimeConfig.js'; validateInstitutional13fArtifact(process.argv[1]+'/13f-insights.sqlite',process.argv[1]+'/manifest.json');"
+        else:raise ValueError('unregistered_install_validator')
+        result=subprocess.run(['node','--input-type=module','-e',script,str(path)],capture_output=True)
+        if result.returncode:raise ValueError('existing_production_validator_failed:'+name)
+    def probe(installed,activated):
+        canonical=installed['groups'].get('canonical',{}).get('root')
+        if not canonical:raise ValueError('canonical_release_required')
+        if not activated:
+            result=subprocess.run(['runuser','-u','webapp','--','env','FACT_OS_LEASE_ROOT='+str(lease),
+                sys.executable,'-m','fact_os.rpc','--root',canonical],input=json.dumps({'batch':[
+                    {'method':'get_coverage'},
+                    {'method':'get_fundamental_company_index','args':[date.today().isoformat()],'kwargs':{'limit':2}}
+                ]}),text=True,capture_output=True,timeout=120)
+            value=json.loads(result.stdout)
+            if result.returncode or not value.get('ok') or any(not r.get('ok') for r in value.get('result',[])):raise ValueError('actual_api_uid_read_failed')
+            return {}
+        # Existing internal credential read in memory; never emitted or sent off-host.
+        config=json.loads(subprocess.check_output(['/opt/elasticbeanstalk/bin/get-config','environment']))
+        secret=config.get('INTERNAL_CRON_SECRET') or config.get('CRON_SECRET')
+        if not secret:raise ValueError('internal_ack_credential_missing')
+        request=urllib.request.Request('http://127.0.0.1:'+str(config.get('PORT') or 8787)+'/api/internal/data-release',headers={'Authorization':'Bearer '+secret})
+        with urllib.request.urlopen(request,timeout=120) as response:body=json.load(response)
+        if body.get('releaseId')!=installed['releaseId'] or body.get('status')!='verified' or not body.get('coverage'):
+            raise ValueError('live_api_generation_mismatch')
+        return {'status':'verified','releaseId':installed['releaseId'],'actualApiUserRead':True,'canonicalReadVerified':True,
+                'groups':{k:v['generationId'] for k,v in installed['groups'].items()}}
+    result=install(s3,args.bucket,candidate,root,validate_group=validate,probe=probe,expected_release=expected)
+    print(json.dumps(result))
+
+
+if __name__=='__main__':main()
