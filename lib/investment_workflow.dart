@@ -63,6 +63,10 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   bool ruleEnabled = false, draftDirty = false, reviewOriginal = false;
   Map<String, dynamic>? discoveryData, selectedGuru, entryEvidence;
   Map<String, dynamic> aiInsightsSelection = {};
+  // Backward-compatible state for the Value Flow panel still present on the
+  // committed production shell. The AI Insights replacement is being
+  // developed separately and must not be pulled into this release.
+  Map<String, dynamic> valueFlowSelection = {};
   Map<String, dynamic> fundamentalSelection = {};
   Map<String, dynamic> guruStudySelection = {};
   Map<String, dynamic>? homeExample;

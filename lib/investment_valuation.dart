@@ -886,8 +886,13 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
     );
   }
 
-  Widget valuationForecastGrid(Map<String, dynamic> result) {
+  Widget valuationForecastGrid(
+    Map<String, dynamic> result, {
+    Map<String, dynamic>? reverseDetails,
+  }) {
     final operating = personalDcfMethod == 'operating_fcff';
+    final reverseMode = reverseDetails != null;
+    final solvedVariable = text(reverseDetails?['variable']);
     final base = asMap(company?['base']);
     final snap = asMap(company?['snapshot']);
     final forecasts = asList(result['forecast']);
@@ -895,22 +900,42 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
     final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
     String amount(dynamic value) =>
         nullableNumber(value) == null ? '—' : formatNumber(number(value));
-    Widget cell(Widget child, {bool actual = false, bool header = false}) =>
-        Container(
-          height: (header ? 74 : 62) * textScale,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          color: actual
-              ? p.background
-              : header
-              ? p.accent.withValues(alpha: .055)
-              : null,
-          alignment: Alignment.centerRight,
-          child: child,
-        );
-    Widget plain(String value, {Color? color}) => Text(
+    bool solvedRow(int row) => switch (solvedVariable) {
+      'growth' => row == 2,
+      'mature_ebit_margin' => row == 3,
+      'terminal_margin' => row == 3,
+      'reinvestment' => row == 7,
+      _ => false,
+    };
+    bool solvedCell(int row, int year) =>
+        solvedRow(row) &&
+        (solvedVariable != 'terminal_margin' || year == forecastHorizon - 1);
+    Widget cell(
+      Widget child, {
+      bool actual = false,
+      bool header = false,
+      bool solved = false,
+    }) => Container(
+      height: (header ? 74 : 62) * textScale,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      color: solved
+          ? p.secondary.withValues(alpha: .13)
+          : actual
+          ? p.background
+          : header
+          ? p.accent.withValues(alpha: .055)
+          : null,
+      alignment: Alignment.centerRight,
+      child: child,
+    );
+    Widget plain(String value, {Color? color, bool strong = false}) => Text(
       value,
       textAlign: TextAlign.right,
-      style: TextStyle(color: color ?? p.muted, fontSize: 13),
+      style: TextStyle(
+        color: color ?? p.muted,
+        fontSize: 13,
+        fontWeight: strong ? FontWeight.w700 : FontWeight.w400,
+      ),
     );
     Widget heading(String en, String zh, String detail) => Column(
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -969,6 +994,9 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
             ),
           ];
     return Container(
+      key: ValueKey(
+        reverseMode ? 'reverse-forecast-grid' : 'valuation-forecast-grid',
+      ),
       decoration: BoxDecoration(
         color: p.panel,
         border: Border.all(color: p.border),
@@ -989,10 +1017,15 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        w(
-                          '$forecastHorizon-year forecast',
-                          '$forecastHorizon 年预测',
-                        ),
+                        reverseMode
+                            ? w(
+                                '$forecastHorizon-year price-implied path',
+                                '$forecastHorizon 年价格隐含路径',
+                              )
+                            : w(
+                                '$forecastHorizon-year forecast',
+                                '$forecastHorizon 年预测',
+                              ),
                         style: TextStyle(
                           color: p.text,
                           fontSize: 18,
@@ -1001,14 +1034,18 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                       ),
                       const SizedBox(height: 4),
                       label(
-                        'Teal cells are editable · actuals stay locked',
-                        '青绿色单元格可编辑，历史实际值锁定',
+                        reverseMode
+                            ? 'Amber cells are solved from price · every other assumption is fixed'
+                            : 'Teal cells are editable · actuals stay locked',
+                        reverseMode
+                            ? '琥珀色单元格由价格反推，其余假设全部固定'
+                            : '青绿色单元格可编辑，历史实际值锁定',
                         size: 11,
                       ),
                     ],
                   ),
                 ),
-                if (MediaQuery.sizeOf(context).width < 1100)
+                if (!reverseMode && MediaQuery.sizeOf(context).width < 1100)
                   TextButton.icon(
                     onPressed: calculation == null || busy
                         ? null
@@ -1019,10 +1056,14 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                 else
                   Tooltip(
                     message: w(
-                      worksheetMemoryEnabled
+                      reverseMode
+                          ? 'Read-only price-implied path'
+                          : worksheetMemoryEnabled
                           ? 'Edits auto-save privately. Save scenario creates a confirmed version.'
                           : 'Saved only when you choose Save scenario',
-                      worksheetMemoryEnabled
+                      reverseMode
+                          ? '价格隐含路径为只读结果'
+                          : worksheetMemoryEnabled
                           ? '修改会自动私密保存；保存情景会创建确认版本。'
                           : '点击保存情景后才写入后端',
                     ),
@@ -1032,7 +1073,19 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
             ),
           ),
           Divider(height: 1, color: p.border),
-          forecastOriginNotice(),
+          if (!reverseMode) forecastOriginNotice(),
+          if (reverseMode)
+            Container(
+              key: const ValueKey('reverse-same-engine-notice'),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: p.secondary.withValues(alpha: .055),
+              child: label(
+                'Same forward DCF engine. The highlighted row is the single parameter solved to reproduce the selected market price.',
+                '使用同一套正向 DCF 引擎；高亮行是为复现所选市场价格而求解的唯一参数。',
+                color: p.secondary,
+                size: 11,
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Wrap(
@@ -1048,34 +1101,41 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                     onSelected: (_) => setForecastHorizon(years),
                   ),
                 label(
-                  worksheetMemoryEnabled
+                  reverseMode
+                      ? '1  Choose one variable   →   2  Solve the annual path   →   3  Forward-check price and residual'
+                      : worksheetMemoryEnabled
                       ? '1  Adjust the filled assumptions   →   2  See your DCF change   →   3  Edits save automatically'
                       : '1  Enter growth & cash-flow margin   →   2  DCF updates automatically   →   3  Compare & save',
-                  worksheetMemoryEnabled
+                  reverseMode
+                      ? '1  选择一个待求变量   →   2  反推年度路径   →   3  回代核验价格与残差'
+                      : worksheetMemoryEnabled
                       ? '1  修改预填假设   →   2  查看 DCF 变化   →   3  修改自动保存'
                       : '1  填写增长与现金流率   →   2  自动更新 DCF   →   3  比较并保存',
                   size: 12,
                 ),
-                TextButton.icon(
-                  key: const ValueKey('forecast-copy-year-one'),
-                  onPressed:
-                      editedRatio(growth.first) != null &&
-                          (operating
-                              ? [
-                                  ebitMargin,
-                                  cashTaxRate,
-                                  dnaMargin,
-                                  capexMargin,
-                                  nwcInvestmentMargin,
-                                ].every(
-                                  (path) => editedRatio(path.first) != null,
-                                )
-                              : editedRatio(margin.first) != null)
-                      ? copyFirstForecastYear
-                      : null,
-                  icon: const Icon(Icons.content_copy, size: 15),
-                  label: Text(w('Copy Year 1 to all years', '第 1 年假设应用到全部年份')),
-                ),
+                if (!reverseMode)
+                  TextButton.icon(
+                    key: const ValueKey('forecast-copy-year-one'),
+                    onPressed:
+                        editedRatio(growth.first) != null &&
+                            (operating
+                                ? [
+                                    ebitMargin,
+                                    cashTaxRate,
+                                    dnaMargin,
+                                    capexMargin,
+                                    nwcInvestmentMargin,
+                                  ].every(
+                                    (path) => editedRatio(path.first) != null,
+                                  )
+                                : editedRatio(margin.first) != null)
+                        ? copyFirstForecastYear
+                        : null,
+                    icon: const Icon(Icons.content_copy, size: 15),
+                    label: Text(
+                      w('Copy Year 1 to all years', '第 1 年假设应用到全部年份'),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -1098,7 +1158,11 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                             height: (row == 0 ? 74 : 62) * textScale,
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             decoration: BoxDecoration(
-                              color: row == 0 ? p.background : null,
+                              color: reverseMode && solvedRow(row)
+                                  ? p.secondary.withValues(alpha: .13)
+                                  : row == 0
+                                  ? p.background
+                                  : null,
                               border: Border(
                                 bottom: BorderSide(color: p.border),
                               ),
@@ -1189,12 +1253,21 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                                   ),
                                   for (var i = 0; i < forecastHorizon; i++)
                                     cell(
-                                      valuationCell(
-                                        revenue[i],
-                                        i,
-                                        'revenue',
-                                        () => editRevenue(i),
-                                      ),
+                                      reverseMode
+                                          ? plain(
+                                              forecasts.length > i
+                                                  ? amount(
+                                                      forecasts[i]['revenueM'],
+                                                    )
+                                                  : '—',
+                                              color: p.text,
+                                            )
+                                          : valuationCell(
+                                              revenue[i],
+                                              i,
+                                              'revenue',
+                                              () => editRevenue(i),
+                                            ),
                                     ),
                                 ],
                               ),
@@ -1203,10 +1276,26 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                                   cell(plain('—'), actual: true),
                                   for (var i = 0; i < forecastHorizon; i++)
                                     cell(
-                                      valuationCell(growth[i], i, 'growth', () {
-                                        syncRevenueInputs();
-                                        scheduleCalculation();
-                                      }),
+                                      reverseMode
+                                          ? plain(
+                                              forecasts.length > i
+                                                  ? pct(forecasts[i]['growth'])
+                                                  : '—',
+                                              color: solvedCell(2, i)
+                                                  ? p.secondary
+                                                  : p.text,
+                                              strong: solvedCell(2, i),
+                                            )
+                                          : valuationCell(
+                                              growth[i],
+                                              i,
+                                              'growth',
+                                              () {
+                                                syncRevenueInputs();
+                                                scheduleCalculation();
+                                              },
+                                            ),
+                                      solved: reverseMode && solvedCell(2, i),
                                     ),
                                 ],
                               ),
@@ -1216,12 +1305,25 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                                     cell(plain('—'), actual: true),
                                     for (var i = 0; i < forecastHorizon; i++)
                                       cell(
-                                        valuationCell(
-                                          margin[i],
-                                          i,
-                                          'FCFE margin',
-                                          scheduleCalculation,
-                                        ),
+                                        reverseMode
+                                            ? plain(
+                                                forecasts.length > i
+                                                    ? pct(
+                                                        forecasts[i]['fcfeMargin'],
+                                                      )
+                                                    : '—',
+                                                color: solvedCell(3, i)
+                                                    ? p.secondary
+                                                    : p.text,
+                                                strong: solvedCell(3, i),
+                                              )
+                                            : valuationCell(
+                                                margin[i],
+                                                i,
+                                                'FCFE margin',
+                                                scheduleCalculation,
+                                              ),
+                                        solved: reverseMode && solvedCell(3, i),
                                       ),
                                   ],
                                 ),
@@ -1231,11 +1333,31 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                                     ebitMargin,
                                     'EBIT margin',
                                     researchMetricValue('operatingMargin'),
+                                    'ebitMargin',
+                                    3,
                                   ),
-                                  (cashTaxRate, 'cash tax rate', null),
-                                  (dnaMargin, 'D&A / revenue', null),
-                                  (capexMargin, 'capex / revenue', null),
-                                  (nwcInvestmentMargin, 'ΔNWC / revenue', null),
+                                  (
+                                    cashTaxRate,
+                                    'cash tax rate',
+                                    null,
+                                    'cashTaxRate',
+                                    4,
+                                  ),
+                                  (dnaMargin, 'D&A / revenue', null, 'dnaM', 5),
+                                  (
+                                    capexMargin,
+                                    'capex / revenue',
+                                    null,
+                                    'capexM',
+                                    6,
+                                  ),
+                                  (
+                                    nwcInvestmentMargin,
+                                    'ΔNWC / revenue',
+                                    null,
+                                    'nwcInvestmentM',
+                                    7,
+                                  ),
                                 ])
                                   TableRow(
                                     children: [
@@ -1247,12 +1369,40 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                                       ),
                                       for (var i = 0; i < forecastHorizon; i++)
                                         cell(
-                                          valuationCell(
-                                            row.$1[i],
-                                            i,
-                                            row.$2,
-                                            scheduleCalculation,
-                                          ),
+                                          reverseMode
+                                              ? plain(
+                                                  forecasts.length > i
+                                                      ? pct(
+                                                          row.$4 == 'dnaM' ||
+                                                                  row.$4 ==
+                                                                      'capexM' ||
+                                                                  row.$4 ==
+                                                                      'nwcInvestmentM'
+                                                              ? number(
+                                                                      forecasts[i][row
+                                                                          .$4],
+                                                                    ) /
+                                                                    number(
+                                                                      forecasts[i]['revenueM'],
+                                                                    )
+                                                              : forecasts[i][row
+                                                                    .$4],
+                                                        )
+                                                      : '—',
+                                                  color: solvedCell(row.$5, i)
+                                                      ? p.secondary
+                                                      : p.text,
+                                                  strong: solvedCell(row.$5, i),
+                                                )
+                                              : valuationCell(
+                                                  row.$1[i],
+                                                  i,
+                                                  row.$2,
+                                                  scheduleCalculation,
+                                                ),
+                                          solved:
+                                              reverseMode &&
+                                              solvedCell(row.$5, i),
                                         ),
                                     ],
                                   ),
@@ -1309,16 +1459,24 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 label(
-                  'Scroll across for all years. Editing revenue updates its growth rate; later years retain their growth assumptions.',
-                  '横向滑动查看全部年度。改收入会联动该年增长率，后续年份保留其增长假设。',
+                  reverseMode
+                      ? 'Scroll across for all years. This path is read-only: change the target price, required return or solved variable in the control panel.'
+                      : 'Scroll across for all years. Editing revenue updates its growth rate; later years retain their growth assumptions.',
+                  reverseMode
+                      ? '横向滑动查看全部年度。此路径为只读；请在控制区修改目标价格、要求回报或待求变量。'
+                      : '横向滑动查看全部年度。改收入会联动该年增长率，后续年份保留其增长假设。',
                   size: 11,
                 ),
                 const SizedBox(height: 6),
                 label(
-                  operating
+                  reverseMode
+                      ? 'The implied path is a mathematical solution, not management guidance, analyst consensus or a unique market expectation.'
+                      : operating
                       ? '$forecastHorizon annual periods from the cutoff, paid at each period end. The editable operating paths are analyst assumptions, not issuer guidance.'
                       : '$forecastHorizon annual periods from the cutoff, paid at each period end — not reported fiscal years. TTM cash flow is CFO − capex, not verified parent FCFE.',
-                  operating
+                  reverseMode
+                      ? '隐含路径是数学求解结果，不是公司指引、分析师共识，也不是唯一的市场预期。'
+                      : operating
                       ? '从基准日起的 $forecastHorizon 个年度期末折现。可编辑经营路径属于分析假设，并非公司指引。'
                       : '从基准日起的 $forecastHorizon 个年度期末折现，并非公司已报告财年。实际 TTM 现金流为 CFO 减资本开支，尚非已核验的母公司 FCFE。',
                   size: 11,
