@@ -34,5 +34,15 @@ class InfrastructureContractTest(unittest.TestCase):
         names=' '.join(self.resources).lower()
         for term in ('frontend','broker','yodlee','ibkr'): self.assertNotIn(term,names)
 
+    def test_delivery_failure_timeout_and_worker_output_are_independently_observable(self):
+        target=self.resources['DailySchedule']['Properties']['Target']
+        self.assertEqual(target['DeadLetterConfig']['Arn'],{'Fn::GetAtt':['DispatchDlq','Arn']})
+        self.assertTrue(self.resources['DispatchDlq']['Properties']['SqsManagedSseEnabled'])
+        send=self.resources['StateMachine']['Properties']['Definition']['States']['Send']['Parameters']
+        self.assertTrue(send['CloudWatchOutputConfig']['CloudWatchOutputEnabled'])
+        self.assertEqual(self.resources['WorkerLogs']['Properties']['RetentionInDays'],30)
+        self.assertEqual(self.resources['TimeoutAlarm']['Properties']['MetricName'],'ExecutionsTimedOut')
+        self.assertEqual(self.resources['DispatchAlarm']['Properties']['Namespace'],'AWS/SQS')
+
 
 if __name__=='__main__': unittest.main()

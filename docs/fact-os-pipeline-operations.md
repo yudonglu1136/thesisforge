@@ -17,6 +17,10 @@ are separate gates. No provider credential belongs on the API host.
 - SSM run and install documents use explicit numeric versions. When updating a
   document, update `RunDocumentVersion` / `InstallDocumentVersion` in the stack.
   Never silently select `$LATEST`.
+- Production Run Command output goes to `/thesisforge/fact-os/worker` (30-day
+  retention). The encrypted Scheduler DLQ records delivery failures separately
+  from execution-failure and timeout CloudWatch alarms. Notification destinations
+  are not yet configured; do not describe these console alarms as paging/email.
 - API install root: `/var/app/data/fact-os`; immutable public read releases only.
   API leases: `/var/app/data/fact-os-leases`, owned by `webapp`, mode 0700.
 - `fact-os/authority/*` in private S3 contains migration-only licensed raw and

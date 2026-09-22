@@ -11,6 +11,10 @@ def template():
     statement=lambda actions,resources:{'Effect':'Allow','Action':actions,'Resource':resources}
     policy=lambda name,statements:{'PolicyName':name,'PolicyDocument':{'Version':'2012-10-17','Statement':statements}}
     resources={
+      'WorkerLogs':{'Type':'AWS::Logs::LogGroup','DeletionPolicy':'Retain','UpdateReplacePolicy':'Retain','Properties':{
+        'LogGroupName':'/thesisforge/fact-os/worker','RetentionInDays':30}},
+      'DispatchDlq':{'Type':'AWS::SQS::Queue','Properties':{
+        'SqsManagedSseEnabled':True,'MessageRetentionPeriod':1209600}},
       'SharadarSecret':{'Type':'AWS::SecretsManager::Secret','DeletionPolicy':'Retain','UpdateReplacePolicy':'Retain','Properties':{
         'Name':'thesisforge/fact-os/sharadar','Description':'Native Sharadar API key; populated separately without logging value'}},
       'WorkerRole':{'Type':'AWS::IAM::Role','Properties':{'AssumeRolePolicyDocument':trust('ec2.amazonaws.com'),
@@ -21,6 +25,9 @@ def template():
           statement(['s3:GetObject','s3:PutObject','s3:GetObjectTagging','s3:PutObjectTagging'],sub('arn:aws:s3:::${Bucket}/fact-os/*')),
           statement(['ssm:SendCommand'],[sub('arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:document/${InstallDocument}'),sub('arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${ApiInstanceId}')]),
           statement(['ssm:GetCommandInvocation'],'*'),
+          statement(['logs:DescribeLogGroups'],'*'),
+          statement(['logs:DescribeLogStreams','logs:CreateLogStream','logs:PutLogEvents'],
+                    sub('arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/thesisforge/fact-os/worker:*')),
         ])]}},
       'WorkerProfile':{'Type':'AWS::IAM::InstanceProfile','Properties':{'Roles':[ref('WorkerRole')]}},
       'WorkerSecurityGroup':{'Type':'AWS::EC2::SecurityGroup','Properties':{
@@ -92,6 +99,7 @@ systemctl enable --now amazon-ssm-agent
         'Definition':{'StartAt':'Send','TimeoutSeconds':22200,'States':{
           'Send':{'Type':'Task','Resource':'arn:aws:states:::aws-sdk:ssm:sendCommand',
             'Parameters':{'DocumentName':ref('RunDocument'),'DocumentVersion':ref('RunDocumentVersion'),'InstanceIds':[ref('Worker')],
+                          'CloudWatchOutputConfig':{'CloudWatchOutputEnabled':True,'CloudWatchLogGroupName':ref('WorkerLogs')},
                           'Parameters':{'ScheduledFor.$':'States.Array($.scheduledFor)'},'TimeoutSeconds':600},
             'ResultPath':'$.dispatch','Next':'Wait'},
           'Wait':{'Type':'Wait','Seconds':30,'Next':'Poll'},
@@ -108,19 +116,31 @@ systemctl enable --now amazon-ssm-agent
           'Verified':{'Type':'Succeed'},'Failed':{'Type':'Fail','Error':'FactOsPipelineNotVerified'}
         }}}},
       'SchedulerRole':{'Type':'AWS::IAM::Role','Properties':{'AssumeRolePolicyDocument':trust('scheduler.amazonaws.com'),
-        'Policies':[policy('start-fact-os-only',[statement(['states:StartExecution'],arn('StateMachine'))])]}},
+        'Policies':[policy('start-fact-os-only',[statement(['states:StartExecution'],arn('StateMachine')),
+                                               statement(['sqs:SendMessage'],arn('DispatchDlq'))])]}},
       'DailySchedule':{'Type':'AWS::Scheduler::Schedule','Properties':{
         'Name':'thesisforge-fact-os-daily','Description':'All 14 authorized Fact OS tables; worker receipt and API ACK required',
         'ScheduleExpression':'cron(30 7 * * ? *)','ScheduleExpressionTimezone':'Asia/Riyadh',
         'State':ref('ScheduleState'),'FlexibleTimeWindow':{'Mode':'OFF'},
         'Target':{'Arn':arn('StateMachine'),'RoleArn':arn('SchedulerRole'),
+            'DeadLetterConfig':{'Arn':arn('DispatchDlq')},
             'Input':'{"scheduledFor":"<aws.scheduler.scheduled-time>","trigger":"scheduler"}',
             'RetryPolicy':{'MaximumEventAgeInSeconds':3600,'MaximumRetryAttempts':2}}}},
       'FailureAlarm':{'Type':'AWS::CloudWatch::Alarm','Properties':{
         'AlarmDescription':'Fact OS daily workflow failed; previous release retained',
         'Namespace':'AWS/States','MetricName':'ExecutionsFailed','Statistic':'Sum','Period':300,
         'EvaluationPeriods':1,'Threshold':1,'ComparisonOperator':'GreaterThanOrEqualToThreshold','TreatMissingData':'notBreaching',
-        'Dimensions':[{'Name':'StateMachineArn','Value':arn('StateMachine')}]}}
+        'Dimensions':[{'Name':'StateMachineArn','Value':arn('StateMachine')}]}},
+      'TimeoutAlarm':{'Type':'AWS::CloudWatch::Alarm','Properties':{
+        'AlarmDescription':'Fact OS workflow exceeded its total time budget; inspect its pinned run before retry',
+        'Namespace':'AWS/States','MetricName':'ExecutionsTimedOut','Statistic':'Sum','Period':300,
+        'EvaluationPeriods':1,'Threshold':1,'ComparisonOperator':'GreaterThanOrEqualToThreshold','TreatMissingData':'notBreaching',
+        'Dimensions':[{'Name':'StateMachineArn','Value':arn('StateMachine')}]}},
+      'DispatchAlarm':{'Type':'AWS::CloudWatch::Alarm','Properties':{
+        'AlarmDescription':'Fact OS schedule could not deliver its trigger; this is separate from worker failure',
+        'Namespace':'AWS/SQS','MetricName':'ApproximateNumberOfMessagesVisible','Statistic':'Maximum','Period':300,
+        'EvaluationPeriods':1,'Threshold':1,'ComparisonOperator':'GreaterThanOrEqualToThreshold','TreatMissingData':'notBreaching',
+        'Dimensions':[{'Name':'QueueName','Value':{'Fn::GetAtt':['DispatchDlq','QueueName']}}]}}
     }
     return {'AWSTemplateFormatVersion':'2010-09-09','Description':'ThesisForge unified Fact OS single-writer pipeline; schedule disabled until live verification',
       'Parameters':{
@@ -134,7 +154,8 @@ systemctl enable --now amazon-ssm-agent
         'ScheduleState':{'Type':'String','Default':'DISABLED','AllowedValues':['DISABLED','ENABLED']}},
       'Resources':resources,'Outputs':{'WorkerId':{'Value':ref('Worker')},'VolumeId':{'Value':ref('DataVolume')},
         'SecretArn':{'Value':ref('SharadarSecret')},'StateMachineArn':{'Value':arn('StateMachine')},'RunDocument':{'Value':ref('RunDocument')},
-        'InstallDocument':{'Value':ref('InstallDocument')}}}
+        'InstallDocument':{'Value':ref('InstallDocument')},'WorkerLogGroup':{'Value':ref('WorkerLogs')},
+        'DispatchDeadLetterQueue':{'Value':ref('DispatchDlq')}}}
 
 
 if __name__=='__main__':
