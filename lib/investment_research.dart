@@ -135,16 +135,113 @@ class _ResearchValueComparison extends StatelessWidget {
   }
 }
 
+int? researchFinancialQuarter(Map<String, dynamic> row) {
+  final fiscal = RegExp(
+    r'^(\d{4})-?Q([1-4])$',
+  ).firstMatch(text(row['fiscalperiod']));
+  if (fiscal != null) {
+    return int.parse(fiscal[1]!) * 4 + int.parse(fiscal[2]!) - 1;
+  }
+  final date = DateTime.tryParse(
+    text(
+      row['calendardate'],
+      text(row['period_end'], text(row['reportperiod'])),
+    ),
+  );
+  return date == null ? null : date.year * 4 + (date.month - 1) ~/ 3;
+}
+
+String researchFinancialQuarterLabel(Map<String, dynamic> row) {
+  final index = researchFinancialQuarter(row);
+  return index == null
+      ? text(row['reportperiod'])
+      : '${index ~/ 4} Q${index % 4 + 1}';
+}
+
+// Compare exact periods, not adjacent displayed bars: missing quarters must
+// never turn a six-month change into QoQ. API facts are already PIT selected.
+Map<String, dynamic>? researchFinancialPrior(
+  Map<String, dynamic> row,
+  List<Map<String, dynamic>> rows,
+  int quarters,
+) {
+  final index = researchFinancialQuarter(row);
+  if (index == null) return null;
+  final matches = rows
+      .where((r) => researchFinancialQuarter(r) == index - quarters)
+      .toList();
+  return matches.length == 1 ? matches.single : null;
+}
+
+double? researchFinancialReportedValue(
+  Map<String, dynamic> period,
+  String key,
+) {
+  if (period['kind'] != 'ttm') return nullableNumber(asMap(period['row'])[key]);
+  final rows = asList(period['rows']);
+  if (rows.length != 4) return null;
+  final indices = rows.map(researchFinancialQuarter).toList();
+  if (indices.any((i) => i == null) ||
+      List.generate(
+        3,
+        (i) => indices[i]! - indices[i + 1]!,
+      ).any((gap) => gap != 1)) {
+    return null;
+  }
+  final currencies = rows
+      .map((r) => text(r['currency']))
+      .where((c) => c.isNotEmpty)
+      .toSet();
+  if (currencies.length > 1) return null;
+  final values = rows.map((r) => nullableNumber(r[key])).toList();
+  if (values.any((v) => v == null || !v.isFinite)) return null;
+  final total = values.fold<double>(0, (sum, value) => sum + value!);
+  // A TTM weighted-average share count needs period-day weights, absent here.
+  return const {'sharesbas', 'shareswa', 'shareswadil'}.contains(key)
+      ? null
+      : total;
+}
+
+({double? value, String reason}) researchFinancialGrowth(
+  Map<String, dynamic> period,
+  String key,
+  String comparison,
+) {
+  if (comparison == 'qoq' && const {'annual', 'ttm'}.contains(period['kind'])) {
+    return (value: null, reason: 'quarterly_only');
+  }
+  final prior = asMap(period[comparison]);
+  final value = researchFinancialReportedValue(period, key);
+  final base = prior.isEmpty
+      ? null
+      : researchFinancialReportedValue(prior, key);
+  if (value == null || !value.isFinite || base == null || !base.isFinite) {
+    return (value: null, reason: 'missing_comparable_period');
+  }
+  final currency = text(asMap(period['row'])['currency']);
+  final baseCurrency = text(asMap(prior['row'])['currency']);
+  if (currency.isNotEmpty &&
+      baseCurrency.isNotEmpty &&
+      currency != baseCurrency) {
+    return (value: null, reason: 'currency_changed');
+  }
+  if (base <= 0) return (value: null, reason: 'non_positive_base');
+  return (value: value / base - 1, reason: 'available');
+}
+
 class _ResearchFinancialSeries {
   const _ResearchFinancialSeries({
     required this.keyName,
     required this.label,
     required this.color,
     required this.values,
+    required this.yoy,
+    required this.qoq,
   });
   final String keyName, label;
   final Color color;
   final List<double?> values;
+  final List<({double? value, String reason})> yoy, qoq;
 }
 
 class _ResearchFinancialBarChart extends StatefulWidget {
@@ -154,10 +251,12 @@ class _ResearchFinancialBarChart extends StatefulWidget {
     required this.muted,
     required this.textColor,
     required this.grid,
+    required this.details,
   });
   final List<String> periods;
   final List<_ResearchFinancialSeries> series;
   final Color muted, textColor, grid;
+  final List<String> details;
 
   @override
   State<_ResearchFinancialBarChart> createState() =>
@@ -167,6 +266,27 @@ class _ResearchFinancialBarChart extends StatefulWidget {
 class _ResearchFinancialBarChartState
     extends State<_ResearchFinancialBarChart> {
   int? hovered;
+
+  @override
+  void didUpdateWidget(covariant _ResearchFinancialBarChart oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.periods.join('|') != widget.periods.join('|')) hovered = null;
+  }
+
+  String growthText(
+    BuildContext context,
+    ({double? value, String reason}) growth,
+  ) {
+    if (growth.value case final value?) {
+      return '${value >= 0 ? '+' : ''}${(value * 100).toStringAsFixed(1)}%';
+    }
+    return switch (growth.reason) {
+      'quarterly_only' => context.tr('仅季度', 'Quarterly only'),
+      'non_positive_base' => context.tr('不适用（基期≤0）', 'N/M (base ≤ 0)'),
+      'currency_changed' => context.tr('币种不同', 'Currency changed'),
+      _ => context.tr('— 缺少可比期', '— Missing base'),
+    };
+  }
 
   void updateHover(Offset position, double width) {
     const left = 62.0, right = 10.0;
@@ -181,7 +301,7 @@ class _ResearchFinancialBarChartState
     if (widget.series.isEmpty || widget.periods.isEmpty) {
       return Center(
         child: Text(
-          'Select a reported line item',
+          context.tr('选择一个报表项目', 'Select a reported line item'),
           style: TextStyle(color: widget.muted, fontSize: 12),
         ),
       );
@@ -221,6 +341,7 @@ class _ResearchFinancialBarChartState
         Expanded(
           child: LayoutBuilder(
             builder: (_, bounds) => MouseRegion(
+              key: const ValueKey('research-financial-hover-area'),
               onHover: (event) =>
                   updateHover(event.localPosition, bounds.maxWidth),
               onExit: (_) => setState(() => hovered = null),
@@ -245,19 +366,20 @@ class _ResearchFinancialBarChartState
                         top: 4,
                         left: math.min(
                           math.max(
-                            66,
+                            4,
                             62 +
                                 (bounds.maxWidth - 72) *
                                     (index + .5) /
                                     widget.periods.length -
-                                70,
+                                150,
                           ),
-                          math.max(66, bounds.maxWidth - 154),
+                          math.max(4, bounds.maxWidth - 312),
                         ),
                         child: IgnorePointer(
                           child: Container(
-                            width: 140,
-                            padding: const EdgeInsets.all(9),
+                            key: const ValueKey('research-financial-tooltip'),
+                            width: math.min(304, bounds.maxWidth - 8),
+                            padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
                               color: const Color(0xff0d1b23),
                               borderRadius: BorderRadius.circular(8),
@@ -277,17 +399,52 @@ class _ResearchFinancialBarChartState
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
+                                if (widget.details[index].isNotEmpty)
+                                  Text(
+                                    widget.details[index],
+                                    style: TextStyle(
+                                      color: widget.muted,
+                                      fontSize: 9,
+                                    ),
+                                  ),
                                 const SizedBox(height: 5),
                                 for (final series in widget.series)
                                   Padding(
-                                    padding: const EdgeInsets.only(bottom: 3),
-                                    child: Text(
-                                      '${series.label}: ${series.values[index] == null ? '—' : formatNumber(series.values[index]!)}',
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: series.color,
-                                        fontSize: 9,
-                                      ),
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '${series.label}: ${series.values[index] == null ? '—' : formatNumber(series.values[index]!)}',
+                                          style: TextStyle(
+                                            color: series.color,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Wrap(
+                                          spacing: 12,
+                                          runSpacing: 2,
+                                          children: [
+                                            Text(
+                                              'YoY ${growthText(context, series.yoy[index])}',
+                                              style: TextStyle(
+                                                color: widget.textColor,
+                                                fontSize: 10,
+                                              ),
+                                            ),
+                                            Text(
+                                              'QoQ ${growthText(context, series.qoq[index])}',
+                                              style: TextStyle(
+                                                color: widget.textColor,
+                                                fontSize: 10,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
                                     ),
                                   ),
                               ],
@@ -2150,11 +2307,31 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   };
 
   List<Map<String, dynamic>> _researchFinancialPeriods() {
-    final annual = asList(
-      researchFundamental?['annual'],
-    ).take(8).toList().reversed;
+    final annual = asList(researchFundamental?['annual']);
+    final quarters = asList(researchFundamental?['quarterly']);
+    Map<String, dynamic>? prior(
+      Map<String, dynamic> row,
+      List<Map<String, dynamic>> rows,
+      int offset,
+    ) {
+      final found = researchFinancialPrior(row, rows, offset);
+      return found == null ? null : {'row': found};
+    }
+
+    if (researchFinancialFrequency == 'quarterly') {
+      return [
+        for (final row in quarters.take(8).toList().reversed)
+          {
+            'label': researchFinancialQuarterLabel(row),
+            'kind': 'quarterly',
+            'row': row,
+            'yoy': prior(row, quarters, 4),
+            'qoq': prior(row, quarters, 1),
+          },
+      ];
+    }
     final periods = <Map<String, dynamic>>[
-      for (final row in annual)
+      for (final row in annual.take(8).toList().reversed)
         {
           'label': text(
             row['reportperiod'],
@@ -2162,32 +2339,36 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
           ).split('-').first,
           'kind': 'annual',
           'row': row,
+          'yoy': prior(row, annual, 4),
         },
     ];
-    final quarters = asList(researchFundamental?['quarterly']).take(4).toList();
     if (quarters.isNotEmpty) {
+      final latest = quarters.first;
+      final previousYear = researchFinancialPrior(latest, quarters, 4);
+      final isBalance = researchStatement == 'balance';
       periods.add({
-        'label': researchStatement == 'balance' ? w('Latest', '最新') : 'TTM',
-        'kind': researchStatement == 'balance' ? 'latest' : 'ttm',
-        'row': quarters.first,
-        'rows': quarters,
+        'label': isBalance ? w('Latest', '最新') : 'TTM',
+        'kind': isBalance ? 'latest' : 'ttm',
+        'row': latest,
+        'rows': quarters.take(4).toList(),
+        'yoy': previousYear == null
+            ? null
+            : {
+                'kind': isBalance ? 'latest' : 'ttm',
+                'row': previousYear,
+                'rows': quarters
+                    .skip(quarters.indexOf(previousYear))
+                    .take(4)
+                    .toList(),
+              },
+        'qoq': isBalance ? prior(latest, quarters, 1) : null,
       });
     }
     return periods;
   }
 
   double? _researchFinancialValue(Map<String, dynamic> period, String key) {
-    if (period['kind'] != 'ttm') {
-      return nullableNumber(asMap(period['row'])[key]);
-    }
-    final values = [
-      for (final row in asList(period['rows'])) nullableNumber(row[key]),
-    ];
-    if (values.length != 4 || values.any((value) => value == null)) return null;
-    if (const {'sharesbas', 'shareswa', 'shareswadil', 'dps'}.contains(key)) {
-      return values.first;
-    }
-    return values.fold<double>(0, (sum, value) => sum + value!);
+    return researchFinancialReportedValue(period, key);
   }
 
   void _selectResearchStatement(String statement) {
@@ -2238,6 +2419,14 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
               for (final period in periods)
                 _researchFinancialValue(period, row.key),
             ],
+            yoy: [
+              for (final period in periods)
+                researchFinancialGrowth(period, row.key, 'yoy'),
+            ],
+            qoq: [
+              for (final period in periods)
+                researchFinancialGrowth(period, row.key, 'qoq'),
+            ],
           ),
     ];
     return card([
@@ -2259,8 +2448,8 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
               ),
               const SizedBox(height: 5),
               label(
-                'Select up to three rows. The chart updates immediately; missing facts stay missing.',
-                '最多选择三行，上方柱状图会立即更新；缺失事实继续显示为空。',
+                'Select up to three rows. Hover or tap a bar for values, YoY and QoQ.',
+                '最多选择三行；悬停或点击柱状图查看数值、同比 YoY 和环比 QoQ。',
                 size: 11,
               ),
             ],
@@ -2301,6 +2490,18 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
               selected: researchStatement == statement.$1,
               onSelected: (_) => _selectResearchStatement(statement.$1),
             ),
+          const SizedBox(width: 8),
+          for (final frequency in [
+            ('annual', 'Annual', '年度'),
+            ('quarterly', 'Quarterly · Q', '季度 · Q'),
+          ])
+            ChoiceChip(
+              key: ValueKey('research-frequency-${frequency.$1}'),
+              label: Text(w(frequency.$2, frequency.$3)),
+              selected: researchFinancialFrequency == frequency.$1,
+              onSelected: (_) =>
+                  updateUI(() => researchFinancialFrequency = frequency.$1),
+            ),
         ],
       ),
       const SizedBox(height: 14),
@@ -2326,14 +2527,14 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 32),
           child: label(
-            'No comparable annual statement history is available at this cutoff.',
-            '该截止日没有可比的年度财务报表历史。',
+            'No statement history is available for this frequency at this cutoff.',
+            '该截止日没有此频率的财务报表历史。',
           ),
         )
       else ...[
         Container(
           key: const ValueKey('research-financial-chart'),
-          height: MediaQuery.sizeOf(context).width < 600 ? 270 : 320,
+          height: MediaQuery.sizeOf(context).width < 600 ? 330 : 340,
           padding: const EdgeInsets.fromLTRB(4, 16, 4, 4),
           decoration: BoxDecoration(
             color: p.card,
@@ -2342,6 +2543,10 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
           ),
           child: _ResearchFinancialBarChart(
             periods: [for (final period in periods) text(period['label'])],
+            details: [
+              for (final period in periods)
+                '${w('Period end', '报告期末')} ${text(asMap(period['row'])['reportperiod'], '—')} · ${w('Disclosed', '披露')} ${text(asMap(period['row'])['date'], '—')}',
+            ],
             series: selected,
             muted: p.muted,
             textColor: p.text,
@@ -2350,10 +2555,14 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         ),
         const SizedBox(height: 12),
         label(
-          researchStatement == 'balance'
+          researchFinancialFrequency == 'quarterly'
+              ? 'Quarterly as-reported values · YoY vs the same quarter last year; QoQ vs the prior quarter, not seasonally adjusted. Percent change is unavailable when the base is zero or negative.'
+              : researchStatement == 'balance'
               ? 'Annual as-reported balances plus the latest reported quarter. Click any row to redraw the chart.'
               : 'Annual as-reported values plus TTM from four available as-reported quarters. Click any row to redraw the chart.',
-          researchStatement == 'balance'
+          researchFinancialFrequency == 'quarterly'
+              ? '原始季度报告数值 · YoY 对比去年同季，QoQ 对比上一季度（未季调）；基期为零或负数时不显示增长百分比。'
+              : researchStatement == 'balance'
               ? '年度原始报告余额加最新已报告季度；点击任一行即可重绘图表。'
               : '年度原始报告数值加最近四个可用原始季度合计；点击任一行即可重绘图表。',
           size: 10,

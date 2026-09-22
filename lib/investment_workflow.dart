@@ -57,6 +57,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   bool researchFinancialsLoading = false;
   String? researchFinancialsError;
   String researchStatement = 'income';
+  String researchFinancialFrequency = 'annual';
   List<String> researchFinancialMetrics = ['revenue', 'netinccmn'];
   Map<String, dynamic> assumptions = {};
   bool busy = false, ownership = false, priority = false;

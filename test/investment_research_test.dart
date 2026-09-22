@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guru_analysis_terminal/main.dart';
 import 'investment_workflow_test.dart' as fixtures;
@@ -69,10 +70,26 @@ class ResearchApi extends fixtures.HomeFixtureApi {
           statement('2021', .84),
         ],
         'quarterly': [
-          statement('2026', .38, dimension: 'ARQ'),
-          statement('2025', .36, dimension: 'ARQ'),
-          statement('2025', .34, dimension: 'ARQ'),
-          statement('2025', .32, dimension: 'ARQ'),
+          for (var i = 0; i < 8; i++)
+            {
+              ...statement('2026', .38 - i * .02, dimension: 'ARQ'),
+              'fiscalperiod': '${(8104 - i) ~/ 4}-Q${(8104 - i) % 4 + 1}',
+              'calendardate': DateTime.utc(
+                (8104 - i) ~/ 4,
+                ((8104 - i) % 4 + 1) * 3 + 1,
+                0,
+              ).toIso8601String().substring(0, 10),
+              'reportperiod': DateTime.utc(
+                (8104 - i) ~/ 4,
+                ((8104 - i) % 4 + 1) * 3 + 1,
+                0,
+              ).toIso8601String().substring(0, 10),
+              'date': DateTime.utc(
+                (8104 - i) ~/ 4,
+                ((8104 - i) % 4 + 1) * 3 + 2,
+                1,
+              ).toIso8601String().substring(0, 10),
+            },
         ],
         'transportCoverage': {'mode': 'full_facts'},
       };
@@ -513,6 +530,69 @@ void main() {
     expect(find.text('Receivables'), findsNWidgets(2));
     expect(t.takeException(), isNull);
   });
+  for (final lang in AppLanguage.values) {
+    for (final size in [const Size(1487, 1058), const Size(390, 844)]) {
+      testWidgets('quarterly statements and hover growth $lang $size', (
+        t,
+      ) async {
+        final api = ResearchApi();
+        await mount(t, api, size: size, lang: lang);
+        final before = api.reads
+            .where((p) => p.contains('/fundamentals'))
+            .length;
+        await t.ensureVisible(
+          find.byKey(const ValueKey('research-frequency-quarterly')),
+        );
+        await t.tap(find.byKey(const ValueKey('research-frequency-quarterly')));
+        await t.pumpAndSettle();
+        expect(find.text('2026 Q1'), findsOneWidget);
+        await t.ensureVisible(
+          find.byKey(const ValueKey('research-financial-hover-area')),
+        );
+        final rect = t.getRect(
+          find.byKey(const ValueKey('research-financial-hover-area')),
+        );
+        final point = Offset(rect.right - 18, rect.top + 100);
+        if (size.width > 600) {
+          final mouse = await t.createGesture(kind: PointerDeviceKind.mouse);
+          await mouse.addPointer(location: point);
+          await mouse.moveTo(point);
+          addTearDown(mouse.removePointer);
+        } else {
+          await t.tapAt(point);
+        }
+        await t.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('research-financial-tooltip')),
+          findsOneWidget,
+        );
+        expect(find.text('YoY +26.7%'), findsWidgets);
+        expect(find.text('QoQ +5.6%'), findsWidgets);
+        expect(t.takeException(), isNull);
+        await t.ensureVisible(
+          find.byKey(const ValueKey('research-statement-balance')),
+        );
+        await t.tap(find.byKey(const ValueKey('research-statement-balance')));
+        await t.pumpAndSettle();
+        expect(
+          t
+              .widget<ChoiceChip>(
+                find.byKey(const ValueKey('research-frequency-quarterly')),
+              )
+              .selected,
+          isTrue,
+        );
+        await t.tap(find.byKey(const ValueKey('research-frequency-annual')));
+        await t.pumpAndSettle();
+        expect(find.text('2026 Q1'), findsNothing);
+        expect(
+          api.reads.where((p) => p.contains('/fundamentals')).length,
+          before,
+        );
+        expect(t.takeException(), isNull);
+      });
+    }
+  }
   testWidgets('switch company requests exact symbol and retains cutoff', (
     t,
   ) async {

@@ -512,6 +512,16 @@ Final regression: full Flutter analysis and all 509 Flutter tests pass. Browser
 verification exercised the English configuration, real backtest, CTA-weight
 chart and event-to-snapshot link, then the Chinese snapshot and modal.
 
+### 2026-09-22 Research quarterly statements
+
+Added paired EN/ZH Annual / Quarterly controls and chart hover/tap amount,
+YoY/QoQ, reporting/disclosure dates, missing-comparison, non-positive-base and
+currency-change explanations. Frequency is shared by all three statements.
+Focused tests pass in EN/ZH at desktop and 390px; live AMZN browser checks cover
+both languages and mobile touch. Analysis, i18n audit and production build pass.
+The full Flutter suite has 32 independently reproduced pre-existing failures
+and no new failing test names; see `docs/research-quarterly-statements-2026-09-22.md`.
+
 Run before release:
 
 ```bash
