@@ -1,12 +1,14 @@
 import { finite, isoDate } from './investmentMath.js';
+import { observationAliases } from './publicObservationSource.js';
 
 // Annual observations, not monthly carry-forwards from a ranked factor panel.
 // All user thresholds are applied transparently in the screen, not to models.
 export function opportunityQuality(source, asOf) {
   isoDate(asOf);
   const result = new Map();
-  if (!source.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='investment_quality_annual'").get()) return result;
-  const rows = source.db.prepare(`WITH eligible AS (
+  const db=source.publicFactsDb??source.db;
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='investment_quality_annual'").get()) return result;
+  const rows = db.prepare(`WITH eligible AS (
     SELECT *, ROW_NUMBER() OVER(
       PARTITION BY ticker,report_period
       ORDER BY available_at,source_hash
@@ -36,5 +38,6 @@ export function opportunityQuality(source, asOf) {
     // current quality signal. No substitution of an older, healthier window.
     if ((Date.parse(asOf)-Date.parse(q.latestPeriodEnd))/86400000>550) q.status='stale';
   }
+  for(const [ticker,canonical] of observationAliases(source))if(result.has(canonical))result.set(ticker,result.get(canonical));
   return result;
 }

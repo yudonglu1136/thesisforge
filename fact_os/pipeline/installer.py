@@ -42,14 +42,19 @@ def install(s3,bucket,candidate,root,*,validate_group,probe,expected_release=Non
             if hashlib.sha256(raw).hexdigest()!=item['manifestSha256']: raise ValueError('group_manifest_checksum_mismatch')
             manifest=json.loads(raw)
             if manifest['groupId']!=name or manifest['generationId']!=item['generationId']: raise ValueError('group_identity_mismatch')
-            if not name.replace('_','').isalnum() or len(name)>64 or not all(c in 'abcdef0123456789' for c in item['generationId']):
+            if not name.replace('_','').isalnum() or len(name)>64 or len(item['generationId'])!=64 or not all(c in 'abcdef0123456789' for c in item['generationId']):
                 raise ValueError('invalid_group_path')
             target=root/'releases'/name/item['generationId']
             stage=target if target.exists() else target.with_name(target.name+'.part')
             stage.mkdir(parents=True,exist_ok=True)
             for entry in manifest['files']:
-                path=(stage/entry['path']).resolve()
-                if not path.is_relative_to(stage.resolve()) or path.is_symlink(): raise ValueError('install_path_escape')
+                relative=Path(entry['path'])
+                if relative.is_absolute() or '..' in relative.parts:raise ValueError('install_path_escape')
+                path=stage/relative
+                if any(part.is_symlink() for part in (path,*path.parents)):
+                    raise ValueError('install_path_escape')
+                path=path.resolve()
+                if not path.is_relative_to(stage.resolve()): raise ValueError('install_path_escape')
                 download(s3,bucket,entry,path)
             if stage!=target: stage.rename(target)
             for directory,_,files in os.walk(target):

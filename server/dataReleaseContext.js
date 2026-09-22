@@ -58,6 +58,6 @@ export function releaseResource(key,create,close) {
 }
 
 export function dataReleaseStatus() {
-  const entry=readDataRelease();
+  const entry=context.getStore()??readDataRelease();
   return entry?{releaseId:entry.manifest.releaseId,groups:entry.manifest.groups,readers:entry.readers}:null;
 }

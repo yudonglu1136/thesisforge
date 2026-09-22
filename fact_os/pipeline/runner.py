@@ -52,7 +52,7 @@ def run(store,*,profile='local',scheduled_for=None,failed_sources=(),specs=None,
             # Avoid leaking credential-bearing subprocess/network messages.
             result={'status':'failed','errorType':type(error).__name__,'previousGenerationRetained':True}
             ledger.task(run_id,spec.id,item.inputFingerprint,'failed',result)
-        results[spec.id]=result
+        results[spec.id]={**result,**({'optionalRefreshFailures':list(item.optionalFailures)} if item.optionalFailures else {})}
     failures=sum(r['status'] in ('failed','blocked') for r in results.values())
     status='failed' if failures==len(results) else 'degraded' if failures or failed_sources else (
         'no_change' if all(r['status']=='unchanged' for r in results.values()) else 'succeeded')

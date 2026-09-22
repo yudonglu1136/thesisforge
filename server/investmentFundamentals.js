@@ -1,5 +1,6 @@
 import { finite, isoDate } from './investmentMath.js';
 import { sourceNode, tickerKey } from './investmentSource.js';
+import { dataReleaseId } from './dataReleaseContext.js';
 import { opportunityQuality } from './investmentQuality.js';
 import { buildOpportunities } from './investmentOpportunities.js';
 import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrices.js';
@@ -45,7 +46,7 @@ function replayState(source) {
   // data_version detects other connections; total_changes also detects writes
   // through this connection (e.g. an import or a test). Never reuse a different
   // generation's PIT observations. Bound dates per source, not per user.
-  const generation=source.db.prepare('PRAGMA data_version').get().data_version;
+  const generation=source.db.prepare('PRAGMA data_version').get().data_version+':'+(dataReleaseId()??'legacy');
   const changes=source.db.prepare('SELECT total_changes() n').get().n;
   let state=cache.get(source);
   if(!state||state.db!==source.db||state.generation!==generation||state.changes!==changes) {

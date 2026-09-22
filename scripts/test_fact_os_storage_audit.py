@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,6 +12,16 @@ spec.loader.exec_module(audit)
 
 
 class StorageAuditTests(unittest.TestCase):
+    def test_snapshot_hardlink_does_not_double_count_allocated_capacity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'original').write_bytes(b'1234')
+            os.link(root/'original',root/'snapshot')
+            entries,_=audit.files_under(root)
+            total=audit.totals(entries)
+            self.assertEqual(total['logical_bytes'],8)
+            self.assertEqual(total['unique_file_inodes'],1)
+            self.assertEqual(total['allocated_bytes'],(root/'original').stat().st_blocks*512)
+
     def test_retained_generations_are_not_current_rows_and_no_deletion(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

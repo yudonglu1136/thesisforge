@@ -1,4 +1,5 @@
 import { finite, isoDate } from './investmentMath.js';
+import { observationAliases } from './publicObservationSource.js';
 
 const validTicker = value => /^[A-Z][A-Z0-9.-]{0,14}$/.test(String(value ?? ''));
 
@@ -11,10 +12,12 @@ export function investmentCurrentQuotes(source, tickers, asOf) {
   const names=[...new Set(tickers.map(x=>String(x??'').toUpperCase()).filter(validTicker))];
   const result=new Map();
   if(!names.length)return result;
-  const exists=source.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='investment_current_quotes'").get();
+  const db=source.publicFactsDb??source.db,aliases=observationAliases(source);
+  const canonical=[...new Set(names.map(t=>aliases.get(t)??t))];
+  const exists=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='investment_current_quotes'").get();
   if(!exists)return result;
-  const placeholders=names.map(()=>'?').join(',');
-  const rows=source.db.prepare(`WITH corrections AS (
+  const placeholders=canonical.map(()=>'?').join(',');
+  const rows=db.prepare(`WITH corrections AS (
     SELECT *,ROW_NUMBER() OVER(
       PARTITION BY ticker,price_date ORDER BY imported_at DESC,source_hash DESC
     ) correction_n
@@ -26,8 +29,8 @@ export function investmentCurrentQuotes(source, tickers, asOf) {
     ) quote_n
     FROM corrections WHERE correction_n=1
   ) SELECT ticker,price_date,close,source,source_ticker,source_generation
-    FROM ranked WHERE quote_n=1 ORDER BY ticker`).all(asOf,...names);
-  for(const row of rows)if(finite(row.close)&&row.close>0)result.set(row.ticker,{
+    FROM ranked WHERE quote_n=1 ORDER BY ticker`).all(asOf,...canonical);
+  for(const row of rows)if(finite(row.close)&&row.close>0)for(const ticker of names.filter(t=>(aliases.get(t)??t)===row.ticker))result.set(ticker,{
     value:row.close,date:row.price_date,source:row.source,
     sourceTicker:row.source_ticker,sourceGeneration:row.source_generation,
     adjustment:'Sharadar SEP split-adjusted close; dividends excluded',

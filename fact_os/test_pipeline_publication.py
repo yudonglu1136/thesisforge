@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from .pipeline.publisher import prepare,activate,load_active
 from .pipeline.installer import install
 from .pipeline.contracts import digest
+from .pipeline.checks import validate_api_read
+from .contracts import TABLES
 
 
 class Missing(Exception):
@@ -101,3 +103,30 @@ class PublicationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'schema_or_identity_invalid'):
             install(self.s3,'bucket',candidate,self.root/'installed',validate_group=fail,probe=lambda *args:{})
         self.assertFalse((self.root/'installed/active.json').exists())
+
+    def test_api_probe_cannot_pass_with_empty_batch_or_partial_coverage(self):
+        with self.assertRaisesRegex(ValueError,'actual_api_uid_read_failed'):
+            validate_api_read({'ok':True,'result':[]})
+        coverage=[{'dataset':t,'locally_available':True,'backfill_complete':True} for t in TABLES]
+        value={'ok':True,'result':[{'ok':True,'result':coverage},{'ok':True,'result':{'companies':[{'ticker':'FIXTURE'}]}}]}
+        self.assertTrue(validate_api_read(value))
+        coverage[0]['backfill_complete']=False
+        with self.assertRaisesRegex(ValueError,'actual_api_coverage_incomplete'):validate_api_read(value)
+        coverage[0]['backfill_complete']=True
+        value['result'][1]['result']['companies']=[]
+        with self.assertRaisesRegex(ValueError,'actual_api_company_index_empty'):validate_api_read(value)
+
+    def test_short_generation_and_symlinked_install_path_fail_closed(self):
+        for short in ('','abc'):
+            self.s3=MemoryS3()
+            candidate=self.candidate();item=candidate['groups']['institutional_13f']
+            raw=json.loads(self.s3.objects[item['manifestKey']][0]);raw['generationId']=short
+            payload=json.dumps(raw).encode();self.s3.objects[item['manifestKey']]=(payload,{})
+            item.update(generationId=short,manifestSha256=hashlib.sha256(payload).hexdigest())
+            with self.assertRaisesRegex(ValueError,'invalid_group_path'):
+                install(self.s3,'bucket',candidate,self.root/'invalid',validate_group=lambda *args:None,probe=lambda *args:{})
+        self.s3=MemoryS3()
+        candidate=self.candidate();stage=self.root/'symlink/releases/institutional_13f'/('a'*64+'.part')
+        stage.mkdir(parents=True);(stage/'source.sqlite').symlink_to(self.root/'source.sqlite')
+        with self.assertRaisesRegex(ValueError,'install_path_escape'):
+            install(self.s3,'bucket',candidate,self.root/'symlink',validate_group=lambda *args:None,probe=lambda *args:{})

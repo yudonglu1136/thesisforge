@@ -48,6 +48,11 @@ groups and requests API installation. Exit zero requires a verified publication
 **and** a complete successful/no-change run. Degraded groups remain explicit.
 To retry only publication, pass `--resume-publication <runId>.json`; no fetch or
 rebuild occurs. Failed publication retains a receipt and its last phase.
+`--stage-only` performs real ingestion, builds and immutable private-S3 staging,
+but never sends the API install command or changes the active S3 pointer. Its
+receipt says `staged_not_activated` and its exit code is 2, deliberately not a
+production-success signal. The root-owned installed `CODE_COMMIT` is recorded
+separately from the task implementation fingerprint.
 
 ## Safety and rollback
 
@@ -84,8 +89,13 @@ the reviewed complete manager/window matrix. Valuation candidates require the
 reviewed model release and its original seven-table gate. Until those external
 adapters are attached, the registry reports these tasks **blocked**; it does not
 pretend that Sharadar SF3 has exact acceptance times or publish unaudited models.
-Current legacy quote/quality and Strategy data-release adapters must be audited
-separately before claiming every consumer is on automatic daily publication.
+`public_observations` reuses the existing annual quality formulas and provides a
+45-day current-quote projection. Exact canonical symbols use the existing
+audited model aliases on read. Full price history stays in canonical Fact OS.
+Its API handles and model comparison caches are pinned to the request release;
+the historical model database is not rewritten. Strategy data-release adapters
+still require separate review before claiming every consumer is on automatic
+daily publication.
 
 The current AWS install target is one explicitly configured EB instance. Before
 an EB replacement/multi-instance rollout, update and verify the install target

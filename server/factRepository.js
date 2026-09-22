@@ -45,23 +45,29 @@ let cachedGeneration = "";
 let cachedBytes = 0;
 const readCache = new Map();
 const requestKey = (request) => JSON.stringify(request);
-async function refreshGeneration() {
+async function readGeneration() {
   const root = path.resolve(releaseRoot('canonical',process.env.FACT_OS_ROOT || path.join(projectRoot, "data/fact_os")));
   try {
     const info = await stat(path.join(root, "manifests/catalog.json"));
-    const generation = `${root}:${info.mtimeMs}:${info.size}:${process.env.FACT_OS_PYTHON || "default"}`;
-    if (generation !== cachedGeneration) { readCache.clear(); cachedBytes = 0; cachedGeneration = generation; }
-  } catch { readCache.clear(); cachedBytes = 0; cachedGeneration = ""; }
+    return `${root}:${info.mtimeMs}:${info.size}:${process.env.FACT_OS_PYTHON || "default"}`;
+  } catch { return ""; }
+}
+
+async function refreshGeneration() {
+  // Cache mutation is serialized with queries. Inspection from another request
+  // must not re-label a still-running RPC with a newly published generation.
+  const generation = await readGeneration();
+  if (generation !== cachedGeneration) { readCache.clear(); cachedBytes = 0; cachedGeneration = generation; }
+  return generation;
 }
 
 export async function factGeneration() {
   if(dataReleaseId())return dataReleaseId();
-  await refreshGeneration();
-  return cachedGeneration;
+  return readGeneration();
 }
 
-function cacheResponse(request, response) {
-  if (!cachedGeneration) return;
+function cacheResponse(request, response, generation) {
+  if (!generation || generation !== cachedGeneration) return;
   const key = requestKey(request);
   const bytes = Buffer.byteLength(JSON.stringify(response));
   if (bytes > 16 * 1024 * 1024) return;
@@ -77,14 +83,15 @@ export function queryFacts(method, args = [], kwargs = {}) {
   // Bound concurrent scans and open a fresh immutable generation for each request.
   const request = { method, args, kwargs };
   const result = queue.then(async () => {
-    await refreshGeneration();
+    const generation = await refreshGeneration();
     const cached = readCache.get(requestKey(request))?.response;
     if (cached) {
       if (!cached.ok) throw new FactDataError(cached.error.code, cached.error.message);
       return structuredClone(cached.result);
     }
     const result = await runRequest(request);
-    cacheResponse(request, { ok: true, result });
+    if (generation !== await refreshGeneration()) throw new FactDataError("local_snapshot_changed", "A new local data generation was published during the read; retry to use a single consistent generation.");
+    cacheResponse(request, { ok: true, result }, generation);
     return structuredClone(result);
   });
   queue = result.catch(() => {});
@@ -101,10 +108,11 @@ export function queryFactsBatch(requests) {
     for (let i = 0; i < missing.length; i += 256) {
       const group = missing.slice(i, i + 256);
       const values = await runRequest({ batch: group.map((entry) => entry.request) });
-      values.forEach((value, j) => { responses[group[j].index] = value; cacheResponse(group[j].request, value); });
+      values.forEach((value, j) => { responses[group[j].index] = value; });
     }
     await refreshGeneration();
-    if (generation && generation !== cachedGeneration) throw new FactDataError("local_snapshot_changed", "A new local data generation was published during the batch; retry to use a single consistent generation.");
+    if (generation !== cachedGeneration) throw new FactDataError("local_snapshot_changed", "A new local data generation was published during the batch; retry to use a single consistent generation.");
+    normalized.forEach((request, index) => cacheResponse(request, responses[index], generation));
     return structuredClone(responses);
   });
   queue = result.catch(() => {});

@@ -52,6 +52,7 @@ class TaskPlan:
     expectedBytes: int = 0
     missingRequired: tuple = ()
     inputVector: dict = field(default_factory=dict)
+    optionalFailures: tuple = ()
 
 
 @dataclass(frozen=True)

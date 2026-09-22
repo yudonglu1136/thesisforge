@@ -1,5 +1,5 @@
 #!/bin/sh
 set -eu
-FACT_OS_PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+FACT_OS_PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 cd "$FACT_OS_PROJECT"
 exec /opt/fact-os/venv/bin/python -m fact_os.pipeline.aws_worker "$@"

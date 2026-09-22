@@ -1,6 +1,21 @@
 import json
 from pathlib import Path
 from ..store import checksum
+from ..contracts import TABLES
+
+
+def validate_api_read(value):
+    """Actual API-user probe must demonstrate coverage and useful company data."""
+    responses=value.get('result',[])
+    if not value.get('ok') or len(responses)!=2 or any(not r.get('ok') for r in responses):
+        raise ValueError('actual_api_uid_read_failed')
+    coverage={row.get('dataset'):row for row in responses[0].get('result',[])}
+    if any(not coverage.get(table,{}).get('locally_available') or
+           not coverage.get(table,{}).get('backfill_complete') for table in TABLES):
+        raise ValueError('actual_api_coverage_incomplete')
+    if not responses[1].get('result',{}).get('companies'):
+        raise ValueError('actual_api_company_index_empty')
+    return True
 
 
 def file_record(path,root):

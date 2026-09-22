@@ -3,6 +3,20 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrices.js';
 
+test('pipeline observations use existing audited aliases without rewriting model data',()=>{
+  const db=new DatabaseSync(':memory:'),publicFactsDb=new DatabaseSync(':memory:');
+  try {
+    db.exec("CREATE TABLE valuation_pit_financials(ticker TEXT,source_ticker TEXT); INSERT INTO valuation_pit_financials VALUES('ALIAS','EXACT')");
+    publicFactsDb.exec(`CREATE TABLE investment_current_quotes(ticker TEXT,source_ticker TEXT,price_date TEXT,close REAL,source TEXT,imported_at TEXT,source_hash TEXT,source_generation TEXT);
+      INSERT INTO investment_current_quotes VALUES('EXACT','EXACT','2026-09-21',25,'canonical','2026-09-21','source','new-release')`);
+    const result=investmentCurrentQuotes({db,publicFactsDb},['ALIAS'],'2026-09-21');
+    assert.equal(result.get('ALIAS').value,25);
+    assert.equal(result.get('ALIAS').sourceTicker,'EXACT');
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name='investment_current_quotes'").get().n,0);
+    assert.equal(investmentCurrentQuotes({db,publicFactsDb},['ALIAS'],'2026-09-20').size,0);
+  } finally {db.close();publicFactsDb.close();}
+});
+
 test('append-only quotes choose the latest correction and never leak a future close',()=>{
   const db=new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE investment_current_quotes(

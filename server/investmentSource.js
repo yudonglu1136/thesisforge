@@ -6,7 +6,7 @@ import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrice
 import { gurus } from './gurus.js';
 import { guruCapitalStructure } from './guruCapitalStructures.js';
 import path from 'node:path';
-import { releaseRoot,releaseResource } from './dataReleaseContext.js';
+import { releaseRoot,releaseResource,dataReleaseId } from './dataReleaseContext.js';
 
 export const SOURCE_ADAPTER_VERSION='investment-pit-adapter-v1';
 const metricNames=['revenueGrowth','operatingMargin','fcfMargin','capexIntensity'];
@@ -64,6 +64,14 @@ export class InvestmentSource {
       db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');return db;
     },db=>db.close());
   }
+  get publicFactsDb(){
+    const root=releaseRoot('public_observations',null);
+    if(!root)return null;
+    return releaseResource('observations:'+root,()=>{
+      const db=new DatabaseSync(path.join(root,'observations.sqlite'),{readOnly:true});
+      db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');return db;
+    },db=>db.close());
+  }
   close(){this.baseInsightsDb?.close();this.db.close();}
   availableTickers() { return this.db.prepare('SELECT DISTINCT ticker FROM valuation_pit_model_runs ORDER BY ticker').all().map(x=>x.ticker); }
   periods(ticker,asOf) {
@@ -89,7 +97,7 @@ export class InvestmentSource {
   }
   company(ticker,asOf) {
     ticker=tickerKey(ticker);isoDate(asOf);
-    const generation=this.db.prepare('PRAGMA data_version').get().data_version;
+    const generation=this.db.prepare('PRAGMA data_version').get().data_version+':'+(dataReleaseId()??'legacy');
     if(generation!==this.cacheGeneration){this.companyCache.clear();this.cacheGeneration=generation;}
     const cacheKey=ticker+':'+asOf;
     if(this.companyCache.has(cacheKey))return structuredClone(this.companyCache.get(cacheKey));

@@ -5,13 +5,14 @@ import json
 import os
 from pathlib import Path
 import pwd
+import sqlite3
 import subprocess
 import sys
 import urllib.request
 from datetime import date
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from fact_os.pipeline.installer import install
-from fact_os.pipeline.checks import validate_canonical
+from fact_os.pipeline.checks import validate_canonical,validate_api_read
 from fact_os.pipeline.contracts import digest
 
 
@@ -33,6 +34,14 @@ def main():
     def validate(name,path,manifest):
         if name == 'canonical':
             validate_canonical(path,manifest['requiredMatrix']);return
+        if name=='public_observations':
+            with sqlite3.connect('file:'+str(path/'observations.sqlite')+'?mode=ro',uri=True) as db:
+                if db.execute('PRAGMA integrity_check').fetchone()[0]!='ok':raise ValueError('observation_integrity_failed')
+                metadata={k:json.loads(v) for k,v in db.execute('SELECT key,value FROM projection_metadata')}
+                if metadata.get('schemaVersion')!='canonical-public-observations-v1':raise ValueError('observation_schema_invalid')
+                for table in ('investment_current_quotes','investment_quality_annual'):
+                    if not db.execute('SELECT count(*) FROM '+table).fetchone()[0]:raise ValueError('observation_projection_empty')
+            return
         if name in ('research_inputs','strategy_inputs'):
             value=json.loads((path/'inputs.json').read_text())
             if value.get('schemaVersion')!='fact-os-input-vector-v1' or value.get('inputs')!=manifest['inputVector']:
@@ -55,7 +64,8 @@ def main():
                     {'method':'get_fundamental_company_index','args':[date.today().isoformat()],'kwargs':{'limit':2}}
                 ]}),text=True,capture_output=True,timeout=120)
             value=json.loads(result.stdout)
-            if result.returncode or not value.get('ok') or any(not r.get('ok') for r in value.get('result',[])):raise ValueError('actual_api_uid_read_failed')
+            if result.returncode:raise ValueError('actual_api_uid_read_failed')
+            validate_api_read(value)
             return {}
         # Existing internal credential read in memory; never emitted or sent off-host.
         config=json.loads(subprocess.check_output(['/opt/elasticbeanstalk/bin/get-config','environment']))

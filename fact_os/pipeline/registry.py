@@ -29,6 +29,9 @@ def tasks():
         # These are canonical INPUT releases, not automatic publication of
         # models/backtests, and do not mutate saved user scenarios or records.
         task('research_inputs',('tickers','fundamentals','stocks'),optional=('actions','events','descriptions'),kind='read_release'),
+        task('public_observations',('tickers','fundamentals','stocks'),
+             code=('fact_os/pipeline/observations.py','scripts/import-investment-quality.py'),
+             method='annual-quality-v1',schema='canonical-public-observations-v1'),
         task('strategy_inputs',('tickers','stocks','funds','actions','daily'),kind='read_release'),
         task('guru_strict',('tickers','holdings','holdings_investor','stocks','funds','actions','external.sec_accepted_filings','external.guru_reviewed_matrix'),
              kind='review_gate',policy='reviewed_atomic_matrix'),

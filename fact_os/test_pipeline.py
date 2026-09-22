@@ -38,8 +38,9 @@ class PlannerTest(unittest.TestCase):
         self.assertFalse(plan([self.spec],self.snapshot,failed_sources=['stocks'])[0].missingRequired)
         self.assertEqual(plan([self.spec],self.snapshot,failed_sources=['fundamentals'])[0].missingRequired,('fundamentals',))
         stale=plan([self.spec],self.snapshot,failed_sources=['actions'])[0]
-        self.assertEqual(stale.inputVector['actions']['status'],'stale_after_failure')
-        self.assertNotEqual(stale.inputFingerprint,self.fingerprint())
+        self.assertEqual(stale.inputVector['actions']['status'],'missing')
+        self.assertEqual(stale.optionalFailures,('actions',))
+        self.assertEqual(stale.inputFingerprint,self.fingerprint())
 
     def test_cache_key_is_task_and_fingerprint_not_day(self):
         previous={('ai',self.fingerprint()):{'artifactId':'retained'}}

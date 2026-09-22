@@ -25,6 +25,13 @@ def build(spec,snapshot,plan,store):
     root=Path(snapshot.root)
     vector=plan.inputVector or input_vector(spec,snapshot)
     if spec.kind=='review_gate': raise ValueError('independent_source_and_release_review_required')
+    if spec.id=='public_observations':
+        from .observations import build_observations
+        file=store.root/'derived/pipeline/public_observations'/plan.inputFingerprint/'observations.sqlite'
+        coverage=build_observations(root,file,plan.inputFingerprint)
+        return BuildResult('succeeded',plan.inputFingerprint,digest(vector),(file_record(file,store.root),),
+            spec.outputSchemaVersion,coverage,vector,{'integrity':'pass','existingQualityFormulas':'annual-quality-v1',
+                'privateDataExcluded':True,'publishedModelsUnchanged':True})
     if spec.kind=='read_release':
         if spec.id!='canonical':
             path=store.root/'derived/pipeline'/spec.id/plan.inputFingerprint/'inputs.json'

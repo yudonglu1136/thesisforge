@@ -69,7 +69,7 @@ def prepare(s3,bucket,store,receipt,previous=None):
                 parts=Path(entry['path']).parts
                 if len(parts)<3 or parts[0]!='snapshots':raise ValueError('canonical_snapshot_path_required')
                 relative=str(Path(*parts[2:]))
-            elif group=='institutional_13f': relative=source.name
+            elif group in ('institutional_13f','public_observations'): relative=source.name
             elif group in ('ai_insights','research_inputs','strategy_inputs'): relative=entry.get('installPath',entry['path'])
             else: raise ValueError('unregistered_publication_group')
             if Path(relative).is_absolute() or '..' in Path(relative).parts: raise ValueError('publication_path_escape')

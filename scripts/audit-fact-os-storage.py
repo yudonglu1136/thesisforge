@@ -48,8 +48,12 @@ def files_under(root):
 
 
 def totals(entries):
+    seen=set();allocated=0
+    for path,_,blocks,_ in entries:
+        stat=path.stat();identity=(stat.st_dev,stat.st_ino)
+        if identity not in seen:allocated+=blocks;seen.add(identity)
     return {"files": len(entries), "logical_bytes": sum(row[1] for row in entries),
-            "allocated_bytes": sum(row[2] for row in entries)}
+            "allocated_bytes": allocated,"unique_file_inodes":len(seen)}
 
 
 def duplicate_contents(entries):
@@ -89,6 +93,11 @@ def audit(root):
         catalog = json.loads(initial_manifest)
         referenced = {part["path"] for info in catalog["datasets"].values()
                       for part in info["partitions"]}
+        pinned=set()
+        for pin in (root/'sync/snapshot-pins').glob('*.json'):
+            value=json.loads(pin.read_text())
+            if not isinstance(value.get('paths'),list):raise ValueError('invalid_snapshot_pin')
+            pinned.update(value['paths'])
         initial, symlinks = files_under(root)
         parts = defaultdict(list)
         for entry in initial:
@@ -111,7 +120,7 @@ def audit(root):
         for generations in by_partition.values():
             generations.sort(key=lambda entry: entry[3], reverse=True)
             reclaimable.extend(entry for entry in generations[2:]
-                               if str(entry[0].relative_to(root)) not in referenced and entry[3] < cutoff_ns)
+                               if str(entry[0].relative_to(root)) not in referenced|pinned and entry[3] < cutoff_ns)
         raw_duplicates = duplicate_contents(raw)
         parquet_duplicates = duplicate_contents(parquet)
         final, _ = files_under(root)
@@ -130,6 +139,7 @@ def audit(root):
                     "policy": "Preserve all raw snapshots forever. ZIP and CSV may intentionally overlap rows; database uniqueness is audited separately."},
             "parquet": {"current_manifest_references": totals(current), "retained_unreferenced": totals(retained),
                         "missing_manifest_paths": sorted(referenced - present),
+                        "snapshot_pinned_paths":len(pinned),
                         "byte_identical_duplicates": parquet_duplicates,
                         "dry_run_gc_eligible": totals(reclaimable), "gc_retention_days": 7,
                         "gc_minimum_generations_per_partition": 2,
