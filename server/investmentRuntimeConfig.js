@@ -19,6 +19,7 @@ export const INVESTMENT_13F_INSIGHTS_TABLES = Object.freeze([
   'institutional_13f_insight_snapshots_v2',
   'institutional_13f_active_snapshots_v1',
   'institutional_13f_active_details_v1',
+  'institutional_13f_active_sectors_v1',
 ]);
 export const verifiedInvestmentOwner = owner => typeof owner === 'string'
   && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(owner);
@@ -109,8 +110,11 @@ export function validateInstitutional13fArtifact(file,manifestPath,{trustedUid=0
     'institutional-13f-artifact-v3',
     'institutional-13f-artifact-v5',
     'institutional-13f-artifact-v6',
+    'institutional-13f-artifact-v7',
   ]);
   const fullArtifact=fullArtifactVersions.has(manifest.version);
+  const activeArtifact=['institutional-13f-artifact-v6','institutional-13f-artifact-v7'].includes(manifest.version);
+  const sectorArtifact=manifest.version==='institutional-13f-artifact-v7';
   const expectedTable=fullArtifact
     ? 'institutional_13f_insight_snapshots_v2'
     : manifest.version==='institutional-13f-artifact-v2'
@@ -128,15 +132,16 @@ export function validateInstitutional13fArtifact(file,manifestPath,{trustedUid=0
   if(digest!==manifest.file.sha256)fail('institutional_13f_artifact_hash_mismatch');
   const auxiliaryTables=fullArtifact
     ? ['institutional_13f_insight_details_v1','institutional_13f_market_history_v1','institutional_13f_security_history_v1',
-      ...(manifest.version==='institutional-13f-artifact-v6'
-        ?['institutional_13f_active_snapshots_v1','institutional_13f_active_details_v1']:[])]
+      ...(activeArtifact?['institutional_13f_active_snapshots_v1','institutional_13f_active_details_v1']:[]),
+      ...(sectorArtifact?['institutional_13f_active_sectors_v1']:[])]
     : [];
   if(fullArtifact
     && (!Number.isSafeInteger(manifest.detailRows)||manifest.detailRows<1
       ||!Number.isSafeInteger(manifest.marketRows)||manifest.marketRows<1))fail('institutional_13f_manifest_invalid');
   if(fullArtifact
     && (!Number.isSafeInteger(manifest.securityHistoryRows)||manifest.securityHistoryRows<1))fail('institutional_13f_manifest_invalid');
-  if(manifest.version==='institutional-13f-artifact-v6'
+  if(sectorArtifact&&(!Number.isSafeInteger(manifest.sectorRows)||manifest.sectorRows<1))fail('institutional_13f_manifest_invalid');
+  if(activeArtifact
     && (!Number.isSafeInteger(manifest.activeRows)||manifest.activeRows<1
       ||!Number.isSafeInteger(manifest.activeDetailRows)||manifest.activeDetailRows<1))fail('institutional_13f_manifest_invalid');
   assertTables(database,[expectedTable,...auxiliaryTables],[expectedTable,...auxiliaryTables]);
@@ -148,14 +153,15 @@ export function validateInstitutional13fArtifact(file,manifestPath,{trustedUid=0
     const detailRows=auxiliaryTables.length?db.prepare('SELECT count(*) count FROM institutional_13f_insight_details_v1').get().count:null;
     const marketRows=auxiliaryTables.length?db.prepare('SELECT count(*) count FROM institutional_13f_market_history_v1').get().count:null;
     const securityHistoryRows=auxiliaryTables.length?db.prepare('SELECT count(*) count FROM institutional_13f_security_history_v1').get().count:null;
-    const activeRows=manifest.version==='institutional-13f-artifact-v6'
+    const activeRows=activeArtifact
       ?db.prepare('SELECT count(*) count FROM institutional_13f_active_snapshots_v1').get().count:null;
-    const activeDetailRows=manifest.version==='institutional-13f-artifact-v6'
+    const activeDetailRows=activeArtifact
       ?db.prepare('SELECT count(*) count FROM institutional_13f_active_details_v1').get().count:null;
     if(rows!==manifest.rows||duplicates!==0
       ||(auxiliaryTables.length&&(detailRows!==manifest.detailRows||marketRows!==manifest.marketRows
         ||securityHistoryRows!==manifest.securityHistoryRows))
-      ||(manifest.version==='institutional-13f-artifact-v6'
+      ||(sectorArtifact&&db.prepare('SELECT count(*) count FROM institutional_13f_active_sectors_v1').get().count!==manifest.sectorRows)
+      ||(activeArtifact
         &&(activeRows!==manifest.activeRows||activeDetailRows!==manifest.activeDetailRows)))fail('institutional_13f_artifact_rows_invalid');
   } finally {db.close();}
   return manifest;

@@ -15,16 +15,17 @@ import datetime as dt
 import gzip
 import hashlib
 import json
-import shutil
+import fcntl
 import sqlite3
 import stat
 from pathlib import Path
 from statistics import median
 
 import duckdb
+from active_sector_analysis import sector_analysis
 
 
-METHOD_VERSION = "institutional-active-13f-v1"
+METHOD_VERSION = "institutional-active-13f-v2"
 DETAIL_SECURITY_LIMIT = 600
 DETAIL_PER_ACTION = 40
 IMPORTANT_PER_DIRECTION = 8
@@ -555,6 +556,7 @@ def snapshot(con, current: str, previous: str, share_basis_date: str, observed_a
         "institutions": [{"investorId": row["investorId"], "name": row["name"],
                            "currentValueM": row["currentValueM"], "previousValueM": row["previousValueM"]} for row in included],
         "details": details,
+        "sectorDetails": sector_analysis(con, cte),
         "activeAnalysis": {
             **manager_data,
             "classification": {
@@ -574,8 +576,7 @@ def snapshot(con, current: str, previous: str, share_basis_date: str, observed_a
     }
 
 
-def main() -> int:
-    args = arguments()
+def build(args) -> int:
     fact_path = Path(args.fact_os).resolve()
     database_path = Path(args.database).resolve()
     if not database_path.exists():
@@ -583,13 +584,16 @@ def main() -> int:
         if not base_database_path.is_file():
             raise RuntimeError("missing_base_13f_artifact")
         database_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(base_database_path, database_path)
+        with sqlite3.connect(f"file:{base_database_path}?mode=ro", uri=True) as base:
+            with sqlite3.connect(database_path) as target:
+                base.backup(target)
         database_path.chmod(database_path.stat().st_mode | stat.S_IWUSR)
     catalog = json.loads((fact_path.parent/"manifests"/"catalog.json").read_text())
     source_keys = ("holdings","holdings_ticker","holdings_investor","actions","fundamentals","daily","tickers","sp500")
     source = {key: catalog["datasets"][key]["state"] for key in source_keys}
     observed_at = max(state["last_success"] for state in source.values())
-    source_generation = compact_hash({"method": METHOD_VERSION, "rules": {
+    source_generation = compact_hash({"method": METHOD_VERSION,
+        "sectorMethodHash": hashlib.sha256(Path(__file__).with_name("active_sector_analysis.py").read_bytes()).hexdigest(), "rules": {
         "passiveIds": sorted(PASSIVE_IDS), "knownActiveIds": sorted(KNOWN_ACTIVE_IDS),
         "passivePhrases": PASSIVE_PHRASES, "custodyBankPhrases": CUSTODY_BANK_PHRASES,
         "assetOwnerPhrases": ASSET_OWNER_PHRASES, "activePhrases": ACTIVE_PHRASES,
@@ -612,7 +616,12 @@ def main() -> int:
       payload_hash TEXT NOT NULL,payload_gzip BLOB NOT NULL,
       PRIMARY KEY(report_date,source_generation,ticker))""")
     sql.execute("CREATE INDEX IF NOT EXISTS institutional_13f_active_details_lookup_idx ON institutional_13f_active_details_v1(report_date,ticker,source_generation)")
+    sql.execute("""CREATE TABLE IF NOT EXISTS institutional_13f_active_sectors_v1(
+      report_date TEXT NOT NULL,source_generation TEXT NOT NULL,sector TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,payload_gzip BLOB NOT NULL,
+      PRIMARY KEY(report_date,source_generation,sector))""")
     before = sql.execute("SELECT count(*) FROM institutional_13f_active_snapshots_v1").fetchone()[0]
+    before_oldest = sql.execute("SELECT min(report_date) FROM institutional_13f_active_snapshots_v1").fetchone()[0]
     inserted = []
     generated_at = dt.datetime.now(dt.timezone.utc).isoformat()
     for index in range(len(selected)-1):
@@ -621,10 +630,17 @@ def main() -> int:
             continue
         payload = snapshot(duck,current,previous,share_basis_date,observed_at)
         details = payload.pop("details", {})
+        sectors = payload.pop("sectorDetails", {})
+        payload['activeAnalysis']['sectorDetailVersion'] = 'active-sector-v1'
         raw = json.dumps(payload,separators=(",",":"),ensure_ascii=False).encode()
         payload_hash = hashlib.sha256(raw).hexdigest()
         compressed = gzip.compress(raw,compresslevel=9,mtime=0)
         with sql:
+            for sector, detail in sectors.items():
+                sector_raw = json.dumps(detail,separators=(",",":"),ensure_ascii=False,allow_nan=False).encode()
+                sql.execute("INSERT INTO institutional_13f_active_sectors_v1 VALUES(?,?,?,?,?)",
+                            (current,source_generation,sector,hashlib.sha256(sector_raw).hexdigest(),
+                             gzip.compress(sector_raw,compresslevel=9,mtime=0)))
             sql.execute("INSERT INTO institutional_13f_active_snapshots_v1 VALUES(?,?,?,?,?,?)",
                         (current,source_generation,payload["availableAt"],generated_at,payload_hash,compressed))
             for ticker, detail in details.items():
@@ -635,23 +651,41 @@ def main() -> int:
         inserted.append({"reportDate": current, "payloadHash": payload_hash, "bytes": len(raw),
                          "compressedBytes": len(compressed), "detailRows": len(details),
                          "includedManagers": payload["coverage"]["includedManagers"]})
+        print(json.dumps({"builtQuarter": current, "sectors": len(sectors)}), flush=True)
     after = sql.execute("SELECT count(*) FROM institutional_13f_active_snapshots_v1").fetchone()[0]
     duplicates = sql.execute("""SELECT count(*) FROM (SELECT report_date,source_generation,count(*) n
       FROM institutional_13f_active_snapshots_v1 GROUP BY report_date,source_generation HAVING n>1)""").fetchone()[0]
     replay = sql.execute("SELECT count(*) FROM institutional_13f_active_snapshots_v1 WHERE source_generation=?", (source_generation,)).fetchone()[0]
     detail_rows = sql.execute("SELECT count(*) FROM institutional_13f_active_details_v1 WHERE source_generation=?", (source_generation,)).fetchone()[0]
+    sector_rows = sql.execute("SELECT count(*) FROM institutional_13f_active_sectors_v1 WHERE source_generation=?", (source_generation,)).fetchone()[0]
+    after_oldest = sql.execute("SELECT min(report_date) FROM institutional_13f_active_snapshots_v1").fetchone()[0]
     sql.execute("PRAGMA optimize")
     sql.close(); duck.close()
     receipt = {"methodVersion": METHOD_VERSION, "sourceGeneration": source_generation,
                "database": str(database_path), "beforeRows": before, "afterRows": after,
                "inserted": inserted, "sameInputRows": replay, "duplicateNaturalKeys": duplicates,
-               "detailRows": detail_rows,
+               "detailRows": detail_rows, "sectorRows": sector_rows,
+               "beforeOldest": before_oldest, "afterOldest": after_oldest,
                "shareBasisDate": share_basis_date, "sourceObservedAt": observed_at}
-    output = Path("data/fact_os/audit")/f"13f-active-insights-{dt.date.today().isoformat()}-{source_generation[:12]}.json"
-    output.write_text(json.dumps(receipt,indent=2)+"\n")
+    stamp = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    output = Path("data/fact_os/audit")/f"13f-active-insights-{stamp}-{source_generation[:12]}.json"
+    with output.open('x') as handle:
+        handle.write(json.dumps(receipt,indent=2)+"\n")
     print(json.dumps({**receipt,"receipt":str(output)},indent=2))
     if duplicates: raise RuntimeError("duplicate_active_13f_natural_keys")
     return 0
+
+
+def main() -> int:
+    args = arguments()
+    root = Path(args.fact_os).resolve().parent
+    # Same writer protocol as Fact OS; derived publication cannot race ingestion.
+    with (root / "sync/writer.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            return build(args)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 if __name__ == "__main__":

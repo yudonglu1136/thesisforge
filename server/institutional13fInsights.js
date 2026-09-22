@@ -1,5 +1,6 @@
 import { assert, isoDate } from './investmentMath.js';
 import { gunzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 
 const parse = row => {
   if (!row) return null;
@@ -14,6 +15,7 @@ const historyIndexCache = new WeakMap();
 const tableAvailabilityCache = new WeakMap();
 const tableColumnCache = new WeakMap();
 const summaryResponseCache = new WeakMap();
+const sectorPayloadCache = new WeakMap();
 
 function cacheEntries(cache, source) {
   let entries=cache.get(source);
@@ -377,6 +379,7 @@ export function institutional13fInsights(source, asOf, reportDate = null, input 
     selectedTicker,
     quarters,
     generatedAt: selected.generated_at,
+    sourceGeneration: selected.source_generation,
     marketHistory: marketHistory(source,visible,selected),
     details: boundedDetails,
     coverage: {
@@ -410,4 +413,51 @@ export function institutional13fInsightDetail(source, ticker, asOf, reportDate =
       history:securityHistory(source,visible,selected,payload,ticker),
     },
   };
+}
+
+// Complete comparable populations are precomputed: no Fact OS scan on requests.
+export function institutional13fSectorDetail(source, sector, asOf, reportDate = null, options = {}) {
+  const requireSector=(condition,message,status)=>{
+    if(!condition)throw Object.assign(new Error(message),{status});
+  };
+  assert(typeof sector==='string'&&sector.length>0&&sector.length<=100,'invalid_sector');
+  const {payload,selected}=visibleSnapshot(source,asOf,reportDate,'active');
+  if(options.generation&&options.generation!==selected.source_generation)
+    throw Object.assign(new Error('institutional_13f_generation_changed'),{status:409});
+  const table='institutional_13f_active_sectors_v1';
+  requireSector(tableExists(source,table),'institutional_13f_sector_unavailable',404);
+  const entries=cacheEntries(sectorPayloadCache,source),key=`${snapshotKey(selected)}|${sector}`;
+  let detail=entries.get(key);
+  if(!detail) {
+    const row=(source.insightsDb??source.db).prepare(`SELECT payload_hash,payload_gzip FROM ${table}
+      WHERE report_date=? AND source_generation=? AND sector=?`).get(selected.report_date,selected.source_generation,sector);
+    requireSector(row,'institutional_13f_sector_unavailable',404);
+    const bytes=gunzipSync(row.payload_gzip);
+    requireSector(createHash('sha256').update(bytes).digest('hex')===row.payload_hash,'institutional_13f_sector_integrity',503);
+    detail=JSON.parse(bytes);
+    requireSector(detail.version==='active-sector-v1'&&detail.sector===sector&&detail.summary&&typeof detail.summary==='object'
+      &&Array.isArray(detail.stocks)&&Array.isArray(detail.managers)&&Array.isArray(detail.industries),
+    'institutional_13f_sector_schema',503);
+    setBounded(entries,key,detail,8);
+  }
+  const view=['stocks','managers','industries'].includes(options.view)?options.view:'stocks';
+  const direction=['adding','reducing'].includes(options.direction)?options.direction:'all';
+  const search=String(options.search??'').trim().slice(0,80).toLowerCase();
+  const rows=detail[view].filter(row=>(direction==='all'||(direction==='adding'?row.netProxyM>0:row.netProxyM<0))
+    &&(!options.industry||view!=='stocks'||row.industry===options.industry)
+    &&(!search||`${row.ticker??''} ${row.investorId??''} ${row.name??''}`.toLowerCase().includes(search)));
+  const limit=Math.min(50,Math.max(1,Number.parseInt(options.limit,10)||20));
+  const offset=Math.min(Math.max(0,Number.parseInt(options.offset,10)||0),Math.max(0,Math.floor((rows.length-1)/limit)*limit));
+  return {version:detail.version,sector,asOf,reportDate:payload.reportDate,
+    previousReportDate:payload.previousReportDate,availableAt:payload.availableAt??selected.available_at,
+    sourceGeneration:selected.source_generation,summary:detail.summary,
+    view,direction,offset,limit,total:rows.length,populationTotal:detail[view].length,
+    rows:rows.slice(offset,offset+limit),
+    methodology:{amount:'Split-normalized share change × median implied quarter-end price; USD millions. Not cash flows or verified trades.',
+      quality:'Each quarter is checked against its own median implied price. Differences beyond max(5% of expected value, USD 0.1m) are excluded from estimates, not repaired. Missing inputs are separately counted.',
+      priceFallback:'Previous split-adjusted price where no current price exists; coverage is explicit.',
+      population:'All comparable positions of the conservative active-manager subset; missing entire filings excluded.',
+      taxonomy:'Current security sector/industry classifications applied to both periods, not historical taxonomy.',
+      availability:'Quarter-end +45 days is a proxy, not actual filing time.',
+      residual:'Reported value change minus priced quantity change; includes valuation, composition and data effects, not causal attribution.'}};
 }

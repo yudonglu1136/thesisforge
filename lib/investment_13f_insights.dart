@@ -432,7 +432,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     final summary = asMap(analysis['summary']);
     final coverage = asMap(institutional13f?['coverage']);
     final buckets = asMap(coverage['classificationBuckets']);
-    final sectors = asList(analysis['sectorRotation']).take(6).toList();
+    final sectors = asList(analysis['sectorRotation']);
     final managers = asList(analysis['managerLeaders']).take(12).toList();
     final rotations = asList(analysis['rotationCandidates']).take(6).toList();
     return Container(
@@ -580,8 +580,8 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           ),
           const SizedBox(height: 4),
           label(
-            'Aggregate reported active-manager weight and quarter-over-quarter change',
-            '主动管理样本的申报行业权重及环比变化',
+            'Select a sector to inspect stocks, industries and manager contributions',
+            '点击行业，查看内部股票、细分行业及机构的增减持贡献',
             size: 11,
           ),
           const SizedBox(height: 10),
@@ -697,57 +697,98 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     final change = nullableNumber(sector['weightChangePp']);
     return SizedBox(
       width: width,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: p.card,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: p.border),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    text(sector['sector'], w('Unclassified', '未分类')),
-                    style: TextStyle(
-                      color: p.text,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  LinearProgressIndicator(
-                    value: current == null ? 0 : current.clamp(0, 1).toDouble(),
-                    minHeight: 3,
-                    backgroundColor: p.border,
-                    valueColor: AlwaysStoppedAnimation(p.accent),
-                  ),
-                ],
+      child: InkWell(
+        key: ValueKey('13f-sector-${sector['sector']}'),
+        borderRadius: BorderRadius.circular(8),
+        onTap: () async {
+          final ticker = await showDialog<String>(
+            context: context,
+            builder: (_) => LanguageScope(
+              language: LanguageScope.of(context),
+              child: ActiveSectorDialog(
+                api: widget.api,
+                palette: p,
+                sector: text(sector['sector']),
+                asOf: asOf,
+                quarter: insightQuarter,
+                generation: text(institutional13f?['sourceGeneration']),
+                sectorSummary: sector,
               ),
             ),
-            const SizedBox(width: 14),
-            Text(
-              _activeRatio(current),
-              style: TextStyle(color: p.text, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(width: 10),
-            SizedBox(
-              width: 66,
-              child: Text(
-                change == null
-                    ? '—'
-                    : '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)} pp',
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  color: change == null || change >= 0 ? p.accent : p.secondary,
-                  fontSize: 11,
+          );
+          if (mounted && ticker != null) {
+            await loadCompany(
+              ticker,
+              origin: '13f_insight',
+              initialSection: 'institutions',
+              evidence: {
+                'type': '13f_insight',
+                'ticker': ticker,
+                'scope': 'active',
+                'sector': sector['sector'],
+                'reportDate': insightQuarter,
+                'asOf': asOf,
+              },
+            );
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: p.card,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: p.border),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      context.ui(text(sector['sector'], 'Unclassified')),
+                      style: TextStyle(
+                        color: p.text,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    LinearProgressIndicator(
+                      value: current == null
+                          ? 0
+                          : current.clamp(0, 1).toDouble(),
+                      minHeight: 3,
+                      backgroundColor: p.border,
+                      valueColor: AlwaysStoppedAnimation(p.accent),
+                    ),
+                  ],
                 ),
               ),
-            ),
-          ],
+              const SizedBox(width: 14),
+              Text(
+                _activeRatio(current),
+                style: TextStyle(color: p.text, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 66,
+                child: Text(
+                  change == null
+                      ? '—'
+                      : '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)} pp',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: change == null || change >= 0
+                        ? p.accent
+                        : p.secondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              Icon(Icons.chevron_right, color: p.muted, size: 18),
+            ],
+          ),
         ),
       ),
     );
@@ -831,8 +872,8 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             if (sector.isNotEmpty) ...[
               const SizedBox(height: 8),
               label(
-                '${w('Largest sector shift', '最大行业变化')}: ${text(sector['sector'])} ${_signedPp(sector['weightChangePp'])}',
-                '${w('Largest sector shift', '最大行业变化')}: ${text(sector['sector'])} ${_signedPp(sector['weightChangePp'])}',
+                '${w('Largest sector shift', '最大行业变化')}: ${context.ui(text(sector['sector']))} ${_signedPp(sector['weightChangePp'])}',
+                '${w('Largest sector shift', '最大行业变化')}: ${context.ui(text(sector['sector']))} ${_signedPp(sector['weightChangePp'])}',
                 size: 10,
               ),
             ],

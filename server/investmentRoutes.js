@@ -11,7 +11,7 @@ import { registerHedgeRoutes } from './hedgeRoutes.js';
 import { createAiInsightsService } from './investmentAiInsights.js';
 import { fundamentalGuruQuarter } from './investmentFundamentals.js';
 import { buildGuruHoldingsMatrix, buildOpportunities, opportunityCompanySummary, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
-import { institutional13fInsights, institutional13fInsightDetail } from './institutional13fInsights.js';
+import { institutional13fInsights, institutional13fInsightDetail, institutional13fSectorDetail } from './institutional13fInsights.js';
 import { buildFundamentalDiscovery, buildFundamentalCompany, saveFundamentalObservation,
   listFundamentalObservations, reviewFundamentalObservation } from './fundamentalResearch.js';
 import { researchDocuments, researchFundamentals, researchInstitutions, researchPublishedModel,
@@ -28,6 +28,8 @@ export function registerInvestmentRoutes(app,service) {
     if(!req.user?.id)return res.status(401).json({error:'unauthorized'});
     try {res.json(await handler(req.user.id,req));}catch(e){res.status(e.status??500).json({error:e.status?e.message:'investment_request_failed'});}
   });}
+  route('get','/13f-sectors/:sector',(_,r)=>institutional13fSectorDetail(service.source,r.params.sector,
+    service.date(r.query.asOf),r.query.quarter??null,r.query));
   route('get','/home',(owner,r)=>service.home(owner,r.query.asOf));
   route('get','/discover',(owner,r)=>service.discover(owner,r.query.asOf));
   route('get','/guru-study',(_,r)=>guruStudy(service.source,service.date(r.query.asOf),r.query.period??'common'));

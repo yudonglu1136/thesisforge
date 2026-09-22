@@ -535,3 +535,12 @@ node scripts/verify-ontology-module.mjs --built
 ```
 
 Browser verification must exercise both languages on desktop and 390x844 mobile viewports, including the unauthenticated shell, Ontology dialogs, and the Guru, Valuation, Portfolio, and Admin routes. A release is blocked by CJK copy in English mode, untranslated UI English in Chinese mode, a translation fallback warning, or a layout overflow.
+
+## 2026-09-22: Active-manager sector detail
+
+New sector dialog has EN/ZH headings, metrics, filters, paging, source-quality
+warnings, error/retry and Research actions. The supplied sector/industry taxonomy
+uses the shared bilingual dictionary. Desktop and 390px tests cover both modes;
+actual browser checks cover the industry/stock/manager drill-down. The old
+Ontology checklist above is historical only; that product remains retired.
+See `docs/13f-sector-drilldown-2026-09-22.md` for coverage and verification limits.

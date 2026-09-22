@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {packageInstitutional13fArtifact} from './package-13f-insights-artifact.mjs';
+import {validateInstitutional13fArtifact} from '../server/investmentRuntimeConfig.js';
 
 test('packages compact summaries with lazy details and market history',t=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'tf-package-13f-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
@@ -34,4 +35,20 @@ test('packages compact summaries with lazy details and market history',t=>{
   a.equal(artifact.prepare('SELECT count(*) count FROM institutional_13f_active_details_v1').get().count,1);
   a.equal(artifact.prepare("SELECT count(*) count FROM sqlite_master WHERE type='table' AND name='institutional_13f_insight_snapshots'").get().count,0);
   artifact.close();
+  const augmented=new DatabaseSync(source);
+  augmented.exec(`CREATE TABLE institutional_13f_active_sectors_v1(report_date TEXT,source_generation TEXT,sector TEXT,payload_hash TEXT,payload_gzip BLOB,PRIMARY KEY(report_date,source_generation,sector));`);
+  augmented.prepare('INSERT INTO institutional_13f_active_sectors_v1 VALUES(?,?,?,?,?)').run('2026-06-30','active-g','Technology','sector-h',Buffer.from('sector'));
+  // Old generations must not leak into the published sidecar.
+  augmented.prepare('INSERT INTO institutional_13f_active_sectors_v1 VALUES(?,?,?,?,?)').run('2026-06-30','old','Technology','old-h',Buffer.from('old'));
+  augmented.close();
+  const installRoot=fs.realpathSync(root),releaseId='13f-insights-20260922-v12';
+  const sectorPath=path.join(installRoot,releaseId,'13f-insights.sqlite');
+  const manifestPath=path.join(installRoot,releaseId,'manifest.json');
+  const next=packageInstitutional13fArtifact({source,output:path.join(installRoot,releaseId),releaseId,runtimeRoot:installRoot});
+  a.equal(next.version,'institutional-13f-artifact-v7');a.equal(next.sectorRows,1);
+  fs.chmodSync(manifestPath,0o400);
+  a.equal(validateInstitutional13fArtifact(sectorPath,manifestPath,{trustedUid:process.getuid()}).sectorRows,1);
+  const sectorArtifact=new DatabaseSync(sectorPath,{readOnly:true});
+  a.equal(sectorArtifact.prepare('SELECT source_generation FROM institutional_13f_active_sectors_v1').get().source_generation,'active-g');
+  sectorArtifact.close();
 });
