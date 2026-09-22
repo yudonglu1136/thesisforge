@@ -544,3 +544,12 @@ uses the shared bilingual dictionary. Desktop and 390px tests cover both modes;
 actual browser checks cover the industry/stock/manager drill-down. The old
 Ontology checklist above is historical only; that product remains retired.
 See `docs/13f-sector-drilldown-2026-09-22.md` for coverage and verification limits.
+
+### 2026-09-22 Sector visual refinement
+
+Active-sector summary, company-logo cards, compact filters, expandable position
+details and coverage/methodology labels have paired EN/ZH text. Real-data desktop
+(1440×1000) and 390×844 mobile dialogs verified in both languages. Nine focused
+Flutter tests pass; i18n audit, analysis and production build pass. Full Flutter
+remains 568 passed / 32 pre-existing adjacent failures; no assertions removed.
+See `docs/13f-sector-visual-polish-2026-09-22.md` for exact scope and checks.
