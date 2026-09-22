@@ -44,3 +44,14 @@ test('AI artifact packages only bounded derived JSON and installs idempotently',
   a.throws(() => validateAiInsightsArtifact(target, path.join(target, 'release-manifest.json'), { trustedUid }), /mismatch|hash/);
   fs.chmodSync(target, 0o700);
 });
+
+test('Elastic Beanstalk installer consumes the packaged release directory', () => {
+  const hook = fs.readFileSync(
+    path.resolve('.platform/hooks/postdeploy/06-install-ai-insights.sh'),
+    'utf8',
+  );
+  a.match(hook, /roots != \{expected_root\}/);
+  a.match(hook, /source_root="\$\{download\}\/source\/\$\{release_id\}"/);
+  a.match(hook, /--source "\$\{source_root\}" --target "\$\{target\}"/);
+  a.doesNotMatch(hook, /--source "\$\{download\}\/source"/);
+});

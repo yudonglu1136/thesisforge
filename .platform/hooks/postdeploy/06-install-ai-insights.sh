@@ -53,17 +53,24 @@ if [ "$(stat -c '%s' "${download}/ai-insights.tar.gz")" != "${archive_bytes}" ] 
   echo "error: AI Insights archive byte contract mismatch" >&2
   exit 1
 fi
-python3 - "${download}/ai-insights.tar.gz" <<'PY'
+python3 - "${download}/ai-insights.tar.gz" "${release_id}" <<'PY'
 import sys, tarfile
-with tarfile.open(sys.argv[1], "r:gz") as archive:
+archive_path, expected_root = sys.argv[1:]
+roots = set()
+with tarfile.open(archive_path, "r:gz") as archive:
     for member in archive.getmembers():
         if member.issym() or member.islnk() or member.name.startswith("/") or ".." in member.name.split("/"):
             raise SystemExit("unsafe_ai_insights_archive")
+        if member.name and member.name != ".":
+            roots.add(member.name.split("/", 1)[0])
+if roots != {expected_root}:
+    raise SystemExit("invalid_ai_insights_archive_root")
 PY
 mkdir "${download}/source"
 tar -xzf "${download}/ai-insights.tar.gz" -C "${download}/source"
+source_root="${download}/source/${release_id}"
 node /var/app/current/scripts/install-ai-insights-artifact.mjs \
-  --source "${download}/source" --target "${target}" >/dev/null
+  --source "${source_root}" --target "${target}" >/dev/null
 chown -R root:root "${target}"
 find "${target}" -type f -exec chmod 0444 {} +
 find "${target}" -type d -exec chmod 0555 {} +
