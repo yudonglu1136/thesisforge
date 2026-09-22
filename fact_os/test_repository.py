@@ -224,6 +224,21 @@ class RepositoryTest(unittest.TestCase):
         points[2]['fcf'] = None
         self.assertIsNone(FactRepository._quarter_metrics(points)['fcfMargin'])
 
+    def test_research_point_exposes_three_statement_rows_without_zero_fill(self):
+        row = {
+            'ticker': 'NEW', 'dimension': 'ARY', 'date': '2025-02-01',
+            'reportperiod': '2024-12-31', 'cor': 60, 'taxexp': 5,
+            'liabilities': 120, 'receivables': 30, 'ncfi': -20,
+            'ncfdebt': None, 'depamor': 7,
+        }
+        point = FactRepository._research_point(row, {'source': 'fixture'})
+        self.assertEqual(point['cor'], 60)
+        self.assertEqual(point['liabilities'], 120)
+        self.assertEqual(point['ncfi'], -20)
+        self.assertIsNone(point['ncfdebt'])
+        self.assertNotIn('inventory', point)
+        self.assertEqual(point['period_end'], '2024-12-31')
+
     def test_official_master_routes_funds_not_provider_fallback(self):
         self.put('tickers', [['funds', 30, 'ETF', '', '2024-06-01', 'Index fund', '2024-06-01', '', '']])
         self.put('funds', [['ETF', '2024-01-02', 50, 49, 50, '2024-01-03']])

@@ -45,6 +45,399 @@ double? researchValueChange(
   return a != null && b != null && b > 0 ? a / b - 1 : null;
 }
 
+class _ResearchValueBar {
+  const _ResearchValueBar({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+  final String label;
+  final double value;
+  final Color color;
+}
+
+class _ResearchValueComparison extends StatelessWidget {
+  const _ResearchValueComparison({
+    required this.items,
+    required this.currency,
+    required this.muted,
+    required this.border,
+  });
+  final List<_ResearchValueBar> items;
+  final String currency;
+  final Color muted, border;
+
+  @override
+  Widget build(BuildContext context) {
+    final maxValue = items.fold<double>(
+      0,
+      (largest, item) => math.max(largest, item.value.abs()),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final item in items)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        item.label,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: muted, fontSize: 11),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      '${currencySymbol(currency)}${item.value.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        color: item.color,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                LayoutBuilder(
+                  builder: (_, bounds) => Stack(
+                    children: [
+                      Container(
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: border.withValues(alpha: .7),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        height: 8,
+                        width: maxValue <= 0
+                            ? 0
+                            : bounds.maxWidth * item.value.abs() / maxValue,
+                        decoration: BoxDecoration(
+                          color: item.color,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ResearchFinancialSeries {
+  const _ResearchFinancialSeries({
+    required this.keyName,
+    required this.label,
+    required this.color,
+    required this.values,
+  });
+  final String keyName, label;
+  final Color color;
+  final List<double?> values;
+}
+
+class _ResearchFinancialBarChart extends StatefulWidget {
+  const _ResearchFinancialBarChart({
+    required this.periods,
+    required this.series,
+    required this.muted,
+    required this.textColor,
+    required this.grid,
+  });
+  final List<String> periods;
+  final List<_ResearchFinancialSeries> series;
+  final Color muted, textColor, grid;
+
+  @override
+  State<_ResearchFinancialBarChart> createState() =>
+      _ResearchFinancialBarChartState();
+}
+
+class _ResearchFinancialBarChartState
+    extends State<_ResearchFinancialBarChart> {
+  int? hovered;
+
+  void updateHover(Offset position, double width) {
+    const left = 62.0, right = 10.0;
+    final plot = math.max(1, width - left - right);
+    final raw = ((position.dx - left) / plot * widget.periods.length).floor();
+    final next = raw >= 0 && raw < widget.periods.length ? raw : null;
+    if (next != hovered) setState(() => hovered = next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.series.isEmpty || widget.periods.isEmpty) {
+      return Center(
+        child: Text(
+          'Select a reported line item',
+          style: TextStyle(color: widget.muted, fontSize: 12),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Wrap(
+            spacing: 16,
+            runSpacing: 6,
+            children: [
+              for (final series in widget.series)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: series.color,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      series.label,
+                      style: TextStyle(color: widget.muted, fontSize: 10),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (_, bounds) => MouseRegion(
+              onHover: (event) =>
+                  updateHover(event.localPosition, bounds.maxWidth),
+              onExit: (_) => setState(() => hovered = null),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (event) =>
+                    updateHover(event.localPosition, bounds.maxWidth),
+                child: Stack(
+                  children: [
+                    CustomPaint(
+                      size: Size.infinite,
+                      painter: _ResearchFinancialBarPainter(
+                        periods: widget.periods,
+                        series: widget.series,
+                        muted: widget.muted,
+                        grid: widget.grid,
+                        hovered: hovered,
+                      ),
+                    ),
+                    if (hovered case final index?)
+                      Positioned(
+                        top: 4,
+                        left: math.min(
+                          math.max(
+                            66,
+                            62 +
+                                (bounds.maxWidth - 72) *
+                                    (index + .5) /
+                                    widget.periods.length -
+                                70,
+                          ),
+                          math.max(66, bounds.maxWidth - 154),
+                        ),
+                        child: IgnorePointer(
+                          child: Container(
+                            width: 140,
+                            padding: const EdgeInsets.all(9),
+                            decoration: BoxDecoration(
+                              color: const Color(0xff0d1b23),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: widget.grid),
+                              boxShadow: const [
+                                BoxShadow(color: Colors.black38, blurRadius: 8),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.periods[index],
+                                  style: TextStyle(
+                                    color: widget.textColor,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                for (final series in widget.series)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 3),
+                                    child: Text(
+                                      '${series.label}: ${series.values[index] == null ? '—' : formatNumber(series.values[index]!)}',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: series.color,
+                                        fontSize: 9,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ResearchFinancialBarPainter extends CustomPainter {
+  _ResearchFinancialBarPainter({
+    required this.periods,
+    required this.series,
+    required this.muted,
+    required this.grid,
+    required this.hovered,
+  });
+  final List<String> periods;
+  final List<_ResearchFinancialSeries> series;
+  final Color muted, grid;
+  final int? hovered;
+
+  String axis(double value) {
+    final magnitude = value.abs();
+    if (magnitude >= 1e12) return '${(value / 1e12).toStringAsFixed(1)}T';
+    if (magnitude >= 1e9) return '${(value / 1e9).toStringAsFixed(1)}B';
+    if (magnitude >= 1e6) return '${(value / 1e6).toStringAsFixed(0)}M';
+    if (magnitude >= 1e3) return '${(value / 1e3).toStringAsFixed(0)}K';
+    return value.toStringAsFixed(magnitude < 10 ? 1 : 0);
+  }
+
+  void drawText(Canvas canvas, String value, Offset offset, {double size = 9}) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: value,
+        style: TextStyle(color: muted, fontSize: size),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    painter.paint(canvas, offset);
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const left = 62.0, right = 10.0, top = 12.0, bottom = 34.0;
+    final width = math.max(1.0, size.width - left - right);
+    final height = math.max(1.0, size.height - top - bottom);
+    final finiteValues = <double>[
+      for (final item in series)
+        for (final value in item.values)
+          if (value != null && value.isFinite) value,
+    ];
+    if (finiteValues.isEmpty) return;
+    var low = math.min(0.0, finiteValues.reduce(math.min));
+    var high = math.max(0.0, finiteValues.reduce(math.max));
+    if ((high - low).abs() < 1e-9) high = low + 1;
+    final range = high - low;
+    double y(double value) => top + (high - value) / range * height;
+    final zero = y(0);
+    final gridPaint = Paint()..color = grid.withValues(alpha: .75);
+    final groupWidth = width / periods.length;
+    if (hovered case final index?) {
+      canvas.drawRect(
+        Rect.fromLTWH(left + index * groupWidth, top, groupWidth, height),
+        Paint()..color = grid.withValues(alpha: .16),
+      );
+    }
+    for (var tick = 0; tick <= 4; tick++) {
+      final value = low + range * tick / 4;
+      final dy = y(value);
+      canvas.drawLine(
+        Offset(left, dy),
+        Offset(size.width - right, dy),
+        gridPaint,
+      );
+      final label = axis(value);
+      final painter = TextPainter(
+        text: TextSpan(
+          text: label,
+          style: TextStyle(color: muted, fontSize: 9),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: left - 8);
+      painter.paint(
+        canvas,
+        Offset(left - 8 - painter.width, dy - painter.height / 2),
+      );
+    }
+    canvas.drawLine(
+      Offset(left, zero),
+      Offset(size.width - right, zero),
+      Paint()..color = muted.withValues(alpha: .55),
+    );
+    final clusterWidth = groupWidth * .68;
+    final barWidth = math.max(3.0, clusterWidth / math.max(1, series.length));
+    for (var period = 0; period < periods.length; period++) {
+      final start =
+          left + period * groupWidth + (groupWidth - clusterWidth) / 2;
+      for (var item = 0; item < series.length; item++) {
+        final value = period < series[item].values.length
+            ? series[item].values[period]
+            : null;
+        if (value == null || !value.isFinite) continue;
+        final valueY = y(value);
+        final rect = Rect.fromLTRB(
+          start + item * barWidth + 1,
+          math.min(zero, valueY),
+          start + (item + 1) * barWidth - 1,
+          math.max(zero, valueY),
+        );
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(rect, const Radius.circular(2)),
+          Paint()..color = series[item].color.withValues(alpha: .92),
+        );
+      }
+      final labelPainter = TextPainter(
+        text: TextSpan(
+          text: periods[period],
+          style: TextStyle(color: muted, fontSize: 9),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: groupWidth);
+      labelPainter.paint(
+        canvas,
+        Offset(
+          left + period * groupWidth + (groupWidth - labelPainter.width) / 2,
+          size.height - bottom + 10,
+        ),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ResearchFinancialBarPainter oldDelegate) =>
+      oldDelegate.periods != periods ||
+      oldDelegate.series != series ||
+      oldDelegate.hovered != hovered ||
+      oldDelegate.grid != grid ||
+      oldDelegate.muted != muted;
+}
+
 extension _InvestmentResearch on _InvestmentWorkspaceState {
   List<Map<String, dynamic>> get researchHistory =>
       researchDatedRows(asList(company?['history']), 'availableAt', asOf);
@@ -58,6 +451,13 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     return assumptions.isNotEmpty ||
         nullableNumber(asMap(company?['published'])['fairValue']) != null ||
         asList(asMap(company?['publishedBreakdown'])['components']).isNotEmpty;
+  }
+
+  bool get researchNeedsFullFinancials {
+    final facts = researchFundamental;
+    if (facts == null) return true;
+    return asList(facts['annual']).isEmpty ||
+        asMap(facts['transportCoverage'])['fullFacts'] == 'on_demand';
   }
 
   List<Widget> refinedResearch() {
@@ -288,13 +688,39 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
 
   void selectResearchSection(String next) {
     selectSection(next);
-    if (next == 'financials' &&
+    if (next == 'evidence' && researchNeedsFullFinancials) {
+      unawaited(loadResearchOverviewFinancials());
+    } else if (next == 'financials' &&
         (researchDocumentsData == null || researchFundamental == null)) {
       unawaited(loadResearchPanel('financials'));
     } else if (next == 'institutions' && researchInstitution == null) {
       unawaited(loadResearchPanel('institutions'));
     } else if (next == 'records' && researchRecordsData == null) {
       unawaited(loadResearchPanel('records'));
+    }
+  }
+
+  Future<void> loadResearchOverviewFinancials() async {
+    if (researchFinancialsLoading || ticker.isEmpty) return;
+    final symbol = ticker, cutoff = asOf, serial = requestSerial;
+    updateUI(() {
+      researchFinancialsLoading = true;
+      researchFinancialsError = null;
+    });
+    try {
+      final value = await widget.api.getJson(
+        '/api/investment/research/${Uri.encodeComponent(symbol)}/fundamentals?asOf=$cutoff',
+      );
+      if (!mounted || serial != requestSerial || ticker != symbol) return;
+      updateUI(() => researchFundamental = value);
+    } catch (e) {
+      if (mounted && serial == requestSerial && ticker == symbol) {
+        updateUI(() => researchFinancialsError = e.toString());
+      }
+    } finally {
+      if (mounted && serial == requestSerial && ticker == symbol) {
+        updateUI(() => researchFinancialsLoading = false);
+      }
     }
   }
 
@@ -311,7 +737,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
           widget.api.getJson(
             '/api/investment/research/${Uri.encodeComponent(symbol)}/documents?asOf=$cutoff',
           ),
-          if (researchFundamental == null)
+          if (researchNeedsFullFinancials)
             widget.api.getJson(
               '/api/investment/research/${Uri.encodeComponent(symbol)}/fundamentals?asOf=$cutoff',
             )
@@ -535,6 +961,12 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     final data = researchInstitution;
     final details = asMap(data?['details']);
     final history = asList(details['history']);
+    final analysis = asMap(details['analysis']);
+    final evidence = asMap(analysis['evidence']);
+    final breadth = asMap(evidence['breadth']);
+    final shares = asMap(evidence['shares']);
+    final weights = asMap(evidence['weights']);
+    final importantChanges = asList(analysis['importantChanges']);
     final institutions = <Map<String, dynamic>>[
       for (final action in ['new', 'increased', 'reduced', 'exited'])
         for (final row in asList(details[action])) {...row, 'action': action},
@@ -544,6 +976,10 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         : researchRange == '10Y'
         ? 40
         : 20;
+    final visibleHistory = history.length > historyLimit
+        ? history.sublist(history.length - historyLimit)
+        : history;
+    final visibleDetails = {...details, 'history': visibleHistory};
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -592,6 +1028,82 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                     size: 11,
                   ),
                 ]),
+              if (analysis.isNotEmpty)
+                card([
+                  label(
+                    'EVIDENCE-BASED READ',
+                    '基于证据的本季判断',
+                    size: 9,
+                    color: p.accent,
+                  ),
+                  const SizedBox(height: 7),
+                  Text(
+                    _insightBehaviorHeadline(text(analysis['headlineKey'])),
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  label(
+                    '${reportQuarterLabel(text(data?['reportDate']))} vs ${reportQuarterLabel(text(data?['previousReportDate']))} · ${w('13F filings are delayed snapshots, not live trades.', '13F 是延迟披露的持仓快照，不是实时交易。')}',
+                    '${reportQuarterLabel(text(data?['reportDate']))} 对比 ${reportQuarterLabel(text(data?['previousReportDate']))} · 13F 是延迟披露的持仓快照，不是实时交易。',
+                    size: 10,
+                  ),
+                  if (breadth.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _insightEvidenceDisclosure(
+                      key: const ValueKey('research-13f-evidence-breadth'),
+                      icon: Icons.groups_2_outlined,
+                      title: w('Breadth of the move', '增减广度'),
+                      summary:
+                          '${_integer(breadth['adds'])} ${w('adding', '增加方向')} · ${_integer(breadth['trims'])} ${w('reducing', '减少方向')}',
+                      details: [
+                        label(
+                          '${w('Net breadth', '净广度')} ${_integer(breadth['netFilers'])} · ${w('Adding share of changed filers', '增加方向占发生变化机构')} ${pct(breadth['addsPct'])}',
+                          '${w('Net breadth', '净广度')} ${_integer(breadth['netFilers'])} · ${w('Adding share of changed filers', '增加方向占发生变化机构')} ${pct(breadth['addsPct'])}',
+                          size: 11,
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (shares.isNotEmpty) ...[
+                    const SizedBox(height: 7),
+                    _insightEvidenceDisclosure(
+                      key: const ValueKey('research-13f-evidence-shares'),
+                      icon: Icons.stacked_line_chart,
+                      title: w('Net reported share change', '股数净变化'),
+                      summary:
+                          '${_sharesFromThousands(shares['netUnitsChangeK'])} · ${nullableNumber(shares['netChangePctPrior']) == null ? '—' : '${number(shares['netChangePctPrior']).toStringAsFixed(2)}%'} ${w('of prior reported shares', '占上季申报股数')}',
+                      details: [
+                        label(
+                          '${w('As % of shares outstanding', '占总股本变化')} ${nullableNumber(shares['netChangePctOutstanding']) == null ? '—' : '${number(shares['netChangePctOutstanding']).toStringAsFixed(2)}%'} · ${w('split-adjusted basis', '拆股折算口径')} ${text(shares['shareBasisDate'], '—')}',
+                          '${w('As % of shares outstanding', '占总股本变化')} ${nullableNumber(shares['netChangePctOutstanding']) == null ? '—' : '${number(shares['netChangePctOutstanding']).toStringAsFixed(2)}%'} · ${w('split-adjusted basis', '拆股折算口径')} ${text(shares['shareBasisDate'], '—')}',
+                          size: 11,
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (weights.isNotEmpty) ...[
+                    const SizedBox(height: 7),
+                    _insightEvidenceDisclosure(
+                      key: const ValueKey('research-13f-evidence-weight'),
+                      icon: Icons.balance_outlined,
+                      title: w('Portfolio-weight evidence', '重要机构组合权重'),
+                      summary:
+                          '${_integer(weights['importantChangesEvaluated'])} ${w('important changes reviewed', '项重要变动')} · ${_integer(weights['sharesUpWeightDown'])} ${w('shares-up / weight-down divergences', '项股数增加但权重下降')}',
+                      details: [
+                        label(
+                          'Weight is measured inside each filer’s reported common-stock portfolio; it is not total fund AUM.',
+                          '权重分母是各机构申报的普通股组合，不代表其完整基金 AUM。',
+                          size: 11,
+                        ),
+                      ],
+                    ),
+                  ],
+                ]),
               if (history.isNotEmpty)
                 card([
                   Row(
@@ -617,28 +1129,43 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  dataTable(
-                    [
-                      w('Quarter', '季度'),
-                      w('Institutions', '机构数'),
-                      w('Split-adjusted shares', '拆股调整股数'),
-                      w('% outstanding', '占流通股'),
-                    ],
-                    [
-                      for (final row in history.reversed.take(historyLimit))
-                        [
-                          text(row['reportDate']),
-                          text(row['holders'], '—'),
-                          formatNumber(number(row['institutionalSharesK'])),
-                          pct(
-                            row['institutionalOwnershipPct'] == null
-                                ? null
-                                : number(row['institutionalOwnershipPct']) /
-                                      100,
-                          ),
-                        ],
+                  _insightHistoryCharts(visibleDetails),
+                ]),
+              if (importantChanges.isNotEmpty)
+                card([
+                  Row(
+                    key: const ValueKey(
+                      'research-13f-changes-worth-researching',
+                    ),
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              w('Changes worth researching', '值得研究的变动'),
+                              style: deskHeading(17),
+                            ),
+                            const SizedBox(height: 3),
+                            label(
+                              'Adds and reductions are shown together. Selected from the complete comparable population by absolute reported value change.',
+                              '同时展示重要增持与减持；先在完整可比机构中计算，再按申报市值绝对变化选取。',
+                              size: 10,
+                            ),
+                          ],
+                        ),
+                      ),
+                      label(
+                        '${importantChanges.length} ${w('changes', '项')}',
+                        '${importantChanges.length} ${w('changes', '项')}',
+                        size: 10,
+                        color: p.accent,
+                      ),
                     ],
                   ),
+                  const SizedBox(height: 8),
+                  for (final change in importantChanges)
+                    _insightImportantChangeRow(change),
                 ]),
               if (institutions.isNotEmpty)
                 card([
@@ -859,6 +1386,15 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   Widget researchReversePanel() {
     final reverse = asMap(calculation?['reverse']);
     final scenario = asMap(reverse['scenario']);
+    final diagnostics = asMap(reverse['diagnostics']);
+    final solved = reverse['status'] == 'solved' && scenario.isNotEmpty;
+    final solvedLabel = switch (text(reverse['variable'])) {
+      'growth' => w('Revenue growth', '收入增长率'),
+      'mature_ebit_margin' => w('Mature EBIT margin', '成熟 EBIT 利润率'),
+      'reinvestment' => w('ΔNWC / revenue', 'ΔNWC / 收入'),
+      'terminal_margin' => w('Final FCFE margin', '末期 FCFE 率'),
+      _ => w('Solved variable', '待求变量'),
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -868,43 +1404,133 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
           '每次只反推一个变量，其余假设固定且可见；这不是分析师共识。',
         ),
         const SizedBox(height: 16),
-        valuationDiagnostics(asMap(calculation?['result'])),
-        if (reverse.isNotEmpty)
+        valuationCalculationState(),
+        pageColumns(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (solved) ...[
+                valuationForecastGrid(scenario, reverseDetails: reverse),
+                const SizedBox(height: 18),
+                valuationTerminalSummary(scenario),
+              ] else
+                card([
+                  Icon(Icons.travel_explore, color: p.secondary, size: 24),
+                  const SizedBox(height: 12),
+                  title('No valid path in the search range', '搜索范围内没有有效路径'),
+                  label(
+                    reverse.isEmpty
+                        ? 'Enter a comparable price and required return to calculate the implied path.'
+                        : 'The selected variable cannot reproduce this price inside the supported bounds. Change one control; no arbitrary root is shown.',
+                    reverse.isEmpty
+                        ? '输入可比价格与要求回报后计算价格隐含路径。'
+                        : '所选变量在支持边界内无法复现该价格。请修改一个控制项；系统不会展示任意根。',
+                  ),
+                ]),
+            ],
+          ),
           card([
-            label('SOLVER DIAGNOSTICS', '求解诊断', size: 10, color: p.accent),
-            const SizedBox(height: 10),
-            Text(text(reverse['status']), style: deskHeading(20)),
-            label(
-              '${w('Roots', '根数量')} ${asMap(reverse['diagnostics'])['rootCount'] ?? 0} · ${w('Residual', '价格残差')} ${nullableNumber(reverse['residual']) == null ? '—' : formatNumber(number(reverse['residual']))}',
-              '${w('Roots', '根数量')} ${asMap(reverse['diagnostics'])['rootCount'] ?? 0} · ${w('Residual', '价格残差')} ${nullableNumber(reverse['residual']) == null ? '—' : formatNumber(number(reverse['residual']))}',
+            label('PRICE-IMPLIED PATH', '价格隐含路径', size: 10, color: p.accent),
+            const SizedBox(height: 8),
+            title('Solve one variable', '每次反推一个变量'),
+            input(
+              reversePrice,
+              'Price to explain',
+              '待解释价格',
+              width: double.infinity,
+              numeric: true,
+              changed: (_) => scheduleCalculation(),
             ),
-            if (text(reverse['fixed']).isNotEmpty)
-              label(text(reverse['fixed']), text(reverse['fixed']), size: 11),
-            if (scenario.isNotEmpty)
-              dataTable(
-                [
-                  w('Year', '年度'),
-                  w('Revenue', '收入'),
-                  personalDcfMethod == 'operating_fcff' ? 'FCFF' : 'FCFE',
-                  w('PV', '现值'),
-                ],
-                [
-                  for (final row in asList(scenario['forecast']))
-                    [
-                      text(row['year']),
-                      formatNumber(number(row['revenueM'])),
-                      formatNumber(
-                        number(
-                          row[personalDcfMethod == 'operating_fcff'
-                              ? 'fcffM'
-                              : 'fcfeM'],
+            const SizedBox(height: 12),
+            input(
+              targetReturn,
+              'Required return %',
+              '要求回报 %',
+              width: double.infinity,
+              numeric: true,
+              changed: (_) => scheduleCalculation(),
+            ),
+            const SizedBox(height: 14),
+            for (final variable
+                in personalDcfMethod == 'operating_fcff'
+                    ? [
+                        ('growth', 'Revenue growth', '收入增长率'),
+                        (
+                          'mature_ebit_margin',
+                          'Mature EBIT margin',
+                          '成熟 EBIT 利润率',
                         ),
-                      ),
-                      formatNumber(number(row['pvM'])),
-                    ],
-                ],
+                        ('reinvestment', 'ΔNWC / revenue', 'ΔNWC / 收入'),
+                      ]
+                    : [
+                        ('growth', 'Revenue growth', '收入增长率'),
+                        ('terminal_margin', 'Final FCFE margin', '末期 FCFE 率'),
+                      ])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ChoiceChip(
+                  key: ValueKey('reverse-variable-${variable.$1}'),
+                  label: SizedBox(
+                    width: double.infinity,
+                    child: Text(w(variable.$2, variable.$3)),
+                  ),
+                  selected: reverseVariable == variable.$1,
+                  onSelected: (_) {
+                    updateUI(() => reverseVariable = variable.$1);
+                    scheduleCalculation();
+                  },
+                ),
               ),
+            Divider(height: 28, color: p.border),
+            Text(
+              solved ? pct(reverse['value']) : '—',
+              key: const ValueKey('reverse-solved-value'),
+              style: TextStyle(
+                color: solved ? p.secondary : p.muted,
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            label(solvedLabel, solvedLabel, color: p.text, size: 12),
+            const SizedBox(height: 14),
+            dataTable(
+              [w('Forward check', '回代检查'), w('Result', '结果')],
+              [
+                [w('Target price', '目标价格'), money(reverse['price'])],
+                [
+                  w('Recalculated value', '回代每股价值'),
+                  money(diagnostics['verifiedForwardValue']),
+                ],
+                [
+                  w('Price residual', '价格残差'),
+                  nullableNumber(reverse['residual']) == null
+                      ? '—'
+                      : money(reverse['residual']),
+                ],
+                [
+                  w('Solutions in bounds', '边界内解数量'),
+                  text(diagnostics['rootCount'], '0'),
+                ],
+              ],
+            ),
+            const SizedBox(height: 10),
+            label(
+              solved
+                  ? 'Forward check passed. The table uses the same engine as My DCF.'
+                  : 'Status: ${text(reverse['status'], 'not_calculated')}',
+              solved
+                  ? '正向回代已通过；表格与“我的 DCF”使用同一计算引擎。'
+                  : '状态：${text(reverse['status'], '尚未计算')}',
+              color: solved ? p.accent : p.secondary,
+              size: 11,
+            ),
+            if (text(reverse['fixed']).isNotEmpty) ...[
+              const SizedBox(height: 12),
+              label(text(reverse['fixed']), text(reverse['fixed']), size: 11),
+            ],
           ]),
+          sideWidth: 330,
+        ),
       ],
     );
   }
@@ -1064,30 +1690,745 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   }
 
   List<Widget> researchOverview() => [
-    pageColumns(
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [researchFactInsight(), researchNextStep()],
-      ),
-      researchEvidenceSidebar(),
-      sideWidth: 330,
-    ),
-    const SizedBox(height: 4),
-    researchMetricStrip(),
-    const SizedBox(height: 6),
-    pageColumns(
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [researchChart(), researchGuidance(), researchHolders()],
-      ),
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [researchCountercase(), researchModelCard()],
-      ),
-      sideWidth: 350,
-    ),
+    researchOverviewValuation(),
+    const SizedBox(height: 18),
+    researchFinancialStatements(),
   ];
 
+  Widget researchOverviewValuation() {
+    final price = asMap(asMap(company?['snapshot'])['price']);
+    final breakdown = asMap(company?['publishedBreakdown']);
+    final methods = asList(breakdown['components']);
+    final fairValue = nullableNumber(
+      breakdown['fairValue'] ?? asMap(company?['published'])['fairValue'],
+    );
+    final marketPrice = nullableNumber(price['value']);
+    final comparable =
+        marketPrice != null &&
+        marketPrice > 0 &&
+        fairValue != null &&
+        text(price['currency'], text(company?['currency'])) ==
+            text(company?['currency']);
+    final gap = comparable ? fairValue / marketPrice - 1 : null;
+    final comparison = <_ResearchValueBar>[
+      if (marketPrice != null)
+        _ResearchValueBar(
+          label: w('Market price', '市场价格'),
+          value: marketPrice,
+          color: p.text,
+        ),
+      if (fairValue != null)
+        _ResearchValueBar(
+          label: w('Final published value', '最终已发布估值'),
+          value: fairValue,
+          color: p.accent,
+        ),
+      for (final method in methods)
+        if (nullableNumber(method['output']) != null)
+          _ResearchValueBar(
+            label: text(method['label']),
+            value: number(method['output']),
+            color: method['status'] == 'included' ? p.secondary : p.muted,
+          ),
+    ];
+    return card([
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                label(
+                  'PRICE & PUBLISHED MODEL',
+                  '价格与已发布模型',
+                  size: 10,
+                  color: p.accent,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  w('What the model is worth — and why', '模型值多少，以及怎么算出来'),
+                  style: deskHeading(22),
+                ),
+                const SizedBox(height: 5),
+                label(
+                  'Price is comparison-only. Every method below comes from the same stored model observation.',
+                  '股价仅用于比较；下方每个方法均来自同一个已存模型节点。',
+                  size: 11,
+                ),
+              ],
+            ),
+          ),
+          if (gap != null)
+            researchTag(
+              '${gap >= 0 ? '+' : ''}${pct(gap)} ${w('value / price − 1', '估值 / 价格 − 1')}',
+              gap >= 0 ? p.accent : p.secondary,
+            ),
+        ],
+      ),
+      const SizedBox(height: 20),
+      if (!researchHasPlatformModel)
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: p.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: p.border),
+          ),
+          child: label(
+            'No platform valuation is stored at this cutoff. The three financial statements below remain available.',
+            '该截止日没有已存平台估值；下方三张财务报表仍可完整研究。',
+            color: p.secondary,
+          ),
+        )
+      else ...[
+        LayoutBuilder(
+          builder: (_, bounds) {
+            final chart = _ResearchValueComparison(
+              items: comparison,
+              currency: text(company?['currency'], 'USD'),
+              muted: p.muted,
+              border: p.border,
+            );
+            final reconciliation = Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _researchReconciliationLine(
+                  w('Market price', '市场价格'),
+                  money(marketPrice),
+                  text(price['date']),
+                ),
+                _researchReconciliationLine(
+                  w('Weighted method value', '子模型加权值'),
+                  money(breakdown['weightedValue']),
+                  w('Before stored adjustments', '已存后置调整前'),
+                ),
+                _researchReconciliationLine(
+                  w('Final published value', '最终已发布估值'),
+                  money(fairValue),
+                  text(breakdown['availableAt']),
+                  accent: true,
+                ),
+              ],
+            );
+            if (bounds.maxWidth < 840) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [chart, const SizedBox(height: 18), reconciliation],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 5, child: chart),
+                const SizedBox(width: 30),
+                Expanded(flex: 3, child: reconciliation),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 22),
+        Divider(color: p.border),
+        const SizedBox(height: 12),
+        Text(w('Model components', '估值子模型'), style: deskHeading(17)),
+        const SizedBox(height: 4),
+        label(
+          'Standalone output × actual stored weight = weighted contribution.',
+          '子模型独立输出 × 实际存储权重 = 加权贡献。',
+          size: 11,
+        ),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (_, bounds) => Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final method in methods)
+                SizedBox(
+                  width: bounds.maxWidth >= 900
+                      ? (bounds.maxWidth - 12) / 2
+                      : bounds.maxWidth,
+                  child: _researchOverviewMethod(method),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 14,
+          runSpacing: 6,
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 620),
+              child: label(
+                '${text(breakdown['modelVersion'], '—')} · ${text(breakdown['period'], '—')} · ${text(breakdown['reconciliationStatus'], '—')}',
+                '${text(breakdown['modelVersion'], '—')} · ${text(breakdown['period'], '—')} · ${text(breakdown['reconciliationStatus'], '—')}',
+                size: 10,
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () {
+                updateUI(() => valuationSection = 'published');
+                selectSection('value');
+              },
+              icon: const Icon(Icons.arrow_forward, size: 15),
+              label: Text(w('Open full reconciliation', '查看完整模型对账')),
+            ),
+          ],
+        ),
+      ],
+    ]);
+  }
+
+  Widget _researchReconciliationLine(
+    String heading,
+    String value,
+    String note, {
+    bool accent = false,
+  }) => Container(
+    padding: const EdgeInsets.symmetric(vertical: 11),
+    decoration: BoxDecoration(
+      border: Border(bottom: BorderSide(color: p.border)),
+    ),
+    child: Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(heading, style: TextStyle(color: p.text, fontSize: 12)),
+              const SizedBox(height: 3),
+              label(note, note, size: 9),
+            ],
+          ),
+        ),
+        Text(
+          value,
+          style: deskHeading(20).copyWith(color: accent ? p.accent : p.text),
+        ),
+      ],
+    ),
+  );
+
+  Widget _researchOverviewMethod(Map<String, dynamic> method) {
+    final included = method['status'] == 'included';
+    final steps = asList(method['steps']);
+    final parameters = asList(method['parameters']);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: p.card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: included ? p.accent.withValues(alpha: .35) : p.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(text(method['label']), style: deskHeading(15)),
+              ),
+              researchTag(
+                included ? w('Included', '已采用') : w('Not used', '未采用'),
+                included ? p.accent : p.secondary,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 20,
+            runSpacing: 10,
+            children: [
+              valuationSummary(
+                method['output'] == null ? 'N/A' : money(method['output']),
+                'Standalone',
+                '独立输出',
+              ),
+              valuationSummary(
+                method['weight'] == null ? '—' : pct(method['weight']),
+                'Weight',
+                '权重',
+              ),
+              valuationSummary(
+                included ? money(method['contribution']) : '—',
+                'Contribution',
+                '贡献',
+              ),
+            ],
+          ),
+          if (text(method['exclusionReason']).isNotEmpty) ...[
+            const SizedBox(height: 10),
+            label(
+              text(method['exclusionReason']),
+              text(method['exclusionReason']),
+              size: 10,
+              color: p.secondary,
+            ),
+          ],
+          if (steps.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            for (final step in steps)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 7),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.calculate_outlined, size: 14, color: p.accent),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        '${text(step['formula'])} = ${nullableNumber(step['output']) == null ? '—' : formatNumber(number(step['output']))}',
+                        style: TextStyle(
+                          color: p.muted,
+                          fontSize: 10,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+          if (parameters.isNotEmpty)
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: EdgeInsets.zero,
+              title: Text(
+                w('Inputs used in this snapshot', '该快照采用的输入'),
+                style: const TextStyle(fontSize: 11),
+              ),
+              children: [
+                for (final input in parameters)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 7),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: label(
+                            text(input['label']),
+                            text(input['label']),
+                            size: 10,
+                          ),
+                        ),
+                        Text(
+                          nullableNumber(input['value']) == null
+                              ? '—'
+                              : formatNumber(number(input['value'])),
+                          style: TextStyle(color: p.text, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  List<({String key, String en, String zh, String unit})>
+  get _researchStatementRows => switch (researchStatement) {
+    'balance' => [
+      (
+        key: 'cashneq',
+        en: 'Cash & equivalents',
+        zh: '现金及等价物',
+        unit: 'currency',
+      ),
+      (key: 'receivables', en: 'Receivables', zh: '应收款项', unit: 'currency'),
+      (key: 'inventory', en: 'Inventory', zh: '存货', unit: 'currency'),
+      (key: 'assetsc', en: 'Current assets', zh: '流动资产', unit: 'currency'),
+      (
+        key: 'ppnenet',
+        en: 'Net property, plant & equipment',
+        zh: '物业厂房设备净额',
+        unit: 'currency',
+      ),
+      (
+        key: 'intangibles',
+        en: 'Intangible assets',
+        zh: '无形资产',
+        unit: 'currency',
+      ),
+      (key: 'assets', en: 'Total assets', zh: '总资产', unit: 'currency'),
+      (key: 'payables', en: 'Payables', zh: '应付款项', unit: 'currency'),
+      (
+        key: 'liabilitiesc',
+        en: 'Current liabilities',
+        zh: '流动负债',
+        unit: 'currency',
+      ),
+      (key: 'debt', en: 'Total debt', zh: '总债务', unit: 'currency'),
+      (
+        key: 'liabilities',
+        en: 'Total liabilities',
+        zh: '总负债',
+        unit: 'currency',
+      ),
+      (key: 'equity', en: 'Shareholders’ equity', zh: '股东权益', unit: 'currency'),
+      (
+        key: 'workingcapital',
+        en: 'Working capital',
+        zh: '营运资本',
+        unit: 'currency',
+      ),
+      (key: 'invcap', en: 'Invested capital', zh: '投入资本', unit: 'currency'),
+      (key: 'deposits', en: 'Deposits', zh: '存款', unit: 'currency'),
+    ],
+    'cash' => [
+      (
+        key: 'ncfo',
+        en: 'Cash from operations',
+        zh: '经营活动现金流',
+        unit: 'currency',
+      ),
+      (key: 'capex', en: 'Capital expenditure', zh: '资本支出', unit: 'currency'),
+      (key: 'fcf', en: 'Free cash flow', zh: '自由现金流', unit: 'currency'),
+      (key: 'ncfi', en: 'Cash from investing', zh: '投资活动现金流', unit: 'currency'),
+      (key: 'ncff', en: 'Cash from financing', zh: '融资活动现金流', unit: 'currency'),
+      (
+        key: 'sbcomp',
+        en: 'Stock-based compensation',
+        zh: '股权激励',
+        unit: 'currency',
+      ),
+      (
+        key: 'ncfcommon',
+        en: 'Net common stock financing',
+        zh: '普通股净融资',
+        unit: 'currency',
+      ),
+      (key: 'ncfdebt', en: 'Net debt financing', zh: '债务净融资', unit: 'currency'),
+      (key: 'ncfdiv', en: 'Cash dividends', zh: '现金股息', unit: 'currency'),
+      (
+        key: 'depamor',
+        en: 'Depreciation & amortization',
+        zh: '折旧与摊销',
+        unit: 'currency',
+      ),
+      (key: 'ncf', en: 'Net change in cash', zh: '现金净变动', unit: 'currency'),
+    ],
+    _ => [
+      (key: 'revenue', en: 'Revenue', zh: '营业收入', unit: 'currency'),
+      (key: 'cor', en: 'Cost of revenue', zh: '营业成本', unit: 'currency'),
+      (key: 'gp', en: 'Gross profit', zh: '毛利润', unit: 'currency'),
+      (key: 'rnd', en: 'Research & development', zh: '研发费用', unit: 'currency'),
+      (
+        key: 'sgna',
+        en: 'Selling, general & administrative',
+        zh: '销售及管理费用',
+        unit: 'currency',
+      ),
+      (key: 'opex', en: 'Operating expenses', zh: '经营费用', unit: 'currency'),
+      (key: 'opinc', en: 'Operating income', zh: '营业利润', unit: 'currency'),
+      (key: 'ebit', en: 'EBIT', zh: '息税前利润', unit: 'currency'),
+      (key: 'intexp', en: 'Interest expense', zh: '利息费用', unit: 'currency'),
+      (key: 'taxexp', en: 'Income tax expense', zh: '所得税费用', unit: 'currency'),
+      (key: 'netinc', en: 'Net income', zh: '净利润', unit: 'currency'),
+      (
+        key: 'netinccmn',
+        en: 'Net income to common',
+        zh: '归属普通股净利润',
+        unit: 'currency',
+      ),
+      (
+        key: 'shareswadil',
+        en: 'Diluted weighted-average shares',
+        zh: '摊薄加权平均股数',
+        unit: 'shares',
+      ),
+      (key: 'dps', en: 'Dividends per share', zh: '每股股息', unit: 'per_share'),
+    ],
+  };
+
+  List<Map<String, dynamic>> _researchFinancialPeriods() {
+    final annual = asList(
+      researchFundamental?['annual'],
+    ).take(8).toList().reversed;
+    final periods = <Map<String, dynamic>>[
+      for (final row in annual)
+        {
+          'label': text(
+            row['reportperiod'],
+            text(row['period_end']),
+          ).split('-').first,
+          'kind': 'annual',
+          'row': row,
+        },
+    ];
+    final quarters = asList(researchFundamental?['quarterly']).take(4).toList();
+    if (quarters.isNotEmpty) {
+      periods.add({
+        'label': researchStatement == 'balance' ? w('Latest', '最新') : 'TTM',
+        'kind': researchStatement == 'balance' ? 'latest' : 'ttm',
+        'row': quarters.first,
+        'rows': quarters,
+      });
+    }
+    return periods;
+  }
+
+  double? _researchFinancialValue(Map<String, dynamic> period, String key) {
+    if (period['kind'] != 'ttm') {
+      return nullableNumber(asMap(period['row'])[key]);
+    }
+    final values = [
+      for (final row in asList(period['rows'])) nullableNumber(row[key]),
+    ];
+    if (values.length != 4 || values.any((value) => value == null)) return null;
+    if (const {'sharesbas', 'shareswa', 'shareswadil', 'dps'}.contains(key)) {
+      return values.first;
+    }
+    return values.fold<double>(0, (sum, value) => sum + value!);
+  }
+
+  void _selectResearchStatement(String statement) {
+    final defaults = switch (statement) {
+      'balance' => ['cashneq', 'debt', 'equity'],
+      'cash' => ['ncfo', 'capex', 'fcf'],
+      _ => ['revenue', 'opinc', 'netinccmn'],
+    };
+    updateUI(() {
+      researchStatement = statement;
+      researchFinancialMetrics = defaults;
+    });
+  }
+
+  void _toggleResearchFinancialMetric(String key, String unit) {
+    updateUI(() {
+      final selected = [...researchFinancialMetrics];
+      if (selected.contains(key)) {
+        if (selected.length > 1) selected.remove(key);
+      } else {
+        final definitions = {
+          for (final row in _researchStatementRows) row.key: row,
+        };
+        final currentUnit = selected.isEmpty
+            ? unit
+            : definitions[selected.first]?.unit;
+        if (currentUnit != unit) selected.clear();
+        if (selected.length >= 3) selected.removeAt(0);
+        selected.add(key);
+      }
+      researchFinancialMetrics = selected;
+    });
+  }
+
+  Widget researchFinancialStatements() {
+    final periods = _researchFinancialPeriods();
+    final definitions = _researchStatementRows;
+    final definitionByKey = {for (final row in definitions) row.key: row};
+    final colors = [p.accent, p.secondary, const Color(0xff73a7ff)];
+    final selected = [
+      for (var index = 0; index < researchFinancialMetrics.length; index++)
+        if (definitionByKey[researchFinancialMetrics[index]] case final row?)
+          _ResearchFinancialSeries(
+            keyName: row.key,
+            label: w(row.en, row.zh),
+            color: colors[index % colors.length],
+            values: [
+              for (final period in periods)
+                _researchFinancialValue(period, row.key),
+            ],
+          ),
+    ];
+    return card([
+      LayoutBuilder(
+        builder: (_, bounds) {
+          final heading = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              label(
+                'FINANCIAL STATEMENTS',
+                '基本财务信息',
+                size: 10,
+                color: p.accent,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                w('Three statements. One comparison chart.', '三张报表，一张可交互比较图'),
+                style: deskHeading(22),
+              ),
+              const SizedBox(height: 5),
+              label(
+                'Select up to three rows. The chart updates immediately; missing facts stay missing.',
+                '最多选择三行，上方柱状图会立即更新；缺失事实继续显示为空。',
+                size: 11,
+              ),
+            ],
+          );
+          final basis = researchTag(
+            '${text(researchFundamental?['reportedBasis'], 'ARQ / ARY')} · ${text(company?['currency'], '—')}',
+            p.muted,
+          );
+          if (bounds.maxWidth < 650) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [heading, const SizedBox(height: 10), basis],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: heading),
+              const SizedBox(width: 12),
+              basis,
+            ],
+          );
+        },
+      ),
+      const SizedBox(height: 14),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final statement in [
+            ('income', 'Income statement', '利润表'),
+            ('balance', 'Balance sheet', '资产负债表'),
+            ('cash', 'Cash flow', '现金流量表'),
+          ])
+            ChoiceChip(
+              key: ValueKey('research-statement-${statement.$1}'),
+              label: Text(w(statement.$2, statement.$3)),
+              selected: researchStatement == statement.$1,
+              onSelected: (_) => _selectResearchStatement(statement.$1),
+            ),
+        ],
+      ),
+      const SizedBox(height: 14),
+      if (researchFinancialsLoading) ...[
+        const LinearProgressIndicator(),
+        const SizedBox(height: 10),
+        label('Loading reported statements…', '正在载入已报告财务报表…', size: 11),
+      ] else if (researchFinancialsError != null)
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: p.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: p.border),
+          ),
+          child: label(
+            'The statement history could not be loaded. No values are substituted.',
+            '财务报表历史暂时无法载入；系统不会填入替代数值。',
+            color: p.secondary,
+          ),
+        )
+      else if (periods.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 32),
+          child: label(
+            'No comparable annual statement history is available at this cutoff.',
+            '该截止日没有可比的年度财务报表历史。',
+          ),
+        )
+      else ...[
+        Container(
+          key: const ValueKey('research-financial-chart'),
+          height: MediaQuery.sizeOf(context).width < 600 ? 270 : 320,
+          padding: const EdgeInsets.fromLTRB(4, 16, 4, 4),
+          decoration: BoxDecoration(
+            color: p.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: p.border),
+          ),
+          child: _ResearchFinancialBarChart(
+            periods: [for (final period in periods) text(period['label'])],
+            series: selected,
+            muted: p.muted,
+            textColor: p.text,
+            grid: p.border,
+          ),
+        ),
+        const SizedBox(height: 12),
+        label(
+          researchStatement == 'balance'
+              ? 'Annual as-reported balances plus the latest reported quarter. Click any row to redraw the chart.'
+              : 'Annual as-reported values plus TTM from four available as-reported quarters. Click any row to redraw the chart.',
+          researchStatement == 'balance'
+              ? '年度原始报告余额加最新已报告季度；点击任一行即可重绘图表。'
+              : '年度原始报告数值加最近四个可用原始季度合计；点击任一行即可重绘图表。',
+          size: 10,
+        ),
+        const SizedBox(height: 10),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            key: ValueKey('research-financial-table-$researchStatement'),
+            headingRowHeight: 42,
+            dataRowMinHeight: 48,
+            dataRowMaxHeight: 52,
+            columns: [
+              DataColumn(label: Text(w('Reported line item', '报表项目'))),
+              for (final period in periods)
+                DataColumn(label: Text(text(period['label'])), numeric: true),
+            ],
+            rows: [
+              for (final row in definitions)
+                DataRow(
+                  selected: researchFinancialMetrics.contains(row.key),
+                  onSelectChanged: (_) =>
+                      _toggleResearchFinancialMetric(row.key, row.unit),
+                  cells: [
+                    DataCell(
+                      Row(
+                        key: ValueKey('research-financial-row-${row.key}'),
+                        children: [
+                          Container(
+                            width: 4,
+                            height: 30,
+                            decoration: BoxDecoration(
+                              color: researchFinancialMetrics.contains(row.key)
+                                  ? selected
+                                            .where(
+                                              (series) =>
+                                                  series.keyName == row.key,
+                                            )
+                                            .map((series) => series.color)
+                                            .firstOrNull ??
+                                        p.accent
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                          ),
+                          const SizedBox(width: 9),
+                          SizedBox(width: 210, child: Text(w(row.en, row.zh))),
+                        ],
+                      ),
+                    ),
+                    for (final period in periods)
+                      DataCell(
+                        Text(
+                          _researchFinancialValue(period, row.key) == null
+                              ? '—'
+                              : formatNumber(
+                                  _researchFinancialValue(period, row.key)!,
+                                ),
+                        ),
+                      ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        label(
+          'Source: Fact OS · Sharadar SF1 as-reported ARY/ARQ · values use the issuer reporting currency and are not zero-filled.',
+          '来源：Fact OS · Sharadar SF1 原始报告 ARY/ARQ · 数值使用发行人报告币种，且不补零。',
+          size: 10,
+        ),
+      ],
+    ]);
+  }
+
+  // Retained for replaying older research layouts without showing it in the
+  // current overview.
+  // ignore: unused_element
   Widget researchFactInsight() {
     final fact = researchFundamental;
     final judgment = asMap(fact?['judgment']);
@@ -1135,6 +2476,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     ]);
   }
 
+  // ignore: unused_element
   Widget researchChart() {
     final all = researchHistory;
     final prices = researchDatedRows(
@@ -1512,6 +2854,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     ]);
   }
 
+  // ignore: unused_element
   Widget researchNextStep() {
     final hasPlatformModel = researchHasPlatformModel;
     return card([
@@ -1561,6 +2904,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     ]);
   }
 
+  // ignore: unused_element
   Widget researchMetricStrip() => LayoutBuilder(
     builder: (_, bounds) => Wrap(
       spacing: 12,
@@ -1603,6 +2947,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     ),
   );
 
+  // ignore: unused_element
   Widget researchGuidance() {
     final evidence = asList(asMap(company?['guidance'])['evidence']);
     final audit = asMap(asMap(company?['guidance'])['audit']);
@@ -1712,6 +3057,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     ),
   );
 
+  // ignore: unused_element
   Widget researchHolders() {
     final holders = orderedDisclosedHolders(asList(company?['provenance']), '');
     return card([
@@ -1759,6 +3105,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     ]);
   }
 
+  // ignore: unused_element
   Widget researchCountercase() {
     final m = asList(
       company?['metrics'],
@@ -1812,6 +3159,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     ]);
   }
 
+  // ignore: unused_element
   Widget researchModelCard() {
     final published = asMap(company?['published']);
     if (!researchHasPlatformModel) {

@@ -414,10 +414,13 @@ class FactRepository:
 
     _FUNDAMENTAL_RESEARCH_FIELDS = (
         'ticker', 'dimension', 'calendardate', 'date', 'reportperiod', 'fiscalperiod',
-        'lastupdated', 'revenue', 'gp', 'opinc', 'ebit', 'netinccmn', 'ncfo', 'capex',
-        'fcf', 'sbcomp', 'rnd', 'sgna', 'sharesbas', 'shareswa', 'shareswadil',
-        'ncfcommon', 'ncfdiv', 'invcap', 'debt', 'cashneq', 'intexp',
-        'workingcapital', 'assets', 'equity', 'deposits', 'roic', 'dps', 'currency',
+        'lastupdated', 'revenue', 'cor', 'gp', 'opex', 'opinc', 'ebit', 'intexp',
+        'taxexp', 'netinc', 'netinccmn', 'rnd', 'sgna', 'sharesbas', 'shareswa',
+        'shareswadil', 'dps', 'cashneq', 'receivables', 'inventory', 'assetsc',
+        'ppnenet', 'intangibles', 'assets', 'payables', 'liabilitiesc', 'debt',
+        'liabilities', 'equity', 'workingcapital', 'invcap', 'deposits', 'ncfo',
+        'capex', 'fcf', 'ncfi', 'ncff', 'sbcomp', 'ncfcommon', 'ncfdebt',
+        'ncfdiv', 'depamor', 'ncf', 'roic', 'currency',
     )
 
     @staticmethod

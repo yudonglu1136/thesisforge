@@ -54,11 +54,15 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       researchRecordsData;
   bool researchPanelLoading = false;
   String? researchPanelError;
+  bool researchFinancialsLoading = false;
+  String? researchFinancialsError;
+  String researchStatement = 'income';
+  List<String> researchFinancialMetrics = ['revenue', 'netinccmn'];
   Map<String, dynamic> assumptions = {};
   bool busy = false, ownership = false, priority = false;
   bool ruleEnabled = false, draftDirty = false, reviewOriginal = false;
   Map<String, dynamic>? discoveryData, selectedGuru, entryEvidence;
-  Map<String, dynamic> valueFlowSelection = {};
+  Map<String, dynamic> aiInsightsSelection = {};
   Map<String, dynamic> fundamentalSelection = {};
   Map<String, dynamic> guruStudySelection = {};
   Map<String, dynamic>? homeExample;
@@ -300,10 +304,32 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           'gurus',
           'managers',
           'fundamentals',
-          'valueflow',
+          'aiinsights',
         }.contains(query['discoverTab'])
         ? query['discoverTab']!
+        : query['discoverTab'] == 'valueflow'
+        ? 'aiinsights'
         : 'gurus';
+    aiInsightsSelection = {
+      for (final key in [
+        'quarter',
+        'tab',
+        'metric',
+        'group',
+        'sector',
+        'sort',
+        'query',
+        'snapshotId',
+      ])
+        if (query['ai_$key'] != null) key: query['ai_$key'],
+      if (query['ai_window'] != null)
+        'window': int.tryParse(query['ai_window']!) ?? 8,
+      if (query['ai_tickers'] != null)
+        'tickers': query['ai_tickers']!.split(','),
+    };
+    if (query['discoverTab'] == 'valueflow') {
+      replaceBrowserQuery({'discoverTab': 'aiinsights'}, replaceCurrent: true);
+    }
     // Guru consensus owns a compact, cacheable bootstrap payload. Loading the
     // full home dashboard here previously added an unrelated database pass to
     // first paint. Screens that consume home state still request it normally.
@@ -316,8 +342,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     managerDesk = query['workspace'] == 'manager';
     homeResearchDesk = managerDesk || query['workspace'] == 'research';
     if ((page == 'home' && homeResearchDesk) ||
-        (page == 'discover' &&
-            const {'fundamentals', 'valueflow'}.contains(discoveryTab))) {
+        (page == 'discover' && discoveryTab == 'fundamentals')) {
       unawaited(loadOpportunities());
     }
     if (page == 'home' && homeResearchDesk) {
@@ -346,7 +371,13 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           origin: query['origin'] ?? 'direct_research',
           initialSection: query['section'],
           evidence: query['entryGuru'] == null
-              ? null
+              ? (query['origin'] == 'ai_insights'
+                    ? {
+                        'aiInsights': Map<String, dynamic>.from(
+                          aiInsightsSelection,
+                        ),
+                      }
+                    : null)
               : {
                   'guruId': query['entryGuru'],
                   'accession': query['entryFiling'],
@@ -438,12 +469,14 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         !discoveryLoading) {
       unawaited(loadDiscovery());
     }
-    if (value == 'discover' && institutional13f == null && !insightLoading) {
+    if (value == 'discover' &&
+        discoveryTab == 'gurus' &&
+        institutional13f == null &&
+        !insightLoading) {
       unawaited(load13FInsights());
     }
     if (((value == 'home' && homeResearchDesk) ||
-            (value == 'discover' &&
-                const {'fundamentals', 'valueflow'}.contains(discoveryTab))) &&
+            (value == 'discover' && discoveryTab == 'fundamentals')) &&
         opportunities == null &&
         !opportunityLoading) {
       unawaited(loadOpportunities());
@@ -497,6 +530,10 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       researchRecordsData = null;
       researchPanelLoading = false;
       researchPanelError = null;
+      researchFinancialsLoading = false;
+      researchFinancialsError = null;
+      researchStatement = 'income';
+      researchFinancialMetrics = ['revenue', 'netinccmn'];
       review = null;
       scenarioId = null;
       scenarioParentId = null;
@@ -648,6 +685,20 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       fillAssumptions();
       worksheetSavedFingerprint = worksheetFingerprint();
       navigate('research');
+      // Deep links must load the same lazy panel as an in-app tab click. The
+      // route already knows the requested section; leaving it empty until the
+      // user clicks the active tab made refreshed Research links look as if
+      // their 13F/document coverage were missing.
+      if (section == 'financials' &&
+          (researchDocumentsData == null || researchFundamental == null)) {
+        unawaited(loadResearchPanel('financials'));
+      } else if (section == 'evidence' && researchNeedsFullFinancials) {
+        unawaited(loadResearchOverviewFinancials());
+      } else if (section == 'institutions' && researchInstitution == null) {
+        unawaited(loadResearchPanel('institutions'));
+      } else if (section == 'records' && researchRecordsData == null) {
+        unawaited(loadResearchPanel('records'));
+      }
       if (assumptions.isNotEmpty) await recalculate();
     } catch (e) {
       if (mounted && serial == requestSerial) {
@@ -940,6 +991,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       'notes': notes.text,
       'priority': priority,
       'sourceGuruIds': sourceGuruIds.toList(),
+      if (discoveryOrigin == 'ai_insights' && sourceGuruIds.isEmpty)
+        'discoveryContext': asMap(entryEvidence?['aiInsights']),
       if (opportunityReturnDate.isNotEmpty && ticker == opportunityTicker)
         'candidateContext': {
           'lens':
@@ -955,7 +1008,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
               ? opportunityQuarter
               : null,
         },
-      if (entryEvidence != null)
+      if (text(entryEvidence?['guruId']).isNotEmpty)
         'entryEvidence': {
           'guruId': entryEvidence?['guruId'],
           'accession': entryEvidence?['accession'],
@@ -1017,6 +1070,22 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
             asMap(asMap(data['decision'])['entryEvidence']).isNotEmpty
             ? asMap(asMap(data['decision'])['entryEvidence'])
             : asList(asMap(data['decision'])['discovery']).firstOrNull;
+        if (discoveryOrigin == 'ai_insights') {
+          final savedContext = asMap(
+            asMap(data['decision'])['discoveryContext'],
+          );
+          aiInsightsSelection = {
+            ...asMap(savedContext['filters']),
+            'quarter': savedContext['selectedQuarter'],
+            'window': savedContext['window'] ?? 8,
+            'snapshotId': savedContext['snapshotId'],
+            'tickers': savedContext['compareTickers'] ?? <String>[],
+          };
+          entryEvidence = {
+            'aiInsights': Map<String, dynamic>.from(aiInsightsSelection),
+          };
+          discoveryTab = 'aiinsights';
+        }
         sourceGuruIds.clear();
         reviewNotes.clear();
         units.text = text(data['activeUnits']);
