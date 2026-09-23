@@ -120,7 +120,38 @@ class AiInsightsFixtureApi extends ApiClient {
         'group': 'hardware',
         'series': [
           for (final q in ['2026Q1', '2026Q2'])
-            {'quarter': q, 'yoy': .2, 'qoq': -.05},
+            {
+              'quarter': q,
+              'yoy': .2,
+              'qoq': -.05,
+              'yoyComparison': {
+                'priorQuarter': q == '2026Q1' ? '2025Q1' : '2025Q2',
+                'prior': 100e6,
+                'comparable': 2,
+                'leaderStatus': 'available',
+                'topContributor': {
+                  'ticker': 'CRDO',
+                  'name': 'Credo fixture',
+                  'delta': 20e6,
+                  'current': 50e6,
+                  'prior': 30e6,
+                  'contribution': .2,
+                  'tiedCount': 1,
+                  'currentEvidence': {
+                    'reportperiod': '2026-06-30',
+                    'datekey': '2026-08-01',
+                  },
+                  'priorEvidence': {
+                    'reportperiod': '2025-06-30',
+                    'datekey': '2025-08-01',
+                  },
+                },
+              },
+              'qoqComparison': {
+                'leaderStatus': 'no_positive_contributor',
+                'topContributor': null,
+              },
+            },
         ],
       },
     ],
@@ -261,6 +292,92 @@ void main() {
       expect(aiInsightsAmount(-1e9), '−\$1.0B');
       expect(aiInsightsPercent(null), '—');
       expect(aiInsightsPercent(-.2), '-20.0%');
+    },
+  );
+
+  testWidgets(
+    'sector cells show logos, contribution evidence and preserve quarter navigation',
+    (tester) async {
+      final api = AiInsightsFixtureApi();
+      Map<String, dynamic> selection = {};
+      await mountAi(tester, api, onSelection: (value) => selection = value);
+      final grid = find.byKey(const ValueKey('ai-sector-heatmap-grid'));
+      expect(tester.getSize(grid).width, greaterThan(1300));
+      final cell = find.byKey(
+        const ValueKey('ai-sector-cell-interconnect-2026Q1'),
+      );
+      expect(tester.getSize(cell).height, greaterThanOrEqualTo(100));
+      expect(
+        find.descendant(of: cell, matching: find.byType(StockLogo)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: cell, matching: find.text('+20.0 pp')),
+        findsOneWidget,
+      );
+      final tooltip = tester.widget<Tooltip>(
+        find.ancestor(of: cell, matching: find.byType(Tooltip)).first,
+      );
+      expect(
+        tooltip.message,
+        contains('Revenue increase \$20.0M ÷ sector base \$100M'),
+      );
+      expect(tooltip.message, contains('2025Q1 → 2026Q1'));
+      expect(tooltip.message, contains('QoQ -5.0% (unadjusted)'));
+      await tapAi(tester, cell);
+      expect(selection['quarter'], '2026Q1');
+      expect(selection['sector'], 'interconnect');
+      expect(selection['selected'], 'CRDO');
+      expect(selection['tab'], 'companies');
+      expect(api.calls.length, 2);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'heatmap basis toggle removes positive-company badge when there is no positive contributor',
+    (tester) async {
+      final api = AiInsightsFixtureApi();
+      await mountAi(tester, api);
+      await tapAi(
+        tester,
+        find.widgetWithText(ChoiceChip, 'QoQ · unadjusted').last,
+      );
+      final grid = find.byKey(const ValueKey('ai-sector-heatmap-grid'));
+      expect(
+        find.descendant(of: grid, matching: find.byType(StockLogo)),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: grid,
+          matching: find.text('No positive contributor'),
+        ),
+        findsNWidgets(2),
+      );
+      expect(api.calls.length, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'sector labels stay fixed on 390px horizontal scroll',
+    (tester) async {
+      final api = AiInsightsFixtureApi();
+      await mountAi(tester, api, width: 390, language: AppLanguage.zh);
+      final grid = find.byKey(const ValueKey('ai-sector-heatmap-grid'));
+      final label = find.descendant(of: grid, matching: find.text('互连'));
+      final x = tester.getTopLeft(label).dx;
+      final scroll = find.descendant(
+        of: grid,
+        matching: find.byType(SingleChildScrollView),
+      );
+      await tester.ensureVisible(label);
+      await tester.drag(scroll, const Offset(-180, 0));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(label).dx, x);
+      expect(tester.getRect(grid).right, lessThanOrEqualTo(390));
+      expect(tester.takeException(), isNull);
     },
   );
 

@@ -91,6 +91,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
       comparisonFailed = false;
   List<String> tickers = ['CRDO', 'ALAB'];
   final search = TextEditingController();
+  final sectorScroll = ScrollController();
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
   Map<String, dynamic> get snapshot => asMap(data?['context']);
@@ -207,6 +208,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
     requestSerial++;
     comparisonSerial++;
     search.dispose();
+    sectorScroll.dispose();
     super.dispose();
   }
 
@@ -854,20 +856,9 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
           ),
         ]),
         const SizedBox(height: 16),
-        if (width >= 1080)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: sectorHeatmap()),
-              const SizedBox(width: 16),
-              Expanded(child: contributions()),
-            ],
-          )
-        else ...[
-          sectorHeatmap(),
-          const SizedBox(height: 16),
-          contributions(),
-        ],
+        sectorHeatmap(),
+        const SizedBox(height: 16),
+        contributions(),
         const SizedBox(height: 16),
         observations(),
         const SizedBox(height: 16),
@@ -1047,97 +1038,264 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
   Widget sectorHeatmap() {
     final sectors = asList(data?['sectors']);
     return panel([
-      title(
-        'Where is growth accelerating?',
-        '哪些环节增长更快？',
-        hintEn:
-            '${metric == 'yoy' ? 'YoY' : 'QoQ'} revenue growth · select a cell to open company rankings',
-        hintZh: '${metric == 'yoy' ? 'YoY' : 'QoQ'} 营收增速 · 点选单元格查看公司榜单',
+      Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        spacing: 16,
+        runSpacing: 8,
+        children: [
+          title(
+            'Where is growth accelerating?',
+            '哪些环节增长更快？',
+            hintEn: 'Sector growth + the company contributing most to it',
+            hintZh: '子行业增速 + 每季增长贡献最大的公司',
+          ),
+          basisToggle(),
+        ],
       ),
+      caption(
+        'Logo = largest positive revenue contribution · pp = contribution to sector growth, not the company’s own growth. Hover or long-press for evidence; select a cell for rankings.',
+        'Logo 标记收入增量贡献第一名 · pp 为对子行业增速的贡献，不是公司自身增速。悬停或长按查看依据，点击格子打开榜单。',
+      ),
+      const SizedBox(height: 16),
       if (sectors.isEmpty)
         caption('No comparable sector data for this cutoff.', '该截止日暂无可比环节数据。')
       else
-        scrollTable(
-          DataTable(
-            horizontalMargin: 0,
-            columnSpacing: 10,
-            headingTextStyle: style(10, false, p.muted),
-            dataRowMinHeight: 38,
-            dataRowMaxHeight: 46,
-            columns: [
-              DataColumn(label: Text(w('Sector', '环节'))),
-              for (final row in series)
-                DataColumn(
-                  label: Text(text(row['quarter']).replaceFirst('20', '')),
-                ),
-            ],
-            rows: [
-              for (final row in sectors)
-                DataRow(
-                  cells: [
-                    DataCell(
-                      SizedBox(
-                        width: 120,
-                        child: Text(
-                          localized(row['label'], text(row['id'])),
-                          style: style(11),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final narrow = constraints.maxWidth < 600;
+            final labelWidth = narrow ? 112.0 : 144.0;
+            final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+            final cellWidth = math.max(
+              (narrow ? 116.0 : 96.0) * scale,
+              (constraints.maxWidth - labelWidth) / math.max(series.length, 1),
+            );
+            final rowHeight = 108.0 * scale;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (labelWidth + cellWidth * series.length >
+                    constraints.maxWidth)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: caption(
+                      'Scroll quarters → · sector labels stay in view',
+                      '横向滑动查看季度 → · 行业名称保持可见',
+                    ),
+                  ),
+                Row(
+                  key: const ValueKey('ai-sector-heatmap-grid'),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: labelWidth,
+                      child: Column(
+                        children: [
+                          SizedBox(
+                            height: 40 * scale,
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                w('Sector', '环节'),
+                                style: style(12, false, p.muted),
+                              ),
+                            ),
+                          ),
+                          for (final row in sectors)
+                            Container(
+                              height: rowHeight,
+                              alignment: Alignment.centerLeft,
+                              padding: const EdgeInsets.only(right: 14),
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  bottom: BorderSide(color: p.border),
+                                ),
+                              ),
+                              child: Text(
+                                localized(row['label'], text(row['id'])),
+                                style: style(13, true),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: Scrollbar(
+                        controller: sectorScroll,
+                        thumbVisibility: true,
+                        child: SingleChildScrollView(
+                          controller: sectorScroll,
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              for (final period in series)
+                                SizedBox(
+                                  width: cellWidth,
+                                  child: Column(
+                                    children: [
+                                      SizedBox(
+                                        height: 40 * scale,
+                                        child: Center(
+                                          child: Text(
+                                            text(
+                                              period['quarter'],
+                                            ).replaceFirst('20', ''),
+                                            style: style(12, true, p.muted),
+                                          ),
+                                        ),
+                                      ),
+                                      for (final row in sectors)
+                                        SizedBox(
+                                          height: rowHeight,
+                                          child: sectorGrowthCell(row, period),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                    for (final period in series)
-                      DataCell(
-                        Builder(
-                          builder: (_) {
-                            final point = asList(row['series'])
-                                .where((v) => v['quarter'] == period['quarter'])
-                                .firstOrNull;
-                            final value = nullableNumber(point?[metric]);
-                            return InkWell(
-                              onTap: () {
-                                group = text(row['group'], 'all');
-                                sector = text(row['id']);
-                                tab = 'companies';
-                                sort = metric == 'yoy'
-                                    ? 'revenueYoY'
-                                    : 'revenueQoQ';
-                                if (period['quarter'] != quarter) {
-                                  setQuarter(text(period['quarter']));
-                                } else {
-                                  setState(() {});
-                                  remember();
-                                }
-                              },
-                              child: Container(
-                                width: 58,
-                                height: 30,
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  color: value == null
-                                      ? p.card
-                                      : (value >= 0 ? p.accent : p.secondary)
-                                            .withValues(
-                                              alpha:
-                                                  .08 +
-                                                  math.min(value.abs(), 1) *
-                                                      .32,
-                                            ),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  aiInsightsPercent(value),
-                                  style: style(10, true),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+    ]);
+  }
+
+  Widget sectorGrowthCell(
+    Map<String, dynamic> row,
+    Map<String, dynamic> period,
+  ) {
+    final point = asList(
+      row['series'],
+    ).where((v) => v['quarter'] == period['quarter']).firstOrNull;
+    final value = nullableNumber(point?[metric]);
+    final comparison = asMap(point?['${metric}Comparison']);
+    final leader = asMap(comparison['topContributor']);
+    final hasLeader =
+        value != null && (nullableNumber(leader['contribution']) ?? 0) > 0;
+    final name = localized(row['label'], text(row['id']));
+    final basis = metric == 'yoy' ? 'YoY' : 'QoQ';
+    final empty = comparison['leaderStatus'] == 'no_positive_contributor'
+        ? w('No positive contributor', '暂无正贡献公司')
+        : w('Not comparable', '暂无可比贡献');
+    final current = asMap(leader['currentEvidence']);
+    final prior = asMap(leader['priorEvidence']);
+    final ties = (nullableNumber(leader['tiedCount']) ?? 1).toInt();
+    final tooltip = [
+      '$name · ${text(period['quarter'])}',
+      'YoY ${aiInsightsPercent(point?['yoy'])} · QoQ ${aiInsightsPercent(point?['qoq'])} ${w('(unadjusted)', '（未季调）')}',
+      if (hasLeader) ...[
+        '${text(leader['ticker'])} · ${text(leader['name'])}',
+        w(
+          'Largest positive $basis contribution: ${pp(leader['contribution'])}',
+          '$basis 最大正贡献：${pp(leader['contribution'])}',
+        ),
+        '${aiInsightsAmount(leader['prior'])} → ${aiInsightsAmount(leader['current'])}',
+        w(
+          'Revenue increase ${aiInsightsAmount(leader['delta'])} ÷ sector base ${aiInsightsAmount(comparison['prior'])}',
+          '收入增量 ${aiInsightsAmount(leader['delta'])} ÷ 行业基期 ${aiInsightsAmount(comparison['prior'])}',
+        ),
+        '${text(comparison['priorQuarter'])} → ${text(period['quarter'])} · ${comparison['comparable']} ${w('comparable companies', '家可比公司')}',
+        w(
+          'Report ends: ${text(prior['reportperiod'], '—')} → ${text(current['reportperiod'], '—')}',
+          '实际报告期末：${text(prior['reportperiod'], '—')} → ${text(current['reportperiod'], '—')}',
+        ),
+        w(
+          'Disclosed: ${text(prior['datekey'], '—')} / ${text(current['datekey'], '—')}',
+          '披露日：${text(prior['datekey'], '—')} / ${text(current['datekey'], '—')}',
+        ),
+        if (ties > 1)
+          w(
+            '$ties tied leaders; first ticker shown alphabetically.',
+            '$ties 家并列第一，按代码顺序展示。',
+          ),
+      ] else
+        empty,
+    ].join('\n');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+      child: Tooltip(
+        message: tooltip,
+        excludeFromSemantics: true,
+        constraints: const BoxConstraints(maxWidth: 340),
+        padding: const EdgeInsets.all(12),
+        child: Semantics(
+          label: tooltip,
+          button: true,
+          child: Material(
+            color: value == null
+                ? p.card
+                : (value >= 0 ? p.accent : p.secondary).withValues(
+                    alpha: .08 + math.min(value.abs(), 1) * .32,
+                  ),
+            borderRadius: BorderRadius.circular(8),
+            child: InkWell(
+              key: ValueKey('ai-sector-cell-${row['id']}-${period['quarter']}'),
+              borderRadius: BorderRadius.circular(8),
+              onTap: () {
+                group = text(row['group'], 'all');
+                sector = text(row['id']);
+                tab = 'companies';
+                sort = metric == 'yoy' ? 'revenueYoY' : 'revenueQoQ';
+                if (hasLeader) selectedTicker = text(leader['ticker']);
+                if (period['quarter'] != quarter) {
+                  setQuarter(text(period['quarter']));
+                } else {
+                  setState(() {});
+                  remember();
+                }
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(aiInsightsPercent(value), style: style(16, true)),
+                    const SizedBox(height: 8),
+                    if (hasLeader) ...[
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          StockLogo(
+                            ticker: text(leader['ticker']),
+                            palette: p,
+                            size: 23,
+                          ),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              '${text(leader['ticker'])}${ties > 1 ? ' ≈' : ''}',
+                              style: style(12, true),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        pp(leader['contribution']),
+                        style: style(11, false, p.text),
+                      ),
+                    ] else
+                      Text(
+                        empty,
+                        textAlign: TextAlign.center,
+                        style: style(10, false, p.muted),
                       ),
                   ],
                 ),
-            ],
+              ),
+            ),
           ),
         ),
-    ]);
+      ),
+    );
   }
 
   List<Map<String, dynamic>> contributionRows(String id) {

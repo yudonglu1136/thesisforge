@@ -25,6 +25,55 @@ function artifact(generationId = 'generationA', scale = 1) {
     sourceManifestSha256: `source-${generationId}`, generatedAt: '2026-09-01T00:00:00Z', companies, facts };
 }
 const now = () => new Date('2026-09-22T12:00:00Z');
+test('sector heatmap leaders use comparable dollar contribution, not issuer growth or absolute declines', () => {
+  const raw = artifact();
+  raw.companies = ['LARGE', 'FAST', 'DECLINE', 'FUTURE', 'SPIN'].map(ticker => ({
+    ticker, name: ticker, group: 'hardware', sector: 'chips',
+    ...(ticker === 'SPIN' ? { corporateActions: [{ type: 'spunofffrom', counterpartyTicker: 'LARGE', date: '2026-04-01', knownAt: '2026-04-01' }] } : {}),
+  }));
+  const values = { LARGE: [1000, 1300, 1400], FAST: [10, 10, 250], DECLINE: [2000, 1900, 100], FUTURE: [100, 100, 10000], SPIN: [100, 100, 5000] };
+  raw.facts = raw.companies.flatMap(c => ['2025-06-30', '2026-03-31', '2026-06-30'].map((period, i) => ({
+    ticker: c.ticker, calendardate: period, reportperiod: period, datekey: i === 2 ? (c.ticker === 'FUTURE' ? '2026-09-30' : '2026-08-01') : period,
+    revenue: values[c.ticker][i], revenueusd: values[c.ticker][i], currency: 'USD', sourceRevisionId: `${c.ticker}:${period}`,
+  })));
+  const service = createAiInsightsService({ now, artifactLoader: () => raw });
+  const view = service.overview({ quarter: '2026Q2', asOf: '2026-09-22' });
+  const point = view.sectors[0].series.at(-1);
+  const yoy = point.yoyComparison, qoq = point.qoqComparison;
+  assert.equal(yoy.topContributor.ticker, 'LARGE');
+  assert.equal(yoy.topContributor.delta, 400);
+  assert.equal(yoy.topContributor.contribution, 400 / 3010);
+  assert.equal(yoy.topContributor.priorEvidence.sourceRevisionId, 'LARGE:2025-06-30');
+  assert.equal(yoy.topContributor.currentEvidence.datekey, '2026-08-01');
+  assert.equal(yoy.leaderStatus, 'available');
+  assert.equal(qoq.topContributor.ticker, 'FAST');
+  assert.equal(qoq.topContributor.delta, 240);
+  assert.equal(qoq.topContributor.contribution, 240 / 3210);
+  assert.equal(yoy.contributions, undefined, 'do not ship a full issuer roster for every cell');
+  assert.equal(point.coverage.yoyComparable, 3);
+  assert.equal(view.sectors[0].series[0].yoyComparison.leaderStatus, 'unavailable');
+});
+
+test('heatmap ties are explicit and deterministic; flat, shrinking and invalid-base cells have no growth winner', () => {
+  const raw = artifact();
+  raw.companies = ['ZZZ', 'AAA'].map(ticker => ({ ticker, name: ticker, group: 'hardware', sector: 'test' }));
+  raw.facts = raw.companies.flatMap(c => [100, 110, 110, 90, 120].map((revenue, i) => {
+    const period = ['2025-06-30', '2025-09-30', '2025-12-31', '2026-03-31', '2026-06-30'][i];
+    return { ticker: c.ticker, calendardate: period, reportperiod: period, datekey: period, revenue, revenueusd: revenue, currency: 'USD' };
+  }));
+  const view = createAiInsightsService({ now, artifactLoader: () => raw }).overview({ quarter: '2026Q2' });
+  const points = view.sectors[0].series;
+  assert.equal(points.at(-1).yoyComparison.topContributor.ticker, 'AAA');
+  assert.equal(points.at(-1).yoyComparison.topContributor.tiedCount, 2);
+  for (const index of [-2, -3]) {
+    assert.equal(points.at(index).qoqComparison.topContributor, null);
+    assert.equal(points.at(index).qoqComparison.leaderStatus, 'no_positive_contributor');
+  }
+  for (const row of raw.facts) if (row.calendardate === '2025-06-30') row.revenue = row.revenueusd = 0;
+  const invalid = createAiInsightsService({ now, artifactLoader: () => raw }).overview({ quarter: '2026Q2' });
+  assert.equal(invalid.sectors[0].series.at(-1).yoyComparison.topContributor, null);
+  assert.equal(invalid.sectors[0].series.at(-1).yoyComparison.leaderStatus, 'unavailable');
+});
 function fakeService() {
   const artifacts = new Map([['generationA', artifact()], ['generationB', artifact('generationB', 2)]]);
   let active = 'generationA';

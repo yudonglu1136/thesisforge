@@ -46,6 +46,28 @@ function lightMetric(metric) {
     priorQuarter: comparison.priorQuarter });
   return { ...metric, yoyComparison: compact(metric.yoyComparison), qoqComparison: compact(metric.qoqComparison) };
 }
+function sectorMetric(metric, index, quarter) {
+  const result = lightMetric(metric);
+  // This is a compact view of the SAME matched population, not a second
+  // company-growth ranking. Retain one leader per basis; no per-cell requests.
+  for (const basis of ['yoy', 'qoq']) {
+    const comparison = metric[`${basis}Comparison`];
+    const compact = result[`${basis}Comparison`];
+    const valid = finite(comparison.growth) && comparison.prior > 0;
+    const positive = valid ? comparison.contributions.filter(c => finite(c.contribution) && c.delta > 0)
+      .sort((a, b) => b.delta - a.delta || a.ticker.localeCompare(b.ticker)) : [];
+    const leader = positive[0];
+    const evidence = q => {
+      const row = index.get(leader.ticker)?.get(q);
+      return { reportperiod: row?.reportperiod ?? null, datekey: row?.datekey ?? null,
+        sourceRevisionId: row?.sourceRevisionId ?? null };
+    };
+    compact.leaderStatus = !valid ? 'unavailable' : leader ? 'available' : 'no_positive_contributor';
+    compact.topContributor = leader ? { ...leader, tiedCount: positive.filter(c => c.delta === leader.delta).length,
+      currentEvidence: evidence(quarter), priorEvidence: evidence(comparison.priorQuarter) } : null;
+  }
+  return result;
+}
 function rowSummary(row) {
   const { scoreBreakdown, ...summary } = row;
   return summary;
@@ -190,7 +212,7 @@ export function createAiInsightsService({ factRoot = process.env.FACT_OS_ROOT ||
     const sectors = [...new Set(artifact.companies.filter(c => c.group !== 'capex').map(c => c.sector))].map(id => {
       const cohort = artifact.companies.filter(c => c.group !== 'capex' && c.sector === id);
       return { id, label: cohort[0].sectorLabel ?? id, group: cohort[0].group,
-        series: quarters.map(q => ({ quarter: q, ...lightMetric(aggregateQuarter(cohort, index, q, 'revenue', { asOf })) })) };
+        series: quarters.map(q => ({ quarter: q, ...sectorMetric(aggregateQuarter(cohort, index, q, 'revenue', { asOf }), index, q) })) };
     });
     const base = metadata(artifact, context);
     const overview = { ...base, summary,

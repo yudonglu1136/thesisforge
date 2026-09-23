@@ -1,5 +1,17 @@
 # Bilingual Coverage Audit
 
+### 2026-09-23: AI sector-quarter growth contributor logos
+
+The existing AI overview heatmap now occupies a full row. Each quarter/sector
+cell shows aggregate revenue growth, the leading positive dollar contributor's
+existing company logo/ticker, and its contribution in percentage points. YoY and
+unadjusted QoQ use their own comparable populations. EN/ZH tooltip evidence
+covers current/base revenue, sector denominator, actual report ends, disclosure
+dates, ties, missing comparison and no-positive-contributor states. Narrow
+screens retain fixed sector labels while quarters scroll. No scoring or source
+fact formula changed. See `ai-sector-contributors-2026-09-23.md` for verification
+and release scope; unrelated whole-suite failures are not claimed as passes.
+
 ### 2026-09-12: Guru consensus read guide (local only)
 
 EN/ZH now names the page as holdings and consensus, defines consensus as shared
