@@ -143,6 +143,50 @@ claim that a background refresh is running when none was started.
 Private detailed logs and the isolated acceptance report are under
 `/private/tmp/guru-*20260923*`; they are not packaged into the app.
 
+## Additional production findings and repairs
+
+The first AWS full-window run exposed a source transport failure that the local
+acceptance did not reproduce. In particular, TCI/Chris Hohn accession
+`0001647251-25-000003` returned HTTP 503 from the official SEC directory JSON
+while its original `.txt` submission returned HTTP 200 (8,045 bytes, SHA-256
+`019b12139eb7b396f94dcce3d9a940c9c010f7a5fea89db3cc76b8be271b8518`).
+SSM receipt: `03629681-93e0-42ad-b217-25be81423665`.
+
+After exhausting bounded transport retries, 13F readers may now discover the
+typed information-table attachment through that exact official original. The
+original must match accession, filer CIK, report period and form. Ambiguous or
+unsafe filenames still fail; 401/403/404, rate limits and long Retry-After values
+do not use this path. There is no mirror, guessed filename, substitute quarter
+or invented holding. A regression first reproduced the directory-503 failure.
+Protected bulk diagnostics now retain filing identities and error codes without
+exposing arbitrary transport details. Previous failed runs remain failed.
+
+Canonical holding prices now reuse `queryFactsBatch`, preserving exact active
+intervals, explicit total-return basis, source identity and per-observation
+provenance. Batches are bounded to eight (six by the default backtest worker).
+Missing or changed inputs remain fail-closed; SQLite/network fallback is not
+introduced. The repository's generation guard, reader lease and cache are reused.
+
+Three fresh-process repetitions on six real 10Y histories show identical semantic
+hashes and a median reader time of 2,371.85ms → 1,282.66ms (45.9% reduction).
+Peak reader-process RSS increased from about 160MiB to 311MiB; bounded batches
+are important. This is not an API p95 or production-wide speed claim. Reproduce
+with `node scripts/benchmark-guru-price-reader.mjs`; the JSON report is under
+`docs/performance/2026-09-23/guru-repair/price-reader-batch.json`.
+
+Independent real 5Y recomputations for Ackman, Chase Coleman and Renaissance
+produce identical status, window, summary, equity response, rebalances and
+quarterly-contribution hashes before/after batching. They use memory-only
+databases, official SEC sources and unchanged canonical Parquet. Exact-source
+batch regression: 1,674 passed / 15 skipped / zero failures; performance tests
+60/60. The final exact-source regression including the directory fallback is
+1,676 passed / 15 skipped / zero failures (1,691 total).
+
+The Fact OS audit passed again (20,983,490,701 bytes, zero duplicate raw bytes).
+Its append-only receipt is `data/fact_os/audit/guru-batch-storage-20260923T1510.json`;
+the default `storage-layout-latest.json` already existed and was not overwritten.
+General storage audit still has the same 11 existing findings.
+
 ## Production and rollback
 
 Pre-deploy EB version: `fundamental-702448f`; environment `thesisforge-api-prod`.

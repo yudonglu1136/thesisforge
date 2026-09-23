@@ -1,0 +1,317 @@
+{
+  "scope": "Six real 10Y canonical histories, three fresh-process repetitions per mode; reader-only benchmark, not API p95 or production latency.",
+  "pass": true,
+  "inputs": [
+    {
+      "symbol": "SPY",
+      "start": "2016-09-23",
+      "end": "2026-09-21",
+      "priceType": "TOTAL_RETURN_ADJUSTED_CLOSE"
+    },
+    {
+      "symbol": "MSFT",
+      "start": "2016-09-23",
+      "end": "2026-09-21",
+      "priceType": "TOTAL_RETURN_ADJUSTED_CLOSE"
+    },
+    {
+      "symbol": "AMZN",
+      "start": "2016-09-23",
+      "end": "2026-09-21",
+      "priceType": "TOTAL_RETURN_ADJUSTED_CLOSE"
+    },
+    {
+      "symbol": "NVDA",
+      "start": "2016-09-23",
+      "end": "2026-09-21",
+      "priceType": "TOTAL_RETURN_ADJUSTED_CLOSE"
+    },
+    {
+      "symbol": "LOW",
+      "start": "2016-09-23",
+      "end": "2026-09-21",
+      "priceType": "TOTAL_RETURN_ADJUSTED_CLOSE"
+    },
+    {
+      "symbol": "QSR",
+      "start": "2016-09-23",
+      "end": "2026-09-21",
+      "priceType": "TOTAL_RETURN_ADJUSTED_CLOSE"
+    }
+  ],
+  "results": [
+    {
+      "mode": "single",
+      "elapsedMs": 2662.037625,
+      "catalogSha256": "134e95b9d4e40564d3b3af62f177f98a80fb8df4ac30f1c79a8504d870e0ca29",
+      "semanticSha256": "df13fd458f2c21871de4a7cb187b24856db8ad7758d1389c89e29e330e07863a",
+      "securities": [
+        {
+          "symbol": "SPY",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "MSFT",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "AMZN",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "NVDA",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "LOW",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "QSR",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        }
+      ],
+      "peakRssKiB": 163392
+    },
+    {
+      "mode": "batch",
+      "elapsedMs": 1326.527333,
+      "catalogSha256": "134e95b9d4e40564d3b3af62f177f98a80fb8df4ac30f1c79a8504d870e0ca29",
+      "semanticSha256": "df13fd458f2c21871de4a7cb187b24856db8ad7758d1389c89e29e330e07863a",
+      "securities": [
+        {
+          "symbol": "SPY",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "MSFT",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "AMZN",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "NVDA",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "LOW",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "QSR",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        }
+      ],
+      "peakRssKiB": 332864
+    },
+    {
+      "mode": "batch",
+      "elapsedMs": 1278.8858750000002,
+      "catalogSha256": "134e95b9d4e40564d3b3af62f177f98a80fb8df4ac30f1c79a8504d870e0ca29",
+      "semanticSha256": "df13fd458f2c21871de4a7cb187b24856db8ad7758d1389c89e29e330e07863a",
+      "securities": [
+        {
+          "symbol": "SPY",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "MSFT",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "AMZN",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "NVDA",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "LOW",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "QSR",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        }
+      ],
+      "peakRssKiB": 300960
+    },
+    {
+      "mode": "single",
+      "elapsedMs": 2342.369083,
+      "catalogSha256": "134e95b9d4e40564d3b3af62f177f98a80fb8df4ac30f1c79a8504d870e0ca29",
+      "semanticSha256": "df13fd458f2c21871de4a7cb187b24856db8ad7758d1389c89e29e330e07863a",
+      "securities": [
+        {
+          "symbol": "SPY",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "MSFT",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "AMZN",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "NVDA",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "LOW",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "QSR",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        }
+      ],
+      "peakRssKiB": 163792
+    },
+    {
+      "mode": "single",
+      "elapsedMs": 2371.847625,
+      "catalogSha256": "134e95b9d4e40564d3b3af62f177f98a80fb8df4ac30f1c79a8504d870e0ca29",
+      "semanticSha256": "df13fd458f2c21871de4a7cb187b24856db8ad7758d1389c89e29e330e07863a",
+      "securities": [
+        {
+          "symbol": "SPY",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "MSFT",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "AMZN",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "NVDA",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "LOW",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "QSR",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        }
+      ],
+      "peakRssKiB": 163904
+    },
+    {
+      "mode": "batch",
+      "elapsedMs": 1282.655458,
+      "catalogSha256": "134e95b9d4e40564d3b3af62f177f98a80fb8df4ac30f1c79a8504d870e0ca29",
+      "semanticSha256": "df13fd458f2c21871de4a7cb187b24856db8ad7758d1389c89e29e330e07863a",
+      "securities": [
+        {
+          "symbol": "SPY",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "MSFT",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "AMZN",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "NVDA",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "LOW",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        },
+        {
+          "symbol": "QSR",
+          "points": 2511,
+          "first": "2016-09-23",
+          "last": "2026-09-21"
+        }
+      ],
+      "peakRssKiB": 318256
+    }
+  ],
+  "singleMedianMs": 2371.847625,
+  "batchMedianMs": 1282.655458,
+  "improvementPercent": 45.92167538587139
+}

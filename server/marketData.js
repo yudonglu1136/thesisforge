@@ -2,6 +2,7 @@ import { readPriceSeriesFromDb } from "./localDatabase.js";
 import {
   factOsEnabled,
   queryFacts,
+  queryFactsBatch,
   PRICE_TYPES,
   FactDataError
 } from "./factRepository.js";
@@ -121,6 +122,78 @@ export function enforceAdjustedPriceRequirement(payload, {
   };
 }
 
+function factPriceSeries(normalized, priceType, rows) {
+  const points = rows.map((point) => ({
+    date: point.date,
+    symbol: normalized,
+    close: point.value,
+    adjustedClose: priceType === PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE
+      ? point.value : null,
+    priceType,
+    securityId: point.security_id,
+    provenance: point.provenance
+  }));
+  return {
+    symbol: normalized,
+    source: "sharadar_fact_os",
+    returnBasis: priceType === PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE
+      ? "total_return_adjusted_close" : priceType.toLowerCase(),
+    priceType,
+    generatedAt: new Date().toISOString(),
+    cache: "local-only",
+    points,
+    status: points.length ? "available" : "missing",
+    message: points.length
+      ? "Local Sharadar facts; refresh synchronizes separately."
+      : "No local price coverage. No legacy price or provider request was substituted."
+  };
+}
+
+function unavailableFactPriceSeries(symbol, priceType, error) {
+  return {symbol, source: "sharadar_fact_os", priceType, status: "unavailable",
+    points: [], error: error.code, message: error.message};
+}
+
+// Reuse the canonical repository's pinned-generation batch protocol. Keep
+// history batches small: 10Y points carry per-observation provenance and must
+// remain below the existing RPC memory/response limit. Missing securities are
+// individual failures, never fabricated zero prices or a provider fallback.
+export async function loadPriceSeriesBatch(requests) {
+  if (!factOsEnabled()) {
+    return Promise.all(requests.map(({symbol, ...options}) => loadPriceSeries(symbol, options)));
+  }
+  const normalized = requests.map(({symbol, ...options}) => ({
+    symbol: String(symbol || "").trim().toUpperCase(), ...options
+  }));
+  if (normalized.some(r => !Object.values(PRICE_TYPES).includes(r.priceType))) {
+    throw new FactDataError("explicit_price_basis_required",
+      "Choose RAW_CLOSE, SPLIT_ADJUSTED_CLOSE or TOTAL_RETURN_ADJUSTED_CLOSE explicitly.");
+  }
+  const output = [];
+  for (let offset = 0; offset < normalized.length; offset += 8) {
+    const group = normalized.slice(offset, offset + 8);
+    const nonempty = group.filter(r => r.symbol);
+    let responses;
+    try {
+      responses = nonempty.length ? await queryFactsBatch(nonempty.map(r => ({
+        method: "get_price_history", args: [r.symbol, r.start, r.end, r.priceType],
+        kwargs: {dataset: "auto"}
+      }))) : [];
+    } catch (error) {
+      if (!(error instanceof FactDataError)) throw error;
+      responses = nonempty.map(() => ({ok: false, error}));
+    }
+    let index = 0;
+    for (const r of group) {
+      if (!r.symbol) { output.push({symbol: "", source: "missing", points: []}); continue; }
+      const result = responses[index++];
+      output.push(result.ok ? factPriceSeries(r.symbol, r.priceType, result.result)
+        : unavailableFactPriceSeries(r.symbol, r.priceType, result.error));
+    }
+  }
+  return output;
+}
+
 export async function loadPriceSeries(symbol, {
   start,
   end,
@@ -146,43 +219,10 @@ export async function loadPriceSeries(symbol, {
         [normalized, start, end, priceType],
         { dataset: "auto" }
       );
-      const points = rows.map((point) => ({
-        date: point.date,
-        symbol: normalized,
-        close: point.value,
-        adjustedClose: priceType === PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE
-          ? point.value
-          : null,
-        priceType,
-        securityId: point.security_id,
-        provenance: point.provenance
-      }));
-      return {
-        symbol: normalized,
-        source: "sharadar_fact_os",
-        returnBasis: priceType === PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE
-          ? "total_return_adjusted_close"
-          : priceType.toLowerCase(),
-        priceType,
-        generatedAt: new Date().toISOString(),
-        cache: "local-only",
-        points,
-        status: points.length ? "available" : "missing",
-        message: points.length
-          ? "Local Sharadar facts; refresh synchronizes separately."
-          : "No local price coverage. No legacy price or provider request was substituted."
-      };
+      return factPriceSeries(normalized, priceType, rows);
     } catch (error) {
       if (!(error instanceof FactDataError)) throw error;
-      return {
-        symbol: normalized,
-        source: "sharadar_fact_os",
-        priceType,
-        status: "unavailable",
-        points: [],
-        error: error.code,
-        message: error.message
-      };
+      return unavailableFactPriceSeries(normalized, priceType, error);
     }
   }
 

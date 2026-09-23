@@ -21,6 +21,7 @@ process.env.FACT_OS_ENABLED = "0";
 const {
   aggregate13fHoldings,
   filingsFromRecentShape,
+  getFilingDocument,
   informationTableFileNamesFromSubmission,
   infer13fValueScale,
   load13fHoldingHistory,
@@ -62,6 +63,50 @@ function informationTableXml(rows) {
   return `<?xml version="1.0" encoding="UTF-8"?>
     <informationTable>${rows.map(tags).join("")}</informationTable>`;
 }
+
+test("unavailable SEC directory uses only the identity-checked original accession", async () => {
+  const originalFetch = globalThis.fetch;
+  const filing = {form: "13F-HR", accessionNumber: "0001647251-25-000003", reportDate: "2024-12-31", primaryDocument: "primary_doc.xml"};
+  const base = "https://www.sec.gov/Archives/edgar/data/1647251/000164725125000003/";
+  const raw = `<SEC-DOCUMENT><SEC-HEADER>\nACCESSION NUMBER: 0001647251-25-000003\nCONFORMED SUBMISSION TYPE: 13F-HR\nCONFORMED PERIOD OF REPORT: 20241231\nCENTRAL INDEX KEY: 0001647251\n</SEC-HEADER>\n<DOCUMENT>\n<TYPE>INFORMATION TABLE\n<FILENAME>info.xml\n</DOCUMENT></SEC-DOCUMENT>`;
+  const xml = informationTableXml([{issuer:"MICROSOFT",title:"COM",cusip:"594918104",value:10000,shares:20}]);
+  const urls = [];
+  globalThis.fetch = async url => {
+    urls.push(String(url));
+    if (String(url) === base + "index.json") return new Response("unavailable", {status:503});
+    if (String(url) === base + filing.accessionNumber + ".txt") return new Response(raw);
+    if (String(url) === base + "info.xml") return new Response(xml);
+    throw Error("unexpected source: " + url);
+  };
+  try {
+    const result = await getFilingDocument("0001647251", filing);
+    assert.equal(result.url, base + "info.xml");
+    assert.equal(result.text, xml);
+    assert.equal(urls.filter(url => url.endsWith("index.json")).length, 3);
+    assert.equal(parse13fInfoTable(result.text)[0].cusip, "594918104");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("SEC directory fallback rejects denied access, long retry-after and wrong original identity", async () => {
+  const originalFetch = globalThis.fetch;
+  const filing = {form:"13F-HR",accessionNumber:"0001647251-25-000003",reportDate:"2024-12-31"};
+  try {
+    for (const status of [401,403,404,429,503]) {
+      let calls=0;
+      globalThis.fetch=async()=>{calls++;return new Response("stop",{status,headers:{"retry-after":"31"}});};
+      await assert.rejects(getFilingDocument("0001647251",filing));
+      assert.equal(calls,1,"must not bypass denial or rate-limit backoff");
+    }
+    const urls=[];
+    globalThis.fetch=async url=>{
+      urls.push(String(url));
+      if(String(url).endsWith("index.json"))return new Response("down",{status:503});
+      return new Response(`<SEC-DOCUMENT><SEC-HEADER>\nACCESSION NUMBER: WRONG\nCONFORMED SUBMISSION TYPE: 13F-HR\nCONFORMED PERIOD OF REPORT: 20241231\nCENTRAL INDEX KEY: 0001647251\n</SEC-HEADER><DOCUMENT>\n<TYPE>INFORMATION TABLE\n<FILENAME>info.xml\n</DOCUMENT>`);
+    };
+    await assert.rejects(getFilingDocument("0001647251",filing),/identity_mismatch/);
+    assert.equal(urls.some(url=>url.endsWith("info.xml")),false);
+  } finally {globalThis.fetch=originalFetch;}
+});
 
 test("raw SEC submission recovers a typed 13F information table omitted by index.json", () => {
   const submission = `

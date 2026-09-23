@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { XMLParser } from "fast-xml-parser";
-import { retrySecRead } from "./secReadRetry.js";
+import { isTransientSecReadError, retrySecRead } from "./secReadRetry.js";
 import { parseLegacy13fInformationTable, indexed13fAttachment, assertLegacy13fIdentity } from "./thirteenFLegacy.js";
 import {
   priceSymbolResolutionForHolding,
@@ -285,9 +285,22 @@ export function informationTableFileNamesFromSubmission(submissionText) {
   return [...new Set(names)];
 }
 
-async function getFilingDocument(cik, filing, preferredName) {
+export async function getFilingDocument(cik, filing, preferredName) {
   const baseUrl = archiveBaseUrl(cik, filing.accessionNumber);
-  const index = await getFilingIndex(cik, filing.accessionNumber);
+  const is13f = /^13F-HR(?:\/A)?$/.test(filing.form || "");
+  let index;
+  let unavailableDirectory = false;
+  try {
+    index = await getFilingIndex(cik, filing.accessionNumber);
+  } catch (error) {
+    // SEC sometimes serves the original submission while its directory JSON
+    // returns 503. This is another official representation of the SAME filing,
+    // not a mirror or a substitute quarter. Never bypass access/rate limits.
+    if (!is13f || !isTransientSecReadError(error) || Number(error.status) === 429 ||
+        Number(error.retryAfterMs) > 30000) throw error;
+    unavailableDirectory = true;
+    index = {directory: {item: []}};
+  }
   const items = toArray(index?.directory?.item);
   const candidates = items.map((item) => item.name).filter(Boolean);
   const preferredBaseName = preferredName ? String(preferredName).split("/").pop() : "";
@@ -295,7 +308,6 @@ async function getFilingDocument(cik, filing, preferredName) {
   const preferredFromIndex = candidates.find(
     (item) => item === preferredName || item === preferredBaseName
   );
-  const is13f = /^13F-HR/.test(filing.form || "");
   const xmlCandidates = candidates.filter((item) => /\.xml$/i.test(item));
   const nonPrimaryXml = xmlCandidates.filter(
     (item) => item !== filing.primaryDocument && item !== primaryBaseName
@@ -312,6 +324,12 @@ async function getFilingDocument(cik, filing, preferredName) {
     // manifest rather than silently parsing the cover sheet as an empty book.
     const submissionName = `${filing.accessionNumber}.txt`;
     const submissionText = await getText(`${baseUrl}/${submissionName}`);
+    if (unavailableDirectory) {
+      assertLegacy13fIdentity(submissionText, {cik, accessionNumber: filing.accessionNumber, reportDate: filing.reportDate});
+      const header = submissionText.match(/<SEC-HEADER>([\s\S]*?)<\/SEC-HEADER>/i)?.[1] || "";
+      const form = header.match(/CONFORMED SUBMISSION TYPE:\s*([^\r\n]+)/i)?.[1]?.trim();
+      if (form !== filing.form) throw new Error("13f_original_form_mismatch");
+    }
     const informationTables = informationTableFileNamesFromSubmission(submissionText);
     if (informationTables.length === 0 && /<(?:S|C)>/i.test(submissionText) && /FORM\s+13F\s+INFORMATION\s+TABLE/i.test(submissionText)) {
       assertLegacy13fIdentity(submissionText, {cik, accessionNumber: filing.accessionNumber, reportDate: filing.reportDate});

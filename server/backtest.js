@@ -5,7 +5,7 @@ import {
   requiredGuruCurveWindowsFor
 } from "./gurus.js";
 import { load13fHoldingHistory, loadGuruDashboard } from "./secClient.js";
-import { loadPriceSeries } from "./marketData.js";
+import { loadPriceSeries, loadPriceSeriesBatch } from "./marketData.js";
 import { factOsEnabled } from "./factRepository.js";
 import {
   adjustedClosePriceMap,
@@ -2439,13 +2439,21 @@ export async function loadGuruBacktest(
     points: spyTotalReturnMap.size
   }]]);
 
-  await mapWithConcurrency(
-    holdingPriceLoadUniverse(universe, "SPY"),
-    priceConcurrency,
-    async (ticker) => {
+  const priceTickers = holdingPriceLoadUniverse(universe, "SPY");
+  // Fact OS serializes RPC reads for snapshot safety. Reuse its bounded batch
+  // protocol instead of starting one Python process for every holding. Each
+  // security retains its exact active interval and total-return basis.
+  for (let offset = 0; offset < priceTickers.length; offset += priceConcurrency) {
+    const group = priceTickers.slice(offset, offset + priceConcurrency);
+    const canonicalSeries = factOsEnabled() ? await loadPriceSeriesBatch(group.map(ticker => ({
+      symbol: ticker,
+      ...(activePriceWindows.get(ticker) || {start, end}),
+      priceType: "TOTAL_RETURN_ADJUSTED_CLOSE"
+    }))) : null;
+    await mapWithConcurrency(group, priceConcurrency, async (ticker, index) => {
       try {
         const activeWindow = activePriceWindows.get(ticker) || { start, end };
-        const series = await loadPriceSeries(ticker, {
+        const series = canonicalSeries ? canonicalSeries[index] : await loadPriceSeries(ticker, {
           start: activeWindow.start,
           end: activeWindow.end,
           priceType: "TOTAL_RETURN_ADJUSTED_CLOSE",
@@ -2476,8 +2484,8 @@ export async function loadGuruBacktest(
           error: error.message
         });
       }
-    }
-  );
+    });
+  }
 
   const rebalances = [];
   for (const { snapshot, decision } of executionSchedule) {
@@ -3078,11 +3086,20 @@ export async function refreshGuruBacktestCache({
         status.failed += 1;
         status.errors.push({
           guru: guru.id,
-          message: error.message
+          message: error.message,
+          ...(error.code ? { code: String(error.code).slice(0, 80) } : {}),
+          ...(Array.isArray(error.filings) ? { filings: error.filings.slice(0, 80).map(filing => ({
+            reportDate: filing.reportDate,
+            accessionNumbers: filing.accessionNumbers,
+            code: filing.code,
+            status: filing.status
+          })) } : {})
         });
         console.warn("[backtest-refresh] failed", {
           guru: guru.id,
-          reason: error.message
+          reason: error.message,
+          ...(error.code ? { code: error.code } : {}),
+          ...(status.errors.at(-1).filings ? { filings: status.errors.at(-1).filings } : {})
         });
       }
     }

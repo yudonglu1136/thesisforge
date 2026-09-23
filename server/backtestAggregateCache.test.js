@@ -1533,6 +1533,26 @@ test("cache refresh counts proxy_ready as a failed strict refresh", async () => 
   }
 });
 
+test("bulk failure retains bounded filing identities for production diagnosis", async () => {
+  const ackman = gurus.find(guru => guru.id === "bill-ackman");
+  const originalTypes = gurus.map(guru => [guru, guru.type]);
+  try {
+    for (const [guru] of originalTypes) if (guru !== ackman) guru.type = "test-disabled";
+    const filings = [{reportDate: "2024-06-30", accessionNumbers: ["0001336528-24-000012"], code: "ETIMEDOUT", status: null, message: "private transport detail"}];
+    const result = await refreshGuruBacktestCache({
+      years: 5, reason: "filing-diagnostic-test",
+      backtestLoader: async () => { throw Object.assign(new Error("Incomplete filing history"), {code: "incomplete_disclosure_history", filings}); }
+    });
+    assert.equal(result.failed, 1);
+    assert.equal(result.results[0].status, "failed");
+    assert.equal(result.errors[0].code, "incomplete_disclosure_history");
+    assert.deepEqual(result.errors[0].filings, [{reportDate: "2024-06-30", accessionNumbers: ["0001336528-24-000012"], code: "ETIMEDOUT", status: null}]);
+    assert.equal(JSON.stringify(result).includes("private transport detail"), false);
+  } finally {
+    for (const [guru, type] of originalTypes) guru.type = type;
+  }
+});
+
 test("production prewarm population refreshes only enabled manager13f profiles", async () => {
   const enabledManagerIds = gurus.filter((guru) =>
     guru.type === "manager13f" && !guru.disableSimulation
