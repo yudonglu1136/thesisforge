@@ -189,6 +189,8 @@ Future<void> mountAi(
   String date = '2026-09-22',
   AppLanguage language = AppLanguage.en,
   Map<String, dynamic> selection = const {},
+  ValueChanged<Map<String, dynamic>>? onSelection,
+  void Function(String, String)? onCompany,
 }) async {
   tester.view.physicalSize = Size(width, 1100);
   tester.view.devicePixelRatio = 1;
@@ -208,7 +210,8 @@ Future<void> mountAi(
                 palette: Palette(false),
                 asOf: date,
                 initialSelection: selection,
-                onCompany: (_, _) {},
+                onCompany: onCompany ?? (_, _) {},
+                onSelection: onSelection,
               ),
             ),
           ),
@@ -272,8 +275,34 @@ void main() {
         findsNWidgets(3),
       );
       expect(find.text('Information available by'), findsNothing);
-      expect(find.text('Company research list'), findsOneWidget);
-      expect(find.byKey(const ValueKey('ai-open-research')), findsOneWidget);
+      expect(find.text('Company research list'), findsNothing);
+      expect(find.text('Market context & detailed trends'), findsNothing);
+      final sections = [
+        'How much capital is being deployed?',
+        'Are growth rates moving together?',
+        'Where is growth accelerating?',
+        'Who added the most revenue?',
+      ];
+      for (final section in sections) {
+        expect(find.text(section), findsOneWidget);
+        expect(
+          find.ancestor(
+            of: find.text(section),
+            matching: find.byType(ExpansionTile),
+          ),
+          findsNothing,
+          reason:
+              'The original overview charts must not be hidden in an accordion.',
+        );
+      }
+      expect(
+        tester.getTopLeft(find.text(sections[0])).dy,
+        lessThan(tester.getTopLeft(find.text(sections[1])).dy),
+      );
+      expect(
+        tester.getTopLeft(find.text(sections[1])).dy,
+        lessThan(tester.getTopLeft(find.text(sections[2])).dy),
+      );
       expect(api.calls.length, 1);
       expect(tester.takeException(), isNull);
     },
@@ -285,7 +314,6 @@ void main() {
       final api = AiInsightsFixtureApi()..empty = true;
       await mountAi(tester, api);
       await tester.pumpAndSettle();
-      await tapAi(tester, find.text('Market context & detailed trends'));
       expect(
         find.text('No disclosed capital investment in this window'),
         findsOneWidget,
@@ -404,7 +432,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('信息截止日'), findsNothing);
-    expect(find.text('公司研究榜单'), findsOneWidget);
+    expect(find.text('公司研究榜单'), findsNothing);
+    expect(find.text('三条增速是否同频？'), findsOneWidget);
+    expect(find.text('哪些环节增长更快？'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tapAi(tester, find.widgetWithText(ChoiceChip, '公司排名'));
     expect(find.text('比较 AI 建设背后的公司'), findsOneWidget);
@@ -424,6 +454,48 @@ void main() {
       Uri.parse(api.calls.last).queryParameters['snapshotId'],
       'snapshot-2026-09-22',
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('restored overview keeps full rankings and Research context', (
+    tester,
+  ) async {
+    final api = AiInsightsFixtureApi();
+    Map<String, dynamic> remembered = {};
+    (String, String)? destination;
+    await mountAi(
+      tester,
+      api,
+      onSelection: (value) => remembered = value,
+      onCompany: (ticker, section) => destination = (ticker, section),
+    );
+    await tapAi(
+      tester,
+      find.widgetWithText(ChoiceChip, 'QoQ · unadjusted').first,
+    );
+    expect(remembered['metric'], 'qoq');
+    expect(
+      api.calls.length,
+      1,
+      reason: 'Chart toggles reuse the pinned snapshot.',
+    );
+    await tapAi(tester, find.widgetWithText(ChoiceChip, 'Company rankings'));
+    expect(
+      find.text('Rank the businesses behind the AI buildout'),
+      findsOneWidget,
+    );
+    await tester.enterText(find.byType(TextField), 'ALAB');
+    await tester.pumpAndSettle();
+    await tapAi(
+      tester,
+      find.descendant(of: find.byType(DataTable), matching: find.text('ALAB')),
+    );
+    expect(remembered['selected'], 'ALAB');
+    expect(remembered['query'], 'ALAB');
+    expect(remembered['tab'], 'companies');
+    expect(remembered['snapshotId'], 'snapshot-2026-09-22');
+    await tapAi(tester, find.text('Open Research'));
+    expect(destination, ('ALAB', 'evidence'));
     expect(tester.takeException(), isNull);
   });
 
