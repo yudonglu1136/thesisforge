@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { XMLParser } from "fast-xml-parser";
+import { retrySecRead } from "./secReadRetry.js";
 import { parseLegacy13fInformationTable, indexed13fAttachment, assertLegacy13fIdentity } from "./thirteenFLegacy.js";
 import {
   priceSymbolResolutionForHolding,
@@ -159,10 +160,18 @@ async function secFetch(url, options = {}) {
   }, Number(options.timeoutMs) || secRequestTimeoutMs);
 
   if (!response.ok) {
-    throw new SecRequestError(`SEC request failed ${response.status}: ${url}`, {
+    const error = new SecRequestError(`SEC request failed ${response.status}: ${url}`, {
       status: response.status,
       url
     });
+    const retryAfter = response.headers?.get?.("retry-after");
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      error.retryAfterMs = Number.isFinite(seconds)
+        ? seconds * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now());
+    }
+    await response.body?.cancel?.();
+    throw error;
   }
 
   await wait(250);
@@ -170,13 +179,17 @@ async function secFetch(url, options = {}) {
 }
 
 async function getJson(url) {
-  const response = await secFetch(url);
-  return response.json();
+  return retrySecRead(async () => {
+    const response = await secFetch(url);
+    return response.json();
+  });
 }
 
 async function getText(url) {
-  const response = await secFetch(url, { accept: "text/xml, text/plain, */*" });
-  return response.text();
+  return retrySecRead(async () => {
+    const response = await secFetch(url, { accept: "text/xml, text/plain, */*" });
+    return response.text();
+  });
 }
 
 async function getPublicText(url) {
@@ -1670,9 +1683,11 @@ export async function load13fHoldingHistory(guru, { years = 5, limit = 24 } = {}
       filingErrors.push({
         reportDate: group.reportDate,
         accessionNumbers: group.filings.map((filing) => filing.accessionNumber),
+        code: error.code || error.name,
+        status: error.status || null,
         message: error.message
       });
-      // Historical filings occasionally point to malformed archives. Skip that quarter only.
+      // Return diagnostics; the simulation must reject an incomplete history.
     }
   }
 

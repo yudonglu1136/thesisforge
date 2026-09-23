@@ -444,6 +444,7 @@ export function summarizeBacktestOutcome({
     proxyMinimumPositions,
     strictFailureCode: proxyPayload?.dataQuality?.strictFailureCode || null,
     contractViolations: violations,
+    filingErrors: error?.filings || [],
     failureCode: outcome === "failure"
       ? violations[0] || compatibilityFailure?.code || failure.code
       : null,
