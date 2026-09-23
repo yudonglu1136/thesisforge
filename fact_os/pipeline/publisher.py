@@ -107,6 +107,8 @@ def activate(s3,bucket,candidate,expected_etag,ack):
         raise ValueError('api_activation_ack_required')
     if not ack.get('actualApiUserRead') or not ack.get('canonicalReadVerified'):
         raise ValueError('api_read_validation_required')
+    if ack.get('groups')!={name:item['generationId'] for name,item in candidate['groups'].items()}:
+        raise ValueError('api_group_ack_mismatch')
     current,etag=load_active(s3,bucket)
     if current and current['releaseId']==candidate['releaseId']: return {'status':'unchanged','releaseId':candidate['releaseId']}
     if etag!=expected_etag: raise ValueError('stale_worker_fence')

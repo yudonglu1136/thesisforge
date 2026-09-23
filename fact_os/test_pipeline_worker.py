@@ -12,6 +12,27 @@ from .contracts import TABLES
 
 
 class WorkerBoundaryTest(unittest.TestCase):
+    def test_capacity_failure_precedes_secret_access_and_source_fetch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);(root/'sync').mkdir();(root/'sync/authority-import.json').write_text('{}')
+            store=MagicMock(root=root)
+            boto=SimpleNamespace(client=MagicMock(return_value=MagicMock()))
+            from .store import Store
+            with patch.dict(os.environ,{'FACT_OS_ROOT':temporary,'FACT_OS_BUCKET':'synthetic-bucket'}), \
+                 patch.dict('sys.modules',{'boto3':boto}), \
+                 patch('sys.argv',['worker','--scheduled-for','2026-09-23T04:30:00Z']), \
+                 patch.object(aws_worker,'Store',return_value=store) as store_class, \
+                 patch.object(aws_worker,'Synchronizer') as sync, \
+                 patch('shutil.disk_usage',return_value=SimpleNamespace(free=1024)), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                store_class._atomic_if_changed=Store._atomic_if_changed
+                self.assertEqual(aws_worker.main(),2)
+            sync.assert_not_called()
+            self.assertNotIn('secretsmanager',[call.args[0] for call in boto.client.call_args_list])
+            report=json.loads((root/'audit/pipeline/capacity-latest.json').read_text())
+            self.assertEqual(report['status'],'blocked')
+            self.assertFalse(report['sourceFetchStarted'])
+
     def test_stage_only_attempts_all_sources_but_never_installs_or_activates(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);(root/'sync').mkdir();(root/'sync/authority-import.json').write_text('{}')

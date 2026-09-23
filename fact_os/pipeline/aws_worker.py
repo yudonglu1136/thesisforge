@@ -4,6 +4,7 @@ from datetime import datetime,timezone
 import json
 import os
 from pathlib import Path
+import shutil
 import time
 from ..contracts import TABLES
 from ..store import Store,now
@@ -35,6 +36,19 @@ def main():
         if receipt_path.parent!=root/'audit/pipeline':raise ValueError('receipt_path_invalid')
         receipt=json.loads(receipt_path.read_text())
     else:
+        # Conservative launch budget for raw staging, changed partitions and
+        # builds. Retention is deliberate: never delete archives/pins to make
+        # a scheduled run green. Recheck actual capacity on every invocation.
+        free=shutil.disk_usage(root).free
+        budget={'scheduledFor':args.scheduled_for,'checkedAt':now(),
+                'freeBytes':free,'estimatedAdditionalBytes':8*1024**3,
+                'reserveBytes':8*1024**3,'sourceFetchStarted':False,
+                'status':'ready' if free>=16*1024**3 else 'blocked',
+                'retention':'preserve_raw_archives_saved_snapshots_and_rollback'}
+        (root/'audit/pipeline').mkdir(parents=True,exist_ok=True)
+        Store._atomic_if_changed(root/'audit/pipeline/capacity-latest.json',encode(budget).decode())
+        emit({'phase':'capacity',**budget})
+        if budget['status']=='blocked':return 2
         key=boto3.client('secretsmanager').get_secret_value(SecretId=os.environ['FACT_OS_SECRET_ID'])['SecretString']
         if not key or key=='test-api-key':raise ValueError('paid_native_key_required')
         sync=Synchronizer(store,key,progress=emit);del key

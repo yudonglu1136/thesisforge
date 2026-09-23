@@ -81,6 +81,27 @@ expiry is enabled until saved-research and rollback retention reconciliation is
 verified. Raw archives are never GC candidates. This conservative retention
 requires capacity monitoring; it is not an unlimited-storage claim.
 
+The worker now records `audit/pipeline/capacity-latest.json` before resolving
+the source credential: an 8 GiB incremental/staging/build allowance plus an
+8 GiB free-space reserve. Insufficient space fails before source fetch. This
+is a conservative launch budget, not an upper bound on future supplier history;
+capacity must still be reviewed as coverage grows.
+
+The API installer budgets all candidate groups before downloading their
+payloads, leaving at least 1 GiB free. Byte-identical files from the exact
+previous immutable group are hash-verified and hardlinked into the new version,
+not downloaded/copied again. Writable, corrupt or out-of-namespace prior files
+are not reused. No archive, saved snapshot, user database or rollback generation
+is deleted to pass a capacity check. Failed activation still restores only the
+active pointer; both immutable versions remain available.
+
+The live API ACK must include every candidate group at exactly its expected
+generation and complete readable canonical coverage. Publication cannot treat
+a matching root release ID with missing/stale group IDs as success. AI and 13F
+production validators run as `webapp`, not only as root. These safeguards require
+deployment of both the worker/publisher and the API installer before acceptance;
+a local test pass does not mean the current production code includes them.
+
 ## Deliberate boundaries / remaining release gates
 
 The registry separates canonical read data, AI Insights, all/active 13F and

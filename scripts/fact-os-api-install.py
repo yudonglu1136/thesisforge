@@ -14,6 +14,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from fact_os.pipeline.installer import install
 from fact_os.pipeline.checks import validate_canonical,validate_api_read
 from fact_os.pipeline.contracts import digest
+from fact_os.contracts import TABLES
 
 
 def api_port(config, environment=None):
@@ -25,6 +26,20 @@ def api_port(config, environment=None):
     if not value.isascii() or not value.isdecimal() or not 1 <= int(value) <= 65535:
         raise ValueError('internal_ack_port_invalid')
     return int(value)
+
+
+def validate_live_ack(body,installed):
+    if (body.get('releaseId')!=installed['releaseId'] or body.get('status')!='verified'
+            or body.get('fundamentals',{}).get('status')!='ready'):
+        raise ValueError('live_api_generation_mismatch')
+    expected={name:item['generationId'] for name,item in installed['groups'].items()}
+    observed={name:item.get('generationId') for name,item in body.get('groups',{}).items()}
+    if observed!=expected:raise ValueError('live_api_group_mismatch')
+    coverage={row.get('dataset'):row for row in body.get('coverage',[])}
+    if any(not coverage.get(t,{}).get('locally_available') or
+           not coverage.get(t,{}).get('backfill_complete') for t in TABLES):
+        raise ValueError('live_api_coverage_incomplete')
+    return True
 
 
 def main():
@@ -63,7 +78,7 @@ def main():
         elif name=='institutional_13f':
             script="import {validateInstitutional13fArtifact} from './server/investmentRuntimeConfig.js'; validateInstitutional13fArtifact(process.argv[1]+'/13f-insights.sqlite',process.argv[1]+'/manifest.json');"
         else:raise ValueError('unregistered_install_validator')
-        result=subprocess.run(['node','--input-type=module','-e',script,str(path)],capture_output=True)
+        result=subprocess.run(['runuser','-u','webapp','--','node','--input-type=module','-e',script,str(path)],capture_output=True)
         if result.returncode:raise ValueError('existing_production_validator_failed:'+name)
     def probe(installed,activated):
         canonical=installed['groups'].get('canonical',{}).get('root')
@@ -84,11 +99,9 @@ def main():
         if not secret:raise ValueError('internal_ack_credential_missing')
         request=urllib.request.Request('http://127.0.0.1:'+str(api_port(config))+'/api/internal/data-release',headers={'Authorization':'Bearer '+secret})
         with urllib.request.urlopen(request,timeout=120) as response:body=json.load(response)
-        if (body.get('releaseId')!=installed['releaseId'] or body.get('status')!='verified'
-                or not body.get('coverage') or body.get('fundamentals',{}).get('status')!='ready'):
-            raise ValueError('live_api_generation_mismatch')
+        validate_live_ack(body,installed)
         return {'status':'verified','releaseId':installed['releaseId'],'actualApiUserRead':True,'canonicalReadVerified':True,
-                'groups':{k:v['generationId'] for k,v in installed['groups'].items()},'fundamentals':body['fundamentals']}
+                'groups':{k:v['generationId'] for k,v in body['groups'].items()},'fundamentals':body['fundamentals']}
     result=install(s3,args.bucket,candidate,root,validate_group=validate,probe=probe,expected_release=expected)
     print(json.dumps(result))
 

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 from .pipeline.publisher import prepare,activate,load_active
 from .pipeline.installer import install
@@ -46,7 +47,8 @@ class PublicationTest(unittest.TestCase):
 
     def candidate(self):return prepare(self.s3,'bucket',self.store,self.receipt)[0]
     def ack(self,candidate):return {'status':'verified','releaseId':candidate['releaseId'],
-        'actualApiUserRead':True,'canonicalReadVerified':True}
+        'actualApiUserRead':True,'canonicalReadVerified':True,
+        'groups':{name:item['generationId'] for name,item in candidate['groups'].items()}}
 
     def test_upload_alone_is_not_activation(self):
         candidate=self.candidate()
@@ -54,6 +56,14 @@ class PublicationTest(unittest.TestCase):
         with self.assertRaises(ValueError):activate(self.s3,'bucket',candidate,None,{'status':'uploaded'})
         activate(self.s3,'bucket',candidate,None,self.ack(candidate))
         self.assertEqual(load_active(self.s3,'bucket')[0]['releaseId'],candidate['releaseId'])
+
+    def test_ack_must_cover_every_candidate_group_at_the_exact_generation(self):
+        candidate=self.candidate()
+        for groups in ({},{'institutional_13f':'b'*64},
+                       {'institutional_13f':'a'*64,'unexpected':'b'*64}):
+            with self.assertRaisesRegex(ValueError,'api_group_ack_mismatch'):
+                activate(self.s3,'bucket',candidate,None,{**self.ack(candidate),'groups':groups})
+            self.assertEqual(load_active(self.s3,'bucket'),(None,None))
 
     def test_unchanged_publication_reuses_objects_and_preserves_active_bytes(self):
         candidate=self.candidate();activate(self.s3,'bucket',candidate,None,self.ack(candidate))
@@ -103,6 +113,79 @@ class PublicationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'schema_or_identity_invalid'):
             install(self.s3,'bucket',candidate,self.root/'installed',validate_group=fail,probe=lambda *args:{})
         self.assertFalse((self.root/'installed/active.json').exists())
+
+    def test_new_generation_reuses_verified_immutable_bytes(self):
+        first=self.candidate();target=self.root/'installed'
+        install(self.s3,'bucket',first,target,validate_group=lambda *args:None,
+                probe=lambda c,active:self.ack(c))
+        old=target/'releases/institutional_13f'/('a'*64)/'source.sqlite'
+        self.receipt['groups']['institutional_13f']['generationId']='b'*64
+        second=self.candidate()
+        with patch.object(self.s3,'download_fileobj',wraps=self.s3.download_fileobj) as download:
+            install(self.s3,'bucket',second,target,validate_group=lambda *args:None,
+                    probe=lambda c,active:self.ack(c),expected_release=first['releaseId'])
+        new=target/'releases/institutional_13f'/('b'*64)/'source.sqlite'
+        self.assertEqual(old.stat().st_ino,new.stat().st_ino)
+        download.assert_not_called()
+
+    def test_capacity_is_checked_before_download_or_pointer_change(self):
+        candidate=self.candidate();target=self.root/'installed'
+        with patch('shutil.disk_usage',return_value=SimpleNamespace(free=0)), \
+             patch.object(self.s3,'download_fileobj') as download:
+            with self.assertRaisesRegex(ValueError,'insufficient_install_capacity'):
+                install(self.s3,'bucket',candidate,target,validate_group=lambda *args:None,
+                        probe=lambda c,active:self.ack(c))
+        download.assert_not_called()
+        self.assertFalse((target/'active.json').exists())
+
+    def test_corrupt_previous_file_is_not_reused(self):
+        first=self.candidate();target=self.root/'installed'
+        install(self.s3,'bucket',first,target,validate_group=lambda *args:None,
+                probe=lambda c,active:self.ack(c))
+        old=target/'releases/institutional_13f'/('a'*64)/'source.sqlite'
+        old.chmod(0o644);old.write_bytes(b'corrupt')
+        self.receipt['groups']['institutional_13f']['generationId']='b'*64
+        second=self.candidate()
+        install(self.s3,'bucket',second,target,validate_group=lambda *args:None,
+                probe=lambda c,active:self.ack(c),expected_release=first['releaseId'])
+        new=target/'releases/institutional_13f'/('b'*64)/'source.sqlite'
+        self.assertEqual(new.read_bytes(),b'synthetic-public-data')
+        self.assertNotEqual(old.stat().st_ino,new.stat().st_ino)
+
+    def test_low_space_retains_previous_release_and_shared_file(self):
+        first=self.candidate();target=self.root/'installed'
+        install(self.s3,'bucket',first,target,validate_group=lambda *args:None,
+                probe=lambda c,active:self.ack(c))
+        before=(target/'active.json').read_bytes()
+        old=target/'releases/institutional_13f'/('a'*64)/'source.sqlite'
+        (self.root/'source.sqlite').write_bytes(b'different-public-generation')
+        entry=self.receipt['groups']['institutional_13f']['files'][0]
+        entry.update(bytes=27,sha256=hashlib.sha256(b'different-public-generation').hexdigest())
+        self.receipt['groups']['institutional_13f']['generationId']='b'*64
+        second=self.candidate()
+        with patch('shutil.disk_usage',return_value=SimpleNamespace(free=1024**3)), \
+             patch.object(self.s3,'download_fileobj') as download:
+            with self.assertRaisesRegex(ValueError,'insufficient_install_capacity'):
+                install(self.s3,'bucket',second,target,validate_group=lambda *args:None,
+                        probe=lambda c,active:self.ack(c),expected_release=first['releaseId'])
+        download.assert_not_called()
+        self.assertEqual((target/'active.json').read_bytes(),before)
+        self.assertEqual(old.read_bytes(),b'synthetic-public-data')
+
+    def test_prior_root_outside_release_namespace_is_never_reused(self):
+        first=self.candidate();target=self.root/'installed'
+        install(self.s3,'bucket',first,target,validate_group=lambda *args:None,
+                probe=lambda c,active:self.ack(c))
+        active=json.loads((target/'active.json').read_text())
+        active['groups']['institutional_13f']['root']=str(self.root)
+        (target/'active.json').chmod(0o644)
+        (target/'active.json').write_text(json.dumps(active))
+        self.receipt['groups']['institutional_13f']['generationId']='b'*64
+        second=self.candidate()
+        with patch.object(self.s3,'download_fileobj',wraps=self.s3.download_fileobj) as download:
+            install(self.s3,'bucket',second,target,validate_group=lambda *args:None,
+                    probe=lambda c,active:self.ack(c),expected_release=first['releaseId'])
+        download.assert_called_once()
 
     def test_api_probe_cannot_pass_with_empty_batch_or_partial_coverage(self):
         with self.assertRaisesRegex(ValueError,'actual_api_uid_read_failed'):
