@@ -22,7 +22,7 @@ import duckdb
 import gzip
 import random
 from .contracts import TABLES
-from .store import now, checksum
+from .store import Store, now, checksum
 from .sync_plan import bounded_date_windows, price_date_windows
 
 BASE = 'https://api.sharadar.com/v1.0'
@@ -383,8 +383,19 @@ class Synchronizer:
             raise UpstreamError('sync retry limit reached')
         checkpoint_dir=self.store.root/'sync/extract-checkpoints'/table
         checkpoint_dir.mkdir(parents=True,exist_ok=True)
+        # Checkpoints resume ONE interrupted extraction, not every future run
+        # of the same historical leaf. SF3 has no lastupdated filter, so an old
+        # leaf otherwise makes each legitimate revision fail one retry at a
+        # time. Keep prior checkpoints intact for diagnostics; never touch raw.
+        attempt_path=checkpoint_dir/'attempt.json'
+        context={'query':params,'schema':contract.digest,'lastSuccess':state.get('last_success')}
+        attempt=json.loads(attempt_path.read_text()) if attempt_path.exists() else None
+        if not attempt or attempt.get('context')!=context:
+            attempt={'context':context,'id':uuid.uuid4().hex}
+            Store._atomic_if_changed(attempt_path,json.dumps(attempt,sort_keys=True))
+        attempt_id=attempt['id']
         def checkpoint_path(query):
-            identity=hashlib.sha256(json.dumps({'query':query,'schema':contract.digest},sort_keys=True).encode()).hexdigest()
+            identity=hashlib.sha256(json.dumps({'query':query,'schema':contract.digest,'attempt':attempt_id},sort_keys=True).encode()).hexdigest()
             return checkpoint_dir/(identity+'.json.gz')
         def fetch(query):
             checkpoint=checkpoint_path(query)
@@ -454,8 +465,11 @@ class Synchronizer:
             query,expected=entry
             observed=canonical_rows_hash(request(table,query,columns),contract.keys)
             if observed!=expected:
-                checkpoint=checkpoint_path(query)
-                if checkpoint.exists(): checkpoint.replace(checkpoint.with_name(checkpoint.name+'.invalid-'+uuid.uuid4().hex))
+                # Every leaf belongs to the invalidated snapshot, including
+                # leaves not reached by verification. The next attempt must
+                # fetch a coherent new set, then pass the same strict gate.
+                Store._atomic_if_changed(attempt_path,json.dumps(
+                    {'context':context,'id':uuid.uuid4().hex,'invalidatedAttempt':attempt_id},sort_keys=True))
                 scope={key:query[key] for key in ('from','to','ticker','ticker.gt','ticker.lte') if key in query}
                 raise UpstreamError('upstream changed during sync; local history retained: '+
                     json.dumps({'table':table,'scope':scope,'expected':expected[:12],'observed':observed[:12]},sort_keys=True))

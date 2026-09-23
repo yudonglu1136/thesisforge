@@ -34,6 +34,13 @@ class InfrastructureContractTest(unittest.TestCase):
         names=' '.join(self.resources).lower()
         for term in ('frontend','broker','yodlee','ibkr'): self.assertNotIn(term,names)
 
+    def test_daily_program_updates_data_without_claiming_api_or_backtest_success(self):
+        command=self.resources['RunDocument']['Properties']['Content']['mainSteps'][0]['inputs']['runCommand'][-1]['Fn::Sub']
+        self.assertIn('--data-only',command)
+        definition=self.resources['StateMachine']['Properties']['Definition']
+        self.assertEqual(definition['States']['Check']['Choices'][0]['Next'],'DataReady')
+        self.assertEqual(definition['States']['DataReady']['Type'],'Succeed')
+
     def test_delivery_failure_timeout_and_worker_output_are_independently_observable(self):
         target=self.resources['DailySchedule']['Properties']['Target']
         self.assertEqual(target['DeadLetterConfig']['Arn'],{'Fn::GetAtt':['DispatchDlq','Arn']})

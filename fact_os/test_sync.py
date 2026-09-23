@@ -191,6 +191,28 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.store.status(),before)
         self.assertFalse(list((self.store.root/'raw').glob('*sync*.csv')))
         self.assertFalse(list((self.store.root/'staging').glob('*sync*.csv')))
+    def test_completed_sync_checkpoints_do_not_hide_next_upstream_revision(self):
+        self.provider([self.original])
+        self.sync.sync('stocks')
+        revised={**self.original,'close':9}
+        self.provider([revised])
+        # Same date/query bounds, but a NEW sync after success: old extracted
+        # leaves are not the input snapshot of this run.
+        self.assertEqual(self.sync.sync('stocks')['status'],'ingested')
+        self.assertEqual(self.store.status()[0]['row_count'],1)
+
+    def test_mutation_invalidates_attempt_not_one_stale_leaf_per_retry(self):
+        rows=[{**self.original,'ticker':symbol,'date':f'2000-01-0{day}'}
+              for day,symbol in ((3,'AAA'),(4,'BBB'),(5,'CCC'))]
+        self.provider(rows,transform=lambda _q,data,n:
+                      [{**row,'close':99} for row in data] if n==2 else data)
+        with patch.dict('os.environ',{'FACT_OS_SYNC_PAGE_SIZE':'2'}):
+            with self.assertRaisesRegex(UpstreamError,'changed during sync'):
+                self.sync.sync('stocks')
+            self.provider([{**row,'close':99} for row in rows])
+            # Every old leaf, including ones not reached by verification, is
+            # isolated from the replacement attempt. The gate remains strict.
+            self.assertEqual(self.sync.sync('stocks')['local_rows'],4)
     def test_completed_backfill_does_not_download_again(self):
         self.mock(lambda req:self.fail('completed backfill must not redownload'))
         self.assertEqual(self.sync.backfill('stocks')['status'],'already_backfilled')

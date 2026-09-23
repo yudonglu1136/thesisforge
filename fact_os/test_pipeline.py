@@ -56,6 +56,15 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual(registry['valuation_candidates'].publicationPolicy,'candidate_only_never_auto_publish')
         self.assertIn('external.sec_accepted_filings',registry['guru_strict'].requiredInputs)
 
+    def test_data_daily_scope_defers_reviewed_models_without_weakening_them(self):
+        daily={s.id:s for s in tasks(profile='aws-data-daily')}
+        self.assertEqual(set(daily),{'canonical','ai_insights','institutional_13f',
+            'research_inputs','public_observations','strategy_inputs'})
+        self.assertEqual(len(daily['canonical'].requiredInputs),14)
+        self.assertTrue(all(s.publicationPolicy=='automatic_after_checks' for s in daily.values()))
+        self.assertIn('guru_strict',{s.id for s in tasks()})
+        self.assertIn('valuation_candidates',{s.id for s in tasks()})
+
 
 class RunnerTest(unittest.TestCase):
     tearDown=StoreRevisionTest.tearDown

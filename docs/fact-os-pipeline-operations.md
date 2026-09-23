@@ -30,6 +30,46 @@ are separate gates. No provider credential belongs on the API host.
 
 ## Commands and receipts
 
+### Daily data-only contract (2026-09-23)
+
+The operator deferred backtests. The fixed AWS daily document now passes
+`--data-only`, selecting the explicit `aws-data-daily` registry: canonical,
+AI Insights, institutional 13F, Research inputs, public observations (quotes /
+quality), and Strategy inputs. All 14 sources and all six automatic groups must
+pass. It does not build Guru curves, publish reviewed valuation models, change
+personal strategies, install on the API, or mutate the API active pointer.
+Full/manual runs still retain the original review gates.
+
+Exit zero in this mode means **data ready**, not production API activation.
+Private S3 `fact-os/data-ready/latest.json` is a separate conditional-write
+pointer, with `dataSyncStatus=verified` and `actualApiActivation=not_requested`.
+Each candidate and its validated objects remain immutable under the existing
+published namespace; the run receipt still says `staged_not_activated`.
+The Step Functions terminal success is `DataReady`. A stale worker, failed
+source, missing group or mismatched generation cannot mark data ready. Never
+use this result to declare website freshness or the Guru health matrix green.
+
+Retry an existing validated data run with
+`bin/fact-os-worker --data-only --scheduled-for <same timestamp> --resume-publication <runId>.json`.
+The profile and timestamp must match. This reuses the exact snapshot without
+fetching sources. A source failure requires a new run after fixing the source;
+publication retry cannot turn a failed fetch into a successful sync.
+
+Extract checkpoints now belong to one attempt, keyed by full query context,
+schema and last successful sync. Successful runs cannot lend stale SF3 leaves
+to the next run. A verification mutation invalidates the complete attempt;
+the next attempt fetches and double-checks a new coherent set. Raw archives and
+prior canonical facts remain intact.
+
+Worker-only code releases may be built with `git archive` from committed trunk
+using an explicit runtime-code allowlist. They contain no database, data tree,
+credentials, frontend or uncommitted work. This is not an EB application package
+and does not bypass the backend source-clean deployment gate. Retain the old
+worker code directory; roll back the code symlink only while no writer is active.
+Keep the AWS schedule disabled during an unverified worker upgrade. Enable only
+after manual data readiness, then pause the duplicate local **public-data** job;
+broker/NAV jobs are outside this cutover.
+
 `python -m fact_os --root <writer-root> pipeline --pipeline-action plan` shows
 required/optional source readiness and content/version-based invalidation.
 `--pipeline-action run` and `resume` use the same validated result ledger.

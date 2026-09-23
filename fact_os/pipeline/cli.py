@@ -29,7 +29,7 @@ def pipeline_command(store,args,emit):
         store.recover_catalog()
         if args.pipeline_action=='reconcile': emit({'status':'catalog_recovered'});return 0
         if args.pipeline_action=='plan':
-            specs=tasks()
+            specs=tasks(profile=args.profile)
             snapshot=freeze(store,code_version=digest([record(s) for s in specs]),configs={s.id:s.configHashes for s in specs})
             emit({'snapshotId':snapshot.snapshotId,'tasks':[record(p) for p in plan(specs,snapshot,Ledger(store).results())]});return 0
         # Resume never fetches upstream. Validated task+fingerprint results and

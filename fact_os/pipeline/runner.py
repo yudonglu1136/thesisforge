@@ -12,7 +12,7 @@ from .builders import build
 
 
 def run(store,*,profile='local',scheduled_for=None,failed_sources=(),specs=None,builder=build):
-    specs=tuple(specs or tasks())
+    specs=tuple(specs or tasks(profile=profile))
     ledger=Ledger(store)
     version=digest([record(s) for s in specs])
     scheduled_for=scheduled_for or now()

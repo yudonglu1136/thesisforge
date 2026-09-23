@@ -88,7 +88,7 @@ systemctl enable --now amazon-ssm-agent
             'timeoutSeconds':'21600','runCommand':[
               'set -eu',
               'test -x /opt/fact-os/current/bin/fact-os-worker',
-              sub('sudo -u factos env FACT_OS_ROOT=/var/lib/fact-os/data FACT_OS_SECRET_ID=${SharadarSecret} FACT_OS_BUCKET=${Bucket} FACT_OS_INSTALL_DOCUMENT=${InstallDocument} FACT_OS_INSTALL_DOCUMENT_VERSION=${InstallDocumentVersion} FACT_OS_API_INSTANCE_ID=${ApiInstanceId} AWS_DEFAULT_REGION=${AWS::Region} /opt/fact-os/current/bin/fact-os-worker --scheduled-for "$SSM_ScheduledFor"')
+              sub('sudo -u factos env FACT_OS_ROOT=/var/lib/fact-os/data FACT_OS_SECRET_ID=${SharadarSecret} FACT_OS_BUCKET=${Bucket} FACT_OS_INSTALL_DOCUMENT=${InstallDocument} FACT_OS_INSTALL_DOCUMENT_VERSION=${InstallDocumentVersion} FACT_OS_API_INSTANCE_ID=${ApiInstanceId} AWS_DEFAULT_REGION=${AWS::Region} /opt/fact-os/current/bin/fact-os-worker --data-only --scheduled-for "$SSM_ScheduledFor"')
             ]}}]}}},
       'StateRole':{'Type':'AWS::IAM::Role','Properties':{'AssumeRolePolicyDocument':trust('states.amazonaws.com'),
         'Policies':[policy('only-fact-os-worker',[
@@ -108,18 +108,18 @@ systemctl enable --now amazon-ssm-agent
             'Retry':[{'ErrorEquals':['Ssm.InvocationDoesNotExistException'],'IntervalSeconds':10,'MaxAttempts':6}],
             'ResultPath':'$.invocation','Next':'Check'},
           'Check':{'Type':'Choice','Choices':[
-            {'Variable':'$.invocation.Status','StringEquals':'Success','Next':'Verified'},
+            {'Variable':'$.invocation.Status','StringEquals':'Success','Next':'DataReady'},
             {'Variable':'$.invocation.Status','StringEquals':'Pending','Next':'Wait'},
             {'Variable':'$.invocation.Status','StringEquals':'InProgress','Next':'Wait'},
             {'Variable':'$.invocation.Status','StringEquals':'Delayed','Next':'Wait'}],'Default':'Failed'},
-          # Worker exits zero ONLY after published-generation API ACK validation.
-          'Verified':{'Type':'Succeed'},'Failed':{'Type':'Fail','Error':'FactOsPipelineNotVerified'}
+          # This workflow verifies DATA readiness, not API activation or curves.
+          'DataReady':{'Type':'Succeed'},'Failed':{'Type':'Fail','Error':'FactOsDailyDataNotVerified'}
         }}}},
       'SchedulerRole':{'Type':'AWS::IAM::Role','Properties':{'AssumeRolePolicyDocument':trust('scheduler.amazonaws.com'),
         'Policies':[policy('start-fact-os-only',[statement(['states:StartExecution'],arn('StateMachine')),
                                                statement(['sqs:SendMessage'],arn('DispatchDlq'))])]}},
       'DailySchedule':{'Type':'AWS::Scheduler::Schedule','Properties':{
-        'Name':'thesisforge-fact-os-daily','Description':'All 14 authorized Fact OS tables; worker receipt and API ACK required',
+        'Name':'thesisforge-fact-os-daily','Description':'All 14 Fact OS tables and validated derived data; API activation and reviewed backtests are separate',
         'ScheduleExpression':'cron(30 7 * * ? *)','ScheduleExpressionTimezone':'Asia/Riyadh',
         'State':ref('ScheduleState'),'FlexibleTimeWindow':{'Mode':'OFF'},
         'Target':{'Arn':arn('StateMachine'),'RoleArn':arn('SchedulerRole'),
