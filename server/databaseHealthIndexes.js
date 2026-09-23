@@ -16,7 +16,12 @@ export const databaseHealthIndexes = Object.freeze([
   sql: `CREATE INDEX ${spec.name} ON ${spec.table} (${spec.expression})`
 })));
 
-const normalizeSql = (sql) => String(sql || "").trim().replace(/\s+/g, " ");
+// SQLite ignores keyword case and whitespace outside tokens, including around
+// parentheses. Compare tokens rather than stored SQL formatting. Quoted JSON
+// paths/string literals remain byte-exact: lowercasing them changes semantics.
+const normalizeSql = (sql) => (String(sql || "").match(
+  /'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\[[^\]]*\]|[A-Za-z_][A-Za-z0-9_]*|\d+|[^\s]/g
+) || []).map(token => /^[A-Za-z_]/.test(token) ? token.toLowerCase() : token).join(" ");
 
 export function inspectDatabaseHealthIndexes(db) {
   const entries = new Map(db.prepare(

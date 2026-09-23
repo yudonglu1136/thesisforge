@@ -30,6 +30,32 @@ function fixture() {
 const storedRows = (db) => ["valuation_ticker_snapshots", "price_points", "unrelated_private"].map((table) =>
   db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
 
+test("production index formatting and SQL keyword case do not disable exact health seeks", () => {
+  const db = fixture();
+  try {
+    const before = readDatabaseTableSummariesFrom(db);
+    for (const spec of databaseHealthIndexes) {
+      // Exact formatting observed on the release-scoped production database.
+      db.exec(spec.sql.replace(" ON ", " on ").replace(/\s+/g, " ").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")"));
+    }
+    assert.ok(inspectDatabaseHealthIndexes(db).every(row => row.state === "ready"));
+    assert.deepEqual(installDatabaseHealthIndexes(db).created, []);
+    const queries = [];
+    const after = readDatabaseTableSummariesFrom({ prepare(sql) { queries.push(sql); return db.prepare(sql); } });
+    assert.deepEqual(after, before);
+    assert.equal(queries.filter(sql => sql.startsWith("SELECT (SELECT COUNT(*)")).length, 2);
+  } finally { db.close(); }
+});
+
+test("health index comparison preserves case-sensitive JSON paths and string values", () => {
+  const db = fixture();
+  try {
+    db.exec(databaseHealthIndexes[1].sql.replaceAll("asOfDate", "asofdate"));
+    assert.equal(inspectDatabaseHealthIndexes(db)[1].state, "incompatible");
+    assert.throws(() => installDatabaseHealthIndexes(db), /incompatible definition/);
+  } finally { db.close(); }
+});
+
 test("health indexing is additive, atomic, idempotent and preserves exact summaries and all stored rows", () => {
   const db = fixture();
   try {
