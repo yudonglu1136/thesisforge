@@ -112,7 +112,7 @@ claim that a background refresh is running when none was started.
   filtering disabled produces 1,255 real daily observations and 21 rebalance
   snapshots; required missing valuation inputs instead produce the specific
   source-gap message. EN desktop and ZH 390px mobile were exercised without
-  page overflow or browser errors. Production verification: **pending**.
+  page overflow or browser errors. Final production verification is recorded below.
 - Same production DB, read-only health table-summary diagnostic (three rounds):
   5,630/5,898/3,628ms before, 575/519/57ms after; all six result semantic hashes
   identical. This is a bounded diagnostic, not a 60-sample API p95 claim.
@@ -216,5 +216,141 @@ This repair does not pretend that the separately deployed data-only Fact OS
 daily scheduler already publishes Guru backtests. Its deferred backtest group
 and any remaining custom-strategy source gaps must be reported separately.
 
-Commit/push/deployment identities and final matrix acceptance will be appended
-after verification. **This document is not a production-success receipt yet.**
+The final production-success receipt is recorded below. Earlier failed and
+in-progress observations are retained as execution history, not final status.
+
+## Production execution history
+
+- Initial frontend: Vercel `dpl_4VrUUXD5YFAc7taKGTZM7hyBXTV7`,
+  `https://thesisforge-5wo783dzn-yudonglu1136s-projects.vercel.app`.
+  Both apex and `www` resolved to this production deployment. The frontend
+  contains the catalog retirement and source-gap messaging; auth bypass is off.
+- A later live alias check resolved both domains to Ready deployment
+  `dpl_578GajpxHzk2wm1Q7Duk4PBegfDE`,
+  `https://thesisforge-pbtzqtxu3-yudonglu1136s-projects.vercel.app`.
+  The actually served `main.dart.js` is byte-identical to the reviewed production
+  artifact (4,763,776 bytes; SHA-256
+  `004fefe83f01b9b5eb414dbc4f56a710379774a9a66b5d3b7e12f3388664fc38`).
+  Both public build metadata endpoints attest the same hash and enabled
+  investment workflow. The changed deployment ID is not a different UI build.
+- Initial backend release: `guru-repair-3c849cb`, committed source
+  `3c849cbba87f4ba8c81a544b89d5913d9c2dffbb`.
+  Its canonical run (SSM `3167f044-b01a-4dcc-8d43-37a205883c7e`) ended
+  **failed** at 2026-09-23T15:28:12Z. The 5Y window had 15 strict-ready,
+  10 separately labelled proxies and five filing-read failures (Chase Coleman,
+  Chris Hohn, Nelson Peltz, Andreas Halvorsen and Mohnish Pabrai).
+  It did not proceed to 10Y or create a completion marker.
+- Fixed backend: `guru-repair-175b4a2`, committed source
+  `175b4a210fe44757e76bef9b710e7070f4e2efce`. EB reported Ready/Green at
+  2026-09-23T15:43:21Z. Private release ZIP SHA-256:
+  `1c07668988b03b0dab9958b11b88a186ec71660898907d1bd90118d305f2d894`.
+  The exact-source package excludes concurrent uncommitted work, including
+  unrelated `backtestEngine.js` changes.
+- New canonical publication: SSM `d9d4147c-23d8-4e04-a5be-2504f241af74`,
+  started 2026-09-23T15:44:27Z, generation
+  `a36efbb08ea688e41d6f8bbb44c83fa687ccda2bdd958c5a76d88bae1b3c658a`.
+  The runner verified deployed source hashes, the existing rollback backup,
+  disabled production auth bypass, disk headroom and absence of another writer.
+  Final 57-row validation was pending at launch; EB Green was not that validation.
+- Post-deploy authenticated browser checks loaded the 30-manager Guru catalog
+  and its 30 comparable style rows. Those style rows belong to the installed
+  immutable Research release, ending 2026-09-18. They are not represented as
+  proof that the newly recomputed runtime 5Y/10Y matrix is complete.
+- The new 5Y pass restored every manager that had a filing-read failure in the
+  initial production attempt: Chase Coleman, Chris Hohn, Andreas Halvorsen and
+  Mohnish Pabrai returned strict `ready`; Nelson Peltz returned the separately
+  allowed `proxy_ready` result. No source-coverage gate was reduced. The
+  2026-09-23T16:14 progress receipt `5cc29c92-0f85-4c84-842e-fcd82e5e7444`
+  recorded 25 processed rows and no hard failure. This intermediate progress
+  is not the final two-window attestation.
+- At 2026-09-23T16:24:53.915Z the new production 5Y window passed all
+  30 current-generation manager checks: 19 strict-ready and 11 permitted
+  proxies, zero hard failures. The runner then started 10Y sequentially.
+  SSM progress receipt: `15ef127d-552c-4a1b-ab65-435e53dc11ff`.
+  The low-level strict-refresh counter calls proxies failures by design;
+  all 11 are separately attested `proxy_ready`, not hidden source failures.
+
+## Browser return-path repair
+
+The final authenticated browser round trip found an additional existing Guru
+preview defect: returning from Strategies restored the selected ticker but not
+its price/model preview. `GuruHoldingsMatrix.update` requested detail only when
+the ticker changed. The same condition also skipped the re-read after a cutoff
+change cleared the detail cache. The focused regression first failed with an
+empty request list, then passed after requesting an uncached selected ticker.
+Successful previews still avoid duplicate requests when display controls change.
+
+- Frontend code: `8cbc819d90e790f68eb28ec4dd80981cfd030ac1`, pushed to `trunk`.
+  Only `lib/investment_guru_holdings.dart` and its test were included.
+- Guru holdings/study tests: 31/31. Full isolated Flutter run: 580 passed,
+  32 failed. All 32 failure names exactly match both the earlier full run and
+  the independently tested original baseline. Analyze and i18n passed.
+- The first local build attempt inherited the source-verification Git environment
+  into Flutter's SDK discovery and failed before producing an artifact. The
+  verification-only Git environment was then scoped to source checks, and the
+  normal SDK production build passed with authentication bypass disabled.
+- Automatic Vercel production deployment:
+  `dpl_3Jmmn5v7RFwtDwRFeHFXH9XJN6R1`,
+  `https://thesisforge-bnrbqw7fe-yudonglu1136s-projects.vercel.app`.
+  Both application domains serve the identical verified 4,763,806-byte JS:
+  SHA-256 `038bcba2beaa7546347922a5d489e6a4ae3705638bd62a227a2a1049406339d7`.
+  This frontend-only release does not restart the active backend prewarm.
+- Fresh production browser verification: Ackman Top-5, 5Y, valuation off,
+  no CTA, leverage 1 and 10bps returns 1,255 actual daily observations and
+  21 rebalances. Latest holdings are UBER/BN/MSFT/AMZN/HHH at 20% targets.
+  Turning valuation filtering on correctly blocks the missing 2021-09-20 QSR
+  model separately from LOW/A/CMG/HLT price-limit exclusions, in both languages.
+  No strategy or user record was saved. Browser error-level log count is zero.
+- The new production Guru → Strategies → Guru round trip restores AMZN
+  price USD 253.71 (2026-09-18) and published model USD 235.69 (2026-07-31),
+  with the 30-manager catalog intact. These are installed Research-release
+  values, not a claim that the Research release was rebuilt by this task.
+
+## Final production acceptance
+
+The canonical publication completed successfully at
+**2026-09-23T17:29:49.730188Z**. All **57/57** required current-generation rows
+passed: 5Y **30/30** (19 strict / 11 proxy) and 10Y **27/27** (4 strict /
+23 proxy), with zero hard failures. All 30 active managers have a supported
+5Y result; the existing 5Y-only policies for Li Lu, Pabrai and Soros are unchanged.
+The 34 proxies remain separately labelled and are not presented as full-fund NAV.
+
+An independent read-only attestation (`f6cd658e-9077-43bf-875b-f7f26eb0ddb9`)
+verified the official completion marker, report hash, exact 57-key matrix,
+method/security-master versions, per-window generation and idle refresh worker.
+The canonical report SHA-256 is
+`c39cdafbeaeefdf3453387059b51fb3daa261e4553b15d8e8233025fd78bbb1c`.
+The production generation is
+`a36efbb08ea688e41d6f8bbb44c83fa687ccda2bdd958c5a76d88bae1b3c658a`.
+
+After the health cache TTL expired, eight concurrent reads at each of
+`backend.thesisforge.tech`, `thesisforge.tech` and `www.thesisforge.tech` all
+returned HTTP 200 / `ok: true`, identical curve hashes and 57/57 availability.
+The overall health status is still `stale` because `market_prices` reports an
+existing economic-source freshness warning. This is not a Guru curve failure
+and is not represented as a fully fresh system-wide health result.
+All responses retained active data-release identity
+`5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84`.
+Observed latencies were 1,676–1,697ms direct, 498–606ms apex and 415–474ms www;
+this small burst is not a new p95 benchmark. Anonymous strategy requests stayed
+401, internal refresh status stayed externally 404 and retired Value Flow stayed
+410 at all three origins. Authenticated browser verification remained successful.
+
+Machine-readable evidence is
+`guru-backtest-repair-2026-09-23.production.json`. Backend source/release remain
+`175b4a2` / `guru-repair-175b4a2`; frontend source is `8cbc819`, with the verified
+Vercel identity and artifact hash above. No unrelated work was committed.
+
+### Explicit remaining limits
+
+- Daily Fact OS data-only synchronization does **not** run this canonical Guru
+  publication. The 48-hour generated-age gate is unchanged; recurring backtest
+  publication remains a separate unfinished integration, not a scheduled pass.
+- Research/Strategy's immutable installed data still end at 2026-09-18; current
+  runtime Guru curves end at 2026-09-21. No historical release or user strategy
+  was silently rewritten to align those dates.
+- Custom valuation-filtered strategies can still be unavailable where historical
+  filings, prices or models are genuinely missing. They now explain the gaps.
+- The 32 baseline Flutter failures, 11 pre-existing storage findings and the
+  generic five-route performance gate remain visible above. This is acceptance
+  of the scoped Guru repair, not a claim that every repository check is green.

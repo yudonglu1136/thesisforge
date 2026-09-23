@@ -1,0 +1,837 @@
+{
+  "schemaVersion": 1,
+  "type": "guru-backtest-repair-production",
+  "verifiedAt": "2026-09-23T17:32:06.986Z",
+  "backend": {
+    "commit": "175b4a210fe44757e76bef9b710e7070f4e2efce",
+    "release": "guru-repair-175b4a2",
+    "environment": "thesisforge-api-prod"
+  },
+  "frontend": {
+    "commit": "8cbc819d90e790f68eb28ec4dd80981cfd030ac1",
+    "deploymentId": "dpl_3Jmmn5v7RFwtDwRFeHFXH9XJN6R1",
+    "url": "https://thesisforge-bnrbqw7fe-yudonglu1136s-projects.vercel.app",
+    "mainDartJsSha256": "038bcba2beaa7546347922a5d489e6a4ae3705638bd62a227a2a1049406339d7",
+    "authDevBypass": false
+  },
+  "productionRunCommandId": "d9d4147c-23d8-4e04-a5be-2504f241af74",
+  "independentAttestationCommandId": "f6cd658e-9077-43bf-875b-f7f26eb0ddb9",
+  "canonical": {
+    "pass": true,
+    "receipt": {
+      "release": "guru-repair-175b4a2",
+      "commit": "175b4a210fe44757e76bef9b710e7070f4e2efce",
+      "refreshGeneration": "a36efbb08ea688e41d6f8bbb44c83fa687ccda2bdd958c5a76d88bae1b3c658a",
+      "notBefore": "2026-09-23T15:44:27.034459Z",
+      "runtimeDatabase": "/var/app/data/thesisforge-20260920-v3.sqlite",
+      "status": "complete",
+      "sourceSnapshot": "snap-01cd197439e20633d",
+      "encryptedSnapshot": "snap-0d35b97fbd109bad2",
+      "exitCode": 0,
+      "finishedAt": "2026-09-23T17:29:49.730188+00:00"
+    },
+    "reportSha256": "c39cdafbeaeefdf3453387059b51fb3daa261e4553b15d8e8233025fd78bbb1c",
+    "marker": {
+      "status": "complete",
+      "recordsSha256": "a36efbb08ea688e41d6f8bbb44c83fa687ccda2bdd958c5a76d88bae1b3c658a",
+      "completedAt": "2026-09-23T17:29:49.673Z",
+      "displayable": 57,
+      "expectedRows": 57
+    },
+    "windows": [
+      {
+        "years": 5,
+        "httpStatus": 200,
+        "startedAt": "2026-09-23T15:44:27.373Z",
+        "finishedAt": "2026-09-23T16:24:53.915Z",
+        "ok": 19,
+        "failed": 11,
+        "proxyAvailable": 11,
+        "alreadyRunning": false,
+        "errorCount": 11,
+        "managerCount": 30,
+        "ready": 19,
+        "proxyReady": 11
+      },
+      {
+        "years": 10,
+        "httpStatus": 200,
+        "startedAt": "2026-09-23T16:24:53.934Z",
+        "finishedAt": "2026-09-23T17:29:45.284Z",
+        "ok": 4,
+        "failed": 23,
+        "proxyAvailable": 23,
+        "alreadyRunning": false,
+        "errorCount": 23,
+        "managerCount": 27,
+        "ready": 4,
+        "proxyReady": 23
+      }
+    ],
+    "statusCounts": {
+      "proxy_ready": 34,
+      "ready": 23
+    },
+    "curveAvailability": {
+      "ok": true,
+      "expectedManagers": 30,
+      "managerCount": 30,
+      "windows": [
+        5,
+        10
+      ],
+      "expectedRows": 57,
+      "displayable": 57,
+      "strictReady": 23,
+      "proxyReady": 34,
+      "failures": [],
+      "byWindow": {
+        "5Y": {
+          "expected": 30,
+          "strictReady": 19,
+          "proxyReady": 11,
+          "failures": 0,
+          "displayable": 30
+        },
+        "10Y": {
+          "expected": 27,
+          "strictReady": 4,
+          "proxyReady": 23,
+          "failures": 0,
+          "displayable": 27
+        }
+      },
+      "methodVersion": "manager13f-drifted-total-return-v9",
+      "proxyMethodVersion": "manager13f-public-holdings-proxy-v1",
+      "securityMasterVersion": "holding-resolution-v1-2ec0cf0f7f1b1154",
+      "readiness": {
+        "refreshIntervalHours": 24,
+        "maxGeneratedAgeHours": 48,
+        "maxEndAgeHours": 288
+      }
+    },
+    "refreshes": [
+      {
+        "guruId": "gavin-baker",
+        "years": 5,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T15:46:09.958Z"
+      },
+      {
+        "guruId": "renaissance-technologies",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T15:48:23.645Z"
+      },
+      {
+        "guruId": "bill-ackman",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T15:48:51.270Z"
+      },
+      {
+        "guruId": "stanley-druckenmiller",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T15:51:10.308Z"
+      },
+      {
+        "guruId": "brad-gerstner",
+        "years": 5,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T15:51:52.744Z"
+      },
+      {
+        "guruId": "chase-coleman",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T15:53:39.562Z"
+      },
+      {
+        "guruId": "philippe-laffont",
+        "years": 5,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T15:55:41.919Z"
+      },
+      {
+        "guruId": "li-lu",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T15:56:13.164Z"
+      },
+      {
+        "guruId": "chuck-akre",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T15:57:09.333Z"
+      },
+      {
+        "guruId": "dev-kantesaria",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T15:57:44.679Z"
+      },
+      {
+        "guruId": "chris-bloomstran",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T15:58:45.879Z"
+      },
+      {
+        "guruId": "samantha-mclemore",
+        "years": 5,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T15:59:39.591Z"
+      },
+      {
+        "guruId": "terry-smith",
+        "years": 5,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:00:40.679Z"
+      },
+      {
+        "guruId": "stan-moss",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:02:30.378Z"
+      },
+      {
+        "guruId": "baillie-gifford",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:04:10.564Z"
+      },
+      {
+        "guruId": "warren-buffett",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:05:11.779Z"
+      },
+      {
+        "guruId": "tom-gayner",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:06:23.005Z"
+      },
+      {
+        "guruId": "chris-hohn",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:06:48.866Z"
+      },
+      {
+        "guruId": "david-tepper",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:07:47.423Z"
+      },
+      {
+        "guruId": "dan-loeb",
+        "years": 5,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:09:03.891Z"
+      },
+      {
+        "guruId": "seth-klarman",
+        "years": 5,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:09:50.903Z"
+      },
+      {
+        "guruId": "nelson-peltz",
+        "years": 5,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:10:20.130Z"
+      },
+      {
+        "guruId": "andreas-halvorsen",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:12:31.837Z"
+      },
+      {
+        "guruId": "david-einhorn",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:13:33.676Z"
+      },
+      {
+        "guruId": "mohnish-pabrai",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:14:18.084Z"
+      },
+      {
+        "guruId": "pat-dorsey",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:15:29.083Z"
+      },
+      {
+        "guruId": "william-heard",
+        "years": 5,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:16:19.942Z"
+      },
+      {
+        "guruId": "evan-mcgoff",
+        "years": 5,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:21:56.754Z"
+      },
+      {
+        "guruId": "michael-cuggino",
+        "years": 5,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:23:00.206Z"
+      },
+      {
+        "guruId": "george-soros",
+        "years": 5,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:24:53.893Z"
+      },
+      {
+        "guruId": "gavin-baker",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:28:46.010Z"
+      },
+      {
+        "guruId": "renaissance-technologies",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:34:05.491Z"
+      },
+      {
+        "guruId": "bill-ackman",
+        "years": 10,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:34:48.175Z"
+      },
+      {
+        "guruId": "stanley-druckenmiller",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:38:37.180Z"
+      },
+      {
+        "guruId": "brad-gerstner",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:39:59.406Z"
+      },
+      {
+        "guruId": "chase-coleman",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:42:18.770Z"
+      },
+      {
+        "guruId": "philippe-laffont",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:46:52.493Z"
+      },
+      {
+        "guruId": "chuck-akre",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:48:44.497Z"
+      },
+      {
+        "guruId": "dev-kantesaria",
+        "years": 10,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:51:26.785Z"
+      },
+      {
+        "guruId": "chris-bloomstran",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:53:15.120Z"
+      },
+      {
+        "guruId": "samantha-mclemore",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:54:10.462Z"
+      },
+      {
+        "guruId": "terry-smith",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T16:55:30.406Z"
+      },
+      {
+        "guruId": "stan-moss",
+        "years": 10,
+        "status": "ready",
+        "generatedAt": "2026-09-23T16:58:00.394Z"
+      },
+      {
+        "guruId": "baillie-gifford",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:02:33.740Z"
+      },
+      {
+        "guruId": "warren-buffett",
+        "years": 10,
+        "status": "ready",
+        "generatedAt": "2026-09-23T17:04:10.569Z"
+      },
+      {
+        "guruId": "tom-gayner",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:06:34.810Z"
+      },
+      {
+        "guruId": "chris-hohn",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:07:32.322Z"
+      },
+      {
+        "guruId": "david-tepper",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:09:22.344Z"
+      },
+      {
+        "guruId": "dan-loeb",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:11:36.757Z"
+      },
+      {
+        "guruId": "seth-klarman",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:13:32.711Z"
+      },
+      {
+        "guruId": "nelson-peltz",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:15:12.803Z"
+      },
+      {
+        "guruId": "andreas-halvorsen",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:19:21.932Z"
+      },
+      {
+        "guruId": "david-einhorn",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:21:52.597Z"
+      },
+      {
+        "guruId": "pat-dorsey",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:23:35.864Z"
+      },
+      {
+        "guruId": "william-heard",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:24:30.601Z"
+      },
+      {
+        "guruId": "evan-mcgoff",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:27:24.755Z"
+      },
+      {
+        "guruId": "michael-cuggino",
+        "years": 10,
+        "status": "proxy_ready",
+        "generatedAt": "2026-09-23T17:29:45.062Z"
+      }
+    ]
+  },
+  "publicChecks": {
+    "checkedAt": "2026-09-23T17:32:06.986Z",
+    "origins": [
+      {
+        "origin": "https://backend.thesisforge.tech",
+        "pass": true,
+        "curve": {
+          "ok": true,
+          "expectedManagers": 30,
+          "managerCount": 30,
+          "windows": [
+            5,
+            10
+          ],
+          "expectedRows": 57,
+          "displayable": 57,
+          "strictReady": 23,
+          "proxyReady": 34,
+          "failures": [],
+          "byWindow": {
+            "5Y": {
+              "expected": 30,
+              "strictReady": 19,
+              "proxyReady": 11,
+              "failures": 0,
+              "displayable": 30
+            },
+            "10Y": {
+              "expected": 27,
+              "strictReady": 4,
+              "proxyReady": 23,
+              "failures": 0,
+              "displayable": 27
+            }
+          },
+          "methodVersion": "manager13f-drifted-total-return-v9",
+          "proxyMethodVersion": "manager13f-public-holdings-proxy-v1",
+          "securityMasterVersion": "holding-resolution-v1-2ec0cf0f7f1b1154",
+          "readiness": {
+            "refreshIntervalHours": 24,
+            "maxGeneratedAgeHours": 48,
+            "maxEndAgeHours": 288
+          }
+        },
+        "healthReads": [
+          {
+            "status": 200,
+            "ms": 1697,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 1679,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 1680,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 1679,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 1682,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 1676,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 1681,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 1680,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          }
+        ],
+        "deny": [
+          {
+            "path": "/api/internal/backtests/status",
+            "status": 404
+          },
+          {
+            "path": "/api/investment/strategies",
+            "status": 401
+          },
+          {
+            "path": "/api/investment/value-flow",
+            "status": 410
+          }
+        ]
+      },
+      {
+        "origin": "https://thesisforge.tech",
+        "pass": true,
+        "curve": {
+          "ok": true,
+          "expectedManagers": 30,
+          "managerCount": 30,
+          "windows": [
+            5,
+            10
+          ],
+          "expectedRows": 57,
+          "displayable": 57,
+          "strictReady": 23,
+          "proxyReady": 34,
+          "failures": [],
+          "byWindow": {
+            "5Y": {
+              "expected": 30,
+              "strictReady": 19,
+              "proxyReady": 11,
+              "failures": 0,
+              "displayable": 30
+            },
+            "10Y": {
+              "expected": 27,
+              "strictReady": 4,
+              "proxyReady": 23,
+              "failures": 0,
+              "displayable": 27
+            }
+          },
+          "methodVersion": "manager13f-drifted-total-return-v9",
+          "proxyMethodVersion": "manager13f-public-holdings-proxy-v1",
+          "securityMasterVersion": "holding-resolution-v1-2ec0cf0f7f1b1154",
+          "readiness": {
+            "refreshIntervalHours": 24,
+            "maxGeneratedAgeHours": 48,
+            "maxEndAgeHours": 288
+          }
+        },
+        "healthReads": [
+          {
+            "status": 200,
+            "ms": 498,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 580,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 564,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 602,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 606,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 544,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 514,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 524,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          }
+        ],
+        "deny": [
+          {
+            "path": "/api/internal/backtests/status",
+            "status": 404
+          },
+          {
+            "path": "/api/investment/strategies",
+            "status": 401
+          },
+          {
+            "path": "/api/investment/value-flow",
+            "status": 410
+          }
+        ]
+      },
+      {
+        "origin": "https://www.thesisforge.tech",
+        "pass": true,
+        "curve": {
+          "ok": true,
+          "expectedManagers": 30,
+          "managerCount": 30,
+          "windows": [
+            5,
+            10
+          ],
+          "expectedRows": 57,
+          "displayable": 57,
+          "strictReady": 23,
+          "proxyReady": 34,
+          "failures": [],
+          "byWindow": {
+            "5Y": {
+              "expected": 30,
+              "strictReady": 19,
+              "proxyReady": 11,
+              "failures": 0,
+              "displayable": 30
+            },
+            "10Y": {
+              "expected": 27,
+              "strictReady": 4,
+              "proxyReady": 23,
+              "failures": 0,
+              "displayable": 27
+            }
+          },
+          "methodVersion": "manager13f-drifted-total-return-v9",
+          "proxyMethodVersion": "manager13f-public-holdings-proxy-v1",
+          "securityMasterVersion": "holding-resolution-v1-2ec0cf0f7f1b1154",
+          "readiness": {
+            "refreshIntervalHours": 24,
+            "maxGeneratedAgeHours": 48,
+            "maxEndAgeHours": 288
+          }
+        },
+        "healthReads": [
+          {
+            "status": 200,
+            "ms": 474,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 435,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 432,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 473,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 415,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 455,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 468,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          },
+          {
+            "status": 200,
+            "ms": 445,
+            "healthStatus": "stale",
+            "ok": true,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "hash": "18b8f9621a588cc1835dcf08eb5ec37149aa6e63964c62ff4d8086055ff6394c"
+          }
+        ],
+        "deny": [
+          {
+            "path": "/api/internal/backtests/status",
+            "status": 404
+          },
+          {
+            "path": "/api/investment/strategies",
+            "status": 401
+          },
+          {
+            "path": "/api/investment/value-flow",
+            "status": 410
+          }
+        ]
+      }
+    ],
+    "pass": true,
+    "sameCurveIdentityAcrossOrigins": true
+  },
+  "limitations": [
+    "Strict and public-sleeve proxy simulations are distinct; neither is a fund NAV.",
+    "Daily Fact OS data-only scheduling does not publish Guru backtests; the 48-hour generated-age gate remains active.",
+    "The installed Research/Strategy release still ends at 2026-09-18; this task did not rewrite it.",
+    "32 pre-existing Flutter failures, 11 storage findings and the generic five-route performance gate remain documented, not waived."
+  ]
+}
