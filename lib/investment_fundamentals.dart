@@ -83,11 +83,14 @@ class FundamentalsPanel extends StatefulWidget {
 
 class _FundamentalsPanelState extends State<FundamentalsPanel> {
   final search = TextEditingController();
+  final resultScroll = ScrollController();
   final detailAnchor = GlobalKey();
   Map<String, dynamic>? data, detail, institutionalDetail;
   List<Map<String, dynamic>> observations = const [];
   String lens = 'all', ticker = '', sort = 'recent';
-  int page = 0;
+  String resolvedLens = 'all';
+  String? detailRequestKey;
+  int page = 0, resolvedPage = 0;
   bool advanced = false;
   String failureCode = '';
   String detailTab = 'business';
@@ -137,15 +140,9 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     return v.toStringAsFixed(1);
   }
 
-  List<Map<String, dynamic>> get rows => asList(data?['rows']).where((row) {
-    final m = asMap(row['metrics']),
-        g = nullableNumber(m['revenueGrowth']),
-        margin = nullableNumber(m['operatingMargin']),
-        fcf = nullableNumber(m['fcfMargin']);
-    return (minGrowth == null || g != null && g >= minGrowth!) &&
-        (minMargin == null || margin != null && margin >= minMargin!) &&
-        (minFcfMargin == null || fcf != null && fcf >= minFcfMargin!);
-  }).toList();
+  // Only committed server results are displayed. Applying draft filters here
+  // would mislabel/empty the previous page while the new request is pending.
+  List<Map<String, dynamic>> get rows => asList(data?['rows']);
 
   @override
   void initState() {
@@ -163,6 +160,14 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
       sort = text(saved['sort']);
     }
     ticker = text(saved['ticker']);
+    if (const [
+      'business',
+      'valuation',
+      'financials',
+      '13f',
+    ].contains(saved['detailTab'])) {
+      detailTab = text(saved['detailTab']);
+    }
     search.text = text(saved['query']);
     minGrowth = nullableNumber(saved['minRevenueGrowth']);
     minMargin = nullableNumber(saved['minOperatingMargin']);
@@ -174,10 +179,14 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
   void didUpdateWidget(covariant FundamentalsPanel old) {
     super.didUpdateWidget(old);
     if (old.asOf != widget.asOf || old.api != widget.api) {
+      debounce?.cancel();
       page = 0;
       detailSerial++;
       institutionalSerial++;
+      data = null;
       detail = null;
+      detailRequestKey = null;
+      observations = const [];
       institutionalDetail = null;
       unawaited(load());
     }
@@ -187,6 +196,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
   void dispose() {
     debounce?.cancel();
     search.dispose();
+    resultScroll.dispose();
     serial++;
     detailSerial++;
     institutionalSerial++;
@@ -198,13 +208,16 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     'ticker': ticker,
     'query': search.text,
     'sort': sort,
+    'detailTab': detailTab,
     'minRevenueGrowth': minGrowth,
     'minOperatingMargin': minMargin,
     'minFcfMargin': minFcfMargin,
   });
 
   Future<void> load() async {
+    debounce?.cancel();
     final id = ++serial;
+    final requestedLens = lens, requestedPage = page;
     setState(() {
       loading = true;
       failed = false;
@@ -232,6 +245,8 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
       if (!mounted || id != serial) return;
       setState(() {
         data = result;
+        resolvedLens = requestedLens;
+        resolvedPage = requestedPage;
         loading = false;
         final available = rows;
         if (!available.any((row) => row['ticker'] == ticker)) {
@@ -243,8 +258,18 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
           );
         }
       });
+      if (resultScroll.hasClients) resultScroll.jumpTo(0);
       remember();
-      if (ticker.isNotEmpty) unawaited(loadDetail());
+      if (ticker.isNotEmpty) {
+        final key = '${widget.asOf}|$ticker|$resolvedLens';
+        if (detailRequestKey != key || detailFailed) unawaited(loadDetail());
+      } else {
+        detailSerial++;
+        institutionalSerial++;
+        detailRequestKey = null;
+        detail = null;
+        observations = const [];
+      }
     } catch (error) {
       if (mounted && id == serial) {
         setState(() {
@@ -255,8 +280,16 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
               : error.toString().contains('401')
               ? 'auth'
               : 'unavailable';
-          data = null;
-          detail = null;
+          // Same-cutoff verified results remain useful after a failed refresh.
+          // A cutoff/API change already clears them in didUpdateWidget.
+          if (failureCode == 'auth') {
+            data = null;
+            detail = null;
+            detailRequestKey = null;
+            observations = const [];
+            detailSerial++;
+            institutionalSerial++;
+          }
         });
       }
     }
@@ -265,6 +298,8 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
   Future<void> loadDetail() async {
     if (ticker.isEmpty) return;
     final id = ++detailSerial, symbol = ticker;
+    institutionalSerial++;
+    detailRequestKey = '${widget.asOf}|$symbol|$resolvedLens';
     setState(() {
       detailLoading = true;
       detailFailed = false;
@@ -276,7 +311,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     });
     try {
       final result = await widget.api.getJson(
-        '/api/investment/fundamentals/${Uri.encodeComponent(symbol)}?asOf=${widget.asOf}&lens=${Uri.encodeQueryComponent(lens)}',
+        '/api/investment/fundamentals/${Uri.encodeComponent(symbol)}?asOf=${widget.asOf}&lens=${Uri.encodeQueryComponent(resolvedLens)}',
       );
       if (result['version'] != 'fundamental-research-v2' ||
           result['ticker'] != symbol ||
@@ -286,6 +321,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
       if (mounted && id == detailSerial) {
         setState(() => detail = result);
         unawaited(loadObservations(symbol));
+        if (detailTab == '13f') unawaited(loadInstitutionalDetail());
       }
     } catch (_) {
       if (mounted && id == detailSerial) setState(() => detailFailed = true);
@@ -295,13 +331,14 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
   }
 
   Future<void> loadObservations(String symbol) async {
+    final id = detailSerial;
     try {
       final uri = Uri(
         path: '/api/investment/fundamental-observations',
         queryParameters: {'ticker': symbol},
       );
       final result = await widget.api.getJson(uri.toString());
-      if (!mounted || symbol != ticker) return;
+      if (!mounted || symbol != ticker || id != detailSerial) return;
       setState(() => observations = asList(result['rows']));
     } catch (_) {
       // The private journal is optional; company evidence remains usable.
@@ -310,6 +347,13 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
 
   void scheduleSearch(String _) {
     debounce?.cancel();
+    // Invalidate immediately, not after debounce: an older request may finish
+    // between the keystroke and the next request.
+    serial++;
+    setState(() {
+      loading = true;
+      failed = false;
+    });
     debounce = Timer(const Duration(milliseconds: 260), () {
       if (mounted) {
         page = 0;
@@ -324,20 +368,22 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
       lens = value;
       page = 0;
       mobileDetail = false;
-      ticker = '';
     });
     remember();
     unawaited(load());
   }
 
   void selectCompany(Map<String, dynamic> row, bool compact) {
+    final changed = ticker != text(row['ticker']);
     setState(() {
       ticker = text(row['ticker']);
       mobileDetail = compact;
-      detailTab = 'business';
+      if (changed) detailTab = 'business';
     });
     remember();
-    unawaited(loadDetail());
+    if (changed || detail == null && !detailLoading || detailFailed) {
+      unawaited(loadDetail());
+    }
     if (compact) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final target = detailAnchor.currentContext;
@@ -354,6 +400,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
   void selectDetailTab(String value) {
     if (detailTab == value) return;
     setState(() => detailTab = value);
+    remember();
     if (value == '13f') unawaited(loadInstitutionalDetail());
   }
 
@@ -478,9 +525,13 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
             _lensStrip(compact),
           ],
           const SizedBox(height: 12),
-          if (loading)
+          if (data != null && (loading || failed)) ...[
+            _refreshStatus(),
+            const SizedBox(height: 10),
+          ],
+          if (loading && data == null)
             _loadingState()
-          else if (failed)
+          else if (failed && data == null)
             _errorState()
           else if (rows.isEmpty)
             _emptyState()
@@ -772,6 +823,47 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
       ],
     ),
   );
+  Widget _refreshStatus() => Semantics(
+    liveRegion: true,
+    child: panel(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                loading ? Icons.sync : Icons.info_outline,
+                size: 17,
+                color: loading ? p.accent : p.secondary,
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  loading
+                      ? w('Updating results…', '正在更新结果…')
+                      : w(
+                          'Results could not refresh. Showing your previous results.',
+                          '刷新未完成，当前仍显示上一次的结果。',
+                        ),
+                  style: st(12, false, p.muted),
+                ),
+              ),
+              if (!loading)
+                TextButton(
+                  onPressed: () => unawaited(load()),
+                  child: Text(w('Retry', '重试')),
+                ),
+            ],
+          ),
+          if (loading) ...[
+            const SizedBox(height: 8),
+            const LinearProgressIndicator(minHeight: 2),
+          ],
+        ],
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    ),
+  );
   Widget _errorState() => panel(
     Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -782,7 +874,12 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
         ),
         const SizedBox(height: 7),
         Text(
-          failureCode == 'cutoff'
+          failureCode == 'auth'
+              ? w(
+                  'Your session has expired. Sign in again to load company financials.',
+                  '登录已过期，请重新登录后查看公司财务。',
+                )
+              : failureCode == 'cutoff'
               ? w(
                   'The response did not match your selected date. Retry to load a consistent view.',
                   '数据与所选截止日不一致，请重试以加载同一日期的数据。',
@@ -823,7 +920,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          w('No comparable changes match this view.', '当前视图没有可比变化。'),
+          w('No companies match these filters.', '没有符合当前条件的公司'),
           style: st(18, true),
         ),
         const SizedBox(height: 6),
@@ -864,13 +961,13 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${lensTitle(lens)} · ${data?['totalMatches'] ?? rows.length}',
+                    '${lensTitle(resolvedLens)} · ${data?['totalMatches'] ?? rows.length}',
                     style: st(18, true),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     bi(data?['rankingBasis']),
-                    style: st(10, false, p.muted),
+                    style: st(11, false, p.muted),
                   ),
                 ],
               ),
@@ -882,31 +979,91 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
           ],
         ),
         const SizedBox(height: 12),
-        for (final row in rows) _resultRow(row, compact),
+        LayoutBuilder(
+          builder: (_, constraints) {
+            final columns = constraints.maxWidth >= 580;
+            return Column(
+              children: [
+                if (columns)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 15,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: 4,
+                          child: Text(
+                            w('Company / report period', '公司 / 财报期间'),
+                            style: st(10, true, p.muted),
+                          ),
+                        ),
+                        for (final label in [
+                          w('Revenue YoY', '收入同比'),
+                          w('TTM op. margin', 'TTM 经营利润率'),
+                          w('TTM FCF margin', 'TTM FCF 率'),
+                        ])
+                          Expanded(
+                            flex: 2,
+                            child: Text(
+                              label,
+                              textAlign: TextAlign.right,
+                              style: st(10, true, p.muted),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                if (compact)
+                  for (final row in rows)
+                    _resultRow(row, compact, columns: columns)
+                else
+                  SizedBox(
+                    height: math.min(
+                      680.0,
+                      rows.length * (columns ? 104.0 : 160.0) +
+                          (resolvedLens == 'all' ? 0 : rows.length * 58.0),
+                    ),
+                    child: Scrollbar(
+                      controller: resultScroll,
+                      thumbVisibility: true,
+                      child: ListView.builder(
+                        controller: resultScroll,
+                        itemCount: rows.length,
+                        itemBuilder: (_, index) =>
+                            _resultRow(rows[index], compact, columns: columns),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
         const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
               child: Text(
-                '${page * 30 + 1}–${page * 30 + rows.length} / ${data?['totalMatches'] ?? rows.length}',
+                '${resolvedPage * 30 + 1}–${resolvedPage * 30 + rows.length} / ${data?['totalMatches'] ?? rows.length}',
                 style: st(11, false, p.muted),
               ),
             ),
             IconButton(
               tooltip: w('Previous page', '上一页'),
-              onPressed: page == 0
+              onPressed: loading || resolvedPage == 0
                   ? null
                   : () {
-                      page--;
+                      page = resolvedPage - 1;
                       unawaited(load());
                     },
               icon: const Icon(Icons.chevron_left),
             ),
             IconButton(
               tooltip: w('Next page', '下一页'),
-              onPressed: data?['hasMore'] == true
+              onPressed: !loading && data?['hasMore'] == true
                   ? () {
-                      page++;
+                      page = resolvedPage + 1;
                       unawaited(load());
                     }
                   : null,
@@ -918,7 +1075,11 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     ),
     padding: const EdgeInsets.all(14),
   );
-  Widget _resultRow(Map<String, dynamic> row, bool compact) {
+  Widget _resultRow(
+    Map<String, dynamic> row,
+    bool compact, {
+    bool columns = false,
+  }) {
     final selected = row['ticker'] == ticker;
     final signal = asMap(row['primarySignal']);
     final metrics = asMap(row['metrics']);
@@ -944,51 +1105,93 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
             children: [
               Row(
                 children: [
-                  _tickerMark(text(row['ticker'])),
-                  const SizedBox(width: 10),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    flex: 4,
+                    child: Row(
                       children: [
-                        Text(
-                          '${row['ticker']}  ${row['name']}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: st(14, true),
-                        ),
-                        Text(
-                          '${row['period_end']} · ${w('available', '可用')} ${row['available_at']}',
-                          style: st(10, false, p.muted),
+                        _tickerMark(text(row['ticker'])),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                text(row['ticker']),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: st(15, true),
+                              ),
+                              Text(
+                                text(row['name']),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: st(11, false, p.muted),
+                              ),
+                              Text(
+                                text(row['period_end']),
+                                style: st(10, false, p.muted),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
                   ),
-                  const Icon(Icons.chevron_right, size: 17),
+                  if (columns)
+                    for (final key in const [
+                      'revenueGrowth',
+                      'operatingMargin',
+                      'fcfMargin',
+                    ])
+                      Expanded(
+                        flex: 2,
+                        child: Text(
+                          pct(metrics[key], sign: key == 'revenueGrowth'),
+                          textAlign: TextAlign.right,
+                          style: st(
+                            15,
+                            true,
+                            nullableNumber(metrics[key]) == null
+                                ? p.muted
+                                : p.text,
+                          ),
+                        ),
+                      ),
+                  if (!columns)
+                    Icon(Icons.chevron_right, size: 17, color: p.muted),
                 ],
               ),
-              const SizedBox(height: 10),
-              if (signal.isNotEmpty && lens != 'all')
+              if (!columns) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    for (final item in [
+                      (w('Revenue YoY', '收入同比'), 'revenueGrowth'),
+                      (w('TTM op. margin', 'TTM 经营利润率'), 'operatingMargin'),
+                      (w('TTM FCF margin', 'TTM FCF 率'), 'fcfMargin'),
+                    ])
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item.$1, style: st(10, false, p.muted)),
+                            const SizedBox(height: 3),
+                            Text(
+                              pct(
+                                metrics[item.$2],
+                                sign: item.$2 == 'revenueGrowth',
+                              ),
+                              style: st(16, true),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+              if (signal.isNotEmpty && resolvedLens != 'all') ...[
+                const SizedBox(height: 10),
                 Text(bi(signal['summary']), style: st(12, true)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 10,
-                runSpacing: 5,
-                children: [
-                  _miniMetric(
-                    w('Revenue YoY', '收入同比'),
-                    pct(metrics['revenueGrowth']),
-                  ),
-                  _miniMetric(
-                    w('TTM op. margin', 'TTM 经营利润率'),
-                    pct(metrics['operatingMargin'], sign: false),
-                  ),
-                  _miniMetric(
-                    w('TTM FCF', 'TTM FCF 率'),
-                    pct(metrics['fcfMargin'], sign: false),
-                  ),
-                ],
-              ),
-              if (signal.isNotEmpty && lens != 'all') ...[
                 const SizedBox(height: 8),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1019,17 +1222,30 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
       color: p.card,
       borderRadius: BorderRadius.circular(6),
     ),
-    child: Text('$label  $value', style: st(9, true, p.muted)),
+    child: Text('$label  $value', style: st(11, true, p.text)),
   );
 
   Widget _detailPanel() {
     if (detailLoading) {
       return panel(
-        const Center(
-          child: Padding(
-            padding: EdgeInsets.all(42),
-            child: CircularProgressIndicator(),
-          ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _tickerMark(ticker),
+                const SizedBox(width: 12),
+                Text(ticker, style: st(20, true)),
+              ],
+            ),
+            const SizedBox(height: 22),
+            const LinearProgressIndicator(minHeight: 2),
+            const SizedBox(height: 12),
+            Text(
+              w('Opening financials and model evidence…', '正在读取公司财务与模型依据…'),
+              style: st(12, false, p.muted),
+            ),
+          ],
         ),
       );
     }

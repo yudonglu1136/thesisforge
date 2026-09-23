@@ -7,7 +7,10 @@ import 'package:guru_analysis_terminal/main.dart';
 class FundamentalApi extends ApiClient {
   FundamentalApi() : super(() => 'test');
   bool fail = false, detailFail = false, wrongDate = false;
+  bool expired = false;
   Completer<Map<String, dynamic>>? pending;
+  final delayedSearches = <String, Completer<Map<String, dynamic>>>{};
+  Completer<Map<String, dynamic>>? pendingObservations;
   final calls = <String>[];
   var saved = false;
 
@@ -248,6 +251,7 @@ class FundamentalApi extends ApiClient {
     calls.add(path);
     final uri = Uri.parse(path);
     if (uri.path.endsWith('/fundamental-observations')) {
+      if (pendingObservations != null) return pendingObservations!.future;
       return {
         'version': 'fundamental-observations-v1',
         'rows': saved
@@ -270,9 +274,14 @@ class FundamentalApi extends ApiClient {
       return institutional(uri.pathSegments.last, date);
     }
     if (uri.path.endsWith('/fundamentals')) {
+      if (expired) throw StateError('HTTP 401');
       if (fail) throw StateError('offline');
+      final delayed = delayedSearches[uri.queryParameters['search']];
+      if (delayed != null) return delayed.future;
       if (pending != null) return pending!.future;
       final result = response(wrongDate ? '2025-01-01' : date);
+      result['lens'] = uri.queryParameters['lens'];
+      result['sort'] = uri.queryParameters['sort'];
       final search = uri.queryParameters['search']?.toUpperCase();
       if (search != null && search.isNotEmpty) {
         result['rows'] = (result['rows'] as List)
@@ -307,6 +316,7 @@ Future<void> mount(
   String date = '2026-09-21',
   void Function(String, String)? onCompany,
   Map<String, dynamic> selection = const {},
+  bool settle = true,
 }) async {
   t.view.physicalSize = Size(width, 1300);
   t.view.devicePixelRatio = 1;
@@ -331,7 +341,7 @@ Future<void> mount(
       ),
     ),
   );
-  await t.pumpAndSettle();
+  if (settle) await t.pumpAndSettle();
 }
 
 Future<void> tap(WidgetTester t, Finder finder) async {
@@ -341,6 +351,148 @@ Future<void> tap(WidgetTester t, Finder finder) async {
 }
 
 void main() {
+  testWidgets('authentication recovery reloads the selected company evidence', (
+    t,
+  ) async {
+    final api = FundamentalApi();
+    await mount(t, api);
+    api.expired = true;
+    await t.enterText(find.byKey(const ValueKey('fundamental-search')), 'UBER');
+    await t.pump(const Duration(milliseconds: 300));
+    await t.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fund-row-UBER')), findsNothing);
+    expect(
+      find.text(
+        'Your session has expired. Sign in again to load company financials.',
+      ),
+      findsOneWidget,
+    );
+    api.expired = false;
+    await tap(t, find.text('Try again'));
+    expect(find.text('OPERATING JUDGMENT'), findsOneWidget);
+  });
+
+  testWidgets('a cutoff change never displays the previous cutoff as current', (
+    t,
+  ) async {
+    final api = FundamentalApi();
+    await mount(t, api);
+    api.pending = Completer<Map<String, dynamic>>();
+    await mount(t, api, date: '2025-09-21', settle: false);
+    expect(find.byKey(const ValueKey('fund-row-UBER')), findsNothing);
+    expect(find.text('OPERATING JUDGMENT'), findsNothing);
+    api.pending!.complete(api.response('2025-09-21'));
+    await t.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
+    expect(
+      api.calls.any((x) => x.contains('/fundamentals/UBER?asOf=2025-09-21')),
+      isTrue,
+    );
+  });
+
+  testWidgets('old journal responses cannot overwrite a new research context', (
+    t,
+  ) async {
+    final api = FundamentalApi();
+    final oldJournal = Completer<Map<String, dynamic>>();
+    api.pendingObservations = oldJournal;
+    await mount(t, api);
+    api.pendingObservations = null;
+    await mount(t, api, date: '2025-09-21');
+    oldJournal.complete({
+      'rows': [
+        {'id': 'stale-observation', 'ticker': 'UBER'},
+      ],
+    });
+    await t.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fund-review-observation')), findsNothing);
+  });
+
+  testWidgets('returning to a saved company tab restores valuation context', (
+    t,
+  ) async {
+    await mount(
+      t,
+      FundamentalApi(),
+      selection: {'ticker': 'UBER', 'detailTab': 'valuation'},
+    );
+    expect(find.text('Published valuation, fully explained'), findsOneWidget);
+    expect(find.text('OPERATING JUDGMENT'), findsNothing);
+  });
+
+  testWidgets('refresh retains verified rows and the selected company', (
+    t,
+  ) async {
+    final api = FundamentalApi();
+    await mount(t, api);
+    final detailReads = api.calls
+        .where((x) => x.contains('/fundamentals/UBER?'))
+        .length;
+    api.pending = Completer<Map<String, dynamic>>();
+    await t.enterText(find.byKey(const ValueKey('fundamental-search')), 'UBER');
+    await t.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
+    expect(find.text('OPERATING JUDGMENT'), findsOneWidget);
+    expect(find.text('Updating results…'), findsOneWidget);
+    api.pending!.complete({
+      ...api.response('2026-09-21'),
+      'lens': 'all',
+      'rows': [api.row('UBER')],
+    });
+    await t.pumpAndSettle();
+    expect(
+      api.calls.where((x) => x.contains('/fundamentals/UBER?')).length,
+      detailReads,
+    );
+    expect(find.text('Updating results…'), findsNothing);
+  });
+
+  testWidgets(
+    'refresh failure preserves results with an explicit stale-query notice',
+    (t) async {
+      final api = FundamentalApi();
+      await mount(t, api);
+      api.fail = true;
+      await t.enterText(
+        find.byKey(const ValueKey('fundamental-search')),
+        'MSFT',
+      );
+      await t.pump(const Duration(milliseconds: 300));
+      await t.pumpAndSettle();
+      expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
+      expect(
+        find.text('Results could not refresh. Showing your previous results.'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('typing invalidates an older request before the debounce fires', (
+    t,
+  ) async {
+    final api = FundamentalApi();
+    await mount(t, api);
+    api.delayedSearches['A'] = Completer<Map<String, dynamic>>();
+    api.delayedSearches['AB'] = Completer<Map<String, dynamic>>();
+    await t.enterText(find.byKey(const ValueKey('fundamental-search')), 'A');
+    await t.pump(const Duration(milliseconds: 300));
+    await t.enterText(find.byKey(const ValueKey('fundamental-search')), 'AB');
+    api.delayedSearches['A']!.complete({
+      ...api.response('2026-09-21'),
+      'rows': [api.row('STALE')],
+    });
+    await t.pump();
+    expect(find.byKey(const ValueKey('fund-row-STALE')), findsNothing);
+    expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
+    await t.pump(const Duration(milliseconds: 300));
+    api.delayedSearches['AB']!.complete({
+      ...api.response('2026-09-21'),
+      'rows': [api.row('AB')],
+    });
+    await t.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fund-row-AB')), findsOneWidget);
+  });
+
   testWidgets(
     'browse starts without a forced lens and keeps filters collapsed',
     (t) async {
