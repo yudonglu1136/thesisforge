@@ -404,7 +404,8 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
       }
     });
     remember();
-    if (ticker.isNotEmpty && ticker != previousTicker) {
+    if (ticker.isNotEmpty &&
+        (ticker != previousTicker || !companyDetails.containsKey(ticker))) {
       scheduleCompanyDetail(ticker);
     }
   }

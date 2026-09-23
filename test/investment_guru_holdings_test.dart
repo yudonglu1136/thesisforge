@@ -99,6 +99,9 @@ Future<void> mount(
   void Function(String, String?)? explore,
   ValueChanged<String>? company,
   ValueChanged<Map<String, dynamic>>? selection,
+  Map<String, dynamic> initialSelection = const {
+    'selected': ['bill-ackman', 'li-lu', 'third'],
+  },
 }) async {
   t.view.physicalSize = Size(width, 1058);
   t.view.devicePixelRatio = 1;
@@ -131,9 +134,7 @@ Future<void> mount(
                         palette: Palette(false),
                         asOf: date,
                         gurus: api.gurus,
-                        initialSelection: const {
-                          'selected': ['bill-ackman', 'li-lu', 'third'],
-                        },
+                        initialSelection: initialSelection,
                         onExplore: explore ?? (_, _) {},
                         onCompany: company ?? (_) {},
                         onStudy: () {},
@@ -150,6 +151,42 @@ Future<void> mount(
 }
 
 void main() {
+  testWidgets('restored company preview reloads at the current cutoff', (
+    t,
+  ) async {
+    final api = HoldingsApi();
+    const restored = {
+      'selected': ['bill-ackman', 'li-lu', 'third'],
+      'ticker': 'GOOGL',
+      'quarter': '2026-06-30',
+    };
+    await mount(t, api, initialSelection: restored);
+    await t.pump(const Duration(milliseconds: 200));
+    await t.pumpAndSettle();
+    expect(
+      api.paths.where((p) => p.contains('/opportunities/GOOGL?')).toList(),
+      ['/api/investment/opportunities/GOOGL?asOf=2026-08-28'],
+    );
+    expect(find.text('USD 100.00'), findsOneWidget);
+    await mount(t, api, initialSelection: restored, date: '2026-08-29');
+    await t.pump(const Duration(milliseconds: 200));
+    await t.pumpAndSettle();
+    expect(
+      api.paths.where((p) => p.contains('/opportunities/GOOGL?')).toList(),
+      [
+        '/api/investment/opportunities/GOOGL?asOf=2026-08-28',
+        '/api/investment/opportunities/GOOGL?asOf=2026-08-29',
+      ],
+    );
+    await study.tap(t, find.text('Quarterly change'));
+    expect(
+      api.paths.where((p) => p.contains('/opportunities/GOOGL?')).length,
+      2,
+    );
+    expect(api.posts, 0);
+    expect(t.takeException(), isNull);
+  });
+
   test(
     'combined filters use selected manager weights and real change ratios',
     () {
