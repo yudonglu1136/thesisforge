@@ -83,7 +83,16 @@ test("prewarm uses the explicit loopback client instead of fetch's hidden header
   const source = fs.readFileSync(prewarmScript, "utf8");
   assert.match(source, /requestLoopbackJson/);
   assert.doesNotMatch(source, /\bfetch\s*\(/);
-  assert.match(source, /DEFAULT_REFRESH_TIMEOUT_MS = 25 \* 60 \* 1000/);
+  assert.match(source, /DEFAULT_REFRESH_TIMEOUT_MS = 60 \* 60 \* 1000/);
+});
+
+test("prewarm rejects a deadline beyond its bounded 90-minute window", async () => {
+  const result = await runPrewarm({
+    port: 1, output: '', marker: '',
+    notBefore: new Date().toISOString(), refreshTimeoutMs: 90 * 60 * 1000 + 1
+  });
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /integer from 1 to 5400000ms/);
 });
 
 function managerResults(years, refreshGeneration, generatedAt = new Date().toISOString()) {
@@ -172,6 +181,7 @@ test("prewarm writes its success marker only after both windows cover every conf
     port: server.address().port,
     output,
     marker,
+    refreshTimeoutMs: 40 * 60 * 1000,
     notBefore: new Date(Date.now() - 1000).toISOString()
   });
 
@@ -180,6 +190,7 @@ test("prewarm writes its success marker only after both windows cover every conf
   assert.deepEqual(requestedPopulations, ["enabled-manager13f", "enabled-manager13f"]);
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.equal(report.pass, true);
+  assert.equal(report.refreshTimeoutMs, 40 * 60 * 1000);
   assert.equal(report.kind, "guru_curve_production_prewarm");
   assert.equal(report.schemaVersion, 1);
   assert.equal(report.refreshGeneration, generation);

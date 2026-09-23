@@ -25,6 +25,19 @@ Confirmed defects:
   user's valuation filter alone excluded every stock.
 - SQLite journal-mode negotiation ran before the busy timeout was installed,
   causing a reproduced concurrent startup failure in the full regression suite.
+- Production health falsely treated four existing expression indexes as
+  incompatible because SQL casing and punctuation whitespace differed. Its
+  fallback scans approached the 8-second health-worker deadline. SQL-token
+  comparison now accepts formatting differences while preserving the exact
+  quoted JSON paths and string literals.
+- Transient SEC transport failures could invalidate an otherwise usable full
+  history. Read-only requests now have at most three attempts; auth, missing
+  documents, parsing and identifier failures still fail immediately. History
+  diagnostics retain accession, report period, status, code and message.
+- The production publisher's 30-minute hard deadline was shorter than the
+  observed 30.5-minute 5Y and 38.5-minute 10Y sequential population runs. The
+  default is now 60 minutes per window, bounded at 90 minutes. All exact-key,
+  current-generation, strict/proxy and final health checks remain mandatory.
 
 ## Retirement, not archival deletion
 
@@ -58,10 +71,17 @@ claim that a background refresh is running when none was started.
 ## Verification
 
 - Reproducing tests failed before the refresh/identity fixes and passed after.
-- Full Node server regression: 1,662 passed, 15 skipped, 0 failed (1,677 total).
+- Exact committed-source Node regression: 1,668 passed, 15 skipped, 0 failed
+  (1,683 total). A separate current-workspace run also covered the other task's
+  uncommitted tests; those files are not included in this release.
 - Final targeted Node regression: 68 passed, 0 failed.
 - Flutter strategy/mix regression: 46 passed, including EN/ZH 390px at 150% text.
 - Flutter analyze: no issues.
+- Full Flutter regression: 579 passed, 32 failed. All 32 failures were
+  independently reproduced on baseline `faba7bf`; the exact failure-name sets
+  match. They concern retired Discover lenses/quality controls and adjacent
+  valuation/portfolio expectations. No assertion was removed and no affected
+  adjacent implementation is being bundled as a speculative fix.
 - i18n audit: pass. Performance suite: 60 passed.
 - Production Flutter artifact built with auth bypass disabled; SHA-256:
   `004fefe83f01b9b5eb414dbc4f56a710379774a9a66b5d3b7e12f3388664fc38`.
@@ -72,9 +92,22 @@ claim that a background refresh is running when none was started.
   no exceptions; two retired choices are excluded. Source gaps and valuation
   exclusions are not converted into fictional returns. This is not a claim
   that every arbitrary strategy configuration is now runnable.
-- Full real-data Guru matrix: **pending**, isolated snapshot recomputation.
+- First isolated real-data matrix: 51/57 displayable, six filing-read failures
+  across Baillie Gifford 10Y, Klarman 10Y, Peltz 5Y/10Y and Halvorsen 5Y/10Y.
+  This run failed; it is not an acceptance receipt. Its source file remained
+  byte-identical and its snapshot passed SQLite integrity checks. All four
+  managers' ten-year official histories subsequently read without filing errors
+  or blocked report dates; these diagnostics do not replace full acceptance.
+- Full real-data matrix with bounded SEC transport retries: **pending**.
 - Browser local Guru directory: 30 active profiles; retirement is reflected in
-  holdings and consensus. Production authenticated verification: **pending**.
+  holdings and consensus. An Ackman Top-5 custom strategy with valuation
+  filtering disabled produces 1,255 real daily observations and 21 rebalance
+  snapshots; required missing valuation inputs instead produce the specific
+  source-gap message. EN desktop and ZH 390px mobile were exercised without
+  page overflow or browser errors. Production verification: **pending**.
+- Same production DB, read-only health table-summary diagnostic (three rounds):
+  5,630/5,898/3,628ms before, 575/519/57ms after; all six result semantic hashes
+  identical. This is a bounded diagnostic, not a 60-sample API p95 claim.
 
 Private detailed logs and the isolated acceptance report are under
 `/private/tmp/guru-*20260923*`; they are not packaged into the app.
@@ -84,6 +117,14 @@ Private detailed logs and the isolated acceptance report are under
 Pre-deploy EB version: `fundamental-702448f`; environment `thesisforge-api-prod`.
 Pre-deploy Vercel deployment: `dpl_6z8qsn8121iGTnahRPTZC9vjGyRr`, both app domains.
 Public health was HTTP 503 before this repair despite EB reporting Green.
+
+Verified rollback material, before any production curve write:
+
+- SQLite backup `/var/app/data/backups/guru-repair-20260923.sqlite`, integrity
+  `ok`, SHA-256 `c0c8cbe5b989f5b3ebe7ebc8b02ff8be369efa68b196b0edc0ff0302601953b4`.
+- Completed source EBS snapshot `snap-01cd197439e20633d` of
+  `vol-04879aae99266e0e9` and completed encrypted rollback copy
+  `snap-0d35b97fbd109bad2`.
 
 Before any production curve write, verify the SQLite backup and completed EBS
 rollback snapshot. Publish via the loopback-only prewarm runner with explicit

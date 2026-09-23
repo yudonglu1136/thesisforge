@@ -11,8 +11,12 @@ import {
 } from "../server/gurus.js";
 import { requestLoopbackJson } from "./loopback-http-json.mjs";
 
-const DEFAULT_REFRESH_TIMEOUT_MS = 25 * 60 * 1000;
-const MAX_REFRESH_TIMEOUT_MS = 30 * 60 * 1000;
+// The audited 30-manager population took 30.5 minutes for 5Y and 38.5 for
+// 10Y on 2026-09-23. Keep a finite whole-window deadline without aborting a
+// valid sequential refresh before its observed duration. Quality gates and
+// current-generation attestation remain unchanged.
+const DEFAULT_REFRESH_TIMEOUT_MS = 60 * 60 * 1000;
+const MAX_REFRESH_TIMEOUT_MS = 90 * 60 * 1000;
 const DEFAULT_STATUS_REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_IDLE_POLL_INTERVAL_MS = 5_000;
 const REQUIRED_WINDOWS = requiredGuruCurveWindows;
