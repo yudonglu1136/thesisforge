@@ -59,6 +59,12 @@ complete during the next search's debounce and display stale results.
   neither introduces nor deletes them. It does not claim a storage migration.
 - Existing adjacent Flutter failures remain separate follow-up work, not a green
   full-suite claim.
+- Pre-push public health returned 503: the unchanged Guru 5Y/10Y curves generated
+  on September 20 exceeded their existing 48-hour freshness limit. AWS remains
+  Ready/Green and the in-process Fundamentals probe is ready. This frontend-only
+  release does not refresh or alter Guru curves, change health thresholds, or
+  claim the aggregate health check passed. Preserve this independent operational
+  failure for the Guru maintenance task.
 - Frontend rollback target: Vercel `dpl_8NMQuTFa63DrTvzpPM1MGpwWwNcD`.
   Keep AWS `fundamental-702448f` and canonical data release
   `5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84` unchanged.
