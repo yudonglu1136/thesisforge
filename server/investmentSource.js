@@ -7,6 +7,7 @@ import { gurus, guruIsVisible } from './gurus.js';
 import { guruCapitalStructure } from './guruCapitalStructures.js';
 import path from 'node:path';
 import { releaseRoot,releaseResource,dataReleaseId } from './dataReleaseContext.js';
+import { marketFactsVersion,marketPriceHistory } from './investmentMarketContext.js';
 
 export const SOURCE_ADAPTER_VERSION='investment-pit-adapter-v1';
 const metricNames=['revenueGrowth','operatingMargin','fcfMargin','capexIntensity'];
@@ -48,7 +49,8 @@ export function sourceNode(row) {
 }
 
 export class InvestmentSource {
-  constructor(file,{insightsFile=null}={}) {
+  constructor(file,{insightsFile=null,canonicalMarket=false}={}) {
+    this.canonicalMarket=canonicalMarket;
     this.db=new DatabaseSync(file,{readOnly:true});
     this.db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');
     this.baseInsightsDb=insightsFile?new DatabaseSync(insightsFile,{readOnly:true}):null;
@@ -97,7 +99,7 @@ export class InvestmentSource {
   }
   company(ticker,asOf) {
     ticker=tickerKey(ticker);isoDate(asOf);
-    const generation=this.db.prepare('PRAGMA data_version').get().data_version+':'+(dataReleaseId()??'legacy');
+    const generation=this.db.prepare('PRAGMA data_version').get().data_version+':'+(dataReleaseId()??'legacy')+':'+(marketFactsVersion()??'stored');
     if(generation!==this.cacheGeneration){this.companyCache.clear();this.cacheGeneration=generation;}
     const cacheKey=ticker+':'+asOf;
     if(this.companyCache.has(cacheKey))return structuredClone(this.companyCache.get(cacheKey));
@@ -124,7 +126,7 @@ export class InvestmentSource {
       templates,templateReconciliation:reconciliation,templatePolicy:reconciliation?.basis==='user_defined_cashflow_path'
         ? 'Independent private worksheet prefilled with disclosed analyst starting assumptions, not issuer guidance or a published DCF. Ke 10% and g 2.5% are illustrative. Confirm parent ownership before saving a formal scenario.'
         : 'Revenue starts from the stored normalized growth assumption and fades to terminal growth. FCFE margins reconcile the unchanged published cash-flow path before post-DCF adjustments. Neither path is annual management guidance. Bear/Bull are editable stresses; saved user assumptions are never replaced.',
-      provenance:this.guruEvidence(ticker,asOf),priceHistory:(snap?.priceHistory??[]).filter(x=>x.date<=asOf && finite(x.close)&&x.close>0).slice(-900),
+      provenance:this.guruEvidence(ticker,asOf),priceHistory:(marketPriceHistory(ticker,asOf)??snap?.priceHistory??[]).filter(x=>x.date<=asOf && finite(x.close)&&x.close>0).slice(-900),
       guidance:{maxObservedAt:latest.guidance.maxObservedAt??null,selection:latest.guidance.guidanceSelection??{},evidence:(latest.guidance.evidence??[]).filter(x=>x.observedAt<=asOf),...guidanceReview},
       coverage:{scenario:templates?'supported':currencyComparable?'existing_method_only':'currency_reconciliation_required',peers:'not_available_reviewed_cohort',kpis:'not_available',roic:'not_available'},
       retrospective:true};

@@ -234,6 +234,25 @@ class RepositoryTest(unittest.TestCase):
         points[2]['fcf'] = None
         self.assertIsNone(FactRepository._quarter_metrics(points)['fcfMargin'])
 
+    def test_fundamental_metrics_do_not_compact_missing_quarters_or_invert_disposals(self):
+        periods = ['2026-06-30','2026-03-31','2025-12-31','2025-09-30',
+                   '2025-06-30','2025-03-31','2024-12-31','2024-09-30']
+        points = [{'quarter_rank': i + 1, 'reportperiod': period,
+                   'revenue': 100, 'opinc': 10, 'fcf': 5, 'capex': 4}
+                  for i, period in enumerate(periods)]
+        self.assertIsNone(FactRepository._quarter_metrics(points)['capexIntensity'])
+        missing = points[:2] + points[3:]
+        for i, point in enumerate(missing):
+            point = {**point, 'quarter_rank': i + 1}
+            missing[i] = point
+        metrics = FactRepository._quarter_metrics(missing)
+        self.assertIsNone(metrics['ttmRevenue'])
+        self.assertEqual(metrics['revenueGrowth'], 0)
+        self.assertTrue(metrics['annualComparisonReady'])
+        no_year = [p for p in points if p['reportperiod'] != '2025-06-30']
+        self.assertIsNone(FactRepository._quarter_metrics(no_year)['revenueGrowth'])
+        self.assertFalse(FactRepository._quarter_metrics(no_year)['annualComparisonReady'])
+
     def test_research_point_exposes_three_statement_rows_without_zero_fill(self):
         row = {
             'ticker': 'NEW', 'dimension': 'ARY', 'date': '2025-02-01',

@@ -16,6 +16,8 @@ import { buildFundamentalDiscovery, buildFundamentalCompany, saveFundamentalObse
   listFundamentalObservations, reviewFundamentalObservation } from './fundamentalResearch.js';
 import { researchDocuments, researchFundamentals, researchInstitutions, researchPublishedModel,
   saveResearchRecord, listResearchRecords } from './researchWorkbench.js';
+import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
+import { factOsEnabled } from './factRepository.js';
 
 export function registerInvestmentRoutes(app,service) {
   // One service instance owns generation caches and snapshot validation for
@@ -24,9 +26,12 @@ export function registerInvestmentRoutes(app,service) {
   const aiInsights = service.aiInsights ??= createAiInsightsService();
   const aiQuery = request => ({...request.query, asOf: service.date(request.query.asOf)});
   function route(method,path,handler,{cacheControl='private, no-store'}={}) {app[method]('/api/investment'+path,async (req,res)=>{
-    res.setHeader('Cache-Control',cacheControl);
+    // These URLs are cutoff-based, not immutable generation URLs. Revalidate
+    // across a data-only publication; browser SWR must not serve the old release.
+    res.setHeader('Cache-Control',service.source?.canonicalMarket&&cacheControl!=='private, no-store'
+      ?'private, no-cache':cacheControl);
     if(!req.user?.id)return res.status(401).json({error:'unauthorized'});
-    try {res.json(await handler(req.user.id,req));}catch(e){
+    try {res.json(await withInvestmentMarketFacts(service,req.user.id,req,path,()=>handler(req.user.id,req)));}catch(e){
       res.setHeader('Cache-Control','private, no-store');
       if(e.name==='FactDataError') {
         const safeCodes=['local_runtime_unavailable','local_data_unavailable','local_snapshot_changed','local_query_timeout'];
@@ -112,7 +117,7 @@ export function enableInvestmentPreview(app) {
   const config=resolveInvestmentRuntimeConfig();
   if(!config)return;
   if(config.production)app.use('/api/investment',investmentProductionIdentity);
-  const source=new InvestmentSource(config.research,{insightsFile:config.insights});
+  const source=new InvestmentSource(config.research,{insightsFile:config.insights,canonicalMarket:factOsEnabled()});
   let store;
   try {store=new InvestmentStore(config.investment,undefined,{verifiedOwnersOnly:config.production});}
   catch(error){source.close();throw error;}

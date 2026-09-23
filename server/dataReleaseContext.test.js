@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { dataReleaseMiddleware,releaseRoot,releaseResource,readDataRelease } from './dataReleaseContext.js';
+import { factGeneration as valuationGeneration } from './valuationFacts.js';
 
 test('requests pin release, old resources drain, new requests switch and restart reloads manifest',async()=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'fact-release-context-'));
@@ -21,14 +22,19 @@ test('requests pin release, old resources drain, new requests switch and restart
     const old=new Promise((resolve,reject)=>dataReleaseMiddleware({},firstResponse,async()=>{
       try{
         assert.equal(releaseRoot('canonical'),firstRoot);
+        assert.equal(valuationGeneration(),'a'.repeat(64));
         releaseResource('reader',()=>({root:firstRoot}),()=>closed++);
         await oldDone;
         assert.equal(releaseRoot('canonical'),firstRoot);assert.equal(closed,0);
+        assert.equal(valuationGeneration(),'a'.repeat(64));
         firstResponse.emit('finish');assert.equal(closed,1);resolve();
       }catch(error){reject(error);}
     }));
     const nextRoot=publish('b');const secondResponse=response();
-    dataReleaseMiddleware({},secondResponse,()=>assert.equal(releaseRoot('canonical'),nextRoot));
+    dataReleaseMiddleware({},secondResponse,()=>{
+      assert.equal(releaseRoot('canonical'),nextRoot);
+      assert.equal(valuationGeneration(),'b'.repeat(64));
+    });
     secondResponse.emit('finish');assert.equal(closed,0);releaseOld();await old;
     assert.equal(readDataRelease(active).manifest.releaseId,'b'.repeat(64));
     fs.writeFileSync(active,'{}');assert.throws(()=>readDataRelease(active),/invalid/);

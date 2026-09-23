@@ -117,3 +117,9 @@ test("financial display never invents FX, prior revenue or future period facts",
   assert.equal(result.freeCashFlowM, null);
   assert.equal(result.dilutedShareEquivalentsM, null);
 });
+
+test('financial cards preserve reported FCF and signed capex rather than invert net disposals',()=>{
+  const row={reportperiod:'2020-03-31',available_at:'2020-04-15',fxusd:1,ncfo:100e6,capex:10e6,revenue:200e6};
+  assert.equal(financialDisplay({asOf:'2020-05-01',trailing:[row]}).freeCashFlowM,110);
+  assert.equal(financialDisplay({asOf:'2020-05-01',trailing:[{...row,fcf:109e6}]}).freeCashFlowM,109);
+});

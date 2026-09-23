@@ -446,6 +446,17 @@ test('missing comparison price disables reverse solve, never the forward DCF',()
   const{service:s,store}=setup();const r=s.calculate({ticker:'ISRG',asOf:'2026-06-01',assumptions,reversePrice:null});
   near(r.result.fairValue,calculateScenario(base,assumptions).fairValue);strict.equal(r.reverse.status,'unavailable');strict.equal(r.reverse.value,null);store.close();
 });
+test('automatic reverse DCF rejects unknown or mismatched quote currency without disabling forward math',()=>{
+  const{service:s,store}=setup();const company=s.source.company.bind(s.source);
+  for(const currency of ['GBP',null]){
+    s.source.company=(...args)=>{const c=company(...args);return {...c,snapshot:{...c.snapshot,price:{value:50,currency}}};};
+    const r=s.calculate({ticker:'ISRG',asOf:'2026-06-01',assumptions:operating});
+    near(r.result.fairValue,calculateScenario(base,operating).fairValue);
+    strict.equal(r.reverse.status,'unavailable');strict.equal(r.reverse.reason,'comparison_price_currency_mismatch');
+    strict.equal(r.isoValueCurve,null);
+  }
+  store.close();
+});
 test('new scenario versions and review histories obey the research cutoff',()=>{
   const{service:s,store}=setup();const a=save(s),d=decide(s,a);save(s,'ISRG','alice','2026-08-01',a.id);
   s.saveReview('alice',{operationId:'history_review_001',decisionId:d.id,asOf:'2026-08-01',expectedHeadId:d.id,action:'Maintain',notes:'Saved history'});

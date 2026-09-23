@@ -2,9 +2,10 @@ import { queryFacts, queryFactsBatch, PRICE_TYPES, factGeneration } from './fact
 import { assert, finite, isoDate, signature } from './investmentMath.js';
 import { tickerKey } from './investmentSource.js';
 import { opportunityCompanySummary, opportunityValuationBreakdown } from './investmentOpportunities.js';
+import { canonicalComparisonQuote,withCanonicalMarket,marketFactsVersion } from './investmentMarketContext.js';
 
 export const FUNDAMENTAL_RESEARCH_VERSION = 'fundamental-research-v2';
-export const FUNDAMENTAL_METHOD_VERSION = 'fact-os-business-change-2026-09-21';
+export const FUNDAMENTAL_METHOD_VERSION = 'fact-os-business-change-2026-09-23-comparable-quarters';
 const LENSES = Object.freeze([
   'growth_profit_sync', 'slowing_growth_margin_up', 'profit_cash_weakening',
   'per_share_dilution', 'capital_return_pending', 'operating_pricing_divergence',
@@ -201,14 +202,30 @@ function latestReported(rows) {
   return [...latest.values()].sort((a, b) => String(b.reportperiod).localeCompare(String(a.reportperiod)));
 }
 
+// Compatibility helpers for offline callers; live list/detail metrics come
+// from FactRepository._quarter_metrics. Preserve holes just as that reader does.
+function quarterSlots(quarterly) {
+  const rows=latestReported(quarterly),anchor=Date.parse(rows[0]?.reportperiod);
+  const slots=[],ambiguous=new Set();
+  for(const row of rows){
+    const days=(anchor-Date.parse(row.reportperiod))/86400000,offset=Math.round(days/91.3125);
+    if(!Number.isFinite(days)||Math.abs(days-offset*91.3125)>21)continue;
+    if(slots[offset])ambiguous.add(offset);
+    slots[offset]=row;
+  }
+  for(const offset of ambiguous)slots[offset]=undefined;
+  return slots;
+}
+
 function sumWindow(rows, start, field) {
-  const values = rows.slice(start, start + 4).map(row => n(row[field]));
+  const values = Array.from({length:4},(_,i)=>n(rows[start+i]?.[field]));
   return values.length === 4 && values.every(finite) ? values.reduce((a, b) => a + b, 0) : null;
 }
 
 export function buildFundamentalSeries(quarterly) {
-  const rows = latestReported(quarterly);
+  const rows = quarterSlots(quarterly);
   return rows.map((row, index) => {
+    if(!row)return null;
     const revenue = sumWindow(rows, index, 'revenue'), opinc = sumWindow(rows, index, 'opinc');
     const fcf = sumWindow(rows, index, 'fcf'), cfo = sumWindow(rows, index, 'ncfo');
     const yearRevenue = n(rows[index + 4]?.revenue), currentRevenue = n(row.revenue);
@@ -216,7 +233,7 @@ export function buildFundamentalSeries(quarterly) {
       quarterlyRevenue: currentRevenue, revenueGrowth: growth(currentRevenue, yearRevenue),
       ttmRevenue: revenue, operatingMargin: ratio(opinc, revenue), fcfMargin: ratio(fcf, revenue),
       cfoMargin: ratio(cfo, revenue), source: row.provenance };
-  }).filter(row => row.ttmRevenue != null).reverse();
+  }).filter(row => row?.ttmRevenue != null).reverse();
 }
 
 function metricRow(id, label, value, comparison, formula, status = null) {
@@ -251,7 +268,7 @@ function detailSections(company, metrics, bundle, valuation, peerContext) {
       metricRow('interestCoverage', text('Pre-tax interest coverage', '税前利息保障倍数'), metrics.interestCoverage, null, 'TTM EBIT / absolute TTM interest expense'),
     ]},
     { id: 'pricing', title: text('What the current price requires', '当前价格隐含怎样的经营要求'), rows: [
-      metricRow('marketPrice', text('Latest split-adjusted close', '最新拆股调整收盘价'), bundle.price?.value, null, 'Sharadar split-adjusted close as of requested cutoff', bundle.price ? 'available' : 'missing'),
+      metricRow('marketPrice', text('Latest quoted close', '最新报价收盘价'), bundle.price?.value, null, 'Sharadar raw quoted close as of requested cutoff; separate from split-adjusted return history', bundle.price?.value>0 ? 'available' : 'missing'),
       metricRow('modelGap', text('Optional valuation-model gap', '可选估值模型差距'), valuation?.modelGap, null, 'model value / comparable market price − 1', valuation?.valuationStatus ?? 'not_modeled'),
     ], note: specialist ? text('Specialist financial metrics are not available in the current Fact OS schema; generic operating ratios are not treated as decision-grade for this business model.', '当前 Fact OS 尚无该类金融企业的专用指标；通用经营比率不会被视作可直接决策的证据。') : null },
     { id: 'history_peers', title: text('Relative to its history and economic peers', '相对自身历史与经济同业'), rows: [
@@ -290,9 +307,13 @@ function buildPeerContext(company, raw) {
   };
 }
 
-function addPricingSignal(signals, metrics, priceHistory) {
+function addPricingSignal(signals, metrics, priceHistory, asOf) {
   if (!Array.isArray(priceHistory) || priceHistory.length < 2) return signals;
-  const start = priceHistory[0]?.value, end = priceHistory.at(-1)?.value;
+  // Match discovery's one-year comparison, including the last session before
+  // the anniversary. The 400-day fetch is a holiday buffer, not a 400-day return.
+  const priorDate=startDate(asOf,365);
+  const prior=priceHistory.filter(point=>point.date<=priorDate).at(-1);
+  const start = prior?.value, end = priceHistory.at(-1)?.value;
   const priceReturn = growth(end, start), fundamentalDelta = delta(metrics.operatingMargin, metrics.operatingMarginPriorYear);
   if (finite(priceReturn) && finite(fundamentalDelta) && fundamentalDelta >= .01 && priceReturn <= -.10) {
     return [...signals, { id: 'operating_pricing_divergence', priority: score(fundamentalDelta / .02, Math.abs(priceReturn) / .20),
@@ -329,26 +350,31 @@ function startDate(asOf, days) {
 
 export async function buildFundamentalCompany(source, ticker, asOf, options = {}) {
   ticker = tickerKey(ticker); isoDate(asOf);
+  if(source?.canonicalMarket&&!marketFactsVersion())return withCanonicalMarket([ticker],asOf,()=>buildFundamentalCompany(source,ticker,asOf,options));
   const requests = [
     { method: 'get_fundamental_research', args: [ticker, asOf], kwargs: { quarters: 16, years: 8 } },
     { method: 'get_price_history', args: [ticker, startDate(asOf, 400), asOf, PRICE_TYPES.SPLIT_ADJUSTED_CLOSE] },
-    { method: 'get_price', args: [ticker, asOf, PRICE_TYPES.SPLIT_ADJUSTED_CLOSE] },
+    { method: 'get_price', args: [ticker, asOf, PRICE_TYPES.RAW_CLOSE] },
     { method: 'get_dividends', args: [ticker, startDate(asOf, 3650), asOf] },
   ];
   const responses = await queryFactsBatch(requests);
   if (!responses[0]?.ok) throw Object.assign(new Error('fundamental_facts_unavailable'), { status: 422 });
   const bundle = responses[0].result;
   bundle.priceHistory = responses[1]?.ok ? responses[1].result : [];
-  bundle.price = responses[2]?.ok ? responses[2].result : null;
+  bundle.price = canonicalComparisonQuote(responses[2]?.ok ? responses[2].result : null,asOf,bundle.catalog_generation);
   bundle.dividends = responses[3]?.ok ? responses[3].result : [];
   bundle.recentDividends = bundle.dividends.filter(row => String(row.date ?? row.exDate ?? '') >= startDate(asOf, 365));
-  const series = buildFundamentalSeries(bundle.quarterly);
+  // The list, detail, and Research financial layer use the same repository
+  // calculation, including quarter gaps. Do not create a second live formula.
+  assert(bundle.method_version===FUNDAMENTAL_METHOD_VERSION&&bundle.metrics&&Array.isArray(bundle.trend),
+    'fundamental_metric_contract_mismatch');
+  const series = bundle.trend;
   const latest = bundle.quarterly?.[0];
   const rawCompany = { ticker, ...bundle.company, period_end: latest?.reportperiod, available_at: latest?.date,
-    metrics: FactMetricsForDetail(bundle.quarterly) };
+    metrics: bundle.metrics };
   let signals = signalsFor(rawCompany);
   if (discoveryComparable(rawCompany)) {
-    signals = addPricingSignal(signals, rawCompany.metrics, bundle.priceHistory);
+    signals = addPricingSignal(signals, rawCompany.metrics, bundle.priceHistory,asOf);
   }
   let valuation = null;
   try {
@@ -377,7 +403,7 @@ export async function buildFundamentalCompany(source, ticker, asOf, options = {}
 }
 
 export function FactMetricsForDetail(quarterly) {
-  const rows = latestReported(quarterly);
+  const observations=latestReported(quarterly).slice(0,8),rows = quarterSlots(observations);
   const q = rank => rows[rank - 1] ?? {};
   const sum = (start, field) => sumWindow(rows, start - 1, field);
   const current = Object.fromEntries(['revenue','gp','opinc','ebit','netinccmn','ncfo','capex','fcf','sbcomp','ncfcommon','ncfdiv','intexp'].map(field => [field, sum(1, field)]));
@@ -385,7 +411,7 @@ export function FactMetricsForDetail(quarterly) {
   const priorY = Object.fromEntries(Object.keys(current).map(field => [field, sum(5, field)]));
   const shares = n(q(1).shareswadil) ?? n(q(1).sharesbas), oldShares = n(q(5).shareswadil) ?? n(q(5).sharesbas);
   const avgCapital = finite(q(1).invcap) && finite(q(5).invcap) ? (q(1).invcap + q(5).invcap) / 2 : null;
-  return { quarterCount: rows.length,
+  return { quarterCount: observations.length,
     annualComparisonReady: Boolean(rows[0] && rows[4]),
     sequentialComparisonReady: Boolean(rows[0] && rows[1]),
     priorSequentialYearReady: Boolean(rows[1] && rows[5]),
@@ -394,7 +420,7 @@ export function FactMetricsForDetail(quarterly) {
     operatingMargin: ratio(current.opinc, current.revenue), operatingMarginPriorQuarter: ratio(priorQ.opinc, priorQ.revenue), operatingMarginPriorYear: ratio(priorY.opinc, priorY.revenue),
     cfoMargin: ratio(current.ncfo, current.revenue), cfoMarginPriorYear: ratio(priorY.ncfo, priorY.revenue),
     fcfMargin: ratio(current.fcf, current.revenue), fcfMarginPriorYear: ratio(priorY.fcf, priorY.revenue), sbcMargin: ratio(current.sbcomp, current.revenue),
-    capexIntensity: ratio(finite(current.capex) ? Math.abs(current.capex) : null, current.revenue), capexIntensityPriorYear: ratio(finite(priorY.capex) ? Math.abs(priorY.capex) : null, priorY.revenue),
+    capexIntensity: ratio(finite(current.capex)&&current.capex<=0 ? -current.capex : null, current.revenue), capexIntensityPriorYear: ratio(finite(priorY.capex)&&priorY.capex<=0 ? -priorY.capex : null, priorY.revenue),
     dilutedSharesGrowth: growth(shares, oldShares), netIncomeGrowth: growth(current.netinccmn, priorY.netinccmn),
     perShareIncomeGrowth: growth(ratio(current.netinccmn, shares), ratio(priorY.netinccmn, oldShares)),
     netCommonFinancing: current.ncfcommon, netDividendCashFlow: current.ncfdiv,

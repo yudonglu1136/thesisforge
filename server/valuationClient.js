@@ -463,7 +463,8 @@ function attachPodcastInsights(ticker, requestedTicker) {
 }
 
 export async function loadValuationDashboard() {
-  const version = `${valuationDashboardVersion()}:${factOsEnabled() ? factGeneration() : "legacy"}`;
+  const asOf=new Date().toISOString().slice(0,10);
+  const version = `${valuationDashboardVersion()}:${factOsEnabled() ? factGeneration() : "legacy"}:${asOf}`;
   if (dashboardCache.payload && dashboardCache.version === version) {
     return dashboardCache.payload;
   }
@@ -480,7 +481,7 @@ export async function loadValuationDashboard() {
     .map(applyAznValuationOverlay)
     .map(applyLsegValuationOverlay);
   const canonicalTickers = factOsEnabled()
-    ? await loadCanonicalValuationDashboard(archivedTickers)
+    ? await loadCanonicalValuationDashboard(archivedTickers,{asOf})
     : archivedTickers;
   const tickers = sortTickers(
     canonicalTickers
@@ -529,7 +530,8 @@ export async function loadValuationTicker(ticker, options = {}) {
   const normalized = normalizeTicker(ticker);
   const pricePoints = normalizePricePoints(options.pricePoints);
   const detail = valuationDetailLevel(options.detail);
-  const factVersion = factOsEnabled() ? factGeneration() : "legacy";
+  const asOf=new Date().toISOString().slice(0,10);
+  const factVersion = `${factOsEnabled() ? factGeneration() : "legacy"}:${asOf}`;
   const cacheKey = `${normalized}:${detail}:${pricePoints}:${factVersion}`;
   const candidates = valuationTickerCandidates(normalized);
   const podcastVersion = detail === "full"
@@ -554,7 +556,7 @@ export async function loadValuationTicker(ticker, options = {}) {
     if (tickerSnapshot) {
       const archivedTicker = applyLsegValuationOverlay(applyAznValuationOverlay(tickerSnapshot));
       const canonicalTicker = factOsEnabled()
-        ? await loadCanonicalValuationDetail(archivedTicker)
+        ? await loadCanonicalValuationDetail(archivedTicker,{asOf})
         : archivedTicker;
       const compactedTicker = compactTickerDetail(
         withValuationAuditLayers(canonicalTicker), {

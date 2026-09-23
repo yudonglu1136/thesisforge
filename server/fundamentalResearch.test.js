@@ -39,6 +39,17 @@ test('missing periods and negative comparison bases stay unknown, not zero-fille
   assert.equal(result.rows.length, 0);
 });
 
+test('missing internal quarters do not shift YoY and net disposals are not gross spending',()=>{
+  const periods=['2026-06-30','2026-03-31','2025-12-31','2025-09-30','2025-06-30','2025-03-31','2024-12-31','2024-09-30'];
+  const rows=periods.map(reportperiod=>({reportperiod,revenue:100,opinc:10,capex:4,fcf:5}));
+  assert.equal(FactMetricsForDetail(rows).capexIntensity,null);
+  const missing=rows.filter(r=>r.reportperiod!=='2025-12-31');
+  assert.equal(FactMetricsForDetail(missing).ttmRevenue,null);
+  assert.equal(FactMetricsForDetail(missing).revenueGrowth,0);
+  assert.equal(FactMetricsForDetail(rows.filter(r=>r.reportperiod!=='2025-06-30')).revenueGrowth,null);
+  assert.ok(buildFundamentalSeries(missing).every(r=>r.periodEnd<'2026-03-31'));
+});
+
 test('reported revision selection and four-quarter TTM never mix duplicate amendments', () => {
   const rows = [];
   const periods = ['2026-06-30', '2026-03-31', '2025-12-31', '2025-09-30',

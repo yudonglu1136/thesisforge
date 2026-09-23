@@ -4,6 +4,7 @@ import { buildFundamentalCompany } from './fundamentalResearch.js';
 import { opportunityValuationBreakdown } from './investmentOpportunities.js';
 import { institutional13fInsightDetail } from './institutional13fInsights.js';
 import { worksheetState } from './investmentDrafts.js';
+import { marketPriceHistory } from './investmentMarketContext.js';
 
 const RESEARCH_PRICE_POINT_LIMIT=360;
 
@@ -126,7 +127,7 @@ function fundamentalResearchShape(detail) {
     metrics,history:(detail.trend??[]).map(row=>({period:row.fiscalPeriod??row.periodEnd,periodEnd:row.periodEnd,
       availableAt:row.availableAt,metrics:{revenueGrowth:row.revenueGrowth,operatingMargin:row.operatingMargin,fcfMargin:row.fcfMargin},
       publishedFairValue:null,publishedFormula:null,source:{dataset:'Fact OS',modelVersion:null}})),
-    priceHistory:detail.priceHistory??[],published:{fairValue:null,formula:null,dcf:null,modelVersion:null},
+    priceHistory:marketPriceHistory(detail.ticker,detail.asOf)??detail.priceHistory??[],published:{fairValue:null,formula:null,dcf:null,modelVersion:null},
     templates:null,templateReconciliation:null,provenance:[],guidance:{evidence:[],audit:null},
     fundamental:detail,retrospective:true,
   };

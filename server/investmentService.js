@@ -29,9 +29,17 @@ export class InvestmentService {
     if(body.snapshotId)assert(body.snapshotId===company.snapshot.id,'actual_base_changed_reload');
     const result=calculateScenario(company.base,body.assumptions);
     // A missing comparison price must not prevent price-independent DCF math.
-    const price=Object.hasOwn(body,'reversePrice')?body.reversePrice:company.snapshot.price.value;
+    // Explicit targets are scenario-currency inputs. Automatic targets require
+    // a comparable quote; never use a USD listing price against a GBP/EUR model.
+    const explicitPrice=Object.hasOwn(body,'reversePrice');
+    const quote=company.snapshot.price;
+    const comparableCurrency=Boolean(quote?.currency&&quote.currency===company.base.currency);
+    const price=explicitPrice?body.reversePrice:comparableCurrency?quote.value:null;
     let reverse;
-    try { reverse=reverseScenario(company.base,body.assumptions,price,body.reverseVariable??'growth',body.targetReturn??body.assumptions.ke); }
+    try {
+      assert(explicitPrice||comparableCurrency,'comparison_price_currency_mismatch');
+      reverse=reverseScenario(company.base,body.assumptions,price,body.reverseVariable??'growth',body.targetReturn??body.assumptions.ke);
+    }
     catch(error) {if(!error.status)throw error;reverse={status:'unavailable',reason:error.message,value:null};}
     const templateResults=Object.fromEntries(Object.entries(company.templates).map(([name,assumptions])=>{
       try {return [name,calculateScenario(company.base,assumptions).fairValue];}

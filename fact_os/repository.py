@@ -453,7 +453,28 @@ class FactRepository:
     @classmethod
     def _quarter_metrics(cls, points):
         """Deterministic, null-preserving metrics from comparable reported quarters."""
-        by_rank = {point['quarter_rank']: point for point in points}
+        # Discovery and detail use the same bounded comparison population.
+        points = points[:8]
+        # SQL row_number is an observation rank, not a fiscal-quarter offset.
+        # Missing quarters must leave holes in TTM and YoY comparisons. Report
+        # dates tolerate normal 52/53-week fiscal calendars, not short periods.
+        dated = [point for point in points if point.get('reportperiod')]
+        if dated:
+            anchor = max(_date(point['reportperiod']) for point in dated)
+            by_rank, ambiguous = {}, set()
+            for point in dated:
+                days = (anchor - _date(point['reportperiod'])).days
+                offset = round(days / 91.3125)
+                if abs(days - offset * 91.3125) > 21:
+                    continue
+                rank = offset + 1
+                if rank in by_rank:
+                    ambiguous.add(rank)
+                by_rank[rank] = point
+            for rank in ambiguous:
+                by_rank.pop(rank, None)
+        else:
+            by_rank = {point['quarter_rank']: point for point in points}
 
         def n(rank, field):
             return cls._finite_number(by_rank.get(rank, {}).get(field))
@@ -496,8 +517,8 @@ class FactRepository:
             'fcfMargin': ratio(current['fcf'], current['revenue']),
             'fcfMarginPriorYear': ratio(prior_y['fcf'], prior_y['revenue']),
             'sbcMargin': ratio(current['sbcomp'], current['revenue']),
-            'capexIntensity': ratio(abs(current['capex']) if current['capex'] is not None else None, current['revenue']),
-            'capexIntensityPriorYear': ratio(abs(prior_y['capex']) if prior_y['capex'] is not None else None, prior_y['revenue']),
+            'capexIntensity': ratio(-current['capex'] if current['capex'] is not None and current['capex'] <= 0 else None, current['revenue']),
+            'capexIntensityPriorYear': ratio(-prior_y['capex'] if prior_y['capex'] is not None and prior_y['capex'] <= 0 else None, prior_y['revenue']),
             'dilutedSharesGrowth': growth(latest_shares, year_shares),
             'netIncomeGrowth': growth(current['netinccmn'], prior_y['netinccmn']),
             'perShareIncomeGrowth': growth(current_eps, prior_eps),
@@ -654,12 +675,23 @@ class FactRepository:
                         key=lambda row: (row['reportperiod'], row['date']), reverse=True)[:years]
         masters = self._rows("SELECT * FROM _master WHERE permaticker=? AND \"table\"='SF1' ORDER BY lastupdated DESC", [identity['permaticker']])
         master = masters[0] if masters else {}
+        metrics = self._quarter_metrics(quarterly)
+        trend = []
+        for index, row in enumerate(quarterly):
+            window = self._quarter_metrics(quarterly[index:])
+            if window['ttmRevenue'] is not None:
+                trend.append({'periodEnd': row['reportperiod'], 'availableAt': row['date'],
+                    'fiscalPeriod': row.get('fiscalperiod'), 'quarterlyRevenue': row.get('revenue'),
+                    **{key: window[key] for key in ('revenueGrowth','ttmRevenue','operatingMargin','fcfMargin','cfoMargin')},
+                    'source': self._lineage('fundamentals', row)})
         return {
             'version': 'fact-fundamental-research-v1', 'as_of': str(as_of),
             'ticker': identity['ticker'], 'identity': identity,
             'company': {key: master.get(key) for key in ('name','exchange','category','sector','industry','sicsector','sicindustry','currency','location','companysite','secfilings')},
             'quarterly': [self._research_point(row, self._lineage('fundamentals', row)) for row in quarterly],
             'annual': [self._research_point(row, self._lineage('fundamentals', row)) for row in annual],
+            'metrics': metrics, 'trend': list(reversed(trend)),
+            'method_version': 'fact-os-business-change-2026-09-23-comparable-quarters',
             'reported_basis': 'ARQ/ARY latest revision visible by the requested as-of date',
             'restated_basis': 'withheld_in_historical_pit; MRQ/MRY are not mixed with as-reported facts',
             'catalog_generation': self.generation,

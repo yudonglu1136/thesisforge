@@ -2,13 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PRICE_TYPES, queryFactsBatch } from "./factRepository.js";
+import { releaseRoot,dataReleaseId } from './dataReleaseContext.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE = "Sharadar Local Fact OS";
 const MODEL_NOTICE = "Published valuation and its recorded inputs are archived model artifacts, not a newly recomputed valuation. Current financial facts are sourced separately from Local Fact OS.";
 
 export function factGeneration() {
-  const root = path.resolve(process.env.FACT_OS_ROOT || path.join(projectRoot, "data/fact_os"));
+  if(dataReleaseId())return dataReleaseId();
+  const root = path.resolve(releaseRoot('canonical',process.env.FACT_OS_ROOT || path.join(projectRoot, "data/fact_os")));
   try {
     const stat = fs.statSync(path.join(root, "manifests/catalog.json"));
     return `${root}:${stat.mtimeMs}:${stat.size}`;
@@ -48,7 +50,10 @@ export function financialDisplay({ quarterly = [], trailing = [], asOf }) {
   const quarterRevenue = usdAmount(quarter, "revenue", "revenueusd");
   const priorRevenue = usdAmount(priorQuarter, "revenue", "revenueusd");
   const cfo = usdAmount(ttm, "ncfo"); const capex = usdAmount(ttm, "capex");
-  const fcf = cfo !== null && capex !== null ? cfo - Math.abs(capex) : null;
+  // SF1 capex is a signed cash-flow field. A positive net disposal is not
+  // spending; abs() made this financial card disagree with the reported FCF.
+  const reportedFcf=usdAmount(ttm,'fcf');
+  const fcf = reportedFcf ?? (cfo !== null && capex !== null ? cfo + capex : null);
   const operatingIncome = finite(ttm?.opinc); const reportedRevenue = finite(ttm?.revenue);
   const shares = finite(ttm?.shareswadil); const sharefactor = finite(ttm?.sharefactor);
   return { currency: "USD", dimension: "ART", periodEnd: ttm?.reportperiod || ttm?.period_end || null,
@@ -60,7 +65,7 @@ export function financialDisplay({ quarterly = [], trailing = [], asOf }) {
     freeCashFlowM: fcf === null ? null : fcf / 1e6,
     freeCashFlowMarginRatio: fcf !== null && revenue > 0 ? fcf / revenue : null,
     dilutedShareEquivalentsM: shares !== null && sharefactor > 0 ? shares * sharefactor / 1e6 : null,
-    cashFlowBasis: "CFO minus absolute capex; not verified parent FCFE",
+    cashFlowBasis: "Reported SF1 FCF, otherwise CFO plus signed capex; not verified parent FCFE",
     provenance: { trailing: ttm?.provenance || null, quarterly: quarter?.provenance || null,
       priorQuarter: priorQuarter?.provenance || null } };
 }

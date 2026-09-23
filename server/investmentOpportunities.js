@@ -7,6 +7,8 @@ import { valuationModelRoute } from './valuationModelRoute.js';
 import { opportunityQuality } from './investmentQuality.js';
 import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrices.js';
 import { institutional13fInsightDetail } from './institutional13fInsights.js';
+import { marketFactsVersion } from './investmentMarketContext.js';
+import { dataReleaseId } from './dataReleaseContext.js';
 
 const parse = r => r ? JSON.parse(r.payload_json) : null;
 const scalar = v => finite(v) ? v : null;
@@ -303,7 +305,7 @@ export function opportunityOwnership(books) {
 // quality factor and price history (roughly 40x the actual ownership work on
 // the production snapshot).
 export function buildGuruHoldingsMatrix(source,asOf,reportDate=null) {
-  const generation=source.db.prepare('PRAGMA data_version').get().data_version;
+  const generation=source.db.prepare('PRAGMA data_version').get().data_version+':'+(dataReleaseId()??'legacy')+':'+(marketFactsVersion()??'stored');
   let cache=readCaches.get(source);
   if(!cache||cache.generation!==generation){cache={generation,rows:new Map()};readCaches.set(source,cache);}
   const key=`guru-matrix:${asOf}:${reportDate??''}`;
@@ -327,7 +329,7 @@ export function buildGuruHoldingsMatrix(source,asOf,reportDate=null) {
 }
 
 export function buildOpportunities(source,asOf,reportDate=null) {
-  const generation=source.db.prepare('PRAGMA data_version').get().data_version;
+  const generation=source.db.prepare('PRAGMA data_version').get().data_version+':'+(dataReleaseId()??'legacy')+':'+(marketFactsVersion()??'stored');
   let cache=readCaches.get(source);
   if(!cache||cache.generation!==generation){cache={generation,rows:new Map()};readCaches.set(source,cache);}
   const key=`${asOf}:${reportDate??''}`;
