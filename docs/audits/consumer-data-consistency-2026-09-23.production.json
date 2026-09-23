@@ -1,0 +1,441 @@
+{
+  "codeCommit": "afa52bdd5ca84990cfcef83aec7a0cda37d6f716",
+  "backendRelease": "data-consistency-afa52bd",
+  "ssmCommand": "f407b32a-25b6-4c7b-84b8-19467de49dab",
+  "result": {
+    "pass": true,
+    "apiUser": "webapp",
+    "releaseId": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+    "groups": [
+      "canonical"
+    ],
+    "filesSha256": {
+      "server/investmentMarketContext.js": "3a68a3ba4c3065c15d5e586fb485adb2b54b4b794d004c98f15a7697dd3d7a2c",
+      "server/investmentMarketRoutes.js": "83dff702346a4a535e81aefbad4f9868341d0d7af6b7975950635efe3baaeb10",
+      "server/investmentService.js": "164803f6184733e71036a0a6391da1901b138a2099c25495daf9bf68d166e8ce",
+      "fact_os/repository.py": "4b19b8b129470d5235b74e55b13697579f7ae51d82cc4df0d76e1b38b9f04c6f"
+    },
+    "reports": [
+      {
+        "version": "consumer-data-consistency-v1",
+        "asOf": "2026-09-22",
+        "executedAt": "2026-09-23T18:42:48.896Z",
+        "runtime": "v22.22.3",
+        "elapsedMs": 60166,
+        "rows": [
+          {
+            "ticker": "AMZN",
+            "canonical": {
+              "value": 258.45,
+              "date": "2026-09-21",
+              "currency": "USD",
+              "priceType": "RAW_CLOSE"
+            },
+            "archivedComparison": {
+              "value": 253.71,
+              "date": "2026-09-18"
+            },
+            "model": {
+              "value": 235.6928225956114,
+              "date": "2026-07-31",
+              "version": "pit-valuation-v15-official-uk-audit-2026-08-29",
+              "reconciliation": "reconciled"
+            },
+            "status": "matched"
+          },
+          {
+            "ticker": "MSFT",
+            "canonical": {
+              "value": 501.61,
+              "date": "2026-09-21",
+              "currency": "USD",
+              "priceType": "RAW_CLOSE"
+            },
+            "archivedComparison": {
+              "value": 493.78,
+              "date": "2026-09-18"
+            },
+            "model": {
+              "value": 335.54108335671367,
+              "date": "2026-07-29",
+              "version": "pit-valuation-v15-official-uk-audit-2026-08-29",
+              "reconciliation": "reconciled"
+            },
+            "status": "matched"
+          },
+          {
+            "ticker": "NVDA",
+            "canonical": {
+              "value": 227.38,
+              "date": "2026-09-21",
+              "currency": "USD",
+              "priceType": "RAW_CLOSE"
+            },
+            "archivedComparison": {
+              "value": 222.27,
+              "date": "2026-09-18"
+            },
+            "model": {
+              "value": 272.76339024804446,
+              "date": "2026-08-26",
+              "version": "pit-valuation-v15-official-uk-audit-2026-08-29",
+              "reconciliation": "reconciled"
+            },
+            "status": "matched"
+          },
+          {
+            "ticker": "GOOGL",
+            "canonical": {
+              "value": 354.97,
+              "date": "2026-09-21",
+              "currency": "USD",
+              "priceType": "RAW_CLOSE"
+            },
+            "archivedComparison": {
+              "value": 349.54,
+              "date": "2026-09-18"
+            },
+            "model": {
+              "value": 283.90910625821135,
+              "date": "2026-07-23",
+              "version": "pit-valuation-v15-official-uk-audit-2026-08-29",
+              "reconciliation": "reconciled"
+            },
+            "status": "matched"
+          },
+          {
+            "ticker": "MU",
+            "canonical": {
+              "value": 1043.96,
+              "date": "2026-09-21",
+              "currency": "USD",
+              "priceType": "RAW_CLOSE"
+            },
+            "archivedComparison": {
+              "value": 1015.8,
+              "date": "2026-09-18"
+            },
+            "model": {
+              "value": 410.4248037344397,
+              "date": "2026-06-25",
+              "version": "pit-valuation-v15-official-uk-audit-2026-08-29",
+              "reconciliation": "reconciled"
+            },
+            "status": "matched"
+          }
+        ],
+        "financials": [
+          {
+            "ticker": "AMZN",
+            "period": "2026-06-30",
+            "methodVersion": "fact-os-business-change-2026-09-23-comparable-quarters",
+            "metricKeys": [
+              "revenueGrowth",
+              "priorRevenueGrowth",
+              "ttmRevenue",
+              "operatingMargin",
+              "fcfMargin",
+              "capexIntensity"
+            ],
+            "status": "list_detail_research_matched"
+          },
+          {
+            "ticker": "MSFT",
+            "period": "2026-06-30",
+            "methodVersion": "fact-os-business-change-2026-09-23-comparable-quarters",
+            "metricKeys": [
+              "revenueGrowth",
+              "priorRevenueGrowth",
+              "ttmRevenue",
+              "operatingMargin",
+              "fcfMargin",
+              "capexIntensity"
+            ],
+            "status": "list_detail_research_matched"
+          },
+          {
+            "ticker": "NVDA",
+            "period": "2026-07-26",
+            "methodVersion": "fact-os-business-change-2026-09-23-comparable-quarters",
+            "metricKeys": [
+              "revenueGrowth",
+              "priorRevenueGrowth",
+              "ttmRevenue",
+              "operatingMargin",
+              "fcfMargin",
+              "capexIntensity"
+            ],
+            "status": "list_detail_research_matched"
+          },
+          {
+            "ticker": "GOOGL",
+            "period": "2026-06-30",
+            "methodVersion": "fact-os-business-change-2026-09-23-comparable-quarters",
+            "metricKeys": [
+              "revenueGrowth",
+              "priorRevenueGrowth",
+              "ttmRevenue",
+              "operatingMargin",
+              "fcfMargin",
+              "capexIntensity"
+            ],
+            "status": "list_detail_research_matched"
+          },
+          {
+            "ticker": "MU",
+            "period": "2026-05-28",
+            "methodVersion": "fact-os-business-change-2026-09-23-comparable-quarters",
+            "metricKeys": [
+              "revenueGrowth",
+              "priorRevenueGrowth",
+              "ttmRevenue",
+              "operatingMargin",
+              "fcfMargin",
+              "capexIntensity"
+            ],
+            "status": "list_detail_research_matched"
+          }
+        ],
+        "modelLedger": {
+          "before": "b8bbe1906156840e72bb0669a8cbf31083bf440571469f9d4ce08e5a3addf389",
+          "after": "b8bbe1906156840e72bb0669a8cbf31083bf440571469f9d4ce08e5a3addf389",
+          "unchanged": true
+        },
+        "status": "pass"
+      },
+      {
+        "version": "consumer-data-consistency-v1",
+        "asOf": "2026-09-18",
+        "executedAt": "2026-09-23T18:43:18.118Z",
+        "runtime": "v22.22.3",
+        "elapsedMs": 28644,
+        "rows": [
+          {
+            "ticker": "AMZN",
+            "canonical": {
+              "value": 253.71,
+              "date": "2026-09-18",
+              "currency": "USD",
+              "priceType": "RAW_CLOSE"
+            },
+            "archivedComparison": {
+              "value": 253.71,
+              "date": "2026-09-18"
+            },
+            "model": {
+              "value": 235.6928225956114,
+              "date": "2026-07-31",
+              "version": "pit-valuation-v15-official-uk-audit-2026-08-29",
+              "reconciliation": "reconciled"
+            },
+            "status": "matched"
+          }
+        ],
+        "financials": [
+          {
+            "ticker": "AMZN",
+            "period": "2026-06-30",
+            "methodVersion": "fact-os-business-change-2026-09-23-comparable-quarters",
+            "metricKeys": [
+              "revenueGrowth",
+              "priorRevenueGrowth",
+              "ttmRevenue",
+              "operatingMargin",
+              "fcfMargin",
+              "capexIntensity"
+            ],
+            "status": "list_detail_research_matched"
+          }
+        ],
+        "modelLedger": {
+          "before": "f1b73ff9b0edbceb88fb8ba055fbad000d7a89cf01442d4edbf47d89601fe3fd",
+          "after": "f1b73ff9b0edbceb88fb8ba055fbad000d7a89cf01442d4edbf47d89601fe3fd",
+          "unchanged": true
+        },
+        "status": "pass"
+      }
+    ]
+  },
+  "publicApi": {
+    "checkedAt": "2026-09-23T18:36:01.977Z",
+    "origins": [
+      {
+        "origin": "https://backend.thesisforge.tech",
+        "health": [
+          {
+            "status": 200,
+            "ms": 2519,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          },
+          {
+            "status": 200,
+            "ms": 2501,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          },
+          {
+            "status": 200,
+            "ms": 2499,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          },
+          {
+            "status": 200,
+            "ms": 2496,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          }
+        ],
+        "auth": [
+          {
+            "endpoint": "/api/investment/research/AMZN?asOf=2026-09-22",
+            "status": 401
+          },
+          {
+            "endpoint": "/api/investment/portfolio",
+            "status": 401
+          },
+          {
+            "endpoint": "/api/internal/backtests/status",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://thesisforge.tech",
+        "health": [
+          {
+            "status": 200,
+            "ms": 768,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          },
+          {
+            "status": 200,
+            "ms": 786,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          },
+          {
+            "status": 200,
+            "ms": 751,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          },
+          {
+            "status": 200,
+            "ms": 816,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          }
+        ],
+        "auth": [
+          {
+            "endpoint": "/api/investment/research/AMZN?asOf=2026-09-22",
+            "status": 401
+          },
+          {
+            "endpoint": "/api/investment/portfolio",
+            "status": 401
+          },
+          {
+            "endpoint": "/api/internal/backtests/status",
+            "status": 404
+          }
+        ]
+      },
+      {
+        "origin": "https://www.thesisforge.tech",
+        "health": [
+          {
+            "status": 200,
+            "ms": 458,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          },
+          {
+            "status": 200,
+            "ms": 696,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          },
+          {
+            "status": 200,
+            "ms": 692,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          },
+          {
+            "status": 200,
+            "ms": 494,
+            "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+            "guru": {
+              "displayable": 57,
+              "expectedRows": 57
+            }
+          }
+        ],
+        "auth": [
+          {
+            "endpoint": "/api/investment/research/AMZN?asOf=2026-09-22",
+            "status": 401
+          },
+          {
+            "endpoint": "/api/investment/portfolio",
+            "status": 401
+          },
+          {
+            "endpoint": "/api/internal/backtests/status",
+            "status": 404
+          }
+        ]
+      }
+    ],
+    "status": "pass",
+    "frontends": [
+      {
+        "origin": "https://thesisforge.tech",
+        "sha256": "038bcba2beaa7546347922a5d489e6a4ae3705638bd62a227a2a1049406339d7"
+      },
+      {
+        "origin": "https://www.thesisforge.tech",
+        "sha256": "038bcba2beaa7546347922a5d489e6a4ae3705638bd62a227a2a1049406339d7"
+      }
+    ]
+  },
+  "browserAcceptance": "pending_authenticated_session"
+}
