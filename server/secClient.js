@@ -8,7 +8,7 @@ import {
   priceSymbolResolutionForHolding,
   tickerForHolding
 } from "./cusipOverrides.js";
-import { gurus } from "./gurus.js";
+import { gurus, visibleGurus, guruIsVisible } from "./gurus.js";
 import { canonicalGuruAvatarUrl } from "./guruAvatarCatalog.js";
 import { manager13fHoldingPublicTradingAnnotation } from "./backtestReplicability.js";
 import { loadPriceSeries, nearestPoint } from "./marketData.js";
@@ -2689,14 +2689,23 @@ async function loadGuruDashboardUncached({ forceRefresh = false } = {}) {
   return { ...payload, cache: { status: "refreshed", ttlMinutes: 30 } };
 }
 
-export async function loadGuruDashboard({ forceRefresh = false } = {}) {
+const visibleDashboardCache = new WeakMap();
+export async function loadGuruDashboard(options = {}) {
+  const payload = await loadGuruDashboardIncludingArchive(options);
+  if (visibleDashboardCache.has(payload)) return visibleDashboardCache.get(payload);
+  const visible = {...payload, gurus: (payload.gurus || []).filter(guruIsVisible)};
+  visibleDashboardCache.set(payload, visible);
+  return visible;
+}
+
+async function loadGuruDashboardIncludingArchive({ forceRefresh = false } = {}) {
   if (factOsEnabled()) {
-    const books = await loadFactGuruDashboard(gurus);
+    const books = await loadFactGuruDashboard(visibleGurus);
     return {
       generatedAt: new Date().toISOString(),
       source: { label: "Sharadar local Fact OS", pitSupported: false },
       gurus: books.map((book, index) => {
-        const guru = gurus[index];
+        const guru = visibleGurus[index];
         const shell = withGuruShell(guru, book);
         return {
           ...shell,

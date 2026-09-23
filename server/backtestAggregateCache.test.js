@@ -201,6 +201,37 @@ function withMethodYears(payload, years) {
   return payload;
 }
 
+test("manager cache rejects a curve belonging to another manager or without identity", () => {
+  const ackman = gurus.find(g => g.id === "bill-ackman");
+  const ready = withMethodYears(fixture(ackman, "wrong-manager", new Date().toISOString()), 5);
+  assert.equal(selectManagerBacktestCache(ready, null, 5, "warren-buffett").kind, "miss");
+  assert.equal(selectManagerBacktestCache({...ready, guru: {}}, null, 5, ackman.id).kind, "miss");
+  assert.throws(() => writeGuruBacktest("warren-buffett", 5, ready), /identity/i);
+  assert.throws(() => writeGuruBacktestProxy("warren-buffett", 5,
+    withMethodYears(proxyFixture(ackman, "wrong-manager-proxy", ready.generatedAt), 5)), /identity/i);
+});
+
+test("canonical public refresh rereads the audited SEC cache without discarding it", async () => {
+  const ackman = gurus.find(g => g.id === "bill-ackman");
+  const ready = withMethodYears(fixture(ackman, "canonical-refresh", new Date().toISOString()), 5);
+  writeGuruBacktest(ackman.id, 5, ready);
+  const old = process.env.FACT_OS_ENABLED;
+  process.env.FACT_OS_ENABLED = "1";
+  try {
+    const result = await loadGuruBacktest(ackman.id, {years: 5, refresh: true, allowCold: false});
+    assert.equal(result.status, "ready");
+    assert.equal(result.summary.marker, "canonical-refresh");
+    assert.equal(result.generatedAt, ready.generatedAt);
+    assert.equal(result.cache.status, "sqlite-sec-disclosure");
+    assert.equal(result.historyWarming, false, 'no background job was started by the public read');
+    for (const id of ['chamath-palihapitiya','john-stamas','nick-sleep-qais-zakaria']) {
+      const retired = await loadGuruBacktest(id,{years:5,refresh:true,allowCold:false});
+      assert.equal(retired.status,'unsupported');
+      assert.equal(retired.retired,true);
+    }
+  } finally { process.env.FACT_OS_ENABLED = old; }
+});
+
 test("a transient failed refresh retains a ready curve from the current method", () => {
   const ackman = gurus.find((guru) => guru.id === "bill-ackman");
   const ready = fixture(ackman, "ready-before-transient-failure", "2026-09-02T00:00:00.000Z");
@@ -1511,7 +1542,8 @@ test("production prewarm population refreshes only enabled manager13f profiles",
     years: 5,
     reason: "production-prewarm-population-test",
     population: "enabled-manager13f",
-    backtestLoader: async (guruId) => {
+    backtestLoader: async (guruId, options) => {
+      assert.equal(options.computeFromDisclosures, true);
       scopedCalls.push(guruId);
       const guru = gurus.find((item) => item.id === guruId);
       return withMethodYears(
@@ -1530,9 +1562,9 @@ test("production prewarm population refreshes only enabled manager13f profiles",
   assert.equal(scopedCalls.includes("nick-sleep-qais-zakaria"), false);
 });
 
-test("default bulk refresh retains congress and disabled-manager behavior", async () => {
+test("default bulk refresh retains congress but never refreshes retired profiles", async () => {
   const supportedGurus = gurus.filter((guru) =>
-    guru.type === "manager13f" || guru.type === "congress"
+    !guru.retiredFromGuru && (guru.type === "manager13f" || guru.type === "congress")
   );
   const defaultCalls = [];
   const result = await refreshGuruBacktestCache({
@@ -1556,7 +1588,9 @@ test("default bulk refresh retains congress and disabled-manager behavior", asyn
   assert.equal(result.failed, 0);
   assert.equal(defaultCalls.includes("nancy-pelosi"), true);
   assert.equal(defaultCalls.includes("renaissance-technologies"), true);
-  assert.equal(defaultCalls.includes("nick-sleep-qais-zakaria"), true);
+  assert.equal(defaultCalls.includes("nick-sleep-qais-zakaria"), false);
+  assert.equal(defaultCalls.includes("chamath-palihapitiya"), false);
+  assert.equal(defaultCalls.includes("john-stamas"), false);
 });
 
 test("bulk refresh rejects an unknown population before loading any guru", async () => {

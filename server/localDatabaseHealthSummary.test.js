@@ -29,6 +29,7 @@ test("table summaries keep economic source dates separate from generated timesta
     summary: { filingDate: "2026-08-13" }
   });
   writeGuruBacktest("manager", 5, {
+    guru: {id: "manager"},
     generatedAt,
     window: { start: "2021-08-31", end: "2026-08-28" }
   });

@@ -2,7 +2,18 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-import { gurus } from "./gurus.js";
+import { gurus, visibleGurus, enabledManager13fGurus, requiredGuruCurveWindowsFor } from "./gurus.js";
+
+test("retired unreliable profiles leave discovery and new simulations without deleting identities", () => {
+  for (const id of ['john-stamas', 'chamath-palihapitiya', 'nick-sleep-qais-zakaria']) {
+    assert.ok(gurus.find(g => g.id === id)?.retirementReason);
+    assert.ok(!visibleGurus.some(g => g.id === id));
+    assert.ok(!enabledManager13fGurus.some(g => g.id === id));
+    assert.deepEqual(requiredGuruCurveWindowsFor(id), []);
+  }
+  assert.ok(visibleGurus.some(g => g.id === 'bill-ackman'));
+  assert.deepEqual(requiredGuruCurveWindowsFor('george-soros'), [5]);
+});
 
 const addedManagers = new Map([
   ["william-heard", {name: "William Heard", chineseName: "威廉·赫德", entityName: "Heard Capital LLC", cik: "0001796409", alternateCiks: []}],
@@ -107,10 +118,10 @@ test("guru catalog has the audited manager population", () => {
 
   assert.equal(gurus.length, 42);
   assert.equal(managers.length, 33);
-  assert.equal(enabledManagers.length, 31);
+  assert.equal(enabledManagers.length, 30);
   assert.deepEqual(
     managers.filter((guru) => guru.disableSimulation).map((guru) => guru.id).sort(),
-    ["john-stamas", "nick-sleep-qais-zakaria"]
+    ["chamath-palihapitiya", "john-stamas", "nick-sleep-qais-zakaria"]
   );
 });
 

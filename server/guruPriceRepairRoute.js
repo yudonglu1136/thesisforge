@@ -118,6 +118,7 @@ export function registerGuruPriceRepairRoute(app, {
         try {
           const payload = await loadGuruBacktest(target.guruId, {
             refresh: true,
+            computeFromDisclosures: true,
             years: target.years,
             detail: "compact",
             refreshGeneration:

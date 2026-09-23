@@ -247,6 +247,35 @@ Future<void> choose(WidgetTester t, {bool two = false}) async {
 }
 
 void main() {
+  test('source gaps are distinct from a valid all-expensive selection', () {
+    expect(
+      strategyFailureHasSourceGap({
+        'code': 'no_eligible_stocks',
+        'exclusions': [
+          {'status': 'expensive'},
+        ],
+      }),
+      false,
+    );
+    expect(
+      strategyFailureHasSourceGap({
+        'code': 'no_eligible_stocks',
+        'exclusions': [
+          {'status': 'no_model'},
+        ],
+      }),
+      true,
+    );
+    expect(
+      strategyFailureHasSourceGap({
+        'code': 'no_eligible_stocks',
+        'managerExclusions': [
+          {'code': 'original_filing_missing'},
+        ],
+      }),
+      true,
+    );
+  });
   testWidgets(
     'zero eligible stock failure shows exclusions, opens evidence and never auto-loosens rules',
     (t) async {
@@ -272,7 +301,7 @@ void main() {
       await mount(t, api, open: (value) => opened = value);
       await choose(t);
       await tap(t, 'Run backtest');
-      expect(find.text('No stocks pass on 2021-09-10'), findsOneWidget);
+      expect(find.text('Required source data is incomplete'), findsOneWidget);
       expect(find.text('QSR · No model'), findsOneWidget);
       expect(find.textContaining('Decision data: 2021-09-09'), findsOneWidget);
       expect(

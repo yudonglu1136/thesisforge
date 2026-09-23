@@ -70,6 +70,10 @@ export const gurus = [
   },
   {
     id: "chamath-palihapitiya",
+    retiredFromGuru: true,
+    disableSimulation: true,
+    retirementReason: "manager_identity_mismatch",
+    simulationNote: "Removed from the current Guru directory: the configured reporting entity is not verified as this manager. Historical records are retained for audit, not offered as a valid manager backtest.",
     name: "Chamath Palihapitiya",
     chineseName: "查马斯·帕里哈皮蒂亚",
     entityName: "SC US (TTGP), LTD. / Social Capital",
@@ -430,6 +434,8 @@ export const gurus = [
   },
   {
     id: "nick-sleep-qais-zakaria",
+    retiredFromGuru: true,
+    retirementReason: "closed_partnership_no_current_simulation",
     name: "Nick Sleep / Qais Zakaria",
     chineseName: "尼克·斯利普 / 凯斯·扎卡里亚",
     entityName: "Sleep, Zakaria & CO Ltd. / Nomad Investment Partnership",
@@ -636,6 +642,8 @@ export const gurus = [
   },
   {
     id: "john-stamas",
+    retiredFromGuru: true,
+    retirementReason: "unverifiable_historical_price_coverage",
     name: "John Stamas",
     chineseName: "约翰·斯塔马斯",
     entityName: "Defender Capital, LLC.",
@@ -671,6 +679,15 @@ export const gurus = [
 
 export const requiredGuruCurveWindows = Object.freeze([5, 10]);
 
+// Retirement removes current discovery / new-strategy entry points only.
+// Keep the original identities for historical filings and saved research.
+export const visibleGurus = Object.freeze(gurus.filter(guru => !guru.retiredFromGuru));
+
+export function guruIsVisible(guruOrId) {
+  const id = typeof guruOrId === "object" ? guruOrId?.id : guruOrId;
+  return visibleGurus.some(guru => guru.id === id);
+}
+
 const publicProxyDeniedManagerWindows = new Set([
   "renaissance-technologies:5"
 ]);
@@ -689,13 +706,13 @@ export function manager13fPublicProxyAllowed(guruOrId, years) {
 }
 
 export const enabledManager13fGurus = Object.freeze(gurus.filter((guru) =>
-  guru.type === "manager13f" && !guru.disableSimulation
+  guru.type === "manager13f" && !guru.disableSimulation && !guru.retiredFromGuru
 ));
 
 export function requiredGuruCurveWindowsFor(guruOrId) {
   const supplied = typeof guruOrId === "object" ? guruOrId : null;
   const guru = gurus.find((item) => item.id === (supplied?.id || guruOrId)) || supplied;
-  if (!guru || guru.disableSimulation || (guru.type && guru.type !== "manager13f")) return [];
+  if (!guru || guru.disableSimulation || guru.retiredFromGuru || (guru.type && guru.type !== "manager13f")) return [];
   const configured = Array.isArray(guru.simulationWindows)
     ? guru.simulationWindows.map(Number)
     : requiredGuruCurveWindows;

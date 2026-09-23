@@ -20,7 +20,8 @@ import { DatabaseSync } from "node:sqlite";
 import {
   enabledManager13fGurus,
   manager13fPublicProxyAllowed,
-  requiredGuruCurveWindows
+  requiredGuruCurveWindows,
+  requiredGuruCurveWindowsFor
 } from "../server/gurus.js";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -478,7 +479,10 @@ export function summarizeAcceptance(
       displayable: rows.filter((row) => row.displayable).length
     };
   }
-  const expectedRows = expectedManagerCount * windows.length;
+  const requiredKeys = enabledManager13fGurus.flatMap(g =>
+    requiredGuruCurveWindowsFor(g).filter(y => windows.includes(y)).map(y => `${g.id}:${y}`));
+  const actualKeys = results.map(row => `${row.guruId}:${row.years}`);
+  const expectedRows = requiredKeys.length;
   const failures = results.filter((row) => row.outcome === "failure").length;
   const displayable = results.filter((row) => row.displayable).length;
   return {
@@ -494,6 +498,8 @@ export function summarizeAcceptance(
     pass:
       managerCount === expectedManagerCount &&
       results.length === expectedRows &&
+      new Set(actualKeys).size === expectedRows &&
+      requiredKeys.every(key => actualKeys.includes(key)) &&
       failures === 0 &&
       displayable === expectedRows
   };
@@ -652,6 +658,7 @@ async function runWorker({ workDb, result, windows: windowOption }) {
 
   for (const guru of managers) {
     for (const years of windows) {
+      if (!requiredGuruCurveWindowsFor(guru).includes(years)) continue;
       const itemStartedAt = Date.now();
       let returnedPayload = null;
       let error = null;
@@ -659,6 +666,7 @@ async function runWorker({ workDb, result, windows: windowOption }) {
       try {
         returnedPayload = await backtest.loadGuruBacktest(guru.id, {
           refresh: true,
+          computeFromDisclosures: true,
           years,
           detail: "full",
           persist: true,

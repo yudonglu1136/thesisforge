@@ -7,7 +7,7 @@ import {
   loadGuruBacktest,
   selectManagerBacktestCache
 } from "./backtest.js";
-import { gurus } from "./gurus.js";
+import { gurus, visibleGurus } from "./gurus.js";
 import {
   readDashboardSnapshot,
   readGuruBacktest,
@@ -25,7 +25,7 @@ import {
 } from "./secClient.js";
 
 const jobId = "guru_13f_refresh";
-const managerGurus = gurus.filter((guru) => guru.type === "manager13f");
+const managerGurus = visibleGurus.filter((guru) => guru.type === "manager13f");
 let activeRefreshPromise = null;
 
 const defaultRefreshRuntime = Object.freeze({
@@ -235,6 +235,7 @@ export async function runThirteenFRefresh(options = {}, runtimeOverrides = {}) {
       let computedArtifacts = null;
       const publicBacktest = await runtime.loadGuruBacktest(guru.id, {
         refresh: true,
+        computeFromDisclosures: true,
         years: normalizedYears,
         // The SQLite audit rows must retain rebalance and attribution detail;
         // the public compact response is derived only after persistence.

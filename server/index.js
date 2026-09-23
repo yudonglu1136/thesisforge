@@ -219,6 +219,7 @@ app.post("/api/internal/backtests/:guruId/refresh", requireLoopbackRequest, requ
   try {
     const payload = await loadGuruBacktest(guru.id, {
       refresh: true,
+      computeFromDisclosures: true,
       years: request.query.years || request.body?.years || 5,
       detail: request.query.detail || request.body?.detail || "compact"
     });
@@ -292,6 +293,7 @@ app.post("/api/internal/prices/repair", requireLoopbackRequest, requireInternalC
     try {
       const payload = await loadGuruBacktest(guruId, {
         refresh: true,
+        computeFromDisclosures: true,
         years: 5,
         detail: "compact",
         refreshGeneration: repair.auditId

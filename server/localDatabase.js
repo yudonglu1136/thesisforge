@@ -22,8 +22,9 @@ fs.mkdirSync(dataDir, { recursive: true });
 
 const db = new DatabaseSync(dbPath);
 db.exec(`
-  PRAGMA journal_mode = WAL;
   PRAGMA busy_timeout = 5000;
+  -- Journal-mode negotiation also takes a lock; install the wait policy first.
+  PRAGMA journal_mode = WAL;
   -- Reclaim an old large WAL allocation after a successful reset. This is not
   -- a cap on an active transaction or on frames pinned by a long reader.
   PRAGMA wal_autocheckpoint = 1000;
@@ -1537,6 +1538,9 @@ export function writeGuruBacktest(guruId, years, payload, {
   preserveReadyMethodVersion = "",
   preserveReadySecurityMasterVersion = ""
 } = {}) {
+  if (payload?.guru?.id !== guruId) {
+    throw new Error("Guru backtest cache identity does not match its key.");
+  }
   if (payload?.status === "proxy_ready") {
     throw new Error("Proxy curves must be written with writeGuruBacktestProxy.");
   }
@@ -1560,6 +1564,7 @@ export function writeGuruBacktest(guruId, years, payload, {
     : null;
   const retainReadyCurve = Boolean(
     retained &&
+    retained.guru?.id === guruId &&
     retained?.status === "ready" &&
     retained?.method?.version === normalizedMethodVersion &&
     String(retained?.method?.securityMasterVersion || "").trim() ===
@@ -1602,6 +1607,9 @@ export function writeGuruBacktest(guruId, years, payload, {
 }
 
 export function writeGuruBacktestProxy(guruId, years, payload) {
+  if (payload?.guru?.id !== guruId) {
+    throw new Error("Guru backtest proxy cache identity does not match its key.");
+  }
   if (payload?.status !== "proxy_ready") {
     throw new Error("Only proxy_ready payloads may be written to guru_backtest_proxies.");
   }

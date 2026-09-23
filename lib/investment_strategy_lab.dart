@@ -1,5 +1,11 @@
 part of 'main.dart';
 
+bool strategyFailureHasSourceGap(Map<String, dynamic> failure) {
+  if (failure['code'] != 'no_eligible_stocks') return false;
+  return asList(failure['managerExclusions']).isNotEmpty ||
+      asList(failure['exclusions']).any((row) => row['status'] != 'expensive');
+}
+
 // JSON transports may decode 10.0 as 10. Compare numeric values, not spelling.
 bool strategyRuleValueEqual(dynamic a, dynamic b) {
   if (a is Map && b is Map) {
@@ -1079,6 +1085,10 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
         'The selected index ETF has no verified price at the requested start. Its real fund history is required; no substitute or shorter period is used.',
         '所选指数 ETF 在开始日期没有核验行情，需要真实基金历史；未替换标的或缩短区间。',
       ),
+      'no_eligible_stocks' when strategyFailureHasSourceGap(f) => w(
+        'Some required filing, model or price evidence is unavailable. This is not solely a valuation-filter result. Review the specific gaps below; no substitute curve is shown.',
+        '所需申报、模型或行情证据存在缺口，并非单纯因为估值筛选太严。请查看下方具体原因；不展示替代曲线。',
+      ),
       'no_eligible_stocks' => w(
         'No stocks can be bought under these rules on this date. A no-cash portfolio cannot be constructed. Adjust the filter, managers or start date; no cash-only return is substituted.',
         '该日期没有任何符合规则的可买股票，无法构建无现金组合。请调整估值筛选、经理或开始日期；不会用空仓收益替代结果。',
@@ -1758,6 +1768,8 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
                       'The requested start precedes available filings',
                       '开始日期早于可用申报历史',
                     )
+                  : strategyFailureHasSourceGap(asMap(result!['failure']))
+                  ? w('Required source data is incomplete', '回测所需源数据不完整')
                   : asMap(result!['failure'])['code'] == 'no_eligible_stocks'
                   ? w(
                       'No stocks pass on ${asMap(result!['failure'])['date']}',
@@ -1773,6 +1785,16 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
             ),
             if (asMap(result!['failure'])['code'] == 'no_eligible_stocks') ...[
               const SizedBox(height: 12),
+              for (final item in asList(
+                asMap(result!['failure'])['managerExclusions'],
+              ))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    failure(item),
+                    style: style(13, false, p.secondary),
+                  ),
+                ),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,

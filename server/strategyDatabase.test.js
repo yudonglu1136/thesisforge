@@ -101,8 +101,10 @@ test('legacy Top10 remains queryable but cannot silently become a verified book'
 });
 test('known manager mismatch is preserved and blocks consumption',t=>{
  const {opts}=fixture(t,{manager:'chamath-palihapitiya'});importStrategyDatabase(opts);
- const c=storedStrategyCatalog(opts.targetFile,'2025-08-18');assert.equal(c.managers[0].identityStatus,'blocked');
- assert.equal(c.managers[0].avatar,'/guru-avatars/chamath-palihapitiya.png');
+ const c=storedStrategyCatalog(opts.targetFile,'2025-08-18');assert.deepEqual(c.managers,[]);
+ const archived=openStrategyDatabase(opts.targetFile);
+ assert.equal(archived.db.prepare('SELECT identity_status FROM managers WHERE id=?').get('chamath-palihapitiya').identity_status,'blocked');
+ archived.close();
  assert.equal(c.etfs[0].available,true);
  const r=loadStoredStrategyData(opts.targetFile,{managers:['chamath-palihapitiya'],start:'2025-08-15',end:'2025-08-18',valuationEnabled:false},{comparisonPrices:strategyComparisonPrices,actionFor:strategyActionFor});
  assert.equal(selectedBook(r.histories.get('chamath-palihapitiya')[0],1).error,'manager_identity_mismatch');

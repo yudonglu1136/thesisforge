@@ -61,6 +61,8 @@ test("Guru dashboard reuses one derived payload and preserves response semantics
   const first = await loadGuruDashboard();
   const hit = await loadGuruDashboard();
   assert.strictEqual(hit, first, "a version-stable hit must reuse the exact payload object");
+  assert.ok(!first.gurus.some(g => ['john-stamas','chamath-palihapitiya','nick-sleep-qais-zakaria'].includes(g.id)));
+  assert.ok(readDashboardSnapshot().gurus.some(g => g.id === 'john-stamas'), 'retirement must not erase the archive');
   assert.equal(
     first.gurus.find((guru) => guru.id === gurus[0].id)?.avatarUrl,
     `/guru-avatars/${gurus[0].id}.png`,

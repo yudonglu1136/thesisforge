@@ -14,6 +14,7 @@ function fixture(){
   const p={status:'ready',generatedAt:'2026-09-01',method:{version:manager13fBacktestMethodVersion,securityMasterVersion:manager13fSecurityMasterVersion,minimumExecutionCoverage:.9,years:5,benchmark:'SPY'},window:{start:equity[0].date,end:equity.at(-1).date},equity,
     summary:{...performance(equity),averagePositions:1,averageCoverage:1},dataQuality:{minimumExecutionCoverage:.9,minimumObservedExecutionCoverage:1,attributionReconciliation:{difference:0}},rebalances:[{coveragePct:1,commonLongValue:100,selectedValue:100}],
     quarterContributions:equity.slice(0,-1).map((e,i)=>({executionDate:e.date,filingDate:`${Number(e.date.slice(0,4))-1}-12-31`,endDate:equity[i+1].date,nextExecutionDate:equity[i+1].date,portfolioReturn:equity[i+1].value/e.value-1,attributionReconciliation:0,cashWeight:0,contributions:[{ticker:'FIXTURE',weight:1,endingWeight:1}]}))};
+  p.guru={id:'bill-ackman'};
   db.prepare('INSERT INTO guru_backtests VALUES(?,5,?)').run('bill-ackman',JSON.stringify(p));
   return {db};
 }
@@ -58,6 +59,7 @@ test('current public-cache identity and strict audit apply to the study too',()=
 function proxyFixture(id='bill-ackman') {
   const source=fixture();
   const p=JSON.parse(source.db.prepare('SELECT payload_json FROM guru_backtests').get().payload_json);
+  p.guru={id};
   const strict={...structuredClone(p),status:'insufficient_data',refreshGeneration:'a'.repeat(64)+':5'};
   p.status='proxy_ready';p.refreshGeneration=strict.refreshGeneration;
   p.method.variant=manager13fProxyMethodVersion;

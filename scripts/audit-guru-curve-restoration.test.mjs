@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { gurus } from "../server/gurus.js";
+import { gurus, enabledManager13fGurus, requiredGuruCurveWindowsFor } from "../server/gurus.js";
 
 import {
   parseCliArgs,
@@ -30,7 +30,7 @@ const guru = { id: "manager-one", name: "Manager One" };
 const expectedManagerCount = gurus.filter((row) =>
   row.type === "manager13f" && !row.disableSimulation
 ).length;
-const expectedCurveRows = expectedManagerCount * 2;
+const expectedCurveRows = enabledManager13fGurus.reduce((n,g)=>n+requiredGuruCurveWindowsFor(g).length,0);
 
 test("CLI accepts explicit source/output paths and rejects unknown flags", () => {
   const parsed = parseCliArgs([
@@ -58,7 +58,7 @@ test("acceptance population follows configuration and excludes disabled profiles
   assert.equal(enabled.length, expectedManagerCount);
   assert.deepEqual(
     disabled.map((row) => row.id).sort(),
-    ["nick-sleep-qais-zakaria"]
+    ["chamath-palihapitiya", "john-stamas", "nick-sleep-qais-zakaria"]
   );
 });
 
@@ -299,9 +299,9 @@ test("failed calculation preserves concrete failure code and reason", () => {
 
 test("acceptance summary requires every configured manager in both windows", () => {
   const results = [];
-  for (let manager = 0; manager < expectedManagerCount; manager += 1) {
-    for (const years of [5, 10]) {
-      results.push({ years, outcome: "ready", displayable: true });
+  for (const manager of enabledManager13fGurus) {
+    for (const years of requiredGuruCurveWindowsFor(manager)) {
+      results.push({ guruId:manager.id, years, outcome: "ready", displayable: true });
     }
   }
   const passing = summarizeAcceptance(results, expectedManagerCount);
@@ -318,7 +318,8 @@ test("acceptance summary requires every configured manager in both windows", () 
     [10]
   );
   assert.equal(tenYearOnly.pass, true);
-  assert.equal(tenYearOnly.expectedRows, expectedManagerCount);
+  assert.equal(tenYearOnly.expectedRows, results.filter(row=>row.years===10).length);
+  assert.equal(summarizeAcceptance([...results.slice(0,-1),results[0]],expectedManagerCount).pass,false);
 });
 
 test("Markdown renders one row per manager/window and escapes table separators", () => {

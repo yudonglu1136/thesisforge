@@ -133,7 +133,10 @@ test('a real drop below the 10 GiB floor after allocation stops before copying s
 test('exact public Guru delta atomically preserves unrelated data, failed caches, and idempotent file bytes',t => {
   const f = fixture(t), beforeBase = hash(f.baseFile), beforeDelta = hash(f.deltaFile);
   a.equal(validateGuruDeltaContract(f.contract),f.contract);
-  const result = applyGuruDelta(f.candidate,f.deltaFile,f.contract); a.equal(result.upserts,72); a.equal(result.deletes,60); a.equal(result.nonTargetWrites,0);
+  const operations=Object.values(f.contract.tables).flatMap(table=>table.operations);
+  const result = applyGuruDelta(f.candidate,f.deltaFile,f.contract);
+  a.equal(result.upserts,operations.filter(op=>op.afterSha256).length);
+  a.equal(result.deletes,operations.filter(op=>!op.afterSha256).length); a.equal(result.nonTargetWrites,0);
   const db = new DatabaseSync(f.candidate,{readOnly:true});
   a.equal(db.prepare('SELECT close FROM price_points').get().close,123.45);
   a.equal(db.prepare('SELECT payload_json FROM valuation_snapshots').get().payload_json,'{"cash":123}');

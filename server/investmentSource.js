@@ -3,7 +3,7 @@ import { assert, finite, ratio, change, isoDate, signature, percentile, personal
 import { researchGuidanceReview } from './investmentGuidance.js';
 import { valuationModelRoute } from './valuationModelRoute.js';
 import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrices.js';
-import { gurus } from './gurus.js';
+import { gurus, guruIsVisible } from './gurus.js';
 import { guruCapitalStructure } from './guruCapitalStructures.js';
 import path from 'node:path';
 import { releaseRoot,releaseResource,dataReleaseId } from './dataReleaseContext.js';
@@ -150,7 +150,8 @@ export class InvestmentSource {
   }
   guruCatalog() {
     const configured=new Map(gurus.map(g=>[g.id,g]));
-    return this.db.prepare('SELECT guru_id FROM guru_exposure_snapshots ORDER BY guru_id').all().map(r=>{
+    return this.db.prepare('SELECT guru_id FROM guru_exposure_snapshots ORDER BY guru_id').all()
+      .filter(r=>!configured.has(r.guru_id)||guruIsVisible(r.guru_id)).map(r=>{
       const g=configured.get(r.guru_id);
       if(g)return {id:g.id,name:g.name,entityName:g.entityName??'',avatar:`/guru-avatars/${g.id}.png`,capitalStructure:guruCapitalStructure(g)};
       // Test fixtures and future staged managers can exist before the catalog

@@ -1,5 +1,6 @@
 import {
   gurus,
+  visibleGurus,
   manager13fPublicProxyAllowed,
   requiredGuruCurveWindowsFor
 } from "./gurus.js";
@@ -574,14 +575,16 @@ function cacheYearsMatch(cached, expectedYears) {
     String(cached?.method?.years) === String(expectedYears);
 }
 
-function strictManagerCacheCompatible(cached, expectedYears) {
-  return cached?.method?.version === manager13fBacktestMethodVersion &&
+function strictManagerCacheCompatible(cached, expectedYears, guruId) {
+  return Boolean(guruId) && cached?.guru?.id === guruId &&
+    cached?.method?.version === manager13fBacktestMethodVersion &&
     cached?.method?.securityMasterVersion === manager13fSecurityMasterVersion &&
     cacheYearsMatch(cached, expectedYears);
 }
 
-function proxyManagerCacheCompatible(cached, expectedYears) {
-  return cached?.status === "proxy_ready" &&
+function proxyManagerCacheCompatible(cached, expectedYears, guruId) {
+  return Boolean(guruId) && cached?.guru?.id === guruId &&
+    cached?.status === "proxy_ready" &&
     cached?.method?.version === manager13fBacktestMethodVersion &&
     cached?.method?.securityMasterVersion === manager13fSecurityMasterVersion &&
     cached?.method?.variant === manager13fProxyMethodVersion &&
@@ -607,12 +610,12 @@ export function selectManagerBacktestCache(
   expectedYears,
   guruId = strictCached?.guru?.id || proxyCached?.guru?.id || ""
 ) {
-  const strictCompatible = strictManagerCacheCompatible(strictCached, expectedYears);
+  const strictCompatible = strictManagerCacheCompatible(strictCached, expectedYears, guruId);
   const proxyPolicyYears = expectedYears ??
     proxyCached?.method?.years ??
     strictCached?.method?.years;
   const proxyCompatible = manager13fPublicProxyAllowed(guruId, proxyPolicyYears) &&
-    proxyManagerCacheCompatible(proxyCached, expectedYears);
+    proxyManagerCacheCompatible(proxyCached, expectedYears, guruId);
   const strictReady = strictCompatible &&
     strictCached?.status === "ready" &&
     auditManager13fStrictReadyPayload(strictCached, {
@@ -625,6 +628,8 @@ export function selectManagerBacktestCache(
     strictCompatible &&
     strictCached?.status === "insufficient_data" &&
     cachedBacktestIsUsable(strictCached) &&
+    (!strictCached.refreshGeneration && !proxyCached.refreshGeneration ||
+      Boolean(strictCached.refreshGeneration) && strictCached.refreshGeneration === proxyCached.refreshGeneration) &&
     proxyCached?.proxy?.strictFailureGeneratedAt === strictCached?.generatedAt;
   if (proxyMatchesStrictFailure && cachedBacktestIsUsable(proxyCached)) {
     return { payload: proxyCached, kind: "proxy" };
@@ -686,7 +691,7 @@ export function persistBacktestRefreshResult(
 
 function cachedBacktestWithHit(
   cached,
-  { status = "sqlite-hit", stale = false, warming = null } = {}
+  { status = "sqlite-hit", source = "sqlite", stale = false, warming = null } = {}
 ) {
   return {
     ...cached,
@@ -696,7 +701,7 @@ function cachedBacktestWithHit(
     cache: {
       ...(cached.cache || {}),
       status,
-      source: "sqlite",
+      source,
       stale
     }
   };
@@ -2058,6 +2063,7 @@ function unsupportedBacktest(guru, window) {
   return {
     generatedAt: new Date().toISOString(),
     status: "unsupported",
+    ...(guru.retiredFromGuru ? {retired: true, reason: guru.retirementReason} : {}),
     guru: {
       id: guru.id,
       name: guru.name,
@@ -2136,6 +2142,9 @@ export async function loadGuruBacktest(
     years = defaultYears,
     detail = "compact",
     persist = true,
+    // Only protected refresh jobs may compute from verified SEC disclosures.
+    // Public refresh requests reload the published cache, never SF3 or SEC.
+    computeFromDisclosures = false,
     allowCold = true,
     shareComputation = true,
     refreshGeneration = "",
@@ -2147,6 +2156,7 @@ export async function loadGuruBacktest(
   const includeAttribution = detail === "full" || detail === "attribution";
   const guru = gurus.find((item) => item.id === guruId);
   if (!guru) throw new Error(`Guru not found: ${guruId}`);
+  if (guru.retiredFromGuru) return unsupportedBacktest(guru, window);
   if (guru.type === "manager13f" &&
       [5, 10].includes(window.methodYears) &&
       !requiredGuruCurveWindowsFor(guru).includes(window.methodYears)) {
@@ -2169,16 +2179,17 @@ export async function loadGuruBacktest(
     : { payload: null, kind: "miss" };
   const cached = cachedSelection.payload;
 
-  if (factOsEnabled()) {
+  if (factOsEnabled() && !computeFromDisclosures) {
     // SF3 quarter-end positions are not filing-time observations. Reuse an
     // independently audited SEC-disclosure simulation only when its current
     // method and security-master versions pass the normal public cache gates.
     // Otherwise fail closed rather than treating a quarter end as knowledge.
-    if (!refresh && cached && cachedBacktestIsUsable(cached)) {
+    if (cached && cachedBacktestIsUsable(cached)) {
       return compactBacktestPayload(cachedBacktestWithHit(cached, {
         status: "sqlite-sec-disclosure",
         source: "audited-sec-disclosure-cache",
-        stale: !cachedBacktestIsFresh(cached)
+        stale: !cachedBacktestIsFresh(cached),
+        warming: false
       }), { includeAttribution });
     }
     return {
@@ -2248,6 +2259,7 @@ export async function loadGuruBacktest(
         years,
         detail: "full",
         persist,
+        computeFromDisclosures,
         allowCold,
         shareComputation: false,
         refreshGeneration,
@@ -2270,6 +2282,14 @@ export async function loadGuruBacktest(
     years: window.years,
     limit: window.limit
   });
+  // Missing complete filings must not be silently treated as unchanged books.
+  // Keep the previous published curve; the protected job records this failure.
+  if (history.filingErrors?.length) {
+    const error = new Error(`Verified disclosure history is incomplete for ${guru.id}: ${history.filingErrors.length} filing(s) could not be read.`);
+    error.code = "incomplete_disclosure_history";
+    error.filings = history.filingErrors;
+    throw error;
+  }
   const normalizedHistory = normalizeBacktestHistory(history);
   const backtestHistory = normalizedHistory.history;
   const excludedFilings = [...new Map([
@@ -2887,7 +2907,7 @@ export async function loadGuruBacktests({
 
   const loadAggregate = async () => {
     const results = [];
-    for (const guru of gurus.filter((item) => item.type === "manager13f" || item.type === "congress")) {
+    for (const guru of visibleGurus.filter((item) => item.type === "manager13f" || item.type === "congress")) {
       results.push(await loadGuruBacktest(guru.id, {
         refresh,
         years,
@@ -3003,7 +3023,7 @@ export async function refreshGuruBacktestCache({
     });
 
     const requestedYears = normalizeBacktestWindow(years).methodYears;
-    const refreshGurus = gurus.filter((item) => normalizedPopulation === "enabled-manager13f"
+    const refreshGurus = visibleGurus.filter((item) => normalizedPopulation === "enabled-manager13f"
       ? item.type === "manager13f" &&
         requiredGuruCurveWindowsFor(item).includes(requestedYears)
       : item.type === "manager13f" || item.type === "congress");
@@ -3012,6 +3032,7 @@ export async function refreshGuruBacktestCache({
       try {
         payload = await backtestLoader(guru.id, {
           refresh: true,
+          computeFromDisclosures: true,
           years,
           detail,
           ...(normalizedGeneration ? { refreshGeneration: normalizedGeneration } : {})

@@ -5,6 +5,7 @@ import {manager13fCorporateActionCatalogVersion} from './corporateActions.js';
 import {selectedBook} from './strategyLab.js';
 import {strategyModelTickers} from './strategyValuationLinks.js';
 import {linkedStrategyComparisonPrices} from './strategyCompositionPrices.js';
+import {enabledManager13fGurus} from './gurus.js';
 
 // All permitted Top N requests are subsets of the exact Top 10 at each filing.
 // Keep complete books for validation / audit, but do not load price and model
@@ -36,7 +37,8 @@ export function storedStrategyCatalog(file,asOf) {
   const managers=db.prepare(`SELECT m.id,m.display_name name,m.entity_name entityName,m.identity_status identityStatus,
     MIN(f.public_date) firstFiling,MAX(f.public_date) lastFiling,COUNT(f.id) quarters
     FROM managers m LEFT JOIN filings f ON f.manager_id=m.id AND f.public_date<=?
-    WHERE m.simulation_enabled=1 GROUP BY m.id ORDER BY m.display_name`).all(asOf);
+    WHERE m.simulation_enabled=1 AND m.identity_status!='blocked' GROUP BY m.id ORDER BY m.display_name`).all(asOf)
+    .filter(m=>enabledManager13fGurus.some(g=>g.id===m.id));
   const freshnessRow=db.prepare("SELECT content FROM source_documents WHERE kind='market_refresh_summary' ORDER BY stored_at DESC LIMIT 1").get();
   const freshness=freshnessRow?JSON.parse(freshnessRow.content):null;
   return {version:'strategy-lab-catalog-v1',asOf,managers:managers.map(m=>({...m,avatar:`/guru-avatars/${m.id}.png`,topNLimit:10,publicProxy:m.id==='renaissance-technologies'})),topNLimit:10,
