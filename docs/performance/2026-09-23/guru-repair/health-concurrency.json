@@ -1,0 +1,86 @@
+{
+  "kind": "read_only_full_health_concurrency_benchmark",
+  "runtime": "v26.7.0",
+  "now": "2026-09-23T13:46:53.886Z",
+  "databasePath": "/Users/yudonglu/Documents/thesisforge/data/releases/thesisforge-20260920-v3/research.sqlite",
+  "baseline": "d4922e3^:server/databaseHealthIndexes.js",
+  "candidate": "d4922e3:server/databaseHealthIndexes.js",
+  "results": [
+    {
+      "variant": "before",
+      "round": 1,
+      "samples": 60,
+      "concurrency": 20,
+      "workers": 3,
+      "p95Ms": 1515.452583,
+      "semanticSha256": "8d767f1f7e66a6797ab5af54d60002f40895044c5899016d3db7cd4dba9bd997",
+      "responseBytes": 54871,
+      "gzipBytes": 5626,
+      "readOnly": true
+    },
+    {
+      "variant": "after",
+      "round": 1,
+      "samples": 60,
+      "concurrency": 20,
+      "workers": 3,
+      "p95Ms": 245.46529099999998,
+      "semanticSha256": "8d767f1f7e66a6797ab5af54d60002f40895044c5899016d3db7cd4dba9bd997",
+      "responseBytes": 54871,
+      "gzipBytes": 5626,
+      "readOnly": true
+    },
+    {
+      "variant": "before",
+      "round": 2,
+      "samples": 60,
+      "concurrency": 20,
+      "workers": 3,
+      "p95Ms": 1098.8801249999997,
+      "semanticSha256": "8d767f1f7e66a6797ab5af54d60002f40895044c5899016d3db7cd4dba9bd997",
+      "responseBytes": 54871,
+      "gzipBytes": 5626,
+      "readOnly": true
+    },
+    {
+      "variant": "after",
+      "round": 2,
+      "samples": 60,
+      "concurrency": 20,
+      "workers": 3,
+      "p95Ms": 186.3012090000002,
+      "semanticSha256": "8d767f1f7e66a6797ab5af54d60002f40895044c5899016d3db7cd4dba9bd997",
+      "responseBytes": 54871,
+      "gzipBytes": 5626,
+      "readOnly": true
+    },
+    {
+      "variant": "before",
+      "round": 3,
+      "samples": 60,
+      "concurrency": 20,
+      "workers": 3,
+      "p95Ms": 1068.480125,
+      "semanticSha256": "8d767f1f7e66a6797ab5af54d60002f40895044c5899016d3db7cd4dba9bd997",
+      "responseBytes": 54871,
+      "gzipBytes": 5626,
+      "readOnly": true
+    },
+    {
+      "variant": "after",
+      "round": 3,
+      "samples": 60,
+      "concurrency": 20,
+      "workers": 3,
+      "p95Ms": 200.59195900000122,
+      "semanticSha256": "8d767f1f7e66a6797ab5af54d60002f40895044c5899016d3db7cd4dba9bd997",
+      "responseBytes": 54871,
+      "gzipBytes": 5626,
+      "readOnly": true
+    }
+  ],
+  "beforeMedianP95Ms": 1098.8801249999997,
+  "afterMedianP95Ms": 200.59195900000122,
+  "improvementPct": 81.7457833264569,
+  "semanticSha256": "8d767f1f7e66a6797ab5af54d60002f40895044c5899016d3db7cd4dba9bd997"
+}

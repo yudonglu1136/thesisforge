@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 3,
+  "aggregate": "median",
+  "label": "guru-quiet-baseline",
+  "generatedAt": "2026-09-23T14:09:56.624Z",
+  "commit": "faba7bf9807c9cf0e1288065dcb33c7aea072435",
+  "workingTreeDirty": true,
+  "sourceSha256": "448bca13e448b9176c3b24762fb7968e1a217104801e2badb1915218a618b136",
+  "runtime": {
+    "node": "v26.7.0",
+    "platform": "darwin 24.6.0",
+    "arch": "arm64"
+  },
+  "inputs": {
+    "databaseBytes": 3159764992,
+    "databaseSha256": "1c4166d9a9d9be8a601699938273027698d54b14afa198658a36f422c82f5b7f",
+    "samples": 200,
+    "concurrency": 20,
+    "runs": 3,
+    "sourceReports": [
+      "guru-api-quiet-baseline-1.json",
+      "guru-api-quiet-baseline-2.json",
+      "guru-api-quiet-baseline-3.json"
+    ]
+  },
+  "process": {
+    "startupReadyMs": 1396.8865000000005,
+    "rssBytes": 439287808
+  },
+  "routes": [
+    {
+      "route": "/api/valuation",
+      "coldMs": 275.8773339999989,
+      "status": 200,
+      "contentEncoding": "br",
+      "vary": "Origin, Accept-Encoding",
+      "identityBytes": 1317065,
+      "encodedBytes": 85021,
+      "reductionPct": 93.54466180484638,
+      "semanticSha256": "1e65ccfc4130244bda199dfcaaf3e23a534c4c802a016f44d4a7faa56d35569e",
+      "conditionalStatus": 304,
+      "sequential": {
+        "requests": 200,
+        "meanMs": 0.21083084000008057,
+        "p50Ms": 0.17979100000047765,
+        "p95Ms": 0.31758300000001327,
+        "p99Ms": 0.5833750000001601,
+        "minMs": 0.10158299999966403,
+        "maxMs": 1.5377919999991718
+      },
+      "concurrent": {
+        "concurrency": 20,
+        "requests": 200,
+        "rps": 11136.839685638517,
+        "meanMs": 0.9941526899999917,
+        "p50Ms": 0.897291999999652,
+        "p95Ms": 2.02087500000016,
+        "p99Ms": 2.376958000000741,
+        "minMs": 0.32445799999914016,
+        "maxMs": 3.082542000000103
+      }
+    },
+    {
+      "route": "/api/valuation/LSEG?pricePoints=300&detail=summary",
+      "coldMs": 5.139832999999271,
+      "status": 200,
+      "contentEncoding": "br",
+      "vary": "Origin, Accept-Encoding",
+      "identityBytes": 29635,
+      "encodedBytes": 3562,
+      "reductionPct": 87.9804285473258,
+      "semanticSha256": "d3ddd91ca605d605df4915759ea98cd59f87d50233cf1d6f9ab98e2fb1ade969",
+      "conditionalStatus": 304,
+      "sequential": {
+        "requests": 200,
+        "meanMs": 0.15838290999996388,
+        "p50Ms": 0.1328749999993306,
+        "p95Ms": 0.29029199999968114,
+        "p99Ms": 0.501124999998865,
+        "minMs": 0.08862500000032014,
+        "maxMs": 1.6653329999990092
+      },
+      "concurrent": {
+        "concurrency": 20,
+        "requests": 200,
+        "rps": 13600.892817007218,
+        "meanMs": 0.8365968950000661,
+        "p50Ms": 0.8018750000010186,
+        "p95Ms": 1.5065420000009908,
+        "p99Ms": 1.6936659999992116,
+        "minMs": 0.23133300000154122,
+        "maxMs": 1.789042000000336
+      }
+    },
+    {
+      "route": "/api/valuation/LSEG?pricePoints=900",
+      "coldMs": 12.598667000000205,
+      "status": 200,
+      "contentEncoding": "br",
+      "vary": "Origin, Accept-Encoding",
+      "identityBytes": 704500,
+      "encodedBytes": 36257,
+      "reductionPct": 94.85351312987935,
+      "semanticSha256": "61e4b93158aef060abedc0565d55ec1283687a6b71ec5f8154d2fe236d483ad0",
+      "conditionalStatus": 304,
+      "sequential": {
+        "requests": 200,
+        "meanMs": 0.1576779649999753,
+        "p50Ms": 0.12170899999910034,
+        "p95Ms": 0.3022499999988213,
+        "p99Ms": 0.5806249999986903,
+        "minMs": 0.08975000000100408,
+        "maxMs": 1.0765410000003612
+      },
+      "concurrent": {
+        "concurrency": 20,
+        "requests": 200,
+        "rps": 11215.320127293005,
+        "meanMs": 1.1252576999999746,
+        "p50Ms": 0.9007500000006985,
+        "p95Ms": 3.4698329999991984,
+        "p99Ms": 3.9170839999987948,
+        "minMs": 0.20583299999998417,
+        "maxMs": 4.015375000000859
+      }
+    },
+    {
+      "route": "/api/gurus",
+      "coldMs": 29.777084000001196,
+      "status": 200,
+      "contentEncoding": "br",
+      "vary": "Origin, Accept-Encoding",
+      "identityBytes": 2155657,
+      "encodedBytes": 192798,
+      "reductionPct": 91.05618379918512,
+      "semanticSha256": "b8bb2684bd2897a29102df01d1a216b9d8fb950ab9cd973ed29b0c1ecae46371",
+      "conditionalStatus": 304,
+      "sequential": {
+        "requests": 200,
+        "meanMs": 0.15540038499998446,
+        "p50Ms": 0.13191699999879347,
+        "p95Ms": 0.2690419999998994,
+        "p99Ms": 0.550375000000713,
+        "minMs": 0.09441700000024866,
+        "maxMs": 1.6037910000013653
+      },
+      "concurrent": {
+        "concurrency": 20,
+        "requests": 200,
+        "rps": 8791.611466336122,
+        "meanMs": 1.462475414999999,
+        "p50Ms": 1.2660420000011072,
+        "p95Ms": 2.836209000000963,
+        "p99Ms": 3.397584000000279,
+        "minMs": 0.2536660000005213,
+        "maxMs": 3.4917499999992287
+      }
+    },
+    {
+      "route": "/api/backtests?years=all&detail=compact",
+      "coldMs": 3.2510419999998703,
+      "status": 200,
+      "contentEncoding": "br",
+      "vary": "Origin, Accept-Encoding",
+      "identityBytes": 23993,
+      "encodedBytes": 2037,
+      "reductionPct": 91.5100237569291,
+      "semanticSha256": "485a96ddfe914479abc12ab768ef6a6ef8c77da1e027b68a645f091024b35969",
+      "conditionalStatus": 304,
+      "sequential": {
+        "requests": 200,
+        "meanMs": 0.10065103999987514,
+        "p50Ms": 0.0902089999999589,
+        "p95Ms": 0.14316600000165636,
+        "p99Ms": 0.20770900000024994,
+        "minMs": 0.07716700000128185,
+        "maxMs": 0.42391700000007404
+      },
+      "concurrent": {
+        "concurrency": 20,
+        "requests": 200,
+        "rps": 14038.043096791116,
+        "meanMs": 0.7863975000000301,
+        "p50Ms": 0.7687499999992724,
+        "p95Ms": 1.532959000000119,
+        "p99Ms": 1.7345420000001468,
+        "minMs": 0.18733400000019174,
+        "maxMs": 1.775499999999738
+      }
+    }
+  ]
+}

@@ -71,8 +71,8 @@ claim that a background refresh is running when none was started.
 ## Verification
 
 - Reproducing tests failed before the refresh/identity fixes and passed after.
-- Exact committed-source Node regression: 1,668 passed, 15 skipped, 0 failed
-  (1,683 total). A separate current-workspace run also covered the other task's
+- Exact committed-source Node regression: 1,669 passed, 15 skipped, 0 failed
+  (1,684 total). A separate current-workspace run also covered the other task's
   uncommitted tests; those files are not included in this release.
 - Final targeted Node regression: 68 passed, 0 failed.
 - Flutter strategy/mix regression: 46 passed, including EN/ZH 390px at 150% text.
@@ -83,6 +83,9 @@ claim that a background refresh is running when none was started.
   valuation/portfolio expectations. No assertion was removed and no affected
   adjacent implementation is being bundled as a speculative fix.
 - i18n audit: pass. Performance suite: 60 passed.
+- Launch-readiness and production-auth build guards: 40 passed. The bounded
+  prewarm/loopback regression adds 24 passing tests, including a 40-minute
+  accepted deadline and rejection above 90 minutes.
 - Production Flutter artifact built with auth bypass disabled; SHA-256:
   `004fefe83f01b9b5eb414dbc4f56a710379774a9a66b5d3b7e12f3388664fc38`.
 - Fact OS storage audit: pass; no duplicate raw archives.
@@ -98,7 +101,12 @@ claim that a background refresh is running when none was started.
   byte-identical and its snapshot passed SQLite integrity checks. All four
   managers' ten-year official histories subsequently read without filing errors
   or blocked report dates; these diagnostics do not replace full acceptance.
-- Full real-data matrix with bounded SEC transport retries: **pending**.
+- Full real-data matrix with bounded SEC transport retries: **57/57 pass**
+  (23 strict, 34 explicitly labelled public-sleeve proxies), completed
+  `2026-09-23T14:07:27.996Z`. The 5Y matrix is 30/30; the permitted 10Y matrix
+  is 27/27. Both generated JSON and Markdown acceptance reports accompany this
+  audit. SQLite integrity is `ok`; the source SHA-256 remains
+  `9bb2c803a7771bd27444b3f802b6f3b69bc947673e74e0a3146ddf86d57b01e6`.
 - Browser local Guru directory: 30 active profiles; retirement is reflected in
   holdings and consensus. An Ackman Top-5 custom strategy with valuation
   filtering disabled produces 1,255 real daily observations and 21 rebalance
@@ -108,6 +116,29 @@ claim that a background refresh is running when none was started.
 - Same production DB, read-only health table-summary diagnostic (three rounds):
   5,630/5,898/3,628ms before, 575/519/57ms after; all six result semantic hashes
   identical. This is a bounded diagnostic, not a 60-sample API p95 claim.
+- Full-health worker concurrency benchmark on one immutable local SQLite
+  source: three rounds per revision, 60 reads at concurrency 20 per round.
+  Median p95 1,098.88ms before / 200.59ms after (81.75% reduction), exactly
+  three shared workers per round, identical complete response hashes. Gzip
+  54,871 → 5,626 bytes. This measures the bounded health service, not network
+  latency or a claim that all API paths improved by that amount.
+- The repository's five-route API benchmark was also run on the same SQLite
+  snapshot with three paired repetitions, 200 samples / concurrency 20, after
+  the real backtest worker finished. Its prohibited raw file-copy step was
+  replaced in a temporary runner by the SQLite online backup API. All five
+  routes returned 200, conditional requests returned 304, and large responses
+  compressed by over 75%. The generic `check:performance` gate **did not pass**:
+  it rejects the intentionally changed Guru populations, and local millisecond
+  p95 measurements also exceeded its 5% regression threshold on four paths
+  (including unchanged valuation handlers). Do not call this a full API
+  performance certification. Independent response comparisons in all three
+  repetitions prove that removing exactly the three authorized retired IDs
+  makes both changed Guru responses byte-identical after the benchmark's
+  existing volatile-field normalization. No checker or assertion was weakened.
+- Actual AWS `webapp` account successfully read the canonical Python/Parquet
+  path: eight SPY adjusted-close observations from September 10–21. SSM
+  receipt `3bc885f9-ff44-40f3-b1e0-2e1e7adb3e76` verifies permissions and the
+  installed reader, not a new data publication.
 
 Private detailed logs and the isolated acceptance report are under
 `/private/tmp/guru-*20260923*`; they are not packaged into the app.
@@ -117,6 +148,11 @@ Private detailed logs and the isolated acceptance report are under
 Pre-deploy EB version: `fundamental-702448f`; environment `thesisforge-api-prod`.
 Pre-deploy Vercel deployment: `dpl_6z8qsn8121iGTnahRPTZC9vjGyRr`, both app domains.
 Public health was HTTP 503 before this repair despite EB reporting Green.
+After accepting the existing indexes, a read-only full health audit completed
+in 1,274ms and exposed the independent freshness failure: the old curves were
+approximately 64 hours old, beyond the unchanged 48-hour generated-age gate.
+A code deploy alone cannot clear that failure; canonical full-matrix production
+recomputation and its health attestation are still required.
 
 Verified rollback material, before any production curve write:
 
