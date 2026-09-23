@@ -33,5 +33,45 @@
 - Storage layout audit remains blocked by the existing runtime/sibling path
   violations; no database was deleted or copied to make it pass.
 
-Publication identity and final rendered checks are recorded separately after
-verification. Local development preview builds are never production artifacts.
+## Release verification
+
+- Feature commit: `c6c79f351ab1bf58dd7d604974ff2d822f10c1f6`, pushed to `trunk`.
+- Clean committed source: full Node suite 1,690 passed / 15 skipped / 0 failed.
+  Clean release Flutter suite: 583 passed / 32 failed, with the **identical**
+  failure-name set as the clean pre-feature baseline (580 passed / 32 failed).
+  No assertions were removed and no unrelated source files were packaged.
+- Production build passed with developer authentication disabled. Compiled
+  `main.dart.js` SHA-256 is
+  `03ac7a41bf1a74de1f55ebcd294a2f0e573cda2fea362fc2f570a9def102cb4c`;
+  both public domains serve those exact bytes, including the new feature and
+  excluding the local developer-entry UI.
+- Vercel: `dpl_HwtTcB9ADn3iJE7MDzDo8VcdVmoK`,
+  `thesisforge-31og70j4h-yudonglu1136s-projects.vercel.app`, READY.
+  Both `thesisforge.tech` and `www.thesisforge.tech` alias this deployment.
+- AWS: `thesisforge-api-prod`, version `ai-contributors-c6c79f3`, Ready / Green.
+  Code-only package SHA-256:
+  `6cb49721dfb159e25b3dccffdc0d108450f583a48b79a46ffcb6e9319ce2e621`.
+  No database, provider archive, private data, or frontend build was included.
+- Deployed service SHA-256 matches the tested commit:
+  `d6ecb4ebf68b69f5492f094372770f404ff9314760b58766845d49459dbddf0a`.
+  Read-only execution as the actual API OS user (`webapp`, uid 900) passed
+  208 YoY/QoQ cell checks across 13 sectors, with 205 positive leaders;
+  missing/non-positive cases remain explicit. Snapshot replay was identical.
+  Existing AI generation and source facts were unchanged.
+- The API origin and each public domain passed eight concurrent health calls,
+  preserving the existing complete Guru curve matrix. AI/private routes denied
+  unauthenticated reads (401); internal routes remained hidden (404).
+  NVDA, MU, TSM, MSFT, and ORCL logo PNGs returned valid bytes on both domains.
+- Real-artifact browser checks: English desktop at 1280×720, Chinese 390px
+  iframe, YoY/QoQ selection, hover evidence, fixed sector labels, and cell →
+  quarter/sector rankings. A browser instrumentation MutationObserver error
+  occurred in the mobile QA wrapper; the visible app and widget checks passed.
+  Local development preview builds were not published. The production browser
+  session required login, so an authenticated production visual replay remains
+  unverified; the deployed asset bytes and production-service data were checked
+  independently, not presented as an authenticated browser test.
+
+Rollback: restore EB version `data-consistency-afa52bd` and Vercel deployment
+`dpl_CEWXrwazhjM8bmLV6TggoAyHXLg7`
+(`thesisforge-ekmvt1433-yudonglu1136s-projects.vercel.app`), assigning **both**
+domains together. No data rollback is needed for this code-only feature.

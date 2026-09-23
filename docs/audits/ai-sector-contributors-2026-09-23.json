@@ -1,0 +1,43 @@
+{
+  "feature": "ai-insights-sector-quarter-contributor-logos",
+  "checkedAt": "2026-09-23T19:30:51.446Z",
+  "commit": "c6c79f351ab1bf58dd7d604974ff2d822f10c1f6",
+  "tests": {
+    "node": {"passed": 1690, "skipped": 15, "failed": 0},
+    "aiNode": 22,
+    "aiWidgets": 17,
+    "performance": 60,
+    "analyze": "pass",
+    "i18n": "pass",
+    "cleanFlutter": {"passed": 583, "failed": 32, "newFailures": 0},
+    "storage": "existing_11_layout_violations"
+  },
+  "frontend": {
+    "deployment": "dpl_HwtTcB9ADn3iJE7MDzDo8VcdVmoK",
+    "url": "https://thesisforge-31og70j4h-yudonglu1136s-projects.vercel.app",
+    "domains": ["thesisforge.tech", "www.thesisforge.tech"],
+    "mainJsSha256": "03ac7a41bf1a74de1f55ebcd294a2f0e573cda2fea362fc2f570a9def102cb4c",
+    "bothDomainsSameDeploymentAndBytes": true,
+    "developerEntryPresent": false,
+    "authenticatedBrowserReplay": "not_verified_session_requires_login"
+  },
+  "backend": {
+    "environment": "thesisforge-api-prod",
+    "version": "ai-contributors-c6c79f3",
+    "status": "Ready",
+    "health": "Green",
+    "packageSha256": "6cb49721dfb159e25b3dccffdc0d108450f583a48b79a46ffcb6e9319ce2e621",
+    "serviceSha256": "d6ecb4ebf68b69f5492f094372770f404ff9314760b58766845d49459dbddf0a",
+    "readOnlyVerificationCommand": "ab224acd-0680-4342-a9e4-fde3b876d605",
+    "apiUser": "webapp",
+    "sectors": 13,
+    "comparisonsChecked": 208,
+    "positiveLeaders": 205,
+    "snapshotReplay": "identical",
+    "generation": "b8c7e5105b5885fa99692e0c036a39dedac5e93f17885d6582463889e33b12f0",
+    "dataRelease": "5c318a56abe766f1e74e41ac2a84c7efd80d5d612649af88d99dda15b46f3e84",
+    "dataMutation": false
+  },
+  "publicChecks": {"healthRequestsPerOrigin": 8, "origins": 3, "passed": true, "unauthenticatedAiStatus": 401, "internalStatus": 404},
+  "rollback": {"backend": "data-consistency-afa52bd", "frontend": "dpl_CEWXrwazhjM8bmLV6TggoAyHXLg7"}
+}
