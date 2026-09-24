@@ -50,10 +50,11 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/home',(owner,r)=>service.home(owner,r.query.asOf));
   route('get','/discover',(owner,r)=>service.discover(owner,r.query.asOf));
   route('get','/guru-study',(_,r)=>guruStudy(service.source,service.date(r.query.asOf),r.query.period??'common'));
-  route('get','/investor-styles',(_,r)=>loadInvestorStyleDashboard({asOf:service.date(r.query.asOf),snapshotId:r.query.snapshotId}),
+  route('get','/investor-styles',(_,r)=>loadInvestorStyleDashboard({asOf:service.date(r.query.asOf),snapshotId:r.query.snapshotId,universe:r.query.universe}),
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/investor-styles/analysis',(_,r)=>ruleAnalysis({asOf:service.date(r.query.asOf),
-    snapshotId:r.query.snapshotId,start:r.query.start,end:r.query.end}));
+    snapshotId:r.query.snapshotId,start:r.query.start,end:r.query.end,
+    ...(r.query.universe===undefined?{}:{universe:r.query.universe})}));
   route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
     search:r.query.search,limit:r.query.limit,
   }));

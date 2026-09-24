@@ -5,6 +5,13 @@ import { qualityRankWeights } from './rulePortfolioWeights.js';
 import { ruleSegments, ruleRangeCovered, emptyRuleMetrics } from './rulePortfolioCoverage.js';
 
 const defaultFile = new URL('./config/investor-style-dashboard.json', import.meta.url);
+const universeFiles = { all:defaultFile, sp500:new URL('./config/investor-style-sp500.json',import.meta.url),
+  nasdaq100:new URL('./config/investor-style-nasdaq100.json',import.meta.url) };
+export const ruleUniverses = Object.freeze([
+  {id:'all',status:'ready',basis:'eligible_us_common_stocks'},
+  {id:'sp500',status:'ready',basis:'historical_effective_membership_current_vintage'},
+  {id:'nasdaq100',status:'ready',basis:'sec_qqq_disclosed_holdings'},
+]);
 
 function fail(code, status = 503) {
   throw Object.assign(new Error(code), { status });
@@ -20,6 +27,14 @@ export function validateInvestorStyleDashboard(payload) {
   const styles = Array.isArray(payload.styles) ? payload.styles : [];
   const curve = Array.isArray(payload.backtest?.curve) ? payload.backtest.curve : [];
   const ids = styles.map(row => row.id);
+  const universe=payload.universe?.id ?? 'all';
+  if (!['all','sp500','nasdaq100'].includes(universe)) invalid();
+  if (universe==='sp500' && (payload.universe.version!=='rule-universe-v1' ||
+      payload.universe.basis!=='historical_effective_membership_current_vintage' ||
+      payload.universe.currentConstituentsBackfilled!==false)) invalid();
+  if (universe==='nasdaq100' && (payload.universe.version!=='rule-universe-v1' ||
+      payload.universe.basis!=='sec_qqq_disclosed_holdings' ||
+      payload.universe.currentConstituentsBackfilled!==false)) invalid();
   if (ids.join(',') !== 'quality_rank,ackman' || curve.length < 2 ||
       !/^[a-f0-9]{64}$/.test(payload.lineage?.sourceGeneration) || payload.lineage.sourceWrites !== false ||
       payload.methodology?.strictArchivedVintagePit !== false) {
@@ -53,6 +68,21 @@ export function validateInvestorStyleDashboard(payload) {
       if (computed[k] === null ? row.metrics[k] !== null : !near(computed[k], row.metrics[k])) invalid();
     }
     for (const [i, q] of row.quarters.entries()) {
+      if (universe==='sp500') {
+        const m=q.universeMembership;
+        if (m?.id!==universe || !date(m.snapshotDate) || m.snapshotDate>q.signalDate ||
+            m.effectiveThrough!==q.signalDate || !(m.memberCount>=400 && m.memberCount<=550) ||
+            !/^[a-f0-9]{64}$/.test(m.fingerprint) || q.positions.some(p=>p.universeMember!==true)) invalid();
+      }
+      if (universe==='nasdaq100') {
+        const m=q.universeMembership;
+        if (m?.id!==universe || !date(m.snapshotDate) || !date(m.filed) ||
+            m.snapshotDate>m.filed || m.filed>=q.signalDate || m.effectiveThrough!==q.signalDate ||
+            !(m.memberCount>=95 && m.memberCount<=115) ||
+            !/^[a-f0-9]{64}$/.test(m.fingerprint) || !/^[a-f0-9]{64}$/.test(m.sourceSha256) ||
+            !/^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/1067839\//.test(m.sourceUrl) ||
+            q.positions.some(p=>p.universeMember!==true)) invalid();
+      }
       if (!date(q.quarter) || !date(q.signalDate) || !date(q.executionDate) || q.signalDate > q.quarter ||
           q.executionDate <= q.signalDate || (i && q.executionDate <= row.quarters[i - 1].executionDate) ||
           !Array.isArray(q.positions) || q.positions.length > (row.id === 'quality_rank' ? 10 : 20) ||
@@ -94,23 +124,34 @@ export function validateInvestorStyleDashboard(payload) {
   return payload;
 }
 
-let cached;
-export function loadInvestorStyleDashboard({ file = defaultFile, asOf = null, snapshotId = null } = {}) {
+const caches=new Map();
+export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotId = null, universe='all' } = {}) {
   if (asOf !== null && !date(asOf)) fail('invalid_as_of', 400);
+  const option=ruleUniverses.find(r=>r.id===universe);
+  if (!option) fail('invalid_rule_universe',400);
+  if (option.status!=='ready') {
+    if (snapshotId) fail('investor_style_snapshot_changed',409);
+    return {status:'universe_unavailable',universe:option,universeOptions:ruleUniverses,
+      requestedAsOf:asOf,snapshotId:null,styles:[],backtest:{curve:[]}};
+  }
+  file ??= universeFiles[universe];
   let payload, id;
   try {
     const stat = fs.statSync(file), key = `${file}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+    let cached=caches.get(String(file));
     if (cached?.key !== key) {
       const source = fs.readFileSync(file, 'utf8');
       payload = validateInvestorStyleDashboard(JSON.parse(source));
       id = createHash('sha256').update(source).digest('hex');
       cached = { key, payload, id };
+      caches.set(String(file),cached);
     }
     ({ payload, id } = cached);
   } catch (error) {
     if (error.status) throw error;
     fail('investor_style_snapshot_unavailable');
   }
+  if ((payload.universe?.id ?? 'all')!==universe) fail('investor_style_universe_mismatch',409);
   if (snapshotId && snapshotId !== id) fail('investor_style_snapshot_changed', 409);
   const cutoff = asOf ?? payload.dataThrough;
   const curve = payload.backtest.curve.filter(r => r.date <= cutoff);
@@ -136,6 +177,7 @@ export function loadInvestorStyleDashboard({ file = defaultFile, asOf = null, sn
     } };
   });
   return structuredClone({ ...payload, snapshotId: id, requestedAsOf: asOf,
+    universe:payload.universe ?? option,universeOptions:ruleUniverses,
     status: curve.length >= 2 ? 'ready' : 'unavailable_before_first_observation',
     dataThrough: curve.at(-1)?.date ?? null, styles,
     backtest: { ...payload.backtest, curve, observations: curve.length, from: curve[0]?.date ?? null,

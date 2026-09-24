@@ -43,10 +43,11 @@ class RuleRangeAnalysisPanel extends StatefulWidget {
     required this.range,
     required this.onCompany,
     this.styles = const [],
+    this.universe = 'all',
   });
   final ApiClient api;
   final Palette palette;
-  final String asOf, snapshotId;
+  final String asOf, snapshotId, universe;
   final List<Map<String, dynamic>> curve;
   final List<Map<String, dynamic>> styles;
   final RangeValues range;
@@ -107,6 +108,7 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
   void didUpdateWidget(covariant RuleRangeAnalysisPanel old) {
     super.didUpdateWidget(old);
     if (old.range != widget.range ||
+        old.universe != widget.universe ||
         old.asOf != widget.asOf ||
         old.snapshotId != widget.snapshotId ||
         old.api != widget.api) {
@@ -148,6 +150,7 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
         queryParameters: {
           'asOf': widget.asOf,
           'snapshotId': snapshot,
+          'universe': widget.universe,
           'start': requestedStart,
           'end': requestedEnd,
         },
@@ -157,6 +160,7 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
       );
       if (!mounted || epoch != request) return;
       if (response['snapshotId'] != snapshot ||
+          (response['universe'] ?? 'all') != widget.universe ||
           response['start'] != requestedStart ||
           response['end'] != requestedEnd ||
           response['version'] != 'rule-range-attribution-v1') {

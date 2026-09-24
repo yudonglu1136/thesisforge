@@ -59,6 +59,10 @@ test('range analysis requires auth, forwards pinned range and never caches failu
   const response = await fetch(base, { headers: { 'x-test-user': 'alice' } });
   assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'private, no-store');
   assert.deepEqual(calls[0], { asOf: '2026-09-24', snapshotId: 'verified', start: '2024-01-02', end: '2025-01-02' });
+  const nasdaq = await fetch(base + '&universe=nasdaq100', { headers: { 'x-test-user': 'alice' } });
+  assert.equal(nasdaq.status, 200);
+  assert.equal(calls[1].universe, 'nasdaq100');
+  assert.equal((await nasdaq.json()).universe, 'nasdaq100');
   const stale = await fetch(base.replace('snapshotId=verified', 'snapshotId=stale'), { headers: { 'x-test-user': 'alice' } });
   assert.equal(stale.status, 409); assert.equal(stale.headers.get('cache-control'), 'private, no-store');
 });

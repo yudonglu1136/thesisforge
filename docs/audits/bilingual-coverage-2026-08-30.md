@@ -623,3 +623,13 @@ EN/ZH desktop and 390px mobile verified; 14 focused widget tests pass. Analysis,
 i18n and production build pass. Full Flutter: 601 passes and 32 existing adjacent
 failures. See `rule-portfolios-2013-2026-09-24.md` for exact coverage and release
 identity; this is current-vintage research reconstruction, not actual fund returns.
+
+### 2026-09-24 Rule portfolio universe selection
+
+All market / S&P 500 / Nasdaq 100 · QQQ filings are available in EN and ZH,
+including eligibility, source timing, missing-history and filing-source labels.
+The selector remains usable during loading/error states. Seventeen focused
+widget tests pass; actual browser checks cover English desktop, Chinese 390px,
+universe changes and the S&P 2013 interval. Full Flutter has 604 passes and the
+same 32 adjacent failure names as the prior release. See
+`rule-universes-2026-09-24.md` for source coverage and release verification.

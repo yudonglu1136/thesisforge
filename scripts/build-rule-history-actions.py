@@ -12,6 +12,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fact_os.repository import FactRepository
 
 REVIEWED = [
+    dict(ticker='BMC', permaticker='198189', cik='835729',
+         effective='2013-09-10', legalDate='2013-09-10', cash=46.25,
+         source='https://www.sec.gov/Archives/edgar/data/835729/000119312513364103/d595671d8k.htm',
+         timing='Item 3.01: merger completed and trading suspended on September 10.'),
+    dict(ticker='LO', permaticker='193634', cik='1424847', successor='RAI', successorCik='1275283',
+         effective='2015-06-12', legalDate='2015-06-12', cash=50.50, ratio=.2909,
+         source='https://www.sec.gov/Archives/edgar/data/1424847/000119312515221980/d941804d8k.htm',
+         timing='Completion June 12; shares ceased trading on the NYSE following closing.'),
+    dict(ticker='ANSS', permaticker='197076', cik='1013462', successor='SNPS', successorCik='883241',
+         effective='2025-07-17', legalDate='2025-07-17', cash=199.91, ratio=.3399,
+         source='https://www.sec.gov/Archives/edgar/data/1013462/000114036125026141/ef20052066_8k.htm',
+         timing='Item 3.01: suspended before July 17 open. Item 2.01 gives FINAL adjusted consideration, not the announcement ratio.'),
+    dict(ticker='LLTC', permaticker='198484', cik='791907', successor='ADI', successorCik='6281',
+         effective='2017-03-13', legalDate='2017-03-10', cash=46., ratio=.2321,
+         source='https://www.sec.gov/Archives/edgar/data/791907/000119312517078946/d340243d8k.htm',
+         timing='Item 3.01: suspended after March 10 close; first ex-security session March 13.'),
     dict(ticker='QCOR', permaticker='197733', cik='891288', successor='MNKKQ', successorCik='1567892',
          effective='2014-08-15', legalDate='2014-08-14', cash=30., ratio=.897,
          source='https://www.sec.gov/Archives/edgar/data/891288/000120919114053195/xslF345X03/doc4.xml',
@@ -33,6 +49,8 @@ def build(root, output, stock_actions, published):
             raise ValueError('action_generation_mismatch')
         actions = original['actions']
         for term in REVIEWED:
+            if any(r['ticker']==term['ticker'] and r['corporateAction']['effectiveDate']==term['effective'] for r in actions):
+                continue
             identity = repo.db.execute('SELECT DISTINCT permaticker,secfilings FROM tickers WHERE ticker=? AND "table"=\'SEP\'', [term['ticker']]).fetchall()
             if len(identity) != 1 or str(identity[0][0]) != term['permaticker'] or str(int(term['cik'])) != str(int(identity[0][1].split('CIK=')[-1])):
                 raise ValueError('action_identity_mismatch')

@@ -10,15 +10,20 @@ class _RuleApi extends ApiClient {
   _RuleApi() : super(() => 'fixture');
   final paths = <String>[];
   final pending = <String, Completer<Map<String, dynamic>>>{};
+  final universePending = <String, Completer<Map<String, dynamic>>>{};
   bool fail = false;
-  Map<String, dynamic> payload() => {
+  Map<String, dynamic> payload([String universe = 'all']) => {
     ...jsonDecode(
           File(
-            'server/config/investor-style-dashboard.json',
+            universe == 'all'
+                ? 'server/config/investor-style-dashboard.json'
+                : 'server/config/investor-style-$universe.json',
           ).readAsStringSync(),
         )
         as Map<String, dynamic>,
-    'snapshotId': 'test-reviewed-snapshot',
+    'snapshotId': universe == 'all'
+        ? 'test-reviewed-snapshot'
+        : 'test-$universe-snapshot',
   };
   final analysisPending = <String, Completer<Map<String, dynamic>>>{};
   bool failAnalysis = false;
@@ -43,6 +48,7 @@ class _RuleApi extends ApiClient {
     return {
       'version': 'rule-range-attribution-v1',
       'snapshotId': q['snapshotId'],
+      'universe': q['universe'] ?? 'all',
       'start': q['start'],
       'end': q['end'],
       'styles': [
@@ -106,8 +112,12 @@ class _RuleApi extends ApiClient {
       return analysis(path);
     }
     final day = Uri.parse(path).queryParameters['asOf']!;
+    final universe = Uri.parse(path).queryParameters['universe'] ?? 'all';
+    if (universePending.containsKey(universe)) {
+      return universePending[universe]!.future;
+    }
     if (pending.containsKey(day)) return pending[day]!.future;
-    return payload();
+    return payload(Uri.parse(path).queryParameters['universe'] ?? 'all');
   }
 }
 
@@ -146,6 +156,74 @@ Future<void> _mount(
 }
 
 void main() {
+  for (final lang in [AppLanguage.en, AppLanguage.zh]) {
+    testWidgets(
+      '390px universe switch reranks both strategies and preserves date selection: $lang',
+      (tester) async {
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final api = _RuleApi();
+        await _mount(tester, api, size: const Size(390, 844), language: lang);
+        await tester.pumpAndSettle();
+        final curve = (api.payload()['backtest'] as Map)['curve'] as List;
+        tester.widget<RangeSlider>(find.byType(RangeSlider)).onChanged!(
+          const RangeValues(.75, 1),
+        );
+        await tester.pumpAndSettle();
+        final expectedStart = curve[(.75 * (curve.length - 1)).round()]['date'];
+        for (final universe in ['sp500', 'nasdaq100', 'all']) {
+          final chip = find.byKey(ValueKey('rule-universe-$universe'));
+          await tester.ensureVisible(chip);
+          await tester.tap(chip);
+          await tester.pumpAndSettle();
+          expect(tester.widget<ChoiceChip>(chip).selected, isTrue);
+          final query = Uri.parse(
+            api.paths.lastWhere((p) => p.contains('/analysis?')),
+          ).queryParameters;
+          expect(query['universe'], universe);
+          expect(query['start'], expectedStart);
+          expect(
+            find.byKey(const ValueKey('rule-range-metrics')),
+            findsOneWidget,
+          );
+          expect(find.byKey(const ValueKey('style-ackman')), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        }
+      },
+    );
+  }
+  testWidgets('late universe response cannot replace newer selection', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _RuleApi();
+    await _mount(tester, api);
+    await tester.pumpAndSettle();
+    api.universePending['sp500'] = Completer();
+    await tester.tap(find.byKey(const ValueKey('rule-universe-sp500')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('rule-universe-nasdaq100')));
+    await tester.pumpAndSettle();
+    api.universePending['sp500']!.complete(api.payload('sp500'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ChoiceChip>(
+            find.byKey(const ValueKey('rule-universe-nasdaq100')),
+          )
+          .selected,
+      isTrue,
+    );
+    expect(find.textContaining('2020-01-02'), findsWidgets);
+    expect(
+      Uri.parse(
+        api.paths.lastWhere((p) => p.contains('/analysis?')),
+      ).queryParameters['universe'],
+      'nasdaq100',
+    );
+    expect(tester.takeException(), isNull);
+  });
   tearDown(() {});
   for (final size in [const Size(1280, 900), const Size(390, 844)]) {
     for (final lang in AppLanguage.values) {
@@ -265,7 +343,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         api.paths.where((p) => !p.contains('/analysis?')).single,
-        '/api/investment/investor-styles?asOf=2026-09-24',
+        '/api/investment/investor-styles?asOf=2026-09-24&universe=all',
       );
       expect(find.text('Rule portfolio dashboard'), findsOneWidget);
       expect(find.text('Sharpe · 0% Rf'), findsOneWidget);

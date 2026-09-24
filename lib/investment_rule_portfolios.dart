@@ -101,7 +101,7 @@ class InvestorStylesDashboard extends StatefulWidget {
 class _RulePortfolioState extends State<InvestorStylesDashboard> {
   Map<String, dynamic>? data;
   bool loading = true, failed = false, drawdown = false;
-  String active = 'quality_rank';
+  String active = 'quality_rank', universe = 'all';
   int epoch = 0, quarter = -1, hover = -1;
   RangeValues range = const RangeValues(0, 1);
   String? savedStart, savedEnd;
@@ -140,6 +140,13 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
   void initState() {
     super.initState();
     final query = readBrowserQuery();
+    if (const [
+      'all',
+      'sp500',
+      'nasdaq100',
+    ].contains(query['strategyUniverse'])) {
+      universe = query['strategyUniverse']!;
+    }
     savedStart = query['strategyFrom'];
     savedEnd = query['strategyTo'];
     unawaited(load());
@@ -153,6 +160,7 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
 
   Future<void> load() async {
     final request = ++epoch;
+    final requestedUniverse = universe;
     setState(() {
       loading = true;
       failed = false;
@@ -160,9 +168,12 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
     });
     try {
       final response = await widget.api.getJson(
-        '/api/investment/investor-styles?asOf=${Uri.encodeQueryComponent(widget.asOf)}',
+        '/api/investment/investor-styles?asOf=${Uri.encodeQueryComponent(widget.asOf)}&universe=$requestedUniverse',
       );
       if (!mounted || request != epoch) return;
+      if ((asMap(response['universe'])['id'] ?? 'all') != requestedUniverse) {
+        throw StateError('rule_universe_mismatch');
+      }
       setState(() {
         data = response;
         loading = false;
@@ -181,6 +192,20 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
 
   RangeValues restoredRange(List<Map<String, dynamic>> curve) {
     if (curve.length < 2 || savedStart == null || savedEnd == null) {
+      if (universe != 'all' && curve.length > 1) {
+        final starts = styles.expand((s) {
+          final segments = asList(asMap(s['coverage'])['segments']);
+          return segments.isEmpty ? <String>[] : [text(segments.last['from'])];
+        }).toList()..sort();
+        if (starts.isNotEmpty) {
+          final first = curve.indexWhere(
+            (r) => text(r['date']).compareTo(starts.last) >= 0,
+          );
+          if (first > 0 && first < curve.length - 1) {
+            return RangeValues(first / (curve.length - 1), 1);
+          }
+        }
+      }
       return const RangeValues(0, 1);
     }
     final first = curve.indexWhere(
@@ -269,6 +294,83 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        panel(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(w('Investment universe', '选股范围'), style: s(17, true)),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final id in ['all', 'sp500', 'nasdaq100'])
+                    ChoiceChip(
+                      key: ValueKey('rule-universe-$id'),
+                      selected: universe == id,
+                      label: Text(
+                        id == 'all'
+                            ? w('All market', '全市场')
+                            : id == 'sp500'
+                            ? 'S&P 500'
+                            : w(
+                                'Nasdaq 100 · QQQ filings',
+                                '纳斯达克 100 · QQQ 披露',
+                              ),
+                      ),
+                      onSelected: (_) {
+                        if (id == universe) return;
+                        setState(() => universe = id);
+                        replaceBrowserQuery({
+                          'strategyTab': 'rules',
+                          'strategyUniverse': id,
+                        }, replaceCurrent: true);
+                        unawaited(load());
+                      },
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                universe == 'nasdaq100'
+                    ? w(
+                        'SEC QQQ equity holdings, available only after filing. Verified quarterly snapshots begin in 2019 Q3; backtest begins in 2020. This is not a complete official index-change history.',
+                        '使用 SEC QQQ 股票持仓，申报公开后才用于选股。已验证季度快照始于 2019 Q3，回测始于 2020 年；不是完整的官方指数调入调出历史。',
+                      )
+                    : universe == 'sp500'
+                    ? w(
+                        'Historical S&P 500 constituents and effective-date changes from Fact OS. Re-ranks both strategies within the eligible members, not today’s constituents backfilled into history.',
+                        '使用 Fact OS 历史 S&P 500 成分及生效日变更，两条策略在符合条件的成分内重新排名，不用今天的名单回填历史。',
+                      )
+                    : w(
+                        'Eligible US common stocks: market cap ≥ USD 1bn; financials and real estate excluded. Both strategies keep their own financial gates.',
+                        '符合条件的美国普通股：市值至少 10 亿美元，排除金融和房地产。两条策略各自保留原有财务门槛。',
+                      ),
+                style: s(12, false, p.muted),
+              ),
+              if (universe != 'all') ...[
+                const SizedBox(height: 5),
+                Text(
+                  w(
+                    'The same common-stock and financial-data eligibility rules apply. Charts, holdings and range statistics all use the selected universe.',
+                    '仍沿用普通股与财务数据可用性条件。曲线、持仓和区间统计一起切换。',
+                  ),
+                  style: s(12, false, p.muted),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        content(),
+      ],
+    );
+  }
+
+  Widget content() {
     if (loading) {
       return panel(
         Column(
@@ -376,6 +478,7 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
           api: widget.api,
           palette: p,
           asOf: widget.asOf,
+          universe: universe,
           snapshotId: text(data?['snapshotId']),
           curve: curve,
           styles: styles,
@@ -621,19 +724,14 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
             ),
             style: s(12, false, p.accent),
           ),
-          if (asList(
-            asMap(
-              styles.firstWhere(
-                (s) => s['id'] == 'ackman',
-                orElse: () => {},
-              )['coverage'],
-            )['gaps'],
-          ).isNotEmpty) ...[
+          for (final affected in styles.where(
+            (s) => asList(asMap(s['coverage'])['gaps']).isNotEmpty,
+          )) ...[
             const SizedBox(height: 8),
             Text(
               w(
-                'History starts ${curve.first['date']}. Ackman has a gap from 2019-11-20 to 2020-01-01: CELG merger rights (BMYRT) lack verified daily prices. Its 2020 segment is independently funded. Select a range within either segment to see its chart and statistics; cross-gap results are unavailable.',
-                '历史从 ${curve.first['date']} 开始。Ackman 在 2019-11-20 至 2020-01-01 存在缺口：CELG 并购权利 BMYRT 缺少可验证日价。2020 年片段为独立起始资金。选择任一连续片段可查看曲线和统计；跨缺口不计算收益。',
+                'History starts ${curve.first['date']}. ${name(text(affected['id']))} has a gap from 2019-11-20 to 2020-01-01: CELG merger rights (BMYRT) lack verified daily prices. Its 2020 segment is independently funded. Select a range within either segment to see its chart and statistics; cross-gap results are unavailable.',
+                '历史从 ${curve.first['date']} 开始。${name(text(affected['id']))} 在 2019-11-20 至 2020-01-01 存在缺口：CELG 并购权利 BMYRT 缺少可验证日价。2020 年片段为独立起始资金。选择任一连续片段可查看曲线和统计；跨缺口不计算收益。',
               ),
               style: s(11, false, p.secondary),
             ),
@@ -715,6 +813,25 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
           '${w('Signal close', '信号收盘')} ${q['signalDate']} · ${w('Execution', '执行')} ${q['executionDate']}',
           style: s(12, false, p.muted),
         ),
+        if (q['universeMembership'] != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            '${w('Universe snapshot', '股票池快照')} ${asMap(q['universeMembership'])['snapshotDate']} · '
+            '${asMap(q['universeMembership'])['memberCount']} ${w('constituents', '个成分')} · '
+            '${q['populationCount']} ${w('eligible for ranking', '只参与排名')}',
+            style: s(12, false, p.muted),
+          ),
+          if (universe == 'nasdaq100')
+            TextButton.icon(
+              onPressed: () => openBrowserPath(
+                text(asMap(q['universeMembership'])['sourceUrl']),
+              ),
+              icon: const Icon(Icons.open_in_new, size: 14),
+              label: Text(
+                '${w('SEC filing', 'SEC 申报')} · ${asMap(q['universeMembership'])['filed']}',
+              ),
+            ),
+        ],
         Text(
           '${q['selectedCount']} ${w('stocks', '只股票')} · ${q['eligibleCount']} ${w('eligible', '只通过门槛')} · ${w('Cash target', '现金目标')} ${pct(q['cashWeight'])}',
           style: s(12, true),

@@ -7,10 +7,12 @@ import assert from 'node:assert/strict';
 // Read-only canonical replay; emits only aggregate diagnostics, never licensed
 // price rows. Run on an installed API host as its actual runtime user as well.
 async function verify() {
-const snapshot = loadInvestorStyleDashboard();
+const universe=process.argv[2] ?? 'all';
+const snapshot = loadInvestorStyleDashboard({universe});
 const run = createRuleAnalysisService(), curve = snapshot.backtest.curve;
 const windows = [[0, curve.length - 1], [Math.floor(curve.length / 2), curve.length - 1], [100, 200], [0, 1]];
 for (const year of [2013, 2014]) {
+  if (universe==='nasdaq100') continue; // SEC quarterly disclosure history begins in 2019 Q3.
   const first=curve.findIndex(r=>r.date.startsWith(`${year}-`));
   const last=curve.findLastIndex(r=>r.date.startsWith(`${year}-`));
   assert.ok(first>=0 && last>first, `missing required ${year} history`);
@@ -19,7 +21,7 @@ for (const year of [2013, 2014]) {
 const results = [];
 for (const [first, last] of windows) {
   const t = performance.now();
-  const result = await run({ snapshotId: snapshot.snapshotId, asOf: snapshot.dataThrough, start: curve[first].date, end: curve[last].date });
+  const result = await run({ universe, snapshotId: snapshot.snapshotId, asOf: snapshot.dataThrough, start: curve[first].date, end: curve[last].date });
   for (const style of result.styles) {
     const source=snapshot.styles.find(s => s.id === style.id);
     const segment=source.coverage?.segments.find(s=>s.from<=result.start && s.to>=result.end);
@@ -43,7 +45,7 @@ for (const [first, last] of windows) {
       turnover: s.turnover, distribution: s.distribution,
       best: s.best?.ticker, worst: s.worst?.ticker, reconciliation: s.reconciliation })) });
 }
-console.log(JSON.stringify({ status: 'pass', snapshotId: snapshot.snapshotId, method: 'rule-range-attribution-v1',
+console.log(JSON.stringify({ status: 'pass', universe, snapshotId: snapshot.snapshotId, method: 'rule-range-attribution-v1',
   observedThrough: snapshot.dataThrough, results }, null, 2));
 }
 

@@ -74,7 +74,7 @@ for (const [id, quarters] of Object.entries(packet.schedules)) {
   // entitlement; the later segment is an independent inception at a scheduled
   // rebalance. No return, turnover or risk statistic may cross this gap.
   const unpricedRight = schedule.some(q=>q.executionDate<'2019-11-20' && q.nextExecutionDate>='2019-11-20' && q.weights.some(p=>p.ticker==='CELG'));
-  const coverage = id === 'ackman' && unpricedRight ? {
+  const coverage = unpricedRight ? {
     segments: [{from:dates[0],to:'2019-11-19'}, {from:'2020-01-02',to:endDate}],
     gaps: [{from:'2019-11-20',to:'2020-01-01',reason:'unpriced_celg_cvr',ticker:'CELG',
       missingSecurity:'BMYRT',sourceUrl:'https://www.sec.gov/Archives/edgar/data/816284/000110465919065939/tm1923405d1_8k.htm'}],
@@ -114,10 +114,12 @@ for (const [id, quarters] of Object.entries(packet.schedules)) {
       ticker: p.ticker, executionDate: q.executionDate, ...p.corporateAction }))),
   });
 }
-const rows = curves.quality_rank;
+const quality=new Map(curves.quality_rank.map(r=>[r.date,r.value]));
+const rows = dates.map(date=>({date,value:quality.get(date)??null}));
 const ackman=new Map(curves.ackman.map(r=>[r.date,r.value]));
 const benchmark=prices.get('SPY'), benchmarkStart=benchmark.get(rows[0].date);
 const payload = { version: 'investor-style-dashboard-v4', dataThrough: rows.at(-1).date,
+  ...(packet.universe ? {universe:packet.universe} : {}),
   backtest: { from: rows[0].date, to: rows.at(-1).date, observations: rows.length, costBps: 25,
     curve: rows.map(r => ({ date:r.date, quality_rank:r.value, ackman:ackman.get(r.date)??null, spy:benchmark.get(r.date)/benchmarkStart })) },
   styles, methodology: { strictArchivedVintagePit:false, priceBasis:'adjusted_total_return_close',

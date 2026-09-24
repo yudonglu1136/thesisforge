@@ -8,10 +8,11 @@ import { refreshRuleSnapshot } from '../server/rulePortfolioRefresh.js';
 import { releaseRoot } from '../server/dataReleaseContext.js';
 import path from 'node:path';
 
-const [end, output, auditPriceOutput] = process.argv.slice(2);
-if (!/^\d{4}-\d{2}-\d{2}$/.test(end ?? '') || !output) throw new Error('Usage: node scripts/refresh-rule-portfolio-observations.mjs END_DATE OUTPUT_JSON');
+const [end, output, auditPriceOutput, universe='all'] = process.argv.slice(2);
+if (!/^\d{4}-\d{2}-\d{2}$/.test(end ?? '') || !output) throw new Error('Usage: node scripts/refresh-rule-portfolio-observations.mjs END_DATE OUTPUT_JSON [AUDIT_PRICE_CSV] [all|sp500|nasdaq100]');
 const sha = x=>createHash('sha256').update(x).digest('hex');
-const source=loadInvestorStyleDashboard(), generation=await factGeneration();
+const source=loadInvestorStyleDashboard({universe}), generation=await factGeneration();
+if (source.status!=='ready') throw new Error('rule_universe_not_ready');
 const root=releaseRoot('canonical',process.env.FACT_OS_ROOT || fileURLToPath(new URL('../data/fact_os',import.meta.url)));
 const catalog=path.join(root,'manifests/catalog.json');
 const priceSourceGeneration=sha(fs.readFileSync(catalog));

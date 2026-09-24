@@ -229,12 +229,12 @@ export async function canonicalRulePrices(snapshot, { query = queryFacts } = {})
 
 export function createRuleAnalysisService({ load = loadInvestorStyleDashboard, generation = factGeneration, prices = canonicalRulePrices } = {}) {
   let cache;
-  return async ({ asOf, snapshotId, start, end }) => {
+  return async ({ asOf, snapshotId, start, end, universe='all' }) => {
     if (!snapshotId || typeof start !== 'string' || typeof end !== 'string') fail('invalid_analysis_range', 400);
-    const snapshot = load({ asOf, snapshotId });
+    const snapshot = load({ asOf, snapshotId, universe });
     if (snapshot.snapshotId !== snapshotId) fail('investor_style_snapshot_changed', 409);
     if (!snapshot.backtest.curve.some(r => r.date === start) || !snapshot.backtest.curve.some(r => r.date === end) || start >= end) fail('invalid_analysis_range', 400);
-    const g = await generation(), key = `${snapshotId}:${asOf}:${g}`;
+    const g = await generation(), key = `${universe}:${snapshotId}:${asOf}:${g}`;
     if (!cache || cache.key !== key) {
       const promise = (async () => {
         const maps = await prices(snapshot);
@@ -246,7 +246,7 @@ export function createRuleAnalysisService({ load = loadInvestorStyleDashboard, g
     }
     const ledger = await cache.promise;
     if (await generation() !== g) fail('rule_analysis_generation_changed', 409);
-    return { ...analyzeRuleRange(ledger, start, end), lineage: {
+    return { ...analyzeRuleRange(ledger, start, end), universe, lineage: {
       portfolioSnapshotId: snapshotId, sourceSnapshotGeneration: snapshot.lineage?.sourceGeneration ?? null,
       readerFingerprint: createHash('sha256').update(g).digest('hex'), allDailyNavReconciled: true,
       adjustmentBasis: 'vendor_current_adjustment_factors', method: RULE_ANALYSIS_VERSION,

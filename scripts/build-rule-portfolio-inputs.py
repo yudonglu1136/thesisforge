@@ -18,6 +18,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from fact_os.repository import FactRepository
+from rule_portfolio_universes import sp500_members_at, qqq_members_at, select_universe
 
 def digest(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
@@ -50,6 +51,30 @@ def build(a):
     d = history_window(d, a.start)
     if d.duplicated(['q', 'ticker']).any():
         raise ValueError('duplicate_security_quarter')
+    universe = getattr(a, 'universe', 'all')
+    membership, membership_evidence = {}, {}
+    if universe == 'sp500':
+        with FactRepository(a.fact_root) as repo:
+            if repo.generation != metadata['factGeneration']:
+                raise ValueError('fact_generation_mismatch')
+            records = repo.db.execute('SELECT cast(date AS VARCHAR),action,ticker FROM sp500').fetchall()
+        for q, group in d.groupby('q', sort=True):
+            if group.signal_date.nunique() != 1:
+                raise ValueError('ambiguous_signal_date')
+            membership[q], membership_evidence[q] = sp500_members_at(records, group.signal_date.iloc[0])
+        d = select_universe(d, membership)
+    elif universe == 'nasdaq100':
+        if not a.sec_universe:
+            raise ValueError('sec_membership_required')
+        source = json.loads(a.sec_universe.read_text())
+        if source.get('version') != 'sec-qqq-disclosed-universe-v1' or source['identityGeneration'] != metadata['factGeneration'] or source['unresolved']:
+            raise ValueError('sec_membership_identity_incomplete')
+        for q, group in d.groupby('q', sort=True):
+            ids, membership_evidence[q] = qqq_members_at(source['snapshots'], group.signal_date.iloc[0])
+            membership[q] = set(group[group.permaticker.astype(str).isin(ids)].ticker)
+        d = select_universe(d, membership)
+    elif universe != 'all':
+        raise ValueError('universe_membership_unavailable:' + universe)
     features, cols = adapter.build_features(d.copy())
     common = features[features.common_feature_complete].copy()
     for key in cols['ackman']:
@@ -117,7 +142,13 @@ def build(a):
             record = dict(quarter=q, signalDate=clock.signal_date, executionDate=clock.entry,
                           nextExecutionDate=None if pd.isna(clock.next_entry) else clock.next_entry,
                           eligibleCount=len(ranked), populationCount=len(group), positions=positions)
-            if model == 'quality_rank':
+            if universe != 'all':
+                record['universeMembership'] = dict(id=universe, **membership_evidence[q])
+                for p in positions:
+                    if p['ticker'] not in membership[q]:
+                        raise ValueError('selected_nonmember')
+                    p['universeMember'] = True
+            if model == 'quality_rank' and universe == 'all':
                 prior = next((r for r in frozen if r['reportDate'] == q), None)
                 if prior is not None:
                     ordered = sorted(prior['targetWeights'], key=lambda r: -r['weight'])
@@ -167,8 +198,16 @@ def build(a):
                if isinstance(value, Path) and value.is_file()}
     receipt.update(sourceGeneration=metadata['factGeneration'], sourceWrites=False,
                    requestedStart=a.start, forwardOutcomeColumnsRead=False,
+                   universeHelper=digest(Path(__file__).with_name('rule_portfolio_universes.py')),
                    priceSha256=digest(a.output/'prices.csv'), builder=digest(__file__))
     payload = dict(schedules=schedules, actions=actions['actions'], lineage=receipt)
+    if universe != 'all':
+        payload['universe'] = dict(id=universe, version='rule-universe-v1',
+            basis='historical_effective_membership_current_vintage' if universe=='sp500' else 'sec_qqq_disclosed_holdings',
+            source='Fact OS / SHARADAR SP500' if universe=='sp500' else 'SEC / QQQ N-PORT public equity holdings',
+            sourceUrl='https://sharadar.com/docs/sp500' if universe=='sp500' else 'https://www.sec.gov/edgar/browse/?CIK=1067839',
+            rankingPopulation='eligible_members_before_strategy_gates',
+            currentConstituentsBackfilled=False)
     (a.output/'inputs.json').write_text(json.dumps(payload, allow_nan=False, separators=(',', ':')))
     print(json.dumps(dict(status='ready', quarters={k: len(v) for k,v in schedules.items()},
                          selectedSymbols=len(set(tickers)), prices=len(prices), sourceWrites=False)))
@@ -178,4 +217,6 @@ if __name__ == '__main__':
     for name in ['panel', 'metadata', 'candidates', 'rates', 'adapter', 'schedule', 'actions', 'fact-root', 'output']:
         p.add_argument('--' + name, type=Path, required=True)
     p.add_argument('--start', default='2013-01-01')
+    p.add_argument('--universe', choices=['all', 'sp500', 'nasdaq100'], default='all')
+    p.add_argument('--sec-universe', type=Path)
     build(p.parse_args())

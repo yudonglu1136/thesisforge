@@ -5,6 +5,39 @@ import path from 'node:path';
 import test from 'node:test';
 import { loadInvestorStyleDashboard, validateInvestorStyleDashboard } from './investorStyleDashboard.js';
 
+test('universe is validated and may not relabel an all-market snapshot', () => {
+  assert.throws(()=>loadInvestorStyleDashboard({universe:'../all'}),/invalid_rule_universe/);
+  assert.throws(()=>loadInvestorStyleDashboard({universe:'nasdaq100',
+    file:new URL('./config/investor-style-dashboard.json',import.meta.url)}),/universe_mismatch/);
+  assert.equal(loadInvestorStyleDashboard().universe.id,'all');
+});
+
+test('three universe snapshots are independent, source-dated and reranked before gates', () => {
+  const rows=['all','sp500','nasdaq100'].map(universe=>loadInvestorStyleDashboard({universe}));
+  assert.equal(new Set(rows.map(r=>r.snapshotId)).size,3);
+  assert.equal(rows[1].backtest.from,'2013-01-02');
+  assert.equal(rows[2].backtest.from,'2020-01-02');
+  assert.equal(rows[2].universe.basis,'sec_qqq_disclosed_holdings');
+  for (const r of rows.slice(1)) {
+    assert.throws(()=>loadInvestorStyleDashboard({universe:r.universe.id,snapshotId:rows[0].snapshotId}),/snapshot_changed/);
+    for (const s of r.styles) for (const q of s.quarters) {
+      assert.ok(q.positions.every(p=>p.universeMember));
+      assert.ok(q.populationCount<=q.universeMembership.memberCount);
+      if (r.universe.id==='nasdaq100') assert.ok(q.universeMembership.filed<q.signalDate);
+    }
+  }
+  for (const index of [0,1]) {
+    assert.notDeepEqual(rows[0].styles[index].quarters.at(-1).positions.map(p=>[p.ticker,p.score]),
+      rows[1].styles[index].quarters.at(-1).positions.map(p=>[p.ticker,p.score]));
+  }
+  const early=loadInvestorStyleDashboard({universe:'nasdaq100',asOf:'2019-12-31'});
+  assert.equal(early.status,'unavailable_before_first_observation');
+  assert.deepEqual(early.backtest.curve,[]);
+  const raw=JSON.parse(fs.readFileSync(new URL('./config/investor-style-nasdaq100.json',import.meta.url)));
+  raw.styles[0].quarters[0].universeMembership.filed='2020-02-01';
+  assert.throws(()=>validateInvestorStyleDashboard(raw),/invalid/);
+});
+
 test('historical cutoff truncates curves, holdings and metrics rather than echoing the date', () => {
   const out = loadInvestorStyleDashboard({ asOf: '2024-05-01' });
   assert.ok(out.backtest.curve.every(r => r.date <= '2024-05-01'));
