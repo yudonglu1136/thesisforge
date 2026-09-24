@@ -70,3 +70,39 @@ Verified pre-release rollback targets: AWS `universe-18b8bf6`; Vercel
 `thesisforge-2kkka1n4l-yudonglu1136s-projects.vercel.app`.
 Rollback switches the EB application version and both Vercel aliases together;
 it does not restore or overwrite any live user database.
+
+## Production acceptance
+
+- Feature commit `3db689d8fe2d7b9da5337daacf28b8a74b35940e`, pushed to trunk.
+- AWS `thesisforge-api-prod`: `intervals-3db689d`, Ready/Green. Code archive
+  SHA-256 `2d66ced39ddb6e25e73f3320983e30ec6ced7499180b7bce720d58371e2510ea`.
+  Archive inspection: 2,593 entries, no database/private-store/env-secret files;
+  only the existing example environment templates are present.
+- Vercel `thesisforge`: `dpl_2ARhrsCdfp5dbNR5ND8H9mg494zW`, Ready,
+  `thesisforge-2bvybyza5-yudonglu1136s-projects.vercel.app`. Both public aliases
+  independently inspected and resolve to this deployment.
+- Both domains serve the verified production-auth main.dart.js hash
+  `e417bfdaccb146e41eab19fdacef9d8af88b9ae1b645fd0a5bac43e436e9b6e8`.
+  Supabase authentication is enabled; developer bypass is false.
+- Read-only AWS verification command `813f2ab8-1c14-4dea-9b06-ee5c982bd3c2`
+  ran as the actual `webapp` user. All-market six, S&P six and Nasdaq four
+  intervals pass v2 checks, including inventories and every supported FIFO lot's
+  gross, cost and net reconciliation. Both strategies retain the exact published
+  NAV, snapshot identities, 2013/2014 results and disclosed coverage gaps.
+  Full host receipt: `/var/tmp/intervals-3db689d-verification.json` (private).
+- Signed-in production browser: Chinese desktop and English desktop, and both
+  languages at verified 390×844 CSS pixels. ANET and Ackman/NEM dialogs show
+  matched sale portions, closing marks, allocated costs and zero reconciliation
+  residual. Browser viewport override reset afterward.
+- Both domains: unauthenticated investment API is 401, internal API is 404.
+  Eight simultaneous health requests return 200 / `ok:true`; the pre-existing
+  `stale/degraded` warning for legacy `price_points` dated September 18 remains
+  explicit. This code-only release does not claim a market-data refresh.
+- Fresh full Fact OS storage audit passed; repository layout retains the same
+  11 existing findings. No unrelated data or directories were removed.
+
+Production receipt and screenshots are retained under ignored
+`data/releases/rule-trade-intervals-20260924/verification/`. Full Flutter's 32
+existing adjacent failures remain disclosed above, not reclassified as passing.
+Corporate-action exchange lots remain explicitly unavailable when an audited
+FIFO conversion is absent; the existing aggregate attribution remains visible.
