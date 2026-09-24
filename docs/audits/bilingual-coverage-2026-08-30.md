@@ -589,3 +589,15 @@ Fundamentals/explorer tests pass. Full Flutter has the same 32 pre-existing
 adjacent failures, with no new failing names. See
 `docs/fundamentals-recovery-redesign-2026-09-22.md` for data-runtime diagnosis,
 scoped installation, release gates and production verification limitations.
+
+### 2026-09-24 Research insider activity
+
+New Announcements & financials section has paired EN/ZH heading, filing-date
+window, purchase/sale summary, monthly chart and accessible month data, type
+filters, paginated details, source evidence, empty/error/retry states and coverage
+notes. SEC codes and company/person names remain source identifiers. The current
+vendor-vintage limitation is visible, not represented as strict historical PIT.
+Four focused widget tests pass, including 390px and stale-response protection;
+real-data desktop/mobile checks exercise purchase empty state and non-sale events.
+The full Flutter suite has 592 passes and the same 32 pre-existing failure names
+as the preceding Strategy release; no new failures or removed assertions.

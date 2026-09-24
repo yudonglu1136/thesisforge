@@ -31,6 +31,7 @@ part 'investment_discover_lenses.dart';
 part 'investment_value_trend.dart';
 part 'investment_growth_quality.dart';
 part 'investment_research.dart';
+part 'research_insiders.dart';
 part 'investment_company_search.dart';
 part 'investment_valuation.dart';
 part 'investment_valuation_memory.dart';

@@ -742,6 +742,13 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
           children: [
             if (section == 'evidence') ...researchOverview(),
             if (section == 'financials') ...[
+              ResearchInsidersPanel(
+                api: widget.api,
+                palette: p,
+                ticker: ticker,
+                asOf: asOf,
+              ),
+              const SizedBox(height: 18),
               researchDocumentsPanel(),
               const SizedBox(height: 18),
               EarningsResearchPanel(
