@@ -90,7 +90,25 @@ both strategies' statistics and best/worst stocks changed together.
 Storage-content receipt `rule-range-storage-20260924.json` passed with zero raw
 duplicates; the 11 existing repository-layout findings remain separate.
 
-Frontend publication and authenticated production UI verification are the next
-release gate, not implied by EB health or standalone replay. This task leaves
+Frontend commit `bd59ef7443bed25f1f58db63423fa48210440c1b` was deployed by the
+existing trunk CI to Vercel `dpl_9rEq9b1BYw1qJyUW84NkrutLQ8fz` (Ready):
+`https://thesisforge-5so4jdvcb-yudonglu1136s-projects.vercel.app`.
+Both `thesisforge.tech` and `www.thesisforge.tech` were independently inspected
+and pointed to that same deployment. Its production build enforces auth bypass
+false. Eight concurrent health reads returned 200/ok; the existing market-price
+module is explicitly stale (source 2026-09-18), not a new analytics regression.
+Unauthenticated range requests return 401; public internal-release probes return
+404. No authentication settings, credentials, prices or user data were changed.
+
+**Remaining acceptance boundary:** the validation browser has no production
+Google session and shows the login page. Authenticated production UI interaction
+therefore remains pending user login; neither runtime replay nor public health
+is claimed as an authenticated browser pass. English desktop, Chinese 390px,
+range dragging and stock dialogs were actually verified on the local build.
+Screenshot: `/private/tmp/rule-range-analysis-zh-desktop.png` (local, not online).
+The full Flutter suite was not certified; only the affected 35 tests plus full
+analyze/i18n/build are reported. Existing unrelated suite/layout findings remain.
+
+This task leaves
 the pre-existing 2013 builders, modified backtest engine, design QA and other
 uncommitted work untouched.
