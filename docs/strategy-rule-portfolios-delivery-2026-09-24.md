@@ -1,8 +1,10 @@
 # Rule portfolios completion
 
 Scope: Quality Rank Top 10 and the Ackman quantitative proxy, alongside the existing
-Strategy builder. This is a local implementation/test/commit delivery, not a production
-deployment. Existing unrelated Research, AI Insights and pipeline work is excluded.
+Strategy builder. The original implementation/test/commit delivery has now been
+promoted to production under the subsequent explicit push/deploy authorization.
+See [production verification](audits/strategy-rules-production-2026-09-24.md).
+Existing unrelated Research, AI Insights and pipeline work is excluded.
 
 ## Defects reproduced before repair
 
@@ -21,7 +23,7 @@ deployment. Existing unrelated Research, AI Insights and pipeline work is exclud
 - [x] Quarter-level rank, source metrics, contributions and weight changes.
 - [x] Independent comparison toggles, rules and bilingual responsive UI.
 - [x] Regression, performance, i18n, analyzer/build and browser validation (exceptions below).
-- [x] Scoped commit. Production deployment remains separate.
+- [x] Scoped commit; subsequent production promotion and live verification recorded separately.
 
 The browser check caught a real integration regression: the shared curve painter
 accepted arbitrary series but painted only five legacy IDs. A pixel-level test
@@ -90,8 +92,9 @@ The superseded untracked UI draft was moved recoverably to
 
 ## Remaining boundaries
 
-- No push or production deployment is performed by this implementation/test/commit
-  request; the previous production version is unchanged.
+- The original implementation request did not deploy. Subsequent authorization
+  promoted code commit `3c12a8d` to Vercel and AWS; see the production audit for
+  exact identities, fresh clean-source test counts and remaining warnings.
 - This is a versioned research snapshot, not a newly enabled daily strategy
   publisher. Fact OS sync and saved user strategies are untouched.
 - Do not label the entire old Strategy/Guru audit epic complete because these two

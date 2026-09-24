@@ -1,5 +1,17 @@
 # Bilingual Coverage Audit
 
+### 2026-09-24: Independent Strategy rule portfolios (production)
+
+EN/ZH covers Quality Rank Top 10 and the Ackman quantitative proxy, curve toggles,
+daily metrics, historical quarters, target-weight changes, raw score evidence,
+original disclosure dates, unavailable states and exploratory-backtest limitations.
+The existing Strategy builder remains the default. Production browser checks cover
+both languages on desktop and a 390x844 viewport, including the holding-evidence
+dialog. Fresh analyzer, i18n, production build and 60 performance tests pass.
+Full Flutter has 588 passes and the same 32 failures reproduced on the prior
+production source; these are not reported as passed. See
+`strategy-rules-production-2026-09-24.md` for release identities and data boundaries.
+
 ### 2026-09-23: AI sector-quarter growth contributor logos
 
 The existing AI overview heatmap now occupies a full row. Each quarter/sector
