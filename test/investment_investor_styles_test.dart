@@ -60,8 +60,21 @@ class _RuleApi extends ApiClient {
             'best': stock,
             'worst': null,
             'reconciliation': {'difference': 0.0},
+            'turnover': {
+              'version': 'rule-range-turnover-v1',
+              'oneWay': q['start'] == '2023-01-03' ? 1.25 : .4,
+              'annualizedOneWay': .8,
+              'executions': 4,
+            },
             'distribution': [
-              for (var i = 0; i < 9; i++) {'count': i == 7 ? 1 : 0},
+              for (var i = 0; i < 9; i++)
+                {
+                  'count': i == 6
+                      ? 2
+                      : i == 2 || i == 7
+                      ? 1
+                      : 0,
+                },
             ],
           },
       ],
@@ -122,6 +135,72 @@ Future<void> _mount(
 
 void main() {
   tearDown(() {});
+  for (final size in [const Size(1280, 900), const Size(390, 844)]) {
+    for (final lang in AppLanguage.values) {
+      testWidgets('horizontal P&L bands and range turnover: $size $lang', (
+        tester,
+      ) async {
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final api = _RuleApi();
+        await _mount(tester, api, size: size, language: lang);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        final left = find.byKey(
+          const ValueKey('distribution-chart-quality_rank'),
+        );
+        final right = find.byKey(const ValueKey('distribution-chart-ackman'));
+        if (size.width > 840) {
+          expect(tester.getTopLeft(left).dy, tester.getTopLeft(right).dy);
+          expect(
+            tester.getTopLeft(right).dx,
+            greaterThan(tester.getTopLeft(left).dx),
+          );
+        } else {
+          expect(
+            tester.getTopLeft(right).dy,
+            greaterThan(tester.getBottomLeft(left).dy),
+          );
+        }
+        for (final id in ['quality_rank', 'ackman']) {
+          final first = find.byKey(ValueKey('distribution-bar-$id-0'));
+          final last = find.byKey(ValueKey('distribution-bar-$id-8'));
+          expect(
+            tester.getTopLeft(last).dx,
+            greaterThan(tester.getTopLeft(first).dx),
+          );
+          expect(tester.getBottomLeft(first).dy, tester.getBottomLeft(last).dy);
+          expect(
+            tester.widget<Text>(find.byKey(ValueKey('range-$id-8'))).data,
+            '125.00%',
+          );
+          expect(
+            tester.widget<Text>(find.byKey(ValueKey('range-$id-9'))).data,
+            '80.00%',
+          );
+        }
+        final tap = find.byKey(
+          const ValueKey('distribution-bin-quality_rank-7'),
+        );
+        await tester.ensureVisible(tap);
+        await tester.tap(tap);
+        await tester.pumpAndSettle();
+        expect(find.textContaining('+5 ≤ x < +10'), findsWidgets);
+        expect(find.textContaining('25.00%'), findsWidgets);
+        tester.widget<RangeSlider>(find.byType(RangeSlider)).onChanged!(
+          const RangeValues(.5, 1),
+        );
+        await tester.pumpAndSettle();
+        for (final id in ['quality_rank', 'ackman']) {
+          expect(
+            tester.widget<Text>(find.byKey(ValueKey('range-$id-8'))).data,
+            '40.00%',
+          );
+        }
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
   testWidgets('shared painter actually draws both rule portfolio series', (
     tester,
   ) async {

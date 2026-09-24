@@ -42,17 +42,19 @@ export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
           events.push({ ticker: p.ticker, date, side: 'corporate_action', ...mark(p, date), action });
         }
       }
-      let nav = marked.portfolioValue, closing = marked;
+      let nav = marked.portfolioValue, closing = marked, trading = null;
       const q = rebalances.get(date);
       if (q) {
         const old = new Map(), target = new Map(q.positions.map(p => [p.ticker, nav * p.weight]));
         for (const p of marked.values) if (!cashClaim(p)) add(old, symbol(p), p.endValue);
         let totalFee = 0, turnover = 0;
+        trading = { preTradeNav: nav, buyNotional: 0, sellNotional: 0, initialEntry: days.length === 0 };
         for (const ticker of new Set([...old.keys(), ...target.keys()])) {
           const delta = (target.get(ticker) ?? 0) - (old.get(ticker) ?? 0);
           if (Math.abs(delta) < 1e-13) continue;
           const fee = Math.abs(delta) * costBps / 10000;
           totalFee += fee; turnover += Math.abs(delta) / nav;
+          trading[delta > 0 ? 'buyNotional' : 'sellNotional'] += Math.abs(delta);
           const price = priceMaps.get(ticker)?.get(date);
           if (!Number.isFinite(price) || price <= 0) fail('missing_execution_price');
           // Converted claims net against the successor's target. Reductions
@@ -80,7 +82,7 @@ export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
       }
       if (!near(nav, row[style.id]) || !near(closing.portfolioValue, nav) ||
           !near(sum([...pnl.values()]) - sum([...fees.values()]), nav - previousNav)) fail('rule_analysis_nav_mismatch');
-      days.push({ date, nav, pnl, fees, positions: new Map(closing.values.map(p => [p.ticker, { ...mark(p, date), open: !cashClaim(p) }])) });
+      days.push({ date, nav, pnl, fees, trading, positions: new Map(closing.values.map(p => [p.ticker, { ...mark(p, date), open: !cashClaim(p) }])) });
       previousNav = nav;
       previousValues = new Map(closing.values.map(p => [p.ticker, p.endValue]));
     }
@@ -98,6 +100,22 @@ export function analyzeRuleRange(ledger, start, end) {
     if (first < 0 || last <= first) fail('invalid_analysis_range', 400);
     const rows = style.days.slice(first, last + 1), origin = first === 0 ? 1 : rows[0].nav;
     const metrics = strategyMetrics(rows.map(r => ({ date: r.date, value: r.nav / origin })));
+    // Match the P&L boundary: ordinary start dates are post-trade closing
+    // marks. Only the full inception range includes its initial entry.
+    const trades = rows.slice(first === 0 ? 0 : 1).flatMap(r => r.trading ? [r.trading] : []);
+    const buyRatio = sum(trades.map(t => t.buyNotional / t.preTradeNav));
+    const sellRatio = sum(trades.map(t => t.sellNotional / t.preTradeNav));
+    const oneWay = (buyRatio + sellRatio) / 2;
+    const turnover = { version: 'rule-range-turnover-v1',
+      basis: 'half_gross_notional_over_each_pretrade_nav',
+      oneWay, twoWay: buyRatio + sellRatio, buyRatio, sellRatio,
+      annualizedOneWay: oneWay * 252 / (rows.length - 1), annualizationSessions: 252,
+      returnIntervals: rows.length - 1,
+      buyNotional: sum(trades.map(t => t.buyNotional)) / origin,
+      sellNotional: sum(trades.map(t => t.sellNotional)) / origin,
+      executions: trades.filter(t => t.buyNotional + t.sellNotional > 0).length,
+      includesInitialEntry: trades.some(t => t.initialEntry),
+    };
     const stocks = new Map();
     const get = ticker => {
       if (!stocks.has(ticker)) stocks.set(ticker, { ticker, grossContribution: 0, costContribution: 0 });
@@ -134,7 +152,7 @@ export function analyzeRuleRange(ledger, start, end) {
     const distribution = bounds.slice(0, -1).map((lower, i) => ({ lower: Number.isFinite(lower) ? lower : null,
       upper: Number.isFinite(bounds[i + 1]) ? bounds[i + 1] : null,
       count: holdings.filter(r => r.netContribution >= lower && r.netContribution < bounds[i + 1]).length }));
-    return { id: style.id, metrics, holdings, best: winners[0] ?? null, worst: losers.at(-1) ?? null, distribution,
+    return { id: style.id, metrics, turnover, holdings, best: winners[0] ?? null, worst: losers.at(-1) ?? null, distribution,
       tradeStats: { population: 'unique_stock_range_pnl_including_open', stocks: holdings.length, wins: winners.length,
         losses: losers.length, flat: holdings.length - winners.length - losers.length,
         open: holdings.filter(r => r.openAtEnd).length, winRate: winners.length + losers.length ? winners.length / (winners.length + losers.length) : null,

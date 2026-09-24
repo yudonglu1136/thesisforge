@@ -27,6 +27,7 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
   Timer? debounce;
   int epoch = 0;
   bool loading = true, failed = false;
+  int? selectedDistributionBin;
   Map<String, dynamic>? detail;
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
@@ -171,9 +172,13 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
       w('Stock win rate', '个股区间胜率'),
       w('Payoff · avg win / avg loss', '盈亏比 · 平均盈 / 平均亏'),
       w('Winning / losing / flat', '盈利 / 亏损 / 持平'),
+      w('Turnover · one-way', '区间换手率 · 单边'),
+      w('Annualized turnover · one-way', '年化换手率 · 单边'),
+      w('Executed rebalances', '实际调仓次数'),
     ];
     List<String> values(String id) {
       final m = metrics[id]!, t = asMap(result(id)['tradeStats']);
+      final turnover = asMap(result(id)['turnover']);
       return [
         pct(m['totalReturn']),
         pct(m['cagr']),
@@ -183,6 +188,9 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
         pct(t['winRate']),
         ratio(t['payoffRatio']),
         t.isEmpty ? '—' : '${t['wins']} / ${t['losses']} / ${t['flat']}',
+        pct(turnover['oneWay']),
+        pct(turnover['annualizedOneWay']),
+        turnover['executions']?.toString() ?? '—',
       ];
     }
 
@@ -252,6 +260,14 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
             w(
               'Risk metrics use all daily net returns (252 sessions/year, sample volatility). Win rate and payoff compare each stock’s net P&L within this range, including marked open holdings; flat stocks are excluded from win rate. No losing or winning stocks: payoff is unavailable, not zero.',
               '风险指标使用全部日频净收益（每年 252 个交易日、样本波动率）。胜率和盈亏比按个股区间净盈亏统计，含期末未卖出的持仓估值；持平股票不计入胜率。没有盈利或亏损股票时，盈亏比为不可用，不补零。',
+            ),
+            style: s(11, false, p.muted),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            w(
+              'One-way turnover = Σ (buys + sells) ÷ (2 × each pre-trade NAV). Initial entry is included only in the full inception range (100% invested = 50% one-way); other opening-day trades are excluded. Annualized = range turnover × 252 ÷ daily return intervals, not a forecast. Corporate-action exchanges are not trades.',
+              '单边换手率＝Σ（买入额＋卖出额）÷（2 × 各次调仓前净值）。仅从最早日期开始的完整区间计入首次建仓（100%建仓计50%）；其他起始日收盘前交易不计入。年化值＝区间换手率 × 252 ÷ 日收益区间数，不是预测；公司行动换股不算交易。',
             ),
             style: s(11, false, p.muted),
           ),
@@ -397,98 +413,262 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
   Widget distribution(List<String> ids) {
     final a = asList(result(ids[0])['distribution']),
         b = asList(result(ids[1])['distribution']);
-    final maxCount = math.max(
-      1.0,
-      [...a, ...b].fold<double>(0, (n, r) => math.max(n, number(r['count']))),
-    );
-    final labels = [
-      '< −10',
-      '−10 … −5',
-      '−5 … −1',
-      '−1 … 0',
-      '0',
-      '0 … 1',
-      '1 … 5',
-      '5 … 10',
-      '≥ 10',
-    ];
+    if (a.length != 9 || b.length != 9) {
+      return Text(w('Distribution data unavailable', '分布数据不可用'), style: s());
+    }
+    final maxCount = [
+      ...a,
+      ...b,
+    ].fold<double>(0, (n, r) => math.max(n, number(r['count'])));
+    final step = math.max(1, (maxCount / 3).ceil());
+    final ceiling = step * 3;
+    final selected =
+        selectedDistributionBin ??
+        List.generate(9, (i) => i).reduce(
+          (i, j) =>
+              number(a[i]['count']) + number(b[i]['count']) >=
+                  number(a[j]['count']) + number(b[j]['count'])
+              ? i
+              : j,
+        );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
           w(
-            'Bins: net contribution to portfolio return in percentage points. Bar length: number of stocks.',
-            '分组：对组合收益的净贡献（百分点）；柱长：股票数量。',
+            'Loss → profit across the horizontal axis. Height and labels show stock counts; both charts use the same scale. Hover or tap a bar for exact bounds.',
+            '横轴从亏损到盈利；柱高和柱顶数字表示股票数量，两图共用刻度。悬停或点按柱子查看完整区间。',
+          ),
+          style: s(12, false, p.muted),
+        ),
+        const SizedBox(height: 16),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final charts = [
+              distributionChart(ids[0], a, ceiling, step, selected),
+              distributionChart(ids[1], b, ceiling, step, selected),
+            ];
+            return constraints.maxWidth >= 840
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: charts[0]),
+                      const SizedBox(width: 28),
+                      Expanded(child: charts[1]),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      charts[0],
+                      const SizedBox(height: 28),
+                      charts[1],
+                    ],
+                  );
+          },
+        ),
+        const SizedBox(height: 12),
+        Text(
+          w(
+            'Bands are net contributions to portfolio return (percentage points), not each stock’s return. Unequal-width bands are ordered categories, not a density scale. Open holdings are marked at the selected end date.',
+            '分组口径为对组合收益的净贡献（百分点），不是个股涨跌幅。不等宽区间按类别排列，不表示概率密度；未卖出持仓按所选期末估值。',
           ),
           style: s(11, false, p.muted),
         ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 20,
-          runSpacing: 8,
-          children: [
-            for (final id in ids)
-              Text('━ ${name(id)}', style: s(12, true, color(id))),
-          ],
+      ],
+    );
+  }
+
+  String distributionBand(int i) => [
+    '< −10',
+    '−10 ≤ x < −5',
+    '−5 ≤ x < −1',
+    '−1 ≤ x < 0',
+    w('0 · flat', '0 · 持平'),
+    '0 < x < +1',
+    '+1 ≤ x < +5',
+    '+5 ≤ x < +10',
+    '≥ +10',
+  ][i];
+
+  Widget distributionChart(
+    String id,
+    List<Map<String, dynamic>> bins,
+    int ceiling,
+    int step,
+    int selected,
+  ) {
+    const labels = [
+      '<−10',
+      '−10\n−5',
+      '−5\n−1',
+      '−1\n0',
+      '0',
+      '0\n+1',
+      '+1\n+5',
+      '+5\n+10',
+      '≥+10',
+    ];
+    const plotHeight = 174.0;
+    final total = bins.fold<int>(0, (n, r) => n + number(r['count']).toInt());
+    final count = number(bins[selected]['count']).toInt();
+    String description(int i) =>
+        '${name(id)} · ${distributionBand(i)} '
+        '${w('pp', '个百分点')} · ${bins[i]['count']} ${w('stocks', '只股票')}';
+    return Column(
+      key: ValueKey('distribution-chart-$id'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(name(id), style: s(15, true, color(id))),
+        const SizedBox(height: 4),
+        Text(
+          '${w('Number of stocks', '股票数量（只）')} · '
+          '${w('Total', '合计')} $total',
+          style: s(12, false, p.muted),
         ),
         const SizedBox(height: 12),
-        for (var i = 0; i < math.min(9, math.min(a.length, b.length)); i++)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 78,
-                  child: Text(labels[i], style: s(11, false, p.muted)),
-                ),
-                Expanded(
-                  child: Column(
+        SizedBox(
+          height: plotHeight + 48,
+          child: Stack(
+            children: [
+              for (var tick = 0; tick <= 3; tick++)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: tick * plotHeight / 3,
+                  height: 28,
+                  child: Row(
                     children: [
-                      for (var j = 0; j < 2; j++)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Semantics(
-                                  label:
-                                      '${name(ids[j])}, ${labels[i]} ${w('percentage points', '个百分点')}: ${(j == 0 ? a : b)[i]['count']} ${w('stocks', '只股票')}',
-                                  child: ExcludeSemantics(
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(3),
-                                      child: LinearProgressIndicator(
-                                        minHeight: 9,
-                                        value:
-                                            number(
-                                              (j == 0 ? a : b)[i]['count'],
-                                            ) /
-                                            maxCount,
-                                        color: color(ids[j]),
-                                        backgroundColor: p.border.withValues(
-                                          alpha: .4,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              SizedBox(
-                                width: 25,
-                                child: Text(
-                                  '${(j == 0 ? a : b)[i]['count']}',
-                                  style: s(11),
-                                ),
-                              ),
-                            ],
-                          ),
+                      SizedBox(
+                        width: 30,
+                        child: Text(
+                          '${tick * step}',
+                          style: s(11, false, p.muted),
                         ),
+                      ),
+                      Expanded(child: Container(height: 1, color: p.border)),
                     ],
                   ),
                 ),
-              ],
-            ),
+              Positioned.fill(
+                left: 32,
+                bottom: 14,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    for (var i = 0; i < 9; i++)
+                      Expanded(
+                        child: MouseRegion(
+                          onEnter: (_) =>
+                              setState(() => selectedDistributionBin = i),
+                          child: Tooltip(
+                            message: description(i),
+                            child: Semantics(
+                              label: description(i),
+                              button: true,
+                              child: InkWell(
+                                key: ValueKey('distribution-bin-$id-$i'),
+                                onTap: () =>
+                                    setState(() => selectedDistributionBin = i),
+                                onFocusChange: (focused) {
+                                  if (focused) {
+                                    setState(() => selectedDistributionBin = i);
+                                  }
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 2,
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      Text(
+                                        '${bins[i]['count']}',
+                                        style: s(13, true, color(id)),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Container(
+                                        key: ValueKey(
+                                          'distribution-bar-$id-$i',
+                                        ),
+                                        height:
+                                            plotHeight *
+                                            number(bins[i]['count']) /
+                                            ceiling,
+                                        constraints: const BoxConstraints(
+                                          maxWidth: 50,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: color(id).withValues(
+                                            alpha: i == selected ? 1 : .65,
+                                          ),
+                                          borderRadius:
+                                              const BorderRadius.vertical(
+                                                top: Radius.circular(3),
+                                              ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 32, top: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < 9; i++)
+                Expanded(
+                  child: Text(
+                    labels[i],
+                    textAlign: TextAlign.center,
+                    style: s(11, i == selected),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: Text(w('← Loss', '← 亏损'), style: s(12, true, p.secondary)),
+            ),
+            Text(w('Flat', '持平'), style: s(12, false, p.muted)),
+            Expanded(
+              child: Text(
+                w('Profit →', '盈利 →'),
+                textAlign: TextAlign.right,
+                style: s(12, true, color(id)),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Container(
+          key: ValueKey('distribution-readout-$id'),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: p.border.withValues(alpha: .25),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            '${distributionBand(selected)} ${w('pp', '个百分点')} · '
+            '$count ${w('stocks', '只股票')}'
+            '${total > 0 ? ' · ${pct(count / total)}' : ''}',
+            style: s(12, true),
+          ),
+        ),
       ],
     );
   }

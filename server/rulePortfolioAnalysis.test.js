@@ -21,6 +21,32 @@ function fixture() {
 }
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 
+test('range turnover reconciles real simulated buys and sells at each pre-cost NAV', () => {
+  const ledger = buildRuleLedger(fixture(), prices);
+  for (const s of analyzeRuleRange(ledger, dates[0], dates[3]).styles) {
+    assert.equal(s.turnover.version, 'rule-range-turnover-v1');
+    close(s.turnover.buyRatio, 1.4); // entry 100%, then add 40%
+    close(s.turnover.sellRatio, .4);
+    close(s.turnover.twoWay, 1.8);
+    close(s.turnover.oneWay, .9);
+    close(s.turnover.annualizedOneWay, .9 * 252 / 3);
+    close(s.turnover.buyNotional, 1 + .399);
+    close(s.turnover.sellNotional, .399);
+    assert.equal(s.turnover.executions, 2);
+    assert.equal(s.turnover.includesInitialEntry, true);
+  }
+  const clipped = analyzeRuleRange(ledger, dates[1], dates[2]).styles[0].turnover;
+  close(clipped.oneWay, .4);
+  close(clipped.annualizedOneWay, .4 * 252);
+  assert.equal(clipped.executions, 1);
+  assert.equal(clipped.includesInitialEntry, false);
+  // Starting at that day's post-trade closing mark excludes its trading,
+  // exactly like the return and fee interval. No rebalance means measured 0.
+  const after = analyzeRuleRange(ledger, dates[2], dates[3]).styles[0].turnover;
+  close(after.oneWay, 0); close(after.annualizedOneWay, 0);
+  assert.equal(after.executions, 0);
+});
+
 test('full-range attribution includes entry fees and ties to every published net NAV', () => {
   const ledger = buildRuleLedger(fixture(), prices);
   const result = analyzeRuleRange(ledger, dates[0], dates[3]);
@@ -104,6 +130,8 @@ test('stock conversion retains its exact successor claim and does not fabricate 
   assert.equal(r.holdings.flatMap(h => h.sales).length, 0);
   assert.equal(r.holdings.flatMap(h => h.purchases).length, 1);
   assert.equal(r.tradeStats.payoffStatus, 'no_losers'); assert.equal(r.tradeStats.payoffRatio, null);
+  close(r.turnover.oneWay, .5); // Entry only; the exchange is not trading.
+  close(analyzeRuleRange(buildRuleLedger(f, maps, { costBps: 0 }), dates[1], dates[3]).styles[0].turnover.oneWay, 0);
 });
 
 test('as-of response cannot include later executions; changing generation during read fails', async () => {

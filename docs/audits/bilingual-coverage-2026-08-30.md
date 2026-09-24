@@ -1,5 +1,16 @@
 # Bilingual Coverage Audit
 
+### 2026-09-24: Interval distribution and turnover
+
+EN/ZH now covers two shared-scale loss-to-profit charts, stock counts, exact
+bin bounds, tap/hover readouts, interval one-way turnover, annualized turnover
+and executed rebalances. Four focused 1280px/390px widget tests verify chart
+layout, bin selection and range-linked turnover updates. The 13-test rule
+portfolio widget file passes; full Flutter is 600 passed / 32 failed with the
+exact same failure-name set as the pre-change baseline, not 32 new passes.
+Full analyzer, i18n, 60 performance checks and production build pass. Production
+browser/release verification is tracked in `rule-distribution-2026-09-24.md`.
+
 ### 2026-09-24: Independent Strategy rule portfolios (production)
 
 EN/ZH covers Quality Rank Top 10 and the Ackman quantitative proxy, curve toggles,
