@@ -32,7 +32,8 @@ def audit(snapshot_path, prices_path):
     reports = []
     for style in snapshot["styles"]:
         key = style["id"]
-        schedule = {q["executionDate"]: q for q in style["quarters"] if q["mature"]}
+        executed = {trade["date"] for trade in style["trades"]}
+        schedule = {q["executionDate"]: q for q in style["quarters"] if q["executionDate"] in executed}
         for q in style["quarters"]:
             total = sum(math.sqrt(11 - p["rank"]) for p in q["positions"]) if key == "quality_rank" else 1
             for p in q["positions"]:

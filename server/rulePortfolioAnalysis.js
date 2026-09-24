@@ -148,7 +148,7 @@ export function analyzeRuleRange(ledger, start, end) {
     illustrativeCapital: 100000, currency: 'USD', styles };
 }
 
-async function canonicalPrices(snapshot) {
+export async function canonicalRulePrices(snapshot) {
   const spans = new Map(), end = snapshot.backtest.curve.at(-1).date;
   function include(ticker, identity, start, stop) {
     const old = spans.get(ticker);
@@ -189,7 +189,7 @@ async function canonicalPrices(snapshot) {
   return maps;
 }
 
-export function createRuleAnalysisService({ load = loadInvestorStyleDashboard, generation = factGeneration, prices = canonicalPrices } = {}) {
+export function createRuleAnalysisService({ load = loadInvestorStyleDashboard, generation = factGeneration, prices = canonicalRulePrices } = {}) {
   let cache;
   return async ({ asOf, snapshotId, start, end }) => {
     if (!snapshotId || typeof start !== 'string' || typeof end !== 'string') fail('invalid_analysis_range', 400);
