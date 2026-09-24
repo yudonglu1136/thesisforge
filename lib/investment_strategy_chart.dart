@@ -576,7 +576,16 @@ class StrategyCurvePainter extends CustomPainter {
         Offset(left - label.width - 8, py - label.height / 2),
       );
     }
-    for (final key in ['guru', 'filtered', 'spy', 'blend', 'leveraged']) {
+    // Preserve legacy layering, then paint new callers' explicitly enabled
+    // series too; a fixed ID allow-list silently hid the rule portfolios.
+    for (final key in {
+      'guru',
+      'filtered',
+      'spy',
+      'blend',
+      'leveraged',
+      ...series.keys,
+    }) {
       final values = series[key];
       if (values == null || values.length < 2) continue;
       final path = Path();

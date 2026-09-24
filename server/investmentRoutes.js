@@ -16,6 +16,7 @@ import { buildFundamentalDiscovery, buildFundamentalCompany, saveFundamentalObse
   listFundamentalObservations, reviewFundamentalObservation } from './fundamentalResearch.js';
 import { researchDocuments, researchFundamentals, researchInstitutions, researchPublishedModel,
   saveResearchRecord, listResearchRecords } from './researchWorkbench.js';
+import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
 import { factOsEnabled } from './factRepository.js';
 
@@ -46,6 +47,8 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/home',(owner,r)=>service.home(owner,r.query.asOf));
   route('get','/discover',(owner,r)=>service.discover(owner,r.query.asOf));
   route('get','/guru-study',(_,r)=>guruStudy(service.source,service.date(r.query.asOf),r.query.period??'common'));
+  route('get','/investor-styles',(_,r)=>loadInvestorStyleDashboard({asOf:service.date(r.query.asOf),snapshotId:r.query.snapshotId}),
+    {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
     search:r.query.search,limit:r.query.limit,
   }));

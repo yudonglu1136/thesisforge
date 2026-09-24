@@ -48,6 +48,7 @@ part 'investment_strategy_mix.dart';
 part 'investment_strategy_cta.dart';
 part 'investment_strategy_snapshot.dart';
 part 'investment_strategy_chart.dart';
+part 'investment_rule_portfolios.dart';
 part 'investment_ai_insights.dart';
 part 'investment_ai_insights_export.dart';
 part 'investment_fundamentals.dart';

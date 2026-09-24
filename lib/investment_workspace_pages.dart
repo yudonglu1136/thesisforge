@@ -760,7 +760,7 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
 
   List<Widget> strategyPage() {
     return [
-      StrategyLabPanel(
+      StrategyWorkspacePanel(
         api: widget.api,
         palette: p,
         asOf: asOf,
