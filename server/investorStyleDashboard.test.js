@@ -10,7 +10,7 @@ test('historical cutoff truncates curves, holdings and metrics rather than echoi
   assert.ok(out.backtest.curve.every(r => r.date <= '2024-05-01'));
   for (const style of out.styles) {
     assert.ok(style.quarters.every(q => q.executionDate <= '2024-05-01'));
-    assert.equal(style.metrics.observations, out.backtest.curve.length);
+    assert.equal(style.metrics.observations, out.backtest.curve.filter(r=>Number.isFinite(r[style.id])).length);
     assert.ok(style.metrics.to <= '2024-05-01');
   }
 });
@@ -18,7 +18,8 @@ test('historical cutoff truncates curves, holdings and metrics rather than echoi
 test('reviewed rule-portfolio snapshot has aligned curves, metrics and holdings changes', () => {
   const payload = loadInvestorStyleDashboard({ asOf: '2026-09-23' });
   assert.equal(payload.requestedAsOf, '2026-09-23');
-  assert.equal(payload.backtest.curve.length, 932);
+  assert.equal(payload.backtest.from, '2013-01-02');
+  assert.equal(payload.backtest.curve.length, 3450);
   assert.equal(payload.dataThrough, '2026-09-21');
   assert.deepEqual(payload.styles.map(row => row.id), ['quality_rank', 'ackman']);
   const owner = payload.styles.find(row => row.id === 'quality_rank');
@@ -28,12 +29,12 @@ test('reviewed rule-portfolio snapshot has aligned curves, metrics and holdings 
   assert.equal(owner.rule.targetCap, .15);
   for (const style of payload.styles) {
     assert.equal(style.metrics.costBps, 25);
-    assert.equal(style.metrics.observations, payload.backtest.curve.length);
-    assert.equal(style.metrics.completedQuarters, 14);
-    assert.equal(style.quarters.length, 15);
+    assert.equal(style.metrics.observations, payload.backtest.curve.filter(r=>Number.isFinite(r[style.id])).length);
+    assert.equal(style.metrics.completedQuarters, style.id==='ackman'?53:54);
+    assert.equal(style.quarters.length, 55);
     assert.equal(style.quarters.at(-1).mature, false);
     assert.equal(style.trades.at(-1).date, '2026-07-01');
-    assert.equal(style.trades.length, 15);
+    assert.equal(style.trades.length, 55);
     for (let index = 1; index < style.quarters.length; index++) {
       const previous = new Set(style.quarters[index - 1].tickers);
       const current = style.quarters[index];
@@ -76,7 +77,7 @@ test('score contributions, allocation and source periods reconcile for every sel
 test('invalid dates, stale snapshots, corruption and absent early history are explicit', () => {
   assert.throws(()=>loadInvestorStyleDashboard({asOf:'2026-02-30'}),/invalid_as_of/);
   assert.throws(()=>loadInvestorStyleDashboard({snapshotId:'old'}),/snapshot_changed/);
-  const old=loadInvestorStyleDashboard({asOf:'2022-01-01'});
+  const old=loadInvestorStyleDashboard({asOf:'2012-01-01'});
   assert.equal(old.status,'unavailable_before_first_observation');
   assert.equal(old.backtest.curve.length,0);
   assert.ok(old.styles.every(s=>s.quarters.length===0 && s.corporateActions.length===0));
@@ -98,5 +99,26 @@ test('late independent requests and mutated caller objects do not poison the cac
   assert.notEqual(loadInvestorStyleDashboard().styles[0].quarters[0].positions[0].score,99);
   assert.ok(a.styles.every(s=>s.corporateActions.every(c=>c.effectiveDate<='2024-05-01')));
   assert.equal(a.styles[0].reconciliation,null);
-  assert.equal(b.styles[0].metrics.observations,932);
+  assert.equal(b.styles[0].metrics.observations,3450);
+});
+
+test('2013 and 2014 are actual daily history, while the declared CVR gap is never compounded', () => {
+  for (const year of [2013,2014]) {
+    const p=loadInvestorStyleDashboard({asOf:`${year}-12-31`});
+    assert.equal(p.status,'ready');
+    assert.ok(p.backtest.curve.filter(r=>r.date.startsWith(`${year}-`)).length>=250);
+    for(const s of p.styles) assert.ok(Number.isFinite(s.metrics.totalReturn));
+    assert.ok(p.backtest.curve.every(r=>r.quality_rank>0 && r.ackman>0));
+  }
+  const p=loadInvestorStyleDashboard();
+  assert.equal(p.styles[1].metrics.totalReturn,null);
+  assert.equal(p.styles[1].metrics.annualizedGrossTradedNotional,null);
+  assert.equal(p.backtest.curve.find(r=>r.date==='2019-11-20').ackman,null);
+  for(const mutate of [x=>x.backtest.curve.find(r=>r.date==='2019-11-20').ackman=1,
+    x=>x.backtest.curve.find(r=>r.date==='2014-01-02').ackman=null,
+    x=>x.styles[1].coverage.gaps=[], x=>x.styles[1].coverage.segments[1].from='2019-11-20',
+    x=>x.styles[1].metrics.totalReturn=1]) {
+    const bad=structuredClone(p); mutate(bad);
+    assert.throws(()=>validateInvestorStyleDashboard(bad),/snapshot_invalid/);
+  }
 });

@@ -1,5 +1,35 @@
 part of 'main.dart';
 
+/// Never bridge missing marks or independently funded history segments.
+Map<String, double?> ruleRangeMetrics(
+  List<Map<String, dynamic>> curve,
+  String id,
+  int first,
+  int last,
+  List<Map<String, dynamic>> styles,
+) {
+  final rows = curve.sublist(first, last + 1);
+  final style = styles.firstWhere((s) => s['id'] == id, orElse: () => {});
+  final segments = asList(asMap(style['coverage'])['segments']);
+  final segment = segments.where(
+    (s) =>
+        text(s['from']).compareTo(text(rows.first['date'])) <= 0 &&
+        text(s['to']).compareTo(text(rows.last['date'])) >= 0,
+  );
+  if (rows.any((r) => nullableNumber(r[id]) == null) ||
+      (segments.isNotEmpty && segment.isEmpty)) {
+    return {};
+  }
+  return strategyRangeMetrics(
+    [
+      for (final r in rows) {'date': r['date'], 'value': r[id]},
+    ],
+    includeEntry:
+        first == 0 ||
+        (segment.isNotEmpty && segment.first['from'] == rows.first['date']),
+  );
+}
+
 /// Range returns and stock attribution deliberately have different denominators:
 /// daily NAV for risk metrics, unique stocks (including open holdings) for P&L.
 class RuleRangeAnalysisPanel extends StatefulWidget {
@@ -12,11 +42,13 @@ class RuleRangeAnalysisPanel extends StatefulWidget {
     required this.curve,
     required this.range,
     required this.onCompany,
+    this.styles = const [],
   });
   final ApiClient api;
   final Palette palette;
   final String asOf, snapshotId;
   final List<Map<String, dynamic>> curve;
+  final List<Map<String, dynamic>> styles;
   final RangeValues range;
   final ValueChanged<String> onCompany;
   @override
@@ -158,10 +190,7 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
     const ids = ['quality_rank', 'ackman'];
     final metrics = {
       for (final id in ids)
-        id: strategyRangeMetrics([
-          for (final r in widget.curve.sublist(first, last + 1))
-            {'date': r['date'], 'value': r[id]},
-        ], includeEntry: first == 0),
+        id: ruleRangeMetrics(widget.curve, id, first, last, widget.styles),
     };
     final labels = [
       w('Return · after costs', '回报率 · 扣费后'),
@@ -266,8 +295,8 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
           const SizedBox(height: 8),
           Text(
             w(
-              'One-way turnover = Σ (buys + sells) ÷ (2 × each pre-trade NAV). Initial entry is included only in the full inception range (100% invested = 50% one-way); other opening-day trades are excluded. Annualized = range turnover × 252 ÷ daily return intervals, not a forecast. Corporate-action exchanges are not trades.',
-              '单边换手率＝Σ（买入额＋卖出额）÷（2 × 各次调仓前净值）。仅从最早日期开始的完整区间计入首次建仓（100%建仓计50%）；其他起始日收盘前交易不计入。年化值＝区间换手率 × 252 ÷ 日收益区间数，不是预测；公司行动换股不算交易。',
+              'One-way turnover = Σ (buys + sells) ÷ (2 × each pre-trade NAV). Initial entry is included when the range starts at inception or an independent segment restart (100% invested = 50% one-way); other opening-day trades are excluded. Annualized = range turnover × 252 ÷ daily return intervals, not a forecast. Corporate-action exchanges are not trades.',
+              '单边换手率＝Σ（买入额＋卖出额）÷（2 × 各次调仓前净值）。区间从策略起点或独立片段起点开始时计入首次建仓（100%建仓计50%）；其他起始日收盘前交易不计入。年化值＝区间换手率 × 252 ÷ 日收益区间数，不是预测；公司行动换股不算交易。',
             ),
             style: s(11, false, p.muted),
           ),
@@ -328,14 +357,19 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
                       children: [
                         Text(name(id), style: s(14, true, color(id))),
                         const SizedBox(height: 10),
-                        extreme(id, asMap(result(id)['best']), true),
+                        if (result(id)['status'] == 'coverage_gap')
+                          gapNotice(id)
+                        else
+                          extreme(id, asMap(result(id)['best']), true),
                         const SizedBox(height: 12),
-                        extreme(id, asMap(result(id)['worst']), false),
+                        if (result(id)['status'] != 'coverage_gap')
+                          extreme(id, asMap(result(id)['worst']), false),
                         const SizedBox(height: 12),
-                        Text(
-                          '${w('Still held', '期末仍持有')}: ${asMap(result(id)['tradeStats'])['open']} · ${w('P&L reconciliation residual', '盈亏对账残差')}: ${money(asMap(result(id)['reconciliation'])['difference'])}',
-                          style: s(11, false, p.muted),
-                        ),
+                        if (result(id)['status'] != 'coverage_gap')
+                          Text(
+                            '${w('Still held', '期末仍持有')}: ${asMap(result(id)['tradeStats'])['open']} · ${w('P&L reconciliation residual', '盈亏对账残差')}: ${money(asMap(result(id)['reconciliation'])['difference'])}',
+                            style: s(11, false, p.muted),
+                          ),
                       ],
                     ),
                 ];
@@ -413,7 +447,7 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
   Widget distribution(List<String> ids) {
     final a = asList(result(ids[0])['distribution']),
         b = asList(result(ids[1])['distribution']);
-    if (a.length != 9 || b.length != 9) {
+    if (a.length != 9 && b.length != 9) {
       return Text(w('Distribution data unavailable', '分布数据不可用'), style: s());
     }
     final maxCount = [
@@ -426,8 +460,10 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
         selectedDistributionBin ??
         List.generate(9, (i) => i).reduce(
           (i, j) =>
-              number(a[i]['count']) + number(b[i]['count']) >=
-                  number(a[j]['count']) + number(b[j]['count'])
+              (a.length == 9 ? number(a[i]['count']) : 0) +
+                      (b.length == 9 ? number(b[i]['count']) : 0) >=
+                  (a.length == 9 ? number(a[j]['count']) : 0) +
+                      (b.length == 9 ? number(b[j]['count']) : 0)
               ? i
               : j,
         );
@@ -445,8 +481,12 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
         LayoutBuilder(
           builder: (context, constraints) {
             final charts = [
-              distributionChart(ids[0], a, ceiling, step, selected),
-              distributionChart(ids[1], b, ceiling, step, selected),
+              a.length == 9
+                  ? distributionChart(ids[0], a, ceiling, step, selected)
+                  : gapNotice(ids[0]),
+              b.length == 9
+                  ? distributionChart(ids[1], b, ceiling, step, selected)
+                  : gapNotice(ids[1]),
             ];
             return constraints.maxWidth >= 840
                 ? Row(
@@ -490,6 +530,12 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
     '+5 ≤ x < +10',
     '≥ +10',
   ][i];
+
+  Widget gapNotice(String id) => Text(
+    '${name(id)} · ${w('This range crosses a data gap. Select 2013–2019-11-19 or 2020-01-02 onward for complete statistics. Independent segments are not compounded together; missing values are not zero.', '此区间跨越数据缺口。请选择 2013 至 2019-11-19，或 2020-01-02 之后的区间查看完整统计。独立片段不拼接复利，缺失值不是零。')}',
+    key: ValueKey('rule-gap-$id'),
+    style: s(12, false, p.secondary),
+  );
 
   Widget distributionChart(
     String id,
@@ -792,7 +838,12 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
                 for (final a in asList(h['corporateActions'])) ...[
                   const SizedBox(height: 12),
                   Text(
-                    '${w('Corporate action · not a trade', '公司行动 · 非买卖')} · ${a['effectiveDate']} · ${a['considerationType']}${a['successorTicker'] == null ? '' : ' → ${a['successorTicker']}'}',
+                    '${w('Corporate action · not a trade', '公司行动 · 非买卖')} · ${a['effectiveDate']} · ${switch (a['considerationType']) {
+                      'stock_and_cash' => w('Stock + cash', '股票加现金'),
+                      'stock' => w('Stock exchange', '换股'),
+                      'cash' => w('Cash settlement', '现金结算'),
+                      _ => w('Other consideration', '其他对价'),
+                    }}${a['successorTicker'] == null ? '' : ' → ${a['successorTicker']}'}',
                     style: s(12, false, p.secondary),
                   ),
                 ],

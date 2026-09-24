@@ -506,6 +506,40 @@ test("ARCH stock conversion uses CNR shares and audits the non-trading transitio
   );
 });
 
+test("mixed stock and cash consideration preserves both merger entitlements", () => {
+  const result = simulateDriftedPortfolio({
+    tradingDates: ["2023-09-21", "2023-09-22", "2023-09-25"],
+    priceMaps: new Map([
+      ["SPY", map([["2023-09-21", 100], ["2023-09-22", 100], ["2023-09-25", 100]])],
+      ["MMP", map([["2023-09-21", 65]])],
+      ["OKE", map([["2023-09-22", 63], ["2023-09-25", 66]])]
+    ]),
+    rebalances: [{
+      reportDate: "2023-06-30",
+      executionDate: "2023-09-21",
+      cashWeight: 0,
+      weights: [{
+        ticker: "MMP", weight: 1,
+        corporateAction: {
+          actionId: "mmp-oneok-2023",
+          considerationType: "stock_and_cash",
+          effectiveDate: "2023-09-22",
+          successorTicker: "OKE",
+          successorSharesPerShare: 0.667,
+          terminalCashEntitlementPerShare: 25
+        }
+      }]
+    }]
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(Math.abs(result.equity.at(-1).value - (66 * 0.667 + 25) / 65) < 1e-12);
+  assert.equal(
+    result.quarterContributions[0].contributions[0].corporateActionResolution.considerationType,
+    "stock_and_cash"
+  );
+});
+
 test("multiple 13F rebalances on one execution date fail closed", () => {
   const shared = {
     filingDate: "2024-01-01",

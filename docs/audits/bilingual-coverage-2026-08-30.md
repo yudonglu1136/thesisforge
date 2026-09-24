@@ -613,3 +613,13 @@ Four focused widget tests pass, including 390px and stale-response protection;
 real-data desktop/mobile checks exercise purchase empty state and non-sale events.
 The full Flutter suite has 592 passes and the same 32 pre-existing failure names
 as the preceding Strategy release; no new failures or removed assertions.
+
+### 2026-09-24 Rule portfolios: 2013 / 2014 history
+
+Added year shortcuts and bilingual segment-coverage explanations. Date changes
+update both strategies' return/risk table, distribution, turnover and detailed
+stock attribution. Cross-gap results explicitly remain unavailable. Real-data
+EN/ZH desktop and 390px mobile verified; 14 focused widget tests pass. Analysis,
+i18n and production build pass. Full Flutter: 601 passes and 32 existing adjacent
+failures. See `rule-portfolios-2013-2026-09-24.md` for exact coverage and release
+identity; this is current-vintage research reconstruction, not actual fund returns.

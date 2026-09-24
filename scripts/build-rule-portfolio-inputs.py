@@ -6,6 +6,7 @@ feature adapter is the versioned original Ackman/common-cohort implementation.
 All inputs are explicit so a production build never depends on /private/tmp.
 """
 import argparse
+from datetime import date
 import hashlib
 import importlib.util
 import json
@@ -21,6 +22,19 @@ from fact_os.repository import FactRepository
 def digest(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 
+def history_window(frame, start='2013-01-01'):
+    if date.fromisoformat(start).isoformat() != start:
+        raise ValueError('invalid_history_start')
+    result = frame[frame.entry.ge(start)].copy()
+    if result.empty:
+        raise ValueError('empty_history_window')
+    return result
+
+def require_quarter_coverage(expected, actual):
+    missing = sorted(set(expected) - set(actual))
+    if missing:
+        raise ValueError('candidate_history_incomplete:' + ','.join(missing))
+
 def build(a):
     metadata = json.loads(a.metadata.read_text())
     if digest(a.panel) != metadata['panelSha256']:
@@ -33,7 +47,7 @@ def build(a):
     spec.loader.exec_module(adapter)
     d = pd.read_csv(a.panel, usecols=lambda c: c not in adapter.FORBIDDEN,
                     keep_default_na=False, na_values=[''], low_memory=False)
-    d = d[d.entry.ge('2023-01-01')].copy()
+    d = history_window(d, a.start)
     if d.duplicated(['q', 'ticker']).any():
         raise ValueError('duplicate_security_quarter')
     features, cols = adapter.build_features(d.copy())
@@ -46,6 +60,7 @@ def build(a):
     quality = pd.DataFrame(screen['candidates']).rename(columns={
         'quarter': 'q', 'revenueYoY': 'revenue_yoy', 'operatingMargin': 'opmargin',
         'fcfMargin': 'fcfmargin', 'roicMin5Y': 'roic_min5'})
+    require_quarter_coverage(d.q.unique(), quality.q.unique())
     # Only beta is reused; quality percentiles and the selected variant are recomputed.
     quality = quality[['q', 'ticker', 'beta', 'roic_min5']].merge(d, on=['q', 'ticker'], validate='one_to_one')
     rates = pd.read_csv(a.rates)
@@ -70,7 +85,11 @@ def build(a):
         quality.roic_min5.ge(.10) & quality.roic_verified.gt(quality.wacc)
 
     original = json.loads(a.schedule.read_text())
-    frozen = [r for r in original['rebalances'] if r['model'] == 'aihf_rank_sqrt_top10_cap15']
+    if 'rebalances' in original:
+        frozen = [r for r in original['rebalances'] if r['model'] == 'aihf_rank_sqrt_top10_cap15']
+    else:
+        frozen = [*original['pre']['aihf_rank_sqrt_top10_cap15_pre2023'],
+                  *original['post']['aihf_rank_sqrt_top10_cap15']]
     schedules = {'quality_rank': [], 'ackman': []}
     for model, frame, keys, component_weights, mask in [
         ('quality_rank', quality, quality_cols, [.25]*4, 'eligible'),
@@ -99,13 +118,18 @@ def build(a):
                           nextExecutionDate=None if pd.isna(clock.next_entry) else clock.next_entry,
                           eligibleCount=len(ranked), populationCount=len(group), positions=positions)
             if model == 'quality_rank':
-                prior = next(r for r in frozen if r['reportDate'] == q)
-                ordered = sorted(prior['targetWeights'], key=lambda r: -r['weight'])
-                if [p['ticker'] for p in positions] != [p['ticker'] for p in ordered]:
-                    raise ValueError('quality_rank_changed_from_requested_research')
-                record['actions'] = [dict(ticker=p['ticker'], permaticker=p['permaticker'], **p['corporateAction'])
-                                     for p in prior['weights'] if p.get('corporateAction')]
+                prior = next((r for r in frozen if r['reportDate'] == q), None)
+                if prior is not None:
+                    ordered = sorted(prior['targetWeights'], key=lambda r: -r['weight'])
+                    if [p['ticker'] for p in positions] != [p['ticker'] for p in ordered]:
+                        raise ValueError('quality_rank_changed_from_requested_research')
+                    # Actions come from the separately reviewed, adjusted-unit
+                    # ledger. A research schedule can contain rounded vendor
+                    # ratios or legal dates which are not executable sessions.
             schedules[model].append(record)
+
+    for rows in schedules.values():
+        require_quarter_coverage(d.q.unique(), [q['quarter'] for q in rows])
 
     a.output.mkdir(parents=True, exist_ok=True)
     with FactRepository(a.fact_root) as repo:
@@ -117,9 +141,9 @@ def build(a):
         if actions['generation'] != repo.generation:
             raise ValueError('action_generation_mismatch')
         tickers += [r['corporateAction']['successorTicker'] for r in actions['actions']
-                    if r['ticker'] in tickers and r['corporateAction']['considerationType'] == 'stock']
+                    if r['ticker'] in tickers and r['corporateAction']['considerationType'] in ('stock','stock_and_cash')]
         start = min(q['executionDate'] for rows in schedules.values() for q in rows)
-        end = max(q['executionDate'] for rows in schedules.values() for q in rows)
+        end = metadata['priceCutoff']
         prices = repo.db.execute('''SELECT ticker,cast(date AS VARCHAR) date,closeadj FROM stocks
             WHERE ticker IN (SELECT * FROM unnest(?)) AND date BETWEEN ? AND ?
             UNION ALL SELECT ticker,cast(date AS VARCHAR),closeadj FROM funds
@@ -142,7 +166,8 @@ def build(a):
     receipt = {key: digest(value) for key, value in vars(a).items()
                if isinstance(value, Path) and value.is_file()}
     receipt.update(sourceGeneration=metadata['factGeneration'], sourceWrites=False,
-                   forwardOutcomeColumnsRead=False, priceSha256=digest(a.output/'prices.csv'), builder=digest(__file__))
+                   requestedStart=a.start, forwardOutcomeColumnsRead=False,
+                   priceSha256=digest(a.output/'prices.csv'), builder=digest(__file__))
     payload = dict(schedules=schedules, actions=actions['actions'], lineage=receipt)
     (a.output/'inputs.json').write_text(json.dumps(payload, allow_nan=False, separators=(',', ':')))
     print(json.dumps(dict(status='ready', quarters={k: len(v) for k,v in schedules.items()},
@@ -152,4 +177,5 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser()
     for name in ['panel', 'metadata', 'candidates', 'rates', 'adapter', 'schedule', 'actions', 'fact-root', 'output']:
         p.add_argument('--' + name, type=Path, required=True)
+    p.add_argument('--start', default='2013-01-01')
     build(p.parse_args())

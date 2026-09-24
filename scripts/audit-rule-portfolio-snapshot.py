@@ -41,6 +41,27 @@ def audit(snapshot_path, prices_path):
                 equal(p["weight"], expected, "target weight")
                 equal(p["score"], sum(i["percentile"] * i["weight"] for i in p["inputs"]), "score")
             equal(sum(p["weight"] for p in q["positions"]) + q["cashWeight"], 1, "cash bridge")
+        segments = style.get("coverage", {}).get("segments", [{"from": curve[0]["date"], "to": curve[-1]["date"]}])
+        gaps = style.get("coverage", {}).get("gaps", [])
+        for row in curve:
+            covered = sum(s["from"] <= row["date"] <= s["to"] for s in segments)
+            missing = sum(g["from"] <= row["date"] <= g["to"] for g in gaps)
+            assert covered + missing == 1, "coverage overlap or undeclared gap"
+            if missing:
+                assert row[key] is None, "gap cannot be priced or zero-filled"
+        for segment in segments:
+            segment_curve = [r for r in curve if segment["from"] <= r["date"] <= segment["to"]]
+            segment_trades = [t for t in style["trades"] if segment["from"] <= t["date"] <= segment["to"]]
+            assert segment_trades[0]["date"] == segment_curve[0]["date"], "segment must fund independently"
+            report = audit_segment(style, schedule, segment_curve, segment_trades, prices)
+            reports.append(report)
+        if len(segments) > 1:
+            assert all(style["metrics"][k] is None for k in ["totalReturn", "cagr", "maxDrawdown", "volatility", "sharpeZeroRf"]), "disconnected segments cannot have full-span returns"
+    print(json.dumps({"status": "pass", "sourceWrites": False, "checks": reports}))
+
+
+def audit_segment(style, schedule, curve, trades, prices):
+        key = style["id"]
         cash, fee_factor, positions, replay, turnovers = 1.0, 1.0, [], [], []
         for row in curve:
             day, values = row["date"], {}
@@ -50,7 +71,9 @@ def audit(snapshot_path, prices_path):
                     if action["considerationType"] == "cash":
                         marked_cash += units * action["terminalCashEntitlementPerShare"]
                         continue
-                    assert action["considerationType"] == "stock", "unaudited action kind"
+                    assert action["considerationType"] in ("stock", "stock_and_cash"), "unaudited action kind"
+                    if action["considerationType"] == "stock_and_cash":
+                        marked_cash += units * action["terminalCashEntitlementPerShare"]
                     ticker, units = action["successorTicker"], units * action["successorSharesPerShare"]
                 values[ticker] = values.get(ticker, 0) + units * prices[ticker, day]
             gross = marked_cash + sum(values.values())
@@ -66,7 +89,7 @@ def audit(snapshot_path, prices_path):
                 positions = [(t, gross * w / prices[t, day], actions.get(t)) for t, w in target.items()]
             replay.append(gross * fee_factor)
             equal(replay[-1], row[key], f"{key} daily NAV {day}")
-        for trade, expected in zip(style["trades"], turnovers, strict=True):
+        for trade, expected in zip(trades, turnovers, strict=True):
             equal(trade["turnover"], expected, "turnover")
         returns = [b / a - 1 for a, b in zip(replay, replay[1:])]
         elapsed = (dt.date.fromisoformat(curve[-1]["date"]) - dt.date.fromisoformat(curve[0]["date"])).days
@@ -78,10 +101,11 @@ def audit(snapshot_path, prices_path):
         computed = {"totalReturn": replay[-1] - 1, "cagr": replay[-1] ** (365.25 / elapsed) - 1,
                     "maxDrawdown": worst, "volatility": stdev * math.sqrt(252),
                     "sharpeZeroRf": statistics.mean(returns) / stdev * math.sqrt(252)}
-        for metric, value in computed.items():
-            equal(value, style["metrics"][metric], metric)
-        reports.append({"strategy": key, "independentDailyChecks": len(replay), "quarters": len(turnovers), "status": "pass"})
-    print(json.dumps({"status": "pass", "sourceWrites": False, "checks": reports}))
+        if len(style.get("coverage", {}).get("segments", [])) <= 1:
+            for metric, value in computed.items():
+                equal(value, style["metrics"][metric], metric)
+        return {"strategy": key, "from": curve[0]["date"], "to": curve[-1]["date"], "metrics": computed,
+                "independentDailyChecks": len(replay), "quarters": len(turnovers), "status": "pass"}
 
 
 if __name__ == "__main__":

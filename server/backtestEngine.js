@@ -382,13 +382,16 @@ export function markPositions(active, date, priceMaps) {
       continue;
     }
     if (actionEffective && date >= actionEffective) {
-      if (action?.considerationType === "stock") {
+      if (["stock", "stock_and_cash"].includes(action?.considerationType)) {
         const successorTicker = String(action?.successorTicker || "")
           .trim()
           .toUpperCase();
         const successorSharesPerShare = finitePositive(
           action?.successorSharesPerShare
         );
+        const cashEntitlementPerShare = action?.considerationType === "stock_and_cash"
+          ? finitePositive(action?.terminalCashEntitlementPerShare)
+          : 0;
         const successorFirstTradingDate = String(
           action?.successorFirstTradingDate || actionEffective
         );
@@ -405,7 +408,8 @@ export function markPositions(active, date, priceMaps) {
         const successorPrice = finitePositive(
           priceMaps.get(successorTicker)?.get(date)
         );
-        if (!successorTicker || successorSharesPerShare == null || successorPrice == null) {
+        if (!successorTicker || successorSharesPerShare == null || successorPrice == null ||
+          cashEntitlementPerShare == null) {
           missing.push({
             ticker: position.ticker,
             successorTicker: successorTicker || null,
@@ -415,7 +419,7 @@ export function markPositions(active, date, priceMaps) {
           continue;
         }
         const equivalentSourceSharePrice =
-          successorPrice * successorSharesPerShare;
+          successorPrice * successorSharesPerShare + cashEntitlementPerShare;
         values.push({
           ...position,
           endPrice: equivalentSourceSharePrice,

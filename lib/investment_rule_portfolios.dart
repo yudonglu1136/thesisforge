@@ -378,6 +378,7 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
           asOf: widget.asOf,
           snapshotId: text(data?['snapshotId']),
           curve: curve,
+          styles: styles,
           range: range,
           onCompany: widget.onCompany,
         ),
@@ -402,11 +403,16 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
     final series = <String, List<double>>{},
         metrics = <String, Map<String, double?>>{};
     for (final id in ['quality_rank', 'ackman', 'spy']) {
-      metrics[id] = strategyRangeMetrics([
-        for (final r in rows) {'date': r['date'], 'value': r[id]},
-      ], includeEntry: first == 0);
-      if (!enabled.contains(id)) continue;
-      final origin = first == 0 ? 1.0 : number(rows.first[id]);
+      metrics[id] = ruleRangeMetrics(curve, id, first, last, styles);
+      if (!enabled.contains(id) || metrics[id]!.isEmpty) continue;
+      final segments = asList(
+        asMap(
+          styles.firstWhere((s) => s['id'] == id, orElse: () => {})['coverage'],
+        )['segments'],
+      );
+      final inception =
+          first == 0 || segments.any((s) => s['from'] == rows.first['date']);
+      final origin = inception ? 1.0 : number(rows.first[id]);
       var peak = origin;
       series[id] = rows.map((r) {
         final v = number(r[id]);
@@ -580,6 +586,27 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
                   },
                   child: Text('${years}Y'),
                 ),
+              for (final year in [2013, 2014])
+                if (curve.any((r) => text(r['date']).startsWith('$year-')))
+                  OutlinedButton(
+                    key: ValueKey('rule-range-year-$year'),
+                    onPressed: () {
+                      final from = curve.indexWhere(
+                        (r) => text(r['date']).startsWith('$year-'),
+                      );
+                      final to = curve.lastIndexWhere(
+                        (r) => text(r['date']).startsWith('$year-'),
+                      );
+                      changeRange(
+                        RangeValues(
+                          from / (curve.length - 1),
+                          to / (curve.length - 1),
+                        ),
+                        curve,
+                      );
+                    },
+                    child: Text('$year'),
+                  ),
               TextButton(
                 onPressed: () => changeRange(const RangeValues(0, 1), curve),
                 child: Text(w('Reset full range', '重置全部区间')),
@@ -594,12 +621,19 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
             ),
             style: s(12, false, p.accent),
           ),
-          if (text(curve.first['date']).compareTo('2013-01-02') > 0) ...[
+          if (asList(
+            asMap(
+              styles.firstWhere(
+                (s) => s['id'] == 'ackman',
+                orElse: () => {},
+              )['coverage'],
+            )['gaps'],
+          ).isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
               w(
-                'Verified history starts ${curve.first['date']}. The requested 2013 extension is not yet available: historical merger/CVR pricing remains incomplete. Longer presets use the available history only.',
-                '已验证历史从 ${curve.first['date']} 开始。要求的 2013 年扩展尚未完成：历史并购及 CVR 权利定价仍有缺口。较长预设仅使用实际可用历史。',
+                'History starts ${curve.first['date']}. Ackman has a gap from 2019-11-20 to 2020-01-01: CELG merger rights (BMYRT) lack verified daily prices. Its 2020 segment is independently funded. Select a range within either segment to see its chart and statistics; cross-gap results are unavailable.',
+                '历史从 ${curve.first['date']} 开始。Ackman 在 2019-11-20 至 2020-01-01 存在缺口：CELG 并购权利 BMYRT 缺少可验证日价。2020 年片段为独立起始资金。选择任一连续片段可查看曲线和统计；跨缺口不计算收益。',
               ),
               style: s(11, false, p.secondary),
             ),

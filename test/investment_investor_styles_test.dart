@@ -22,6 +22,7 @@ class _RuleApi extends ApiClient {
   };
   final analysisPending = <String, Completer<Map<String, dynamic>>>{};
   bool failAnalysis = false;
+  bool enforceCoverage = false;
   Map<String, dynamic> analysis(String path) {
     final q = Uri.parse(path).queryParameters;
     final stock = <String, dynamic>{
@@ -46,37 +47,48 @@ class _RuleApi extends ApiClient {
       'end': q['end'],
       'styles': [
         for (final id in ['quality_rank', 'ackman'])
-          {
-            'id': id,
-            'tradeStats': {
-              'wins': 3,
-              'losses': 1,
-              'flat': 0,
-              'open': 1,
-              'winRate': .75,
-              'payoffRatio': 2.0,
+          if (enforceCoverage &&
+              id == 'ackman' &&
+              q['start']!.compareTo('2019-11-20') < 0 &&
+              q['end']!.compareTo('2020-01-02') >= 0)
+            {
+              'id': id,
+              'status': 'coverage_gap',
+              'distribution': [],
+              'holdings': [],
+            }
+          else
+            {
+              'id': id,
+              'tradeStats': {
+                'wins': 3,
+                'losses': 1,
+                'flat': 0,
+                'open': 1,
+                'winRate': .75,
+                'payoffRatio': 2.0,
+              },
+              'holdings': [stock],
+              'best': stock,
+              'worst': null,
+              'reconciliation': {'difference': 0.0},
+              'turnover': {
+                'version': 'rule-range-turnover-v1',
+                'oneWay': q['start'] == '2013-01-02' ? 1.25 : .4,
+                'annualizedOneWay': .8,
+                'executions': 4,
+              },
+              'distribution': [
+                for (var i = 0; i < 9; i++)
+                  {
+                    'count': i == 6
+                        ? 2
+                        : i == 2 || i == 7
+                        ? 1
+                        : 0,
+                  },
+              ],
             },
-            'holdings': [stock],
-            'best': stock,
-            'worst': null,
-            'reconciliation': {'difference': 0.0},
-            'turnover': {
-              'version': 'rule-range-turnover-v1',
-              'oneWay': q['start'] == '2023-01-03' ? 1.25 : .4,
-              'annualizedOneWay': .8,
-              'executions': 4,
-            },
-            'distribution': [
-              for (var i = 0; i < 9; i++)
-                {
-                  'count': i == 6
-                      ? 2
-                      : i == 2 || i == 7
-                      ? 1
-                      : 0,
-                },
-            ],
-          },
       ],
     };
   }
@@ -397,13 +409,11 @@ void main() {
       expect(find.textContaining('Reconciling stock P&L'), findsOneWidget);
       final rangePath = api.paths.last;
       expect(Uri.parse(rangePath).queryParameters['start'], start);
-      final expected = strategyRangeMetrics([
-        for (final r in curve.skip(first))
-          {'date': r['date'], 'value': r['ackman']},
-      ]);
+      // Half of the extended history crosses the declared CVR gap. Missing
+      // marks must not be removed to invent a continuous return.
       expect(
         tester.widget<Text>(find.byKey(const ValueKey('range-ackman-0'))).data,
-        '${(expected['totalReturn']! * 100).toStringAsFixed(2)}%',
+        '—',
       );
       // A later range must win even if the half-range response arrives last.
       tester.widget<RangeSlider>(find.byType(RangeSlider)).onChanged!(
@@ -492,7 +502,7 @@ void main() {
       await tester.pumpAndSettle();
       final query = Uri.parse(api.paths.last).queryParameters;
       expect(query['end'], '2026-09-14');
-      expect(query['start'], '2023-01-03');
+      expect(query['start'], '2013-01-02');
       expect(find.text('Stock P&L distribution'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('range-quality_rank-0')),
@@ -530,6 +540,60 @@ void main() {
         find.byKey(const ValueKey('range-ackman-best')),
       );
       expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    '2013/2014 controls restore both curves and range statistics from a coverage gap',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _RuleApi()..enforceCoverage = true;
+      await _mount(tester, api, size: const Size(390, 844));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('rule-gap-ackman')), findsWidgets);
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('range-ackman-0'))).data,
+        '—',
+      );
+      expect(
+        find.byKey(const ValueKey('distribution-chart-ackman')),
+        findsNothing,
+      );
+      final payload = api.payload();
+      final curve = asList(asMap(payload['backtest'])['curve']);
+      for (final year in [2013, 2014]) {
+        final button = find.byKey(ValueKey('rule-range-year-$year'));
+        await tester.ensureVisible(button);
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+        final query = Uri.parse(api.paths.last).queryParameters;
+        expect(
+          query['start'],
+          curve.firstWhere((r) => text(r['date']).startsWith('$year-'))['date'],
+        );
+        expect(
+          query['end'],
+          curve.lastWhere((r) => text(r['date']).startsWith('$year-'))['date'],
+        );
+        expect(find.byKey(const ValueKey('rule-gap-ackman')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('distribution-chart-ackman')),
+          findsOneWidget,
+        );
+        for (final id in ['quality_rank', 'ackman']) {
+          final rows = curve
+              .where((r) => text(r['date']).startsWith('$year-'))
+              .toList();
+          final m = strategyRangeMetrics([
+            for (final r in rows) {'date': r['date'], 'value': r[id]},
+          ], includeEntry: year == 2013);
+          expect(
+            tester.widget<Text>(find.byKey(ValueKey('range-$id-0'))).data,
+            '${(m['totalReturn']! * 100).toStringAsFixed(2)}%',
+          );
+        }
+        expect(tester.takeException(), isNull);
+      }
     },
   );
 }

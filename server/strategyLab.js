@@ -168,8 +168,14 @@ export function applyStrategyCosts(result,rebalances,costBps) {
       // Settled cash is not sold again. A stock conversion is now the exact
       // successor claim and can net against that claim's new target weight.
       if(action?.considerationType==='cash')continue;
-      const symbol=action?.considerationType==='stock'?action.successorTicker:h.priceSymbol??h.ticker;
-      old.set(symbol,(old.get(symbol)??0)+h.endingWeight);
+      const converted=['stock','stock_and_cash'].includes(action?.considerationType);
+      const symbol=converted?action.successorTicker:h.priceSymbol??h.ticker;
+      // Mixed consideration contains a settled cash leg: only the successor
+      // security is traded at the next rebalance, never the merger cash.
+      const stockFraction=action?.considerationType==='stock_and_cash'
+        ? (action.successorPrice*action.successorSharesPerShare)/h.endPrice : 1;
+      if (!Number.isFinite(stockFraction) || stockFraction<0 || stockFraction>1) throw new Error('invalid_mixed_consideration');
+      old.set(symbol,(old.get(symbol)??0)+h.endingWeight*stockFraction);
     }
     const target=new Map();
     for(const h of rebalances[i].weights){const symbol=h.priceSymbol??h.ticker;target.set(symbol,(target.get(symbol)??0)+h.weight);}

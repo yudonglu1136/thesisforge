@@ -54,12 +54,11 @@ for (const [id, quarters] of Object.entries(packet.schedules)) {
     q.exited = previous.filter(p => !q.tickers.includes(p.ticker)).map(p => p.ticker);
     q.exits = previous.filter(p => !q.tickers.includes(p.ticker)).map(p => ({ ticker: p.ticker, previousTargetWeight: p.weight, weight: 0 }));
     q.mature = !!q.nextExecutionDate;
-    if (!q.nextExecutionDate) continue;
     const weights = q.positions.map(p => {
       if (!prices.get(p.ticker)?.has(q.executionDate)) throw new Error(`missing_entry_price:${id}:${p.ticker}:${q.executionDate}`);
       const matches = packet.actions.filter(a => a.ticker === p.ticker && String(a.permaticker) === p.permaticker &&
         a.status === 'verified_research_accounting' && a.corporateAction.legalSourceVerified === true &&
-        a.corporateAction.effectiveDate > q.executionDate && a.corporateAction.effectiveDate <= q.nextExecutionDate);
+        a.corporateAction.effectiveDate > q.executionDate && a.corporateAction.effectiveDate <= (q.nextExecutionDate ?? dates.at(-1)));
       if (matches.length > 1) throw new Error('ambiguous_action');
       const action = matches[0]?.corporateAction ?? q.actions?.find(a => a.ticker === p.ticker && a.permaticker === p.permaticker);
       return { ticker: p.ticker, permaticker: p.permaticker, weight: p.weight,
@@ -69,17 +68,34 @@ for (const [id, quarters] of Object.entries(packet.schedules)) {
       nextExecutionDate: q.nextExecutionDate, weights, targetWeights: weights, cashWeight: q.cashWeight,
       ...(weights.length ? {} : { cashReason: 'strategy_rules' }) });
   }
-  const endDate = schedule.at(-1).nextExecutionDate;
-  const gross = simulateDriftedPortfolio({ rebalances: schedule, tradingDates: dates, priceMaps: prices,
-    benchmarkSymbol: 'SPY', endDate, allowExplicitCash: true });
-  if (!gross.ok || gross.equity.at(-1).date !== endDate) throw new Error(`replay_failed:${id}:${JSON.stringify(gross.failure ?? gross.error)}`);
-  const net = applyStrategyCosts(gross, schedule, 25);
+  const endDate = dates.at(-1);
+  // Explicit coverage exception, never outcome-based removal or stitching.
+  // CELG included an unpriced BMYRT right. The first segment ends before the
+  // entitlement; the later segment is an independent inception at a scheduled
+  // rebalance. No return, turnover or risk statistic may cross this gap.
+  const unpricedRight = schedule.some(q=>q.executionDate<'2019-11-20' && q.nextExecutionDate>='2019-11-20' && q.weights.some(p=>p.ticker==='CELG'));
+  const coverage = id === 'ackman' && unpricedRight ? {
+    segments: [{from:dates[0],to:'2019-11-19'}, {from:'2020-01-02',to:endDate}],
+    gaps: [{from:'2019-11-20',to:'2020-01-01',reason:'unpriced_celg_cvr',ticker:'CELG',
+      missingSecurity:'BMYRT',sourceUrl:'https://www.sec.gov/Archives/edgar/data/816284/000110465919065939/tm1923405d1_8k.htm'}],
+  } : {segments:[{from:dates[0],to:endDate}],gaps:[]};
+  for (const q of quarters) q.mature = !!q.nextExecutionDate && coverage.segments.some(s=>s.from<=q.executionDate && s.to>=q.nextExecutionDate);
+  const results = coverage.segments.map(segment => {
+  const rebalances=schedule.filter(q=>q.executionDate>=segment.from && q.executionDate<segment.to);
+  const gross = simulateDriftedPortfolio({ rebalances, tradingDates: dates.filter(d=>d>=segment.from && d<=segment.to), priceMaps: prices,
+    benchmarkSymbol: 'SPY', endDate:segment.to, allowExplicitCash: true });
+  if (!gross.ok || gross.equity.at(-1).date !== segment.to) throw new Error(`replay_failed:${id}:${JSON.stringify(gross.failure ?? gross.error)}`);
+  const net = applyStrategyCosts(gross, rebalances, 25);
   const compounded = gross.quarterContributions.reduce((nav, q, i) => nav * (1 + q.portfolioReturn) * (1 - net.trades[i].costFraction), 1);
   if (Math.abs(compounded - net.equity.at(-1).value) > 1e-9) throw new Error('quarterly_daily_reconciliation_failed');
   for (const q of quarters) delete q.actions; // only execution receipts below expose applied actions
-  curves[id] = net.equity.map((r, i) => ({ ...r, benchmark:gross.equity[i].benchmark }));
-  const years = (Date.parse(endDate) - Date.parse(net.equity[0].date)) / (86400000 * 365.25);
-  styles.push({ id, quarters, trades: net.trades,
+  return {segment,gross,net,compounded};
+  });
+  curves[id] = results.flatMap(({net}) => net.equity);
+  const full = results.length===1 ? results[0] : null;
+  const trades=results.flatMap(r=>r.net.trades);
+  const years = (Date.parse(endDate) - Date.parse(dates[0])) / (86400000 * 365.25);
+  styles.push({ id, quarters, trades, coverage,
     rule: { methodId: id === 'quality_rank' ? 'quality-rank-sqrt-top10-v1' : 'ackman-quality-improvement-proxy-v1',
       targetCap: id === 'quality_rank' ? .15 : .05, targetCount: id === 'quality_rank' ? 10 : 20,
       rebalance: 'quarterly_next_spy_session_close', scoreBeforeGates: true,
@@ -89,19 +105,21 @@ for (const [id, quarters] of Object.entries(packet.schedules)) {
         positiveRevenueFcfEbitdaEv: true, netDebtToEbitdaMax: 3 },
     },
     review: { status: 'experimental_proxy', decision: 'research_use_only' },
-    metrics: { ...strategyMetrics(net.equity), observations: net.equity.length, costBps: 25,
-      completedQuarters: schedule.length, annualizedGrossTradedNotional: net.trades.reduce((v,t)=>v+t.turnover,0)/years },
-    reconciliation: { quarterlyDailyError: compounded - net.equity.at(-1).value, ...gross.reconciliation },
+    metrics: { ...(full ? strategyMetrics(full.net.equity) : {totalReturn:null,cagr:null,maxDrawdown:null,volatility:null,sharpeZeroRf:null}),
+      observations: curves[id].length, costBps: 25,
+      completedQuarters: quarters.filter(q=>q.mature).length,
+      annualizedGrossTradedNotional: full ? trades.reduce((v,t)=>v+t.turnover,0)/years : null },
+    reconciliation: { segments: results.map(r=>({...r.segment,quarterlyDailyError:r.compounded-r.net.equity.at(-1).value,...r.gross.reconciliation})) },
     corporateActions: schedule.flatMap(q => q.weights.filter(p => p.corporateAction).map(p => ({
       ticker: p.ticker, executionDate: q.executionDate, ...p.corporateAction }))),
   });
 }
 const rows = curves.quality_rank;
-if (rows.length !== curves.ackman.length || rows.some((r,i) => r.date !== curves.ackman[i].date ||
-    Math.abs(r.benchmark - curves.ackman[i].benchmark) > 1e-9)) throw new Error('unaligned_comparison');
-const payload = { version: 'investor-style-dashboard-v3', dataThrough: rows.at(-1).date,
+const ackman=new Map(curves.ackman.map(r=>[r.date,r.value]));
+const benchmark=prices.get('SPY'), benchmarkStart=benchmark.get(rows[0].date);
+const payload = { version: 'investor-style-dashboard-v4', dataThrough: rows.at(-1).date,
   backtest: { from: rows[0].date, to: rows.at(-1).date, observations: rows.length, costBps: 25,
-    curve: rows.map((r,i) => ({ date:r.date, quality_rank:r.value, ackman:curves.ackman[i].value, spy:r.benchmark })) },
+    curve: rows.map(r => ({ date:r.date, quality_rank:r.value, ackman:ackman.get(r.date)??null, spy:benchmark.get(r.date)/benchmarkStart })) },
   styles, methodology: { strictArchivedVintagePit:false, priceBasis:'adjusted_total_return_close',
     cashRate:0, transactionCostBpsEachSide:25, benchmarkCosts:0, entryCostIncluded:true,
     terminalLiquidation:false, riskFreeRate:0, classification:'exploratory_research_rules_not_actual_fund_returns' },

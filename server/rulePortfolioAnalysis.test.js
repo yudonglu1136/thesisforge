@@ -116,6 +116,43 @@ test('sample volatility, Sharpe and drawdown use unsampled daily net NAV', () =>
 });
 const sum = values => values.reduce((a, b) => a + b, 0);
 
+test('disconnected history is individually replayable; missing marks cannot become zero returns', () => {
+  const f=fixture();
+  f.styles=[{id:'ackman',quarters:[f.styles[0].quarters[0], {executionDate:dates[2],positions:[{ticker:'AAA',weight:1}],cashWeight:0}],
+    trades:[{date:dates[0],turnover:1,costFraction:.0025},{date:dates[2],turnover:1,costFraction:.0025}],
+    coverage:{segments:[{from:dates[0],to:dates[0]},{from:dates[2],to:dates[3]}],gaps:[{from:dates[1],to:dates[1]}]}}];
+  f.backtest.curve=dates.map((date,i)=>({date,ackman:[.9975,null,.9975,.9975*100/120][i]}));
+  const ledger=buildRuleLedger(f,prices);
+  const missing=analyzeRuleRange(ledger,dates[0],dates[3]).styles[0];
+  assert.equal(missing.status,'coverage_gap');
+  assert.equal(missing.metrics.totalReturn,null); assert.equal(missing.turnover,null);
+  assert.deepEqual(missing.distribution,[]);
+  const later=analyzeRuleRange(ledger,dates[2],dates[3]).styles[0];
+  close(later.metrics.totalReturn,.9975*100/120-1);
+  assert.equal(later.turnover.includesInitialEntry,true); close(later.turnover.oneWay,.5);
+  close(later.reconciliation.difference,0);
+  const absent=new Map(prices); absent.set('AAA',new Map([[dates[0],100]]));
+  assert.throws(()=>buildRuleLedger(f,absent),/missing_execution_price/);
+});
+
+test('mixed merger cash is not sold; successor purchase costs and P&L independently reconcile', () => {
+  const f=fixture();
+  f.styles=[{id:'quality_rank',quarters:[
+    {executionDate:dates[0],positions:[{ticker:'AAA',weight:1}],cashWeight:0},
+    {executionDate:dates[2],positions:[{ticker:'BBB',weight:1}],cashWeight:0}],
+    trades:[{date:dates[0],turnover:1,costFraction:.0025},{date:dates[2],turnover:.25,costFraction:.000625}],
+    corporateActions:[{ticker:'AAA',executionDate:dates[0],effectiveDate:dates[1],considerationType:'stock_and_cash',
+      successorTicker:'BBB',successorSharesPerShare:1,terminalCashEntitlementPerShare:25}]}];
+  const nav=.9975*(1-.000625);
+  f.backtest.curve=dates.map((date,i)=>({date,quality_rank:[.9975,.9975,nav,nav*80/75][i]}));
+  const maps=new Map([['AAA',new Map([[dates[0],100]])],['BBB',new Map([[dates[1],75],[dates[2],75],[dates[3],80]])]]);
+  const out=analyzeRuleRange(buildRuleLedger(f,maps),dates[0],dates[3]).styles[0];
+  close(out.turnover.sellRatio,0); close(out.turnover.buyRatio,1.25);
+  close(out.reconciliation.difference,0);
+  assert.equal(out.holdings.flatMap(h=>h.sales).length,0);
+  close(out.holdings.find(h=>h.ticker==='BBB').purchases[0].notional,.9975*.25);
+});
+
 test('stock conversion retains its exact successor claim and does not fabricate turnover', () => {
   const f = fixture();
   f.styles = [{ id: 'quality_rank', quarters: [

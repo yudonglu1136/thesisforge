@@ -25,9 +25,10 @@ test('investor-style dashboard route is authenticated and returns the reviewed s
   assert.equal(response.status, 200);
   assert.match(response.headers.get('cache-control'), /private.*max-age=300/);
   const body = await response.json();
-  assert.equal(body.version, 'investor-style-dashboard-v3');
+  assert.equal(body.version, 'investor-style-dashboard-v4');
   assert.equal(body.requestedAsOf, '2026-09-23');
-  assert.equal(body.backtest.curve.length, 932);
+  assert.equal(body.backtest.curve.length, 3450);
+  assert.equal(body.backtest.from, '2013-01-02');
   assert.equal(body.backtest.to, '2026-09-21');
   assert.deepEqual(body.styles.map(row => row.id), ['quality_rank', 'ackman']);
   const historicResponse = await fetch(

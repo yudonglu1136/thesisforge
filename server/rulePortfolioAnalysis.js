@@ -3,6 +3,7 @@ import { strategyMetrics } from './strategyLab.js';
 import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
 import { queryFactsBatch, factGeneration, PRICE_TYPES } from './factRepository.js';
 import { createHash } from 'node:crypto';
+import { emptyRuleMetrics } from './rulePortfolioCoverage.js';
 
 export const RULE_ANALYSIS_VERSION = 'rule-range-attribution-v1';
 const tolerance = 1e-8;
@@ -10,9 +11,11 @@ const sum = rows => rows.reduce((a, b) => a + b, 0);
 const fail = (message, status = 503) => { throw Object.assign(new Error(message), { status }); };
 const add = (map, key, value) => map.set(key, (map.get(key) ?? 0) + value);
 const near = (a, b) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= tolerance * Math.max(1, Math.abs(b));
-const symbol = p => p.corporateActionResolution?.considerationType === 'stock'
+const symbol = p => ['stock','stock_and_cash'].includes(p.corporateActionResolution?.considerationType)
   ? p.corporateActionResolution.successorTicker : p.ticker;
 const cashClaim = p => p.corporateActionResolution?.considerationType === 'cash';
+const tradedValue = p => p.corporateActionResolution?.considerationType === 'stock_and_cash'
+  ? p.units * p.corporateActionResolution.successorSharesPerShare * p.corporateActionResolution.successorPrice : p.endValue;
 const mark = (p, date) => ({ date, price: p.endPrice, value: p.endValue,
   basis: cashClaim(p) ? 'cash_entitlement' : p.corporateActionResolution ? 'equivalent_source_adjusted_unit' : 'total_return_adjusted_close' });
 
@@ -21,8 +24,17 @@ const mark = (p, date) => ({ date, price: p.endPrice, value: p.endValue,
 // recorded cost must reconcile before any attribution is returned.
 export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
   const curve = snapshot.backtest.curve;
-  if (curve.length < 2 || curve.some((r, i) => i && r.date <= curve[i - 1].date)) fail('invalid_rule_curve');
+  if (!curve.length || curve.some((r, i) => i && r.date <= curve[i - 1].date)) fail('invalid_rule_curve');
   const styles = snapshot.styles.map(style => {
+    if (style.coverage) {
+      const segments=style.coverage.segments.map(segment=>{
+        const partial={...style,quarters:style.quarters.filter(q=>q.executionDate>=segment.from && q.executionDate<=segment.to),
+          trades:style.trades.filter(t=>t.date>=segment.from && t.date<=segment.to)};
+        delete partial.coverage;
+        return {...buildRuleLedger({...snapshot,styles:[partial],backtest:{curve:curve.filter(r=>r.date>=segment.from && r.date<=segment.to)}},priceMaps,{costBps}).styles[0],...segment};
+      });
+      return {id:style.id,segments,coverage:style.coverage};
+    }
     const recorded = new Map(style.trades.map(t => [t.date, t]));
     // The newest displayed selection can be unexecuted: its date is the last
     // closing mark of the previous return window, without a new entry cost.
@@ -46,7 +58,7 @@ export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
       const q = rebalances.get(date);
       if (q) {
         const old = new Map(), target = new Map(q.positions.map(p => [p.ticker, nav * p.weight]));
-        for (const p of marked.values) if (!cashClaim(p)) add(old, symbol(p), p.endValue);
+        for (const p of marked.values) if (!cashClaim(p)) add(old, symbol(p), tradedValue(p));
         let totalFee = 0, turnover = 0;
         trading = { preTradeNav: nav, buyNotional: 0, sellNotional: 0, initialEntry: days.length === 0 };
         for (const ticker of new Set([...old.keys(), ...target.keys()])) {
@@ -61,7 +73,7 @@ export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
           // remain attributed to their source sleeve; they are not fake sales
           // of the delisted security at a made-up historical quote.
           const sources = delta < 0 ? marked.values.filter(p => !cashClaim(p) && symbol(p) === ticker) : [];
-          const slices = sources.length ? sources.map(p => ({ ticker: p.ticker, fraction: p.endValue / old.get(ticker) })) : [{ ticker, fraction: 1 }];
+          const slices = sources.length ? sources.map(p => ({ ticker: p.ticker, fraction: tradedValue(p) / old.get(ticker) })) : [{ ticker, fraction: 1 }];
           for (const slice of slices) {
             add(fees, slice.ticker, fee * slice.fraction);
             events.push({ ticker: slice.ticker, tradedTicker: ticker, date, side: delta > 0 ? 'buy' : 'sell',
@@ -96,6 +108,12 @@ export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
 // the actual simulated rebalance events. Values are per unit of starting NAV.
 export function analyzeRuleRange(ledger, start, end) {
   const styles = ledger.styles.map(style => {
+    if (style.segments) {
+      const segment=style.segments.find(s=>s.from<=start && s.to>=end);
+      if (!segment) return {id:style.id,status:'coverage_gap',coverage:style.coverage,
+        metrics:emptyRuleMetrics(),turnover:null,tradeStats:null,holdings:[],distribution:[],best:null,worst:null};
+      return {...analyzeRuleRange({...ledger,styles:[segment]},start,end).styles[0],status:'available',segment:{from:segment.from,to:segment.to}};
+    }
     const first = style.days.findIndex(r => r.date === start), last = style.days.findIndex(r => r.date === end);
     if (first < 0 || last <= first) fail('invalid_analysis_range', 400);
     const rows = style.days.slice(first, last + 1), origin = first === 0 ? 1 : rows[0].nav;
@@ -180,7 +198,7 @@ export async function canonicalRulePrices(snapshot) {
   // Resolve successor identity using the same canonical repository. A ticker
   // alias is never substituted by company name or by a display/logo mapping.
   for (const style of snapshot.styles) for (const a of style.corporateActions ?? []) {
-    if (a.considerationType === 'stock' && a.effectiveDate <= end) {
+    if (['stock','stock_and_cash'].includes(a.considerationType) && a.effectiveDate <= end) {
       const old = spans.get(a.successorTicker);
       if (old) include(a.successorTicker, old.identity, a.effectiveDate, end);
       else include(a.successorTicker, a.successorTicker, a.effectiveDate, end);
