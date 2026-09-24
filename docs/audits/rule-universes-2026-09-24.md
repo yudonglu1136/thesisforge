@@ -123,4 +123,39 @@ Rollback targets before deployment: AWS `history2013-042b2cf`; Vercel
 `thesisforge-ko49491h6-yudonglu1136s-projects.vercel.app`.
 Rollback switches the backend application version and both frontend aliases,
 leaving live user data intact. Deployment identity and production read-back
-results will be appended after verification, not inferred from local tests.
+results are recorded below, not inferred from local tests.
+
+### Production acceptance
+
+- Feature commit: `18b8bf6f669d0fb1b36d07fa471aec846831b290`, pushed to trunk.
+- AWS: `universe-18b8bf6`, Ready/Green; deployment completed September 24,
+  2026 at 14:31:40 UTC. Private code archive SHA-256:
+  `ff7ebbed5d36c7d3a30db6a9ab42ee5745b4c863c7753f0c629ddbb7e0056e13`.
+- Frontend: `dpl_2DfSXM2ZUEFsLux5udyVa3Qjkhni`, Ready, verified on **both**
+  apex and www, URL `thesisforge-3il63207z-yudonglu1136s-projects.vercel.app`.
+  Published Flutter JavaScript hash equals the locally verified production-auth
+  build: `db704e1a855249df986ad064329bf0fe1e205fad82951416904dfc7075677645`.
+- AWS actual `webapp` user: read-only canonical replay command
+  `374a75b4-7731-48cb-bc8c-e10186f1abd2` succeeded for all three exact hashes.
+  Six all-market, six S&P and four Nasdaq intervals passed, including 2013/2014,
+  turnover, distribution counts, independently recomputed metrics and residuals.
+  Receipt: `data/fact_os/audit/rule-universes-production-20260924.json` locally;
+  full host report `/var/tmp/universe-18b8bf6-verification.json` (root-only).
+- Runtime cold replay timings: all-market 13.8s, S&P 11.8s, Nasdaq 4.1s;
+  subsequent tested interval calculations at most 336ms / 106ms / 86ms. These are
+  host verification timings, not browser latency or a p95 performance claim.
+- Both public domains return Vercel app responses and 401 for unauthenticated
+  private universe endpoints. Eight concurrent health requests passed HTTP 200 /
+  `ok:true`; the existing `stale/degraded` market-prices warning (September 18
+  legacy price date) remains explicit. This task does not claim all data current.
+- Replaying identical immutable inputs produced byte-identical new snapshots.
+- Signed-in production browser: switched from all market to Nasdaq and S&P;
+  Nasdaq shows 1,688 observations and 231.52% / 244.38% net interval returns,
+  matching host replay. Chinese **390×844 CSS pixels** shows the S&P 2014
+  interval with 252 observations, 19.09% / 14.51% returns and 82.78% / 133.73%
+  one-way turnover. Source filing and snapshot hashes match the release.
+  Browser screenshots and raw test logs are retained in the ignored release
+  evidence directory `data/releases/rule-universe-sec-20260924/verification/`.
+
+The public API, deployed code and canonical reads have been checked together;
+no production database replacement or developer authentication bypass was used.

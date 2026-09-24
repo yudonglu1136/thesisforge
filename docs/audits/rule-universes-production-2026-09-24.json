@@ -1,0 +1,143 @@
+{
+  "release": "universe-18b8bf6",
+  "commit": "18b8bf6f669d0fb1b36d07fa471aec846831b290",
+  "commandId": "374a75b4-7731-48cb-bc8c-e10186f1abd2",
+  "status": "Success",
+  "result": {
+    "status": "pass",
+    "actualUser": "webapp",
+    "readerSha256": "4131b94ae67bba4086204df02098481ccbb3f23e6beb49cbde803c2c35157d22",
+    "universes": [
+      {
+        "universe": "all",
+        "snapshotId": "76f0a490efb29aaadcc84ea5015f095d63891bd75e3cd8cc4ddff4f38a406e0b",
+        "observedThrough": "2026-09-21",
+        "windows": 6,
+        "coldMs": 13763,
+        "warmMaxMs": 336,
+        "samples": [
+          {
+            "from": "2013-01-02",
+            "to": "2013-12-31",
+            "styles": [
+              {
+                "id": "quality_rank",
+                "status": "available",
+                "return": 0.2951754656519672,
+                "turnover": 1.3514276129686742,
+                "residual": -6.661338147750939e-16
+              },
+              {
+                "id": "ackman",
+                "status": "available",
+                "return": 0.40553690690488065,
+                "turnover": 2.063482178433568,
+                "residual": -4.440892098500626e-16
+              }
+            ]
+          },
+          {
+            "from": "2014-01-02",
+            "to": "2014-12-31",
+            "styles": [
+              {
+                "id": "quality_rank",
+                "status": "available",
+                "return": 0.2602065279046286,
+                "turnover": 0.9354003797517488,
+                "residual": -5.551115123125783e-16
+              },
+              {
+                "id": "ackman",
+                "status": "available",
+                "return": 0.20089340494662755,
+                "turnover": 1.661712816098246,
+                "residual": -4.440892098500626e-16
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "universe": "sp500",
+        "snapshotId": "ebfe7e38d1d59f20cb7cac3cfcbd152b9467754921173c920fbbbbd412af5847",
+        "observedThrough": "2026-09-21",
+        "windows": 6,
+        "coldMs": 11782,
+        "warmMaxMs": 106,
+        "samples": [
+          {
+            "from": "2013-01-02",
+            "to": "2013-12-31",
+            "styles": [
+              {
+                "id": "quality_rank",
+                "status": "available",
+                "return": 0.2670415375405064,
+                "turnover": 1.4565046487409026,
+                "residual": 4.996003610813204e-16
+              },
+              {
+                "id": "ackman",
+                "status": "available",
+                "return": 0.3728297894165322,
+                "turnover": 1.8555903773254192,
+                "residual": -3.885780586188048e-16
+              }
+            ]
+          },
+          {
+            "from": "2014-01-02",
+            "to": "2014-12-31",
+            "styles": [
+              {
+                "id": "quality_rank",
+                "status": "available",
+                "return": 0.19086849337549538,
+                "turnover": 0.827829595004268,
+                "residual": -2.7755575615628914e-16
+              },
+              {
+                "id": "ackman",
+                "status": "available",
+                "return": 0.14507640022035528,
+                "turnover": 1.3373200320545666,
+                "residual": -7.771561172376096e-16
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "universe": "nasdaq100",
+        "snapshotId": "282819cf26b8d53de530d50e05f84808ad057644306f589d1f41d355c451f214",
+        "observedThrough": "2026-09-21",
+        "windows": 4,
+        "coldMs": 4124,
+        "warmMaxMs": 86,
+        "samples": [
+          {
+            "from": "2020-01-02",
+            "to": "2026-09-21",
+            "styles": [
+              {
+                "id": "quality_rank",
+                "status": "available",
+                "return": 2.315168582859594,
+                "turnover": 7.939302644534051,
+                "residual": 2.220446049250313e-15
+              },
+              {
+                "id": "ackman",
+                "status": "available",
+                "return": 2.443758227629178,
+                "turnover": 7.1192249392501825,
+                "residual": -2.220446049250313e-15
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
