@@ -633,3 +633,14 @@ widget tests pass; actual browser checks cover English desktop, Chinese 390px,
 universe changes and the S&P 2013 interval. Full Flutter has 604 passes and the
 same 32 adjacent failure names as the prior release. See
 `rule-universes-2026-09-24.md` for source coverage and release verification.
+
+### 2026-09-24 Matched holding intervals (local)
+
+Rule portfolio stock detail now groups FIFO purchase-to-sale/mark intervals,
+with EN/ZH quantity, basis, costs, net P&L, returns, carried-in and still-held
+labels. Corporate-action pairing limitations remain explicit. Four new focused
+tests cover both languages at 1280×720 and 390×844, plus research navigation;
+all 21 scoped widget tests pass. Real ANET browser checks cover both languages
+at desktop/mobile, and the English mobile footer overflow found in testing was
+fixed. This entry records local verification, not a production release; see
+`rule-trade-intervals-2026-09-24.md`.

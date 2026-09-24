@@ -163,7 +163,10 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
           (response['universe'] ?? 'all') != widget.universe ||
           response['start'] != requestedStart ||
           response['end'] != requestedEnd ||
-          response['version'] != 'rule-range-attribution-v1') {
+          ![
+            'rule-range-attribution-v1',
+            'rule-range-attribution-v2',
+          ].contains(response['version'])) {
         throw StateError('range_snapshot_mismatch');
       }
       setState(() {
@@ -795,85 +798,427 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
   void showStock(Map<String, dynamic> h) {
     showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: p.panel,
-        title: Text('${h['ticker']} · ${w('Range P&L', '区间盈亏')}'),
-        content: SizedBox(
-          width: 600,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('$start → $end', style: s(12, false, p.muted)),
-                Text(
-                  '${money(h['netContribution'])} · ${pct(h['netContribution'])}',
-                  style: s(22, true),
-                ),
-                Text(
-                  '${w('Before costs', '扣费前')}: ${money(h['grossContribution'])} · ${w('Costs', '费用')}: ${money(h['costContribution'])}',
-                  style: s(12),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  w(
-                    'Simulated rebalance dates; USD total-return-adjusted prices. Multiple buys and partial sales are retained. Purchases before the selected range are context only, not the interval cost basis.',
-                    '以下是模拟调仓日期及美元总回报复权价格，保留多次加仓和部分卖出。区间前买入仅提供持仓背景，不用其价格冒充区间成本。',
+      builder: (dialogContext) => LanguageScope(
+        language: context.language,
+        child: RuleTradeDetailDialog(
+          stock: h,
+          start: start,
+          end: end,
+          palette: p,
+          onCompany: widget.onCompany,
+        ),
+      ),
+    );
+  }
+}
+
+/// Matched, auditable holding intervals; no client-side financial calculations.
+class RuleTradeDetailDialog extends StatelessWidget {
+  const RuleTradeDetailDialog({
+    super.key,
+    required this.stock,
+    required this.start,
+    required this.end,
+    required this.palette,
+    required this.onCompany,
+  });
+  final Map<String, dynamic> stock;
+  final String start, end;
+  final Palette palette;
+  final ValueChanged<String> onCompany;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = palette;
+    String w(String en, String zh) => context.tr(zh, en);
+    TextStyle s([double size = 13, bool bold = false, Color? color]) =>
+        TextStyle(
+          fontSize: size,
+          fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
+          color: color ?? p.text,
+          height: 1.45,
+        );
+    String money(dynamic v) => nullableNumber(v) == null
+        ? '—'
+        : '${number(v) < -1e-10 ? '−' : ''}\$${formatNumber(number(v).abs() * 100000)}';
+    String price(dynamic v) =>
+        nullableNumber(v) == null ? '—' : '\$${number(v).toStringAsFixed(4)}';
+    String pct(dynamic v) => nullableNumber(v) == null
+        ? '—'
+        : '${(number(v) * 100).toStringAsFixed(2)}%';
+    String qty(dynamic v) => nullableNumber(v) == null
+        ? '—'
+        : (number(v) * 100000).toStringAsFixed(4);
+    final h = stock;
+    final analysis = asMap(h['lotAnalysis']);
+    final ready = analysis['status'] == 'available';
+    final intervals = asList(analysis['intervals']);
+    final groups = <String, List<Map<String, dynamic>>>{};
+    for (final row in intervals) {
+      final key = '${row['buyDate']}:${row['buyPrice']}:${row['entryDate']}';
+      groups.putIfAbsent(key, () => []).add(row);
+    }
+    Widget summary(String label, dynamic value, {bool primary = false}) =>
+        Container(
+          width: MediaQuery.sizeOf(context).width < 732
+              ? (MediaQuery.sizeOf(context).width - 64 - (primary ? 0 : 10)) /
+                    (primary ? 1 : 2)
+              : (math.min(1040, MediaQuery.sizeOf(context).width - 32) - 52) /
+                    3,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: p.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: primary ? p.accent.withValues(alpha: .5) : p.border,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: s(12, false, p.muted)),
+              const SizedBox(height: 4),
+              Text(
+                money(value),
+                style: s(22, true, number(value) < 0 ? p.secondary : p.accent),
+              ),
+            ],
+          ),
+        );
+    Widget exitCell(Map<String, dynamic> row) => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${row['exitDate']} · ${row['status'] == 'open'
+              ? w('Still held', '仍持有')
+              : row['exitKind'] == 'exit'
+              ? w('Exit', '清仓')
+              : w('Partial sale', '部分卖出')}',
+          style: s(13, true),
+        ),
+        Text(
+          '${price(row['exitPrice'])}${row['status'] == 'open' ? w(' · closing mark, not a sale', ' · 期末估值，非卖出') : ''}',
+          style: s(12, false, p.muted),
+        ),
+      ],
+    );
+    Widget pnlCell(Map<String, dynamic> row) => Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          money(row['netContribution']),
+          style: s(
+            17,
+            true,
+            number(row['netContribution']) < 0 ? p.secondary : p.accent,
+          ),
+        ),
+        Text(
+          '${pct(row['returnOnBasis'])} · ${w('on lot basis', '批次收益率')}',
+          style: s(11, false, p.muted),
+        ),
+      ],
+    );
+    Widget batch(List<Map<String, dynamic>> rows, bool narrow) {
+      final row = rows.first;
+      if (row['status'] == 'fee') {
+        return ListTile(
+          title: Text(w('Historical modeled fee', '历史模拟费用'), style: s()),
+          trailing: Text(money(row['netContribution']), style: s()),
+        );
+      }
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          border: Border.all(color: p.border),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              color: p.card,
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.south_west_rounded, size: 18, color: p.accent),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${w('Bought', '买入')} ${row['buyDate']} · ${price(row['buyPrice'])}',
+                          style: s(14, true),
+                        ),
+                      ),
+                    ],
                   ),
-                  style: s(12, false, p.muted),
-                ),
-                for (final side in ['purchases', 'sales']) ...[
-                  const SizedBox(height: 14),
-                  Text(
-                    side == 'purchases'
-                        ? w('Buys · up to range end', '买入 · 截至区间末')
-                        : w('Sells · within range', '卖出 · 区间内'),
-                    style: s(14, true),
-                  ),
-                  if (asList(h[side]).isEmpty) Text(w('None', '无'), style: s()),
-                  for (final e in asList(h[side]))
+                  if (row['carriedIn'] == true)
                     Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      padding: const EdgeInsets.only(top: 5),
                       child: Text(
-                        '${e['date']} · ${e['tradedTicker'] ?? h['ticker']} · ${price(e['price'])}${e['beforeRange'] == true ? w(' · before range', ' · 区间之前') : ''}',
-                        style: s(13),
+                        '${w('Carried in · range basis', '区间前已持有 · 本段计价起点')} ${row['entryDate']} · ${price(row['entryPrice'])}',
+                        style: s(12, false, p.secondary),
                       ),
                     ),
                 ],
-                for (final a in asList(h['corporateActions'])) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    '${w('Corporate action · not a trade', '公司行动 · 非买卖')} · ${a['effectiveDate']} · ${switch (a['considerationType']) {
-                      'stock_and_cash' => w('Stock + cash', '股票加现金'),
-                      'stock' => w('Stock exchange', '换股'),
-                      'cash' => w('Cash settlement', '现金结算'),
-                      _ => w('Other consideration', '其他对价'),
-                    }}${a['successorTicker'] == null ? '' : ' → ${a['successorTicker']}'}',
-                    style: s(12, false, p.secondary),
+              ),
+            ),
+            if (!narrow)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 4,
+                      child: Text(
+                        w('Sell / range-end mark', '卖出／期末估值'),
+                        style: s(11, false, p.muted),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: Text(
+                        w('Adjusted units', '复权模拟数量'),
+                        style: s(11, false, p.muted),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: Text(
+                        w('Basis → proceeds', '区间成本 → 金额'),
+                        style: s(11, false, p.muted),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: Text(
+                        w('Net P&L', '本段净盈亏'),
+                        textAlign: TextAlign.end,
+                        style: s(11, false, p.muted),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            for (final r in rows)
+              Container(
+                key: ValueKey('lot-${r['id']}'),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: p.border)),
+                ),
+                child: narrow
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          exitCell(r),
+                          const SizedBox(height: 10),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '${w('Units', '数量')} ${qty(r['quantity'])}\n${money(r['entryValue'])} → ${money(r['exitValue'])}',
+                                  style: s(12),
+                                ),
+                              ),
+                              pnlCell(r),
+                            ],
+                          ),
+                          Text(
+                            '${w('Allocated costs', '分摊费用')} ${money(r['costContribution'])}',
+                            style: s(11, false, p.muted),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        children: [
+                          Expanded(flex: 4, child: exitCell(r)),
+                          Expanded(
+                            flex: 2,
+                            child: Text(qty(r['quantity']), style: s()),
+                          ),
+                          Expanded(
+                            flex: 2,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${money(r['entryValue'])} → ${money(r['exitValue'])}',
+                                  style: s(12),
+                                ),
+                                Text(
+                                  '${w('Costs', '费用')} ${money(r['costContribution'])}',
+                                  style: s(11, false, p.muted),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Expanded(flex: 2, child: pnlCell(r)),
+                        ],
+                      ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    return Dialog(
+      backgroundColor: p.panel,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: SizedBox(
+        width: 1040,
+        height: math.min(820, MediaQuery.sizeOf(context).height - 48),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+              child: Row(
+                children: [
+                  StockLogo(ticker: text(h['ticker']), palette: p, size: 36),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${h['ticker']} · ${w('Holding intervals', '持仓区间明细')}',
+                          style: s(19, true),
+                        ),
+                        Text('$start → $end', style: s(12, false, p.muted)),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: w('Close', '关闭'),
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(Icons.close, color: p.muted),
                   ),
                 ],
-                const SizedBox(height: 12),
-                if (h['openAtEnd'] == true)
-                  Text(
-                    '${w('Open at range end', '期末未卖出')} · $end · ${price(asMap(h['closingMark'])['price'])}',
-                    style: s(13),
-                  ),
-              ],
+              ),
             ),
-          ),
+            Divider(height: 1, color: p.border),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) => SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          summary(
+                            w('Total range P&L', '区间总盈亏'),
+                            h['netContribution'],
+                            primary: true,
+                          ),
+                          if (ready)
+                            summary(
+                              w('Sold portions · net P&L', '已卖出部分 · 净盈亏'),
+                              analysis['realized'],
+                            ),
+                          if (ready)
+                            summary(
+                              w('Still held · floating P&L', '仍持有部分 · 浮动盈亏'),
+                              analysis['unrealized'],
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        w(
+                          'FIFO · earliest purchases are matched first. Partial sales split a purchase into separate intervals. All amounts use an illustrative \$100,000 at the selected range start; units and prices are total-return adjusted.',
+                          'FIFO 先买先卖 · 部分卖出拆成独立区间。金额按所选区间初始 10 万美元折算；数量和价格均为总回报复权模拟口径。',
+                        ),
+                        style: s(12, false, p.muted),
+                      ),
+                      Text(
+                        '${w('Before costs', '扣费前')} ${money(h['grossContribution'])} − ${w('Costs', '费用')} ${money(h['costContribution'])} = ${money(h['netContribution'])}',
+                        style: s(12),
+                      ),
+                      const SizedBox(height: 16),
+                      if (ready) ...[
+                        for (final rows in groups.values)
+                          batch(rows, constraints.maxWidth < 700),
+                        Text(
+                          '${w('Paired intervals reconcile · difference', '区间配对已对账 · 差额')} ${money(asMap(analysis['reconciliation'])['difference'])}',
+                          style: s(12, false, p.accent),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          w(
+                            'Fees retain the published model’s pre-cost target-turnover basis. Quantities reconcile to post-cost holdings. Original purchase prices are context only when the selected range starts later.',
+                            '费用保留已发布模型的扣费前目标调仓口径；数量与扣费后持仓一致。买入早于所选区间时，仅展示原买价作背景，本段盈亏从区间起点计。',
+                          ),
+                          style: s(11, false, p.muted),
+                        ),
+                      ] else ...[
+                        Text(
+                          w(
+                            'Matched intervals are unavailable for this record. Corporate actions are not treated as ordinary sales. Original events are shown below.',
+                            '该记录暂无法配对持仓批次；公司行动不视为普通卖出。下方保留原始事件。',
+                          ),
+                          style: s(13, false, p.secondary),
+                        ),
+                        const SizedBox(height: 10),
+                        for (final side in ['purchases', 'sales']) ...[
+                          Text(
+                            side == 'purchases'
+                                ? w('Buys · up to range end', '买入 · 截至区间末')
+                                : w('Sells · within range', '卖出 · 区间内'),
+                            style: s(14, true),
+                          ),
+                          for (final e in asList(h[side]))
+                            Text(
+                              '${e['date']} · ${e['tradedTicker'] ?? h['ticker']} · ${price(e['price'])}',
+                              style: s(),
+                            ),
+                        ],
+                        for (final a in asList(h['corporateActions']))
+                          Text(
+                            '${w('Corporate action · not a trade', '公司行动 · 非买卖')} · ${a['effectiveDate']} → ${a['successorTicker'] ?? w('Cash entitlement', '现金对价')}',
+                            style: s(),
+                          ),
+                        if (h['openAtEnd'] == true)
+                          Text(
+                            '${w('Open at range end', '期末未卖出')} · $end · ${price(asMap(h['closingMark'])['price'])}',
+                            style: s(),
+                          ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Divider(height: 1, color: p.border),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 12,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(w('Close', '关闭')),
+                  ),
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      onCompany(text(h['ticker']));
+                    },
+                    icon: const Icon(Icons.arrow_forward, size: 16),
+                    label: Text(w('Research company', '研究公司')),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text(w('Close', '关闭')),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              widget.onCompany(text(h['ticker']));
-            },
-            child: Text(w('Research company', '研究公司')),
-          ),
-        ],
       ),
     );
   }

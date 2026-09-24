@@ -512,7 +512,7 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('range-quality_rank-best')));
       await tester.pumpAndSettle();
-      expect(find.text('ANET · Range P&L'), findsOneWidget);
+      expect(find.text('ANET · Holding intervals'), findsOneWidget);
       expect(
         find.textContaining('2023-01-03 · ANET · \$15.0000'),
         findsOneWidget,

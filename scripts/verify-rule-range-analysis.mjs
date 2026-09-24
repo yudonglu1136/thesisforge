@@ -1,5 +1,5 @@
 import { loadInvestorStyleDashboard } from '../server/investorStyleDashboard.js';
-import { createRuleAnalysisService } from '../server/rulePortfolioAnalysis.js';
+import { createRuleAnalysisService, RULE_ANALYSIS_VERSION } from '../server/rulePortfolioAnalysis.js';
 import { EventEmitter } from 'node:events';
 import { dataReleaseMiddleware } from '../server/dataReleaseContext.js';
 import assert from 'node:assert/strict';
@@ -38,6 +38,14 @@ for (const [first, last] of windows) {
     assert.ok(Math.abs(style.turnover.oneWay - expected) < 1e-9, `${style.id}: turnover receipt mismatch`);
     assert.ok(Math.abs(style.turnover.annualizedOneWay - expected * 252 / (last - first)) < 1e-9);
     assert.equal(style.distribution.reduce((sum, bin) => sum + bin.count, 0), style.tradeStats.stocks);
+    for (const holding of style.holdings) {
+      const lots = holding.lotAnalysis;
+      assert.ok(lots && ['available', 'unavailable_corporate_action'].includes(lots.status));
+      if (lots.status !== 'available') continue;
+      assert.ok(Math.abs(lots.reconciliation.difference) < 1e-8);
+      assert.ok(Math.abs(lots.intervals.reduce((n, r) => n + r.netContribution, 0) - holding.netContribution) < 1e-8);
+      assert.ok(lots.intervals.every(r => r.exitDate >= result.start && r.exitDate <= result.end && r.quantity >= 0));
+    }
   }
   results.push({ start: result.start, end: result.end, milliseconds: Math.round(performance.now() - t),
     bytes: Buffer.byteLength(JSON.stringify(result)), styles: result.styles.map(s => ({ id: s.id, metrics: s.metrics,
@@ -45,7 +53,7 @@ for (const [first, last] of windows) {
       turnover: s.turnover, distribution: s.distribution,
       best: s.best?.ticker, worst: s.worst?.ticker, reconciliation: s.reconciliation })) });
 }
-console.log(JSON.stringify({ status: 'pass', universe, snapshotId: snapshot.snapshotId, method: 'rule-range-attribution-v1',
+console.log(JSON.stringify({ status: 'pass', universe, snapshotId: snapshot.snapshotId, method: RULE_ANALYSIS_VERSION,
   observedThrough: snapshot.dataThrough, results }, null, 2));
 }
 

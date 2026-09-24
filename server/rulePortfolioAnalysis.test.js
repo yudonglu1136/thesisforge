@@ -21,6 +21,58 @@ function fixture() {
 }
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 
+test('post-cost execution quantities conserve inventory and FIFO intervals reconcile for both strategies', () => {
+  const ledger = buildRuleLedger(fixture(), prices);
+  for (const style of ledger.styles) {
+    const inventory = new Map();
+    for (const e of style.events) {
+      if (!['buy', 'sell'].includes(e.side)) continue;
+      const before = inventory.get(e.ticker) ?? 0;
+      close(e.quantityBefore, before);
+      const after = before + (e.side === 'buy' ? e.quantity : -e.quantity);
+      assert.ok(after >= -1e-12);
+      close(e.quantityAfter, after);
+      close(e.notional, e.quantity * e.price);
+      inventory.set(e.ticker, after);
+      const mark = style.days.find(d => d.date === e.date).positions.get(e.ticker);
+      close(after, mark ? mark.value / mark.price : 0);
+    }
+  }
+  for (const style of analyzeRuleRange(ledger, dates[0], dates[3]).styles) {
+    for (const h of style.holdings) {
+      assert.equal(h.lotAnalysis.status, 'available');
+      assert.equal(h.lotAnalysis.method, 'fifo-post-cost-v1');
+      close(sum(h.lotAnalysis.intervals.map(r => r.grossContribution)), h.grossContribution);
+      close(sum(h.lotAnalysis.intervals.map(r => r.costContribution)), h.costContribution);
+      close(sum(h.lotAnalysis.intervals.map(r => r.netContribution)), h.netContribution);
+      close(h.lotAnalysis.reconciliation.difference, 0);
+    }
+    const b = style.holdings.find(h => h.ticker === 'BBB');
+    assert.equal(b.lotAnalysis.intervals[0].status, 'closed');
+    assert.equal(b.lotAnalysis.intervals[0].buyDate, dates[0]);
+    assert.equal(b.lotAnalysis.intervals[0].exitDate, dates[2]);
+    close(b.lotAnalysis.intervals[0].quantity, .49875 / 100);
+  }
+});
+
+test('FIFO uses a selected opening mark, excludes opening trades/fees and preserves original buy context', () => {
+  const ledger = buildRuleLedger(fixture(), prices);
+  const r = analyzeRuleRange(ledger, dates[1], dates[2]).styles[0];
+  for (const h of r.holdings) {
+    close(sum(h.lotAnalysis.intervals.map(r => r.netContribution)), h.netContribution);
+    const carried = h.lotAnalysis.intervals.find(r => r.carriedIn);
+    assert.equal(carried.buyDate, dates[0]);
+    assert.equal(carried.entryDate, dates[1]);
+    assert.equal(carried.buyPrice, 100);
+    assert.equal(carried.entryPrice, h.ticker === 'AAA' ? 110 : 90);
+    close(carried.entryCost, 0);
+  }
+  const after = analyzeRuleRange(ledger, dates[2], dates[3]).styles[0].holdings[0];
+  assert.ok(after.lotAnalysis.intervals.every(r => r.status === 'open' && r.carriedIn));
+  assert.ok(after.lotAnalysis.intervals.every(r => r.costContribution === 0));
+  close(sum(after.lotAnalysis.intervals.map(r => r.netContribution)), after.netContribution);
+});
+
 test('canonical range prices use one compact pinned batch and reject identity or date drift', async () => {
   const snapshot = fixture();
   for (const style of snapshot.styles) for (const q of style.quarters) for (const p of q.positions) {

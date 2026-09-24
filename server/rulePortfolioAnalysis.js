@@ -4,8 +4,9 @@ import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
 import { queryFacts, factGeneration, PRICE_TYPES } from './factRepository.js';
 import { createHash } from 'node:crypto';
 import { emptyRuleMetrics } from './rulePortfolioCoverage.js';
+import { ruleTradeIntervals } from './ruleTradeIntervals.js';
 
-export const RULE_ANALYSIS_VERSION = 'rule-range-attribution-v1';
+export const RULE_ANALYSIS_VERSION = 'rule-range-attribution-v2';
 const tolerance = 1e-8;
 const sum = rows => rows.reduce((a, b) => a + b, 0);
 const fail = (message, status = 503) => { throw Object.assign(new Error(message), { status }); };
@@ -41,6 +42,9 @@ export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
     const rebalances = new Map(style.quarters.filter(q => recorded.has(q.executionDate)).map(q => [q.executionDate, q]));
     if (rebalances.size !== recorded.size) fail('rule_analysis_schedule_mismatch');
     const days = [], events = [], actionsSeen = new Set();
+    // Do not invent broker lots across an exchange or cash entitlement. These
+    // retain the existing audited action attribution, explicitly unpaired.
+    const unpairedTickers = new Set((style.corporateActions ?? []).flatMap(a => [a.ticker, a.successorTicker].filter(Boolean)));
     let active, previousValues = new Map(), previousNav = 1;
     for (const row of curve) {
       const date = row.date, pnl = new Map(), fees = new Map();
@@ -57,6 +61,7 @@ export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
       let nav = marked.portfolioValue, closing = marked, trading = null;
       const q = rebalances.get(date);
       if (q) {
+        const eventStart = events.length;
         const old = new Map(), target = new Map(q.positions.map(p => [p.ticker, nav * p.weight]));
         for (const p of marked.values) if (!cashClaim(p)) add(old, symbol(p), tradedValue(p));
         let totalFee = 0, turnover = 0;
@@ -91,6 +96,30 @@ export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
         if (!active.ok) fail(active.failure.code);
         closing = markPositions(active, date, priceMaps);
         if (!closing.ok) fail(closing.failure.code);
+        const before = new Map(marked.values.map(p => [p.ticker, p]));
+        const after = new Map(closing.values.map(p => [p.ticker, p]));
+        const targets = new Map(events.slice(eventStart).map(e => [e.ticker, e]));
+        const corrected = events.slice(eventStart).filter(e => unpairedTickers.has(e.ticker));
+        for (const ticker of new Set([...before.keys(), ...after.keys()])) {
+          if (unpairedTickers.has(ticker)) continue;
+          const price = priceMaps.get(ticker)?.get(date);
+          if (!Number.isFinite(price) || price <= 0) fail('missing_execution_price');
+          const quantityBefore = (before.get(ticker)?.endValue ?? 0) / price;
+          const quantityAfter = (after.get(ticker)?.endValue ?? 0) / price;
+          const delta = quantityAfter - quantityBefore;
+          const cost = fees.get(ticker) ?? 0;
+          if (Math.abs(delta) < 1e-15 && !cost) continue;
+          const targetEvent = targets.get(ticker);
+          corrected.push({ ticker, tradedTicker: ticker, date,
+            side: Math.abs(delta) < 1e-15 ? 'fee' : delta > 0 ? 'buy' : 'sell',
+            price, basis: 'total_return_adjusted_close', quantity: Math.abs(delta), quantityBefore, quantityAfter,
+            notional: Math.abs(delta) * price, cost,
+            preCostTargetNotional: targetEvent?.notional ?? 0,
+            costBasis: 'historical_pre_cost_target_turnover',
+            quantityBasis: 'post_cost_simulated_position',
+            reason: targetEvent ? 'rebalance' : 'cost_reallocation' });
+        }
+        events.splice(eventStart, events.length - eventStart, ...corrected);
       }
       if (!near(nav, row[style.id]) || !near(closing.portfolioValue, nav) ||
           !near(sum([...pnl.values()]) - sum([...fees.values()]), nav - previousNav)) fail('rule_analysis_nav_mismatch');
@@ -98,7 +127,7 @@ export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
       previousNav = nav;
       previousValues = new Map(closing.values.map(p => [p.ticker, p.endValue]));
     }
-    return { id: style.id, days, events };
+    return { id: style.id, days, events, unpairedTickers: [...unpairedTickers] };
   });
   return { version: RULE_ANALYSIS_VERSION, snapshotId: snapshot.snapshotId, styles };
 }
@@ -149,13 +178,20 @@ export function analyzeRuleRange(ledger, start, end) {
       const events = style.events.filter(e => e.ticker === r.ticker && e.date <= end);
       const opening = rows[0].positions.get(r.ticker), closing = rows.at(-1).positions.get(r.ticker);
       const seen = rows.flatMap(row => row.positions.has(r.ticker) ? [row.positions.get(r.ticker)] : []);
+      const lotAnalysis = ruleTradeIntervals({ events: events.filter(e => e.side !== 'corporate_action'), start, end,
+        opening, closing, inception: first === 0, origin, gross: r.grossContribution, costs: r.costContribution,
+        supported: !(style.unpairedTickers ?? []).includes(r.ticker) });
+      const scaledEvent = e => ({ ...e, notional: e.notional / origin, cost: e.cost / origin,
+        ...(e.quantity == null ? {} : { quantity: e.quantity / origin, quantityBefore: e.quantityBefore / origin,
+          quantityAfter: e.quantityAfter / origin, preCostTargetNotional: e.preCostTargetNotional / origin }) });
       return { ...r, netContribution: r.grossContribution - r.costContribution,
+        lotAnalysis,
         openAtStart: first > 0 && !!opening?.open, openAtEnd: !!closing?.open,
         openingMark: opening ? { ...opening, value: opening.value / origin } : null,
         closingMark: closing ? { ...closing, value: closing.value / origin } : null,
         firstObserved: seen[0]?.date ?? null, lastObserved: seen.at(-1)?.date ?? null,
-        purchases: events.filter(e => e.side === 'buy').map(e => ({ ...e, beforeRange: e.date < start })),
-        sales: events.filter(e => e.side === 'sell' && e.date >= start),
+        purchases: events.filter(e => e.side === 'buy').map(e => ({ ...scaledEvent(e), beforeRange: first > 0 && e.date <= start })),
+        sales: events.filter(e => e.side === 'sell' && (first === 0 ? e.date >= start : e.date > start)).map(scaledEvent),
         corporateActions: events.filter(e => e.side === 'corporate_action').map(e => ({ ...e.action, observedDate: e.date })),
       };
     }).sort((a, b) => b.netContribution - a.netContribution || a.ticker.localeCompare(b.ticker));
