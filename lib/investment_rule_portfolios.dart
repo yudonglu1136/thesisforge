@@ -19,6 +19,23 @@ class StrategyWorkspacePanel extends StatefulWidget {
 class _StrategyWorkspacePanelState extends State<StrategyWorkspacePanel> {
   bool rules = false, opened = false;
   @override
+  void initState() {
+    super.initState();
+    rules = readBrowserQuery()['strategyTab'] == 'rules';
+    opened = rules;
+  }
+
+  void tab(bool value) {
+    setState(() {
+      rules = value;
+      opened = opened || value;
+    });
+    replaceBrowserQuery({
+      'strategyTab': value ? 'rules' : 'builder',
+    }, replaceCurrent: true);
+  }
+
+  @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
@@ -30,16 +47,13 @@ class _StrategyWorkspacePanelState extends State<StrategyWorkspacePanel> {
             key: const ValueKey('strategy-builder-tab'),
             selected: !rules,
             label: Text(context.tr('策略构建器', 'Strategy builder')),
-            onSelected: (_) => setState(() => rules = false),
+            onSelected: (_) => tab(false),
           ),
           ChoiceChip(
             key: const ValueKey('strategy-styles-tab'),
             selected: rules,
             label: Text(context.tr('规则组合', 'Rule portfolios')),
-            onSelected: (_) => setState(() {
-              rules = true;
-              opened = true;
-            }),
+            onSelected: (_) => tab(true),
           ),
         ],
       ),
@@ -90,6 +104,7 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
   String active = 'quality_rank';
   int epoch = 0, quarter = -1, hover = -1;
   RangeValues range = const RangeValues(0, 1);
+  String? savedStart, savedEnd;
   final enabled = <String>{'quality_rank', 'ackman', 'spy'};
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
@@ -124,6 +139,9 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
   @override
   void initState() {
     super.initState();
+    final query = readBrowserQuery();
+    savedStart = query['strategyFrom'];
+    savedEnd = query['strategyTo'];
     unawaited(load());
   }
 
@@ -148,7 +166,7 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
       setState(() {
         data = response;
         loading = false;
-        range = const RangeValues(0, 1);
+        range = restoredRange(asList(asMap(response['backtest'])['curve']));
         hover = -1;
         quarter = quarters.length - 1;
       });
@@ -159,6 +177,79 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
         loading = false;
       });
     }
+  }
+
+  RangeValues restoredRange(List<Map<String, dynamic>> curve) {
+    if (curve.length < 2 || savedStart == null || savedEnd == null) {
+      return const RangeValues(0, 1);
+    }
+    final first = curve.indexWhere(
+      (r) => text(r['date']).compareTo(savedStart!) >= 0,
+    );
+    final last = curve.lastIndexWhere(
+      (r) => text(r['date']).compareTo(savedEnd!) <= 0,
+    );
+    if (first < 0 || last <= first) return const RangeValues(0, 1);
+    return RangeValues(first / (curve.length - 1), last / (curve.length - 1));
+  }
+
+  void changeRange(RangeValues value, List<Map<String, dynamic>> curve) {
+    final first = (value.start * (curve.length - 1)).round();
+    final last = (value.end * (curve.length - 1)).round();
+    if (first >= last) return;
+    setState(() {
+      range = value;
+      hover = -1;
+      savedStart = text(curve[first]['date']);
+      savedEnd = text(curve[last]['date']);
+    });
+    replaceBrowserQuery({
+      'strategyTab': 'rules',
+      'strategyFrom': savedStart,
+      'strategyTo': savedEnd,
+    }, replaceCurrent: true);
+  }
+
+  Future<void> pickBoundary(
+    List<Map<String, dynamic>> curve,
+    bool beginning,
+  ) async {
+    final requestEpoch = epoch;
+    final first = (range.start * (curve.length - 1)).round();
+    final last = (range.end * (curve.length - 1)).round();
+    final minimum = DateTime.parse(
+      text(curve[beginning ? 0 : first + 1]['date']),
+    );
+    final maximum = DateTime.parse(
+      text(curve[beginning ? last - 1 : curve.length - 1]['date']),
+    );
+    final day = await showDatePicker(
+      context: context,
+      initialDate: DateTime.parse(
+        text(curve[beginning ? first : last]['date']),
+      ),
+      firstDate: minimum,
+      lastDate: maximum,
+      helpText: beginning
+          ? w('Select start date', '选择起始日期')
+          : w('Select end date', '选择结束日期'),
+      cancelText: w('Cancel', '取消'),
+      confirmText: w('Apply', '应用'),
+      selectableDayPredicate: (d) =>
+          curve.any((r) => r['date'] == d.toIso8601String().substring(0, 10)),
+    );
+    if (!mounted || day == null || requestEpoch != epoch) return;
+    final index = curve.indexWhere(
+      (r) => r['date'] == day.toIso8601String().substring(0, 10),
+    );
+    if (index < 0) return;
+    changeRange(
+      RangeValues(
+        (beginning ? index : first) / (curve.length - 1),
+        (beginning ? last : index) / (curve.length - 1),
+      ),
+      curve,
+    );
   }
 
   Widget panel(Widget child) => Container(
@@ -442,19 +533,77 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
           RangeSlider(
             values: range,
             divisions: curve.length - 1,
+            labels: RangeLabels(
+              text(rows.first['date']),
+              text(rows.last['date']),
+            ),
             onChanged: (v) {
               if ((v.end - v.start) * (curve.length - 1) >= 1) {
-                setState(() {
-                  range = v;
-                  hover = -1;
-                });
+                changeRange(v, curve);
               }
             },
           ),
-          TextButton(
-            onPressed: () => setState(() => range = const RangeValues(0, 1)),
-            child: Text(w('Reset full range', '重置全部区间')),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                key: const ValueKey('rule-range-start'),
+                onPressed: () => pickBoundary(curve, true),
+                icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                label: Text('${w('From', '从')} ${rows.first['date']}'),
+              ),
+              OutlinedButton.icon(
+                key: const ValueKey('rule-range-end'),
+                onPressed: () => pickBoundary(curve, false),
+                icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                label: Text('${w('To', '至')} ${rows.last['date']}'),
+              ),
+              for (final years in [1, 3, 5, 10])
+                TextButton(
+                  key: ValueKey('rule-range-${years}y'),
+                  onPressed: () {
+                    final end = DateTime.parse(text(curve.last['date']));
+                    final target = DateTime(
+                      end.year - years,
+                      end.month,
+                      end.day,
+                    ).toIso8601String().substring(0, 10);
+                    final start = curve.indexWhere(
+                      (r) => text(r['date']).compareTo(target) >= 0,
+                    );
+                    changeRange(
+                      RangeValues(math.max(0, start) / (curve.length - 1), 1),
+                      curve,
+                    );
+                  },
+                  child: Text('${years}Y'),
+                ),
+              TextButton(
+                onPressed: () => changeRange(const RangeValues(0, 1), curve),
+                child: Text(w('Reset full range', '重置全部区间')),
+              ),
+            ],
           ),
+          const SizedBox(height: 8),
+          Text(
+            w(
+              'Changing either date or the slider updates both strategies’ table, P&L distribution and stock attribution below.',
+              '调整日期或滑块，下方两套策略的统计表、盈亏分布及股票归因同步更新。',
+            ),
+            style: s(12, false, p.accent),
+          ),
+          if (text(curve.first['date']).compareTo('2013-01-02') > 0) ...[
+            const SizedBox(height: 8),
+            Text(
+              w(
+                'Verified history starts ${curve.first['date']}. The requested 2013 extension is not yet available: historical merger/CVR pricing remains incomplete. Longer presets use the available history only.',
+                '已验证历史从 ${curve.first['date']} 开始。要求的 2013 年扩展尚未完成：历史并购及 CVR 权利定价仍有缺口。较长预设仅使用实际可用历史。',
+              ),
+              style: s(11, false, p.secondary),
+            ),
+          ],
           const SizedBox(height: 8),
           Text(name(active), style: s(13, true, color(active))),
           const SizedBox(height: 8),

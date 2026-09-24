@@ -18,7 +18,8 @@ test('historical cutoff truncates curves, holdings and metrics rather than echoi
 test('reviewed rule-portfolio snapshot has aligned curves, metrics and holdings changes', () => {
   const payload = loadInvestorStyleDashboard({ asOf: '2026-09-23' });
   assert.equal(payload.requestedAsOf, '2026-09-23');
-  assert.equal(payload.backtest.curve.length, 876);
+  assert.equal(payload.backtest.curve.length, 932);
+  assert.equal(payload.dataThrough, '2026-09-21');
   assert.deepEqual(payload.styles.map(row => row.id), ['quality_rank', 'ackman']);
   const owner = payload.styles.find(row => row.id === 'quality_rank');
   assert.equal(owner.review.status, 'experimental_proxy');
@@ -31,6 +32,8 @@ test('reviewed rule-portfolio snapshot has aligned curves, metrics and holdings 
     assert.equal(style.metrics.completedQuarters, 14);
     assert.equal(style.quarters.length, 15);
     assert.equal(style.quarters.at(-1).mature, false);
+    assert.equal(style.trades.at(-1).date, '2026-07-01');
+    assert.equal(style.trades.length, 15);
     for (let index = 1; index < style.quarters.length; index++) {
       const previous = new Set(style.quarters[index - 1].tickers);
       const current = style.quarters[index];
@@ -95,5 +98,5 @@ test('late independent requests and mutated caller objects do not poison the cac
   assert.notEqual(loadInvestorStyleDashboard().styles[0].quarters[0].positions[0].score,99);
   assert.ok(a.styles.every(s=>s.corporateActions.every(c=>c.effectiveDate<='2024-05-01')));
   assert.equal(a.styles[0].reconciliation,null);
-  assert.equal(b.styles[0].metrics.observations,876);
+  assert.equal(b.styles[0].metrics.observations,932);
 });

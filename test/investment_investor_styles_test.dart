@@ -313,7 +313,8 @@ void main() {
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
-      expect(find.text('Stock P&L distribution'), findsNothing);
+      // The section must not disappear while an updated interval is loading.
+      expect(find.text('Stock P&L distribution'), findsOneWidget);
       expect(find.textContaining('Reconciling stock P&L'), findsOneWidget);
       final rangePath = api.paths.last;
       expect(Uri.parse(rangePath).queryParameters['start'], start);
@@ -351,6 +352,74 @@ void main() {
       );
       expect(find.text('Sells · within range'), findsOneWidget);
       expect(find.textContaining('Open at range end'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets('date presets update the shared interval for both portfolios', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _RuleApi();
+    await _mount(tester, api);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('rule-range-1y')));
+    await tester.tap(find.byKey(const ValueKey('rule-range-1y')));
+    await tester.pumpAndSettle();
+    final query = Uri.parse(api.paths.last).queryParameters;
+    final curve = (api.payload()['backtest'] as Map)['curve'] as List;
+    final end = DateTime.parse(curve.last['date'] as String);
+    final target = DateTime(
+      end.year - 1,
+      end.month,
+      end.day,
+    ).toIso8601String().substring(0, 10);
+    final start = curve.firstWhere(
+      (r) => (r['date'] as String).compareTo(target) >= 0,
+    )['date'];
+    expect(query['start'], start);
+    expect(query['end'], curve.last['date']);
+    expect(find.text('Stock P&L distribution'), findsOneWidget);
+    for (final id in ['quality_rank', 'ackman']) {
+      final m = strategyRangeMetrics([
+        for (final r in curve.where(
+          (r) => (r['date'] as String).compareTo(start as String) >= 0,
+        ))
+          {'date': r['date'], 'value': r[id]},
+      ]);
+      expect(
+        tester.widget<Text>(find.byKey(ValueKey('range-$id-0'))).data,
+        '${(m['totalReturn']! * 100).toStringAsFixed(2)}%',
+      );
+    }
+    expect(find.byKey(const ValueKey('rule-range-start')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rule-range-end')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets(
+    'calendar end-date selection re-queries both strategy distributions',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _RuleApi();
+      await _mount(tester, api);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('rule-range-end')));
+      await tester.tap(find.byKey(const ValueKey('rule-range-end')));
+      await tester.pumpAndSettle();
+      expect(find.byType(DatePickerDialog), findsOneWidget);
+      await tester.tap(find.text('14').last);
+      await tester.tap(find.text('Apply'));
+      await tester.pumpAndSettle();
+      final query = Uri.parse(api.paths.last).queryParameters;
+      expect(query['end'], '2026-09-14');
+      expect(query['start'], '2023-01-03');
+      expect(find.text('Stock P&L distribution'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('range-quality_rank-0')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('range-ackman-0')), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

@@ -255,6 +255,8 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
             ),
             style: s(11, false, p.muted),
           ),
+          const SizedBox(height: 24),
+          Text(w('Stock P&L distribution', '个股盈亏分布'), style: s(18, true)),
           if (loading) ...[
             const SizedBox(height: 18),
             LinearProgressIndicator(color: p.accent),
@@ -413,7 +415,6 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(w('Stock P&L distribution', '个股盈亏分布'), style: s(18, true)),
         Text(
           w(
             'Bins: net contribution to portfolio return in percentage points. Bar length: number of stocks.',
