@@ -69,6 +69,7 @@ systemctl enable --now amazon-ssm-agent
         'Device':'/dev/sdf','InstanceId':ref('Worker'),'VolumeId':ref('DataVolume')}},
       'ApiReadPolicy':{'Type':'AWS::IAM::Policy','Properties':{**policy('fact-os-read-and-ssm',[
         statement(['s3:GetObject'],sub('arn:aws:s3:::${Bucket}/fact-os/published/*')),
+        statement(['s3:GetObject'],sub('arn:aws:s3:::${Bucket}/investment-releases/*')),
         statement(['ssm:UpdateInstanceInformation','ssmmessages:CreateControlChannel','ssmmessages:CreateDataChannel',
                    'ssmmessages:OpenControlChannel','ssmmessages:OpenDataChannel'],'*'),
         ]),'Roles':[ref('ApiRoleName')]}},

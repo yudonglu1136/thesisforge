@@ -52,3 +52,14 @@ test('packages compact summaries with lazy details and market history',t=>{
   a.equal(sectorArtifact.prepare('SELECT source_generation FROM institutional_13f_active_sectors_v1').get().source_generation,'active-g');
   sectorArtifact.close();
 });
+
+test('Elastic Beanstalk 13F installer supports instance-role S3 reads with exact bucket and release paths',()=>{
+  const hook=fs.readFileSync(path.resolve('.platform/hooks/postdeploy/05-install-13f-insights.sh'),'utf8');
+  a.match(hook,/THESISFORGE_13F_INSTALL_DB_S3_URI/);
+  a.match(hook,/THESISFORGE_13F_INSTALL_MANIFEST_S3_URI/);
+  a.match(hook,/parsed\.scheme == "s3"/);
+  a.match(hook,/parsed\.netloc == "thesisforge-production-378477120101-us-east-1"/);
+  a.match(hook,/aws s3 cp "\$\{database_source\}"/);
+  a.match(hook,/aws s3 cp "\$\{manifest_source\}"/);
+  a.match(hook,/--region us-east-1 --only-show-errors/);
+});

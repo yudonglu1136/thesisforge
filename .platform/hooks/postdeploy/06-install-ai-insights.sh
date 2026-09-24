@@ -8,12 +8,14 @@ config_value() {
   python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$1" <<<"${environment_json}"
 }
 release_id="${THESISFORGE_AI_INSIGHTS_INSTALL_RELEASE_ID:-$(config_value THESISFORGE_AI_INSIGHTS_INSTALL_RELEASE_ID)}"
+archive_s3_uri="${THESISFORGE_AI_INSIGHTS_INSTALL_S3_URI:-$(config_value THESISFORGE_AI_INSIGHTS_INSTALL_S3_URI)}"
 archive_url="${THESISFORGE_AI_INSIGHTS_INSTALL_ARCHIVE_URL:-$(config_value THESISFORGE_AI_INSIGHTS_INSTALL_ARCHIVE_URL)}"
 archive_sha="${THESISFORGE_AI_INSIGHTS_INSTALL_ARCHIVE_SHA256:-$(config_value THESISFORGE_AI_INSIGHTS_INSTALL_ARCHIVE_SHA256)}"
 archive_bytes="${THESISFORGE_AI_INSIGHTS_INSTALL_ARCHIVE_BYTES:-$(config_value THESISFORGE_AI_INSIGHTS_INSTALL_ARCHIVE_BYTES)}"
 unset environment_json
 
-if [ -z "${release_id}${archive_url}${archive_sha}${archive_bytes}" ]; then
+archive_source="${archive_s3_uri:-${archive_url}}"
+if [ -z "${release_id}${archive_source}${archive_sha}${archive_bytes}" ]; then
   echo "no AI Insights sidecar install configured; skipping"
   exit 0
 fi
@@ -23,7 +25,7 @@ if [[ ! "${release_id}" =~ ^ai-insights-[0-9]{8}-v[1-9][0-9]*$ ]] ||
   echo "error: invalid AI Insights release contract" >&2
   exit 1
 fi
-python3 - "${release_id}" "${archive_url}" <<'PY'
+python3 - "${release_id}" "${archive_source}" <<'PY'
 import sys
 from urllib.parse import urlparse
 release_id, url = sys.argv[1:]
@@ -32,8 +34,12 @@ allowed = {
     "thesisforge-production-378477120101-us-east-1.s3.amazonaws.com",
     "thesisforge-production-378477120101-us-east-1.s3.us-east-1.amazonaws.com",
 }
-if (parsed.scheme != "https" or parsed.hostname not in allowed
-        or parsed.path != f"/investment-releases/{release_id}/ai-insights.tar.gz" or not parsed.query):
+valid_https = (parsed.scheme == "https" and parsed.hostname in allowed
+    and parsed.path == f"/investment-releases/{release_id}/ai-insights.tar.gz" and bool(parsed.query))
+valid_s3 = (parsed.scheme == "s3"
+    and parsed.netloc == "thesisforge-production-378477120101-us-east-1"
+    and parsed.path == f"/investment-releases/{release_id}/ai-insights.tar.gz" and not parsed.query)
+if not (valid_https or valid_s3):
     raise SystemExit("invalid_ai_insights_presigned_url")
 PY
 
@@ -50,8 +56,13 @@ if [ -e "${target}" ]; then
 fi
 download="$(mktemp -d "${runtime_root}/.${release_id}.download.XXXXXX")"
 trap 'rm -rf "${download}"' EXIT
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 300 \
-  "${archive_url}" --output "${download}/ai-insights.tar.gz"
+if [[ "${archive_source}" == s3://* ]]; then
+  aws s3 cp "${archive_source}" "${download}/ai-insights.tar.gz" \
+    --region us-east-1 --only-show-errors
+else
+  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 300 \
+    "${archive_source}" --output "${download}/ai-insights.tar.gz"
+fi
 if [ "$(stat -c '%s' "${download}/ai-insights.tar.gz")" != "${archive_bytes}" ] ||
    [ "$(sha256sum "${download}/ai-insights.tar.gz" | awk '{print $1}')" != "${archive_sha}" ]; then
   echo "error: AI Insights archive byte contract mismatch" >&2

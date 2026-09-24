@@ -51,5 +51,13 @@ class InfrastructureContractTest(unittest.TestCase):
         self.assertEqual(self.resources['TimeoutAlarm']['Properties']['MetricName'],'ExecutionsTimedOut')
         self.assertEqual(self.resources['DispatchAlarm']['Properties']['Namespace'],'AWS/SQS')
 
+    def test_api_role_can_restore_immutable_runtime_sidecars(self):
+        statements=self.resources['ApiReadPolicy']['Properties']['PolicyDocument']['Statement']
+        self.assertIn({
+            'Effect':'Allow',
+            'Action':['s3:GetObject'],
+            'Resource':{'Fn::Sub':'arn:aws:s3:::${Bucket}/investment-releases/*'},
+        },statements)
+
 
 if __name__=='__main__': unittest.main()

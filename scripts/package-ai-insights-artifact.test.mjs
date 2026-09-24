@@ -55,6 +55,11 @@ test('Elastic Beanstalk installer consumes the packaged release directory', () =
   a.match(hook, /--source "\$\{source_root\}" --target "\$\{target\}"/);
   a.doesNotMatch(hook, /--source "\$\{download\}\/source"/);
   a.match(hook, /chmod 0755 "\$\(dirname "\$\{runtime_root\}"\)" "\$\{runtime_root\}"/);
+  a.match(hook, /THESISFORGE_AI_INSIGHTS_INSTALL_S3_URI/);
+  a.match(hook, /parsed\.scheme == "s3"/);
+  a.match(hook, /parsed\.netloc == "thesisforge-production-378477120101-us-east-1"/);
+  a.match(hook, /aws s3 cp "\$\{archive_source\}"/);
+  a.match(hook, /--region us-east-1 --only-show-errors/);
   a.ok(
     hook.indexOf('chmod 0755') < hook.indexOf('if [ -e "${target}" ]'),
     'parent traversal permissions must be repaired even when the release already exists',

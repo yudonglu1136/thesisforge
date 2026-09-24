@@ -9,6 +9,8 @@ config_value() {
 }
 
 release_id="${THESISFORGE_13F_INSTALL_RELEASE_ID:-$(config_value THESISFORGE_13F_INSTALL_RELEASE_ID)}"
+database_s3_uri="${THESISFORGE_13F_INSTALL_DB_S3_URI:-$(config_value THESISFORGE_13F_INSTALL_DB_S3_URI)}"
+manifest_s3_uri="${THESISFORGE_13F_INSTALL_MANIFEST_S3_URI:-$(config_value THESISFORGE_13F_INSTALL_MANIFEST_S3_URI)}"
 database_url="${THESISFORGE_13F_INSTALL_DB_URL:-$(config_value THESISFORGE_13F_INSTALL_DB_URL)}"
 manifest_url="${THESISFORGE_13F_INSTALL_MANIFEST_URL:-$(config_value THESISFORGE_13F_INSTALL_MANIFEST_URL)}"
 gzip_sha="${THESISFORGE_13F_INSTALL_GZIP_SHA256:-$(config_value THESISFORGE_13F_INSTALL_GZIP_SHA256)}"
@@ -16,7 +18,9 @@ database_sha="${THESISFORGE_13F_INSTALL_DB_SHA256:-$(config_value THESISFORGE_13
 database_bytes="${THESISFORGE_13F_INSTALL_DB_BYTES:-$(config_value THESISFORGE_13F_INSTALL_DB_BYTES)}"
 unset environment_json
 
-if [ -z "${release_id}${database_url}${manifest_url}${gzip_sha}${database_sha}${database_bytes}" ]; then
+database_source="${database_s3_uri:-${database_url}}"
+manifest_source="${manifest_s3_uri:-${manifest_url}}"
+if [ -z "${release_id}${database_source}${manifest_source}${gzip_sha}${database_sha}${database_bytes}" ]; then
   echo "no 13F sidecar install configured; skipping"
   exit 0
 fi
@@ -28,7 +32,7 @@ if [[ ! "${release_id}" =~ ^13f-insights-[0-9]{8}-v[1-9][0-9]*$ ]] ||
   exit 1
 fi
 
-python3 - "${release_id}" "${database_url}" "${manifest_url}" <<'PY'
+python3 - "${release_id}" "${database_source}" "${manifest_source}" <<'PY'
 import sys
 from urllib.parse import urlparse
 
@@ -40,7 +44,11 @@ allowed = {
 for url, name in ((database_url, "13f-insights.sqlite.gz"), (manifest_url, "manifest.json")):
     parsed = urlparse(url)
     expected = f"/investment-releases/{release_id}/{name}"
-    if parsed.scheme != "https" or parsed.hostname not in allowed or parsed.path != expected or not parsed.query:
+    valid_https = parsed.scheme == "https" and parsed.hostname in allowed and parsed.path == expected and bool(parsed.query)
+    valid_s3 = (parsed.scheme == "s3"
+        and parsed.netloc == "thesisforge-production-378477120101-us-east-1"
+        and parsed.path == expected and not parsed.query)
+    if not (valid_https or valid_s3):
         raise SystemExit("invalid_13f_sidecar_presigned_url")
 PY
 
@@ -162,10 +170,20 @@ if [ "${available_bytes}" -lt "${required_bytes}" ]; then
 fi
 
 mkdir "${stage}"
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 900 \
-  "${database_url}" --output "${stage}/13f-insights.sqlite.gz"
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 120 \
-  "${manifest_url}" --output "${stage}/manifest.json"
+if [[ "${database_source}" == s3://* ]]; then
+  aws s3 cp "${database_source}" "${stage}/13f-insights.sqlite.gz" \
+    --region us-east-1 --only-show-errors
+else
+  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 900 \
+    "${database_source}" --output "${stage}/13f-insights.sqlite.gz"
+fi
+if [[ "${manifest_source}" == s3://* ]]; then
+  aws s3 cp "${manifest_source}" "${stage}/manifest.json" \
+    --region us-east-1 --only-show-errors
+else
+  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 120 \
+    "${manifest_source}" --output "${stage}/manifest.json"
+fi
 
 actual_gzip_sha="$(sha256sum "${stage}/13f-insights.sqlite.gz" | awk '{print $1}')"
 if [ "${actual_gzip_sha}" != "${gzip_sha}" ]; then
