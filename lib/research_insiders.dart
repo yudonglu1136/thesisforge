@@ -385,14 +385,13 @@ class _ResearchInsidersState extends State<ResearchInsidersPanel> {
                     color: color.withValues(alpha: .12),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(
-                    r['kind'] == 'purchase'
-                        ? Icons.south_west
-                        : r['kind'] == 'sale'
-                        ? Icons.north_east
-                        : Icons.swap_horiz,
-                    size: 18,
-                    color: color,
+                  child: Center(
+                    child: Text(
+                      '${r['transactioncode'] ?? ''}'.trim().isEmpty
+                          ? '·'
+                          : '${r['transactioncode']}',
+                      style: s(15, true, color),
+                    ),
                   ),
                 ),
                 Expanded(

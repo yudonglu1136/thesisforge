@@ -105,6 +105,8 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         expect(find.text(zh ? '内部人交易' : 'Insider trades'), findsOneWidget);
+        // Transaction identifiers remain visible without a freshly cached icon font.
+        expect(find.text('S'), findsNWidgets(5));
         expect(
           find.textContaining(zh ? '仅部分合计' : 'partial total'),
           findsOneWidget,
