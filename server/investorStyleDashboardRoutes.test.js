@@ -39,3 +39,24 @@ test('investor-style dashboard route is authenticated and returns the reviewed s
   assert.equal(historic.snapshotId,body.snapshotId);
   assert.equal((await fetch(base+'&snapshotId=stale',{headers:{'x-test-user':'alice'}})).status,409);
 });
+
+test('range analysis requires auth, forwards pinned range and never caches failures', async t => {
+  const app = express(), calls = [];
+  app.use((req, _, next) => { if (req.headers['x-test-user']) req.user = { id: 'alice' }; next(); });
+  registerInvestmentRoutes(app, { aiInsights: {}, date: value => value,
+    ruleAnalysis: async args => {
+      calls.push(args);
+      if (args.snapshotId === 'stale') throw Object.assign(new Error('investor_style_snapshot_changed'), { status: 409 });
+      return { version: 'rule-range-attribution-v1', ...args };
+    } });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}/api/investment/investor-styles/analysis?asOf=2026-09-24&snapshotId=verified&start=2024-01-02&end=2025-01-02`;
+  assert.equal((await fetch(base)).status, 401); assert.equal(calls.length, 0);
+  const response = await fetch(base, { headers: { 'x-test-user': 'alice' } });
+  assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  assert.deepEqual(calls[0], { asOf: '2026-09-24', snapshotId: 'verified', start: '2024-01-02', end: '2025-01-02' });
+  const stale = await fetch(base.replace('snapshotId=verified', 'snapshotId=stale'), { headers: { 'x-test-user': 'alice' } });
+  assert.equal(stale.status, 409); assert.equal(stale.headers.get('cache-control'), 'private, no-store');
+});

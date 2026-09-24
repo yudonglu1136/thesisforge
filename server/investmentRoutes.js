@@ -17,6 +17,7 @@ import { buildFundamentalDiscovery, buildFundamentalCompany, saveFundamentalObse
 import { researchDocuments, researchFundamentals, researchInstitutions, researchPublishedModel,
   saveResearchRecord, listResearchRecords } from './researchWorkbench.js';
 import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
+import { createRuleAnalysisService } from './rulePortfolioAnalysis.js';
 import { researchInsiders } from './researchInsiders.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
 import { factOsEnabled } from './factRepository.js';
@@ -26,6 +27,7 @@ export function registerInvestmentRoutes(app,service) {
   // both reads and saved research. A second route-local instance can otherwise
   // observe another manifest generation during the same user workflow.
   const aiInsights = service.aiInsights ??= createAiInsightsService();
+  const ruleAnalysis = service.ruleAnalysis ??= createRuleAnalysisService();
   const aiQuery = request => ({...request.query, asOf: service.date(request.query.asOf)});
   function route(method,path,handler,{cacheControl='private, no-store'}={}) {app[method]('/api/investment'+path,async (req,res)=>{
     // These URLs are cutoff-based, not immutable generation URLs. Revalidate
@@ -50,6 +52,8 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/guru-study',(_,r)=>guruStudy(service.source,service.date(r.query.asOf),r.query.period??'common'));
   route('get','/investor-styles',(_,r)=>loadInvestorStyleDashboard({asOf:service.date(r.query.asOf),snapshotId:r.query.snapshotId}),
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
+  route('get','/investor-styles/analysis',(_,r)=>ruleAnalysis({asOf:service.date(r.query.asOf),
+    snapshotId:r.query.snapshotId,start:r.query.start,end:r.query.end}));
   route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
     search:r.query.search,limit:r.query.limit,
   }));
