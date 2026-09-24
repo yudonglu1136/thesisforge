@@ -186,6 +186,37 @@ class FactRepository:
         return [{'dataset': table, **state, 'locally_available': table in self._datasets}
                 for table, state in sorted(self._states.items())]
 
+    def get_insider_transactions(self, ticker, start, as_of):
+        """Bounded filing-date window; a current vendor snapshot, NOT a vintage archive.
+
+        SF2 does not contain accession IDs or original/amended filing links. Keep
+        those limitations explicit instead of claiming strict historical replay.
+        """
+        first, cutoff = _date(start), _date(as_of)
+        if first > cutoff or (cutoff - first).days > 370:
+            raise ValueError('insiders requires a filing window of at most one year')
+        identity = self.resolve_security(ticker)
+        self._require('insiders')
+        aliases = identity['aliases']
+        marks = ','.join('?' for _ in aliases)
+        count = self.db.execute(f'SELECT count(*) FROM insiders WHERE ticker IN ({marks}) AND date>=? AND date<=?',
+                                [*aliases, first, cutoff]).fetchone()[0]
+        if count > 20000:
+            raise MissingData('insider filing window too large; select a shorter window')
+        rows = self._security_rows('insiders', identity, 'date>=? AND date<=?',
+                                   [first, cutoff], 'date DESC,ownername,formtype,rownum')
+        for row in rows:
+            # Do not include catalog generation or ingestion timestamps: a price
+            # refresh must not change a saved financial evidence identity.
+            content = {key: row.get(key) for key, _ in self._contracts['insiders'].columns}
+            row['fact_id'] = hashlib.sha256(json.dumps(content, sort_keys=True, default=str,
+                                                      separators=(',', ':')).encode()).hexdigest()
+            row['provenance'] = self._lineage('insiders', row)
+        return {'ticker': identity['ticker'], 'security_id': identity['security_id'],
+                'company_id': identity['company_id'], 'generation': self.generation,
+                'source_as_of': self._states['insiders'].get('max_date'),
+                'pit_basis': 'filing_date_filtered_current_vendor_snapshot', 'rows': rows}
+
     def _master(self):
         self._require('tickers')
         if not self._master_ready:

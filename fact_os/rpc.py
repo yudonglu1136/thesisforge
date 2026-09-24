@@ -17,11 +17,13 @@ METHODS = frozenset({
     'get_institutional_holdings', 'get_institutional_ownership_history',
     'get_holder_changes', 'get_investors', 'resolve_investor',
     'get_investor_history', 'get_investor_portfolio', 'get_investor_changes',
+    'get_insider_transactions',
 })
 
 
 def required_tables(repo, method, args, kwargs):
     if method == 'get_coverage': return set()
+    if method == 'get_insider_transactions': return {'tickers', 'insiders'}
     if method == 'get_dividends': return {'tickers', 'actions'}
     if method in ('resolve_security', 'get_investors', 'resolve_investor'):
         return {'tickers'}

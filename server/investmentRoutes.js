@@ -17,6 +17,7 @@ import { buildFundamentalDiscovery, buildFundamentalCompany, saveFundamentalObse
 import { researchDocuments, researchFundamentals, researchInstitutions, researchPublishedModel,
   saveResearchRecord, listResearchRecords } from './researchWorkbench.js';
 import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
+import { researchInsiders } from './researchInsiders.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
 import { factOsEnabled } from './factRepository.js';
 
@@ -91,6 +92,7 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/gurus/:id',(_,r)=>service.source.guruDetail(r.params.id,service.date(r.query.asOf)));
   route('get','/research/:ticker',(owner,r)=>service.research(owner,r.params.ticker,r.query.asOf));
   route('get','/research/:ticker/documents',(_,r)=>researchDocuments(service.source,r.params.ticker,service.date(r.query.asOf)));
+  route('get','/research/:ticker/insiders',(_,r)=>(service.researchInsiders??researchInsiders)(r.params.ticker,service.date(r.query.asOf),r.query));
   route('get','/research/:ticker/fundamentals',(_,r)=>researchFundamentals(service,r.params.ticker,r.query.asOf));
   route('get','/research/:ticker/institutions',(_,r)=>researchInstitutions(service,r.params.ticker,r.query.asOf,r.query.quarter??null));
   route('get','/research/:ticker/published-model',(_,r)=>researchPublishedModel(service,r.params.ticker,r.query.asOf));

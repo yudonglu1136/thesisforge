@@ -136,3 +136,34 @@ for a verified consolidated-book mapping; they are neither summed nor guessed.
 The 2026 Q2 filing-entity transition does not become a fabricated list of new Guru
 purchases: manager-level changes are explicitly unavailable across that boundary.
 These are local read-path measurements, not production load or SLA claims.
+
+## Research insider activity (2026-09-24)
+
+`GET /api/investment/research/:ticker/insiders` reads the allowlisted
+`get_insider_transactions` repository method, behind normal investment auth.
+Both `tickers` and `insiders` must have complete canonical backfills. It uses
+the request-pinned installed catalog, the existing Python runtime/reader lease,
+and no provider calls, model-node requirement or separate financial database.
+The daily canonical publication already carries `insiders`; this consumer does
+not add a timer, rebuild, private journal or data writer.
+
+The filing-date window is 3, 6 or 12 calendar months through the research cutoff;
+the current month can be partial. Per-company reads are bounded at 20,000 lines,
+with at most 50 returned per API page. The default interface page has 5 lines.
+`snapshotId` pins pagination to company/window/content/method; mismatch is 409.
+Evidence IDs hash source fields, never the global catalog or ingestion clock.
+
+Method `reported-insider-activity-v1` sums positive reported USD `transactionvalue`
+for direction-consistent non-derivative P/S lines on Forms 4/5. Missing/invalid
+amounts remain missing; partial totals expose priced/unpriced counts. Awards,
+exercises, gifts, tax withholding, holdings-only lines and derivatives stay in
+the detail list but outside these totals. Unlinked amendments quarantine the
+affected owner's window from aggregates. Joint-owner reporting may overlap;
+line totals are not deduplicated economic trade volume. Shares are as reported,
+not split-adjusted. No inference about intent, confidence or future returns.
+
+This is **filing-date-filtered current vendor data**, not strict archived-vintage
+PIT. The canonical table lacks accession IDs, amendment linkage, source text and
+10b5-1 plan flags. SEC navigation is labelled issuer search, not a verified filing.
+The USD unit contract is explicit in [Sharadar's insiders documentation](https://sharadar.com/docs/insiders);
+transaction classifications follow [SEC Form 4 instructions](https://www.sec.gov/about/forms/form4data.pdf).
