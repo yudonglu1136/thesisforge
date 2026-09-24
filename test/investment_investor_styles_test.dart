@@ -487,11 +487,11 @@ void main() {
       expect(find.textContaining('Reconciling stock P&L'), findsOneWidget);
       final rangePath = api.paths.last;
       expect(Uri.parse(rangePath).queryParameters['start'], start);
-      // Half of the extended history crosses the declared CVR gap. Missing
-      // marks must not be removed to invent a continuous return.
+      // The reviewed CELG consideration bridge keeps Ackman's range metrics
+      // available even when the selected interval crosses November 2019.
       expect(
         tester.widget<Text>(find.byKey(const ValueKey('range-ackman-0'))).data,
-        '—',
+        isNot('—'),
       );
       // A later range must win even if the half-range response arrives last.
       tester.widget<RangeSlider>(find.byType(RangeSlider)).onChanged!(
@@ -621,21 +621,21 @@ void main() {
     },
   );
   testWidgets(
-    '2013/2014 controls restore both curves and range statistics from a coverage gap',
+    '2013/2014 controls keep both continuous curves and range statistics available',
     (tester) async {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      final api = _RuleApi()..enforceCoverage = true;
+      final api = _RuleApi();
       await _mount(tester, api, size: const Size(390, 844));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('rule-gap-ackman')), findsWidgets);
+      expect(find.byKey(const ValueKey('rule-gap-ackman')), findsNothing);
       expect(
         tester.widget<Text>(find.byKey(const ValueKey('range-ackman-0'))).data,
-        '—',
+        '468.66%',
       );
       expect(
         find.byKey(const ValueKey('distribution-chart-ackman')),
-        findsNothing,
+        findsOneWidget,
       );
       final payload = api.payload();
       final curve = asList(asMap(payload['backtest'])['curve']);

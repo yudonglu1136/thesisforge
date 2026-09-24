@@ -1,5 +1,16 @@
 # Rule portfolio range follow-up — 2026-09-24
 
+## Superseded CELG limitation
+
+The original range release below correctly failed closed because licensed
+Sharadar data has no BMYRT series. A later reviewed release now accounts for
+CELG as $50 cash + one BMY share + one BMYRT right, using Bristol Myers Squibb's
+2019 10-K disclosure that the CVR's first November 21, 2019 trade was $2.30.
+The research model explicitly liquidates that right at first trade, net of its
+25bp transaction cost, and retains the BMY share claim. All-market and S&P
+Ackman histories are therefore continuous from 2013-01-02 through 2026-09-21.
+The text below is retained as the audit record of the earlier blocked state.
+
 Scope: Quality Rank Top 10 and Ackman quantitative proxy only. Saved user
 strategies, Guru replication, source facts and private stores are not modified.
 

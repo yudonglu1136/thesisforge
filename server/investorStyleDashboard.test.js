@@ -63,7 +63,7 @@ test('reviewed rule-portfolio snapshot has aligned curves, metrics and holdings 
   for (const style of payload.styles) {
     assert.equal(style.metrics.costBps, 25);
     assert.equal(style.metrics.observations, payload.backtest.curve.filter(r=>Number.isFinite(r[style.id])).length);
-    assert.equal(style.metrics.completedQuarters, style.id==='ackman'?53:54);
+    assert.equal(style.metrics.completedQuarters, 54);
     assert.equal(style.quarters.length, 55);
     assert.equal(style.quarters.at(-1).mature, false);
     assert.equal(style.trades.at(-1).date, '2026-07-01');
@@ -135,7 +135,7 @@ test('late independent requests and mutated caller objects do not poison the cac
   assert.equal(b.styles[0].metrics.observations,3450);
 });
 
-test('2013 and 2014 are actual daily history, while the declared CVR gap is never compounded', () => {
+test('2013 through present is continuous after reviewed CELG CVR accounting', () => {
   for (const year of [2013,2014]) {
     const p=loadInvestorStyleDashboard({asOf:`${year}-12-31`});
     assert.equal(p.status,'ready');
@@ -144,12 +144,21 @@ test('2013 and 2014 are actual daily history, while the declared CVR gap is neve
     assert.ok(p.backtest.curve.every(r=>r.quality_rank>0 && r.ackman>0));
   }
   const p=loadInvestorStyleDashboard();
-  assert.equal(p.styles[1].metrics.totalReturn,null);
-  assert.equal(p.styles[1].metrics.annualizedGrossTradedNotional,null);
-  assert.equal(p.backtest.curve.find(r=>r.date==='2019-11-20').ackman,null);
-  for(const mutate of [x=>x.backtest.curve.find(r=>r.date==='2019-11-20').ackman=1,
+  const ackman=p.styles[1], celg=ackman.corporateActions.find(a=>a.ticker==='CELG');
+  assert.ok(Number.isFinite(ackman.metrics.totalReturn));
+  assert.ok(Number.isFinite(ackman.metrics.annualizedGrossTradedNotional));
+  assert.deepEqual(ackman.coverage,{segments:[{from:'2013-01-02',to:'2026-09-21'}],gaps:[]});
+  assert.ok(p.backtest.curve.find(r=>r.date==='2019-11-20').ackman>0);
+  assert.ok(p.backtest.curve.find(r=>r.date==='2019-11-21').ackman>0);
+  assert.equal(celg.successorTicker,'BMY');
+  assert.equal(celg.contingentRightTicker,'BMYRT');
+  assert.equal(celg.contingentRightFirstTradePrice,2.30);
+  assert.equal(celg.contingentRightLiquidationCostBps,25);
+  assert.equal(celg.contingentRightNetProceedsPerShare,2.29425);
+  for(const mutate of [x=>x.backtest.curve.find(r=>r.date==='2019-11-20').ackman=null,
     x=>x.backtest.curve.find(r=>r.date==='2014-01-02').ackman=null,
-    x=>x.styles[1].coverage.gaps=[], x=>x.styles[1].coverage.segments[1].from='2019-11-20',
+    x=>x.styles[1].coverage.segments[0].to='2019-11-20',
+    x=>x.styles[1].corporateActions.find(a=>a.ticker==='CELG').contingentRightNetProceedsPerShare=0,
     x=>x.styles[1].metrics.totalReturn=1]) {
     const bad=structuredClone(p); mutate(bad);
     assert.throws(()=>validateInvestorStyleDashboard(bad),/snapshot_invalid/);

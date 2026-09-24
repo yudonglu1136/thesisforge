@@ -36,6 +36,19 @@ def require_quarter_coverage(expected, actual):
     if missing:
         raise ValueError('candidate_history_incomplete:' + ','.join(missing))
 
+def frozen_quality_schedule(original):
+    if 'rebalances' in original:
+        return [r for r in original['rebalances'] if r['model'] == 'aihf_rank_sqrt_top10_cap15']
+    if 'styles' in original:
+        published_quality = next((row for row in original['styles'] if row.get('id') == 'quality_rank'), None)
+        if published_quality is None:
+            raise ValueError('published_quality_schedule_missing')
+        return [dict(reportDate=q['quarter'], targetWeights=[
+            dict(ticker=p['ticker'], weight=p['weight']) for p in q['positions']
+        ]) for q in published_quality['quarters']]
+    return [*original['pre']['aihf_rank_sqrt_top10_cap15_pre2023'],
+            *original['post']['aihf_rank_sqrt_top10_cap15']]
+
 def build(a):
     metadata = json.loads(a.metadata.read_text())
     if digest(a.panel) != metadata['panelSha256']:
@@ -110,11 +123,7 @@ def build(a):
         quality.roic_min5.ge(.10) & quality.roic_verified.gt(quality.wacc)
 
     original = json.loads(a.schedule.read_text())
-    if 'rebalances' in original:
-        frozen = [r for r in original['rebalances'] if r['model'] == 'aihf_rank_sqrt_top10_cap15']
-    else:
-        frozen = [*original['pre']['aihf_rank_sqrt_top10_cap15_pre2023'],
-                  *original['post']['aihf_rank_sqrt_top10_cap15']]
+    frozen = frozen_quality_schedule(original)
     schedules = {'quality_rank': [], 'ackman': []}
     for model, frame, keys, component_weights, mask in [
         ('quality_rank', quality, quality_cols, [.25]*4, 'eligible'),

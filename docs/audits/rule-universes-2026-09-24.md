@@ -21,7 +21,7 @@ current-vintage research reconstruction, **not strict archived-vintage PIT**.
 | Universe | Source | Available backtest |
 | --- | --- | --- |
 | All market | Existing common cohort, unchanged artifact | 2013-01-02–2026-09-21 |
-| S&P 500 | Canonical Sharadar SP500 historical quarter snapshots plus effective-date additions/removals | 2013-01-02–2026-09-21, with declared gaps |
+| S&P 500 | Canonical Sharadar SP500 historical quarter snapshots plus effective-date additions/removals | 2013-01-02–2026-09-21, continuous |
 | Nasdaq 100 proxy | QQQ public SEC N-PORT equity holdings, exact canonical CUSIP/permaticker resolution | 2020-01-02–2026-09-21 |
 
 Nasdaq membership is the latest **publicly filed** QQQ snapshot available before
@@ -43,12 +43,13 @@ membership classification reuses Fact OS identity; it is not a new security mast
 One reviewed FER ISIN/CUSIP bridge is linked to the SEC N-PX original in that
 artifact. Raw filings, private stores, databases and credentials are not packaged.
 
-Both S&P strategies hold CELG at its 2019 cash/stock/CVR acquisition. Missing
-verified BMYRT daily prices leave 2019-11-20–2020-01-01 unavailable; 2020 is an
-independently funded segment. Cross-gap returns and attribution fail closed.
-The UI defaults S&P to the latest continuous segment, with 2013/2014 shortcuts
-and date controls to inspect older complete intervals. Existing all-market
-history is unchanged (its Ackman segment has the same pre-existing gap).
+Both S&P and all-market Ackman proxies hold CELG at its 2019 cash/stock/CVR
+acquisition. The canonical source has no BMYRT daily series. The reviewed action
+therefore uses the issuer-reported $2.30 first trade on November 21, explicitly
+liquidates the CVR at that price with 25bp cost, and carries the BMY stock claim.
+This restores one continuous 2013–2026 public-market simulation without claiming
+an actual Ackman trade or inventing CVR observations. Missing or altered evidence
+fails snapshot validation.
 
 ## Action evidence
 
@@ -62,6 +63,8 @@ legal completion date, identities, cash/stock terms and SEC original:
 - LO: $50.50 + 0.2909 RAI, June 12, 2015.
 - ANSS: final $199.91 + 0.3399 SNPS, July 17, 2025 before open. Announced
   preliminary consideration and a vendor's extra price row are not substituted.
+- CELG: $50 + one BMY share + one BMYRT CVR. The right is modeled sold at the
+  issuer-reported $2.30 first trade, net $2.29425 after 25bp, on November 21, 2019.
 
 ## Immutable inputs and reproducibility
 
@@ -71,8 +74,8 @@ No canonical or runtime database writes are part of this release.
 
 Artifact SHA-256:
 
-- All: `76f0a490efb29aaadcc84ea5015f095d63891bd75e3cd8cc4ddff4f38a406e0b`
-- S&P: `ebfe7e38d1d59f20cb7cac3cfcbd152b9467754921173c920fbbbbd412af5847`
+- All: `f54f6a0727e6f56f5d6c01bf69f6a1d44cd4996617272e8d915b86a9a36da95b`
+- S&P: `6c0b226a63084fb86e4b5a33c28f4d43c6212a8049a180fe34534bbdf66d32de`
 - Nasdaq: `282819cf26b8d53de530d50e05f84808ad057644306f589d1f41d355c451f214`
 - SEC membership: `cd10b95965ed969bac9867a9d6ee401fb912be470ebd958a65fedb9819ff1968`
 
@@ -90,18 +93,18 @@ argument; this feature does not add a timer or change saved research on a schedu
 
 ## Fresh verification
 
-- Full Node: 1,728 passed, 15 explicitly skipped, zero failures.
+- Full Node: 1,735 passed, 15 explicitly skipped, zero failures.
 - Final route/snapshot/range tests: 24 passed, including auth, incorrect universe,
   wrong snapshot, delayed publication and pre-coverage requests.
 - Performance regression suite: 60 passed.
-- Canonical Fact OS Python: 247 passed. Rule/universe Python: 8 passed.
-- Independent Python daily replay: all 3,422 observations per S&P strategy
-  across two segments, and all 1,688 per Nasdaq strategy reconciled.
+- Canonical Fact OS Python: 247 passed. Rule/universe Python: 10 passed.
+- Independent Python daily replay: all 3,450 observations per S&P strategy
+  across one segment, and all 1,688 per Nasdaq strategy reconciled.
 - Actual canonical interval analysis: six S&P windows and four Nasdaq windows,
   including turnover, P&L residual and distribution-count reconciliation.
 - Focused Flutter: 17 passed, including EN/ZH 390px, preserved intervals and
   out-of-order universe responses. Analyze, i18n and production-auth build pass.
-- Full Flutter: 604 passed, **32 pre-existing adjacent failures**. Exact failure
+- Full Flutter: 608 passed, **32 pre-existing adjacent failures**. Exact failure
   names compared with the prior 2013 release: no new failures, none suppressed.
 - Broader `scripts/test_fact_os*.py` run: 44 tests, 9 failures and 2 errors in
   the unchanged replay fixture (`catalog_database_mismatch:stocks`). This is

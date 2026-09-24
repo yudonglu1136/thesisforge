@@ -540,6 +540,47 @@ test("mixed stock and cash consideration preserves both merger entitlements", ()
   );
 });
 
+test("CELG conversion keeps BMY shares and the net first-trade BMYRT proceeds", () => {
+  const result = simulateDriftedPortfolio({
+    tradingDates: ["2019-11-20", "2019-11-21", "2019-11-22"],
+    priceMaps: new Map([
+      ["SPY", map([["2019-11-20", 100], ["2019-11-21", 100], ["2019-11-22", 100]])],
+      ["CELG", map([["2019-11-20", 108]])],
+      ["BMY", map([["2019-11-21", 44], ["2019-11-22", 45]])]
+    ]),
+    rebalances: [{
+      reportDate: "2019-09-30",
+      executionDate: "2019-11-20",
+      cashWeight: 0,
+      weights: [{
+        ticker: "CELG", weight: 1,
+        corporateAction: {
+          actionId: "rule-history:CELG:2019-11-21",
+          considerationType: "stock_and_cash",
+          effectiveDate: "2019-11-21",
+          successorTicker: "BMY",
+          successorSharesPerShare: 1.25,
+          terminalCashEntitlementPerShare: 52.29425,
+          legalCashPerShare: 50,
+          contingentRightTicker: "BMYRT",
+          contingentRightFirstTradePrice: 2.30,
+          contingentRightLiquidationCostBps: 25,
+          contingentRightNetProceedsPerShare: 2.29425,
+          modeledRightDisposition: "liquidated_at_first_trade"
+        }
+      }]
+    }]
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.equity.length, 3);
+  assert.ok(Math.abs(result.equity[1].value - (44 * 1.25 + 52.29425) / 108) < 1e-12);
+  assert.ok(Math.abs(result.equity[2].value - (45 * 1.25 + 52.29425) / 108) < 1e-12);
+  const resolution = result.quarterContributions[0].contributions[0].corporateActionResolution;
+  assert.equal(resolution.contingentRightTicker, "BMYRT");
+  assert.equal(resolution.contingentRightNetProceedsPerShare, 2.29425);
+});
+
 test("multiple 13F rebalances on one execution date fail closed", () => {
   const shared = {
     filingDate: "2024-01-01",

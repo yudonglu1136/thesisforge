@@ -35,6 +35,28 @@ for (const line of priceSource.trim().split('\n').slice(1)) {
 }
 const dates = [...prices.get('SPY').keys()].sort();
 const curves = {}, styles = [];
+const validateCelgCvrAccounting = action => {
+  const expected = action?.ticker === 'CELG' &&
+    action?.corporateAction?.considerationType === 'stock_and_cash' &&
+    action.corporateAction.effectiveDate === '2019-11-21' &&
+    action.corporateAction.legalCompletionDate === '2019-11-20' &&
+    action.corporateAction.successorTicker === 'BMY' &&
+    action.corporateAction.legalCashPerShare === 50 &&
+    action.corporateAction.legalSuccessorSharesPerShare === 1 &&
+    action.corporateAction.terminalCashEntitlementPerShare === 52.29425 &&
+    action.corporateAction.contingentRightTicker === 'BMYRT' &&
+    action.corporateAction.contingentRightFirstTradingDate === '2019-11-21' &&
+    action.corporateAction.contingentRightFirstTradePrice === 2.30 &&
+    action.corporateAction.contingentRightLiquidationCostBps === 25 &&
+    action.corporateAction.contingentRightNetProceedsPerShare === 2.29425 &&
+    action.corporateAction.contingentRightPriceBasis === 'first_trade_reported_by_issuer_10k' &&
+    action.corporateAction.modeledRightDisposition === 'liquidated_at_first_trade' &&
+    action.corporateAction.legalSourceVerified === true &&
+    action.corporateAction.syntheticPriceUsed === false &&
+    String(action.corporateAction.sourceUrl).startsWith('https://www.sec.gov/') &&
+    String(action.corporateAction.contingentRightSourceUrl).startsWith('https://www.sec.gov/');
+  if (!expected) throw new Error('celg_cvr_accounting_missing');
+};
 for (const [id, quarters] of Object.entries(packet.schedules)) {
   const schedule = [];
   for (const [i, q] of quarters.entries()) {
@@ -69,16 +91,13 @@ for (const [id, quarters] of Object.entries(packet.schedules)) {
       ...(weights.length ? {} : { cashReason: 'strategy_rules' }) });
   }
   const endDate = dates.at(-1);
-  // Explicit coverage exception, never outcome-based removal or stitching.
-  // CELG included an unpriced BMYRT right. The first segment ends before the
-  // entitlement; the later segment is an independent inception at a scheduled
-  // rebalance. No return, turnover or risk statistic may cross this gap.
-  const unpricedRight = schedule.some(q=>q.executionDate<'2019-11-20' && q.nextExecutionDate>='2019-11-20' && q.weights.some(p=>p.ticker==='CELG'));
-  const coverage = unpricedRight ? {
-    segments: [{from:dates[0],to:'2019-11-19'}, {from:'2020-01-02',to:endDate}],
-    gaps: [{from:'2019-11-20',to:'2020-01-01',reason:'unpriced_celg_cvr',ticker:'CELG',
-      missingSecurity:'BMYRT',sourceUrl:'https://www.sec.gov/Archives/edgar/data/816284/000110465919065939/tm1923405d1_8k.htm'}],
-  } : {segments:[{from:dates[0],to:endDate}],gaps:[]};
+  // Fail closed if a selected CELG position crosses the acquisition without
+  // the reviewed BMY + cash + first-trade CVR liquidation receipt.  With that
+  // receipt the public strategy is continuously reproducible without inventing
+  // a BMYRT history that the licensed canonical price source does not contain.
+  const celgCrossing = schedule.some(q=>q.executionDate<'2019-11-21' && q.nextExecutionDate>='2019-11-21' && q.weights.some(p=>p.ticker==='CELG'));
+  if (celgCrossing) validateCelgCvrAccounting(packet.actions.find(a => a.ticker === 'CELG'));
+  const coverage = {segments:[{from:dates[0],to:endDate}],gaps:[]};
   for (const q of quarters) q.mature = !!q.nextExecutionDate && coverage.segments.some(s=>s.from<=q.executionDate && s.to>=q.nextExecutionDate);
   const results = coverage.segments.map(segment => {
   const rebalances=schedule.filter(q=>q.executionDate>=segment.from && q.executionDate<segment.to);

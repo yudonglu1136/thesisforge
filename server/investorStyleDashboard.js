@@ -110,6 +110,22 @@ export function validateInvestorStyleDashboard(payload) {
           !near(p.weight, q.positions.find(r => r.ticker === p.ticker).weight))) invalid();
       }
     }
+    const needsCelgCvr = row.quarters.some(q => q.executionDate < '2019-11-21' &&
+      q.nextExecutionDate >= '2019-11-21' && q.positions.some(p => p.ticker === 'CELG'));
+    if (needsCelgCvr) {
+      const action = row.corporateActions?.find(a => a.ticker === 'CELG' && a.effectiveDate === '2019-11-21');
+      if (action?.considerationType !== 'stock_and_cash' || action.successorTicker !== 'BMY' ||
+          action.legalCompletionDate !== '2019-11-20' || action.legalCashPerShare !== 50 ||
+          action.legalSuccessorSharesPerShare !== 1 || !near(action.terminalCashEntitlementPerShare, 52.29425) ||
+          action.contingentRightTicker !== 'BMYRT' || action.contingentRightFirstTradingDate !== '2019-11-21' ||
+          action.contingentRightFirstTradePrice !== 2.30 || action.contingentRightLiquidationCostBps !== 25 ||
+          !near(action.contingentRightNetProceedsPerShare, 2.29425) ||
+          action.contingentRightPriceBasis !== 'first_trade_reported_by_issuer_10k' ||
+          action.modeledRightDisposition !== 'liquidated_at_first_trade' ||
+          action.legalSourceVerified !== true || action.syntheticPriceUsed !== false ||
+          !String(action.sourceUrl).startsWith('https://www.sec.gov/') ||
+          !String(action.contingentRightSourceUrl).startsWith('https://www.sec.gov/')) invalid();
+    }
   }
   for (let index = 0; index < curve.length; index++) {
     const row = curve[index];

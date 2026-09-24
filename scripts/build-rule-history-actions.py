@@ -40,7 +40,25 @@ REVIEWED = [
          legalDate='2017-08-08', cash=33.50,
          source='https://www.sec.gov/Archives/edgar/data/1265888/000119312517251307/d434981d8k.htm',
          timing='Completion and NYSE trading suspension on August 8.'),
+    dict(ticker='CELG', permaticker='198310', cik='816284', successor='BMY', successorCik='14272',
+         effective='2019-11-21', legalDate='2019-11-20', cash=50., ratio=1.,
+         rightTicker='BMYRT', rightFirstTradingDate='2019-11-21', rightFirstTradePrice=2.30,
+         rightLiquidationCostBps=25, rightNet=2.30 * (1 - 25 / 10_000),
+         source='https://www.sec.gov/Archives/edgar/data/816284/000110465919065939/tm1923405d1_8k.htm',
+         rightSource='https://www.sec.gov/Archives/edgar/data/14272/000001427220000082/bmy-20191231x10xk.htm',
+         timing='CELG trading was suspended before the November 21 open; BMYRT first traded November 21.'),
 ]
+
+
+def cash_entitlement(term):
+    """Return modeled cash in legal source-share units.
+
+    A separately traded right is not merger cash.  When an official first-trade
+    price is available but the licensed price source has no series, the right is
+    explicitly liquidated at that observable price, net of the strategy's
+    standard one-way transaction cost.
+    """
+    return term['cash'] + term.get('rightNet', 0)
 
 def build(root, output, stock_actions, published):
     with FactRepository(root) as repo:
@@ -64,10 +82,19 @@ def build(root, output, stock_actions, published):
             action = dict(actionId=f"rule-history:{term['ticker']}:{term['effective']}",
                 considerationType='stock_and_cash' if term.get('successor') else 'cash',
                 effectiveDate=term['effective'], publicTradingEndExclusive=term['effective'],
-                legalCompletionDate=term['legalDate'], terminalCashEntitlementPerShare=term['cash']*factor,
+                legalCompletionDate=term['legalDate'], terminalCashEntitlementPerShare=cash_entitlement(term)*factor,
                 legalCashPerShare=term['cash'], sourceUrl=term['source'], legalSourceVerified=True,
                 syntheticPriceUsed=False, timingEvidence=term['timing'],
                 sourceAdjustmentFactor=factor, sourceBasis=source)
+            if term.get('rightTicker'):
+                action.update(contingentRightTicker=term['rightTicker'],
+                    contingentRightFirstTradingDate=term['rightFirstTradingDate'],
+                    contingentRightFirstTradePrice=term['rightFirstTradePrice'],
+                    contingentRightLiquidationCostBps=term['rightLiquidationCostBps'],
+                    contingentRightNetProceedsPerShare=term['rightNet'],
+                    contingentRightSourceUrl=term['rightSource'],
+                    contingentRightPriceBasis='first_trade_reported_by_issuer_10k',
+                    modeledRightDisposition='liquidated_at_first_trade')
             if term.get('successor'):
                 identity = repo.db.execute('SELECT DISTINCT permaticker,secfilings FROM tickers WHERE ticker=? AND "table"=\'SEP\'', [term['successor']]).fetchall()
                 if len(identity) != 1 or int(identity[0][1].split('CIK=')[-1]) != int(term['successorCik']):

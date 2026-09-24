@@ -6,12 +6,12 @@ The earlier blocked attempt below is retained as history. The new candidate
 actually reconstructs 2013 and 2014; it does not relabel the old 2023 curve.
 Release identity and production acceptance are recorded separately after deployment.
 
-- Snapshot `76f0a490efb29aaadcc84ea5015f095d63891bd75e3cd8cc4ddff4f38a406e0b`,
-  schema `investor-style-dashboard-v4`, 2,702,802 bytes.
+- Snapshot `f54f6a0727e6f56f5d6c01bf69f6a1d44cd4996617272e8d915b86a9a36da95b`,
+  schema `investor-style-dashboard-v4`, 2,703,806 bytes.
 - Quality Rank: 3,450 observed sessions, 2013-01-02 through 2026-09-21.
-- Ackman: 3,422 observed sessions in two **independently funded** segments:
-  2013-01-02–2019-11-19 and 2020-01-02–2026-09-21. The 28-session gap remains
-  null. Cross-gap return/risk/attribution is unavailable, never compounded.
+- Ackman: 3,450 continuous observed sessions, 2013-01-02 through 2026-09-21.
+  Net total return is 468.6646%, CAGR 13.5095%, maximum drawdown -33.3436%,
+  annualized volatility 20.2208%, and 0%-risk-free Sharpe 0.7303.
 - Both 2013 and 2014 calendar selections have 252 observed sessions. All 2023+
   selected tickers, scores and target weights are unchanged from the preceding
   published snapshot. Financial data remains current-vintage reconstruction,
@@ -19,8 +19,8 @@ Release identity and production acceptance are recorded separately after deploym
 - First/last date controls, slider, and explicit **2013 / 2014** shortcuts update
   both strategies' return, risk, win rate, payoff, turnover, distribution and
   stock-level buy/sell/mark analysis. Missing history is explained bilingually.
-- Daily extension understands the v4 segments, preserves the historical gap,
-  and does not classify a quarter spanning missing observations as complete.
+- Daily extension understands the v4 coverage contract and rejects any
+  unaccounted corporate-action interval rather than inserting a null or restart.
   New quarterly selections still require the existing reviewed rebuild; this
   change does not create a second daily timer or rewrite user strategies.
 
@@ -38,17 +38,24 @@ Release identity and production acceptance are recorded separately after deploym
 - Existing audited ATVI $95 cash settlement is preserved. Adjusted-price units
   are explicitly reconciled. Merger cash is not a fictitious sale; successor
   purchases only trade the amount not already received in the stock exchange.
-- CELG: the $50 + BMY share does **not** replace the missing BMYRT CVR.
+- CELG: $50 cash + one BMY share + one BMYRT CVR. The CVR is not omitted and
+  no synthetic daily series is fabricated. Bristol Myers Squibb's 2019 10-K
+  reports the first November 21, 2019 BMYRT trade at $2.30; the model explicitly
+  liquidates the right at that observable price, charges the same 25bp one-way
+  cost ($2.29425 net), and carries the BMY share in adjusted-price units.
   [SEC completion](https://www.sec.gov/Archives/edgar/data/816284/000110465919065939/tm1923405d1_8k.htm).
-  No verified daily CVR series was found in the authorized canonical input;
-  no interpolation, zero substitution or losing-stock exclusion was used.
+  [BMY 2019 10-K](https://www.sec.gov/Archives/edgar/data/14272/000001427220000082/bmy-20191231x10xk.htm).
+  The authorized canonical source still has no BMYRT price rows; this explicit
+  first-trade disposition is a research-model assumption, not an actual Ackman
+  trade or a claim that daily CVR history exists.
 
 ### Fresh verification
 
-Independent Python share/cash/action/fee replay matches every published valid
-daily NAV (3,450 Quality / 3,422 Ackman), including segment restarts. Real Fact OS
-range attribution reconciles to net returns within 2e-14. Replaying the daily
-refresh against the same 3,450-session input preserves NAV and gap coverage.
+Independent Python share/cash/action/fee replay matches every published daily
+NAV (3,450 per strategy) across one continuous segment. Real Fact OS full-range
+attribution reconciles to net returns within 2e-14. The CELG transition preserves
+the BMY stock claim and separately settled cash/CVR proceeds; merger cash is not
+sold again at the next rebalance.
 
 | Range | Quality net return | Ackman net return | Quality one-way turnover | Ackman one-way turnover |
 | --- | ---: | ---: | ---: | ---: |
@@ -57,15 +64,16 @@ refresh against the same 3,450-session input preserves NAV and gap coverage.
 
 Ranges start at the selected closing mark, except an independent inception
 includes its initial entry fee. Prices are adjusted simulation prices, not raw
-historical trade quotes. Full-span Ackman metrics are intentionally unavailable.
+historical trade quotes. Full-span Ackman metrics are now available under the
+disclosed first-trade CVR disposition.
 
 Local browser exercised real 2013/2014 data, both distributions, trade details,
-EN/ZH desktop and 390px mobile. Focused Flutter: 14 passing; analyze, i18n and
-production build pass. Full Flutter: 601 passing / the existing 32 adjacent
+EN/ZH desktop and 390px mobile. Focused Flutter: 17 passing; analyze, i18n and
+production build pass. Full Flutter: 608 passing / the existing 32 adjacent
 failures (not suppressed). Full Fact OS storage audit passes; repository layout
 still reports 11 pre-existing findings. No source database or user data changed.
-Full Node suite: 1,725 passing / 15 skipped / zero failures; performance suite:
-60 passing. Three Python history-window tests pass. No assertion was removed.
+Full Node suite: 1,735 passing / 15 skipped / zero failures; performance suite:
+60 passing. Ten Python rule/universe tests pass. No assertion was removed.
 Initial local cold canonical range replay was approximately 39 seconds.
 The first deployed AWS replay then exceeded 240 seconds: hundreds of singular
 price histories repeatedly scanned the full immutable archive. This was **not**
@@ -78,9 +86,9 @@ and pinned generation. Compact date/value/source-ticker points remain traceable
 to full immutable facts by generation + table + natural key. No source data,
 selection, published daily NAV, costs or analysis formula changes.
 
-Fresh local full canonical replay now takes 3.432 seconds cold; subsequent
-ranges take 25–154ms. All six windows reconcile, including both requested
-calendar years, and the known cross-gap rejection. These are **local** timings,
+Fresh local full canonical replay takes about 3 seconds cold; subsequent ranges
+take tens of milliseconds. All six windows reconcile, including both requested
+calendar years and the continuous 2019 acquisition interval. These are **local** timings,
 not production latency claims. Production acceptance requires another actual
 `webapp` replay plus the authenticated browser, not only a green deploy.
 
