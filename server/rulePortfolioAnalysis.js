@@ -1,7 +1,7 @@
 import { allocateAtClose, markPositions } from './backtestEngine.js';
 import { strategyMetrics } from './strategyLab.js';
 import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
-import { queryFactsBatch, factGeneration, PRICE_TYPES } from './factRepository.js';
+import { queryFacts, factGeneration, PRICE_TYPES } from './factRepository.js';
 import { createHash } from 'node:crypto';
 import { emptyRuleMetrics } from './rulePortfolioCoverage.js';
 
@@ -184,7 +184,7 @@ export function analyzeRuleRange(ledger, start, end) {
     illustrativeCapital: 100000, currency: 'USD', styles };
 }
 
-export async function canonicalRulePrices(snapshot) {
+export async function canonicalRulePrices(snapshot, { query = queryFacts } = {}) {
   const spans = new Map(), end = snapshot.backtest.curve.at(-1).date;
   function include(ticker, identity, start, stop) {
     const old = spans.get(ticker);
@@ -205,22 +205,24 @@ export async function canonicalRulePrices(snapshot) {
     }
   }
   const entries = [...spans], maps = new Map();
-  // Bound RPC payloads: full provenance stays inside Fact OS, not on the wire
-  // to the browser. The outer service also guards a generation change.
-  for (let i = 0; i < entries.length; i += 12) {
-    const group = entries.slice(i, i + 12);
-    const responses = await queryFactsBatch(group.map(([, s]) => ({ method: 'get_price_history',
-      args: [s.identity, s.start, s.end, PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE] })));
-    responses.forEach((response, j) => {
-      if (!response.ok) fail('rule_analysis_prices_unavailable');
-      const [ticker, span] = group[j], map = new Map();
-      for (const r of response.result) {
-        if (r.currency !== 'USD' || r.price_type !== PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE ||
-            (span.identity.startsWith('sharadar:') && r.security_id !== span.identity) || map.has(r.date)) fail('rule_analysis_identity_conflict');
-        map.set(r.date, r.value);
-      }
-      maps.set(ticker, map);
-    });
+  // One pinned batch, not hundreds of full Parquet scans and repeated daily
+  // provenance payloads. Full facts remain addressable by generation/table/key.
+  const response = await query('get_price_histories', [entries.map(([, s]) =>
+    ({ ticker: s.identity, start: s.start, end: s.end })), PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE]);
+  if (response.version !== 'canonical-price-histories-v1' || !response.generation ||
+      JSON.stringify(response.columns) !== JSON.stringify(['date', 'value', 'source_ticker']) ||
+      response.series?.length !== entries.length) fail('rule_analysis_prices_unavailable');
+  for (const [j, r] of response.series.entries()) {
+    const [ticker, span] = entries[j], map = new Map();
+    if (r.requested !== span.identity || r.currency !== 'USD' || r.price_type !== PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE ||
+        r.start !== span.start || r.end !== span.end ||
+        (span.identity.startsWith('sharadar:') && r.security_id !== span.identity)) fail('rule_analysis_identity_conflict');
+    for (const [date, value, sourceTicker] of r.points) {
+      if (date < span.start || date > span.end || !Number.isFinite(value) || value <= 0 ||
+          !r.aliases.includes(sourceTicker) || map.has(date)) fail('rule_analysis_identity_conflict');
+      map.set(date, value);
+    }
+    maps.set(ticker, map);
   }
   return maps;
 }

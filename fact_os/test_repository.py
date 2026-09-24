@@ -151,6 +151,72 @@ class RepositoryTest(unittest.TestCase):
             self.assertNotEqual(repo.resolve_security('NEW')['security_id'], repo.resolve_security('OLD')['security_id'])
             self.assertNotEqual(repo.resolve_security('NEW')['company_id'], repo.resolve_security('OLD')['company_id'])
 
+    def test_compact_history_batch_matches_singular_and_pins_generation(self):
+        self.put('stocks', [['NEW', '2013-01-02', 10, 9, 20, '2024-01-03'],
+                            ['NEW', '2014-01-02', 12, 11, 24, '2024-01-03'],
+                            ['CLASSB', '2014-01-02', 5, 4, 10, '2024-01-03']])
+        spans = [{'ticker': 'sharadar:security:10', 'start': '2013-01-01', 'end': '2014-01-02'},
+                 {'ticker': 'CLASSB', 'start': '2014-01-02', 'end': '2014-01-02'}]
+        with FactRepository(self.store.root) as repo:
+            result = repo.get_price_histories(spans, 'TOTAL_RETURN_ADJUSTED_CLOSE')
+            self.assertEqual(result['generation'], repo.generation)
+            self.assertEqual(result['columns'], ['date', 'value', 'source_ticker'])
+            for request, series in zip(spans, result['series']):
+                expected = repo.get_price_history(request['ticker'], request['start'], request['end'], 'TOTAL_RETURN_ADJUSTED_CLOSE')
+                self.assertEqual(series['points'], [[r['date'], r['value'], r['provenance']['key']['ticker']] for r in expected])
+                self.assertEqual(series['security_id'], expected[0]['security_id'])
+                self.assertEqual(series['currency'], 'USD')
+                self.assertEqual(series['price_type'], 'TOTAL_RETURN_ADJUSTED_CLOSE')
+            self.put('stocks', [['NEW', '2014-01-02', 15, 14, 30, '2024-01-04']])
+            self.assertEqual(repo.get_price_histories(spans, 'TOTAL_RETURN_ADJUSTED_CLOSE'), result)
+        with FactRepository(self.store.root) as repo:
+            self.assertNotEqual(repo.get_price_histories(spans, 'TOTAL_RETURN_ADJUSTED_CLOSE')['generation'], result['generation'])
+
+    def test_compact_history_batch_fails_closed_and_keeps_missing_dates(self):
+        self.put('stocks', [['NEW', '2013-01-02', 10, 9, 20, '2024-01-03']])
+        span = {'ticker': 'NEW', 'start': '2013-01-01', 'end': '2013-01-04'}
+        with FactRepository(self.store.root) as repo:
+            self.assertEqual(len(repo.get_price_histories([span], 'RAW_CLOSE')['series'][0]['points']), 1)
+            with self.assertRaises(MissingData): repo.get_price_histories([{**span, 'ticker': 'UNKNOWN'}], 'RAW_CLOSE')
+            for spans in ([], [span]*513, [{**span, 'end': '2012-01-01'}]):
+                with self.assertRaises(ValueError): repo.get_price_histories(spans, 'RAW_CLOSE')
+            with self.assertRaises(ValueError): repo.get_price_histories([span], 'unknown_basis')
+        self.put('tickers', [['stocks', 10, 'OLD', 'https://www.sec.gov/Archives/edgar/data/123/', '2020-06-01', 'Issuer', '2020-06-01', '', '']])
+        self.put('stocks', [['OLD', '2013-01-02', 10, 9, 21, '2024-01-03']])
+        with FactRepository(self.store.root) as repo:
+            # Same adjusted price but conflicting raw price must still fail,
+            # exactly like the full canonical singular reader.
+            with self.assertRaises(MissingData): repo.get_price_histories([span], 'TOTAL_RETURN_ADJUSTED_CLOSE')
+
+    def test_compact_history_rpc_requires_complete_inputs(self):
+        from .rpc import dispatch
+        self.put('stocks', [['NEW', '2013-01-02', 10, 9, 20, '2024-01-03']])
+        request = {'method': 'get_price_histories', 'args': [[{'ticker': 'NEW', 'start': '2013-01-01', 'end': '2014-01-01'}], 'RAW_CLOSE']}
+        with FactRepository(self.store.root) as repo:
+            with self.assertRaises(MissingData): dispatch(repo, request)
+            self.assertEqual(dispatch(repo, {**request, 'allow_partial': True})['series'][0]['points'][0][1], 20)
+
+    def test_compact_history_funds_alias_duplicates_and_invalid_values(self):
+        self.put('tickers', [['stocks', 10, 'OLD', 'https://www.sec.gov/Archives/edgar/data/123/', '2020-06-01', 'Issuer', '2020-06-01', '', ''],
+                             ['funds', 12, 'FUND', '', '2024-06-01', 'Fund', '2024-06-01', '', '']])
+        self.put('stocks', [['NEW', '2013-01-02', 10, 9, 20, '2024-01-03'],
+                            ['OLD', '2013-01-02', 10, 9, 20, '2024-01-04']])
+        self.put('funds', [['FUND', '2014-01-02', 50, 49, 100, '2024-01-03']])
+        spans = [{'ticker': t, 'start': '2013-01-01', 'end': '2014-01-02'} for t in ('NEW', 'FUND', 'CLASSB')]
+        with FactRepository(self.store.root) as repo:
+            result = repo.get_price_histories(spans, 'RAW_CLOSE')
+            self.assertEqual([len(s['points']) for s in result['series']], [1, 1, 0])
+            self.assertEqual(result['series'][1]['table'], 'funds')
+            self.assertEqual(result['series'][1]['points'][0][1], 100)
+            self.assertEqual(result['adjustment_basis'], 'historical_quoted_price')
+        with FactRepository(self.store.root) as repo:
+            # Corrupt an in-memory synthetic view, not the canonical store:
+            # today's writer already rejects this older-archive failure mode.
+            repo.db.execute('CREATE TEMP TABLE bad_funds AS SELECT * FROM funds')
+            repo.db.execute('UPDATE bad_funds SET closeadj=0')
+            repo.db.execute('CREATE OR REPLACE TEMP VIEW funds AS SELECT * FROM bad_funds')
+            with self.assertRaises(MissingData): repo.get_price_histories(spans, 'TOTAL_RETURN_ADJUSTED_CLOSE')
+
     def test_batch_prices_are_offline_explicit_and_partial(self):
         self.put('stocks', [['NEW', '2024-01-02', 10, 9, 20, '2024-01-03']])
         with patch('socket.socket', side_effect=AssertionError('network forbidden')):

@@ -66,8 +66,23 @@ failures (not suppressed). Full Fact OS storage audit passes; repository layout
 still reports 11 pre-existing findings. No source database or user data changed.
 Full Node suite: 1,725 passing / 15 skipped / zero failures; performance suite:
 60 passing. Three Python history-window tests pass. No assertion was removed.
-Local cold canonical range replay is approximately 39 seconds; cached requests
-26–153ms. These are **local** timings, not production latency claims.
+Initial local cold canonical range replay was approximately 39 seconds.
+The first deployed AWS replay then exceeded 240 seconds: hundreds of singular
+price histories repeatedly scanned the full immutable archive. This was **not**
+accepted as a successful production attribution check.
+
+The follow-up changes only the read path: `get_price_histories` performs one
+bounded scan per canonical price table, retaining security identities, date
+bounds, complete-backfill gates, alias conflict checks, explicit price basis
+and pinned generation. Compact date/value/source-ticker points remain traceable
+to full immutable facts by generation + table + natural key. No source data,
+selection, published daily NAV, costs or analysis formula changes.
+
+Fresh local full canonical replay now takes 3.432 seconds cold; subsequent
+ranges take 25–154ms. All six windows reconcile, including both requested
+calendar years, and the known cross-gap rejection. These are **local** timings,
+not production latency claims. Production acceptance requires another actual
+`webapp` replay plus the authenticated browser, not only a green deploy.
 
 Bounded extraction: 84,275 company-quarter rows / 3,457 tickers / 55 quarters;
 1,090,085 observed price rows / 360 symbols. Source generation remains

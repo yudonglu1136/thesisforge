@@ -10,7 +10,7 @@ from .repository import FactRepository, MissingData, PITUnavailable
 
 METHODS = frozenset({
     'get_coverage',
-    'resolve_security', 'get_price', 'get_price_history', 'get_prices',
+    'resolve_security', 'get_price', 'get_price_history', 'get_price_histories', 'get_prices',
     'get_fundamentals', 'get_latest_fundamentals', 'get_fundamental_change_universe',
     'get_fundamental_company_index',
     'get_fundamental_research', 'get_dividends', 'get_metric', 'get_metric_history',
@@ -27,6 +27,17 @@ def required_tables(repo, method, args, kwargs):
     if method == 'get_dividends': return {'tickers', 'actions'}
     if method in ('resolve_security', 'get_investors', 'resolve_investor'):
         return {'tickers'}
+    if method == 'get_price_histories':
+        spans = kwargs.get('spans', args[0] if args else None)
+        if not isinstance(spans, list) or not 1 <= len(spans) <= 512:
+            raise ValueError('invalid historical security spans')
+        tables = {'tickers'}
+        for span in spans:
+            selected = repo.resolve_security(span['ticker']).get('price_dataset')
+            if selected not in ('stocks', 'funds'):
+                raise MissingData('Canonical price table is missing or ambiguous in the security master.')
+            tables.add(selected)
+        return tables
     if method in ('get_price', 'get_price_history', 'get_prices'):
         dataset = kwargs.get('dataset', 'auto')
         if dataset == 'auto':

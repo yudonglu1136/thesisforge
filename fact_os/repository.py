@@ -344,6 +344,70 @@ class FactRepository:
         rows = self._security_rows(dataset, identity, 'date BETWEEN ? AND ?', [start, end])
         return [self._price_result(row, basis, identity, dataset) for row in rows]
 
+    def get_price_histories(self, spans, price_type):
+        """Bounded multi-security history, one scan per canonical price table.
+
+        Exact same identity, price and alias-conflict rules as the singular
+        reader. Compact points retain source natural keys; generation + table
+        locate the immutable full facts, without repeating lineage per day.
+        No forward filling, provider fallback or writer database reads.
+        """
+        if not isinstance(spans, list) or not 1 <= len(spans) <= 512:
+            raise ValueError('one to 512 historical security spans required')
+        basis = self._price_basis(price_type)
+        series, groups = [], {'stocks': [], 'funds': []}
+        for index, span in enumerate(spans):
+            start, end = _date(span['start']), _date(span['end'])
+            if start > end or (end - start).days > 20000:
+                raise ValueError('invalid bounded history span')
+            identity = self.resolve_security(span['ticker'])
+            dataset = self._price_dataset('auto', identity)
+            self._require(dataset)
+            groups[dataset].extend((index, alias, start, end) for alias in identity['aliases'])
+            series.append({'requested': span['ticker'], 'security_id': identity['security_id'],
+                           'company_id': identity['company_id'], 'ticker': identity['ticker'],
+                           'aliases': identity['aliases'], 'table': dataset, 'currency': 'USD',
+                           'price_type': basis.name, 'start': start, 'end': end, 'points': []})
+        count = 0
+        for dataset, wanted in groups.items():
+            if not wanted:
+                continue
+            aliases = sorted({row[1] for row in wanted})
+            # Explicit ticker/date predicates preserve Parquet pruning, while
+            # the join applies each requested security's exact date bounds.
+            sql = (f'SELECT w.requested, p.* FROM {ident(dataset)} p JOIN '
+                   f'(VALUES {",".join("(?,?,?,?)" for _ in wanted)}) w(requested,alias,start_date,end_date) '
+                   'ON p.ticker=w.alias AND p.date BETWEEN w.start_date AND w.end_date '
+                   f'WHERE p.ticker IN ({",".join("?" for _ in aliases)}) AND p.date BETWEEN ? AND ? '
+                   'ORDER BY w.requested,p.date,p.ticker')
+            cursor = self.db.execute(sql, [v for row in wanted for v in row] + aliases +
+                                     [min(r[2] for r in wanted), max(r[3] for r in wanted)])
+            columns = [c[0] for c in cursor.description]
+            ignored = {'requested', 'ticker', 'lastupdated', '_ingestion_run', '_observed_at'}
+            previous_key, previous_fact = None, None
+            while batch := cursor.fetchmany(4096):
+                for values in batch:
+                    row = dict(zip(columns, values))
+                    key = (row['requested'], row['date'])
+                    comparable = {k: v for k, v in row.items() if k not in ignored}
+                    if key == previous_key:
+                        if comparable != previous_fact:
+                            raise MissingData(f'{dataset}: conflicting retained ticker-alias facts')
+                        continue
+                    value = row[basis.value]
+                    if value is None or not math.isfinite(value) or value <= 0:
+                        raise MissingData(f'{dataset}: invalid {basis.name} observation')
+                    series[row['requested']]['points'].append([row['date'], value, row['ticker']])
+                    previous_key, previous_fact = key, comparable
+                    count += 1
+                    if count > 2000000:
+                        raise MissingData('historical price batch too large; narrow security spans')
+        return {'version': 'canonical-price-histories-v1', 'generation': self.generation,
+                'columns': ['date', 'value', 'source_ticker'],
+                'availability_precision': 'session_date_end_of_day',
+                'adjustment_basis': 'vendor_current_adjustment_factors' if basis != PriceType.RAW_CLOSE else 'historical_quoted_price',
+                'series': series}
+
     def get_price(self, ticker, as_of, price_type, *, dataset='auto'):
         identity = self.resolve_security(ticker)
         dataset = self._price_dataset(dataset, identity)

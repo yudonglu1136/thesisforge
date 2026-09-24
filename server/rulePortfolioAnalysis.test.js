@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRuleLedger, analyzeRuleRange, createRuleAnalysisService } from './rulePortfolioAnalysis.js';
+import { buildRuleLedger, analyzeRuleRange, createRuleAnalysisService, canonicalRulePrices } from './rulePortfolioAnalysis.js';
 
 const dates = ['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'];
 const prices = new Map([
@@ -20,6 +20,32 @@ function fixture() {
     backtest: { curve: dates.map((date, i) => ({ date, quality_rank: values[i], ackman: values[i] })) } };
 }
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
+
+test('canonical range prices use one compact pinned batch and reject identity or date drift', async () => {
+  const snapshot = fixture();
+  for (const style of snapshot.styles) for (const q of style.quarters) for (const p of q.positions) {
+    p.permaticker = p.ticker === 'AAA' ? 1 : 2;
+  }
+  let calls = 0, response;
+  const query = async (method, [spans, basis]) => {
+    calls++;
+    assert.equal(method, 'get_price_histories'); assert.equal(basis, 'TOTAL_RETURN_ADJUSTED_CLOSE');
+    assert.equal(spans.length, 2);
+    response = {version:'canonical-price-histories-v1', generation:'immutable-generation', columns:['date','value','source_ticker'],
+      series:spans.map(s=>({...s, requested:s.ticker, security_id:s.ticker, aliases:['AAA'],
+        currency:'USD',price_type:basis,points:[[s.start,100,'AAA']]}))};
+    return response;
+  };
+  const maps = await canonicalRulePrices(snapshot, {query});
+  assert.equal(calls, 1); assert.equal(maps.get('AAA').get(dates[0]),100);
+  for (const mutate of [r=>r.series[0].security_id='different', r=>r.series[0].currency='GBP',
+    r=>r.series[0].points.push(r.series[0].points[0]), r=>r.series[0].points[0][1]=0,
+    r=>r.series[0].points[0][0]='2012-01-01', r=>r.series[0].points[0][2]='WRONG',
+    r=>r.series[0].start='2012-01-01', r=>r.generation=null]) {
+    const changed=structuredClone(response); mutate(changed);
+    await assert.rejects(canonicalRulePrices(snapshot,{query:async()=>changed}), /rule_analysis_(identity_conflict|prices_unavailable)/);
+  }
+});
 
 test('range turnover reconciles real simulated buys and sells at each pre-cost NAV', () => {
   const ledger = buildRuleLedger(fixture(), prices);
