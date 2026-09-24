@@ -11,17 +11,75 @@ class _RuleApi extends ApiClient {
   final paths = <String>[];
   final pending = <String, Completer<Map<String, dynamic>>>{};
   bool fail = false;
-  Map<String, dynamic> payload() =>
-      jsonDecode(
-            File(
-              'server/config/investor-style-dashboard.json',
-            ).readAsStringSync(),
-          )
-          as Map<String, dynamic>;
+  Map<String, dynamic> payload() => {
+    ...jsonDecode(
+          File(
+            'server/config/investor-style-dashboard.json',
+          ).readAsStringSync(),
+        )
+        as Map<String, dynamic>,
+    'snapshotId': 'test-reviewed-snapshot',
+  };
+  final analysisPending = <String, Completer<Map<String, dynamic>>>{};
+  bool failAnalysis = false;
+  Map<String, dynamic> analysis(String path) {
+    final q = Uri.parse(path).queryParameters;
+    final stock = <String, dynamic>{
+      'ticker': 'ANET',
+      'netContribution': .06,
+      'grossContribution': .061,
+      'costContribution': .001,
+      'openAtStart': true,
+      'openAtEnd': true,
+      'openingMark': {'date': q['start'], 'price': 20.0},
+      'closingMark': {'date': q['end'], 'price': 40.0},
+      'purchases': [
+        {'date': '2023-01-03', 'price': 15.0, 'beforeRange': true},
+      ],
+      'sales': [],
+      'corporateActions': [],
+    };
+    return {
+      'version': 'rule-range-attribution-v1',
+      'snapshotId': q['snapshotId'],
+      'start': q['start'],
+      'end': q['end'],
+      'styles': [
+        for (final id in ['quality_rank', 'ackman'])
+          {
+            'id': id,
+            'tradeStats': {
+              'wins': 3,
+              'losses': 1,
+              'flat': 0,
+              'open': 1,
+              'winRate': .75,
+              'payoffRatio': 2.0,
+            },
+            'holdings': [stock],
+            'best': stock,
+            'worst': null,
+            'reconciliation': {'difference': 0.0},
+            'distribution': [
+              for (var i = 0; i < 9; i++) {'count': i == 7 ? 1 : 0},
+            ],
+          },
+      ],
+    };
+  }
+
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
     paths.add(path);
     if (fail) throw Exception('fixture failure');
+    if (path.contains('/analysis?')) {
+      if (failAnalysis) throw Exception('attribution unavailable');
+      final start = Uri.parse(path).queryParameters['start'];
+      if (analysisPending.containsKey(start)) {
+        return analysisPending[start]!.future;
+      }
+      return analysis(path);
+    }
     final day = Uri.parse(path).queryParameters['asOf']!;
     if (pending.containsKey(day)) return pending[day]!.future;
     return payload();
@@ -91,9 +149,9 @@ void main() {
         for (var i = 0; i < bytes.lengthInBytes; i += 4) {
           if (bytes.getUint8(i) == (rgb >> 16 & 255) &&
               bytes.getUint8(i + 1) == (rgb >> 8 & 255) &&
-                bytes.getUint8(i + 2) == (rgb & 255)) {
-              matches++;
-            }
+              bytes.getUint8(i + 2) == (rgb & 255)) {
+            matches++;
+          }
         }
         expect(
           matches,
@@ -115,7 +173,7 @@ void main() {
       await _mount(tester, api, open: (v) => opened = v);
       await tester.pumpAndSettle();
       expect(
-        api.paths.single,
+        api.paths.where((p) => !p.contains('/analysis?')).single,
         '/api/investment/investor-styles?asOf=2026-09-24',
       );
       expect(find.text('Rule portfolio dashboard'), findsOneWidget);
@@ -123,6 +181,10 @@ void main() {
       expect(find.text('Annualized vol'), findsOneWidget);
       expect(find.text('Max drawdown'), findsOneWidget);
       expect(find.text('LATEST · RETURN NOT MATURE'), findsOneWidget);
+      expect(find.byKey(const ValueKey('rule-range-metrics')), findsOneWidget);
+      expect(find.text('Stock P&L distribution'), findsOneWidget);
+      expect(find.text('75.00%'), findsNWidgets(2));
+      expect(api.paths.where((p) => p.contains('/analysis?')).length, 1);
       await tester.ensureVisible(
         find.byKey(const ValueKey('curve-toggle-ackman')),
       );
@@ -234,4 +296,92 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Rule portfolio dashboard'), findsOneWidget);
   });
+  testWidgets(
+    'range updates both metrics, drops stale attribution and keeps marks distinct from sells',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _RuleApi();
+      await _mount(tester, api);
+      await tester.pumpAndSettle();
+      final curve = (api.payload()['backtest'] as Map)['curve'] as List;
+      final first = (0.5 * (curve.length - 1)).round();
+      final start = curve[first]['date'] as String;
+      api.analysisPending[start] = Completer();
+      tester.widget<RangeSlider>(find.byType(RangeSlider)).onChanged!(
+        const RangeValues(.5, 1),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text('Stock P&L distribution'), findsNothing);
+      expect(find.textContaining('Reconciling stock P&L'), findsOneWidget);
+      final rangePath = api.paths.last;
+      expect(Uri.parse(rangePath).queryParameters['start'], start);
+      final expected = strategyRangeMetrics([
+        for (final r in curve.skip(first))
+          {'date': r['date'], 'value': r['ackman']},
+      ]);
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('range-ackman-0'))).data,
+        '${(expected['totalReturn']! * 100).toStringAsFixed(2)}%',
+      );
+      // A later range must win even if the half-range response arrives last.
+      tester.widget<RangeSlider>(find.byType(RangeSlider)).onChanged!(
+        const RangeValues(.75, 1),
+      );
+      await tester.pumpAndSettle();
+      final latestPath = api.paths.last;
+      api.analysisPending[start]!.complete(api.analysis(rangePath));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining(
+          '${Uri.parse(latestPath).queryParameters['start']} →',
+        ),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('range-quality_rank-best')),
+      );
+      await tester.tap(find.byKey(const ValueKey('range-quality_rank-best')));
+      await tester.pumpAndSettle();
+      expect(find.text('ANET · Range P&L'), findsOneWidget);
+      expect(
+        find.textContaining('2023-01-03 · ANET · \$15.0000'),
+        findsOneWidget,
+      );
+      expect(find.text('Sells · within range'), findsOneWidget);
+      expect(find.textContaining('Open at range end'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'attribution failure preserves both net metrics and retry works on a narrow screen',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _RuleApi()..failAnalysis = true;
+      await _mount(
+        tester,
+        api,
+        size: const Size(390, 844),
+        language: AppLanguage.zh,
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('range-quality_rank-0')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('range-ackman-0')), findsOneWidget);
+      expect(find.textContaining('不会编造买卖价格'), findsOneWidget);
+      api.failAnalysis = false;
+      await tester.ensureVisible(find.text('重试逐股分析'));
+      await tester.tap(find.text('重试逐股分析'));
+      await tester.pumpAndSettle();
+      expect(find.text('个股盈亏分布'), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('range-ackman-best')),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

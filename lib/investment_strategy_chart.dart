@@ -17,7 +17,7 @@ Map<String, double?> strategyRangeMetrics(
                 .map((r) => math.pow(r - avg, 2).toDouble())
                 .reduce((a, b) => a + b) /
             (returns.length - 1)
-      : 0.0;
+      : null;
   var peak = 1.0, drawdown = 0.0;
   for (final v in values) {
     peak = math.max(peak, v);
@@ -32,8 +32,8 @@ Map<String, double?> strategyRangeMetrics(
         ? math.pow(values.last, 365.25 / days).toDouble() - 1
         : null,
     'maxDrawdown': drawdown,
-    'volatility': math.sqrt(variance * 252),
-    'sharpeZeroRf': variance > 0
+    'volatility': variance == null ? null : math.sqrt(variance * 252),
+    'sharpeZeroRf': variance != null && variance > 0
         ? avg / math.sqrt(variance) * math.sqrt(252)
         : null,
   };
