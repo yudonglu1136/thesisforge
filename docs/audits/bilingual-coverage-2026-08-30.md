@@ -8,8 +8,9 @@ and executed rebalances. Four focused 1280px/390px widget tests verify chart
 layout, bin selection and range-linked turnover updates. The 13-test rule
 portfolio widget file passes; full Flutter is 600 passed / 32 failed with the
 exact same failure-name set as the pre-change baseline, not 32 new passes.
-Full analyzer, i18n, 60 performance checks and production build pass. Production
-browser/release verification is tracked in `rule-distribution-2026-09-24.md`.
+Full analyzer, i18n, 60 performance checks and production build pass. Signed-in
+production browser checks passed EN/ZH desktop and 390x844, bin tap/hover and
+1Y interval changes; release verification is in `rule-distribution-2026-09-24.md`.
 
 ### 2026-09-24: Independent Strategy rule portfolios (production)
 
