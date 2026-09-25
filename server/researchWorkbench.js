@@ -153,6 +153,8 @@ function finishResearchWorkbench(service,owner,ticker,asOf,core,model) {
     coverage:{
       company:'available',facts:model?'model_snapshot_summary':'fact_os_full',
       documents:'on_demand',institutions:'on_demand',
+      marketPrice:core.snapshot?.price?.canonical?'fact_os_canonical':
+        finite(core.snapshot?.price?.value)?'released_snapshot':'unavailable',
       platformModel:model?'available':'not_modeled',personalResearch:'available',
     },
     researchDates:{cutoff:asOf,financialPeriod:core.snapshot?.periodEnd??null,

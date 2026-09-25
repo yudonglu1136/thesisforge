@@ -36,9 +36,25 @@ test('materialized opportunities never rebuild canonical quotes in a user reques
   const result=await withInvestmentMarketFacts(service,'verified-owner',{query:{asOf}},'/opportunities',()=>({from:'artifact'}));
   assert.deepEqual(result,{from:'artifact'});assert.equal(service.calls.length,0);
 });
+test('company research remains readable from the released research snapshot when no Fact OS generation is active',async()=>{
+  const service=fixture();
+  service.marketReadOptions.getGeneration=async()=>'';
+  service.marketReadOptions.readBatch=async()=>assert.fail('no canonical read without a published generation');
+  const result=await withInvestmentMarketFacts(service,'verified-owner',
+    {query:{asOf},params:{ticker:'AMZN'}},'/research/:ticker',
+    ()=>({ticker:'AMZN',coverage:{company:'available'}}));
+  assert.deepEqual(result,{ticker:'AMZN',coverage:{company:'available'}});
+});
+test('price-sensitive writes remain fail-closed when no Fact OS generation is active',async()=>{
+  const service=fixture();
+  service.marketReadOptions.getGeneration=async()=>'';
+  service.marketReadOptions.readBatch=async()=>[{ok:false,error:{code:'local_data_unavailable'}}];
+  await assert.rejects(()=>withInvestmentMarketFacts(service,'verified-owner',
+    {query:{asOf},body:{ticker:'AMZN',asOf}},'/calculate',()=>assert.fail()),/local_data_unavailable/);
+});
 test('private review ownership is validated before price reads',async()=>{
   const service=fixture();service.store.get=()=>{throw Error('not_owned');};
-  assert.throws(()=>withInvestmentMarketFacts(service,'attacker',{query:{asOf},params:{id:'other'}},'/review/:id',()=>assert.fail()),/not_owned/);
+  await assert.rejects(()=>withInvestmentMarketFacts(service,'attacker',{query:{asOf},params:{id:'other'}},'/review/:id',()=>assert.fail()),/not_owned/);
   assert.equal(service.calls.length,0);
 });
 
