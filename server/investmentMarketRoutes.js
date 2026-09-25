@@ -6,6 +6,10 @@ import { opportunityBooks } from './investmentOpportunities.js';
 // one subprocess per holding. Private ownership is resolved before any read.
 export function withInvestmentMarketFacts(service,owner,request,route,handler) {
   if(!service.source?.canonicalMarket)return handler();
+  // The production opportunities endpoint reads its pinned public-analysis
+  // artifact. Rebuilding a canonical quote batch here would defeat the
+  // materialization boundary and make every user pay for the source scan.
+  if(route==='/opportunities'&&service.publicAnalysis)return handler();
   const body=request.body??{},params=request.params??{};
   let tickers=[],historyTickers=[];
   const asOf=service.date(request.query?.asOf??body.asOf);

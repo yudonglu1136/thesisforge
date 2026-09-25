@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRuleLedger, analyzeRuleRange, createRuleAnalysisService, canonicalRulePrices } from './rulePortfolioAnalysis.js';
+import { buildRuleLedger, analyzeRuleRange, createRuleAnalysisService, canonicalRulePrices,
+  serializeRuleLedger,hydrateRuleLedger } from './rulePortfolioAnalysis.js';
 
 const dates = ['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'];
 const prices = new Map([
@@ -20,6 +21,13 @@ function fixture() {
     backtest: { curve: dates.map((date, i) => ({ date, quality_rank: values[i], ackman: values[i] })) } };
 }
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
+
+test('versioned public ledger round-trips maps without changing range statistics',()=>{
+  const ledger=buildRuleLedger(fixture(),prices);
+  const restored=hydrateRuleLedger(JSON.parse(JSON.stringify(serializeRuleLedger(ledger))));
+  assert.deepEqual(analyzeRuleRange(restored,dates[0],dates.at(-1)),
+    analyzeRuleRange(ledger,dates[0],dates.at(-1)));
+});
 
 test('post-cost execution quantities conserve inventory and FIFO intervals reconcile for both strategies', () => {
   const ledger = buildRuleLedger(fixture(), prices);

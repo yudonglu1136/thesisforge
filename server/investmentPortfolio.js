@@ -4,7 +4,9 @@ import {portfolioMarketContext,portfolioValuations} from './portfolioRisk.js';
 import {portfolioHome} from './portfolioHome.js';
 import {portfolioGuruContext,portfolioGuruActivity,portfolioGuruBooks} from './portfolioGuruActivity.js';
 import {portfolioSyncResult} from './portfolioSyncResult.js';
-import {loadDividendCalendarForTickers} from './dividendClient.js';
+import {portfolioAnalysisIdentity,portfolioAnalysisQueue} from './portfolioAnalysisQueue.js';
+import {portfolioConnectionRevision,readUserPortfolioAnalysis,writeUserPortfolioAnalysis} from './userPortfolioStore.js';
+import {dataReleaseStatus} from './dataReleaseContext.js';
 
 const n = x => finite(x) ? x : null;
 const sum = xs => xs.reduce((s, x) => s + x, 0);
@@ -14,29 +16,10 @@ const symbol = v => /^[A-Z][A-Z0-9.-]{0,14}$/.test(v ?? '') ? v : null;
 const currency = v => /^[A-Z]{3}$/.test(v ?? '') ? v : null;
 const empty = (status, asOf) => ({version: 'portfolio-research-v1', status, asOf, groups: [], managers: [], positions: []});
 
-function dividendReadTimeoutMs() {
-  const configured=Number(process.env.PORTFOLIO_DIVIDEND_READ_TIMEOUT_MS);
-  return Number.isFinite(configured)?Math.max(250,Math.min(10_000,configured)):2_500;
-}
-
-function withDeadline(promise,ms) {
-  let timer;
-  const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('portfolio_dividend_read_timeout'),{code:'portfolio_dividend_read_timeout'})),ms);});
-  return Promise.race([promise,timeout]).finally(()=>clearTimeout(timer));
-}
-
 function trailingYearStart(asOf) {
   const value=new Date(`${isoDate(asOf)}T00:00:00Z`);
   value.setUTCFullYear(value.getUTCFullYear()-1);
   return value.toISOString().slice(0,10);
-}
-
-function eligibleDividendPositions(analysis) {
-  return analysis.groups.flatMap(group=>group.positions.filter(position=>{
-    if(position.kind!=='equity'||!(position.quantity>0)||!(position.price>0)||!(position.value>0)||!(position.fxRateToBase>0))return false;
-    const expected=position.quantity*position.price*position.fxRateToBase;
-    return Math.abs(expected-position.value)<=Math.max(1,Math.abs(position.value)*.01);
-  }).map(position=>({...position,baseCurrency:group.currency,quoteCurrency:position.currency})));
 }
 
 // This is a transparent current-holdings estimate, not broker cash income.
@@ -267,7 +250,7 @@ export function buildPortfolioAnalysis(source, payload, asOf, options={}) {
   return portfolioMarketContext(source,analysis,payload,asOf,options);
 }
 
-export function registerPortfolioAnalysisRoute(app, service, loadPortfolio) {
+export function registerPortfolioAnalysisRoute(app, service, loadPortfolio,{analysisQueue=portfolioAnalysisQueue}={}) {
   const respond = forceRefresh => async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
     res.vary('Authorization');
@@ -298,29 +281,36 @@ export function registerPortfolioAnalysisRoute(app, service, loadPortfolio) {
       const loadMs=performance.now()-loadStarted;
       const rate=req.query.riskFreeRate===undefined?.04:Number(req.query.riskFreeRate);
       if(!Number.isFinite(rate)||rate<0||rate>.2)return res.status(400).json({error:'invalid_risk_free_rate'});
-      const buildStarted=performance.now();
-      const analysis=buildPortfolioAnalysis(service.source, payload, asOf,{riskFreeRate:rate,home,summary});
-      const buildMs=performance.now()-buildStarted;
-      const dividendStarted=performance.now();
-      if(!summary&&analysis.groups?.length){
-        try{
-          // Fact OS readers share a bounded queue. A long fundamental scan may
-          // be ahead of this request, but Portfolio must still return usable
-          // account data instead of waiting for that queue for up to minutes.
-          const calendar=await withDeadline(loadDividendCalendarForTickers(eligibleDividendPositions(analysis),{
-            startDate:trailingYearStart(asOf),endDate:asOf,
-          }),dividendReadTimeoutMs());
-          attachPortfolioTrailingDividends(analysis,calendar,{asOf});
-        }catch{
-          attachPortfolioTrailingDividends(analysis,{status:{source:'unavailable'},events:[]},{asOf});
-        }
+      // A request may read an exact or last-good private analysis snapshot, but
+      // it never scans the public research/13F warehouse. A worker thread owns
+      // the expensive rebuild and atomically publishes a new encrypted owner
+      // snapshot only after the whole calculation succeeds.
+      const connectionRevision=local?null:portfolioConnectionRevision(req.user);
+      const dependencies=analysisQueue.dependencies?.()??{release:dataReleaseStatus(),
+        investmentReleaseId:process.env.INVESTMENT_RELEASE_ID??null};
+      const identity=portfolioAnalysisIdentity(payload,{asOf,scope,riskFreeRate:rate,connectionRevision,...dependencies});
+      let saved=null;
+      if(!local)try{saved=readUserPortfolioAnalysis(req.user,{scope,inputFingerprint:identity.inputFingerprint,asOf});}catch{}
+      const analysis=saved?.payload??analysePortfolio(payload,{asOf});
+      analysis.detailLevel??=summary?'summary':home?'home':'detail';
+      const rebuilding=!saved?.exact&&!!analysis.groups?.length;
+      if(rebuilding&&!local){
+        const user={id:req.user.id,...(req.user.adminPortfolioHash?{adminPortfolioHash:req.user.adminPortfolioHash}:{})};
+        analysisQueue.enqueue({inputFingerprint:identity.inputFingerprint,payload,asOf,scope,riskFreeRate:rate},{
+          onSuccess:result=>{try{writeUserPortfolioAnalysis(user,{scope,inputFingerprint:identity.inputFingerprint,
+            asOf,reportDate:identity.reportDate,payload:result,connectionRevision});}catch(error){console.warn('[portfolio-analysis] snapshot write failed',{scope,code:error?.code??'failed'});}},
+          onFailure:()=>console.warn('[portfolio-analysis] background rebuild failed',{scope}),
+        });
       }
-      const dividendMs=performance.now()-dividendStarted;
+      const queueStatus=rebuilding&&!local?analysisQueue.status(identity.inputFingerprint):'idle';
       const result={
         ...analysis,
         // Connection metadata lets the client distinguish an unconfigured
         // account from a configured connection whose broker refresh failed.
         ...(payload?.connection?{connection:payload.connection}:{}),
+        analysisSnapshot:{status:saved?.exact?'ready':queueStatus==='failed'?'failed':rebuilding?'updating':'not_required',
+          inputFingerprint:identity.inputFingerprint,updatedAt:saved?.createdAt??null,
+          stale:Boolean(saved&&!saved.exact)},
       };
       if(forceRefresh){
         const sync=portfolioSyncResult(payload).response;
@@ -331,8 +321,8 @@ export function registerPortfolioAnalysisRoute(app, service, loadPortfolio) {
         result.sync=syncStatus;
       }
       const totalMs=performance.now()-loadStarted;
-      res.setHeader('Server-Timing',`portfolio-read;dur=${loadMs.toFixed(1)}, portfolio-build;dur=${buildMs.toFixed(1)}, portfolio-dividends;dur=${dividendMs.toFixed(1)}, total;dur=${totalMs.toFixed(1)}`);
-      if(totalMs>1_000)console.warn('[portfolio-analysis] slow request',{scope,forceRefresh,totalMs:Number(totalMs.toFixed(1)),loadMs:Number(loadMs.toFixed(1)),buildMs:Number(buildMs.toFixed(1)),dividendMs:Number(dividendMs.toFixed(1)),groups:analysis.groups?.length??0});
+      res.setHeader('Server-Timing',`portfolio-read;dur=${loadMs.toFixed(1)}, portfolio-snapshot;dur=${(totalMs-loadMs).toFixed(1)}, total;dur=${totalMs.toFixed(1)}`);
+      if(totalMs>1_000)console.warn('[portfolio-analysis] slow snapshot read',{scope,forceRefresh,totalMs:Number(totalMs.toFixed(1)),loadMs:Number(loadMs.toFixed(1)),snapshotStatus:result.analysisSnapshot.status});
       res.json(result);
     } catch (e) { res.status(e.status ?? 503).json({error: 'portfolio_analysis_unavailable'}); }
   };

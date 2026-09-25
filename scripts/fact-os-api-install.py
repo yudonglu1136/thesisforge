@@ -30,7 +30,8 @@ def api_port(config, environment=None):
 
 def validate_live_ack(body,installed):
     if (body.get('releaseId')!=installed['releaseId'] or body.get('status')!='verified'
-            or body.get('fundamentals',{}).get('status')!='ready'):
+            or body.get('fundamentals',{}).get('status')!='ready'
+            or body.get('publicAnalysis',{}).get('status')!='ready'):
         raise ValueError('live_api_generation_mismatch')
     expected={name:item['generationId'] for name,item in installed['groups'].items()}
     observed={name:item.get('generationId') for name,item in body.get('groups',{}).items()}
@@ -101,7 +102,8 @@ def main():
         with urllib.request.urlopen(request,timeout=120) as response:body=json.load(response)
         validate_live_ack(body,installed)
         return {'status':'verified','releaseId':installed['releaseId'],'actualApiUserRead':True,'canonicalReadVerified':True,
-                'groups':{k:v['generationId'] for k,v in body['groups'].items()},'fundamentals':body['fundamentals']}
+                'groups':{k:v['generationId'] for k,v in body['groups'].items()},'fundamentals':body['fundamentals'],
+                'publicAnalysis':body['publicAnalysis']}
     result=install(s3,args.bucket,candidate,root,validate_group=validate,probe=probe,expected_release=expected)
     print(json.dumps(result))
 

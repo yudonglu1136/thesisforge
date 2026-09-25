@@ -50,6 +50,27 @@ test('encrypted report inputs survive restart and preserve owner isolation, cred
   } finally {db.close();}
 });
 
+test('analysis snapshots are encrypted, versioned and serve only the same owner, scope and cutoff',()=>{
+  const user={id:'persistence-analysis'},other={id:'persistence-analysis-other'};
+  for(const owner of [user,other])store.savePortfolioConnection(owner,config(owner===user?'SYNTHETIC_ANALYSIS_123456':'SYNTHETIC_ANALYSIS_OTHER_123456',owner===user?'456789':'567890'));
+  const first='a'.repeat(64),next='b'.repeat(64),analysis={version:'portfolio-research-v1',status:'ready',asOf:'2026-09-12',groups:[{currency:'USD'}]};
+  const revision=store.portfolioConnectionRevision(user);
+  store.writeUserPortfolioAnalysis(user,{scope:'detail',inputFingerprint:first,asOf:'2026-09-12',reportDate:'2026-09-09',payload:analysis,
+    connectionRevision:revision,now:new Date('2026-09-12T13:00:00Z')});
+  assert.equal(store.readUserPortfolioAnalysis(user,{scope:'detail',inputFingerprint:first,asOf:'2026-09-12'}).exact,true);
+  const stale=store.readUserPortfolioAnalysis(user,{scope:'detail',inputFingerprint:next,asOf:'2026-09-12'});
+  assert.equal(stale.exact,false);assert.deepEqual(stale.payload,analysis);
+  assert.equal(store.readUserPortfolioAnalysis(user,{scope:'summary',inputFingerprint:next,asOf:'2026-09-12'}),null);
+  assert.equal(store.readUserPortfolioAnalysis(user,{scope:'detail',inputFingerprint:next,asOf:'2026-09-11'}),null);
+  assert.equal(store.readUserPortfolioAnalysis(other,{scope:'detail',inputFingerprint:first,asOf:'2026-09-12'}),null);
+  store.savePortfolioConnection(user,config('SYNTHETIC_ANALYSIS_REPLACED_123456','678901'));
+  assert.throws(()=>store.writeUserPortfolioAnalysis(user,{scope:'detail',inputFingerprint:next,asOf:'2026-09-12',
+    reportDate:'2026-09-09',payload:analysis,connectionRevision:revision}),/connection_changed/);
+  const db=new DatabaseSync(store.userPortfolioInfo(user).path,{readOnly:true});
+  try{assert.ok(!db.prepare('SELECT encrypted_json FROM portfolio_analysis_snapshots').get().encrypted_json.includes('portfolio-research-v1'));}
+  finally{db.close();}
+});
+
 test('failed, partial, sampled, undated and older reports never replace last good report',()=>{
   const user={id:'persistence-validation'};store.savePortfolioConnection(user,config());
   store.writeUserPortfolioReport(user,payload(),options(user));

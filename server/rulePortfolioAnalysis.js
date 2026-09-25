@@ -132,6 +132,41 @@ export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
   return { version: RULE_ANALYSIS_VERSION, snapshotId: snapshot.snapshotId, styles };
 }
 
+const mapRows=value=>value instanceof Map?[...value.entries()]:[];
+const plainStyle=style=>style.segments
+  ?{...style,segments:style.segments.map(plainStyle)}
+  :{...style,days:style.days.map(day=>({...day,pnl:mapRows(day.pnl),fees:mapRows(day.fees),positions:mapRows(day.positions)}))};
+
+// Worker-safe representation of the reconciled daily strategy ledger. The
+// expensive canonical price read and allocation replay happen once per Fact
+// OS generation; user-selected ranges only reduce this immutable artifact.
+export function serializeRuleLedger(ledger) {
+  if(ledger?.version!==RULE_ANALYSIS_VERSION||typeof ledger.snapshotId!=='string'||!Array.isArray(ledger.styles))
+    fail('rule_ledger_artifact_invalid');
+  return {version:'rule-ledger-artifact-v1',ledgerVersion:ledger.version,snapshotId:ledger.snapshotId,
+    styles:ledger.styles.map(plainStyle)};
+}
+
+const hydratedMap=(value,code)=>{
+  if(!Array.isArray(value))fail(code);
+  const result=new Map();
+  for(const row of value){if(!Array.isArray(row)||row.length!==2||typeof row[0]!=='string'||result.has(row[0]))fail(code);result.set(row[0],row[1]);}
+  return result;
+};
+const hydratedStyle=style=>style?.segments
+  ?{...style,segments:style.segments.map(hydratedStyle)}
+  :{...style,days:(style?.days??[]).map(day=>{
+    if(typeof day?.date!=='string'||!Number.isFinite(day.nav))fail('rule_ledger_artifact_invalid');
+    return {...day,pnl:hydratedMap(day.pnl,'rule_ledger_artifact_invalid'),
+      fees:hydratedMap(day.fees,'rule_ledger_artifact_invalid'),positions:hydratedMap(day.positions,'rule_ledger_artifact_invalid')};
+  })};
+
+export function hydrateRuleLedger(value) {
+  if(value?.version!=='rule-ledger-artifact-v1'||value.ledgerVersion!==RULE_ANALYSIS_VERSION||
+      typeof value.snapshotId!=='string'||!Array.isArray(value.styles))fail('rule_ledger_artifact_invalid');
+  return {version:value.ledgerVersion,snapshotId:value.snapshotId,styles:value.styles.map(hydratedStyle)};
+}
+
 // Stock-level interval P&L, not a count of daily wins or a fabricated FIFO trade
 // ledger. Open holdings are marked, and boundary marks remain separate from
 // the actual simulated rebalance events. Values are per unit of starting NAV.

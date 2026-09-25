@@ -43,6 +43,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
   void privacyChanged() => setState(() {});
   void homeUpdate(VoidCallback action) => setState(action);
   final search = TextEditingController();
+  Timer? snapshotPoll;
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
   String percent(dynamic v) => nullableNumber(v) == null
@@ -71,12 +72,14 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
   @override
   void dispose() {
     serial++;
+    snapshotPoll?.cancel();
     portfolioPrivacyMode.removeListener(privacyChanged);
     search.dispose();
     super.dispose();
   }
 
   Future<void> load() async {
+    snapshotPoll?.cancel();
     final request = ++serial;
     setState(() {
       loading = true;
@@ -102,7 +105,17 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
           selectedCurrency = text(groups.firstOrNull?['currency']);
         }
       });
-      if (!widget.homeMode && asList(result['groups']).isNotEmpty) {
+      final snapshotStatus = text(asMap(result['analysisSnapshot'])['status']);
+      if (snapshotStatus == 'updating') {
+        schedulePrimarySnapshotPoll(request);
+      } else if (snapshotStatus == 'failed') {
+        setState(
+          () => portfolioActionError = w(
+            'The saved portfolio is available, but the refreshed analysis could not be completed. Retry shortly.',
+            '已有组合快照仍可查看，但新版分析暂时未能完成，请稍后重试。',
+          ),
+        );
+      } else if (!widget.homeMode && asList(result['groups']).isNotEmpty) {
         unawaited(loadDetails(request));
       }
     } catch (_) {
@@ -115,7 +128,51 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
     }
   }
 
-  Future<void> loadDetails(int request) async {
+  void schedulePrimarySnapshotPoll(int request, [int attempt = 0]) {
+    snapshotPoll?.cancel();
+    if (attempt >= 30) {
+      if (mounted && request == serial) {
+        setState(
+          () => portfolioActionError = w(
+            'The saved portfolio is available. The refreshed analysis is taking longer than expected.',
+            '已有组合快照仍可查看；新版分析所需时间超出预期。',
+          ),
+        );
+      }
+      return;
+    }
+    snapshotPoll = Timer(const Duration(seconds: 2), () async {
+      if (!mounted || request != serial) return;
+      try {
+        final scope = widget.homeMode ? 'home' : 'summary';
+        final result = await widget.api.getJson(
+          '/api/investment/portfolio-analysis?asOf=${widget.asOf}&riskFreeRate=$riskFreeRate&scope=$scope',
+        );
+        if (!mounted || request != serial) return;
+        final status = text(asMap(result['analysisSnapshot'])['status']);
+        final ready = status == 'ready';
+        setState(() => data = result);
+        if (ready) {
+          if (!widget.homeMode && asList(result['groups']).isNotEmpty) {
+            unawaited(loadDetails(request));
+          }
+        } else if (status == 'updating') {
+          schedulePrimarySnapshotPoll(request, attempt + 1);
+        } else {
+          setState(
+            () => portfolioActionError = w(
+              'The saved portfolio is available, but the refreshed analysis could not be completed. Retry shortly.',
+              '已有组合快照仍可查看，但新版分析暂时未能完成，请稍后重试。',
+            ),
+          );
+        }
+      } catch (_) {
+        schedulePrimarySnapshotPoll(request, attempt + 1);
+      }
+    });
+  }
+
+  Future<void> loadDetails(int request, [int attempt = 0]) async {
     try {
       final result = await widget.api.getJson(
         '/api/investment/portfolio-analysis?asOf=${widget.asOf}&riskFreeRate=$riskFreeRate&scope=detail',
@@ -125,11 +182,24 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
           result['version'] != 'portfolio-research-v1') {
         throw StateError('portfolio_contract_mismatch');
       }
+      final snapshotStatus = text(asMap(result['analysisSnapshot'])['status']);
+      final updating = snapshotStatus == 'updating';
       setState(() {
         data = result;
-        detailsLoading = false;
-        detailsFailed = false;
+        detailsLoading = updating;
+        detailsFailed = snapshotStatus == 'failed';
       });
+      if (updating && attempt < 30) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        if (mounted && request == serial) {
+          unawaited(loadDetails(request, attempt + 1));
+        }
+      } else if (updating && mounted && request == serial) {
+        setState(() {
+          detailsLoading = false;
+          detailsFailed = true;
+        });
+      }
     } catch (_) {
       if (mounted && request == serial) {
         setState(() {
@@ -173,7 +243,17 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
           selectedCurrency = text(groups.firstOrNull?['currency']);
         }
       });
-      if (!widget.homeMode && groups.isNotEmpty) {
+      final snapshotStatus = text(asMap(result['analysisSnapshot'])['status']);
+      if (snapshotStatus == 'updating') {
+        schedulePrimarySnapshotPoll(request);
+      } else if (snapshotStatus == 'failed') {
+        setState(
+          () => portfolioActionError = w(
+            'The saved portfolio is available, but the refreshed analysis could not be completed. Retry shortly.',
+            '已有组合快照仍可查看，但新版分析暂时未能完成，请稍后重试。',
+          ),
+        );
+      } else if (!widget.homeMode && groups.isNotEmpty) {
         unawaited(loadDetails(request));
       }
       if (sync['ok'] != true) {
@@ -502,6 +582,17 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
           PortfolioDataNotice(
             icon: Icons.history_rounded,
             text: savedPortfolioReportNotice(data, context.language),
+            palette: p,
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (text(asMap(data?['analysisSnapshot'])['status']) == 'updating') ...[
+          PortfolioDataNotice(
+            icon: Icons.sync_rounded,
+            text: w(
+              'Showing your last available portfolio snapshot. A refreshed analysis is being calculated in the background.',
+              '正在显示已有组合快照；新版分析正在后台更新。',
+            ),
             palette: p,
           ),
           const SizedBox(height: 12),

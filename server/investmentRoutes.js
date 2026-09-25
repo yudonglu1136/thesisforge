@@ -12,15 +12,17 @@ import { createAiInsightsService } from './investmentAiInsights.js';
 import { fundamentalGuruQuarter } from './investmentFundamentals.js';
 import { buildGuruHoldingsMatrix, buildOpportunities, opportunityCompanySummary, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
 import { institutional13fInsights, institutional13fInsightDetail, institutional13fSectorDetail } from './institutional13fInsights.js';
-import { buildFundamentalDiscovery, buildFundamentalCompany, saveFundamentalObservation,
+import { buildFundamentalDiscovery, analyzeFundamentalUniverse, FUNDAMENTAL_RESEARCH_VERSION, FUNDAMENTAL_METHOD_VERSION,
+  buildFundamentalCompany, saveFundamentalObservation,
   listFundamentalObservations, reviewFundamentalObservation } from './fundamentalResearch.js';
 import { researchDocuments, researchFundamentals, researchInstitutions, researchPublishedModel,
   saveResearchRecord, listResearchRecords } from './researchWorkbench.js';
 import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
-import { createRuleAnalysisService } from './rulePortfolioAnalysis.js';
+import { createRuleAnalysisService,analyzeRuleRange,hydrateRuleLedger } from './rulePortfolioAnalysis.js';
 import { researchInsiders } from './researchInsiders.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
 import { factOsEnabled } from './factRepository.js';
+import { publicAnalysisArtifacts } from './publicAnalysisArtifact.js';
 
 export function registerInvestmentRoutes(app,service) {
   // One service instance owns generation caches and snapshot validation for
@@ -28,6 +30,11 @@ export function registerInvestmentRoutes(app,service) {
   // observe another manifest generation during the same user workflow.
   const aiInsights = service.aiInsights ??= createAiInsightsService();
   const ruleAnalysis = service.ruleAnalysis ??= createRuleAnalysisService();
+  const publicAnalysis = service.publicAnalysis ??= publicAnalysisArtifacts;
+  const precomputed = ()=>service.source?.canonicalMarket===true;
+  const artifactState=snapshot=>({status:snapshot.status,fingerprint:snapshot.fingerprint,updatedAt:snapshot.updatedAt,
+    cohortFingerprint:snapshot.activeCohortFingerprint??null,
+    ...(snapshot.error?{error:snapshot.error}:{})});
   const aiQuery = request => ({...request.query, asOf: service.date(request.query.asOf)});
   function route(method,path,handler,{cacheControl='private, no-store'}={}) {app[method]('/api/investment'+path,async (req,res)=>{
     // These URLs are cutoff-based, not immutable generation URLs. Revalidate
@@ -50,11 +57,37 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/home',(owner,r)=>service.home(owner,r.query.asOf));
   route('get','/discover',(owner,r)=>service.discover(owner,r.query.asOf));
   route('get','/guru-study',(_,r)=>guruStudy(service.source,service.date(r.query.asOf),r.query.period??'common'));
-  route('get','/investor-styles',(_,r)=>loadInvestorStyleDashboard({asOf:service.date(r.query.asOf),snapshotId:r.query.snapshotId,universe:r.query.universe}),
+  route('get','/investor-styles',(_,r)=>{
+    const args={asOf:service.date(r.query.asOf),universe:r.query.universe??'all'};
+    if(!precomputed())return loadInvestorStyleDashboard({...args,snapshotId:r.query.snapshotId});
+    const snapshot=publicAnalysis.get('strategy',args);
+    const dashboard=snapshot.value;
+    if(dashboard&&r.query.snapshotId&&dashboard.snapshotId!==r.query.snapshotId)
+      throw Object.assign(new Error('investor_style_snapshot_changed'),{status:409});
+    return dashboard?{...dashboard,artifact:artifactState(snapshot)}:
+      {status:'updating',requestedAsOf:args.asOf,universe:{id:args.universe},universeOptions:[],styles:[],backtest:{curve:[]},artifact:artifactState(snapshot)};
+  },
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
-  route('get','/investor-styles/analysis',(_,r)=>ruleAnalysis({asOf:service.date(r.query.asOf),
-    snapshotId:r.query.snapshotId,start:r.query.start,end:r.query.end,
-    ...(r.query.universe===undefined?{}:{universe:r.query.universe})}));
+  route('get','/investor-styles/analysis',async(_,r)=>{
+    const asOf=service.date(r.query.asOf);
+    if(!precomputed())return ruleAnalysis({asOf,snapshotId:r.query.snapshotId,start:r.query.start,end:r.query.end,
+      ...(r.query.universe===undefined?{}:{universe:r.query.universe})});
+    const args={asOf,universe:r.query.universe??'all'};
+    const dashboardSnapshot=publicAnalysis.get('strategy',args),dashboard=dashboardSnapshot.value;
+    const snapshot=publicAnalysis.get('strategy-ledger',args,{clone:false}),value=snapshot.value;
+    if(!dashboard||!value?.ledger)throw Object.assign(new Error('strategy_analysis_updating'),{status:503});
+    if(!dashboardSnapshot.activeCohortFingerprint||dashboardSnapshot.activeCohortFingerprint!==snapshot.activeCohortFingerprint)
+      throw Object.assign(new Error('strategy_analysis_updating'),{status:503});
+    if(!r.query.snapshotId||dashboard.snapshotId!==r.query.snapshotId||value.snapshotId!==dashboard.snapshotId)
+      throw Object.assign(new Error('investor_style_snapshot_changed'),{status:409});
+    const start=String(r.query.start??''),end=String(r.query.end??'');
+    if(start>=end||!dashboard.backtest.curve.some(row=>row.date===start)||!dashboard.backtest.curve.some(row=>row.date===end))
+      throw Object.assign(new Error('invalid_analysis_range'),{status:400});
+    return {...analyzeRuleRange(hydrateRuleLedger(value.ledger),start,end),universe:args.universe,
+      artifact:{dashboard:artifactState(dashboardSnapshot),ledger:artifactState(snapshot)},lineage:{portfolioSnapshotId:dashboard.snapshotId,
+        sourceSnapshotGeneration:value.sourceGeneration,readerFingerprint:snapshot.fingerprint,
+        allDailyNavReconciled:true,adjustmentBasis:'vendor_current_adjustment_factors',method:'rule-range-attribution-v2'}};
+  });
   route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
     search:r.query.search,limit:r.query.limit,
   }));
@@ -63,18 +96,31 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/ai-insights/compare',(_,r)=>aiInsights.compare(aiQuery(r)));
   route('get','/ai-insights/methodology',()=>aiInsights.methodology());
   route('get','/ai-insights/companies/:ticker',(_,r)=>aiInsights.company(r.params.ticker,aiQuery(r)));
-  route('get','/fundamentals',(_,r)=>(service.fundamentalDiscovery??buildFundamentalDiscovery)(service.date(r.query.asOf),{
-    lens:r.query.lens,search:r.query.search,limit:r.query.limit,offset:r.query.offset,sort:r.query.sort,
-    minRevenueGrowth:r.query.minRevenueGrowth,minOperatingMargin:r.query.minOperatingMargin,
-    minFcfMargin:r.query.minFcfMargin,
-  }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
+  route('get','/fundamentals',(_,r)=>{
+    const asOf=service.date(r.query.asOf),options={lens:r.query.lens,search:r.query.search,limit:r.query.limit,
+      offset:r.query.offset,sort:r.query.sort,minRevenueGrowth:r.query.minRevenueGrowth,
+      minOperatingMargin:r.query.minOperatingMargin,minFcfMargin:r.query.minFcfMargin};
+    if(service.fundamentalDiscovery)return service.fundamentalDiscovery(asOf,options);
+    if(!precomputed())return buildFundamentalDiscovery(asOf,options);
+    const snapshot=publicAnalysis.get('fundamentals',{asOf});
+    return snapshot.value?{...analyzeFundamentalUniverse(snapshot.value,options),artifact:artifactState(snapshot)}:
+      {version:FUNDAMENTAL_RESEARCH_VERSION,methodVersion:FUNDAMENTAL_METHOD_VERSION,status:'updating',asOf,
+        rows:[],totalMatches:0,counts:{},coverage:{factCompanies:0,withSignals:0,latestAvailableAt:null},artifact:artifactState(snapshot)};
+  },{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/fundamentals/:ticker',(_,r)=>(service.fundamentalCompany??buildFundamentalCompany)(service.source,r.params.ticker,service.date(r.query.asOf),{lens:r.query.lens}),
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/fundamentals/:ticker/gurus',(_,r)=>fundamentalGuruQuarter(service.source,r.params.ticker,service.date(r.query.asOf),r.query.quarter??null));
   route('get','/fundamental-observations',(owner,r)=>listFundamentalObservations(service,owner,r.query.ticker??null));
   route('post','/fundamental-observations',(owner,r)=>saveFundamentalObservation(service,owner,r.body));
   route('get','/fundamental-observations/:id/review',(owner,r)=>reviewFundamentalObservation(service,owner,r.params.id,r.query.asOf));
-  route('get','/opportunities',(_,r)=>buildOpportunities(service.source,service.date(r.query.asOf),r.query.quarter??null));
+  route('get','/opportunities',(_,r)=>{
+    const args={asOf:service.date(r.query.asOf),reportDate:r.query.quarter??null};
+    if(!precomputed())return buildOpportunities(service.source,args.asOf,args.reportDate);
+    const snapshot=publicAnalysis.get('opportunities',args);
+    return snapshot.value?{...snapshot.value,artifact:artifactState(snapshot)}:
+      {version:'guru-valuation-discovery-v1',status:'updating',asOf:args.asOf,reportDate:args.reportDate,
+        quarters:[],coverage:{eligibleManagers:0,reportedManagers:0,total:0},rows:[],artifact:artifactState(snapshot)};
+  });
   route('get','/guru-holdings',(owner,r)=>({
     ...buildGuruHoldingsMatrix(service.source,service.date(r.query.asOf),r.query.quarter??null),
     // The first Guru screen only needs this compact directory. Bundling it
@@ -139,6 +185,12 @@ export function enableInvestmentPreview(app) {
   registerPortfolioAnalysisRoute(app,service, async options => {
     const {loadPortfolioDashboard} = await import('./portfolioClient.js');
     return loadPortfolioDashboard(options);
+  });
+  // Warm the two expensive public discovery artifacts outside any user
+  // request. A daily Fact OS release changes their fingerprint and starts a
+  // new immutable generation while the last-good response remains readable.
+  setImmediate(()=>{
+    try{publicAnalysisArtifacts.warmCurrent(service.date()).catch(()=>{});}catch{}
   });
   return service;
 }

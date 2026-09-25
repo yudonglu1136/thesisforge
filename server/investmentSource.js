@@ -49,12 +49,14 @@ export function sourceNode(row) {
 }
 
 export class InvestmentSource {
-  constructor(file,{insightsFile=null,canonicalMarket=false}={}) {
+  constructor(file,{insightsFile=null,publicFactsFile=null,canonicalMarket=false}={}) {
     this.canonicalMarket=canonicalMarket;
     this.db=new DatabaseSync(file,{readOnly:true});
     this.db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');
     this.baseInsightsDb=insightsFile?new DatabaseSync(insightsFile,{readOnly:true}):null;
     this.baseInsightsDb?.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');
+    this.basePublicFactsDb=publicFactsFile?new DatabaseSync(publicFactsFile,{readOnly:true}):null;
+    this.basePublicFactsDb?.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');
     this.companyCache=new Map(); this.cacheGeneration=null;
     this.guruExposureCache=new Map(); this.guruExposureGeneration=null;
   }
@@ -68,13 +70,13 @@ export class InvestmentSource {
   }
   get publicFactsDb(){
     const root=releaseRoot('public_observations',null);
-    if(!root)return null;
+    if(!root)return this.basePublicFactsDb;
     return releaseResource('observations:'+root,()=>{
       const db=new DatabaseSync(path.join(root,'observations.sqlite'),{readOnly:true});
       db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');return db;
     },db=>db.close());
   }
-  close(){this.baseInsightsDb?.close();this.db.close();}
+  close(){this.basePublicFactsDb?.close();this.baseInsightsDb?.close();this.db.close();}
   availableTickers() { return this.db.prepare('SELECT DISTINCT ticker FROM valuation_pit_model_runs ORDER BY ticker').all().map(x=>x.ticker); }
   periods(ticker,asOf) {
     ticker=tickerKey(ticker);isoDate(asOf);

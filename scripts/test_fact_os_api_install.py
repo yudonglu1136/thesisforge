@@ -27,6 +27,7 @@ class ApiInstallPortTest(unittest.TestCase):
         installed={'releaseId':'a'*64,'groups':{'canonical':{'generationId':'b'*64},
                                                'ai_insights':{'generationId':'c'*64}}}
         body={**installed,'status':'verified','fundamentals':{'status':'ready','factCompanies':2},
+              'publicAnalysis':{'status':'ready'},
               'coverage':[{'dataset':t,'locally_available':True,'backfill_complete':True} for t in TABLES]}
         self.assertTrue(installer.validate_live_ack(body,installed))
         for groups in ({'canonical':{'generationId':'b'*64}},

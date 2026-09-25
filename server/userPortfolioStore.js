@@ -168,6 +168,21 @@ function initUserDb(db) {
       encrypted_json TEXT NOT NULL,
       PRIMARY KEY (provider, connection_revision, report_date)
     );
+
+    CREATE TABLE IF NOT EXISTS portfolio_analysis_snapshots (
+      scope TEXT NOT NULL,
+      input_fingerprint TEXT NOT NULL,
+      connection_revision TEXT NOT NULL,
+      as_of TEXT NOT NULL,
+      report_date TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      payload_sha256 TEXT NOT NULL,
+      encrypted_json TEXT NOT NULL,
+      PRIMARY KEY (scope, input_fingerprint)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_portfolio_analysis_snapshots_latest
+      ON portfolio_analysis_snapshots (scope, connection_revision, as_of, created_at DESC);
   `);
 }
 
@@ -240,6 +255,7 @@ function decryptJson(value, aad = encryptionAad) {
 
 const reportHash = value => crypto.createHash("sha256").update(value).digest("hex");
 const reportAad = user => Buffer.from(`thesisforge-portfolio-report-v1:${userHashFromUser(user)}`);
+const analysisAad = user => Buffer.from(`thesisforge-portfolio-analysis-v1:${userHashFromUser(user)}`);
 const reportError = code => Object.assign(new Error(code), { code });
 const reportDate = value => {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -309,6 +325,73 @@ export function readUserPortfolioReport(user) {
     throw reportError("portfolio_report_integrity_failure");
   }
   return { payload, reportAsOf: row.report_date, retrievedAt: row.retrieved_at };
+}
+
+function analysisScope(value) {
+  const scope=String(value??'');
+  if (!['home','summary','detail'].includes(scope)) throw reportError('portfolio_analysis_scope_invalid');
+  return scope;
+}
+
+function analysisFingerprint(value) {
+  const fingerprint=String(value??'').toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(fingerprint)) throw reportError('portfolio_analysis_fingerprint_invalid');
+  return fingerprint;
+}
+
+// Analysis overlays are private owner data. They live beside the encrypted
+// broker report and are never copied into a public Fact OS/release artifact.
+export function writeUserPortfolioAnalysis(user,{scope,inputFingerprint,asOf,reportDate:sourceReportDate,payload,
+  connectionRevision:expectedRevision=null,now=new Date()}={}) {
+  scope=analysisScope(scope);inputFingerprint=analysisFingerprint(inputFingerprint);
+  asOf=reportDate(asOf);sourceReportDate=reportDate(sourceReportDate);
+  if(!asOf||!sourceReportDate||!payload||typeof payload!=='object')throw reportError('portfolio_analysis_snapshot_invalid');
+  const connectionRevision=portfolioConnectionRevision(user);
+  if(!connectionRevision||expectedRevision&&connectionRevision!==expectedRevision)throw reportError('portfolio_connection_changed');
+  const createdAt=normalizedNow(now).toISOString(),json=JSON.stringify(payload);
+  if(Buffer.byteLength(json)>24*1024*1024)throw reportError('portfolio_analysis_too_large');
+  const db=openUserDb(user);
+  db.exec('BEGIN IMMEDIATE');
+  try{
+    if(portfolioConnectionRevision(user)!==connectionRevision||expectedRevision&&connectionRevision!==expectedRevision)
+      throw reportError('portfolio_connection_changed');
+    db.prepare(`INSERT INTO portfolio_analysis_snapshots
+      (scope,input_fingerprint,connection_revision,as_of,report_date,created_at,payload_sha256,encrypted_json)
+      VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT(scope,input_fingerprint) DO UPDATE SET
+        connection_revision=excluded.connection_revision,as_of=excluded.as_of,
+        report_date=excluded.report_date,created_at=excluded.created_at,
+        payload_sha256=excluded.payload_sha256,encrypted_json=excluded.encrypted_json`)
+      .run(scope,inputFingerprint,connectionRevision,asOf,sourceReportDate,createdAt,
+        reportHash(json),encryptJson(payload,analysisAad(user)));
+    // Bounded retention per owner/scope. Saved broker reports remain governed
+    // by their own immutable history and are not removed here.
+    db.prepare(`DELETE FROM portfolio_analysis_snapshots WHERE rowid IN (
+      SELECT rowid FROM portfolio_analysis_snapshots WHERE scope=? AND connection_revision=?
+      ORDER BY created_at DESC LIMIT -1 OFFSET 8
+    )`).run(scope,connectionRevision);
+    db.exec('COMMIT');
+    return {scope,inputFingerprint,asOf,reportDate:sourceReportDate,createdAt};
+  }catch(error){db.exec('ROLLBACK');throw error;}
+}
+
+export function readUserPortfolioAnalysis(user,{scope,inputFingerprint,asOf}={}) {
+  scope=analysisScope(scope);inputFingerprint=analysisFingerprint(inputFingerprint);asOf=reportDate(asOf);
+  if(!asOf)return null;
+  const connectionRevision=portfolioConnectionRevision(user);
+  if(!connectionRevision)return null;
+  const db=openUserDb(user);
+  const exact=db.prepare(`SELECT scope,input_fingerprint,as_of,report_date,created_at,payload_sha256,encrypted_json
+    FROM portfolio_analysis_snapshots WHERE scope=? AND input_fingerprint=? AND connection_revision=? LIMIT 1`)
+    .get(scope,inputFingerprint,connectionRevision);
+  const row=exact??db.prepare(`SELECT scope,input_fingerprint,as_of,report_date,created_at,payload_sha256,encrypted_json
+    FROM portfolio_analysis_snapshots WHERE scope=? AND connection_revision=? AND as_of=?
+    ORDER BY created_at DESC LIMIT 1`).get(scope,connectionRevision,asOf);
+  if(!row)return null;
+  const payload=decryptJson(row.encrypted_json,analysisAad(user)),json=JSON.stringify(payload);
+  if(reportHash(json)!==row.payload_sha256)throw reportError('portfolio_analysis_integrity_failure');
+  return {payload,scope:row.scope,inputFingerprint:row.input_fingerprint,asOf:row.as_of,
+    reportDate:row.report_date,createdAt:row.created_at,exact:row.input_fingerprint===inputFingerprint};
 }
 
 function cleanString(value) {

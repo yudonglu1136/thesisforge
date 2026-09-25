@@ -31,6 +31,11 @@ test('holdings, AI, company search and published model ledger do not trigger quo
     await withInvestmentMarketFacts(service,'verified-owner',{query:{asOf}},route,()=>true);
   assert.equal(service.calls.length,0);
 });
+test('materialized opportunities never rebuild canonical quotes in a user request',async()=>{
+  const service=fixture();service.publicAnalysis={get:()=>({})};
+  const result=await withInvestmentMarketFacts(service,'verified-owner',{query:{asOf}},'/opportunities',()=>({from:'artifact'}));
+  assert.deepEqual(result,{from:'artifact'});assert.equal(service.calls.length,0);
+});
 test('private review ownership is validated before price reads',async()=>{
   const service=fixture();service.store.get=()=>{throw Error('not_owned');};
   assert.throws(()=>withInvestmentMarketFacts(service,'attacker',{query:{asOf},params:{id:'other'}},'/review/:id',()=>assert.fail()),/not_owned/);
