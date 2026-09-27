@@ -71,3 +71,29 @@ Final source/group verification and schedule restoration are recorded in the
 small local receipt `data/fact_os/audit/worker-upgrade-48dc2c1-20260927.json`.
 Until that receipt is terminal, the manual data acceptance remains pending;
 the next actual scheduled run remains a separate acceptance requirement.
+
+## Terminal manual verification (2026-09-28 Asia/Riyadh)
+
+The execution finished `SUCCEEDED`. The independent verifier read the private
+S3 data-ready pointer, matching run receipt and all six group manifests, and
+verified their SHA-256 checksums and generation identities before restoring
+the original Scheduler configuration.
+
+- Run ID: `fa58128fef70af43a6586e541d17d08e3ea6f62047a37a7401a325580211942c`.
+- Data release: `412a6aaa0252fa3222c35ad735440055ca73343fef5e11c2450c7c4ee34fa6d3`.
+- All 14 sources are `ready`. Eleven were ingested; `holdings_ticker`,
+  `events` and `descriptions` were unchanged. Stocks and daily each required
+  the one permitted source-mutation retry, then passed complete verification.
+- All six groups succeeded: canonical, AI Insights, institutional 13F,
+  public observations, Research inputs and Strategy inputs. Their full
+  generation IDs are retained in the small local audit receipt above.
+- A separate Scheduler read confirmed `ENABLED`, `cron(30 7 * * ? *)`,
+  `Asia/Riyadh`, the original State Machine and `trigger=scheduler` input.
+- A separate worker read confirmed `/opt/fact-os/releases/48dc2c1` and the
+  exact runtime commit above. The old release remains available for rollback.
+  Final data-volume free space was approximately 60 GiB; no expansion occurred.
+
+This is a **manual data-only acceptance**, not a scheduled acceptance or a
+website-freshness assertion. The next actual scheduled execution (2026-09-28
+07:30 Asia/Riyadh) remains pending. `actualApiActivation=not_requested`;
+API serving pointers and private accounts were not changed.
