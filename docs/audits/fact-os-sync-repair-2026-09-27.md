@@ -42,3 +42,32 @@ already existed, so this run used the append-only receipt
 Backtest/model publication and private broker jobs are not added to the public
 daily job. Deployment and actual scheduled acceptance must be recorded
 separately; this document alone does not assert either.
+
+## AWS worker installation
+
+After explicit authorization to upload code, pause the public schedule, verify
+and restore/rollback, the worker-only release was installed on the existing
+instance. No instance/volume expansion, API activation or private account
+operation was performed.
+
+- Runtime commit: `48dc2c1cba6f24e21a0337fd74215663b1d2a287` (sync fix
+  `817a0fa` plus portable synthetic-capacity fixtures).
+- Code archive SHA-256:
+  `54a1a9e66a4c8f0b84d03a56d8107fe096faf3abc4d48adfa8a24e21be3e1e69`.
+- Install command: `9030af35-d9c4-46b6-8cc4-da1e28b30b5b`; 46 tests passed
+  on the actual worker using its Python 3.12 runtime before the atomic switch.
+- Current code: `/opt/fact-os/releases/48dc2c1`; rollback code retained at
+  `/opt/fact-os/releases/032da37`.
+- Manual execution: `worker-upgrade-48dc2c1-20260927`; source command
+  `adb85a56-b0e6-4056-b8ba-e2c4ce043be9`.
+- Actual start: `2026-09-27T19:35:04.328Z`. Its manually supplied schedule key
+  is `2026-09-27T20:00:00Z`, not its actual start time and not a Scheduler event.
+- The first install attempt stopped before switching because the host default
+  Python was incompatible with the existing SDK; the subsequent test run
+  exposed fixture dependence on `/tmp` capacity. Production disk gates were
+  preserved; low-capacity rejection remains explicitly tested.
+
+Final source/group verification and schedule restoration are recorded in the
+small local receipt `data/fact_os/audit/worker-upgrade-48dc2c1-20260927.json`.
+Until that receipt is terminal, the manual data acceptance remains pending;
+the next actual scheduled run remains a separate acceptance requirement.
