@@ -59,13 +59,12 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/guru-study',(_,r)=>guruStudy(service.source,service.date(r.query.asOf),r.query.period??'common'));
   route('get','/investor-styles',(_,r)=>{
     const args={asOf:service.date(r.query.asOf),universe:r.query.universe??'all'};
-    if(!precomputed())return loadInvestorStyleDashboard({...args,snapshotId:r.query.snapshotId});
-    const snapshot=publicAnalysis.get('strategy',args);
-    const dashboard=snapshot.value;
-    if(dashboard&&r.query.snapshotId&&dashboard.snapshotId!==r.query.snapshotId)
-      throw Object.assign(new Error('investor_style_snapshot_changed'),{status:409});
-    return dashboard?{...dashboard,artifact:artifactState(snapshot)}:
-      {status:'updating',requestedAsOf:args.asOf,universe:{id:args.universe},universeOptions:[],styles:[],backtest:{curve:[]},artifact:artifactState(snapshot)};
+    // This is already an immutable, reviewed, precomputed public artifact.
+    // The loader validates/caches it and slices by cutoff; it never scans the
+    // financial or price databases or runs a backtest. Re-materializing it per
+    // calendar day made a cold queue look like missing historical observations.
+    // Attribution remains separately gated by its canonical-price/cohort checks.
+    return loadInvestorStyleDashboard({...args,snapshotId:r.query.snapshotId});
   },
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/investor-styles/analysis',async(_,r)=>{

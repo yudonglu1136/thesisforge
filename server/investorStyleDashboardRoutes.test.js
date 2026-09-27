@@ -3,6 +3,32 @@ import test from 'node:test';
 import express from 'express';
 import { registerInvestmentRoutes } from './investmentRoutes.js';
 
+test('canonical production reads the verified precomputed curve without a cold background artifact', async t => {
+  const app=express();
+  app.use((req,_,next)=>{if(req.headers['x-test-user'])req.user={id:'alice'};next();});
+  registerInvestmentRoutes(app,{
+    date:value=>value,aiInsights:{},source:{canonicalMarket:true},
+    publicAnalysis:{get(){assert.fail('A published curve must not wait for a second build or unrelated canonical source');}},
+  });
+  const server=app.listen(0,'127.0.0.1');
+  await new Promise(resolve=>server.once('listening',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const base=`http://127.0.0.1:${server.address().port}/api/investment/investor-styles`;
+  for(const universe of ['all','sp500','nasdaq100']){
+    const response=await fetch(base+`?asOf=2026-09-27&universe=${universe}`,{headers:{'x-test-user':'alice'}});
+    assert.equal(response.status,200);assert.match(response.headers.get('cache-control'),/no-cache/);
+    const result=await response.json();assert.equal(result.status,'ready');
+    assert.equal(result.universe.id,universe);
+    assert.equal(result.backtest.from,universe==='nasdaq100'?'2020-01-02':'2013-01-02');
+    assert.equal(result.dataThrough,'2026-09-21'); // Never relabel the cutoff as a new observation.
+    assert.ok(result.backtest.curve.length>1000);
+    assert.equal((await fetch(base+`?asOf=2026-09-27&universe=${universe}&snapshotId=stale`,{headers:{'x-test-user':'alice'}})).status,409);
+  }
+  const early=await fetch(base+'?asOf=2012-01-01',{headers:{'x-test-user':'alice'}});
+  assert.equal((await early.json()).status,'unavailable_before_first_observation');
+  assert.equal((await fetch(base+'?asOf=2026-09-27')).status,401);
+});
+
 test('investor-style dashboard route is authenticated and returns the reviewed snapshot', async t => {
   const app = express();
   app.use((request, _, next) => {
