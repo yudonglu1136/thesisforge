@@ -40,5 +40,11 @@ failed. No six-group success or API activation is claimed.
   remain incomplete.
 - Chrome signed-in Home successfully rendered existing Portfolio snapshot and
   holdings; no broker sync was invoked. Other page acceptance is ongoing.
+- Signed-in production rule portfolios render 2013-01-02–2026-09-21 curves,
+  but stock attribution remains unavailable, leaving win rate, payoff and
+  turnover blank even after Retry attribution. This is a release blocker.
+- Production 13F displays the existing institutional dataset. Fundamentals
+  displays "Financial analysis is being prepared" with no company results;
+  the clearer loading state is not a completed functional repair.
 - User waived new SPY/KMLM parameter questions and requested existing website
   rules. Do not invent contributions or claim an unrun threshold experiment.
