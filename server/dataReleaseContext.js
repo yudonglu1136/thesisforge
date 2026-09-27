@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 const context=new AsyncLocalStorage();
-let current=null;
+const currents=new Map();
 
 function dispose(entry) {
   if(!entry||entry.current||entry.readers)return;
@@ -15,6 +15,7 @@ function dispose(entry) {
 export function readDataRelease(file=process.env.FACT_OS_ACTIVE_MANIFEST ||
   (process.env.NODE_ENV==='production'&&fs.existsSync('/var/app/data/fact-os/active.json')?'/var/app/data/fact-os/active.json':null)) {
   if(!file)return null;
+  const key=path.resolve(file),current=currents.get(key);
   const bytes=fs.readFileSync(file);
   const identity=crypto.createHash('sha256').update(bytes).digest('hex');
   if(current?.identity===identity)return current;
@@ -27,14 +28,28 @@ export function readDataRelease(file=process.env.FACT_OS_ACTIVE_MANIFEST ||
       throw Error('data_release_group_path_invalid');
   }
   const previous=current;
-  current={identity,manifest,current:true,readers:0,resources:new Map()};
+  const next={identity,manifest,current:true,readers:0,resources:new Map()};
+  currents.set(key,next);
   if(previous){previous.current=false;dispose(previous);}
-  return current;
+  return next;
+}
+
+export function researchReleaseManifest(req) {
+  const url=String(req.originalUrl??'').split('?')[0];
+  if(!/^\/api\/investment\/research(?:\/|$)/.test(url)&&url!=='/api/internal/research-data-release')return null;
+  const file=process.env.FACT_OS_RESEARCH_MANIFEST??(process.env.NODE_ENV==='production'
+    ?'/var/app/data/fact-os/research-active.json':null);
+  return file&&fs.existsSync(file)?file:null;
 }
 
 export function dataReleaseMiddleware(req,res,next) {
   let entry;
-  try{entry=readDataRelease();}catch{return res.status(503).json({error:'data_release_unavailable'});}
+  try{
+    const research=researchReleaseManifest(req);
+    entry=research?readDataRelease(research):readDataRelease();
+    if(research&&Object.keys(entry.manifest.groups).sort().join(',')!=='canonical,research_inputs')
+      throw Error('research_release_scope_invalid');
+  }catch{return res.status(503).json({error:'data_release_unavailable'});}
   if(!entry)return next();
   entry.readers++;
   res.setHeader('X-Data-Release-Id',entry.manifest.releaseId);

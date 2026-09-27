@@ -2,6 +2,7 @@ import express from "express";
 import { dataReleaseMiddleware,dataReleaseStatus } from './dataReleaseContext.js';
 import { queryFacts } from './factRepository.js';
 import { verifyReleasedFundamentals } from './fundamentalReleaseProbe.js';
+import { verifyReleasedResearch } from './researchReleaseProbe.js';
 import { enableInvestmentPreview } from './investmentRoutes.js';
 import { publicAnalysisArtifacts } from './publicAnalysisArtifact.js';
 import cors from "cors";
@@ -117,6 +118,16 @@ app.use(cors({
 }));
 installJsonTransport(app);
 app.use('/api',dataReleaseMiddleware);
+app.get('/api/internal/research-data-release',requireLoopbackRequest,requireInternalCron,async (_request,response)=>{
+  try {
+    const release=dataReleaseStatus();
+    if(!release||Object.keys(release.groups).sort().join(',')!=='canonical,research_inputs')
+      return response.status(503).json({error:'research_release_not_activated'});
+    const coverage=await queryFacts('get_coverage');
+    const research=await verifyReleasedResearch(new Date().toISOString().slice(0,10));
+    response.json({status:'verified',releaseId:release.releaseId,groups:release.groups,coverage,research});
+  }catch{return response.status(503).json({error:'research_release_probe_failed'});}
+});
 app.get('/api/internal/data-release',requireLoopbackRequest,requireInternalCron,async (_request,response)=>{
   try {
     const release=dataReleaseStatus();

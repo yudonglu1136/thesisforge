@@ -35,6 +35,46 @@ class MemoryS3:
 
 
 class PublicationTest(unittest.TestCase):
+    def test_research_scope_cannot_replace_global_pointer_or_accept_other_groups(self):
+        candidate=self.candidate();target=self.root/'installed'
+        with self.assertRaisesRegex(ValueError,'research_release_scope_invalid'):
+            install(self.s3,'bucket',candidate,target,validate_group=lambda *args:None,
+                    probe=lambda *args:{},active_name='research-active.json')
+        with self.assertRaisesRegex(ValueError,'invalid_activation_scope'):
+            install(self.s3,'bucket',candidate,target,validate_group=lambda *args:None,
+                    probe=lambda *args:{},active_name='../active.json')
+        candidate['groups']={name:candidate['groups']['institutional_13f'] for name in ('canonical','research_inputs')}
+        # Independent pointer rollback must not touch a global release.
+        target.mkdir();(target/'active.json').write_text('{"releaseId":"global-preserved"}')
+        with self.assertRaisesRegex(ValueError,'group_identity_mismatch'):
+            install(self.s3,'bucket',candidate,target,validate_group=lambda *args:None,
+                    probe=lambda *args:{},active_name='research-active.json')
+        self.assertEqual((target/'active.json').read_text(),'{"releaseId":"global-preserved"}')
+
+    def test_research_publication_and_failed_ack_are_atomic_without_global_switch(self):
+        original=self.candidate();item=original['groups']['institutional_13f']
+        raw=json.loads(self.s3.get_object(Bucket='bucket',Key=item['manifestKey'])['Body'].read())
+        groups={}
+        for name in ('canonical','research_inputs'):
+            manifest={**raw,'groupId':name};body=json.dumps(manifest).encode()
+            sha=hashlib.sha256(body).hexdigest();key='fact-os/published/groups/'+name+'/'+sha+'.json'
+            self.s3.put_object(Bucket='bucket',Key=key,Body=body)
+            groups[name]={**item,'manifestKey':key,'manifestSha256':sha}
+        candidate={**original,'groups':groups};target=self.root/'research-install';target.mkdir()
+        (target/'active.json').write_text('{"releaseId":"global-preserved"}')
+        install(self.s3,'bucket',candidate,target,validate_group=lambda *args:None,
+                probe=lambda c,active:self.ack(c),active_name='research-active.json')
+        before=(target/'research-active.json').read_bytes()
+        newer={**candidate,'releaseId':'b'*64}
+        def reject(c,active):
+            if active:raise ValueError('research_probe_failed')
+            return {}
+        with self.assertRaisesRegex(ValueError,'research_probe_failed'):
+            install(self.s3,'bucket',newer,target,validate_group=lambda *args:None,
+                    probe=reject,expected_release=candidate['releaseId'],active_name='research-active.json')
+        self.assertEqual((target/'research-active.json').read_bytes(),before)
+        self.assertEqual((target/'active.json').read_text(),'{"releaseId":"global-preserved"}')
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.store=SimpleNamespace(root=self.root)

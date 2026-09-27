@@ -167,3 +167,22 @@ an EB replacement/multi-instance rollout, update and verify the install target
 and restore the active release on each serving instance. A green health response
 alone is insufficient. First scheduled acceptance is pending until the actual
 Scheduler execution, source receipt, builds, install and API ACK are inspected.
+
+### Research-only recovery
+
+`scripts/fact-os-api-install.py --scope research` accepts **only** a complete
+`canonical` + `research_inputs` candidate. It retains the same checksums,
+14-table coverage, actual `webapp` read, fencing and atomic rollback checks,
+but writes `research-active.json`. Only `/api/investment/research/*` and the
+loopback-only `/api/internal/research-data-release` use that pointer. Strategy,
+Discover, Portfolio and the global `active.json` are unchanged. The Research ACK
+requires usable annual and quarterly histories for AMZN and PLTR, correct
+identities and the requested disclosure cutoff. It does not claim Strategy NAV
+reconciliation, global activation or daily synchronization success.
+
+Set `THESISFORGE_RESEARCH_RELEASE_KEY` to the exact approved immutable release
+key to restore this scope when EB replaces an instance. The postdeploy hook
+installs only if the Research pointer is absent; it never automatically rewinds
+an existing activation or downloads private stores. Replacing an existing
+Research release still requires the explicit installer and expected-release
+fence. Keep prior manifests/files and verify the live scoped ACK after rollback.

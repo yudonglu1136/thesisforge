@@ -57,13 +57,17 @@ def reusable_file(root,previous,name,relative,entry):
 
 
 def install(s3,bucket,candidate,root,*,validate_group,probe,expected_release=None,
-            reserve_bytes=1024**3):
+            reserve_bytes=1024**3,active_name='active.json'):
+    if active_name not in ('active.json','research-active.json'):
+        raise ValueError('invalid_activation_scope')
+    if active_name=='research-active.json' and set(candidate['groups'])!={'canonical','research_inputs'}:
+        raise ValueError('research_release_scope_invalid')
     root=Path(root).resolve();root.mkdir(parents=True,exist_ok=True)
     # The base must be root-owned and traverseable by the actual API account.
     root.chmod(0o755)
     with (root/'install.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        active=root/'active.json'
+        active=root/active_name
         previous=json.loads(active.read_text()) if active.exists() else None
         if (previous or {}).get('releaseId')!=expected_release:
             if (previous or {}).get('releaseId')!=candidate['releaseId']: raise ValueError('installer_fence_conflict')

@@ -9,6 +9,19 @@ spec.loader.exec_module(installer)
 
 
 class ApiInstallPortTest(unittest.TestCase):
+    def test_research_ack_is_separate_and_does_not_relax_global_activation(self):
+        installed={'releaseId':'a'*64,'groups':{name:{'generationId':c*64}
+            for name,c in [('canonical','b'),('research_inputs','c')]}}
+        body={**installed,'status':'verified','research':{'status':'ready'},
+              'coverage':[{'dataset':t,'locally_available':True,'backfill_complete':True} for t in TABLES]}
+        self.assertTrue(installer.validate_live_ack(body,installed,'research'))
+        with self.assertRaisesRegex(ValueError,'live_api_generation_mismatch'):
+            installer.validate_live_ack(body,installed)
+        with self.assertRaisesRegex(ValueError,'live_api_generation_mismatch'):
+            installer.validate_live_ack({**body,'research':{'status':'failed'}},installed,'research')
+        with self.assertRaisesRegex(ValueError,'live_api_coverage_incomplete'):
+            installer.validate_live_ack({**body,'coverage':body['coverage'][:-1]},installed,'research')
+
     def test_eb_platform_port_is_not_the_local_development_default(self):
         self.assertEqual(installer.api_port({}, {}), 8080)
 

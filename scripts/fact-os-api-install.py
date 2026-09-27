@@ -28,10 +28,14 @@ def api_port(config, environment=None):
     return int(value)
 
 
-def validate_live_ack(body,installed):
+def validate_live_ack(body,installed,scope='all'):
+    if scope not in ('all','research'):raise ValueError('invalid_activation_scope')
+    if scope=='research' and set(installed['groups'])!={'canonical','research_inputs'}:
+        raise ValueError('research_release_scope_invalid')
     if (body.get('releaseId')!=installed['releaseId'] or body.get('status')!='verified'
-            or body.get('fundamentals',{}).get('status')!='ready'
-            or body.get('publicAnalysis',{}).get('status')!='ready'):
+            or (scope=='research' and body.get('research',{}).get('status')!='ready')
+            or (scope=='all' and (body.get('fundamentals',{}).get('status')!='ready'
+            or body.get('publicAnalysis',{}).get('status')!='ready'))):
         raise ValueError('live_api_generation_mismatch')
     expected={name:item['generationId'] for name,item in installed['groups'].items()}
     observed={name:item.get('generationId') for name,item in body.get('groups',{}).items()}
@@ -47,6 +51,7 @@ def main():
     if os.geteuid()!=0:raise ValueError('root_installer_required')
     parser=argparse.ArgumentParser();parser.add_argument('--bucket',required=True);parser.add_argument('--candidate-key',required=True)
     parser.add_argument('--expected-release',required=True,help='Exact previous root release id, or none for first install')
+    parser.add_argument('--scope',choices=('all','research'),default='all')
     args=parser.parse_args()
     import boto3
     s3=boto3.client('s3')
@@ -98,13 +103,16 @@ def main():
         config=json.loads(subprocess.check_output(['/opt/elasticbeanstalk/bin/get-config','environment']))
         secret=config.get('INTERNAL_CRON_SECRET') or config.get('CRON_SECRET')
         if not secret:raise ValueError('internal_ack_credential_missing')
-        request=urllib.request.Request('http://127.0.0.1:'+str(api_port(config))+'/api/internal/data-release',headers={'Authorization':'Bearer '+secret})
+        endpoint='/api/internal/research-data-release' if args.scope=='research' else '/api/internal/data-release'
+        request=urllib.request.Request('http://127.0.0.1:'+str(api_port(config))+endpoint,headers={'Authorization':'Bearer '+secret})
         with urllib.request.urlopen(request,timeout=120) as response:body=json.load(response)
-        validate_live_ack(body,installed)
+        validate_live_ack(body,installed,args.scope)
         return {'status':'verified','releaseId':installed['releaseId'],'actualApiUserRead':True,'canonicalReadVerified':True,
-                'groups':{k:v['generationId'] for k,v in body['groups'].items()},'fundamentals':body['fundamentals'],
-                'publicAnalysis':body['publicAnalysis']}
-    result=install(s3,args.bucket,candidate,root,validate_group=validate,probe=probe,expected_release=expected)
+                'groups':{k:v['generationId'] for k,v in body['groups'].items()},'scope':args.scope,
+                **({'research':body['research']} if args.scope=='research' else
+                   {'fundamentals':body['fundamentals'],'publicAnalysis':body['publicAnalysis']})}
+    result=install(s3,args.bucket,candidate,root,validate_group=validate,probe=probe,expected_release=expected,
+                   active_name='research-active.json' if args.scope=='research' else 'active.json')
     print(json.dumps(result))
 
 
