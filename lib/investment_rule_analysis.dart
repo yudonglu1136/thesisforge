@@ -135,7 +135,7 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
     );
   }
 
-  Future<void> load() async {
+  Future<void> load({int warmAttempt = 0}) async {
     final request = ++epoch,
         requestedStart = start,
         requestedEnd = end,
@@ -173,8 +173,23 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
         detail = response;
         loading = false;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted || epoch != request) return;
+      // A cold immutable artifact is built off-request. Keep this exact
+      // range/snapshot pending, rather than presenting warming as bad data.
+      // The epoch and cancellable timer prevent an old range from resurfacing.
+      if (error is ApiRequestException &&
+          error.statusCode == 503 &&
+          error.code == 'strategy_analysis_updating' &&
+          warmAttempt < 20) {
+        debounce?.cancel();
+        debounce = Timer(const Duration(seconds: 3), () {
+          if (mounted && epoch == request) {
+            unawaited(load(warmAttempt: warmAttempt + 1));
+          }
+        });
+        return;
+      }
       setState(() {
         failed = true;
         loading = false;

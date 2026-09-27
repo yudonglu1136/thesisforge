@@ -27,6 +27,7 @@ class _RuleApi extends ApiClient {
   };
   final analysisPending = <String, Completer<Map<String, dynamic>>>{};
   bool failAnalysis = false;
+  int warmingResponses = 0;
   bool enforceCoverage = false;
   Map<String, dynamic> analysis(String path) {
     final q = Uri.parse(path).queryParameters;
@@ -104,6 +105,14 @@ class _RuleApi extends ApiClient {
     paths.add(path);
     if (fail) throw Exception('fixture failure');
     if (path.contains('/analysis?')) {
+      if (warmingResponses > 0) {
+        warmingResponses--;
+        throw const ApiRequestException(
+          statusCode: 503,
+          code: 'strategy_analysis_updating',
+          message: 'strategy_analysis_updating',
+        );
+      }
       if (failAnalysis) throw Exception('attribution unavailable');
       final start = Uri.parse(path).queryParameters['start'];
       if (analysisPending.containsKey(start)) {
@@ -156,6 +165,54 @@ Future<void> _mount(
 }
 
 void main() {
+  testWidgets('warming retries stop at the bound and cancel when disposed', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _RuleApi()..warmingResponses = 100;
+    await _mount(tester, api);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    for (var i = 0; i < 21; i++) {
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+    }
+    expect(api.paths.where((p) => p.contains('/analysis?')).length, 21);
+    expect(find.text('Retry attribution'), findsOneWidget);
+    await tester.ensureVisible(find.text('Retry attribution'));
+    await tester.tap(find.text('Retry attribution'));
+    await tester.pump();
+    final count = api.paths.length;
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 6));
+    expect(api.paths.length, count);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets(
+    'cold attribution retries the same pinned range and becomes visible',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _RuleApi()..warmingResponses = 1;
+      await _mount(tester, api);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+      expect(find.text('Retry attribution'), findsNothing);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      final requests = api.paths
+          .where((p) => p.contains('/analysis?'))
+          .toList();
+      expect(requests.length, 2);
+      expect(requests.first, requests.last);
+      expect(
+        find.byKey(const ValueKey('range-quality_rank-8')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
   for (final lang in [AppLanguage.en, AppLanguage.zh]) {
     testWidgets(
       '390px universe switch reranks both strategies and preserves date selection: $lang',
