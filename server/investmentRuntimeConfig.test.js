@@ -94,6 +94,29 @@ test('workflow stays disabled without probing files; preview accepts separate so
   a.equal(fs.existsSync(path.join(root,'private')),false);
 });
 
+test('13F sidecar accepts ANALYZE statistics but rejects unrelated private tables',t=>{
+  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'tf-13f-statistics-')));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const file=path.join(root,'13f.sqlite'),manifestPath=path.join(root,'manifest.json');
+  const db=new DatabaseSync(file);
+  db.exec(`CREATE TABLE institutional_13f_insight_snapshots(report_date TEXT,source_generation TEXT,PRIMARY KEY(report_date,source_generation));
+    INSERT INTO institutional_13f_insight_snapshots VALUES('2026-06-30','g'); ANALYZE;`);
+  db.close();
+  const seal=()=>{
+    const bytes=fs.readFileSync(file);
+    fs.writeFileSync(manifestPath,JSON.stringify({version:'institutional-13f-artifact-v1',state:'verified',rows:1,
+      checks:{integrity:'ok',naturalKeyUniqueness:'pass',privateDataExcluded:true},
+      file:{path:file,bytes:bytes.length,sha256:crypto.createHash('sha256').update(bytes).digest('hex')}}));
+    fs.chmodSync(file,0o400);fs.chmodSync(manifestPath,0o400);
+  };
+  seal();
+  const options={trustedUid:fs.statSync(file).uid};
+  a.equal(validateInstitutional13fArtifact(file,manifestPath,options).rows,1);
+  fs.chmodSync(file,0o600);fs.chmodSync(manifestPath,0o600);
+  const changed=new DatabaseSync(file);changed.exec('CREATE TABLE private_positions(secret TEXT)');changed.close();seal();
+  a.throws(()=>validateInstitutional13fArtifact(file,manifestPath,options),/unexpected_source_table/);
+});
+
 test('13F sidecar requires exact immutable bytes and natural-key uniqueness',t=>{
   const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'tf-13f-artifact-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const file=path.join(root,'13f.sqlite'),manifestPath=path.join(root,'manifest.json'),db=new DatabaseSync(file);

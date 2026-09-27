@@ -144,7 +144,11 @@ export function validateInstitutional13fArtifact(file,manifestPath,{trustedUid=0
   if(activeArtifact
     && (!Number.isSafeInteger(manifest.activeRows)||manifest.activeRows<1
       ||!Number.isSafeInteger(manifest.activeDetailRows)||manifest.activeDetailRows<1))fail('institutional_13f_manifest_invalid');
-  assertTables(database,[expectedTable,...auxiliaryTables],[expectedTable,...auxiliaryTables]);
+  // The canonical builder runs ANALYZE. SQLite's reserved planner tables are
+  // metadata, not an extra public/private dataset. Keep the business-table
+  // allowlist exact and retain the immutable byte/hash/row checks below.
+  assertTables(database,[expectedTable,...auxiliaryTables],
+    [expectedTable,...auxiliaryTables,'sqlite_stat1','sqlite_stat4']);
   const db=new DatabaseSync(database,{readOnly:true});
   try {
     const rows=db.prepare(`SELECT count(*) count FROM ${expectedTable}`).get().count;
