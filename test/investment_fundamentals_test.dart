@@ -8,6 +8,7 @@ class FundamentalApi extends ApiClient {
   FundamentalApi() : super(() => 'test');
   bool fail = false, detailFail = false, wrongDate = false;
   bool expired = false;
+  bool preparing = false;
   Completer<Map<String, dynamic>>? pending;
   final delayedSearches = <String, Completer<Map<String, dynamic>>>{};
   Completer<Map<String, dynamic>>? pendingObservations;
@@ -282,6 +283,11 @@ class FundamentalApi extends ApiClient {
       final result = response(wrongDate ? '2025-01-01' : date);
       result['lens'] = uri.queryParameters['lens'];
       result['sort'] = uri.queryParameters['sort'];
+      if (preparing) {
+        result['status'] = 'updating';
+        result['rows'] = [];
+        result['totalMatches'] = 0;
+      }
       final search = uri.queryParameters['search']?.toUpperCase();
       if (search != null && search.isNotEmpty) {
         result['rows'] = (result['rows'] as List)
@@ -351,6 +357,16 @@ Future<void> tap(WidgetTester t, Finder finder) async {
 }
 
 void main() {
+  testWidgets('missing precompute is not an empty screening result', (t) async {
+    final api = FundamentalApi()..preparing = true;
+    await mount(t, api);
+    expect(find.text('No companies match these filters.'), findsNothing);
+    expect(find.text('Financial analysis is being prepared.'), findsOneWidget);
+    api.preparing = false;
+    await tap(t, find.text('Try again'));
+    expect(find.text('Financial analysis is being prepared.'), findsNothing);
+    expect(find.text('UBER'), findsWidgets);
+  });
   testWidgets('authentication recovery reloads the selected company evidence', (
     t,
   ) async {

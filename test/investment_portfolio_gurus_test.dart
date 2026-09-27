@@ -65,6 +65,10 @@ void main() {
       );
       await fixtures.tap(t, find.text('Holdings & value'));
       expect(find.text('20.0%'), findsWidgets);
+      await fixtures.tap(
+        t,
+        find.byKey(const ValueKey('portfolio-guru-open-AAA')),
+      );
       expect(find.text('2 added / new'), findsOneWidget);
       expect(find.text('1 reduced / exited'), findsOneWidget);
       await fixtures.tap(t, find.text('Guru activity · 2026 Q2'));
@@ -72,10 +76,48 @@ void main() {
       expect(find.text('Reduced & exited · 1'), findsOneWidget);
       await fixtures.tap(t, find.widgetWithText(OutlinedButton, 'Gamma Guru'));
       expect(actions, [('Gamma', 'Gamma-filing')]);
+      expect(find.byType(AlertDialog), findsNothing);
       expect(t.takeException(), isNull);
     },
   );
   for (final lang in [AppLanguage.en, AppLanguage.zh]) {
+    testWidgets('holdings Guru evidence is accessible at 390px: $lang', (
+      t,
+    ) async {
+      portfolioPrivacyMode.value = true;
+      final actions = <(String, String)>[];
+      await fixtures.mount(
+        t,
+        GuruPortfolioApi(),
+        size: const Size(390, 844),
+        scale: 1.5,
+        lang: lang,
+        onGuru: (a, b) => actions.add((a, b)),
+      );
+      await fixtures.tap(
+        t,
+        find.text(lang == AppLanguage.en ? 'Holdings & value' : '持仓与估值'),
+      );
+      await fixtures.tap(
+        t,
+        find.byKey(const ValueKey('portfolio-guru-open-AAA')),
+      );
+      expect(find.text('USD 1,000'), findsNothing);
+      await fixtures.tap(
+        t,
+        find.text(
+          lang == AppLanguage.en ? 'Guru activity · 2026 Q2' : '大佬动向 · 2026 Q2',
+        ),
+      );
+      expect(
+        find.text(lang == AppLanguage.en ? 'Added & new · 2' : '加仓与新建 · 2'),
+        findsOneWidget,
+      );
+        await fixtures.tap(t, find.widgetWithText(OutlinedButton, 'Gamma Guru'));
+        expect(actions, [('Gamma', 'Gamma-filing')]);
+        expect(find.byType(AlertDialog), findsNothing);
+      expect(t.takeException(), isNull);
+    });
     testWidgets('Home activity fits 390px at 150% with privacy on: $lang', (
       t,
     ) async {

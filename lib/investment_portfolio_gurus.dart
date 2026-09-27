@@ -3,6 +3,41 @@ part of 'main.dart';
 // The API supplies one common disclosed quarter and exact security matches.
 // No private amounts/quantities enter this public-evidence component.
 extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
+  Widget portfolioGuruButton(Map<String, dynamic> position) {
+    if (position['kind'] != 'equity') return const SizedBox.shrink();
+    return IconButton(
+      key: ValueKey(
+        'portfolio-guru-open-${position['id'] ?? position['ticker']}',
+      ),
+      tooltip: w('Guru filing evidence', '大佬持仓证据'),
+      icon: Icon(Icons.groups_outlined, color: p.accent, size: 20),
+      onPressed: () => showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: p.panel,
+          title: Text(
+            '${position['ticker']} · ${w('Guru filing evidence', '大佬持仓证据')}',
+          ),
+          content: SizedBox(
+            width: 620,
+            child: SingleChildScrollView(
+              child: portfolioGuruEvidence(
+                position,
+                beforeNavigate: () => Navigator.of(dialogContext).pop(),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(w('Close', '关闭')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   String guruQuarter(dynamic date) {
     final d = DateTime.tryParse(text(date));
     return d == null ? '—' : '${d.year} Q${(d.month + 2) ~/ 3}';
@@ -20,7 +55,10 @@ extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
   String guruWeight(dynamic value) =>
       number(value) > 0 && number(value) < .001 ? '<0.1%' : percent(value);
 
-  Widget portfolioGuruEvidence(Map<String, dynamic> position) {
+  Widget portfolioGuruEvidence(
+    Map<String, dynamic> position, {
+    VoidCallback? beforeNavigate,
+  }) {
     if (position['kind'] != 'equity') return const SizedBox.shrink();
     final activity = asMap(position['guruActivity']);
     if (activity['status'] == 'outside_scope') return const SizedBox.shrink();
@@ -167,11 +205,17 @@ extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
         LayoutBuilder(
           builder: (_, constraints) {
             final sections = [
-              guruActivityGroup(adds, w('Added & new', '加仓与新建'), p.accent),
+              guruActivityGroup(
+                adds,
+                w('Added & new', '加仓与新建'),
+                p.accent,
+                beforeNavigate: beforeNavigate,
+              ),
               guruActivityGroup(
                 trims,
                 w('Reduced & exited', '减仓与清仓'),
                 p.negative,
+                beforeNavigate: beforeNavigate,
               ),
             ];
             return constraints.maxWidth < 700
@@ -199,6 +243,7 @@ extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
             other,
             w('Other holders · unchanged / unknown', '其他持有人 · 未变 / 未知'),
             p.muted,
+            beforeNavigate: beforeNavigate,
           ),
           if (number(activity['unknown']) > 0 ||
               number(activity['extractedBooks']) > 0 ||
@@ -229,8 +274,9 @@ extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
   Widget guruActivityGroup(
     List<Map<String, dynamic>> rows,
     String label,
-    Color color,
-  ) => Column(
+    Color color, {
+    VoidCallback? beforeNavigate,
+  }) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       Text(
@@ -252,7 +298,10 @@ extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
           child: OutlinedButton(
             onPressed: text(m['accession']).isEmpty
                 ? null
-                : () => widget.onGuru(text(m['guruId']), text(m['accession'])),
+                : () {
+                    beforeNavigate?.call();
+                    widget.onGuru(text(m['guruId']), text(m['accession']));
+                  },
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.all(10),
               alignment: Alignment.centerLeft,

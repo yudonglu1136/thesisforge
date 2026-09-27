@@ -106,7 +106,20 @@ class OpportunityApi extends fixtures.HomeFixtureApi {
       throw StateError('connection failed');
     }
     final r = await super.getJson(path);
-    if (readOnly && path.contains('/research/')) r['templates'] = {};
+    if (readOnly && path.contains('/research/')) {
+      r['templates'] = {};
+      // Published-model coverage is independent of personal DCF eligibility.
+      r['coverage'] = {'platformModel': 'available'};
+      r['publishedBreakdown'] = {
+        'fairValue': 30,
+        'weightedValue': 30,
+        'modelVersion': 'synthetic-read-only-fixture',
+        'availableAt': '2026-04-20',
+        'reconciliationStatus': 'reconciled',
+        'components': [],
+        'postModelAdjustments': [],
+      };
+    }
     if (path.contains('/research/') && failure == 'identity') {
       r['ticker'] = 'WRONG';
     }
@@ -152,8 +165,12 @@ void main() {
       await tester.tap(find.text('View valuation method'));
       await tester.pumpAndSettle();
       expect(find.text('Published model · read-only'), findsOneWidget);
-      expect(find.byType(ValuationTrendChart), findsOneWidget);
-      expect(find.text(r'$30.00'), findsOneWidget);
+      expect(find.text('Published-model reconciliation'), findsOneWidget);
+      expect(find.text('Final published value'), findsOneWidget);
+      expect(find.text(r'$30.00'), findsNWidgets(2));
+      await tester.tap(find.text('My DCF'));
+      await tester.pumpAndSettle();
+      expect(find.text('No personal DCF starting point'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

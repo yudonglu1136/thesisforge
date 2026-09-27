@@ -1386,18 +1386,24 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
           ),
         ),
         DataCell(
-          TextButton(
-            onPressed: row['kind'] == 'equity'
-                ? () => widget.onCompany(
-                    covered
-                        ? portfolioValuationTicker(g, text(row['ticker']))
-                        : text(row['ticker']),
-                    covered ? 'value' : 'overview',
-                  )
-                : null,
-            child: Text(
-              covered ? w('Valuation →', '估值 →') : w('Research →', '研究 →'),
-            ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              portfolioGuruButton(row),
+              TextButton(
+                onPressed: row['kind'] == 'equity'
+                    ? () => widget.onCompany(
+                        covered
+                            ? portfolioValuationTicker(g, text(row['ticker']))
+                            : text(row['ticker']),
+                        covered ? 'value' : 'overview',
+                      )
+                    : null,
+                child: Text(
+                  covered ? w('Valuation →', '估值 →') : w('Research →', '研究 →'),
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -1473,6 +1479,7 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
                     ],
                   ),
                 ),
+                portfolioGuruButton(row),
                 const SizedBox(width: 10),
                 _portfolioStackedValue(
                   amount(row['value']),

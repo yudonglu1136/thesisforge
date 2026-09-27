@@ -191,7 +191,10 @@ void main() {
       expect((api.drafts.last['assumptions'] as Map)['margin'][2], isNull);
       await reopen(t, api);
       expect(input(t, 'FCFE margin %', 3), isEmpty);
-      expect(find.textContaining('FCFE margin must be above'), findsWidgets);
+      expect(
+        find.textContaining('Year 3: FCFE margin must be between −90% and 90%'),
+        findsWidgets,
+      );
     },
   );
   testWidgets(

@@ -242,6 +242,11 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
           result['asOf'] != widget.asOf) {
         throw StateError('fundamental_cutoff_mismatch');
       }
+      // A missing materialized result is not a successful empty screen. Keep
+      // filters and last verified results intact instead of clearing selection.
+      if (result['status'] == 'updating') {
+        throw StateError('fundamental_analysis_preparing');
+      }
       if (!mounted || id != serial) return;
       setState(() {
         data = result;
@@ -277,6 +282,8 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
           failed = true;
           failureCode = error.toString().contains('fundamental_cutoff_mismatch')
               ? 'cutoff'
+              : error.toString().contains('fundamental_analysis_preparing')
+              ? 'preparing'
               : error.toString().contains('401')
               ? 'auth'
               : 'unavailable';
@@ -869,12 +876,19 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          w('Financial data is temporarily unavailable.', '财务数据暂时无法连接'),
+          failureCode == 'preparing'
+              ? w('Financial analysis is being prepared.', '财务分析正在准备中')
+              : w('Financial data is temporarily unavailable.', '财务数据暂时无法连接'),
           style: st(18, true),
         ),
         const SizedBox(height: 7),
         Text(
-          failureCode == 'auth'
+          failureCode == 'preparing'
+              ? w(
+                  'The verified screening snapshot is not ready yet. This does not mean no companies match. Your filters are preserved.',
+                  '已验证的筛选快照尚未就绪，并非没有符合条件的公司。筛选条件已保留。',
+                )
+              : failureCode == 'auth'
               ? w(
                   'Your session has expired. Sign in again to load company financials.',
                   '登录已过期，请重新登录后查看公司财务。',
