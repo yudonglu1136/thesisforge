@@ -8,7 +8,7 @@ import shutil
 import time
 from ..contracts import TABLES
 from ..store import Store,now
-from ..sync import Synchronizer,UpstreamError
+from ..sync import Synchronizer,UpstreamError,UpstreamSnapshotChanged
 from .contracts import encode
 from .runner import run
 from .publisher import prepare,activate,load_active,missing
@@ -17,6 +17,16 @@ from .registry import DATA_DAILY_GROUPS
 
 
 DATA_READY_KEY='fact-os/data-ready/latest.json'
+
+def sync_source(sync,table,emit):
+    """Retry only an invalidated snapshot once under the existing writer lock."""
+    try:
+        return sync.sync(table)
+    except UpstreamSnapshotChanged:
+        emit({'phase':'source_retry','table':table,'attempt':2,
+              'reason':'upstream_snapshot_changed','delaySeconds':30})
+        time.sleep(30)
+        return sync.sync(table)
 
 
 def load_data_ready(s3,bucket):
@@ -59,7 +69,10 @@ def main():
     modes=parser.add_mutually_exclusive_group()
     modes.add_argument('--stage-only',action='store_true',help='Validate on isolated worker; explicitly do not install or activate API data')
     modes.add_argument('--data-only',action='store_true',help='Daily 14-table sync and automatic derived artifacts; defer reviewed models/backtests and do not activate API')
+    parser.add_argument('--activate-daily',action='store_true',help='With --data-only: also require verified API installation and live ACK; enable only after the production activation gates pass')
     args=parser.parse_args()
+    if args.activate_daily and not args.data_only:
+        parser.error('--activate-daily requires --data-only')
     datetime.fromisoformat(args.scheduled_for.replace('Z','+00:00'))
     import boto3
     root=Path(os.environ['FACT_OS_ROOT']).resolve();store=Store(root)
@@ -95,13 +108,16 @@ def main():
         if budget['status']=='blocked':return 2
         key=boto3.client('secretsmanager').get_secret_value(SecretId=os.environ['FACT_OS_SECRET_ID'])['SecretString']
         if not key or key=='test-api-key':raise ValueError('paid_native_key_required')
-        sync=Synchronizer(store,key,progress=emit);del key
+        # Sequential native extraction avoids multiplying the provider request
+        # budget. Explicit operator overrides remain bounded by Synchronizer.
+        os.environ.setdefault('FACT_OS_SYNC_WORKERS','1')
+        sync=Synchronizer(store,key,progress=emit,request_interval=1);del key
         failed=[]
         try:
             with sync.job_lock():
                 store.recover_catalog()
                 for table in TABLES:
-                    try:emit({'phase':'source','table':table,**sync.sync(table)})
+                    try:emit({'phase':'source','table':table,**sync_source(sync,table,emit)})
                     except Exception as error:
                         code=str(error) if isinstance(error,UpstreamError) else type(error).__name__
                         store.record_error(table,code);failed.append(table)
@@ -145,7 +161,11 @@ def main():
             emit({'phase':'final','runId':receipt['runId'],'status':receipt['status'],'publicationStatus':'staged_not_activated',
                   'candidateReleaseId':candidate['releaseId'],
                   **({'dataSyncStatus':'verified','actualApiActivation':'not_requested'} if args.data_only else {})})
-            return 0 if args.data_only else 2
+            if not args.activate_daily:
+                return 0 if args.data_only else 2
+            # Data readiness is retained separately if installation fails. This
+            # opt-in uses exactly the same fenced installer and live ACK as a
+            # reviewed publication; it never turns staging into serving success.
         ledger.publication(receipt,'uploading',{})
         try:
             return publish(store,receipt,s3,ssm,bucket,emit,ledger)
@@ -182,7 +202,8 @@ def publish(store,receipt,s3,ssm,bucket,emit,ledger):
         else:raise ValueError('api_install_timeout:'+command_id)
         result=activate(s3,bucket,candidate,etag,ack)
         ledger.publication(receipt,'verified',{'releaseId':candidate['releaseId'],'ack':ack})
-        final={**receipt,'publicationStatus':'verified','releaseId':candidate['releaseId'],'ack':ack,'verifiedAt':now()}
+        final={**receipt,'publicationStatus':'verified','releaseId':candidate['releaseId'],'ack':ack,'verifiedAt':now(),
+               'actualApiActivation':'verified'}
         Store._atomic_if_changed(root/'audit/pipeline'/(receipt['runId']+'.json'),encode(final).decode())
         Store._atomic_if_changed(root/'audit/pipeline/latest.json',encode(final).decode())
         s3.put_object(Bucket=bucket,Key='fact-os/runs/'+receipt['runId']+'.json',Body=encode(final),ServerSideEncryption='AES256')

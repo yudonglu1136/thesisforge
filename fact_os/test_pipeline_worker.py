@@ -52,7 +52,41 @@ class DataReadyBoundaryTest(unittest.TestCase):
 
 
 class WorkerBoundaryTest(unittest.TestCase):
+    def test_activation_requires_explicit_daily_profile(self):
+        with patch('sys.argv',['worker','--scheduled-for','2026-09-27T04:30:00Z','--activate-daily']), \
+             contextlib.redirect_stderr(io.StringIO()),patch.object(aws_worker,'Store') as store:
+            with self.assertRaises(SystemExit):aws_worker.main()
+            store.assert_not_called()
+
+    def test_changed_snapshot_restarts_once_after_invalidation(self):
+        from .sync import UpstreamSnapshotChanged
+        sync=MagicMock();events=[]
+        sync.sync.side_effect=[UpstreamSnapshotChanged('changed'),{'status':'ingested'}]
+        with patch.object(aws_worker.time,'sleep') as sleep:
+            result=aws_worker.sync_source(sync,'funds',events.append)
+        self.assertEqual(result,{'status':'ingested'})
+        self.assertEqual(sync.sync.call_count,2)
+        sleep.assert_called_once_with(30)
+        self.assertEqual(events[0]['reason'],'upstream_snapshot_changed')
+
+    def test_persistent_change_and_other_errors_remain_fail_closed(self):
+        from .sync import UpstreamSnapshotChanged,UpstreamError
+        for error,expected_calls in [(UpstreamSnapshotChanged('changed'),2),(UpstreamError('sync HTTP 429'),1),(ValueError('schema'),1)]:
+            sync=MagicMock();sync.sync.side_effect=error
+            with patch.object(aws_worker.time,'sleep'),self.assertRaises(type(error)):
+                aws_worker.sync_source(sync,'funds',lambda v:None)
+            self.assertEqual(sync.sync.call_count,expected_calls)
+
     def test_data_only_syncs_all_tables_and_stages_without_api_install(self):
+        self.run_daily_fixture()
+
+    def test_daily_activation_runs_existing_publisher_after_data_validation(self):
+        self.run_daily_fixture(activation=True)
+
+    def test_daily_activation_failure_is_not_data_ready_success(self):
+        self.run_daily_fixture(activation=True,publication_failure=True)
+
+    def run_daily_fixture(self,activation=False,publication_failure=False):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);(root/'sync').mkdir();(root/'sync/authority-import.json').write_text('{}')
             (root/'audit/pipeline').mkdir(parents=True)
@@ -66,7 +100,7 @@ class WorkerBoundaryTest(unittest.TestCase):
             from .store import Store
             with patch.dict(os.environ,{'FACT_OS_ROOT':temporary,'FACT_OS_BUCKET':'synthetic-bucket','FACT_OS_SECRET_ID':'synthetic-reference'}), \
                  patch.dict('sys.modules',{'boto3':boto}), \
-                 patch('sys.argv',['worker','--scheduled-for',receipt['scheduledFor'],'--data-only']), \
+                 patch('sys.argv',['worker','--scheduled-for',receipt['scheduledFor'],'--data-only']+(['--activate-daily'] if activation else [])), \
                  patch.object(aws_worker,'Store',return_value=store) as store_class, \
                  patch.object(aws_worker,'Synchronizer',return_value=sync), \
                  patch.object(aws_worker,'run',return_value=receipt) as runner, \
@@ -75,16 +109,22 @@ class WorkerBoundaryTest(unittest.TestCase):
                  patch.object(aws_worker,'load_data_ready',return_value=(None,None)), \
                  patch.object(aws_worker,'load_active') as serving_pointer, \
                  patch.object(aws_worker,'prepare',return_value=(candidate,{'status':'uploaded'})), \
-                 patch.object(aws_worker,'activate') as activate,contextlib.redirect_stdout(io.StringIO()) as output:
+                 patch.object(aws_worker,'activate') as activate, \
+                 patch.object(aws_worker,'publish',return_value=0,side_effect=ValueError('install_failed') if publication_failure else None) as publish, \
+                 contextlib.redirect_stdout(io.StringIO()) as output:
                 store_class._atomic_if_changed=Store._atomic_if_changed
-                self.assertEqual(aws_worker.main(),0)
+                self.assertEqual(aws_worker.main(),2 if publication_failure else 0)
             self.assertEqual([c.args[0] for c in sync.sync.call_args_list],list(TABLES))
             self.assertEqual(runner.call_args.kwargs['profile'],'aws-data-daily')
+            self.assertEqual(publish.call_count,1 if activation else 0)
             serving_pointer.assert_not_called();ssm.send_command.assert_not_called();activate.assert_not_called()
             saved=json.loads((root/'audit/pipeline/r.json').read_text())
-            self.assertEqual(saved['dataSyncStatus'],'verified')
-            self.assertEqual(saved['publicationStatus'],'staged_not_activated')
-            self.assertEqual(saved['actualApiActivation'],'not_requested')
+            if publication_failure:
+                self.assertEqual(saved['publicationStatus'],'failed')
+            else:
+                self.assertEqual(saved['dataSyncStatus'],'verified')
+                self.assertEqual(saved['publicationStatus'],'staged_not_activated')
+                self.assertEqual(saved['actualApiActivation'],'not_requested')
             self.assertNotIn('synthetic-fixture-not-a-real-key',output.getvalue())
 
     def test_capacity_failure_precedes_secret_access_and_source_fetch(self):

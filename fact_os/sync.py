@@ -16,6 +16,7 @@ import re
 import shutil
 import tempfile
 import time
+import threading
 import uuid
 import zipfile
 
@@ -31,6 +32,28 @@ BASE = 'https://api.sharadar.com/v1.0'
 
 class UpstreamError(RuntimeError):
     pass
+
+class UpstreamSnapshotChanged(UpstreamError):
+    """A fully invalidated extraction may be retried, never partially ingested."""
+
+class RequestGate:
+    """One source-client budget across extraction workers and source tables."""
+    def __init__(self, interval=0, *, clock=None, sleep=None):
+        self.interval=max(0,float(interval))
+        self.clock=clock or time.monotonic
+        self.sleep=sleep or (lambda seconds:time.sleep(seconds))
+        self.lock=threading.Lock()
+        self.next_request=0
+
+    def wait(self):
+        with self.lock:
+            delay=max(0,self.next_request-self.clock())
+            if delay:self.sleep(delay)
+            self.next_request=self.clock()+self.interval
+
+    def cooldown(self, seconds):
+        with self.lock:
+            self.next_request=max(self.next_request,self.clock()+seconds)
 
 def retry_delay(value):
     """Honor provider cooldowns without sleeping beyond the query retry budget."""
@@ -79,10 +102,11 @@ def load_key(env_file=None):
     return key
 
 class Synchronizer:
-    def __init__(self, store, key, *, progress=None):
+    def __init__(self, store, key, *, progress=None, request_interval=0):
         self.store, self.key = store, key
         self.progress = progress
         self._job_depth = 0
+        self.request_gate=RequestGate(request_interval)
         self.http = httpx.Client(timeout=httpx.Timeout(30,connect=15),follow_redirects=False,
             headers={'x-api-key':key})
 
@@ -341,7 +365,9 @@ class Synchronizer:
         def request(dataset,query,fields,*,split_read_timeout=False):
             for attempt in range(4):
                 retry_after=0
+                response=None
                 try:
+                    self.request_gate.wait()
                     if self.progress and os.environ.get('FACT_OS_SYNC_TRACE')=='1':
                         # Only public query bounds, never headers, URLs or keys.
                         self.progress({'phase':'query_start','dataset':dataset,'attempt':attempt+1,
@@ -365,6 +391,13 @@ class Synchronizer:
                             response=httpx.Response(upstream.status_code)
                             if upstream.status_code in (429,500,502,503,504):
                                 retry_after=retry_delay(upstream.headers.get('retry-after','0'))
+                            if upstream.status_code==429:
+                                # A missing provider hint is not permission to
+                                # hammer again after 1s. Share the cooldown with
+                                # every worker and the next table, even on the
+                                # final failed request of this query.
+                                retry_after=max(retry_after,min(120,30*2**attempt))
+                                self.request_gate.cooldown(retry_after)
                     if response.status_code==200:
                         rows=page_rows(response,query['format'],fields,query['limit'])
                         allowed=set(query['ticker'].split(',')) if 'ticker' in query else None
@@ -397,6 +430,8 @@ class Synchronizer:
                     if attempt==3:raise UpstreamError('sync read timeout; local history retained') from None
                 except httpx.TransportError:
                     if attempt==3:raise UpstreamError('sync transport failed; local history retained') from None
+                if response is not None and response.status_code==429:
+                    continue  # wait through the shared gate on the next attempt
                 time.sleep(max(retry_after,min(8,2**attempt))+random.uniform(0,.5))
             raise UpstreamError('sync retry limit reached')
         checkpoint_dir=self.store.root/'sync/extract-checkpoints'/table
@@ -489,7 +524,7 @@ class Synchronizer:
                 Store._atomic_if_changed(attempt_path,json.dumps(
                     {'context':context,'id':uuid.uuid4().hex,'invalidatedAttempt':attempt_id},sort_keys=True))
                 scope={key:query[key] for key in ('from','to','ticker','ticker.gt','ticker.lte') if key in query}
-                raise UpstreamError('upstream changed during sync; local history retained: '+
+                raise UpstreamSnapshotChanged('upstream changed during sync; local history retained: '+
                     json.dumps({'table':table,'scope':scope,'expected':expected[:12],'observed':observed[:12]},sort_keys=True))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for start in range(0,len(queries),workers):

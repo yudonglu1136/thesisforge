@@ -55,6 +55,29 @@ The profile and timestamp must match. This reuses the exact snapshot without
 fetching sources. A source failure requires a new run after fixing the source;
 publication retry cannot turn a failed fetch into a successful sync.
 
+### Source recovery and opt-in daily serving (2026-09-27)
+
+The worker uses one native extraction worker by default and spaces requests by
+at least one second. HTTP 429 cooldowns are shared across extraction threads
+and source tables: without a provider hint, the four bounded attempts use
+30/60/120-second cooldowns. A valid Retry-After is honored up to the existing
+300-second query limit; a larger hint fails closed rather than retrying early.
+Transport/schema errors and exhausted rate limits do not silently restart a
+whole table. A detected source-content mutation invalidates the complete
+extraction attempt and is retried once after 30 seconds, with the same full
+verification gate. Repeated mutation leaves the previous facts in place.
+
+`--data-only --activate-daily` opts the six automatic groups into the existing
+installer/ACK/fenced publication path **after** all fourteen sources and all
+six groups pass. It does not enable Guru curves or reviewed valuation models.
+If activation fails, the process fails and preserves the separately verified
+data-ready pointer; data-ready is not serving success. The default AWS document
+does not enable this switch. Before enabling it, complete the production backup
+and restore gates, verify the current EB install target and API capacity, and
+pass a manual installation/ACK. Research's scoped recovery pointer must also
+be reconciled so it cannot keep shadowing later global releases. Merely shipping
+the worker code does not satisfy these gates or turn on website auto-update.
+
 Extract checkpoints now belong to one attempt, keyed by full query context,
 schema and last successful sync. Successful runs cannot lend stale SF3 leaves
 to the next run. A verification mutation invalidates the complete attempt;

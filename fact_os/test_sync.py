@@ -15,13 +15,31 @@ from unittest.mock import patch
 import httpx
 
 from .store import Store
-from .sync import Synchronizer, UpstreamError, retry_delay
+from .sync import Synchronizer, UpstreamError, retry_delay, RequestGate
 from .sync_plan import bounded_date_windows
 
 DDL='CREATE TABLE IF NOT EXISTS "stocks" ("ticker" TEXT,"date" TEXT,"close" REAL,"closeadj" REAL,"closeunadj" REAL,"lastupdated" TEXT,PRIMARY KEY ("ticker","date"));'
 FIELDS=['ticker','date','close','closeadj','closeunadj','lastupdated']
 
 class RetryDelayTest(unittest.TestCase):
+    def test_rate_limit_without_header_has_meaningful_shared_cooldown(self):
+        clock=[100.0]; waits=[]
+        def sleep(seconds):
+            waits.append(seconds);clock[0]+=seconds
+        gate=RequestGate(interval=1,clock=lambda:clock[0],sleep=sleep)
+        gate.wait()
+        gate.cooldown(30)
+        gate.wait()  # another extraction thread/table also respects this delay
+        gate.wait()
+        self.assertEqual(waits,[30,1])
+
+    def test_shorter_response_cannot_shorten_existing_cooldown(self):
+        clock=[10.0];waits=[]
+        def sleep(seconds):waits.append(seconds);clock[0]+=seconds
+        gate=RequestGate(clock=lambda:clock[0],sleep=sleep)
+        gate.cooldown(120);gate.cooldown(5);gate.wait()
+        self.assertEqual(waits,[120])
+
     def test_http_date_and_invalid_headers(self):
         future=format_datetime(datetime.now(timezone.utc)+timedelta(seconds=120),usegmt=True)
         self.assertGreater(retry_delay(future),118)
@@ -32,6 +50,17 @@ class RetryDelayTest(unittest.TestCase):
         with self.assertRaises(UpstreamError):retry_delay('301')
 
 class SyncTest(unittest.TestCase):
+    def test_no_hint_rate_limit_waits_thirty_seconds_not_one(self):
+        calls=0
+        def handler(req):
+            nonlocal calls
+            calls+=1
+            return httpx.Response(429) if calls==1 else httpx.Response(200,json={'count':0,'data':[]})
+        self.mock(handler)
+        with patch('fact_os.sync.time.sleep') as sleep:
+            self.sync.sync('stocks')
+        self.assertGreater(sleep.call_args_list[0].args[0],29)
+
     def test_rate_limit_honors_retry_after_instead_of_clipping_to_sixty(self):
         calls=0
         def handler(req):
@@ -42,7 +71,8 @@ class SyncTest(unittest.TestCase):
         self.mock(handler)
         with patch('fact_os.sync.time.sleep') as sleep:
             self.sync.sync('stocks')
-        self.assertGreaterEqual(sleep.call_args_list[0].args[0],120)
+        # Elapsed header processing may consume a fraction of the cooldown.
+        self.assertGreater(sleep.call_args_list[0].args[0],119)
 
     def test_excessive_rate_limit_wait_fails_without_early_retry(self):
         self.mock(lambda req:httpx.Response(429,headers={'Retry-After':'7200'}))
