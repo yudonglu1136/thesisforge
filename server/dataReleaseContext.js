@@ -36,7 +36,14 @@ export function readDataRelease(file=process.env.FACT_OS_ACTIVE_MANIFEST ||
 
 export function researchReleaseManifest(req) {
   const url=String(req.originalUrl??'').split('?')[0];
-  if(!/^\/api\/investment\/research(?:\/|$)/.test(url)&&url!=='/api/internal/research-data-release')return null;
+  // These DCF operations are part of the same Research workspace even though
+  // their existing public URLs are not nested under /research. Pin their quote
+  // and model reads to the same verified release as the opening worksheet.
+  // This does not change journal ownership, snapshot validation or other modules.
+  const worksheet=req.method==='POST'&&[
+    '/api/investment/calculate','/api/investment/valuation-drafts','/api/investment/scenarios',
+  ].includes(url);
+  if(!worksheet&&!/^\/api\/investment\/research(?:\/|$)/.test(url)&&url!=='/api/internal/research-data-release')return null;
   const file=process.env.FACT_OS_RESEARCH_MANIFEST??(process.env.NODE_ENV==='production'
     ?'/var/app/data/fact-os/research-active.json':null);
   return file&&fs.existsSync(file)?file:null;

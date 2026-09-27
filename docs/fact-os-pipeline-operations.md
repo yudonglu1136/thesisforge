@@ -173,8 +173,12 @@ Scheduler execution, source receipt, builds, install and API ACK are inspected.
 `scripts/fact-os-api-install.py --scope research` accepts **only** a complete
 `canonical` + `research_inputs` candidate. It retains the same checksums,
 14-table coverage, actual `webapp` read, fencing and atomic rollback checks,
-but writes `research-active.json`. Only `/api/investment/research/*` and the
-loopback-only `/api/internal/research-data-release` use that pointer. Strategy,
+but writes `research-active.json`. The `/api/investment/research/*` reads,
+Research worksheet POSTs to `/api/investment/calculate`,
+`/api/investment/valuation-drafts` and `/api/investment/scenarios`, and the
+loopback-only `/api/internal/research-data-release` use that pointer. These
+worksheet operations retain owner authorization and exact snapshot checks.
+Strategy,
 Discover, Portfolio and the global `active.json` are unchanged. The Research ACK
 requires usable annual and quarterly histories for AMZN and PLTR, correct
 identities and the requested disclosure cutoff. It does not claim Strategy NAV

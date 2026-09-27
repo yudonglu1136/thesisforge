@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { dataReleaseMiddleware,releaseRoot,releaseResource,readDataRelease,dataReleaseId } from './dataReleaseContext.js';
+import { dataReleaseMiddleware,releaseRoot,releaseResource,readDataRelease,dataReleaseId,researchReleaseManifest } from './dataReleaseContext.js';
 import { factGeneration as valuationGeneration } from './valuationFacts.js';
 
 test('requests pin release, old resources drain, new requests switch and restart reloads manifest',async()=>{
@@ -55,6 +55,17 @@ test('Research activation does not switch Strategy, Discover or Portfolio data',
   process.env.FACT_OS_ACTIVE_MANIFEST=global;process.env.FACT_OS_RESEARCH_MANIFEST=research;
   const response=()=>Object.assign(new EventEmitter(),{setHeader(){},status(){return this;},json(v){this.error=v;}});
   try {
+    for(const endpoint of ['calculate','valuation-drafts','scenarios']) {
+      const url=`/api/investment/${endpoint}`;
+      const res=response();let called=false;
+      dataReleaseMiddleware({originalUrl:url,method:'POST'},res,()=>{
+        called=true;assert.equal(dataReleaseId(),'b'.repeat(64));
+        assert.equal(releaseRoot('canonical'),root);
+      });
+      assert.equal(called,true);res.emit('finish');
+      assert.equal(researchReleaseManifest({originalUrl:url,method:'GET'}),null);
+      assert.equal(researchReleaseManifest({originalUrl:url+'-other',method:'POST'}),null);
+    }
     for(const url of ['/api/investment/research/AMZN/fundamentals?asOf=2026-09-22','/api/internal/research-data-release',
       '/api/investment/strategies','/api/investment/opportunities','/api/portfolio','/api/investment/research-not-a-route']) {
       const res=response();let called=false;
@@ -65,6 +76,9 @@ test('Research activation does not switch Strategy, Discover or Portfolio data',
     fs.writeFileSync(research,'{}');const res=response();
     dataReleaseMiddleware({originalUrl:'/api/investment/research/AMZN/fundamentals'},res,()=>assert.fail('invalid manifest accepted'));
     assert.equal(res.error.error,'data_release_unavailable');
+    const calc=response();
+    dataReleaseMiddleware({originalUrl:'/api/investment/calculate',method:'POST'},calc,()=>assert.fail('invalid DCF manifest accepted'));
+    assert.equal(calc.error.error,'data_release_unavailable');
     assert.equal(readDataRelease(global).manifest.releaseId,'a'.repeat(64));
   }finally {
     for(const [key,value] of [['FACT_OS_ACTIVE_MANIFEST',prior.global],['FACT_OS_RESEARCH_MANIFEST',prior.research]])
