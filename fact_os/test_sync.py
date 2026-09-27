@@ -10,6 +10,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -436,7 +437,12 @@ class SyncTest(unittest.TestCase):
         transport=httpx.MockTransport(handler)
         self.sync.http.close();self.sync.http=client(transport=transport,headers={'x-api-key':'private-test-credential'})
         with patch('fact_os.sync.httpx.Client',side_effect=lambda **kwargs:client(transport=transport,**kwargs)):
-            result=self.sync.backfill('stocks',refresh=True)
+            with patch('fact_os.sync.shutil.disk_usage',return_value=SimpleNamespace(free=1024)):
+                with self.assertRaisesRegex(UpstreamError,'insufficient disk headroom'):
+                    self.sync.backfill('stocks',refresh=True)
+            # This protocol fixture is a one-row ZIP, independent of host /tmp.
+            with patch('fact_os.sync.shutil.disk_usage',return_value=SimpleNamespace(free=16*1024**3)):
+                result=self.sync.backfill('stocks',refresh=True)
         self.assertEqual(result['local_rows'],1)
         self.assertTrue((self.store.root/'manifests/stocks-full-archive.json').exists())
     def test_verified_archive_can_promote_prior_unverified_ingestion(self):

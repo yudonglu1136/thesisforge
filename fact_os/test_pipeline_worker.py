@@ -52,6 +52,13 @@ class DataReadyBoundaryTest(unittest.TestCase):
 
 
 class WorkerBoundaryTest(unittest.TestCase):
+    def setUp(self):
+        # Synthetic worker roots live under /tmp, not the production data
+        # volume. These protocol tests must not depend on the host root disk's
+        # free space; the dedicated capacity test overrides this with 1 KiB.
+        capacity=patch.object(aws_worker.shutil,'disk_usage',return_value=SimpleNamespace(free=32*1024**3))
+        capacity.start();self.addCleanup(capacity.stop)
+
     def test_activation_requires_explicit_daily_profile(self):
         with patch('sys.argv',['worker','--scheduled-for','2026-09-27T04:30:00Z','--activate-daily']), \
              contextlib.redirect_stderr(io.StringIO()),patch.object(aws_worker,'Store') as store:
