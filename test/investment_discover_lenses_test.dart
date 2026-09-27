@@ -1,243 +1,182 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guru_analysis_terminal/main.dart';
-import 'investment_explorer_test.dart' as explorer;
+import 'investment_fundamentals_test.dart' as facts;
 
-class LensApi extends explorer.ExplorerApi {
-  @override
-  Future<Map<String, dynamic>> getJson(String path) async {
-    final result = await super.getJson(path);
-    if (path.startsWith('/api/investment/opportunities?')) {
-      final rows = result['rows'] as List;
-      final row = rows.first as Map;
-      row['medianWeight'] = .12;
-      row['valuation'] = {
-        'trend': explorer.trendFixture(),
-        'revenueGrowth': .3,
-        'change': .1,
-        'modelRoute': 'operating_company',
-        'fairValue': 33,
-        'previousFairValue': 30,
-        'currency': 'USD',
-        'date': '2026-05-15',
-        'previousDate': '2026-02-15',
-        'comparable': true,
-      };
-      row['managers'] = [
-        for (final (id, action, previous, delta, weight) in [
-          ('alpha', 'increased', 100, 50, .3),
-          ('bravo', 'new', 0, 10, .01),
-          ('charlie', 'increased', 100, 20, .1),
-          ('delta', 'increased', 200, 40, .08),
-          ('echo', 'reduced', 100, -50, .2),
-          ('foxtrot', 'sold_out', 100, -100, 0.0),
-        ])
-          {
-            'guruId': id,
-            'name': '$id manager',
-            'action': action,
-            'previousShares': previous,
-            'changeShares': delta,
-            'shares': previous + delta,
-            'weight': weight,
-            'comparisonStatus': 'corporate_action_unverified',
-            'availableAt': '2026-05-15',
-            'reportDate': '2026-03-31',
-            'accession': '$id-fixture',
-          },
-      ];
-    }
-    if (path.contains('/research/')) {
-      (result['snapshot'] as Map)['availableAt'] = '2026-05-15';
-      result['history'] = [
-        {
-          'availableAt': '2026-02-15',
-          'period': '2025-Q4',
-          'publishedFairValue': 30,
-        },
-        {
-          'availableAt': '2026-05-15',
-          'period': '2026-Q1',
-          'publishedFairValue': 33,
-        },
-      ];
-      result['metrics'] = [
-        {'key': 'revenueGrowth', 'value': .3, 'previous': .2},
-        {'key': 'operatingMargin', 'value': .3, 'previous': .28},
-        {'key': 'fcfMargin', 'value': .18, 'previous': .22},
-        {'key': 'capexIntensity', 'value': .05, 'previous': null},
-      ];
-    }
-    return result;
-  }
-}
-
+// The four-card explorer is retired. Test its evidence responsibilities through
+// the actual facts-first workspace. Classification gates remain unit-tested.
 void main() {
-  test(
-    'manager sides are mutually exclusive, sorted by weight, null-safe and immutable',
-    () {
-      final rows = [
-        {'name': 'B', 'action': 'new', 'weight': null},
-        {'name': 'A', 'action': 'increased', 'weight': .2},
-        {'name': 'C', 'action': 'sold_out', 'weight': 0},
-        {'name': 'D', 'action': 'mixed_claims', 'weight': .5},
-      ];
-      expect(discoverManagerSide(rows, additions: true).map((m) => m['name']), [
-        'A',
-        'B',
-      ]);
-      expect(discoverManagerSide(rows, additions: false).single['name'], 'C');
-      expect(rows.first['name'], 'B');
-      expect(
-        discoverShareChange({'previousShares': 100, 'changeShares': -50}),
-        -.5,
-      );
-      expect(
-        discoverShareChange({'previousShares': 0, 'changeShares': 100}),
-        isNull,
-      );
-      expect(discoverShareChange({'previousShares': 100}), isNull);
-    },
-  );
-
+  test('manager sides remain exclusive, sorted, null-safe and immutable', () {
+    final rows = [
+      {'name': 'B', 'action': 'new', 'weight': null},
+      {'name': 'A', 'action': 'increased', 'weight': .2},
+      {'name': 'C', 'action': 'sold_out', 'weight': 0},
+      {'name': 'D', 'action': 'mixed_claims', 'weight': .5},
+    ];
+    expect(discoverManagerSide(rows, additions: true).map((m) => m['name']), [
+      'A',
+      'B',
+    ]);
+    expect(discoverManagerSide(rows, additions: false).single['name'], 'C');
+    expect(rows.first['name'], 'B');
+    expect(
+      discoverShareChange({'previousShares': 100, 'changeShares': -50}),
+      -.5,
+    );
+    expect(
+      discoverShareChange({'previousShares': 0, 'changeShares': 100}),
+      isNull,
+    );
+    expect(discoverShareChange({'previousShares': 100}), isNull);
+  });
   for (final size in [
     const Size(1487, 1058),
     const Size(1280, 720),
     const Size(390, 844),
   ]) {
-    for (final language in AppLanguage.values) {
-      for (final lens in ['adds', 'growth', 'revision', 'debate']) {
-        testWidgets('$lens distinct evidence at $size $language', (
-          tester,
-        ) async {
-          final api = LensApi();
-          await explorer.mountExplorer(
-            tester,
-            api,
-            size: size,
-            language: language,
+    for (final lang in AppLanguage.values) {
+      for (final tab in [
+        ('business', 'Business', '经营研究'),
+        ('financials', 'Financials', '财务趋势'),
+        ('valuation', 'Valuation', '估值拆解'),
+        ('13f', '13F insights', '13F 洞察'),
+      ]) {
+        testWidgets('current ${tab.$1} evidence $size $lang', (t) async {
+          final api = facts.FundamentalApi();
+          await facts.mount(t, api, width: size.width, language: lang);
+          t.view.physicalSize = size;
+          await t.pumpAndSettle();
+          if (size.width < 900) {
+            await facts.tap(t, find.byKey(const ValueKey('fund-row-UBER')));
+          }
+          await facts.tap(
+            t,
+            find.text(lang == AppLanguage.en ? tab.$2 : tab.$3),
           );
-          if (size.width < 620) {
-            final carousel = find.byKey(
-              const ValueKey('discover-collection-carousel'),
+          expect(
+            find.byKey(const ValueKey('fundamental-detail-tabs')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('discover-collection-growth')),
+            findsNothing,
+          );
+          if (tab.$1 == 'business') {
+            await facts.tap(
+              t,
+              find.byKey(const ValueKey('fundamental-evidence-expansion')),
             );
-            await tester.ensureVisible(carousel);
-            for (
-              var i = 0;
-              i < ['adds', 'growth', 'revision', 'debate'].indexOf(lens);
-              i++
-            ) {
-              await tester.drag(carousel, const Offset(-290, 0));
-              await tester.pumpAndSettle();
-            }
-          }
-          await explorer.tapKey(tester, 'discover-collection-$lens');
-          await explorer.tapKey(tester, 'discover-candidate-TEST');
-          expect(find.byKey(ValueKey('discover-lens-$lens')), findsOneWidget);
-          for (final other in [
-            'adds',
-            'growth',
-            'revision',
-            'debate',
-          ].where((v) => v != lens)) {
-            expect(find.byKey(ValueKey('discover-lens-$other')), findsNothing);
-          }
-          expect(tester.takeException(), isNull);
-          if (lens == 'adds' || lens == 'debate') {
-            expect(
-              find.byKey(const ValueKey('lens-adding-managers')),
-              findsOneWidget,
-            );
-            expect(
-              find.byKey(const ValueKey('lens-reducing-managers')),
-              lens == 'debate' ? findsOneWidget : findsNothing,
-            );
-            expect(find.textContaining('+50.00%'), findsOneWidget);
             expect(
               find.textContaining(
-                language == AppLanguage.en
-                    ? 'corporate-action adjustments'
-                    : '公司行动调整',
-              ),
-              findsWidgets,
-            );
-          }
-          if (lens == 'growth') {
-            expect(
-              find.textContaining(
-                language == AppLanguage.en ? 'FCF margin fell' : '自由现金流率下降',
+                lang == AppLanguage.en
+                    ? 'Fact OS does not explain causality'
+                    : 'Fact OS 不解释因果',
               ),
               findsOneWidget,
             );
-            expect(find.text('-4.00'), findsOneWidget);
-          }
-          if (lens == 'revision') {
-            expect(find.byType(SteadyValueChart), findsOneWidget);
-            await explorer.tapKey(tester, 'latest-value-revision');
-            expect(find.text(r'$33.00'), findsOneWidget);
+          } else if (tab.$1 == 'financials') {
             expect(
-              find.textContaining(
-                language == AppLanguage.en
-                    ? 'not a per-share contribution bridge'
-                    : '不是逐项金额归因',
+              find.text(
+                lang == AppLanguage.en
+                    ? 'Growth and operating conversion'
+                    : '增长与经营转化',
+              ),
+              findsOneWidget,
+            );
+            expect(
+              find.text(lang == AppLanguage.en ? 'Target P / E' : '目标市盈率'),
+              findsNothing,
+            );
+          } else if (tab.$1 == 'valuation') {
+            expect(
+              find.text(lang == AppLanguage.en ? 'Target P / E' : '目标市盈率'),
+              findsOneWidget,
+            );
+            expect(
+              find.text(lang == AppLanguage.en ? 'Discount rate' : '折现率'),
+              findsOneWidget,
+            );
+          } else {
+            expect(
+              api.calls.where((p) => p.contains('/13f-insights/')).length,
+              1,
+            );
+            expect(find.text('Fixture Capital'), findsOneWidget);
+            expect(
+              find.text(
+                lang == AppLanguage.en
+                    ? 'Institution count history'
+                    : '持有机构数量变化',
+              ),
+              findsOneWidget,
+            );
+            expect(
+              find.text(
+                lang == AppLanguage.en
+                    ? 'Institutional ownership history'
+                    : '机构持股与占总股本变化',
               ),
               findsOneWidget,
             );
           }
-          final action = find.byKey(ValueKey('lens-$lens-research'));
-          await tester.ensureVisible(action);
-          expect(tester.takeException(), isNull);
-          expect(api.calls, isEmpty); // Inspection never writes a decision.
+          expect(api.saved, isFalse);
+          expect(t.takeException(), isNull);
         });
       }
     }
   }
-
   testWidgets(
-    'switching lens on the same ticker changes evidence, not only selected styling',
-    (tester) async {
-      await explorer.mountExplorer(tester, LensApi());
-      for (final lens in ['adds', 'growth', 'revision', 'debate', 'debate']) {
-        await explorer.tapKey(tester, 'discover-collection-$lens');
-        expect(find.byKey(ValueKey('discover-lens-$lens')), findsOneWidget);
-        expect(find.text('TEST'), findsWidgets);
-      }
-      await explorer.tapKey(tester, 'lens-managers-more-adds');
-      expect(find.byKey(const ValueKey('lens-manager-bravo')), findsOneWidget);
-      expect(tester.takeException(), isNull);
+    'switching evidence changes content and fetches holdings only on demand',
+    (t) async {
+      final api = facts.FundamentalApi();
+      await facts.mount(t, api);
+      expect(api.calls.where((p) => p.contains('/13f-insights/')), isEmpty);
+      await facts.tap(t, find.text('Valuation'));
+      expect(find.text('Target P / E'), findsOneWidget);
+      await facts.tap(t, find.text('Financials'));
+      expect(find.text('Target P / E'), findsNothing);
+      await facts.tap(t, find.text('13F insights'));
+      expect(find.text('Fixture Capital'), findsOneWidget);
+      expect(api.saved, isFalse);
     },
   );
-
   testWidgets(
-    'growth CTA opens financial evidence and returns to its exact lens',
-    (tester) async {
-      await explorer.mountExplorer(tester, LensApi());
-      await explorer.tapKey(tester, 'discover-collection-growth');
-      await explorer.tapKey(tester, 'lens-growth-research');
-      expect(find.text('Quarterly research'), findsOneWidget);
-      final back = find.text('Back to candidates');
-      await tester.ensureVisible(back);
-      await tester.tap(back);
-      await tester.pumpAndSettle();
+    'research handoff and restored selection preserve ticker, cutoff and tab',
+    (t) async {
+      final api = facts.FundamentalApi();
+      final opened = <(String, String)>[];
+      await facts.mount(t, api, onCompany: (a, b) => opened.add((a, b)));
+      await facts.tap(t, find.byKey(const ValueKey('fund-open-research')));
+      expect(opened, [('UBER', 'financials')]);
+      await t.pumpWidget(const SizedBox());
+      await facts.mount(
+        t,
+        api,
+        selection: {'ticker': 'UBER', 'detailTab': 'valuation'},
+      );
+      expect(find.text('Published valuation, fully explained'), findsOneWidget);
       expect(
-        find.byKey(const ValueKey('discover-lens-growth')),
-        findsOneWidget,
+        api.calls
+            .where((p) => p.contains('/fundamentals/UBER?'))
+            .every((p) => p.contains('asOf=2026-09-21')),
+        isTrue,
       );
     },
   );
-
   testWidgets(
-    'missing company model does not invent growth analysis or offer model CTA',
-    (tester) async {
-      final api = LensApi()..failure = 'missing';
-      await explorer.mountExplorer(tester, api);
-      await explorer.tapKey(tester, 'discover-collection-growth');
-      expect(
-        find.textContaining('Detailed model evidence is unavailable'),
-        findsOneWidget,
-      );
-      expect(find.byKey(const ValueKey('lens-growth-research')), findsNothing);
-      expect(find.textContaining('FCF margin fell'), findsNothing);
+    'missing valuation keeps fact-only research without inventing a model',
+    (t) async {
+      final api = facts.FundamentalApi();
+      final opened = <(String, String)>[];
+      await facts.mount(t, api, onCompany: (a, b) => opened.add((a, b)));
+      await facts.tap(t, find.byKey(const ValueKey('fund-row-FACT')));
+      expect(find.text('No valuation model'), findsOneWidget);
+      await facts.tap(t, find.text('Valuation'));
+      expect(find.text('Target P / E'), findsNothing);
+      await facts.tap(t, find.text('Business'));
+      await facts.tap(t, find.byKey(const ValueKey('fund-open-research')));
+      expect(opened, [('FACT', 'financials')]);
+      expect(api.saved, isFalse);
     },
   );
 }

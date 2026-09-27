@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guru_analysis_terminal/main.dart';
 import 'investment_explorer_test.dart' as fixture;
+import 'investment_fundamentals_test.dart' as facts;
 
 void main() {
   const rules = GrowthQualityRules();
@@ -115,47 +116,52 @@ void main() {
     expect(bad.roic, .15);
     expect(bad.growth, .15);
   });
+  // Persisted quality-rule mathematics above remain covered. The old editable
+  // cards were replaced by explicit server-side Fact OS threshold filters.
   for (final language in AppLanguage.values) {
     testWidgets(
-      'quality presets and decimal input apply, invalid input stays a draft $language',
+      'current thresholds serialize percentages and clear without changing cutoff $language',
       (t) async {
-        await fixture.mountExplorer(
+        final api = facts.FundamentalApi();
+        await facts.mount(t, api, language: language);
+        await facts.tap(t, find.byKey(const ValueKey('fundamental-advanced')));
+        for (final pair in [
+          ('growth', 'minRevenueGrowth'),
+          ('margin', 'minOperatingMargin'),
+          ('fcf', 'minFcfMargin'),
+        ]) {
+          final dropdown = find.descendant(
+            of: find.byKey(ValueKey('fund-filter-${pair.$1}')),
+            matching: find.byType(DropdownButton<double?>),
+          );
+          await facts.tap(t, dropdown);
+          await facts.tap(t, find.text('10%').last);
+          final uri = Uri.parse(
+            api.calls.lastWhere(
+              (p) => Uri.parse(p).path.endsWith('/fundamentals'),
+            ),
+          );
+          expect(uri.queryParameters[pair.$2], '0.1');
+          expect(uri.queryParameters['asOf'], '2026-09-21');
+        }
+        await facts.tap(
           t,
-          fixture.ExplorerApi(),
-          language: language,
+          find.byKey(const ValueKey('fundamental-clear-thresholds')),
         );
-        await fixture.tapKey(t, 'discover-collection-growth');
-        expect(find.byKey(const ValueKey('quality-years-5')), findsOneWidget);
-        final field = find.descendant(
-          of: find.byKey(const ValueKey('quality-roic')),
-          matching: find.byType(TextFormField),
+        final uri = Uri.parse(
+          api.calls.lastWhere(
+            (p) => Uri.parse(p).path.endsWith('/fundamentals'),
+          ),
         );
-        await t.ensureVisible(field);
-        await t.enterText(field, '20.5');
-        await t.testTextInput.receiveAction(TextInputAction.done);
-        await t.pumpAndSettle();
-        expect(find.text('20.5'), findsOneWidget);
-        expect(
-          find.byKey(const ValueKey('discover-candidate-TEST')),
-          findsNothing,
-        );
-        await t.enterText(field, 'bad');
-        await t.testTextInput.receiveAction(TextInputAction.done);
-        await t.pumpAndSettle();
-        expect(
-          find.byKey(const ValueKey('discover-candidate-TEST')),
-          findsNothing,
-        );
-        await fixture.tapKey(t, 'quality-preset-roic');
-        expect(
-          find.byKey(const ValueKey('discover-candidate-TEST')),
-          findsOneWidget,
-        );
-        await fixture.tapKey(t, 'quality-preset-growth');
-        expect(find.byKey(const ValueKey('quality-roic')), findsNothing);
-        await fixture.tapKey(t, 'quality-preset-cash');
-        await fixture.tapKey(t, 'quality-extra');
-        expect(find.byKey(const ValueKey('quality-cash')), findsOneWidget);
+        for (final key in [
+          'minRevenueGrowth',
+          'minOperatingMargin',
+          'minFcfMargin',
+        ]) {
+          expect(uri.queryParameters[key], isNull);
+        }
+        expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
+        expect(api.saved, isFalse);
         expect(t.takeException(), isNull);
       },
     );
