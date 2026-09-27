@@ -897,21 +897,17 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     });
     try {
       if (panel == 'financials') {
-        final values = await Future.wait([
-          widget.api.getJson(
-            '/api/investment/research/${Uri.encodeComponent(symbol)}/documents?asOf=$cutoff',
-          ),
-          if (researchNeedsFullFinancials)
-            widget.api.getJson(
-              '/api/investment/research/${Uri.encodeComponent(symbol)}/fundamentals?asOf=$cutoff',
-            )
-          else
-            Future.value(researchFundamental!),
-        ]);
+        // Independent evidence layers: a financial scan must never discard a
+        // successfully loaded filing catalog (or hold it behind its latency).
+        if (researchNeedsFullFinancials) {
+          unawaited(loadResearchOverviewFinancials());
+        }
+        final documents = await widget.api.getJson(
+          '/api/investment/research/${Uri.encodeComponent(symbol)}/documents?asOf=$cutoff',
+        );
         if (!mounted || serial != requestSerial) return;
         updateUI(() {
-          researchDocumentsData = values[0];
-          researchFundamental = values[1];
+          researchDocumentsData = documents;
         });
       } else if (panel == 'institutions') {
         final value = await widget.api.getJson(
@@ -948,6 +944,16 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
             'This research layer could not be loaded. Existing evidence remains visible.',
             '这一研究层暂时无法载入，已有证据仍然保留显示。',
             color: p.secondary,
+          ),
+        ),
+      if (researchPanelError != null && !researchPanelLoading)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const ValueKey('research-layer-retry'),
+            onPressed: () => loadResearchPanel(section),
+            icon: const Icon(Icons.refresh, size: 16),
+            label: Text(w('Retry this section', '重试这一研究层')),
           ),
         ),
     ],
@@ -1018,6 +1024,24 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         researchPanelState(),
+        if (researchFinancialsError != null)
+          card([
+            label(
+              'Financial history could not be loaded. Announcements remain available.',
+              '财务历史暂时无法载入，公告仍可查看。',
+              color: p.secondary,
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: researchFinancialsLoading
+                    ? null
+                    : loadResearchOverviewFinancials,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: Text(w('Retry financial history', '重试财务历史')),
+              ),
+            ),
+          ]),
         pageColumns(
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1028,7 +1052,9 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                 '公告分类线索、已验证原文链接、可读取正文是三种不同覆盖状态。',
               ),
               const SizedBox(height: 16),
-              if (documents.isEmpty && !researchPanelLoading)
+              if (documents.isEmpty &&
+                  !researchPanelLoading &&
+                  researchPanelError == null)
                 card([
                   label(
                     'No announcement catalog is available at this cutoff.',

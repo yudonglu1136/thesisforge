@@ -5,12 +5,28 @@ import 'package:guru_analysis_terminal/main.dart';
 import 'investment_workflow_test.dart' as fixtures;
 
 class ResearchApi extends fixtures.HomeFixtureApi {
+  bool failFinancials = false, failDocuments = false;
   bool readOnly = true, wrongIdentity = false, noHistory = false, saved = false;
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
     final uri = Uri.parse(path);
+    if (uri.path.endsWith('/documents')) {
+      reads.add(path);
+      if (failDocuments) throw Exception('documents_unavailable');
+      return {
+        'rows': [
+          {
+            'title': 'Independent filing evidence',
+            'form': '10-Q',
+            'publishedAt': '2026-05-01',
+            'contentStatus': 'verified_link_only',
+          },
+        ],
+      };
+    }
     if (uri.path.endsWith('/fundamentals')) {
       reads.add(path);
+      if (failFinancials) throw Exception('local_data_unavailable');
       Map<String, dynamic> statement(
         String year,
         double scale, {
@@ -404,6 +420,33 @@ Future<void> mount(
 }
 
 void main() {
+  testWidgets('successful documents survive a failed financial history', (
+    t,
+  ) async {
+    final api = ResearchApi()..failFinancials = true;
+    await mount(t, api, initialSection: 'financials');
+    expect(find.text('Independent filing evidence'), findsOneWidget);
+    expect(
+      find.text('No announcement catalog is available at this cutoff.'),
+      findsNothing,
+    );
+    expect(t.takeException(), isNull);
+  });
+  testWidgets('failed documents are retryable and not labelled absent', (
+    t,
+  ) async {
+    final api = ResearchApi()..failDocuments = true;
+    await mount(t, api, initialSection: 'financials');
+    expect(
+      find.text('No announcement catalog is available at this cutoff.'),
+      findsNothing,
+    );
+    api.failDocuments = false;
+    await t.ensureVisible(find.byKey(const ValueKey('research-layer-retry')));
+    await t.tap(find.byKey(const ValueKey('research-layer-retry')));
+    await t.pumpAndSettle();
+    expect(find.text('Independent filing evidence'), findsOneWidget);
+  });
   test('research route resolves exact candidate only on Research', () {
     expect(researchEntryTicker('research', '', ' nvda '), 'NVDA');
     expect(researchEntryTicker('research', 'ISRG', 'NVDA'), 'ISRG');
