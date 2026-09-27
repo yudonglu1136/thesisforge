@@ -85,7 +85,7 @@ export function registerInvestmentRoutes(app,service) {
     return {...analyzeRuleRange(hydrateRuleLedger(value.ledger),start,end),universe:args.universe,
       artifact:{dashboard:artifactState(dashboardSnapshot),ledger:artifactState(snapshot)},lineage:{portfolioSnapshotId:dashboard.snapshotId,
         sourceSnapshotGeneration:value.sourceGeneration,readerFingerprint:snapshot.fingerprint,
-        allDailyNavReconciled:true,adjustmentBasis:'vendor_current_adjustment_factors',method:'rule-range-attribution-v2'}};
+        allDailyNavReconciled:true,adjustmentBasis:value.adjustmentBasis??'vendor_current_adjustment_factors',method:'rule-range-attribution-v2'}};
   });
   route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
     search:r.query.search,limit:r.query.limit,

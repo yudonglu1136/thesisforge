@@ -44,3 +44,31 @@ test('failed portfolio work is surfaced and not hot-looped',async()=>{
   assert.equal(queue.enqueue({inputFingerprint:fingerprint}),false);
   assert.equal(calls,1);
 });
+
+test('snapshot publication errors become failed jobs rather than unhandled success callbacks',async()=>{
+  let failed=0;
+  const queue=new PortfolioAnalysisQueue({compute:async()=>({})});
+  const fingerprint='c'.repeat(64);
+  queue.enqueue({inputFingerprint:fingerprint},{onSuccess:()=>{throw new Error('snapshot_write_failed');},onFailure:()=>failed++});
+  for(let i=0;i<100&&!failed;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(failed,1);
+  assert.equal(queue.status(fingerprint),'failed');
+});
+
+test('queued work retains the data paths captured when it was enqueued',async()=>{
+  let unblock;const gate=new Promise(resolve=>unblock=resolve),seen=[];
+  const previous=process.env.FACT_OS_ROOT;
+  const queue=new PortfolioAnalysisQueue({runtimeConfig:{releaseId:'r1'},compute:async job=>{
+    if(job.inputFingerprint==='first')await gate;
+    seen.push(job.dataPaths.canonicalRoot);
+  }});
+  try {
+    process.env.FACT_OS_ROOT='/first-generation';
+    queue.enqueue({inputFingerprint:'first'});
+    queue.enqueue({inputFingerprint:'second'});
+    process.env.FACT_OS_ROOT='/replacement-generation';
+    unblock();
+    for(let i=0;i<100&&seen.length<2;i++)await new Promise(resolve=>setTimeout(resolve,5));
+    assert.deepEqual(seen,['/first-generation','/first-generation']);
+  }finally{if(previous===undefined)delete process.env.FACT_OS_ROOT;else process.env.FACT_OS_ROOT=previous;}
+});

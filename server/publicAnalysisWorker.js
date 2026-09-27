@@ -7,6 +7,8 @@ import { InvestmentSource } from './investmentSource.js';
 import { buildOpportunities } from './investmentOpportunities.js';
 import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
 import { buildRuleLedger,canonicalRulePrices,serializeRuleLedger } from './rulePortfolioAnalysis.js';
+import { analysisFailureCode } from './analysisFailure.js';
+import {readRuleLedgerArchive} from './ruleLedgerArchive.js';
 
 async function build() {
   const {kind,args,context,fingerprint,cohortFingerprint,logicalKey,root}=workerData;
@@ -22,10 +24,13 @@ async function build() {
   }else if(kind==='strategy')value=loadInvestorStyleDashboard({asOf:args.asOf,universe:args.universe??'all'});
   else if(kind==='strategy-ledger'){
     const dashboard=loadInvestorStyleDashboard({asOf:args.asOf,universe:args.universe??'all'});
-    const prices=await canonicalRulePrices(dashboard);
-    value={version:'strategy-ledger-public-analysis-v1',snapshotId:dashboard.snapshotId,
-      sourceGeneration:dashboard.lineage?.sourceGeneration??null,
-      ledger:serializeRuleLedger(buildRuleLedger(dashboard,prices))};
+    value=readRuleLedgerArchive(dashboard,{root:context.ruleLedgerRoot,identity:context.ruleLedgerIdentity??null});
+    if(!value){
+      const prices=await canonicalRulePrices(dashboard);
+      value={version:'strategy-ledger-public-analysis-v1',snapshotId:dashboard.snapshotId,
+        sourceGeneration:dashboard.lineage?.sourceGeneration??null,
+        ledger:serializeRuleLedger(buildRuleLedger(dashboard,prices))};
+    }
   }
   else throw new Error('public_analysis_kind_invalid');
   const directory=path.join(root,'releases',fingerprint);fs.mkdirSync(directory,{recursive:true,mode:0o755});
@@ -43,4 +48,4 @@ async function build() {
     path:path.relative(root,file),bytes:bytes.length,sha256};
 }
 
-build().then(entry=>parentPort.postMessage({ok:true,entry}),()=>parentPort.postMessage({ok:false,error:'public_analysis_build_failed'}));
+build().then(entry=>parentPort.postMessage({ok:true,entry}),error=>parentPort.postMessage({ok:false,error:analysisFailureCode(error)}));

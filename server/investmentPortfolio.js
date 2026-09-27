@@ -7,6 +7,7 @@ import {portfolioSyncResult} from './portfolioSyncResult.js';
 import {portfolioAnalysisIdentity,portfolioAnalysisQueue} from './portfolioAnalysisQueue.js';
 import {portfolioConnectionRevision,readUserPortfolioAnalysis,writeUserPortfolioAnalysis} from './userPortfolioStore.js';
 import {dataReleaseStatus} from './dataReleaseContext.js';
+import {analysisFailureCode} from './analysisFailure.js';
 
 const n = x => finite(x) ? x : null;
 const sum = xs => xs.reduce((s, x) => s + x, 0);
@@ -298,8 +299,8 @@ export function registerPortfolioAnalysisRoute(app, service, loadPortfolio,{anal
         const user={id:req.user.id,...(req.user.adminPortfolioHash?{adminPortfolioHash:req.user.adminPortfolioHash}:{})};
         analysisQueue.enqueue({inputFingerprint:identity.inputFingerprint,payload,asOf,scope,riskFreeRate:rate},{
           onSuccess:result=>{try{writeUserPortfolioAnalysis(user,{scope,inputFingerprint:identity.inputFingerprint,
-            asOf,reportDate:identity.reportDate,payload:result,connectionRevision});}catch(error){console.warn('[portfolio-analysis] snapshot write failed',{scope,code:error?.code??'failed'});}},
-          onFailure:()=>console.warn('[portfolio-analysis] background rebuild failed',{scope}),
+            asOf,reportDate:identity.reportDate,payload:result,connectionRevision});}catch{throw new Error('snapshot_write_failed');}},
+          onFailure:error=>console.warn('[portfolio-analysis] background rebuild failed',{scope,code:analysisFailureCode(error)}),
         });
       }
       const queueStatus=rebuilding&&!local?analysisQueue.status(identity.inputFingerprint):'idle';

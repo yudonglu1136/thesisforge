@@ -54,7 +54,10 @@ export class PortfolioAnalysisQueue {
     const failed=this.failures.get(job.inputFingerprint);
     if(failed&&Date.now()-failed<30_000)return false;
     this.failures.delete(job.inputFingerprint);
-    this.keys.add(job.inputFingerprint);this.pending.push({job,onSuccess,onFailure});this.#drain();return true;
+    // Capture the request's release before waiting behind another owner's job.
+    // Resolving it in #run can inherit the preceding request's async context.
+    const pinnedJob={...job,dataPaths:releasePaths()};
+    this.keys.add(job.inputFingerprint);this.pending.push({job:pinnedJob,onSuccess,onFailure});this.#drain();return true;
   }
   status(inputFingerprint) {
     if(this.keys.has(inputFingerprint))return 'updating';
@@ -64,7 +67,7 @@ export class PortfolioAnalysisQueue {
   #drain() {
     while(this.active<this.maxActive&&this.pending.length){
       const item=this.pending.shift();this.active++;
-      this.#run(item.job).then(value=>{this.failures.delete(item.job.inputFingerprint);item.onSuccess(value);},error=>{
+      this.#run(item.job).then(value=>{item.onSuccess(value);this.failures.delete(item.job.inputFingerprint);}).catch(error=>{
         this.failures.set(item.job.inputFingerprint,Date.now());item.onFailure(error);
       }).finally(()=>{
         this.keys.delete(item.job.inputFingerprint);this.active--;this.#drain();
@@ -74,7 +77,7 @@ export class PortfolioAnalysisQueue {
   async #run(job) {
     if(this.compute)return this.compute(job);
     this.dependencies();
-    const config=this.runtimeConfig,paths=releasePaths();
+    const config=this.runtimeConfig,paths=job.dataPaths;
     if(!config)throw new Error('investment_runtime_unavailable');
     return new Promise((resolve,reject)=>{
       const worker=new Worker(new URL('./portfolioAnalysisWorker.js',import.meta.url),{

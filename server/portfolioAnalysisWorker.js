@@ -2,6 +2,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { InvestmentSource } from './investmentSource.js';
 import { buildPortfolioAnalysis,attachPortfolioTrailingDividends } from './investmentPortfolio.js';
 import { loadDividendCalendarForTickers } from './dividendClient.js';
+import { analysisFailureCode } from './analysisFailure.js';
 
 const eligible=analysis=>(analysis.groups??[]).flatMap(group=>(group.positions??[]).filter(position=>{
   if(position.kind!=='equity'||!(position.quantity>0)||!(position.price>0)||!(position.value>0)||!(position.fxRateToBase>0))return false;
@@ -28,4 +29,4 @@ async function main() {
   }finally{source.close();}
 }
 
-main().catch(()=>parentPort.postMessage({ok:false,error:'portfolio_analysis_worker_failed'}));
+main().catch(error=>parentPort.postMessage({ok:false,error:analysisFailureCode(error)}));

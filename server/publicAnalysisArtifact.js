@@ -4,6 +4,8 @@ import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { dataReleaseStatus } from './dataReleaseContext.js';
 import { resolveInvestmentRuntimeConfig } from './investmentRuntimeConfig.js';
+import { analysisFailureCode } from './analysisFailure.js';
+import {defaultRuleLedgerRoot,ruleLedgerArchiveIdentity} from './ruleLedgerArchive.js';
 
 const schema='public-analysis-index-v2';
 const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'
@@ -32,7 +34,8 @@ export class PublicAnalysisArtifacts {
       canonicalRoot:release?.groups?.canonical?.root??process.env.FACT_OS_ROOT??null,
       publicFactsFile:release?.groups?.public_observations?.root?path.join(release.groups.public_observations.root,'observations.sqlite'):null,
       insightsFile:release?.groups?.institutional_13f?.root?path.join(release.groups.institutional_13f.root,'13f-insights.sqlite'):config?.insights??null,
-      researchFile:config?.research??null,investmentReleaseId:config?.releaseId??process.env.INVESTMENT_RELEASE_ID??null};
+      researchFile:config?.research??null,investmentReleaseId:config?.releaseId??process.env.INVESTMENT_RELEASE_ID??null,
+      ruleLedgerRoot:defaultRuleLedgerRoot(),ruleLedgerIdentity:ruleLedgerArchiveIdentity()};
   }
   identity(kind,args,context=this.context()) {
     const logicalKey=safeKey(`${kind}:${args.asOf}:${args.reportDate??args.universe??'default'}`);
@@ -40,6 +43,7 @@ export class PublicAnalysisArtifacts {
       strategy:['canonical','strategy_inputs'],'strategy-ledger':['canonical','strategy_inputs']}[kind]??Object.keys(context.groups);
     const groups=Object.fromEntries(dependencies.filter(key=>context.groups[key]).map(key=>[key,context.groups[key]]));
     const inputs={args,releaseId:Object.keys(groups).length?null:context.releaseId,groups,
+      ...(kind.startsWith('strategy')&&context.ruleLedgerIdentity?{ruleLedgerIdentity:context.ruleLedgerIdentity}:{}),
       investmentReleaseId:kind==='fundamentals'?null:context.investmentReleaseId};
     return {logicalKey,fingerprint:digest({schema,kind,...inputs}),
       cohortFingerprint:digest({schema:'public-analysis-cohort-v1',family:kind.startsWith('strategy')?'strategy':kind,...inputs})};
@@ -56,7 +60,8 @@ export class PublicAnalysisArtifacts {
     if(this.cache.has(key))return clone?structuredClone(this.cache.get(key)):this.cache.get(key);
     const bytes=fs.readFileSync(file);
     if(bytes.length!==entry.bytes||crypto.createHash('sha256').update(bytes).digest('hex')!==entry.sha256)return null;
-    const value=JSON.parse(bytes);this.cache.set(key,value);
+    let value;try{value=JSON.parse(bytes);}catch{return null;}
+    this.cache.set(key,value);
     while(this.cache.size>8)this.cache.delete(this.cache.keys().next().value);
     return clone?structuredClone(value):value;
   }
@@ -64,7 +69,7 @@ export class PublicAnalysisArtifacts {
     const context=this.context(),identity=this.identity(kind,args,context),index=this.#index(),entry=index.entries[identity.logicalKey];
     const value=this.#read(entry,{clone}),exact=entry?.fingerprint===identity.fingerprint&&
       entry?.cohortFingerprint===identity.cohortFingerprint;
-    if(!exact)this.enqueue({kind,args,context,...identity});
+    if(!exact||!value)this.enqueue({kind,args,context,...identity});
     const failure=this.failures.get(identity.fingerprint);
     return {value,exact:Boolean(exact&&value),status:exact&&value?'ready':failure?'stale':'updating',fingerprint:identity.fingerprint,
       ...(failure?{error:'public_analysis_build_failed'}:{}),
@@ -110,8 +115,10 @@ export class PublicAnalysisArtifacts {
   }
   #drain() {
     while(this.active<this.maxActive&&this.pending.length){const job=this.pending.shift();this.active++;
-      this.#run(job).then(entry=>{this.failures.delete(job.fingerprint);this.#activate(job,entry);},error=>{
-        this.failures.set(job.fingerprint,{at:Date.now(),code:error?.code??'public_analysis_build_failed'});
+      this.#run(job).then(entry=>{this.#activate(job,entry);this.failures.delete(job.fingerprint);}).catch(error=>{
+        const code=analysisFailureCode(error);
+        this.failures.set(job.fingerprint,{at:Date.now(),code});
+        console.warn('[public-analysis] build failed',{kind:job.kind,asOf:job.args.asOf,code});
       }).finally(()=>{this.keys.delete(job.fingerprint);this.active--;this.#drain();});}
   }
   async #run(job) {

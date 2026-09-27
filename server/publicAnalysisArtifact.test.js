@@ -12,6 +12,23 @@ const waitFor=async predicate=>{
   throw new Error('artifact_test_timeout');
 };
 
+test('missing exact artifact is rebuilt instead of remaining updating forever',async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'public-analysis-missing-'));
+  let calls=0;
+  const artifacts=new PublicAnalysisArtifacts({root,runtimeConfig:{releaseId:'r1'},compute:async()=>{
+    calls++;throw new Error('local_data_unavailable');
+  }});
+  const args={asOf:'2026-09-27'},identity=artifacts.identity('fundamentals',args);
+  try{
+    fs.writeFileSync(path.join(root,'active.json'),JSON.stringify({schemaVersion:'public-analysis-index-v2',
+      entries:{[identity.logicalKey]:{...identity,path:'missing.json',bytes:1,sha256:'0'.repeat(64)}}}));
+    artifacts.get('fundamentals',args);
+    await waitFor(()=>calls);
+    await waitFor(()=>artifacts.get('fundamentals',args).error);
+    assert.equal(calls,1);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
 test('public analysis keeps last good immutable generation while a deduplicated replacement builds',async()=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'public-analysis-'));
   let builds=0;

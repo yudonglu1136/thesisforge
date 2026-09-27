@@ -122,7 +122,11 @@ export function buildRuleLedger(snapshot, priceMaps, { costBps = 25 } = {}) {
         events.splice(eventStart, events.length - eventStart, ...corrected);
       }
       if (!near(nav, row[style.id]) || !near(closing.portfolioValue, nav) ||
-          !near(sum([...pnl.values()]) - sum([...fees.values()]), nav - previousNav)) fail('rule_analysis_nav_mismatch');
+          !near(sum([...pnl.values()]) - sum([...fees.values()]), nav - previousNav)) {
+        throw Object.assign(new Error('rule_analysis_nav_mismatch'),{status:503,diagnostic:{strategy:style.id,date,
+          expectedNav:row[style.id],computedNav:nav,closingNav:closing.portfolioValue,
+          contribution:sum([...pnl.values()])-sum([...fees.values()]),navChange:nav-previousNav}});
+      }
       days.push({ date, nav, pnl, fees, trading, positions: new Map(closing.values.map(p => [p.ticker, { ...mark(p, date), open: !cashClaim(p) }])) });
       previousNav = nav;
       previousValues = new Map(closing.values.map(p => [p.ticker, p.endValue]));
