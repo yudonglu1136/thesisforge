@@ -11,9 +11,17 @@ import {DatabaseSync} from 'node:sqlite';
 import {restoreUserData} from '../server/userDataBackup.js';
 
 const REGION='us-east-1', ACCOUNT='378477120101';
-const INSTANCE='i-0896b2f2f421b847b', GROUP='sg-0d7dabbfa4cdc91cc';
+const GROUP='sg-0d7dabbfa4cdc91cc';
 const BUCKET='thesisforge-production-378477120101-us-east-1';
 const MAX_EXPORT_BYTES=16*1024*1024;
+export function resolveBackupInstance(environment, resources) {
+  if(environment?.ApplicationName!=='thesisforge-api'
+    ||environment?.EnvironmentName!=='thesisforge-api-prod'||environment?.Status!=='Ready'
+    ||!Array.isArray(resources?.Instances)||resources.Instances.length!==1
+    ||!/^i-[a-f0-9]{17}$/.test(resources.Instances[0]?.Id||''))
+    throw Error('ambiguous_or_unready_backup_target');
+  return resources.Instances[0].Id;
+}
 export function privateBackupOutput(destination, repository) {
   if(typeof destination!=='string'||!path.isAbsolute(destination)||fs.existsSync(destination)) throw Error('new_private_output_required');
   const parent=fs.realpathSync(path.dirname(destination));
@@ -93,6 +101,10 @@ export async function backupAwsUserData(destination) {
     {group:GROUP,ip:operatorIp,description:ingressDescription});
   try {
     if(aws('sts','get-caller-identity').Account!==ACCOUNT) throw Error('wrong_aws_account');
+    const environments=aws('elasticbeanstalk','describe-environments','--environment-names','thesisforge-api-prod').Environments;
+    if(environments?.length!==1)throw Error('ambiguous_backup_environment');
+    const INSTANCE=resolveBackupInstance(environments[0],aws('elasticbeanstalk','describe-environment-resources',
+      '--environment-name','thesisforge-api-prod').EnvironmentResources);
     const info=aws('ec2','describe-instances','--instance-ids',INSTANCE).Reservations[0].Instances[0];
     if(info.State.Name!=='running'||!info.SecurityGroups.some(g=>g.GroupId===GROUP)) throw Error('target_changed');
     const block=aws('s3api','get-public-access-block','--bucket',BUCKET).PublicAccessBlockConfiguration;

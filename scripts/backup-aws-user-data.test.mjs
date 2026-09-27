@@ -5,7 +5,16 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
-import {validateEncryptedExport,privateBackupOutput,matchingTemporaryIngressRules,requireLegacyUserBackupPaths,verifyRestoredCredentialEnvelopes} from './backup-aws-user-data.mjs';
+import {validateEncryptedExport,privateBackupOutput,matchingTemporaryIngressRules,requireLegacyUserBackupPaths,verifyRestoredCredentialEnvelopes,resolveBackupInstance} from './backup-aws-user-data.mjs';
+test('backup follows the current production environment, not a retired instance',()=>{
+  const environment={ApplicationName:'thesisforge-api',EnvironmentName:'thesisforge-api-prod',Status:'Ready'};
+  const resources={Instances:[{Id:'i-0eabc67533fb38fca'}]};
+  assert.equal(resolveBackupInstance(environment,resources),'i-0eabc67533fb38fca');
+  for(const env of [{...environment,ApplicationName:'other'},{...environment,EnvironmentName:'staging'},{...environment,Status:'Updating'}])
+    assert.throws(()=>resolveBackupInstance(env,resources));
+  for(const instances of [[],[{Id:'i-123'},{Id:'i-456'}],[{Id:'invalid'}]])
+    assert.throws(()=>resolveBackupInstance(environment,{Instances:instances}));
+});
 const cipher=Buffer.alloc(64,7).toString('base64');
 const valid=()=>({generation:'2db3cf31-5594-4fa2-bbd2-9aed49bf4cde',databases:1,
   objects:[{name:'db-00001.enc',base64:cipher},{name:'manifest.enc',base64:cipher}],recovery:cipher});
@@ -79,4 +88,3 @@ test('isolated restored credentials and reports decrypt with original key and ow
   fs.renameSync(directory,path.join(temp,'portfolios','b'.repeat(40)));
   assert.throws(()=>verifyRestoredCredentialEnvelopes(temp,key));
 });
-

@@ -4,7 +4,8 @@ import io
 import gzip
 import json
 from collections import Counter
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone
+from email.utils import format_datetime
 import tempfile
 import unittest
 import zipfile
@@ -14,13 +15,43 @@ from unittest.mock import patch
 import httpx
 
 from .store import Store
-from .sync import Synchronizer, UpstreamError
+from .sync import Synchronizer, UpstreamError, retry_delay
 from .sync_plan import bounded_date_windows
 
 DDL='CREATE TABLE IF NOT EXISTS "stocks" ("ticker" TEXT,"date" TEXT,"close" REAL,"closeadj" REAL,"closeunadj" REAL,"lastupdated" TEXT,PRIMARY KEY ("ticker","date"));'
 FIELDS=['ticker','date','close','closeadj','closeunadj','lastupdated']
 
+class RetryDelayTest(unittest.TestCase):
+    def test_http_date_and_invalid_headers(self):
+        future=format_datetime(datetime.now(timezone.utc)+timedelta(seconds=120),usegmt=True)
+        self.assertGreater(retry_delay(future),118)
+        self.assertLessEqual(retry_delay(future),120)
+        for value in ('invalid','NaN','Infinity','-20',None):
+            self.assertEqual(retry_delay(value),0)
+        self.assertEqual(retry_delay('300'),300)
+        with self.assertRaises(UpstreamError):retry_delay('301')
+
 class SyncTest(unittest.TestCase):
+    def test_rate_limit_honors_retry_after_instead_of_clipping_to_sixty(self):
+        calls=0
+        def handler(req):
+            nonlocal calls
+            calls+=1
+            if calls==1:return httpx.Response(429,headers={'Retry-After':'120'})
+            return httpx.Response(200,json={'count':0,'data':[]})
+        self.mock(handler)
+        with patch('fact_os.sync.time.sleep') as sleep:
+            self.sync.sync('stocks')
+        self.assertGreaterEqual(sleep.call_args_list[0].args[0],120)
+
+    def test_excessive_rate_limit_wait_fails_without_early_retry(self):
+        self.mock(lambda req:httpx.Response(429,headers={'Retry-After':'7200'}))
+        with patch.dict('os.environ',{'FACT_OS_SYNC_WORKERS':'1'}), patch('fact_os.sync.time.sleep') as sleep:
+            with self.assertRaisesRegex(UpstreamError,'retry delay exceeds'):
+                self.sync.sync('stocks')
+        sleep.assert_not_called()
+        self.assertEqual(len(self.requests),1)
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         self.store=Store(self.root/'facts');self.store.install_contract('stocks',DDL)

@@ -2,7 +2,9 @@
 import csv
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone
+from email.utils import parsedate_to_datetime
+import math
 import hashlib
 import fcntl
 from functools import wraps
@@ -29,6 +31,22 @@ BASE = 'https://api.sharadar.com/v1.0'
 
 class UpstreamError(RuntimeError):
     pass
+
+def retry_delay(value):
+    """Honor provider cooldowns without sleeping beyond the query retry budget."""
+    try:
+        seconds=float(value)
+    except (TypeError,ValueError):
+        try:
+            instant=parsedate_to_datetime(value)
+            if instant.tzinfo is None:instant=instant.replace(tzinfo=timezone.utc)
+            seconds=(instant-datetime.now(timezone.utc)).total_seconds()
+        except (TypeError,ValueError,OverflowError):
+            return 0
+    if not math.isfinite(seconds):return 0
+    if seconds>300:
+        raise UpstreamError('upstream retry delay exceeds query budget; local history retained')
+    return max(0,seconds)
 
 def serialized_job(method):
     @wraps(method)
@@ -345,8 +363,8 @@ class Synchronizer:
                             response=httpx.Response(200,content=b''.join(chunks))
                         else:
                             response=httpx.Response(upstream.status_code)
-                            try: retry_after=min(60,max(0,float(upstream.headers.get('retry-after','0'))))
-                            except ValueError: retry_after=0
+                            if upstream.status_code in (429,500,502,503,504):
+                                retry_after=retry_delay(upstream.headers.get('retry-after','0'))
                     if response.status_code==200:
                         rows=page_rows(response,query['format'],fields,query['limit'])
                         allowed=set(query['ticker'].split(',')) if 'ticker' in query else None
