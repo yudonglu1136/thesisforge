@@ -108,7 +108,8 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
   );
   Color seriesColor(String id) => switch (id) {
     'capex' => p.accent,
-    'hardware' => const Color(0xFF7FAAFF),
+    'hardware' =>
+      blackEditionPreview ? const Color(0xFF36CF88) : const Color(0xFF7FAAFF),
     _ => p.secondary,
   };
   String seriesLabel(String id) => switch (id) {
@@ -146,7 +147,13 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
       TextStyle(
         fontSize: size,
         height: 1.4,
-        fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
+        fontWeight: bold
+            ? (blackEditionPreview ? FontWeight.w600 : FontWeight.w700)
+            : FontWeight.w400,
+        fontFeatures: blackEditionPreview
+            ? const [ui.FontFeature.tabularFigures()]
+            : null,
+        letterSpacing: blackEditionPreview && size >= 20 ? -.5 : null,
         color: color ?? p.text,
       );
 
@@ -406,7 +413,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
     decoration: BoxDecoration(
       color: p.panel,
       border: Border.all(color: border ?? p.border),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(blackEditionPreview ? 4 : 12),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1582,6 +1589,9 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
   String peerLabel(Map<String, dynamic> row) =>
       row['group'] == 'software' ? w('Software', '软件') : w('Hardware', '硬件');
 
+  Widget rankingHeading(String value) =>
+      blackEditionPreview ? Flexible(child: Text(value)) : Text(value);
+
   Widget rankingTable(
     List<Map<String, dynamic>> rows, {
     bool compact = false,
@@ -1594,25 +1604,31 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
       dataRowMinHeight: 60,
       dataRowMaxHeight: 68,
       columns: [
-        DataColumn(label: Text(w('Compare', '对比'))),
-        DataColumn(label: Text(w('Peer rank', '同组排名')), numeric: true),
-        DataColumn(label: Text(w('Company / peer', '公司 / 同组'))),
-        DataColumn(label: Text(w('Revenue', '收入')), numeric: true),
-        const DataColumn(label: Text('YoY'), numeric: true),
-        const DataColumn(label: Text('QoQ'), numeric: true),
-        if (!compact)
-          DataColumn(label: Text(w('Δ YoY', 'YoY 变化')), numeric: true),
+        DataColumn(label: rankingHeading(w('Compare', '对比'))),
         DataColumn(
-          label: Text(w('Op. margin · TTM', '经营利润率 · TTM')),
+          label: rankingHeading(w('Peer rank', '同组排名')),
+          numeric: true,
+        ),
+        DataColumn(label: rankingHeading(w('Company / peer', '公司 / 同组'))),
+        DataColumn(label: rankingHeading(w('Revenue', '收入')), numeric: true),
+        DataColumn(label: rankingHeading('YoY'), numeric: true),
+        DataColumn(label: rankingHeading('QoQ'), numeric: true),
+        if (!compact)
+          DataColumn(
+            label: rankingHeading(w('Δ YoY', 'YoY 变化')),
+            numeric: true,
+          ),
+        DataColumn(
+          label: rankingHeading(w('Op. margin · TTM', '经营利润率 · TTM')),
           numeric: true,
         ),
         DataColumn(
-          label: Text(w('FCF margin · TTM', 'FCF 率 · TTM')),
+          label: rankingHeading(w('FCF margin · TTM', 'FCF 率 · TTM')),
           numeric: true,
         ),
         if (!compact)
           DataColumn(
-            label: Text(w('SBC / revenue', 'SBC / 收入')),
+            label: rankingHeading(w('SBC / revenue', 'SBC / 收入')),
             numeric: true,
           ),
         for (final l in [
@@ -1620,10 +1636,12 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
           w('Quality', '质量分'),
           w('Composite', '综合分'),
         ])
-          DataColumn(label: Text(l), numeric: true),
+          DataColumn(label: rankingHeading(l), numeric: true),
         if (!compact) ...[
-          DataColumn(label: Text(w('Period end / disclosed', '期末 / 披露日'))),
-          DataColumn(label: Text(w('Data status', '数据状态'))),
+          DataColumn(
+            label: rankingHeading(w('Period end / disclosed', '期末 / 披露日')),
+          ),
+          DataColumn(label: rankingHeading(w('Data status', '数据状态'))),
         ],
       ],
       rows: [
@@ -2866,7 +2884,14 @@ class _AiInsightsChartPainter extends CustomPainter {
       final tp = TextPainter(
         text: TextSpan(
           text: value,
-          style: TextStyle(color: color ?? palette.faint, fontSize: fontSize),
+          style: TextStyle(
+            color: color ?? palette.faint,
+            fontSize: blackEditionPreview ? fontSize + 1 : fontSize,
+            fontFamily: blackEditionPreview ? 'TFInter' : null,
+            fontFeatures: blackEditionPreview
+                ? const [ui.FontFeature.tabularFigures()]
+                : null,
+          ),
         ),
         textDirection: TextDirection.ltr,
       )..layout();

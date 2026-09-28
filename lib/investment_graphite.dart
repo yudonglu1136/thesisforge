@@ -5,17 +5,39 @@ part of 'main.dart';
 class _GraphitePalette extends Palette {
   _GraphitePalette(super.colorBlind);
   @override
-  Color get background => const Color(0xFF0E171F);
+  Color get background =>
+      blackEditionPreview ? Colors.black : const Color(0xFF0E171F);
   @override
-  Color get panel => const Color(0xFF111C25);
+  Color get panel =>
+      blackEditionPreview ? const Color(0xFF080808) : const Color(0xFF111C25);
   @override
-  Color get card => const Color(0xFF17252E);
+  Color get card =>
+      blackEditionPreview ? const Color(0xFF121212) : const Color(0xFF17252E);
   @override
-  Color get border => const Color(0xFF293A46);
+  Color get border =>
+      blackEditionPreview ? const Color(0xFF2A2A2A) : const Color(0xFF293A46);
   @override
-  Color get accent => colorBlind ? super.accent : const Color(0xFF48DAB3);
+  Color get accent => colorBlind
+      ? super.accent
+      : blackEditionPreview
+      ? const Color(0xFF52AEF5)
+      : const Color(0xFF48DAB3);
   @override
-  Color get muted => const Color(0xFFB0BDCC);
+  Color get muted =>
+      blackEditionPreview ? const Color(0xFFABABAB) : const Color(0xFFB0BDCC);
+  @override
+  Color get faint =>
+      blackEditionPreview ? const Color(0xFF858585) : super.faint;
+  @override
+  Color get text => blackEditionPreview ? const Color(0xFFF5F5F5) : super.text;
+  @override
+  Color get positive => blackEditionPreview && !colorBlind
+      ? const Color(0xFF36CF88)
+      : super.positive;
+  @override
+  Color get negative => blackEditionPreview && !colorBlind
+      ? const Color(0xFFFF6963)
+      : super.negative;
 }
 
 extension _GraphiteWorkspace on _InvestmentWorkspaceState {
@@ -26,13 +48,31 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
       scaffoldBackgroundColor: p.background,
       colorScheme: ColorScheme.dark(
         primary: p.accent,
-        onPrimary: p.background,
+        onPrimary: blackEditionPreview ? Colors.black : p.background,
         surface: p.panel,
         onSurface: p.text,
         outline: p.border,
       ),
       textTheme: base.textTheme.apply(bodyColor: p.text, displayColor: p.text),
       dividerColor: p.border,
+      splashFactory: blackEditionPreview
+          ? InkSparkle.splashFactory
+          : base.splashFactory,
+      dataTableTheme: !blackEditionPreview
+          ? base.dataTableTheme
+          : base.dataTableTheme.copyWith(
+              headingTextStyle: TextStyle(
+                color: p.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+              dataTextStyle: TextStyle(
+                color: p.text,
+                fontSize: 13,
+                fontFeatures: const [ui.FontFeature.tabularFigures()],
+              ),
+              dividerThickness: .5,
+            ),
       inputDecorationTheme: InputDecorationTheme(
         labelStyle: TextStyle(color: p.muted, fontSize: 13),
         enabledBorder: OutlineInputBorder(
@@ -44,10 +84,12 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          backgroundColor: p.accent,
+          backgroundColor: blackEditionPreview ? p.text : p.accent,
           foregroundColor: p.background,
           minimumSize: const Size(44, 46),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(blackEditionPreview ? 4 : 8),
+          ),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -60,7 +102,9 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
       ),
       chipTheme: base.chipTheme.copyWith(
         backgroundColor: p.panel,
-        selectedColor: p.accent.withValues(alpha: .20),
+        selectedColor: blackEditionPreview
+            ? const Color(0xFF292929)
+            : p.accent.withValues(alpha: .20),
         side: BorderSide(color: p.border),
         labelStyle: TextStyle(color: p.text),
         showCheckmark: false,
@@ -211,9 +255,11 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
   Widget brand({double size = 23}) => Row(
     children: [
       Image.asset(
-        'assets/branding/thesisforge-mark.png',
-        width: 32,
-        height: 36,
+        blackEditionPreview
+            ? 'assets/branding/thesisforge-black-mark.png'
+            : 'assets/branding/thesisforge-mark.png',
+        width: blackEditionPreview ? 40 : 32,
+        height: blackEditionPreview ? 40 : 36,
       ),
       const SizedBox(width: 12),
       Expanded(
@@ -224,9 +270,11 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
             'ThesisForge',
             style: TextStyle(
               color: p.text,
-              fontSize: size,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -.5,
+              fontSize: blackEditionPreview ? size - 2 : size,
+              fontWeight: blackEditionPreview
+                  ? FontWeight.w600
+                  : FontWeight.w700,
+              letterSpacing: blackEditionPreview ? -.9 : -.5,
             ),
           ),
         ),
@@ -255,7 +303,9 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                     child: Material(
                       color: page == item.$1
-                          ? p.accent.withValues(alpha: .17)
+                          ? blackEditionPreview
+                                ? const Color(0xFF1C1C1C)
+                                : p.accent.withValues(alpha: .17)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(5),
                       child: InkWell(
@@ -270,8 +320,12 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                             children: [
                               Icon(
                                 item.$4,
-                                color: page == item.$1 ? p.accent : p.muted,
-                                size: 25,
+                                color: page == item.$1
+                                    ? blackEditionPreview
+                                          ? p.text
+                                          : p.accent
+                                    : p.muted,
+                                size: blackEditionPreview ? 21 : 25,
                               ),
                               const SizedBox(width: 20),
                               Expanded(
@@ -279,7 +333,10 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                                   w(item.$2, item.$3),
                                   style: TextStyle(
                                     color: page == item.$1 ? p.text : p.muted,
-                                    fontSize: 17,
+                                    fontSize: blackEditionPreview ? 14 : 17,
+                                    fontWeight: page == item.$1
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
                                   ),
                                 ),
                               ),
@@ -460,9 +517,9 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
       // hidden AI panel revive that stale generation/date tuple later.
       aiInsightsSelection.remove('snapshotId');
       final selectedAiQuarter = text(aiInsightsSelection['quarter']);
-      final latestAiQuarter =
-          '${parsed.year}Q${((parsed.month - 1) ~/ 3) + 1}';
-      if (selectedAiQuarter.replaceAll('-', '').compareTo(latestAiQuarter) > 0) {
+      final latestAiQuarter = '${parsed.year}Q${((parsed.month - 1) ~/ 3) + 1}';
+      if (selectedAiQuarter.replaceAll('-', '').compareTo(latestAiQuarter) >
+          0) {
         aiInsightsSelection.remove('quarter');
       }
       if (page == 'discover' && discoveryTab == 'aiinsights') {

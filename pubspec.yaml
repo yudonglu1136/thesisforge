@@ -60,8 +60,12 @@ flutter:
 
   assets:
     - assets/branding/thesisforge-mark.png
+    - assets/branding/thesisforge-black-mark.png
 
   fonts:
+    - family: TFInter
+      fonts:
+        - asset: assets/fonts/Inter-Variable.ttf
     - family: ResearchSerif
       fonts:
         - asset: assets/fonts/DMSerifDisplay-Regular.ttf

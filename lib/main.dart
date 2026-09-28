@@ -61,6 +61,11 @@ part 'investment_strategy_hedge.dart';
 const investmentWorkflowEnabled = bool.fromEnvironment(
   'INVESTMENT_WORKFLOW_ENABLED',
 );
+// User-approved Black Edition. Explicit false retains the previous theme.
+const blackEditionPreview = bool.fromEnvironment(
+  'BLACK_EDITION_PREVIEW',
+  defaultValue: true,
+);
 // A nonvisual identity marker lets the release wrapper verify the compiled
 // branch, rather than trusting the environment that was meant to reach Flutter.
 const investmentWorkflowBuildMarker = investmentWorkflowEnabled
@@ -1166,7 +1171,7 @@ class _GuruTerminalAppState extends State<GuruTerminalApp>
           useMaterial3: true,
           brightness: Brightness.dark,
           scaffoldBackgroundColor: const Color(0xFF0B111D),
-          fontFamily: 'Inter',
+          fontFamily: blackEditionPreview ? 'TFInter' : 'Inter',
           colorScheme: ColorScheme.fromSeed(
             brightness: Brightness.dark,
             seedColor: const Color(0xFF22D3A6),

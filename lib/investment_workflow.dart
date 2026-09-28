@@ -1139,7 +1139,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       w(en, zh),
       style: TextStyle(
         fontSize: 22,
-        fontWeight: FontWeight.w800,
+        fontWeight: blackEditionPreview ? FontWeight.w600 : FontWeight.w800,
+        letterSpacing: blackEditionPreview ? -.6 : null,
         color: p.text,
       ),
     ),
@@ -1150,7 +1151,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     child: Material(
       color: p.panel,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(blackEditionPreview ? 4 : 8),
         side: BorderSide(color: border ?? p.border),
       ),
       child: Padding(
