@@ -136,7 +136,8 @@ app.get('/api/internal/data-release',requireLoopbackRequest,requireInternalCron,
     const fundamentals=await verifyReleasedFundamentals(new Date().toISOString().slice(0,10));
     const publicAnalysis=process.env.INVESTMENT_WORKFLOW_ENABLED==='true'
       ?await publicAnalysisArtifacts.warmCurrent(new Date().toISOString().slice(0,10)):null;
-    response.json({status:'verified',releaseId:release.releaseId,groups:release.groups,coverage,fundamentals,publicAnalysis});
+    const research=await verifyReleasedResearch(new Date().toISOString().slice(0,10));
+    response.json({status:'verified',releaseId:release.releaseId,groups:release.groups,coverage,fundamentals,publicAnalysis,research});
   }catch{return response.status(503).json({error:'data_release_probe_failed'});}
 });
 registerRetiredProductRoutes(app);

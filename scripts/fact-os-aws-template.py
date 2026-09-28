@@ -10,6 +10,8 @@ def template():
     trust=lambda service:{'Version':'2012-10-17','Statement':[{'Effect':'Allow','Principal':{'Service':service},'Action':'sts:AssumeRole'}]}
     statement=lambda actions,resources:{'Effect':'Allow','Action':actions,'Resource':resources}
     policy=lambda name,statements:{'PolicyName':name,'PolicyDocument':{'Version':'2012-10-17','Statement':statements}}
+    worker_command='sudo -u factos env FACT_OS_ROOT=/var/lib/fact-os/data FACT_OS_SECRET_ID=${SharadarSecret} FACT_OS_BUCKET=${Bucket} FACT_OS_INSTALL_DOCUMENT=${InstallDocument} FACT_OS_INSTALL_DOCUMENT_VERSION=${InstallDocumentVersion} FACT_OS_API_INSTANCE_ID=${ApiInstanceId} AWS_DEFAULT_REGION=${AWS::Region} /opt/fact-os/current/bin/fact-os-worker --data-only'
+    schedule_argument=' --scheduled-for "$SSM_ScheduledFor"'
     resources={
       'WorkerLogs':{'Type':'AWS::Logs::LogGroup','DeletionPolicy':'Retain','UpdateReplacePolicy':'Retain','Properties':{
         'LogGroupName':'/thesisforge/fact-os/worker','RetentionInDays':30}},
@@ -79,7 +81,9 @@ systemctl enable --now amazon-ssm-agent
                         'ExpectedRelease':{'type':'String','allowedPattern':'^([a-f0-9]{64}|none)$','interpolationType':'ENV_VAR'}},
           'mainSteps':[{'action':'aws:runShellScript','name':'InstallFactOs','inputs':{'timeoutSeconds':'3600','runCommand':[
             'set -eu','cd /var/app/current',
-            sub('/opt/thesisforge-fact-os/bin/python scripts/fact-os-api-install.py --bucket ${Bucket} --candidate-key "$SSM_ReleaseKey" --expected-release "$SSM_ExpectedRelease"')
+            {'Fn::If':['DailyServingEnabled',
+                sub('/opt/thesisforge-fact-os/bin/python scripts/fact-os-api-install.py --scope public-daily --bucket ${Bucket} --candidate-key "$SSM_ReleaseKey" --expected-release "$SSM_ExpectedRelease"'),
+                sub('/opt/thesisforge-fact-os/bin/python scripts/fact-os-api-install.py --bucket ${Bucket} --candidate-key "$SSM_ReleaseKey" --expected-release "$SSM_ExpectedRelease"')]}
           ]}}]}}},
       'RunDocument':{'Type':'AWS::SSM::Document','Properties':{
         'DocumentType':'Command','DocumentFormat':'JSON','UpdateMethod':'NewVersion',
@@ -89,7 +93,7 @@ systemctl enable --now amazon-ssm-agent
             'timeoutSeconds':'21600','runCommand':[
               'set -eu',
               'test -x /opt/fact-os/current/bin/fact-os-worker',
-              sub('sudo -u factos env FACT_OS_ROOT=/var/lib/fact-os/data FACT_OS_SECRET_ID=${SharadarSecret} FACT_OS_BUCKET=${Bucket} FACT_OS_INSTALL_DOCUMENT=${InstallDocument} FACT_OS_INSTALL_DOCUMENT_VERSION=${InstallDocumentVersion} FACT_OS_API_INSTANCE_ID=${ApiInstanceId} AWS_DEFAULT_REGION=${AWS::Region} /opt/fact-os/current/bin/fact-os-worker --data-only --scheduled-for "$SSM_ScheduledFor"')
+              {'Fn::If':['DailyServingEnabled',sub(worker_command+' --activate-daily'+schedule_argument),sub(worker_command+schedule_argument)]}
             ]}}]}}},
       'StateRole':{'Type':'AWS::IAM::Role','Properties':{'AssumeRolePolicyDocument':trust('states.amazonaws.com'),
         'Policies':[policy('only-fact-os-worker',[
@@ -109,18 +113,20 @@ systemctl enable --now amazon-ssm-agent
             'Retry':[{'ErrorEquals':['Ssm.InvocationDoesNotExistException'],'IntervalSeconds':10,'MaxAttempts':6}],
             'ResultPath':'$.invocation','Next':'Check'},
           'Check':{'Type':'Choice','Choices':[
-            {'Variable':'$.invocation.Status','StringEquals':'Success','Next':'DataReady'},
+            {'Variable':'$.invocation.Status','StringEquals':'Success','Next':'SuccessMode'},
             {'Variable':'$.invocation.Status','StringEquals':'Pending','Next':'Wait'},
             {'Variable':'$.invocation.Status','StringEquals':'InProgress','Next':'Wait'},
             {'Variable':'$.invocation.Status','StringEquals':'Delayed','Next':'Wait'}],'Default':'Failed'},
-          # This workflow verifies DATA readiness, not API activation or curves.
-          'DataReady':{'Type':'Succeed'},'Failed':{'Type':'Fail','Error':'FactOsDailyDataNotVerified'}
+          # Only explicit serving mode can report installer/ACK success; neither mode builds curves.
+          'SuccessMode':{'Type':'Pass','Result':{'Fn::If':['DailyServingEnabled','api','data']},'ResultPath':'$.verifiedMode','Next':'SuccessKind'},
+          'SuccessKind':{'Type':'Choice','Choices':[{'Variable':'$.verifiedMode','StringEquals':'api','Next':'ApiActivated'}],'Default':'DataReady'},
+          'DataReady':{'Type':'Succeed'},'ApiActivated':{'Type':'Succeed'},'Failed':{'Type':'Fail','Error':'FactOsDailyDataNotVerified'}
         }}}},
       'SchedulerRole':{'Type':'AWS::IAM::Role','Properties':{'AssumeRolePolicyDocument':trust('scheduler.amazonaws.com'),
         'Policies':[policy('start-fact-os-only',[statement(['states:StartExecution'],arn('StateMachine')),
                                                statement(['sqs:SendMessage'],arn('DispatchDlq'))])]}},
       'DailySchedule':{'Type':'AWS::Scheduler::Schedule','Properties':{
-        'Name':'thesisforge-fact-os-daily','Description':'All 14 Fact OS tables and validated derived data; API activation and reviewed backtests are separate',
+        'Name':'thesisforge-fact-os-daily','Description':{'Fn::If':['DailyServingEnabled','All 14 Fact OS tables, six derived groups and verified API activation; reviewed backtests remain separate','All 14 Fact OS tables and validated derived data; no API activation or reviewed backtests']},
         'ScheduleExpression':'cron(30 7 * * ? *)','ScheduleExpressionTimezone':'Asia/Riyadh',
         'State':ref('ScheduleState'),'FlexibleTimeWindow':{'Mode':'OFF'},
         'Target':{'Arn':arn('StateMachine'),'RoleArn':arn('SchedulerRole'),
@@ -151,8 +157,11 @@ systemctl enable --now amazon-ssm-agent
         'ApiInstanceId':{'Type':'String','AllowedPattern':'^i-[a-f0-9]+$'},
         'RunDocumentVersion':{'Type':'String','Default':'1','AllowedPattern':'^[1-9][0-9]*$'},
         'InstallDocumentVersion':{'Type':'String','Default':'1','AllowedPattern':'^[1-9][0-9]*$'},
+        'ActivateDaily':{'Type':'String','Default':'false','AllowedValues':['false','true'],
+                         'Description':'Enable only after backup/restore, current API target and manual installation/ACK gates pass'},
         'AmiId':{'Type':'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>','Default':'/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64'},
         'ScheduleState':{'Type':'String','Default':'DISABLED','AllowedValues':['DISABLED','ENABLED']}},
+      'Conditions':{'DailyServingEnabled':{'Fn::Equals':[ref('ActivateDaily'),'true']}},
       'Resources':resources,'Outputs':{'WorkerId':{'Value':ref('Worker')},'VolumeId':{'Value':ref('DataVolume')},
         'SecretArn':{'Value':ref('SharadarSecret')},'StateMachineArn':{'Value':arn('StateMachine')},'RunDocument':{'Value':ref('RunDocument')},
         'InstallDocument':{'Value':ref('InstallDocument')},'WorkerLogGroup':{'Value':ref('WorkerLogs')},

@@ -254,6 +254,33 @@ rollback copy before activation. Rollback changes code/flags, not live user
 data. Keep the investment journal, including edits made after deployment.
 Legacy links and the original broker connection screen remain available.
 
+### Public-only daily data activation (authorized 2026-09-28)
+
+The operator separately authorized connecting public website data without
+accessing private accounts or configuring a new backup key. This narrower
+operation is not the initial investment-journal migration above. Use
+`fact-os-api-install.py --scope public-daily`: it accepts exactly canonical,
+AI Insights, institutional 13F, public observations, Research inputs and
+Strategy inputs. All files are immutable under `/var/app/data/fact-os/releases`;
+only that namespace's `active.json` is switched. It neither replaces the
+runtime SQLite database nor opens, backs up or migrates any user store.
+
+Rollback preserves the prior public pointer and every old immutable generation;
+failed ACK restores the pointer. The retained Research-only recovery pointer is
+not deleted: explicit public-daily activation supersedes it for Research reads
+and worksheets; removing/rolling back that activation restores recovery reads.
+Actual-UID canonical reads, all six group identities, Fundamentals, Research
+and public-analysis warmup must pass before publication. No Guru curve or
+reviewed valuation gate is relaxed. Existing private-data migration and
+valuation/13F write operations still require their original backup gates.
+
+First inspect capacity for the entire candidate plus reserve, retain the prior
+application version, validate pointer rollback, and verify the current EB
+target before dispatch. Enable `ActivateDaily=true` only after real manual
+install/ACK and S3 fenced publication succeed. The first subsequent scheduled
+activation must be independently attested; data-only success is not serving
+success. No frontend rebuild is needed for a data-only update.
+
 This public-source migration does not refresh issuer financial APIs or certify
 Guru study curves. Current-method/security-master cache validation must keep
 incompatible or unavailable study results unavailable, not reuse earlier

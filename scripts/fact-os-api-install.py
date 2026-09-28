@@ -16,6 +16,15 @@ from fact_os.pipeline.checks import validate_canonical,validate_api_read
 from fact_os.pipeline.contracts import digest
 from fact_os.contracts import TABLES
 
+PUBLIC_DAILY_GROUPS={'canonical','ai_insights','institutional_13f','public_observations','research_inputs','strategy_inputs'}
+
+def scoped_candidate(candidate,scope):
+    if scope=='public-daily':
+        if set(candidate.get('groups',{}))!=PUBLIC_DAILY_GROUPS:
+            raise ValueError('public_daily_release_scope_invalid')
+        return {**candidate,'activationScope':'public-daily'}
+    return candidate
+
 
 def api_port(config, environment=None):
     # EB injects its platform PORT into web.service even when get-config's
@@ -29,12 +38,15 @@ def api_port(config, environment=None):
 
 
 def validate_live_ack(body,installed,scope='all'):
-    if scope not in ('all','research'):raise ValueError('invalid_activation_scope')
+    if scope not in ('all','research','public-daily'):raise ValueError('invalid_activation_scope')
+    scoped_candidate(installed,scope)
+    if scope=='public-daily' and body.get('research',{}).get('status')!='ready':
+        raise ValueError('public_daily_research_ack_missing')
     if scope=='research' and set(installed['groups'])!={'canonical','research_inputs'}:
         raise ValueError('research_release_scope_invalid')
     if (body.get('releaseId')!=installed['releaseId'] or body.get('status')!='verified'
             or (scope=='research' and body.get('research',{}).get('status')!='ready')
-            or (scope=='all' and (body.get('fundamentals',{}).get('status')!='ready'
+            or (scope!='research' and (body.get('fundamentals',{}).get('status')!='ready'
             or body.get('publicAnalysis',{}).get('status')!='ready'))):
         raise ValueError('live_api_generation_mismatch')
     expected={name:item['generationId'] for name,item in installed['groups'].items()}
@@ -51,13 +63,14 @@ def main():
     if os.geteuid()!=0:raise ValueError('root_installer_required')
     parser=argparse.ArgumentParser();parser.add_argument('--bucket',required=True);parser.add_argument('--candidate-key',required=True)
     parser.add_argument('--expected-release',required=True,help='Exact previous root release id, or none for first install')
-    parser.add_argument('--scope',choices=('all','research'),default='all')
+    parser.add_argument('--scope',choices=('all','research','public-daily'),default='all')
     args=parser.parse_args()
     import boto3
     s3=boto3.client('s3')
     if not args.candidate_key.startswith('fact-os/published/releases/') or not args.candidate_key.endswith('.json'):raise ValueError('release_key_invalid')
     candidate=json.loads(s3.get_object(Bucket=args.bucket,Key=args.candidate_key)['Body'].read())
     if digest({k:candidate[k] for k in ('schemaVersion','groups')})!=candidate['releaseId']:raise ValueError('release_identity_invalid')
+    candidate=scoped_candidate(candidate,args.scope)
     root=Path('/var/app/data/fact-os');active=root/'active.json'
     expected=None if args.expected_release=='none' else args.expected_release
     lease=Path('/var/app/data/fact-os-leases');lease.mkdir(exist_ok=True)

@@ -35,10 +35,13 @@ class InfrastructureContractTest(unittest.TestCase):
         for term in ('frontend','broker','yodlee','ibkr'): self.assertNotIn(term,names)
 
     def test_daily_program_updates_data_without_claiming_api_or_backtest_success(self):
-        command=self.resources['RunDocument']['Properties']['Content']['mainSteps'][0]['inputs']['runCommand'][-1]['Fn::Sub']
+        command=self.resources['RunDocument']['Properties']['Content']['mainSteps'][0]['inputs']['runCommand'][-1]['Fn::If'][2]['Fn::Sub']
         self.assertIn('--data-only',command)
+        self.assertNotIn('--activate-daily',command)
         definition=self.resources['StateMachine']['Properties']['Definition']
-        self.assertEqual(definition['States']['Check']['Choices'][0]['Next'],'DataReady')
+        self.assertEqual(definition['States']['Check']['Choices'][0]['Next'],'SuccessMode')
+        self.assertEqual(definition['States']['SuccessMode']['Result']['Fn::If'][2],'data')
+        self.assertEqual(definition['States']['SuccessKind']['Default'],'DataReady')
         self.assertEqual(definition['States']['DataReady']['Type'],'Succeed')
 
     def test_delivery_failure_timeout_and_worker_output_are_independently_observable(self):
@@ -50,6 +53,19 @@ class InfrastructureContractTest(unittest.TestCase):
         self.assertEqual(self.resources['WorkerLogs']['Properties']['RetentionInDays'],30)
         self.assertEqual(self.resources['TimeoutAlarm']['Properties']['MetricName'],'ExecutionsTimedOut')
         self.assertEqual(self.resources['DispatchAlarm']['Properties']['Namespace'],'AWS/SQS')
+
+    def test_daily_serving_is_explicit_opt_in_with_distinct_success_state(self):
+        self.assertEqual(self.template['Parameters']['ActivateDaily']['Default'],'false')
+        self.assertEqual(self.template['Parameters']['ActivateDaily']['AllowedValues'],['false','true'])
+        command=self.resources['RunDocument']['Properties']['Content']['mainSteps'][0]['inputs']['runCommand'][-1]
+        self.assertEqual(command['Fn::If'][0],'DailyServingEnabled')
+        self.assertIn('--data-only --activate-daily',command['Fn::If'][1]['Fn::Sub'])
+        self.assertNotIn('--activate-daily',command['Fn::If'][2]['Fn::Sub'])
+        state=self.resources['StateMachine']['Properties']['Definition']['States']
+        self.assertEqual(state['SuccessMode']['Result'],
+                         {'Fn::If':['DailyServingEnabled','api','data']})
+        self.assertEqual(state['SuccessKind']['Choices'][0]['Next'],'ApiActivated')
+        self.assertEqual(state['ApiActivated']['Type'],'Succeed')
 
     def test_api_role_can_restore_immutable_runtime_sidecars(self):
         statements=self.resources['ApiReadPolicy']['Properties']['PolicyDocument']['Statement']

@@ -78,6 +78,17 @@ pass a manual installation/ACK. Research's scoped recovery pointer must also
 be reconciled so it cannot keep shadowing later global releases. Merely shipping
 the worker code does not satisfy these gates or turn on website auto-update.
 
+The IaC exposes `ActivateDaily=false|true` (default false). After these gates
+pass, update the current `ApiInstanceId`, install the new numeric RunDocument
+version, and opt in explicitly. Serving mode passes `--activate-daily` and ends
+at `ApiActivated`; data-only mode ends at `DataReady`. Neither success state
+certifies Guru curves or reviewed valuations. Inspect the live ACK and exact
+release identities, not only the Step Functions state. Do not enable this
+parameter while its rollback or scoped Research reconciliation gate is unresolved.
+For the separately authorized public-only path, use the `public-daily` scope
+and isolation/retained-pointer rollback gates in `docs/deployment-contract.md`;
+this does not authorize private-data migration or relaxed model/curve gates.
+
 Extract checkpoints now belong to one attempt, keyed by full query context,
 schema and last successful sync. Successful runs cannot lend stale SF3 leaves
 to the next run. A verification mutation invalidates the complete attempt;

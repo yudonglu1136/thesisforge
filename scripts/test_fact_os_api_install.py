@@ -9,6 +9,22 @@ spec.loader.exec_module(installer)
 
 
 class ApiInstallPortTest(unittest.TestCase):
+    def test_public_daily_requires_exact_public_groups_and_keeps_release_identity(self):
+        candidate={'releaseId':'a'*64,'groups':{name:{} for name in installer.PUBLIC_DAILY_GROUPS}}
+        scoped=installer.scoped_candidate(candidate,'public-daily')
+        self.assertEqual(scoped['activationScope'],'public-daily')
+        self.assertEqual(scoped['releaseId'],candidate['releaseId'])
+        self.assertNotIn('activationScope',candidate)
+        body={**scoped,'status':'verified','fundamentals':{'status':'ready'},'publicAnalysis':{'status':'ready'},
+              'research':{'status':'ready'},'coverage':[{'dataset':t,'locally_available':True,'backfill_complete':True} for t in TABLES]}
+        scoped['groups']={name:{'generationId':'b'*64} for name in installer.PUBLIC_DAILY_GROUPS}
+        body['groups']=scoped['groups']
+        self.assertTrue(installer.validate_live_ack(body,scoped,'public-daily'))
+        with self.assertRaisesRegex(ValueError,'public_daily_research_ack_missing'):
+            installer.validate_live_ack({**body,'research':{'status':'failed'}},scoped,'public-daily')
+        for groups in ({'canonical':{}},{**candidate['groups'],'user_portfolios':{}}):
+            with self.assertRaisesRegex(ValueError,'public_daily_release_scope_invalid'):
+                installer.scoped_candidate({**candidate,'groups':groups},'public-daily')
     def test_research_ack_is_separate_and_does_not_relax_global_activation(self):
         installed={'releaseId':'a'*64,'groups':{name:{'generationId':c*64}
             for name,c in [('canonical','b'),('research_inputs','c')]}}

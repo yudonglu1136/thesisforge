@@ -22,6 +22,9 @@ export function readDataRelease(file=process.env.FACT_OS_ACTIVE_MANIFEST ||
   const manifest=JSON.parse(bytes);
   if(manifest.schemaVersion!==1||manifest.state!=='verified'||!/^[a-f0-9]{64}$/.test(manifest.releaseId??''))
     throw Error('data_release_manifest_invalid');
+  if(manifest.activationScope==='public-daily'&&Object.keys(manifest.groups??{}).sort().join(',')!==
+    'ai_insights,canonical,institutional_13f,public_observations,research_inputs,strategy_inputs')
+    throw Error('public_daily_release_scope_invalid');
   const base=path.resolve(path.dirname(file),'releases');
   for(const item of Object.values(manifest.groups??{})) {
     if(!item.root||!path.resolve(item.root).startsWith(base+path.sep)||!fs.statSync(item.root).isDirectory())
@@ -44,6 +47,10 @@ export function researchReleaseManifest(req) {
     '/api/investment/calculate','/api/investment/valuation-drafts','/api/investment/scenarios',
   ].includes(url);
   if(!worksheet&&!/^\/api\/investment\/research(?:\/|$)/.test(url)&&url!=='/api/internal/research-data-release')return null;
+  // Explicit public-only cutover supersedes the recovery pointer without
+  // deleting it. Rolling back the daily pointer restores the recovery route.
+  // Keep the scoped installer ACK pinned to its own scope for independent recovery.
+  if(url!=='/api/internal/research-data-release'&&readDataRelease()?.manifest.activationScope==='public-daily')return null;
   const file=process.env.FACT_OS_RESEARCH_MANIFEST??(process.env.NODE_ENV==='production'
     ?'/var/app/data/fact-os/research-active.json':null);
   return file&&fs.existsSync(file)?file:null;

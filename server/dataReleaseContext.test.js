@@ -86,3 +86,30 @@ test('Research activation does not switch Strategy, Discover or Portfolio data',
     fs.rmSync(directory,{recursive:true,force:true});
   }
 });
+
+test('verified public daily activation supersedes recovery for Research and rollback restores it',()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'daily-release-context-'));
+  const prior={global:process.env.FACT_OS_ACTIVE_MANIFEST,research:process.env.FACT_OS_RESEARCH_MANIFEST};
+  const root=path.join(directory,'releases','canonical');fs.mkdirSync(root,{recursive:true});
+  const global=path.join(directory,'active.json'),research=path.join(directory,'research-active.json');
+  const groups=Object.fromEntries(['canonical','research_inputs','strategy_inputs','ai_insights','institutional_13f','public_observations'].map(k=>[k,{root}]));
+  const daily={schemaVersion:1,state:'verified',releaseId:'c'.repeat(64),activationScope:'public-daily',groups};
+  fs.writeFileSync(research,JSON.stringify({schemaVersion:1,state:'verified',releaseId:'b'.repeat(64),groups:{canonical:{root},research_inputs:{root}}}));
+  process.env.FACT_OS_ACTIVE_MANIFEST=global;process.env.FACT_OS_RESEARCH_MANIFEST=research;
+  const read=url=>{const res=Object.assign(new EventEmitter(),{setHeader(){},status(){return this;},json(v){this.error=v;}});let id;
+    dataReleaseMiddleware({originalUrl:url,method:'POST'},res,()=>{id=dataReleaseId();});res.emit('finish');return {id,error:res.error};};
+  try {
+    fs.writeFileSync(global,JSON.stringify(daily));
+    for(const url of ['/api/investment/research/AMZN','/api/investment/calculate','/api/investment/valuation-drafts','/api/investment/scenarios'])
+      assert.equal(read(url).id,daily.releaseId);
+    assert.equal(read('/api/internal/research-data-release').id,'b'.repeat(64));
+    fs.writeFileSync(global,JSON.stringify({...daily,groups:{canonical:{root}}}));
+    assert.equal(read('/api/investment/research/AMZN').error?.error,'data_release_unavailable');
+    fs.unlinkSync(global);delete process.env.FACT_OS_ACTIVE_MANIFEST;
+    assert.equal(read('/api/investment/research/AMZN').id,'b'.repeat(64));
+  }finally{
+    for(const [key,value] of [['FACT_OS_ACTIVE_MANIFEST',prior.global],['FACT_OS_RESEARCH_MANIFEST',prior.research]])
+      if(value===undefined)delete process.env[key];else process.env[key]=value;
+    fs.rmSync(directory,{recursive:true,force:true});
+  }
+});
