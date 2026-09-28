@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import re
 
 spec=importlib.util.spec_from_file_location('fact_os_aws_template',Path(__file__).with_name('fact-os-aws-template.py'))
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
@@ -8,6 +9,12 @@ module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 
 class InfrastructureContractTest(unittest.TestCase):
     def setUp(self): self.template=module.template();self.resources=self.template['Resources']
+
+    def test_installer_accepts_real_release_keys_and_rejects_path_escape(self):
+        pattern=self.resources['InstallDocument']['Properties']['Content']['parameters']['ReleaseKey']['allowedPattern']
+        self.assertIsNotNone(re.fullmatch(pattern,'fact-os/published/releases/'+'a'*64+'.json'))
+        for value in ('fact-os/published/releases/../active.json','fact-os/published/releases/'+'a'*64+'xjson'):
+            self.assertIsNone(re.fullmatch(pattern,value))
 
     def test_schedule_has_explicit_timezone_and_starts_disabled(self):
         schedule=self.resources['DailySchedule']['Properties']

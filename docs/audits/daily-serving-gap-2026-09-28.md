@@ -76,3 +76,65 @@ AWS CloudFormation template validation passed. Full local storage audit passed
 `data/fact_os/audit/storage-public-daily-20260928.json`. Layout audit retains
 the eleven previously documented findings; no files were deleted or ignored
 to force a pass. Rollback application remains `recovery-e5c121d`.
+
+## Public serving deployment (in progress)
+
+Code `3909366e2c06ec4200515570f84ad05dceefa00d` was pushed to trunk and
+deployed as EB `public-daily-3909366` (Ready/Green). This is application
+deployment, not a data-serving acceptance. CloudFormation changeset
+`public-serving-3909366` completed with `ActivateDaily=true`, RunDocument 6,
+InstallDocument 2, current API instance `i-0eabc67533fb38fca`, and the schedule
+temporarily **DISABLED**. No instance or volume was expanded.
+
+Manual publication-only verification reuses scheduled run
+`74a89dc42e131642a5c42dd11f72792c19785a8a7f400f93a8b9d0a076af87d0`;
+it does not fetch sources or rebuild backtests. An initial command referenced
+a mistyped receipt filename and failed before publication. The corrected
+worker command is `01f55ef4-e56d-4d5e-9591-bf07bf0d0406`, with actual API
+installer command `f8c878c9-ee74-402d-8e6a-600f9755bd7b`. Final acceptance and
+schedule restoration must be recorded below; manual verification does not
+count as the first scheduled API activation.
+
+## Actual acceptance
+
+- Installer and publication commands above completed successfully. Actual
+  `webapp` reads, all fourteen canonical coverage/backfill checks, and live
+  API ACK passed. Serving release is
+  `075134daa3dac8f423445dd36f285e8e79ca8f4351a9c7df8f8d1058ffaee554`.
+- The data-ready candidate and serving release have the same runId and all
+  six identical group generation IDs. Root release IDs differ because their
+  publication manifests refer to different prior-release chains (data-ready
+  versus first global API installation); no payload objects were uploaded in
+  the publication resume (`uploadedObjects=0`). Do not compare root IDs alone.
+- Independent follow-up command `f26afdcd-5c88-4e3b-86f8-13accba381b0`
+  re-read the live ACK: Research AMZN has 8 quarterly / 8 annual periods,
+  PLTR 8 / 6; Fundamentals 5,428 companies, latest available 2026-09-25;
+  public analysis ready. Eight precomputed jobs cover Fundamentals,
+  opportunities, and summaries/ledgers for the three strategy universes.
+  This does not assert new historical backtests were built.
+- API disk free after installation: 8,323,096,576 bytes. Existing recovery
+  pointer and old immutable releases retained. No private data read/migrated,
+  no new secret, no source fetch, no GC, no instance expansion.
+- CloudFormation completed and Scheduler restored to **ENABLED**, cron
+  `30 7 * * ? *`, **Asia/Riyadh**, with API activation enabled. First scheduled
+  serving acceptance remains **pending 2026-09-29 07:30 Asia/Riyadh**.
+  The existing read-only monitor was updated to check both data-ready and
+  actual serving ACK, rather than its obsolete data-only acceptance.
+- Both production domains resolve to Vercel
+  `dpl_6SMs64yd8xMDTYTiUDCsf7iTXLa6`,
+  `thesisforge-amibzhy1g-yudonglu1136s-projects.vercel.app` (Ready).
+  External Fundamentals requires authentication (401); internal ACK is not
+  publicly accessible (404). No authentication bypass was enabled.
+- Eight concurrent public health requests completed in 2.11–2.26 seconds,
+  all **503**. The pre-existing aggregate Guru/legacy readiness gate is not
+  certified by this public-data cutover; do not report the entire platform
+  healthy or claim browser-authenticated page acceptance from these probes.
+
+Rollback: disable the public scheduler; retain all immutable files. Installer
+ACK failure restores the prior global pointer automatically. For this first
+global cutover, reverting the global pointer to its absent prior state restores
+the retained Research recovery selection. Application rollback target is
+`recovery-e5c121d`. Original stack parameters/template were retained locally
+under `/private/tmp/thesisforge-fact-os-before-public-serving-*`; do not blindly
+restore its obsolete API instance ID. Guru/reviewed models and private jobs
+remain outside this publication scope.
