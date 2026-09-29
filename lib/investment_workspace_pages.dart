@@ -36,6 +36,10 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
 
   Future<void> requestNavigate(String next) async {
     if (page == next) return;
+    if (page == 'admin' && widget.adminContent != null) {
+      widget.onLegacyView?.call(next);
+      return;
+    }
     if (page == 'research' && !await allowLeaveDraft()) return;
     if (next == 'admin') {
       if (mounted && widget.showAdmin) widget.onLegacyView?.call('admin');

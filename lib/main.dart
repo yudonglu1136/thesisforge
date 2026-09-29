@@ -66,6 +66,9 @@ const blackEditionPreview = bool.fromEnvironment(
   'BLACK_EDITION_PREVIEW',
   defaultValue: true,
 );
+const thesisForgeMarkAsset = blackEditionPreview
+    ? 'assets/branding/thesisforge-black-mark.png'
+    : 'assets/branding/thesisforge-mark.png';
 // A nonvisual identity marker lets the release wrapper verify the compiled
 // branch, rather than trusting the environment that was meant to reach Flutter.
 const investmentWorkflowBuildMarker = investmentWorkflowEnabled
@@ -1170,12 +1173,12 @@ class _GuruTerminalAppState extends State<GuruTerminalApp>
         theme: ThemeData(
           useMaterial3: true,
           brightness: Brightness.dark,
-          scaffoldBackgroundColor: const Color(0xFF0B111D),
+          scaffoldBackgroundColor: Palette(false).background,
           fontFamily: blackEditionPreview ? 'TFInter' : 'Inter',
           colorScheme: ColorScheme.fromSeed(
             brightness: Brightness.dark,
-            seedColor: const Color(0xFF22D3A6),
-            surface: const Color(0xFF111827),
+            seedColor: Palette(false).accent,
+            surface: Palette(false).panel,
           ),
         ),
         home: AuthGate(
@@ -1432,12 +1435,15 @@ class LoginScreen extends StatelessWidget {
     return Scaffold(
       body: Container(
         key: const ValueKey('login-background'),
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF0A1220), Color(0xFF0D1F24)],
-          ),
+        decoration: BoxDecoration(
+          color: blackEditionPreview ? palette.background : null,
+          gradient: blackEditionPreview
+              ? null
+              : const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF0A1220), Color(0xFF0D1F24)],
+                ),
         ),
         child: SafeArea(
           child: Padding(
@@ -1471,14 +1477,18 @@ class LoginScreen extends StatelessWidget {
                               height: 52,
                               padding: const EdgeInsets.all(7),
                               decoration: BoxDecoration(
-                                color: palette.accent.withValues(alpha: .12),
+                                color: blackEditionPreview
+                                    ? palette.background
+                                    : palette.accent.withValues(alpha: .12),
                                 borderRadius: BorderRadius.circular(8),
                                 border: Border.all(
-                                  color: palette.accent.withValues(alpha: .32),
+                                  color: blackEditionPreview
+                                      ? palette.border
+                                      : palette.accent.withValues(alpha: .32),
                                 ),
                               ),
                               child: Image.asset(
-                                'assets/branding/thesisforge-mark.png',
+                                thesisForgeMarkAsset,
                                 fit: BoxFit.contain,
                                 semanticLabel: context.tr(
                                   'ThesisForge',
@@ -1530,6 +1540,12 @@ class LoginScreen extends StatelessWidget {
                         ),
                         const SizedBox(height: 28),
                         FilledButton.icon(
+                          style: blackEditionPreview
+                              ? FilledButton.styleFrom(
+                                  backgroundColor: palette.text,
+                                  foregroundColor: palette.background,
+                                )
+                              : null,
                           onPressed: authConfigured ? onGoogle : null,
                           icon: const Icon(Icons.login_rounded),
                           label: Text(
@@ -2036,11 +2052,14 @@ class _TerminalHomeState extends State<TerminalHome>
   Widget build(BuildContext context) {
     if (!_hasSession) return const SizedBox.shrink();
     _scheduleSecondaryRecoveryIfStale();
-    if (isInvestmentMode(_mode)) {
+    if (isInvestmentMode(_mode) ||
+        (blackEditionPreview && _mode == 'admin' && _adminEnabled)) {
       return LanguageScope(
         language: widget.language,
         child: InvestmentWorkspace(
-          key: _workspaceKey,
+          key: _mode == 'admin'
+              ? ValueKey('admin-shell-$_identityEpoch')
+              : _workspaceKey,
           api: _api,
           palette: palette,
           initialPage: _mode,
@@ -2053,6 +2072,20 @@ class _TerminalHomeState extends State<TerminalHome>
           showAdmin: _adminEnabled,
           onLogout: widget.onLogout,
           localPreview: widget.accessToken == _localDevToken,
+          adminContent: _mode == 'admin'
+              ? SecondaryDashboard(
+                  key: ValueKey('admin-$_identityEpoch'),
+                  mode: 'admin',
+                  initialValuationTicker: _valuationTicker,
+                  onValuationTickerChanged: (_) {},
+                  api: _api,
+                  data: _adminPayload,
+                  loading: _loadingSecondary,
+                  error: _secondaryError,
+                  palette: palette,
+                  onRefresh: () => _loadSecondary('admin', refresh: true),
+                )
+              : null,
         ),
       );
     }
@@ -2450,7 +2483,7 @@ class TerminalHeader extends StatelessWidget {
         border: Border.all(color: palette.accent.withValues(alpha: .32)),
       ),
       child: Image.asset(
-        'assets/branding/thesisforge-mark.png',
+        thesisForgeMarkAsset,
         fit: BoxFit.contain,
         semanticLabel: context.tr('ThesisForge', 'ThesisForge'),
       ),
@@ -25958,15 +25991,22 @@ class Palette {
 
   final bool colorBlind;
 
-  Color get background => const Color(0xFF0B111D);
-  Color get panel => const Color(0xFF111827);
-  Color get card => const Color(0xFF172033);
+  Color get background =>
+      blackEditionPreview ? Colors.black : const Color(0xFF0B111D);
+  Color get panel =>
+      blackEditionPreview ? const Color(0xFF080808) : const Color(0xFF111827);
+  Color get card =>
+      blackEditionPreview ? const Color(0xFF121212) : const Color(0xFF172033);
   Color get text => const Color(0xFFF7FAFC);
   Color get muted => const Color(0xFFAAB5C4);
   Color get faint => const Color(0xFF708093);
-  Color get border => const Color(0xFF273244);
-  Color get accent =>
-      colorBlind ? const Color(0xFF58A6FF) : const Color(0xFF22D3A6);
+  Color get border =>
+      blackEditionPreview ? const Color(0xFF2A2A2A) : const Color(0xFF273244);
+  Color get accent => colorBlind
+      ? const Color(0xFF58A6FF)
+      : blackEditionPreview
+      ? const Color(0xFF52AEF5)
+      : const Color(0xFF22D3A6);
   Color get secondary => const Color(0xFFE0B15A);
   Color get positive =>
       colorBlind ? const Color(0xFF4EA1F3) : const Color(0xFF18A878);

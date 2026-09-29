@@ -133,104 +133,116 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                     if (busy)
                       LinearProgressIndicator(minHeight: 2, color: p.accent),
                     Expanded(
-                      child: SingleChildScrollView(
-                        key: ValueKey(
-                          'workflow-$page-${page == 'research' ? '$ticker-$section' : '$discoveryTab-${text(asMap(selectedGuru?['guru'])['id'])}'}-$asOf-${page == 'discover' && MediaQuery.sizeOf(context).width < 1380 ? opportunityMobileDetail : false}',
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (page != 'home' &&
-                                page != 'book' &&
-                                page != 'discover' &&
-                                (page != 'research' || company == null))
-                              Padding(
-                                padding: EdgeInsets.fromLTRB(
-                                  desktop ? 34 : 18,
-                                  24,
-                                  24,
-                                  0,
-                                ),
-                                child: Align(
-                                  alignment: Alignment.centerRight,
-                                  child: dateControl(),
-                                ),
+                      child: page == 'admin' && widget.adminContent != null
+                          ? widget.adminContent!
+                          : SingleChildScrollView(
+                              key: ValueKey(
+                                'workflow-$page-${page == 'research' ? '$ticker-$section' : '$discoveryTab-${text(asMap(selectedGuru?['guru'])['id'])}'}-$asOf-${page == 'discover' && MediaQuery.sizeOf(context).width < 1380 ? opportunityMobileDetail : false}',
                               ),
-                            if (error != null)
-                              Padding(
-                                padding: const EdgeInsets.all(20),
-                                child: card([
-                                  label(
-                                    'Could not complete this step. Saved records are unchanged.',
-                                    '本次操作未完成，已保存记录不变。',
-                                    color: p.negative,
-                                  ),
-                                  SelectableText(
-                                    error!,
-                                    style: TextStyle(
-                                      color: p.muted,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  button(
-                                    'Retry workspace',
-                                    '重载工作区',
-                                    () => unawaited(
-                                      page == 'research' && ticker.isNotEmpty
-                                          ? loadCompany(
-                                              ticker,
-                                              origin: discoveryOrigin,
-                                              evidence: entryEvidence,
-                                              initialSection: section,
-                                            )
-                                          : page == 'discover'
-                                          ? loadDiscovery()
-                                          : loadHome(),
-                                    ),
-                                  ),
-                                ], border: p.negative),
-                              ),
-                            if (notice != null)
-                              Padding(
-                                padding: const EdgeInsets.all(20),
-                                child: Text(
-                                  notice!,
-                                  style: TextStyle(color: p.accent),
-                                ),
-                              ),
-                            if (page == 'research' && company != null)
-                              ...researchView()
-                            else
-                              Padding(
-                                padding:
-                                    desktop &&
-                                        page == 'discover' &&
-                                        discoveryTab == 'managers'
-                                    ? const EdgeInsets.fromLTRB(24, 16, 24, 24)
-                                    : page == 'book'
-                                    ? EdgeInsets.fromLTRB(
-                                        desktop ? 34 : 18,
-                                        20,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  if (page != 'home' &&
+                                      page != 'book' &&
+                                      page != 'discover' &&
+                                      (page != 'research' || company == null))
+                                    Padding(
+                                      padding: EdgeInsets.fromLTRB(
                                         desktop ? 34 : 18,
                                         24,
-                                      )
-                                    : EdgeInsets.all(desktop ? 34 : 18),
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    if (page == 'home') ...personalHomePage(),
-                                    if (page == 'discover') ...discoveryPage(),
-                                    if (page == 'research') ...researchView(),
-                                    if (page == 'book')
-                                      ...researchPortfolioPage(),
-                                    if (page == 'strategies') ...strategyPage(),
-                                  ],
-                                ),
+                                        24,
+                                        0,
+                                      ),
+                                      child: Align(
+                                        alignment: Alignment.centerRight,
+                                        child: dateControl(),
+                                      ),
+                                    ),
+                                  if (error != null)
+                                    Padding(
+                                      padding: const EdgeInsets.all(20),
+                                      child: card([
+                                        label(
+                                          'Could not complete this step. Saved records are unchanged.',
+                                          '本次操作未完成，已保存记录不变。',
+                                          color: p.negative,
+                                        ),
+                                        SelectableText(
+                                          error!,
+                                          style: TextStyle(
+                                            color: p.muted,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        button(
+                                          'Retry workspace',
+                                          '重载工作区',
+                                          () => unawaited(
+                                            page == 'research' &&
+                                                    ticker.isNotEmpty
+                                                ? loadCompany(
+                                                    ticker,
+                                                    origin: discoveryOrigin,
+                                                    evidence: entryEvidence,
+                                                    initialSection: section,
+                                                  )
+                                                : page == 'discover'
+                                                ? loadDiscovery()
+                                                : loadHome(),
+                                          ),
+                                        ),
+                                      ], border: p.negative),
+                                    ),
+                                  if (notice != null)
+                                    Padding(
+                                      padding: const EdgeInsets.all(20),
+                                      child: Text(
+                                        notice!,
+                                        style: TextStyle(color: p.accent),
+                                      ),
+                                    ),
+                                  if (page == 'research' && company != null)
+                                    ...researchView()
+                                  else
+                                    Padding(
+                                      padding:
+                                          desktop &&
+                                              page == 'discover' &&
+                                              discoveryTab == 'managers'
+                                          ? const EdgeInsets.fromLTRB(
+                                              24,
+                                              16,
+                                              24,
+                                              24,
+                                            )
+                                          : page == 'book'
+                                          ? EdgeInsets.fromLTRB(
+                                              desktop ? 34 : 18,
+                                              20,
+                                              desktop ? 34 : 18,
+                                              24,
+                                            )
+                                          : EdgeInsets.all(desktop ? 34 : 18),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          if (page == 'home')
+                                            ...personalHomePage(),
+                                          if (page == 'discover')
+                                            ...discoveryPage(),
+                                          if (page == 'research')
+                                            ...researchView(),
+                                          if (page == 'book')
+                                            ...researchPortfolioPage(),
+                                          if (page == 'strategies')
+                                            ...strategyPage(),
+                                        ],
+                                      ),
+                                    ),
+                                ],
                               ),
-                          ],
-                        ),
-                      ),
+                            ),
                     ),
                   ],
                 ),
@@ -255,9 +267,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
   Widget brand({double size = 23}) => Row(
     children: [
       Image.asset(
-        blackEditionPreview
-            ? 'assets/branding/thesisforge-black-mark.png'
-            : 'assets/branding/thesisforge-mark.png',
+        thesisForgeMarkAsset,
         width: blackEditionPreview ? 40 : 32,
         height: blackEditionPreview ? 40 : 36,
       ),

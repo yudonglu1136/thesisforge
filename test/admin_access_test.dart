@@ -33,6 +33,7 @@ Widget _terminal(
   String token = 'test-session',
   String userId = 'owner-id',
   String view = 'admin',
+  AppLanguage language = AppLanguage.en,
 }) => MaterialApp(
   home: TerminalHome(
     key: const ValueKey('same-terminal-state'),
@@ -41,8 +42,8 @@ Widget _terminal(
     userId: userId,
     userName: 'Test user',
     userEmail: email,
-    language: AppLanguage.en,
-    routeUri: Uri.parse('http://localhost/?view=$view&lang=en'),
+    language: language,
+    routeUri: Uri.parse('http://localhost/?view=$view&lang=${language.name}'),
     onLanguage: (_) {},
     onLogout: () {},
   ),
@@ -87,8 +88,38 @@ void main() {
     await tester.pumpWidget(_terminal(api));
     await tester.pumpAndSettle();
     expect(find.byType(AdminPortfolioDashboard), findsOneWidget);
+    expect(find.byType(InvestmentWorkspace), findsOneWidget);
+    expect(find.byType(TerminalHeader), findsNothing);
     expect(find.text('Portfolio admin console'), findsOneWidget);
     expect(api.paths, contains('/api/admin/portfolio-users'));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('admin returns through the shared workspace navigation', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _AdminAccessApi();
+    await tester.pumpWidget(_terminal(api));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Home').first);
+    await tester.pumpAndSettle();
+    expect(find.byType(AdminPortfolioDashboard), findsNothing);
+    expect(
+      find.byType(InvestmentWorkspace),
+      investmentWorkflowEnabled ? findsOneWidget : findsNothing,
+    );
+    expect(
+      find.byType(TerminalHeader),
+      investmentWorkflowEnabled ? findsNothing : findsOneWidget,
+    );
+    await tester.tap(find.text('Admin').first);
+    await tester.pumpAndSettle();
+    expect(find.byType(AdminPortfolioDashboard), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
@@ -188,6 +219,25 @@ void main() {
 
   for (final width in [390.0, 1280.0]) {
     for (final language in AppLanguage.values) {
+      testWidgets('integrated admin fits $width / $language', (tester) async {
+        tester.view.physicalSize = Size(width, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        await tester.pumpWidget(
+          _terminal(_AdminAccessApi(), language: language),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(AdminPortfolioDashboard), findsOneWidget);
+        expect(find.byType(InvestmentWorkspace), findsOneWidget);
+        expect(find.byType(TerminalHeader), findsNothing);
+        expect(
+          find.image(const AssetImage(thesisForgeMarkAsset)),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      });
       testWidgets('workspace admin entry is gated at $width / $language', (
         tester,
       ) async {

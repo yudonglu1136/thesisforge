@@ -3114,6 +3114,16 @@ void main() {
     );
     final panel = tester.getRect(find.byKey(const ValueKey('login-panel')));
     expect(background, const Rect.fromLTWH(0, 0, 390, 844));
+    final decoration =
+        tester
+                .widget<Container>(
+                  find.byKey(const ValueKey('login-background')),
+                )
+                .decoration
+            as BoxDecoration;
+    expect(decoration.color, Colors.black);
+    expect(decoration.gradient, isNull);
+    expect(find.image(const AssetImage(thesisForgeMarkAsset)), findsOneWidget);
     expect(panel.left, greaterThanOrEqualTo(16));
     expect(panel.right, lessThanOrEqualTo(374));
     expect(panel.center.dy, closeTo(422, 1));

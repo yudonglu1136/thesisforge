@@ -17,8 +17,10 @@ class InvestmentWorkspace extends StatefulWidget {
     this.showAdmin = false,
     this.onLogout,
     this.localPreview = false,
+    this.adminContent,
   });
   final ApiClient api;
+  final Widget? adminContent;
   final Palette palette;
   final String initialPage, initialTicker;
   final String? initialAsOf;
