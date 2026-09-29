@@ -1552,18 +1552,6 @@ class LoginScreen extends StatelessWidget {
                             context.tr('使用 Google 继续', 'Continue with Google'),
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        OutlinedButton.icon(
-                          key: const ValueKey('explore-public-isrg-case'),
-                          onPressed: () => openBrowserPath('/research/isrg/'),
-                          icon: const Icon(Icons.insights_rounded),
-                          label: Text(
-                            context.tr(
-                              '查看 ISRG 英文案例 · 免登录',
-                              'Explore the ISRG case — no sign-in',
-                            ),
-                          ),
-                        ),
                         if (localBypassEnabled) ...[
                           const SizedBox(height: 12),
                           OutlinedButton.icon(
@@ -1574,21 +1562,22 @@ class LoginScreen extends StatelessWidget {
                             ),
                           ),
                         ],
-                        const SizedBox(height: 18),
-                        Text(
-                          (authMessage?.isNotEmpty ?? false)
-                              ? authMessage!
-                              : (authConfigured
-                                    ? context.tr(
-                                        '案例无需登录；登录后可进入完整研究终端。',
-                                        'Explore the case freely. Sign in for the full research terminal.',
-                                      )
-                                    : context.tr(
-                                        'Supabase 密钥未配置或身份验证暂不可用；开发环境可进入本地工作区。',
-                                        'Supabase keys are not configured or auth is not reachable; local workspace mode is available for development.',
-                                      )),
-                          style: TextStyle(color: palette.faint, fontSize: 12),
-                        ),
+                        if (!authConfigured ||
+                            (authMessage?.isNotEmpty ?? false)) ...[
+                          const SizedBox(height: 18),
+                          Text(
+                            (authMessage?.isNotEmpty ?? false)
+                                ? authMessage!
+                                : context.tr(
+                                    'Supabase 密钥未配置或身份验证暂不可用；开发环境可进入本地工作区。',
+                                    'Supabase keys are not configured or auth is not reachable; local workspace mode is available for development.',
+                                  ),
+                            style: TextStyle(
+                              color: palette.faint,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
                         if ((authMessage?.isNotEmpty ?? false)) ...[
                           const SizedBox(height: 12),
                           OutlinedButton.icon(

@@ -3023,7 +3023,7 @@ void main() {
   });
 
   testWidgets(
-    'renders first-visit auth shell in English with public case access',
+    'renders first-visit auth shell with login only and no public case CTA',
     (WidgetTester tester) async {
       await tester.pumpWidget(const GuruTerminalApp());
 
@@ -3034,14 +3034,10 @@ void main() {
       expect(find.text('Continue with Google'), findsOneWidget);
       expect(find.text('Chinese'), findsOneWidget);
       expect(find.text('English'), findsOneWidget);
-      expect(find.text('Explore the ISRG case — no sign-in'), findsOneWidget);
+      expect(find.textContaining('ISRG'), findsNothing);
       expect(
-        tester
-            .widget<OutlinedButton>(
-              find.byKey(const ValueKey('explore-public-isrg-case')),
-            )
-            .onPressed,
-        isNotNull,
+        find.byKey(const ValueKey('explore-public-isrg-case')),
+        findsNothing,
       );
       expect(find.text('研究终端'), findsNothing);
     },
@@ -3070,7 +3066,7 @@ void main() {
       ),
     );
 
-    expect(find.text('查看 ISRG 英文案例 · 免登录'), findsOneWidget);
+    expect(find.textContaining('ISRG'), findsNothing);
     await tester.tap(find.text('EN'));
     await tester.pump();
 
@@ -3079,7 +3075,8 @@ void main() {
     expect(find.text('Enter Local Workspace'), findsOneWidget);
     expect(find.text('Chinese'), findsOneWidget);
     expect(find.text('English'), findsOneWidget);
-    expect(find.text('Explore the ISRG case — no sign-in'), findsOneWidget);
+    expect(find.textContaining('ISRG'), findsNothing);
+    expect(find.textContaining('Explore the case'), findsNothing);
     expect(find.text('研究终端'), findsNothing);
   });
 
