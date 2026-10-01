@@ -162,9 +162,15 @@ is a conservative launch budget, not an upper bound on future supplier history;
 capacity must still be reviewed as coverage grows.
 
 The API installer budgets all candidate groups before downloading their
-payloads, leaving at least 1 GiB free. Byte-identical files from the exact
-previous immutable group are hash-verified and hardlinked into the new version,
-not downloaded/copied again. Writable, corrupt or out-of-namespace prior files
+payloads, leaving at least 1 GiB free. Byte-identical canonical Parquet files
+from the exact previous immutable group are hash-verified and hardlinked.
+Product artifacts instead reuse verified bytes by independent copy: their
+existing production validators require a single-link inode. Retrying an old
+hardlinked product candidate atomically isolates each listed file, checks the
+same size/hash, and preserves the original content and other release paths.
+Copy/isolation bytes are included in the capacity budget. No validator is
+relaxed; successful installation and live ACK are still required.
+Writable, corrupt or out-of-namespace prior files
 are not reused. No archive, saved snapshot, user database or rollback generation
 is deleted to pass a capacity check. Failed activation still restores only the
 active pointer; both immutable versions remain available.

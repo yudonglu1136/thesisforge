@@ -38,6 +38,32 @@ def safe_member(base,relative):
     return path
 
 
+def independent_copy(source,target,entry):
+    """Preserve exact content while satisfying product validators' nlink=1.
+
+    Replacement is atomic; existing readers keep their old read-only inode.
+    This never rewrites a shared inode or changes a generation's bytes.
+    """
+    target.parent.mkdir(parents=True,exist_ok=True)
+    parent_mode=target.parent.stat().st_mode & 0o777
+    temporary=target.with_name(target.name+'.isolate-'+uuid.uuid4().hex)
+    try:
+        target.parent.chmod(parent_mode | 0o200)
+        with source.open('rb') as src, temporary.open('xb') as dst:
+            shutil.copyfileobj(src,dst)
+            dst.flush();os.fsync(dst.fileno())
+        if temporary.stat().st_size!=entry['bytes'] or checksum(temporary)!=entry['sha256']:
+            raise ValueError('isolated_object_checksum_mismatch')
+        temporary.chmod(0o444)
+        temporary.replace(target)
+        descriptor=os.open(target.parent,os.O_RDONLY)
+        try:os.fsync(descriptor)
+        finally:os.close(descriptor)
+    finally:
+        temporary.unlink(missing_ok=True)
+        target.parent.chmod(parent_mode)
+
+
 def reusable_file(root,previous,name,relative,entry):
     """Reuse only immutable public bytes from the exact previous group.
 
@@ -90,7 +116,13 @@ def install(s3,bucket,candidate,root,*,validate_group,probe,expected_release=Non
                     raise ValueError('invalid_install_object')
                 path=safe_member(stage,entry['path'])
                 reuse=None if path.exists() else reusable_file(root,previous,name,entry['path'],entry)
-                if not path.exists() and reuse is None:required_bytes+=entry['bytes']
+                # Canonical Parquet explicitly supports shared immutable files.
+                # Product validators require independent inodes, including a
+                # retry of an older installer-created hardlinked candidate.
+                independent=name!='canonical'
+                if ((not path.exists() and (reuse is None or independent))
+                        or (path.exists() and independent and path.stat().st_nlink!=1)):
+                    required_bytes+=entry['bytes']
                 members.append((entry,path,reuse))
             plans.append((name,item,manifest,target,stage,members))
         # Check the complete candidate before writing any payload. Leave room
@@ -102,8 +134,12 @@ def install(s3,bucket,candidate,root,*,validate_group,probe,expected_release=Non
             for entry,path,reuse in members:
                 if reuse is not None:
                     path.parent.mkdir(parents=True,exist_ok=True)
-                    os.link(reuse,path)
-                else:download(s3,bucket,entry,path)
+                    if name=='canonical':os.link(reuse,path)
+                    else:independent_copy(reuse,path,entry)
+                else:
+                    download(s3,bucket,entry,path)
+                    if name!='canonical' and path.stat().st_nlink!=1:
+                        independent_copy(path,path,entry)
             if stage!=target: stage.rename(target)
             for directory,_,files in os.walk(target):
                 for file in files: (Path(directory)/file).chmod(0o444)

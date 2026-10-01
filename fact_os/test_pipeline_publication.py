@@ -154,7 +154,7 @@ class PublicationTest(unittest.TestCase):
             install(self.s3,'bucket',candidate,self.root/'installed',validate_group=fail,probe=lambda *args:{})
         self.assertFalse((self.root/'installed/active.json').exists())
 
-    def test_new_generation_reuses_verified_immutable_bytes(self):
+    def test_new_generation_reuses_bytes_without_sharing_validated_product_inode(self):
         first=self.candidate();target=self.root/'installed'
         install(self.s3,'bucket',first,target,validate_group=lambda *args:None,
                 probe=lambda c,active:self.ack(c))
@@ -165,8 +165,40 @@ class PublicationTest(unittest.TestCase):
             install(self.s3,'bucket',second,target,validate_group=lambda *args:None,
                     probe=lambda c,active:self.ack(c),expected_release=first['releaseId'])
         new=target/'releases/institutional_13f'/('b'*64)/'source.sqlite'
-        self.assertEqual(old.stat().st_ino,new.stat().st_ino)
+        self.assertNotEqual(old.stat().st_ino,new.stat().st_ino)
+        self.assertEqual(old.stat().st_nlink,1)
+        self.assertEqual(new.stat().st_nlink,1)
         download.assert_not_called()
+
+    def test_retry_detaches_legacy_shared_product_bytes_before_validation(self):
+        first=self.candidate();target=self.root/'installed'
+        install(self.s3,'bucket',first,target,validate_group=lambda *args:None,
+                probe=lambda c,active:self.ack(c))
+        old=target/'releases/institutional_13f'/('a'*64)/'source.sqlite'
+        import os
+        os.link(old,self.root/'retained-public-copy')
+        before=old.read_bytes()
+        def validate(name,root,manifest):
+            self.assertEqual((root/'source.sqlite').stat().st_nlink,1)
+        install(self.s3,'bucket',first,target,validate_group=validate,
+                probe=lambda c,active:self.ack(c),expected_release=first['releaseId'])
+        self.assertEqual(old.read_bytes(),before)
+        self.assertEqual((self.root/'retained-public-copy').read_bytes(),before)
+
+    def test_legacy_inode_repair_respects_capacity_and_preserves_pointer(self):
+        first=self.candidate();target=self.root/'installed'
+        install(self.s3,'bucket',first,target,validate_group=lambda *args:None,
+                probe=lambda c,active:self.ack(c))
+        old=target/'releases/institutional_13f'/('a'*64)/'source.sqlite'
+        import os
+        os.link(old,self.root/'retained-public-copy')
+        before=(target/'active.json').read_bytes();inode=old.stat().st_ino
+        with patch('shutil.disk_usage',return_value=SimpleNamespace(free=1024**3)):
+            with self.assertRaisesRegex(ValueError,'insufficient_install_capacity'):
+                install(self.s3,'bucket',first,target,validate_group=lambda *args:None,
+                        probe=lambda c,active:self.ack(c),expected_release=first['releaseId'])
+        self.assertEqual(old.stat().st_ino,inode)
+        self.assertEqual((target/'active.json').read_bytes(),before)
 
     def test_capacity_is_checked_before_download_or_pointer_change(self):
         candidate=self.candidate();target=self.root/'installed'
