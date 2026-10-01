@@ -7,8 +7,11 @@ import { canonicalRulePrices } from '../server/rulePortfolioAnalysis.js';
 import { refreshRuleSnapshot } from '../server/rulePortfolioRefresh.js';
 import { releaseRoot } from '../server/dataReleaseContext.js';
 import path from 'node:path';
+import { readRuleLedgerArchive } from '../server/ruleLedgerArchive.js';
+import { hydrateRuleLedger, buildRuleLedger } from '../server/rulePortfolioAnalysis.js';
+import { extendPublishedPriceVintage } from '../server/rulePriceVintage.js';
 
-const [end, output, auditPriceOutput, universe='all'] = process.argv.slice(2);
+const [end, output, auditPriceOutput, universe='all', ledgerArchive] = process.argv.slice(2);
 if (!/^\d{4}-\d{2}-\d{2}$/.test(end ?? '') || !output) throw new Error('Usage: node scripts/refresh-rule-portfolio-observations.mjs END_DATE OUTPUT_JSON [AUDIT_PRICE_CSV] [all|sp500|nasdaq100]');
 const sha = x=>createHash('sha256').update(x).digest('hex');
 const source=loadInvestorStyleDashboard({universe}), generation=await factGeneration();
@@ -21,9 +24,20 @@ if (benchmark.at(-1)?.date!==end) throw new Error('end_not_observed_in_canonical
 const request=structuredClone(source);
 request.backtest.curve=[{date:source.backtest.from},{date:end}];
 for(const style of request.styles)style.trades=style.quarters.filter(q=>q.executionDate<end).map(q=>({date:q.executionDate}));
-const prices=await canonicalRulePrices(request);
+let prices=await canonicalRulePrices(request);
 prices.set('SPY',new Map(benchmark.map(r=>[r.date,r.value])));
 if(await factGeneration()!==generation || sha(fs.readFileSync(catalog))!==priceSourceGeneration)throw new Error('input_generation_changed');
+let vintage;
+if(ledgerArchive){
+  const archive=readRuleLedgerArchive(source,{root:ledgerArchive});
+  if(!archive)throw new Error('published_price_archive_required');
+  const ledger=hydrateRuleLedger(archive.ledger);
+  const original=extendPublishedPriceVintage(source,ledger,new Map());
+  buildRuleLedger(source,original.prices);
+  const extended=extendPublishedPriceVintage(source,ledger,prices);
+  prices=extended.prices;
+  vintage={basis:extended.basis,bridges:extended.bridges,archiveIdentity:archive.archiveIdentity};
+}
 const result=refreshRuleSnapshot(source,prices,end);
 // Optional bounded, local-only extract for the independent Python audit; never
 // part of a release package or source-controlled data. No full database copy.
@@ -33,6 +47,7 @@ if (auditPriceOutput) {
   fs.writeFileSync(auditPriceOutput,csv,{flag:'wx',mode:0o600});
 }
 result.lineage={...result.lineage, refresh:{method:'rule-observed-window-v1', parentSnapshot:source.snapshotId,
+  ...(vintage?{priceVintage:vintage}:{}),
   priceSourceGeneration,requestedEnd:end,sourceWrites:false,
   builderSha256:sha(fs.readFileSync(fileURLToPath(import.meta.url))),
   engineSha256:sha(fs.readFileSync(new URL('../server/backtestEngine.js',import.meta.url))),
