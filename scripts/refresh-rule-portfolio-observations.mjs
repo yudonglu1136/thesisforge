@@ -12,7 +12,7 @@ import { hydrateRuleLedger, buildRuleLedger } from '../server/rulePortfolioAnaly
 import { extendPublishedPriceVintage } from '../server/rulePriceVintage.js';
 
 const [end, output, auditPriceOutput, universe='all', ledgerArchive] = process.argv.slice(2);
-if (!/^\d{4}-\d{2}-\d{2}$/.test(end ?? '') || !output) throw new Error('Usage: node scripts/refresh-rule-portfolio-observations.mjs END_DATE OUTPUT_JSON [AUDIT_PRICE_CSV] [all|sp500|nasdaq100]');
+if (!/^\d{4}-\d{2}-\d{2}$/.test(end ?? '') || !output) throw new Error('Usage: node scripts/refresh-rule-portfolio-observations.mjs END_DATE OUTPUT_JSON [AUDIT_PRICE_CSV] [all|sp500|nasdaq100] [LEDGER_ARCHIVE_DIR]');
 const sha = x=>createHash('sha256').update(x).digest('hex');
 const source=loadInvestorStyleDashboard({universe}), generation=await factGeneration();
 if (source.status!=='ready') throw new Error('rule_universe_not_ready');
