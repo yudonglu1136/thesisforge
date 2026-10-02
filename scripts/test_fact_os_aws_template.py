@@ -41,6 +41,10 @@ class InfrastructureContractTest(unittest.TestCase):
         names=' '.join(self.resources).lower()
         for term in ('frontend','broker','yodlee','ibkr'): self.assertNotIn(term,names)
 
+    def test_worker_ami_is_explicit_not_a_mutable_latest_parameter(self):
+        self.assertEqual(self.template['Parameters']['AmiId']['Type'],'AWS::EC2::Image::Id')
+        self.assertNotIn('Default',self.template['Parameters']['AmiId'])
+
     def test_daily_program_updates_data_without_claiming_api_or_backtest_success(self):
         command=self.resources['RunDocument']['Properties']['Content']['mainSteps'][0]['inputs']['runCommand'][-1]['Fn::If'][2]['Fn::If'][2]['Fn::Sub']
         self.assertIn('--data-only',command)
