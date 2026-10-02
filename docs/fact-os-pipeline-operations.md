@@ -161,6 +161,16 @@ the source credential: an 8 GiB incremental/staging/build allowance plus an
 is a conservative launch budget, not an upper bound on future supplier history;
 capacity must still be reviewed as coverage grows.
 
+For operator-authorized consolidation of legacy duplicate canonical files,
+`scripts/deduplicate-canonical-release-files.py --root /var/app/data/fact-os`
+is a dry run; `--apply` shares only checksum-identical, owner-controlled,
+read-only Parquet inodes listed in retained canonical catalogs. It holds the
+installer lock, validates the whole plan before replacement, keeps every
+historical path and active pointer, and writes a small audit receipt. Open
+readers keep their old inode until close. This is not GC, does not remove a
+generation, and never visits raw archives, product SQLite or private stores.
+It is not an unlimited-capacity solution; recheck actual free space afterwards.
+
 The API installer budgets all candidate groups before downloading their
 payloads, leaving at least 1 GiB free. Byte-identical canonical Parquet files
 from the exact previous immutable group are hash-verified and hardlinked.
