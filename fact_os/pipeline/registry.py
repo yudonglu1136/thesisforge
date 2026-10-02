@@ -1,5 +1,7 @@
 """Explicit dependencies. Independent sources/review gates are never invented."""
 from pathlib import Path
+from importlib.metadata import version,PackageNotFoundError
+import platform
 from ..contracts import TABLES
 from ..store import checksum
 from .contracts import TaskSpec, digest
@@ -15,8 +17,14 @@ def source_hash(*files):
 
 def tasks(*,profile='all',rule_daily=False):
     common = source_hash('fact_os/pipeline/builders.py','fact_os/pipeline/checks.py','fact_os/repository.py','fact_os/contracts.py')
+    runtime={'python':platform.python_version()}
+    if rule_daily:
+        for name in ('duckdb','numpy','pandas'):
+            try:runtime[name]=version(name)
+            except PackageNotFoundError:runtime[name]='missing'
     def task(id, required, *, optional=(), code=(), configs=(), method='1', schema='1', kind='derived', policy='automatic_after_checks'):
-        return TaskSpec(id=id,kind=kind,implementationVersion=digest([common,source_hash(*code)]),
+        return TaskSpec(id=id,kind=kind,implementationVersion=digest([common,source_hash(*code),
+            *([runtime] if id=='strategy_inputs' and rule_daily else [])]),
             methodologyVersion=method,configHashes={p:checksum(PROJECT/p) for p in configs},
             requiredInputs=tuple(required),optionalInputs=tuple(optional),outputSchemaVersion=schema,
             publicationGroup=id,publicationPolicy=policy)

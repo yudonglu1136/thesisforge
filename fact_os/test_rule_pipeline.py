@@ -1,5 +1,7 @@
 import json
 import unittest
+from unittest.mock import patch
+import sys
 from dataclasses import replace
 from pathlib import Path
 from .test_pipeline import RunnerTest
@@ -57,5 +59,16 @@ class QuarterClockTest(unittest.TestCase):
         self.assertTrue(new_quarter_due(['2026-06-30'],['2026-09-30','2026-10-01'],'2026-10-01'))
         self.assertFalse(new_quarter_due(['2026-09-30'],['2026-09-30','2026-10-01'],'2026-10-01'))
         self.assertFalse(new_quarter_due(['2026-06-30'],['2026-10-01'],'2026-09-30'))
+
+    def test_node_builder_uses_same_python_runtime_without_source_credentials(self):
+        from .pipeline.builders import execute
+        import tempfile
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as d,patch.dict('os.environ',{'SHARADAR_API_KEY':'not-a-real-key'}),patch(
+                'fact_os.pipeline.builders.subprocess.run',return_value=SimpleNamespace(returncode=0)) as call:
+            execute(['node','builder.mjs'],Path(d)/'build.log',5)
+            env=call.call_args.kwargs['env']
+            self.assertEqual(env['FACT_OS_PYTHON'],sys.executable)
+            self.assertNotIn('SHARADAR_API_KEY',env)
 
 if __name__=='__main__':unittest.main()

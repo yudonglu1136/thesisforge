@@ -2,4 +2,7 @@
 set -eu
 FACT_OS_PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 cd "$FACT_OS_PROJECT"
+if [ -x "$FACT_OS_PROJECT/venv/bin/python" ]; then
+  exec "$FACT_OS_PROJECT/venv/bin/python" -m fact_os.pipeline.aws_worker "$@"
+fi
 exec /opt/fact-os/venv/bin/python -m fact_os.pipeline.aws_worker "$@"
