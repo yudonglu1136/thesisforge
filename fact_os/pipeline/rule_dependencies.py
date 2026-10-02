@@ -64,6 +64,9 @@ def acquire(store,s3,bucket,cutoff,*,fetch=None):
     if result.returncode:raise ValueError('qqq_public_source_failed')
     value=json.loads(qqq.read_text())
     if value.get('unresolved') or not value.get('snapshots'):raise ValueError('qqq_identity_incomplete')
+    # Request time is operational metadata, not a new membership vintage.
+    value['asOf']=max(s['filed'] for s in value['snapshots'])
+    Store._atomic_if_changed(qqq,json.dumps(value,sort_keys=True))
     # File handed to freeze must not be the mutable staging name.
     fixed=staging/(checksum(qqq)+'.json')
     if not fixed.exists():Store._atomic_if_changed(fixed,qqq.read_text())
@@ -74,9 +77,11 @@ def acquire(store,s3,bucket,cutoff,*,fetch=None):
         data=s3.get_object(Bucket=bucket,Key=reference['manifestKey'])['Body'].read()
         if hashlib.sha256(data).hexdigest()!=reference['manifestSha256']:raise ValueError('parent_manifest_checksum')
         manifest=json.loads(data)
+        if manifest.get('generationId')!=reference['generationId']:raise ValueError('parent_generation_mismatch')
         if manifest['compatibilityVersion']=='rule-portfolio-bundle-v1':
             parent_root=store.root/'derived/rule-parents'/reference['generationId']
             for item in manifest['files']:
+                if item['path']=='inputs.json':continue # Avoid recursive planner metadata as a parent input.
                 relative=Path(item['path'])
                 if relative.is_absolute() or '..' in relative.parts:raise ValueError('parent_path_escape')
                 if item['key']!='fact-os/published/objects/'+item['sha256']:raise ValueError('parent_object_namespace')

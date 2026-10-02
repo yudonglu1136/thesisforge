@@ -22,7 +22,10 @@ const root=path.resolve(v.root),output=path.resolve(v.output),sha=x=>createHash(
 if(output===root||output.startsWith(root+path.sep))throw new Error('output_must_not_mutate_input_snapshot');
 process.env.FACT_OS_ROOT=root;
 const catalog=()=>fs.readFileSync(path.join(root,'manifests/catalog.json'));
-const sourceManifestSha256=sha(catalog()),generation=await factGeneration();
+// factGeneration() is a request/cache token (path/mtime/runtime), not the
+// canonical fact identity. Python selections bind to the catalog SHA-256.
+const sourceManifestSha256=sha(catalog()),generation=sourceManifestSha256;
+const cacheToken=await factGeneration();
 const parent=v.parent?validateRulePortfolioBundle(v.parent):null;
 const selectionBytes=v.selections?fs.readFileSync(v.selections):null;
 const selections=selectionBytes?JSON.parse(selectionBytes):null;
@@ -55,7 +58,7 @@ for(const universe of RULE_BUNDLE_UNIVERSES){
     sourceWrites:false,allDailyNavReconciled:true}};
   dashboards[universe]=result;allPrices[universe]=vintage.prices;
 }
-if(sha(catalog())!==sourceManifestSha256||await factGeneration()!==generation)throw new Error('rule_daily_input_changed');
+if(sha(catalog())!==sourceManifestSha256||await factGeneration()!==cacheToken)throw new Error('rule_daily_input_changed');
 if(parent&&validateRulePortfolioBundle(v.parent).identity!==parent.identity)throw new Error('rule_daily_parent_changed');
 if(selectionBytes&&sha(fs.readFileSync(v.selections))!==sha(selectionBytes))throw new Error('rule_daily_selections_changed');
 const result=buildRulePortfolioBundle({output,dashboards,prices:allPrices,sourceGeneration:generation,sourceManifestSha256});
