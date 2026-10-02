@@ -6,14 +6,19 @@ from ..store import checksum, Store
 from .contracts import InputSnapshot, digest, encode, record
 
 
-def freeze(store, *, code_version, configs=None):
+def freeze(store, *, code_version, configs=None, external=None):
     # writer first, then catalog recovery/publication. Never copy writer views.
     with store.writer() as db:
         store._publish_manifest(db)
         catalog_path=store.root/'manifests/catalog.json'
         payload=catalog_path.read_bytes()
         catalog=json.loads(payload)
-        snapshot_id=digest({'catalog':checksum(catalog_path),'config':configs or {},'code':code_version})
+        external=external or {}
+        external_identity={name:{k:v for k,v in item.items() if k!='files'} | {'files':[
+            {k:v for k,v in f.items() if k!='source'} for f in item.get('files',[])]}
+            for name,item in external.items()}
+        snapshot_id=digest({'catalog':checksum(catalog_path),'config':configs or {},'code':code_version,
+                            **({'external':external_identity} if external else {})})
         root=store.root/'snapshots'/snapshot_id
         root.mkdir(parents=True,exist_ok=True)
         from .registry import PROJECT
@@ -24,6 +29,18 @@ def freeze(store, *, code_version, configs=None):
                 target=root/'config'/relative;target.parent.mkdir(parents=True,exist_ok=True)
                 Store._atomic_if_changed(target,source.read_text())
         inputs={}
+        for name,item in external.items():
+            if not name.startswith('external.'):raise ValueError('external_input_namespace')
+            for f in item.get('files',[]):
+                relative=Path(f['path']);source=Path(f['source']).resolve()
+                if relative.is_absolute() or '..' in relative.parts or relative.parts[0]!='external':
+                    raise ValueError('external_input_path_escape')
+                if source.stat().st_size!=f['bytes'] or checksum(source)!=f['sha256']:
+                    raise ValueError('external_input_changed')
+                target=root/relative;target.parent.mkdir(parents=True,exist_ok=True)
+                if not target.exists():os.link(source,target)
+                if checksum(target)!=f['sha256']:raise ValueError('external_snapshot_conflict')
+            inputs[name]={**external_identity[name],'coverage':{},'partitions':[]}
         for name,item in catalog['datasets'].items():
             state=item.get('state') or {}
             parts=item.get('partitions',[])

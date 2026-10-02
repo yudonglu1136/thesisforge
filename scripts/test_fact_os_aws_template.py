@@ -42,7 +42,7 @@ class InfrastructureContractTest(unittest.TestCase):
         for term in ('frontend','broker','yodlee','ibkr'): self.assertNotIn(term,names)
 
     def test_daily_program_updates_data_without_claiming_api_or_backtest_success(self):
-        command=self.resources['RunDocument']['Properties']['Content']['mainSteps'][0]['inputs']['runCommand'][-1]['Fn::If'][2]['Fn::Sub']
+        command=self.resources['RunDocument']['Properties']['Content']['mainSteps'][0]['inputs']['runCommand'][-1]['Fn::If'][2]['Fn::If'][2]['Fn::Sub']
         self.assertIn('--data-only',command)
         self.assertNotIn('--activate-daily',command)
         definition=self.resources['StateMachine']['Properties']['Definition']
@@ -64,7 +64,11 @@ class InfrastructureContractTest(unittest.TestCase):
     def test_daily_serving_is_explicit_opt_in_with_distinct_success_state(self):
         self.assertEqual(self.template['Parameters']['ActivateDaily']['Default'],'false')
         self.assertEqual(self.template['Parameters']['ActivateDaily']['AllowedValues'],['false','true'])
-        command=self.resources['RunDocument']['Properties']['Content']['mainSteps'][0]['inputs']['runCommand'][-1]
+        outer=self.resources['RunDocument']['Properties']['Content']['mainSteps'][0]['inputs']['runCommand'][-1]
+        self.assertEqual(outer['Fn::If'][0],'DailyRulesEnabled')
+        self.assertEqual(self.template['Parameters']['RulePortfolios']['Default'],'false')
+        for branch in outer['Fn::If'][1]['Fn::If'][1:]:self.assertIn('--rule-portfolios',branch['Fn::Sub'])
+        command=outer['Fn::If'][2]
         self.assertEqual(command['Fn::If'][0],'DailyServingEnabled')
         self.assertIn('--data-only --activate-daily',command['Fn::If'][1]['Fn::Sub'])
         self.assertNotIn('--activate-daily',command['Fn::If'][2]['Fn::Sub'])

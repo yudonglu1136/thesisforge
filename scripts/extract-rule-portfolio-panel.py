@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--fact-root', type=Path, default=ROOT / 'data/fact_os')
+parser.add_argument('--start-entry', type=dt.date.fromisoformat, default=dt.date(2013,1,1))
+parser.add_argument('--as-of', type=dt.date.fromisoformat)
 args = parser.parse_args()
 OUT = args.output.resolve()
 OUT.mkdir(parents=True, exist_ok=True)
@@ -41,7 +43,9 @@ with FactRepository(args.fact_root) as repo:
     c.execute("SET preserve_insertion_order=false")
     c.execute("SET threads=1")
     say('pinned ' + repo.generation)
-    spy = c.execute("SELECT date,closeadj FROM funds WHERE ticker='SPY' AND closeadj>0 ORDER BY date").fetchall()
+    spy = c.execute("SELECT date,closeadj FROM funds WHERE ticker='SPY' AND closeadj>0 AND date<=? ORDER BY date",
+                    [args.as_of or dt.date.max]).fetchall()
+    if not spy:raise ValueError('benchmark_history_missing')
     sessions = [r[0] for r in spy]; spyprice = dict(spy); cutoff = sessions[-1]
     def before(d):
         i = bisect.bisect_right(sessions, d) - 1
@@ -50,16 +54,17 @@ with FactRepository(args.fact_root) as repo:
         i = bisect.bisect_right(sessions, d)
         return sessions[i] if i < len(sessions) and (sessions[i]-d).days <= 7 else None
     schedule = []
-    for year in range(2012, 2027):
+    for year in range(args.start_entry.year-1, cutoff.year+1):
         for m in [3, 6, 9, 12]:
             q = dt.date(year, m, calendar.monthrange(year, m)[1])
             if q < dt.date(2012, 12, 31) or q > cutoff: continue
             signal = before(q); entry = after(q)
-            if not entry: continue
+            if not entry or entry<args.start_entry: continue
             nextq = month(q, 3); nextq = nextq.replace(day=calendar.monthrange(nextq.year,nextq.month)[1])
             exitdate = after(nextq)
             schedule.append((q, signal, signal, entry, exitdate, before(month(signal,-6)), before(month(signal,-12)), before(month(signal,-1))))
     datecols = ['q','signal_date','info_date','entry','next_entry','pre6','pre12','pre1']
+    if not schedule:raise ValueError('no_new_executable_quarter')
     c.execute('CREATE TEMP TABLE dates(' + ','.join(x+' DATE' for x in datecols) + ')')
     c.executemany('INSERT INTO dates VALUES (' + ','.join('?' for _ in datecols) + ')', schedule)
     # Current security-master classification is explicit, not asserted historical.

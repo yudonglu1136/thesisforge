@@ -1,6 +1,7 @@
 """Offline regressions for small-page, all-market historical price refreshes."""
 import csv
 import io
+import json
 from pathlib import Path
 import tempfile
 import threading
@@ -10,7 +11,7 @@ from unittest.mock import patch
 import httpx
 
 from .store import Store
-from .sync import Synchronizer, UpstreamError
+from .sync import Synchronizer, UpstreamError, UpstreamSnapshotChanged
 
 
 FIELDS = ['ticker', 'date', 'close', 'closeadj', 'closeunadj', 'lastupdated']
@@ -105,8 +106,10 @@ class PriceExtractionTest(unittest.TestCase):
     def test_new_symbol_after_discovery_cannot_be_silently_omitted(self):
         before = self.store.status()
         self.provider(10000, 'mutates')
-        with self.assertRaisesRegex(UpstreamError, 'ticker universe changed'):
+        with self.assertRaisesRegex(UpstreamSnapshotChanged, 'ticker universe changed'):
             self.sync.sync('stocks')
+        attempt=json.loads((self.store.root/'sync/extract-checkpoints/stocks/attempt.json').read_text())
+        self.assertNotEqual(attempt['id'],attempt['invalidatedAttempt'])
         self.assertEqual(self.store.status(), before)
         self.assertFalse(list((self.store.root / 'raw').glob('*sync*.csv')))
         self.assertFalse(list((self.store.root / 'staging').glob('*sync*.csv')))

@@ -93,7 +93,9 @@ systemctl enable --now amazon-ssm-agent
             'timeoutSeconds':'21600','runCommand':[
               'set -eu',
               'test -x /opt/fact-os/current/bin/fact-os-worker',
-              {'Fn::If':['DailyServingEnabled',sub(worker_command+' --activate-daily'+schedule_argument),sub(worker_command+schedule_argument)]}
+              {'Fn::If':['DailyRulesEnabled',
+                {'Fn::If':['DailyServingEnabled',sub(worker_command+' --activate-daily --rule-portfolios'+schedule_argument),sub(worker_command+' --rule-portfolios'+schedule_argument)]},
+                {'Fn::If':['DailyServingEnabled',sub(worker_command+' --activate-daily'+schedule_argument),sub(worker_command+schedule_argument)]}]}
             ]}}]}}},
       'StateRole':{'Type':'AWS::IAM::Role','Properties':{'AssumeRolePolicyDocument':trust('states.amazonaws.com'),
         'Policies':[policy('only-fact-os-worker',[
@@ -159,9 +161,12 @@ systemctl enable --now amazon-ssm-agent
         'InstallDocumentVersion':{'Type':'String','Default':'1','AllowedPattern':'^[1-9][0-9]*$'},
         'ActivateDaily':{'Type':'String','Default':'false','AllowedValues':['false','true'],
                          'Description':'Enable only after backup/restore, current API target and manual installation/ACK gates pass'},
+        'RulePortfolios':{'Type':'String','Default':'false','AllowedValues':['false','true'],
+                          'Description':'Enable only after three-universe quarter/ledger bundle and live API ACK pass'},
         'AmiId':{'Type':'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>','Default':'/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64'},
         'ScheduleState':{'Type':'String','Default':'DISABLED','AllowedValues':['DISABLED','ENABLED']}},
-      'Conditions':{'DailyServingEnabled':{'Fn::Equals':[ref('ActivateDaily'),'true']}},
+      'Conditions':{'DailyServingEnabled':{'Fn::Equals':[ref('ActivateDaily'),'true']},
+                    'DailyRulesEnabled':{'Fn::Equals':[ref('RulePortfolios'),'true']}},
       'Resources':resources,'Outputs':{'WorkerId':{'Value':ref('Worker')},'VolumeId':{'Value':ref('DataVolume')},
         'SecretArn':{'Value':ref('SharadarSecret')},'StateMachineArn':{'Value':arn('StateMachine')},'RunDocument':{'Value':ref('RunDocument')},
         'InstallDocument':{'Value':ref('InstallDocument')},'WorkerLogGroup':{'Value':ref('WorkerLogs')},

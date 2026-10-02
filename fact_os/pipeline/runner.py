@@ -11,7 +11,7 @@ from .checks import verify_files
 from .builders import build
 
 
-def run(store,*,profile='local',scheduled_for=None,failed_sources=(),specs=None,builder=build):
+def run(store,*,profile='local',scheduled_for=None,failed_sources=(),specs=None,builder=build,external=None):
     specs=tuple(specs or tasks(profile=profile))
     ledger=Ledger(store)
     version=digest([record(s) for s in specs])
@@ -19,7 +19,7 @@ def run(store,*,profile='local',scheduled_for=None,failed_sources=(),specs=None,
     run_id=digest({'profile':profile,'scheduledFor':scheduled_for,'planVersion':version})
     existing=ledger.existing_run(run_id)
     snapshot=(load(store.root/'snapshots'/existing) if existing else
-              freeze(store,code_version=version,configs={s.id:s.configHashes for s in specs}))
+              freeze(store,code_version=version,configs={s.id:s.configHashes for s in specs},external=external))
     if snapshot.codeVersion!=version:raise ValueError('resume_implementation_version_mismatch')
     previous=ledger.results()
     # Cache presence is not success: a missing/corrupt output is rebuilt.
@@ -59,7 +59,9 @@ def run(store,*,profile='local',scheduled_for=None,failed_sources=(),specs=None,
     receipt={'schemaVersion':1,'runId':run_id,'profile':profile,'scheduledFor':scheduled_for,
         'codeVersion':version,
         'snapshotId':snapshot.snapshotId,'status':status,'publicationStatus':'pending',
-        'sources':snapshot.inputs,'failedSources':list(failed_sources),'tasks':results,'groups':groups,'completedAt':now()}
+        'sources':{k:v for k,v in snapshot.inputs.items() if not k.startswith('external.')},
+        'externalInputs':{k:v for k,v in snapshot.inputs.items() if k.startswith('external.')},
+        'failedSources':list(failed_sources),'tasks':results,'groups':groups,'completedAt':now()}
     directory=store.root/'audit/pipeline';directory.mkdir(parents=True,exist_ok=True)
     Store._atomic_if_changed(directory/(run_id+'.json'),encode(receipt).decode())
     Store._atomic_if_changed(directory/'latest.json',encode(receipt).decode())

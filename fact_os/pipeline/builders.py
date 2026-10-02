@@ -25,6 +25,9 @@ def build(spec,snapshot,plan,store):
     root=Path(snapshot.root)
     vector=plan.inputVector or input_vector(spec,snapshot)
     if spec.kind=='review_gate': raise ValueError('independent_source_and_release_review_required')
+    if spec.id=='strategy_inputs' and spec.outputSchemaVersion=='rule-portfolio-bundle-v1':
+        from .rule_builder import build_rules
+        return build_rules(spec,snapshot,plan,store)
     if spec.id=='public_observations':
         from .observations import build_observations
         file=store.root/'derived/pipeline/public_observations'/plan.inputFingerprint/'observations.sqlite'

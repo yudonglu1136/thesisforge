@@ -70,9 +70,11 @@ def main():
     modes.add_argument('--stage-only',action='store_true',help='Validate on isolated worker; explicitly do not install or activate API data')
     modes.add_argument('--data-only',action='store_true',help='Daily 14-table sync and automatic derived artifacts; defer reviewed models/backtests and do not activate API')
     parser.add_argument('--activate-daily',action='store_true',help='With --data-only: also require verified API installation and live ACK; enable only after the production activation gates pass')
+    parser.add_argument('--rule-portfolios',action='store_true',help='Include the reviewed three-universe public curve/ledger bundle and quarterly selections')
     args=parser.parse_args()
     if args.activate_daily and not args.data_only:
         parser.error('--activate-daily requires --data-only')
+    if args.rule_portfolios and not args.data_only:parser.error('--rule-portfolios requires --data-only')
     datetime.fromisoformat(args.scheduled_for.replace('Z','+00:00'))
     import boto3
     root=Path(os.environ['FACT_OS_ROOT']).resolve();store=Store(root)
@@ -122,7 +124,18 @@ def main():
                         code=str(error) if isinstance(error,UpstreamError) else type(error).__name__
                         store.record_error(table,code);failed.append(table)
                         emit({'phase':'source','table':table,'status':'failed','code':code})
-                receipt={**run(store,profile='aws-data-daily' if args.data_only else 'aws-daily',scheduled_for=args.scheduled_for,failed_sources=failed),
+                external={};specs=None
+                if args.rule_portfolios:
+                    from .registry import tasks
+                    from .rule_dependencies import acquire
+                    specs=tasks(profile='aws-data-daily',rule_daily=True)
+                    try:external=acquire(store,s3,bucket,args.scheduled_for[:10])
+                    except Exception as error:
+                        emit({'phase':'rule_dependencies','status':'failed','errorType':type(error).__name__})
+                        # Missing external inputs block this group and prevent
+                        # activation; accepted source facts remain retained.
+                receipt={**run(store,profile='aws-data-daily' if args.data_only else 'aws-daily',scheduled_for=args.scheduled_for,failed_sources=failed,
+                              specs=specs,external=external),
                          'workerCodeCommit':code_commit}
         finally:sync.close()
     # Publication has its own serialized fence even during resume.

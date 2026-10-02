@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from fact_os.repository import FactRepository
 from rule_portfolio_universes import sp500_members_at, qqq_members_at, select_universe
+from rule_daily_dependencies import rate_at
 
 def digest(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
@@ -101,15 +102,12 @@ def build(a):
     require_quarter_coverage(d.q.unique(), quality.q.unique())
     # Only beta is reused; quality percentiles and the selected variant are recomputed.
     quality = quality[['q', 'ticker', 'beta', 'roic_min5']].merge(d, on=['q', 'ticker'], validate='one_to_one')
-    rates = pd.read_csv(a.rates)
-    rates['DGS10'] = pd.to_numeric(rates.DGS10, errors='coerce') / 100
-    rates = rates.dropna().sort_values('observation_date')
+    rates = pd.read_csv(a.rates,keep_default_na=False).to_dict('records')
     for q, group in quality.groupby('q'):
         signal = group.signal_date.iloc[0]
-        eligible_rates = rates[rates.observation_date.le(signal)]
-        if eligible_rates.empty:
-            raise ValueError('missing_prior_risk_free_rate')
-        quality.loc[group.index, 'risk_free'] = eligible_rates.DGS10.iloc[-1]
+        evidence=rate_at(rates,signal)
+        quality.loc[group.index, 'risk_free'] = evidence['value']
+        quality.loc[group.index, 'risk_free_date'] = evidence['date']
     equity, debt = quality.cap_m, quality.ttm_debt.abs() * quality.ttm_fxusd / 1e6
     debt_cost = pd.concat([quality.ttm_intexp.abs() / quality.ttm_debt.abs().replace(0, np.nan),
                            quality.risk_free + .015], axis=1).max(axis=1).clip(upper=.15)
@@ -143,6 +141,7 @@ def build(a):
                 positions.append(dict(ticker=r.ticker, permaticker=str(r.permaticker), rank=rank,
                     score=float(r.score), beta=float(r.beta) if model == 'quality_rank' else None,
                     wacc=float(r.wacc) if model == 'quality_rank' else None,
+                    riskFreeDate=r.risk_free_date if model == 'quality_rank' else None,
                     pretaxReturn=float(r.roic_verified), sourceDates=source_dates,
                     sourcePeriods={key: str(r[key]) for key in ['ttm_reportperiod', 'q0_reportperiod', 'y0_reportperiod']},
                     inputs=[dict(id=key, value=float(r[key]), percentile=float(r['pct_' + key]),

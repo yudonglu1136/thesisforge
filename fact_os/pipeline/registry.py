@@ -13,7 +13,7 @@ def source_hash(*files):
     return digest({name:checksum(PROJECT/name) for name in files})
 
 
-def tasks(*,profile='all'):
+def tasks(*,profile='all',rule_daily=False):
     common = source_hash('fact_os/pipeline/builders.py','fact_os/pipeline/checks.py','fact_os/repository.py','fact_os/contracts.py')
     def task(id, required, *, optional=(), code=(), configs=(), method='1', schema='1', kind='derived', policy='automatic_after_checks'):
         return TaskSpec(id=id,kind=kind,implementationVersion=digest([common,source_hash(*code)]),
@@ -35,7 +35,20 @@ def tasks(*,profile='all'):
         task('public_observations',('tickers','fundamentals','stocks'),
              code=('fact_os/pipeline/observations.py','scripts/import-investment-quality.py'),
              method='annual-quality-v1',schema='canonical-public-observations-v1'),
-        task('strategy_inputs',('tickers','stocks','funds','actions','daily'),kind='read_release'),
+        (task('strategy_inputs',('tickers','stocks','funds','actions','daily','fundamentals','sp500',
+              'external.rule_rates','external.rule_qqq','external.rule_parent'),
+              code=('scripts/build-rule-daily-bundle.mjs','scripts/build-rule-quarter-selections.py',
+                    'scripts/build-rule-portfolio-inputs.py','scripts/build-rule-portfolio-candidates.py',
+                    'scripts/extract-rule-portfolio-panel.py','scripts/rule_selection_features.py',
+                    'scripts/rule_daily_dependencies.py','scripts/rule_portfolio_universes.py',
+                    'server/ruleQuarterAppend.js','server/rulePriceVintage.js','server/rulePortfolioRefresh.js',
+                    'server/rulePortfolioBundleBuild.js','server/rulePortfolioBundle.js',
+                    'server/rulePortfolioAnalysis.js','server/ruleLedgerArchive.js','server/investorStyleDashboard.js',
+                    'fact_os/pipeline/rule_builder.py','fact_os/pipeline/rule_dependencies.py'),
+              configs=('server/config/investor-style-dashboard.json','server/config/investor-style-sp500.json',
+                       'server/config/investor-style-nasdaq100.json'),
+              method='rule-daily-vintage-quarter-v1',schema='rule-portfolio-bundle-v1') if rule_daily else
+         task('strategy_inputs',('tickers','stocks','funds','actions','daily'),kind='read_release')),
         task('guru_strict',('tickers','holdings','holdings_investor','stocks','funds','actions','external.sec_accepted_filings','external.guru_reviewed_matrix'),
              kind='review_gate',policy='reviewed_atomic_matrix'),
         task('valuation_candidates',('tickers','fundamentals','stocks','external.reviewed_model_release'),

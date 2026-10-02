@@ -447,6 +447,9 @@ class Synchronizer:
             attempt={'context':context,'id':uuid.uuid4().hex}
             Store._atomic_if_changed(attempt_path,json.dumps(attempt,sort_keys=True))
         attempt_id=attempt['id']
+        def invalidate_attempt():
+            Store._atomic_if_changed(attempt_path,json.dumps(
+                {'context':context,'id':uuid.uuid4().hex,'invalidatedAttempt':attempt_id},sort_keys=True))
         def checkpoint_path(query):
             identity=hashlib.sha256(json.dumps({'query':query,'schema':contract.digest,'attempt':attempt_id},sort_keys=True).encode()).hexdigest()
             return checkpoint_dir/(identity+'.json.gz')
@@ -486,7 +489,8 @@ class Synchronizer:
             rows=read_universe(dataset,discovery)
             expected=canonical_rows_hash(rows,('ticker',))
             if canonical_rows_hash(read_universe(dataset,discovery),('ticker',))!=expected:
-                raise UpstreamError('ticker universe changed during sync; local history retained')
+                invalidate_attempt()
+                raise UpstreamSnapshotChanged('ticker universe changed during sync; local history retained')
             discoveries.append((dataset,discovery,expected))
             return [r['ticker'] for r in rows]
         workers=max(1,min(3,int(os.environ.get('FACT_OS_SYNC_WORKERS','3'))))
@@ -521,8 +525,7 @@ class Synchronizer:
                 # Every leaf belongs to the invalidated snapshot, including
                 # leaves not reached by verification. The next attempt must
                 # fetch a coherent new set, then pass the same strict gate.
-                Store._atomic_if_changed(attempt_path,json.dumps(
-                    {'context':context,'id':uuid.uuid4().hex,'invalidatedAttempt':attempt_id},sort_keys=True))
+                invalidate_attempt()
                 scope={key:query[key] for key in ('from','to','ticker','ticker.gt','ticker.lte') if key in query}
                 raise UpstreamSnapshotChanged('upstream changed during sync; local history retained: '+
                     json.dumps({'table':table,'scope':scope,'expected':expected[:12],'observed':observed[:12]},sort_keys=True))
@@ -533,7 +536,8 @@ class Synchronizer:
         # leaf and nevertheless allow this run to advance its watermark.
         for dataset,query,expected in discoveries:
             if canonical_rows_hash(read_universe(dataset,query),('ticker',))!=expected:
-                raise UpstreamError('ticker universe changed during sync; local history retained')
+                invalidate_attempt()
+                raise UpstreamSnapshotChanged('ticker universe changed during sync; local history retained')
         if total==0:
             # An empty response cannot truncate local data or advance a watermark.
             dest.unlink() # disposable empty response, not historical data
