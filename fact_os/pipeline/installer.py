@@ -148,6 +148,8 @@ def install(s3,bucket,candidate,root,*,validate_group,probe,expected_release=Non
             target.parent.chmod(0o755);target.parent.parent.chmod(0o755)
             validate_group(name,target,manifest)
             groups[name]={'generationId':item['generationId'],'root':str(target),'inputVector':manifest['inputVector']}
+            if name=='strategy_inputs' and manifest.get('compatibilityVersion')=='rule-portfolio-bundle-v1':
+                groups[name]['rulePortfolioBundleRequired']=True
         installed={**candidate,'groups':groups}
         # Probe with the real API UID before switching; then probe live request
         # activation. Failures restore only this data pointer, never user stores.

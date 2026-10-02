@@ -21,11 +21,12 @@ async function build() {
     if(!context.researchFile)throw new Error('research_release_unavailable');
     const source=new InvestmentSource(context.researchFile,{canonicalMarket:true,publicFactsFile:context.publicFactsFile,insightsFile:context.insightsFile});
     try{value=buildOpportunities(source,args.asOf,args.reportDate??null);}finally{source.close();}
-  }else if(kind==='strategy')value=loadInvestorStyleDashboard({asOf:args.asOf,universe:args.universe??'all'});
+  }else if(kind==='strategy')value=loadInvestorStyleDashboard({asOf:args.asOf,universe:args.universe??'all',bundleRoot:context.ruleBundleRoot??null});
   else if(kind==='strategy-ledger'){
-    const dashboard=loadInvestorStyleDashboard({asOf:args.asOf,universe:args.universe??'all'});
+    const dashboard=loadInvestorStyleDashboard({asOf:args.asOf,universe:args.universe??'all',bundleRoot:context.ruleBundleRoot??null});
     value=readRuleLedgerArchive(dashboard,{root:context.ruleLedgerRoot,identity:context.ruleLedgerIdentity??null});
     if(!value){
+      if(context.ruleBundleRoot)throw new Error('rule_bundle_ledger_required');
       const prices=await canonicalRulePrices(dashboard);
       value={version:'strategy-ledger-public-analysis-v1',snapshotId:dashboard.snapshotId,
         sourceGeneration:dashboard.lineage?.sourceGeneration??null,

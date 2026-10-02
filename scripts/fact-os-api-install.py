@@ -52,6 +52,16 @@ def validate_live_ack(body,installed,scope='all'):
     expected={name:item['generationId'] for name,item in installed['groups'].items()}
     observed={name:item.get('generationId') for name,item in body.get('groups',{}).items()}
     if observed!=expected:raise ValueError('live_api_group_mismatch')
+    strategy=installed.get('groups',{}).get('strategy_inputs',{})
+    if strategy.get('rulePortfolioBundleRequired'):
+        manifest=json.loads((Path(strategy['root'])/'rule-manifest.json').read_text())
+        from fact_os.store import checksum
+        rules=body.get('publicAnalysis',{}).get('rulePortfolios',{})
+        if (rules.get('status')!='ready' or rules.get('bundleIdentity')!=checksum(Path(strategy['root'])/'rule-manifest.json')
+            or set(rules.get('universes',{}))!=set(manifest['entries']) or any(
+                any(rules['universes'][u].get(k)!=entry[k] for k in ('snapshotId','dataThrough'))
+                for u,entry in manifest['entries'].items())):
+            raise ValueError('live_api_rule_bundle_mismatch')
     coverage={row.get('dataset'):row for row in body.get('coverage',[])}
     if any(not coverage.get(t,{}).get('locally_available') or
            not coverage.get(t,{}).get('backfill_complete') for t in TABLES):
@@ -91,6 +101,10 @@ def main():
             value=json.loads((path/'inputs.json').read_text())
             if value.get('schemaVersion')!='fact-os-input-vector-v1' or value.get('inputs')!=manifest['inputVector']:
                 raise ValueError('canonical_input_vector_invalid')
+            if name!='strategy_inputs' or manifest.get('compatibilityVersion')!='rule-portfolio-bundle-v1':return
+            script="import {validateRulePortfolioBundle} from './server/rulePortfolioBundleBuild.js'; validateRulePortfolioBundle(process.argv[1]);"
+            result=subprocess.run(['runuser','-u','webapp','--','node','--input-type=module','-e',script,str(path)],capture_output=True,timeout=120)
+            if result.returncode:raise ValueError('rule_bundle_production_validator_failed')
             return
         if name=='ai_insights':
             script="import {validateAiInsightsArtifact} from './server/investmentRuntimeConfig.js'; validateAiInsightsArtifact(process.argv[1],process.argv[1]+'/release-manifest.json');"

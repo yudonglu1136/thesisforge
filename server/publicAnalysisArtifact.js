@@ -6,6 +6,7 @@ import { dataReleaseStatus } from './dataReleaseContext.js';
 import { resolveInvestmentRuntimeConfig } from './investmentRuntimeConfig.js';
 import { analysisFailureCode } from './analysisFailure.js';
 import {defaultRuleLedgerRoot,ruleLedgerArchiveIdentity} from './ruleLedgerArchive.js';
+import {ruleBundlePaths} from './rulePortfolioBundle.js';
 
 const schema='public-analysis-index-v2';
 const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'
@@ -30,12 +31,16 @@ export class PublicAnalysisArtifacts {
     // this process instead of repeating the audit on every public API read.
     if(!this.runtimeConfigResolved){this.runtimeConfig=resolveInvestmentRuntimeConfig();this.runtimeConfigResolved=true;}
     const release=dataReleaseStatus(),config=this.runtimeConfig;
+    const bundleRoot=release?.groups?.strategy_inputs?.root??null;
+    const bundle=ruleBundlePaths(bundleRoot,'all',{required:release?.groups?.strategy_inputs?.rulePortfolioBundleRequired===true});
     return {releaseId:release?.releaseId??'legacy',groups:Object.fromEntries(Object.entries(release?.groups??{}).map(([k,v])=>[k,v.generationId])),
       canonicalRoot:release?.groups?.canonical?.root??process.env.FACT_OS_ROOT??null,
       publicFactsFile:release?.groups?.public_observations?.root?path.join(release.groups.public_observations.root,'observations.sqlite'):null,
       insightsFile:release?.groups?.institutional_13f?.root?path.join(release.groups.institutional_13f.root,'13f-insights.sqlite'):config?.insights??null,
       researchFile:config?.research??null,investmentReleaseId:config?.releaseId??process.env.INVESTMENT_RELEASE_ID??null,
-      ruleLedgerRoot:defaultRuleLedgerRoot(),ruleLedgerIdentity:ruleLedgerArchiveIdentity()};
+      ruleBundleRoot:bundle?bundleRoot:null,ruleBundleIdentity:bundle?.identity??null,
+      ruleLedgerRoot:bundle?.ledgerRoot??defaultRuleLedgerRoot(),
+      ruleLedgerIdentity:bundle?.ledgerIdentity??ruleLedgerArchiveIdentity()};
   }
   identity(kind,args,context=this.context()) {
     const logicalKey=safeKey(`${kind}:${args.asOf}:${args.reportDate??args.universe??'default'}`);
@@ -44,6 +49,7 @@ export class PublicAnalysisArtifacts {
     const groups=Object.fromEntries(dependencies.filter(key=>context.groups[key]).map(key=>[key,context.groups[key]]));
     const inputs={args,releaseId:Object.keys(groups).length?null:context.releaseId,groups,
       ...(kind.startsWith('strategy')&&context.ruleLedgerIdentity?{ruleLedgerIdentity:context.ruleLedgerIdentity}:{}),
+      ...(kind.startsWith('strategy')&&context.ruleBundleIdentity?{ruleBundleIdentity:context.ruleBundleIdentity}:{}),
       investmentReleaseId:kind==='fundamentals'?null:context.investmentReleaseId};
     return {logicalKey,fingerprint:digest({schema,kind,...inputs}),
       cohortFingerprint:digest({schema:'public-analysis-cohort-v1',family:kind.startsWith('strategy')?'strategy':kind,...inputs})};
@@ -85,8 +91,25 @@ export class PublicAnalysisArtifacts {
     const index=this.#index(),missing=prepared.filter(job=>index.entries[job.logicalKey]?.fingerprint!==job.fingerprint||
       index.entries[job.logicalKey]?.cohortFingerprint!==job.cohortFingerprint||
       !this.#read(index.entries[job.logicalKey]));
-    if(!missing.length)return {status:'ready',asOf,generations:Object.fromEntries(prepared.map(job=>
-      [`${job.kind}:${job.args.universe??'default'}`,job.fingerprint]))};
+    const receipt=index=>{
+      let rulePortfolios;
+      if(context.ruleBundleRoot){
+        const universes={};
+        for(const universe of ['all','sp500','nasdaq100']){
+          const jobs=prepared.filter(j=>j.args.universe===universe);
+          const values=Object.fromEntries(jobs.map(j=>[j.kind,this.#read(index.entries[j.logicalKey],{clone:false})]));
+          const d=values.strategy,l=values['strategy-ledger'],expected=ruleBundlePaths(context.ruleBundleRoot,universe,{required:true});
+          if(!d||!l||d.snapshotId!==expected.snapshotId||l.snapshotId!==d.snapshotId||
+            l.archiveIdentity!==expected.ledgerIdentity||d.dataThrough!==expected.dataThrough)
+            throw new Error('rule_bundle_actual_serving_mismatch');
+          universes[universe]={snapshotId:d.snapshotId,dataThrough:d.dataThrough,observations:d.backtest.curve.length};
+        }
+        rulePortfolios={status:'ready',bundleIdentity:context.ruleBundleIdentity,universes};
+      }
+      return {status:'ready',asOf,generations:Object.fromEntries(prepared.map(job=>
+        [`${job.kind}:${job.args.universe??'default'}`,job.fingerprint])),...(rulePortfolios?{rulePortfolios}:{})};
+    };
+    if(!missing.length)return receipt(index);
     for(const job of missing)this.warming.add(job.fingerprint);
     let timeout;
     const deadline=new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('public_analysis_prewarm_timeout')),timeoutMs);});
@@ -101,9 +124,9 @@ export class PublicAnalysisArtifacts {
         entries.push([job,entry]);
       }
       const next=this.#index();for(const [job,entry] of entries)next.entries[job.logicalKey]=entry;
+      const result=receipt(next);
       this.#writeIndex(next);
-      return {status:'ready',asOf,generations:Object.fromEntries(prepared.map(job=>
-        [`${job.kind}:${job.args.universe??'default'}`,job.fingerprint]))};
+      return result;
     }finally{clearTimeout(timeout);for(const job of missing)this.warming.delete(job.fingerprint);}
   }
   enqueue(job) {

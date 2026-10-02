@@ -3,7 +3,7 @@
 // This does not overwrite canonical quotes, revise old NAV, or infer a missing
 // execution/corporate-action price. The caller must replay the complete ledger
 // and retain the existing historical NAV and cost reconciliation gates.
-export function extendPublishedPriceVintage(snapshot, ledger, current) {
+export function extendPublishedPriceVintage(snapshot, ledger, current,{newSymbols={}}={}) {
   if (ledger.snapshotId !== snapshot.snapshotId) throw new Error('vintage_snapshot_mismatch');
   const prices=new Map(),bridges={};
   function put(ticker,date,price){
@@ -39,7 +39,18 @@ export function extendPublishedPriceVintage(snapshot, ledger, current) {
   for(const [ticker,observations] of current){
     const future=[...observations].filter(([d])=>d>snapshot.dataThrough).sort(([a],[b])=>a.localeCompare(b));
     if(!future.length)continue;
-    const recorded=prices.get(ticker),anchor=recorded&&[...recorded.keys()].filter(d=>observations.has(d)).sort().at(-1);
+    let recorded=prices.get(ticker);
+    if(!recorded&&newSymbols[ticker]>snapshot.dataThrough){
+      // Newly selected securities have no inherited adjusted units or opening
+      // position. Use their actual current adjusted units, only after entry.
+      const rows=future.filter(([d])=>d>=newSymbols[ticker]);
+      if(!rows.some(([d])=>d===newSymbols[ticker]))throw new Error('vintage_new_entry_missing');
+      for(const [,p] of rows)if(!(Number.isFinite(p)&&p>0))throw new Error('vintage_invalid_price');
+      prices.set(ticker,new Map(rows));
+      bridges[ticker]={date:newSymbols[ticker],factor:1,basis:'new_position_current_adjusted_units'};
+      continue;
+    }
+    const anchor=recorded&&[...recorded.keys()].filter(d=>observations.has(d)).sort().at(-1);
     if(!anchor)throw new Error('vintage_anchor_missing:'+ticker);
     const before=observations.get(anchor);
     if(!(Number.isFinite(before)&&before>0))throw new Error('vintage_invalid_anchor');

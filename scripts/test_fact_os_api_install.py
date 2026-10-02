@@ -1,6 +1,9 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import tempfile
+import json
+import hashlib
 from fact_os.contracts import TABLES
 
 spec = importlib.util.spec_from_file_location('fact_os_api_install', Path(__file__).with_name('fact-os-api-install.py'))
@@ -9,6 +12,24 @@ spec.loader.exec_module(installer)
 
 
 class ApiInstallPortTest(unittest.TestCase):
+    def test_strategy_activation_requires_actual_matching_curve_and_ledger_ack(self):
+        with tempfile.TemporaryDirectory() as directory:
+            entries={u:{'snapshotId':c*64,'dataThrough':'2026-09-30'} for u,c in [('all','a'),('sp500','b'),('nasdaq100','c')]}
+            raw=json.dumps({'entries':entries}).encode()
+            (Path(directory)/'rule-manifest.json').write_bytes(raw)
+            installed={'releaseId':'d'*64,'groups':{'strategy_inputs':{'generationId':'e'*64,
+                'root':directory,'rulePortfolioBundleRequired':True}}}
+            body={**installed,'status':'verified','fundamentals':{'status':'ready'},'publicAnalysis':{'status':'ready'},
+                'coverage':[{'dataset':t,'locally_available':True,'backfill_complete':True} for t in TABLES]}
+            with self.assertRaisesRegex(ValueError,'live_api_rule_bundle_mismatch'):
+                installer.validate_live_ack(body,installed)
+            rules={'status':'ready','bundleIdentity':hashlib.sha256(raw).hexdigest(),'universes':entries}
+            body['publicAnalysis']['rulePortfolios']=rules
+            self.assertTrue(installer.validate_live_ack(body,installed))
+            rules['universes']={**entries,'all':{**entries['all'],'dataThrough':'2026-09-21'}}
+            with self.assertRaisesRegex(ValueError,'live_api_rule_bundle_mismatch'):
+                installer.validate_live_ack(body,installed)
+
     def test_public_daily_requires_exact_public_groups_and_keeps_release_identity(self):
         candidate={'releaseId':'a'*64,'groups':{name:{} for name in installer.PUBLIC_DAILY_GROUPS}}
         scoped=installer.scoped_candidate(candidate,'public-daily')

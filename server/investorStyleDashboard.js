@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { strategyMetrics } from './strategyLab.js';
 import { qualityRankWeights } from './rulePortfolioWeights.js';
 import { ruleSegments, ruleRangeCovered, emptyRuleMetrics } from './rulePortfolioCoverage.js';
+import { releaseRoot, dataReleaseStatus } from './dataReleaseContext.js';
+import { ruleBundlePaths } from './rulePortfolioBundle.js';
 
 const defaultFile = new URL('./config/investor-style-dashboard.json', import.meta.url);
 const universeFiles = { all:defaultFile, sp500:new URL('./config/investor-style-sp500.json',import.meta.url),
@@ -141,7 +143,7 @@ export function validateInvestorStyleDashboard(payload) {
 }
 
 const caches=new Map();
-export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotId = null, universe='all' } = {}) {
+export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotId = null, universe='all', bundleRoot=null } = {}) {
   if (asOf !== null && !date(asOf)) fail('invalid_as_of', 400);
   const option=ruleUniverses.find(r=>r.id===universe);
   if (!option) fail('invalid_rule_universe',400);
@@ -150,7 +152,9 @@ export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotI
     return {status:'universe_unavailable',universe:option,universeOptions:ruleUniverses,
       requestedAsOf:asOf,snapshotId:null,styles:[],backtest:{curve:[]}};
   }
-  file ??= universeFiles[universe];
+  const bundle=!file?ruleBundlePaths(bundleRoot??releaseRoot('strategy_inputs',null),universe,
+    {required:bundleRoot!==null||dataReleaseStatus()?.groups?.strategy_inputs?.rulePortfolioBundleRequired===true}):null;
+  file ??= bundle?.file??universeFiles[universe];
   let payload, id;
   try {
     const stat = fs.statSync(file), key = `${file}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
@@ -168,6 +172,7 @@ export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotI
     fail('investor_style_snapshot_unavailable');
   }
   if ((payload.universe?.id ?? 'all')!==universe) fail('investor_style_universe_mismatch',409);
+  if(bundle&&(bundle.snapshotId!==id||bundle.dataThrough!==payload.dataThrough))fail('rule_bundle_snapshot_mismatch');
   if (snapshotId && snapshotId !== id) fail('investor_style_snapshot_changed', 409);
   const cutoff = asOf ?? payload.dataThrough;
   const curve = payload.backtest.curve.filter(r => r.date <= cutoff);

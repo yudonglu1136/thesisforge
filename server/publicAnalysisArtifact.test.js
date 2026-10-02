@@ -79,3 +79,31 @@ test('daily compatibility group switches only after every public artifact succee
     assert.equal(fs.readFileSync(path.join(root,'active.json'),'utf8'),before);
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('bundle activation checks actual curve and ledger identities before publishing the cache index',async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'public-analysis-bundle-'));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const bundle=path.join(root,'bundle');fs.mkdirSync(bundle);
+  const h=x=>crypto.createHash('sha256').update(x).digest('hex');
+  const manifest={schemaVersion:'rule-portfolio-bundle-v1',sourceGeneration:h('source'),sourceManifestSha256:h('catalog'),
+    ledgerIdentity:h('ledger'),entries:Object.fromEntries(['all','sp500','nasdaq100'].map(id=>[id,
+      {file:`${id}.json`,snapshotId:h(id),dataThrough:'2026-09-30'}]))};
+  fs.writeFileSync(path.join(bundle,'rule-manifest.json'),JSON.stringify(manifest));
+  let wrong=false,version='v1';
+  const artifacts=new PublicAnalysisArtifacts({root,runtimeConfig:{},compute:async job=>{
+    const e=manifest.entries[job.args.universe];
+    const value=job.kind==='strategy'?{snapshotId:e.snapshotId,dataThrough:wrong?'2026-09-21':e.dataThrough,backtest:{curve:[{},{}]}}
+      :job.kind==='strategy-ledger'?{snapshotId:e.snapshotId,archiveIdentity:manifest.ledgerIdentity}:{status:'ready'};
+    const bytes=Buffer.from(JSON.stringify(value)),file=path.join(root,job.fingerprint+'.json');fs.writeFileSync(file,bytes);
+    return {...job,path:path.basename(file),bytes:bytes.length,sha256:h(bytes)};
+  }});
+  artifacts.context=()=>({groups:{strategy_inputs:version},releaseId:version,ruleBundleRoot:bundle,
+    ruleBundleIdentity:h(JSON.stringify(manifest)),ruleLedgerIdentity:manifest.ledgerIdentity});
+  const ready=await artifacts.warmCurrent('2026-10-02');
+  assert.equal(ready.rulePortfolios.status,'ready');
+  assert.equal(ready.rulePortfolios.universes.all.dataThrough,'2026-09-30');
+  const before=fs.readFileSync(path.join(root,'active.json'),'utf8');
+  wrong=true;version='v2';
+  await assert.rejects(artifacts.warmCurrent('2026-10-02'),/rule_bundle_actual_serving_mismatch/);
+  assert.equal(fs.readFileSync(path.join(root,'active.json'),'utf8'),before);
+});
