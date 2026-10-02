@@ -184,10 +184,44 @@ a local test pass does not mean the current production code includes them.
 
 ## Deliberate boundaries / remaining release gates
 
-The registry separates canonical read data, AI Insights, all/active 13F and
-Research/Strategy input vectors. The latter are **inputs**, not newly published
-valuation models or recomputed personal backtests. Existing model releases and
-saved user results stay unchanged.
+### Opt-in public rule portfolios (2026-10-02)
+
+`--data-only --activate-daily --rule-portfolios` adds the two published rule
+portfolios in all three universes to the existing six-group transaction. IaC
+`RulePortfolios=true` supplies the last flag; it remains default-off. This is
+not a Guru fund-copy backtest or a user portfolio refresh. The production
+acceptance record is `docs/audits/rule-daily-wiring-2026-10-02.md`; code support
+alone is not evidence that the live schedule has been enabled.
+
+Before planning, the worker archives public FRED DGS10 observations, retrieves
+official SEC QQQ holdings, verifies exact canonical security identities, and
+pins the previous published curve/ledger bundle. Rates, membership, source
+facts, rule configuration and implementation/runtime versions enter the input
+fingerprint. Builders use only this immutable snapshot. A new executable
+quarter generates its selections using the existing rule formulas; it does not
+merely wait for someone to supply a selection file. Missing/stale rates,
+unresolved identities and unreviewed corporate actions fail closed.
+
+The strategy group publishes `rule-portfolio-bundle-v1`: all-market, S&P 500
+and QQQ-based Nasdaq universes, each with its curve and reconciled P&L ledger.
+They share a cutoff and are installed atomically. The actual API ACK must
+attest matching strategy/ledger identities; an uploaded bundle alone is not
+activation. An unchanged observed market session preserves the previous
+curve/ledger bytes. Weekends do not manufacture new observations. Saved user
+results and previously published selections are not rewritten.
+
+Worker releases may carry their own `venv`; `bin/fact-os-worker` selects it
+before the legacy shared environment. Roll back code and its environment
+together, only with no active writer. Keep the public schedule paused until a
+real manual 14-source/six-group installation and API ACK pass, then restore
+07:30 Asia/Riyadh. Separately verify the next `trigger=scheduler` execution.
+Do not substitute the manual test for that acceptance.
+
+The default registry separates canonical read data, AI Insights, all/active 13F
+and Research/Strategy input vectors. Without the explicit rule-portfolio opt-in
+above, the latter are **inputs**, not recomputed backtests. Neither mode publishes
+reviewed valuation models or recomputes personal backtests. Existing model
+releases and saved user results stay unchanged.
 
 Guru strict/proxy publishing requires independently accepted SEC evidence plus
 the reviewed complete manager/window matrix. Valuation candidates require the
@@ -198,9 +232,9 @@ pretend that Sharadar SF3 has exact acceptance times or publish unaudited models
 45-day current-quote projection. Exact canonical symbols use the existing
 audited model aliases on read. Full price history stays in canonical Fact OS.
 Its API handles and model comparison caches are pinned to the request release;
-the historical model database is not rewritten. Strategy data-release adapters
-still require separate review before claiming every consumer is on automatic
-daily publication.
+the historical model database is not rewritten. Only the opt-in public rule
+bundle has a Strategy automatic-build adapter; this does not imply that every
+Strategy or Guru consumer is on automatic daily publication.
 
 The current AWS install target is one explicitly configured EB instance. Before
 an EB replacement/multi-instance rollout, update and verify the install target

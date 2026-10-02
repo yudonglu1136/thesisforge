@@ -93,7 +93,10 @@ class WorkerBoundaryTest(unittest.TestCase):
     def test_daily_activation_failure_is_not_data_ready_success(self):
         self.run_daily_fixture(activation=True,publication_failure=True)
 
-    def run_daily_fixture(self,activation=False,publication_failure=False):
+    def test_rule_daily_flag_acquires_inputs_and_selects_atomic_builder(self):
+        self.run_daily_fixture(activation=True,rule_portfolios=True)
+
+    def run_daily_fixture(self,activation=False,publication_failure=False,rule_portfolios=False):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);(root/'sync').mkdir();(root/'sync/authority-import.json').write_text('{}')
             (root/'audit/pipeline').mkdir(parents=True)
@@ -107,10 +110,11 @@ class WorkerBoundaryTest(unittest.TestCase):
             from .store import Store
             with patch.dict(os.environ,{'FACT_OS_ROOT':temporary,'FACT_OS_BUCKET':'synthetic-bucket','FACT_OS_SECRET_ID':'synthetic-reference'}), \
                  patch.dict('sys.modules',{'boto3':boto}), \
-                 patch('sys.argv',['worker','--scheduled-for',receipt['scheduledFor'],'--data-only']+(['--activate-daily'] if activation else [])), \
+                 patch('sys.argv',['worker','--scheduled-for',receipt['scheduledFor'],'--data-only']+(['--activate-daily'] if activation else [])+(['--rule-portfolios'] if rule_portfolios else [])), \
                  patch.object(aws_worker,'Store',return_value=store) as store_class, \
                  patch.object(aws_worker,'Synchronizer',return_value=sync), \
                  patch.object(aws_worker,'run',return_value=receipt) as runner, \
+                 patch('fact_os.pipeline.rule_dependencies.acquire',return_value={'external.rule_rates':{'status':'ready'}}) as acquire, \
                  patch.object(aws_worker,'Ledger'), \
                  patch('fact_os.pipeline.cli.ingestion_lock',return_value=contextlib.nullcontext()), \
                  patch.object(aws_worker,'load_data_ready',return_value=(None,None)), \
@@ -123,6 +127,16 @@ class WorkerBoundaryTest(unittest.TestCase):
                 self.assertEqual(aws_worker.main(),2 if publication_failure else 0)
             self.assertEqual([c.args[0] for c in sync.sync.call_args_list],list(TABLES))
             self.assertEqual(runner.call_args.kwargs['profile'],'aws-data-daily')
+            self.assertEqual(acquire.call_count,int(rule_portfolios))
+            if rule_portfolios:
+                acquire.assert_called_once_with(store,s3,'synthetic-bucket',receipt['scheduledFor'][:10])
+                specs={spec.id:spec for spec in runner.call_args.kwargs['specs']}
+                self.assertEqual(set(specs),aws_worker.DATA_DAILY_GROUPS)
+                self.assertEqual(specs['strategy_inputs'].outputSchemaVersion,'rule-portfolio-bundle-v1')
+                self.assertEqual(runner.call_args.kwargs['external'],acquire.return_value)
+            else:
+                self.assertIsNone(runner.call_args.kwargs['specs'])
+                self.assertEqual(runner.call_args.kwargs['external'],{})
             self.assertEqual(publish.call_count,1 if activation else 0)
             serving_pointer.assert_not_called();ssm.send_command.assert_not_called();activate.assert_not_called()
             saved=json.loads((root/'audit/pipeline/r.json').read_text())

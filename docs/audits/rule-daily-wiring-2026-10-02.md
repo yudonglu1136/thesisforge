@@ -31,8 +31,8 @@ AWS candidate evidence:
   Daily NAV replay and window-level P&L/distribution reconciliation passed.
 
 Tests: Node full suite 1,767 passed, zero failed, 15 skipped; performance 60
-passed. Python Fact OS suite 273 passed before the final runtime test, targeted
-pipeline/config tests rerun after changes. Full storage audit passed with zero
+passed. Python Fact OS suite 275 passed after adding the runtime and worker
+flag-wiring regressions. Full storage audit passed with zero
 duplicate raw bytes; the 11 pre-existing legacy layout findings remain preserved.
 
 The October 2 scheduled public run failed on upstream holdings-universe mutation.
@@ -43,3 +43,30 @@ Deployment remains gated by a full worker run, API installation and exact live
 ACK. The next real Scheduler execution must be separately attested. Retain old
 worker code, application version and active public pointer; do not delete source
 archives or rollback generations to fit an installation.
+
+## Production wiring and live validation in progress
+
+- Backend `rule-daily-5057558` deployed Ready/Green, rollback application
+  `public-inode-1b1f721`. Existing public release continues serving pending
+  data installation. This is not a strategy-data activation claim.
+- CloudFormation `rule-daily-c842432` completed, with RulePortfolios=true,
+  ActivateDaily=true, RunDocument 7 and InstallDocument 2. Actual document
+  arguments and State Machine numeric document version were independently
+  re-read. The public schedule remains DISABLED pending acceptance.
+- Worker AMI is pinned to its existing image. An earlier preview that proposed
+  instance replacement was discarded without execution; no worker, disk or
+  API capacity expansion occurred.
+- Full real manual worker command `806182d6-8f91-46ea-b393-db33ad7acb41`
+  runs immutable code `5057558`, scheduled-for `2026-10-02T11:20:00Z`.
+  This is a manual validation, not a Scheduler-triggered success. Sources are
+  processed under the existing single writer lock. Code pointer remains
+  `/opt/fact-os/releases/48dc2c1` until validation and safe cutover.
+- Both formal frontend aliases resolve to
+  `dpl_Grk2DSdw6sqgZs5NDGWfaftrkQrk`,
+  `thesisforge-4oy0ewyv5-yudonglu1136s-projects.vercel.app`.
+- Actual API probe `a3798033-cf14-43a5-bfad-cff19ab94234` confirms the retained
+  release `e7be0d842e359b7b9efebc860a28bec54b513946c441c3f2eef7621bb5fa004b`,
+  Research/Fundamentals/public-analysis ready. It is the OLD strategy bundle.
+- Public aggregate health is still 503 for stale Guru-study/legacy price
+  readiness, whose check code was not changed by this release. Do not claim
+  overall platform health or reduce its gates to certify this public rule job.
