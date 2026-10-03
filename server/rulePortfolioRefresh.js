@@ -56,6 +56,9 @@ export function refreshRuleSnapshot(source, priceMaps, end) {
     curve:observed.map(date => ({date,quality_rank:byStyle.quality_rank.get(date)??null,
       ackman:byStyle.ackman.get(date)??null,spy:spy.get(date)/base})) };
   result.dataThrough = end;
+  // The offline bundle builder reattaches QQQ from its pinned canonical marks
+  // after refreshing the strategy NAV; never carry a stale benchmark manifest.
+  delete result.backtest.qqqBenchmark;
   // Previously observed history is immutable except an old terminal mark that
   // now has its first actual rebalance cost when the partial quarter executes.
   const original = new Map(source.backtest.curve.map(r=>[r.date,r]));

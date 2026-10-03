@@ -49,7 +49,7 @@ def tasks(*,profile='all',rule_daily=False):
                     'scripts/build-rule-portfolio-inputs.py','scripts/build-rule-portfolio-candidates.py',
                     'scripts/extract-rule-portfolio-panel.py','scripts/rule_selection_features.py',
                     'scripts/rule_daily_dependencies.py','scripts/rule_portfolio_universes.py',
-                    'server/ruleQuarterAppend.js','server/rulePriceVintage.js','server/rulePortfolioRefresh.js',
+                    'server/ruleQuarterAppend.js','server/rulePriceVintage.js','server/rulePortfolioRefresh.js','server/ruleBenchmark.js',
                     'server/rulePortfolioBundleBuild.js','server/rulePortfolioBundle.js',
                     'server/rulePortfolioAnalysis.js','server/ruleLedgerArchive.js','server/investorStyleDashboard.js',
                     'server/backtestEngine.js','server/strategyLab.js','server/rulePortfolioCoverage.js',

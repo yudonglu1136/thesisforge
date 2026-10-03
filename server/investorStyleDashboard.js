@@ -139,6 +139,15 @@ export function validateInvestorStyleDashboard(payload) {
       fail('investor_style_snapshot_invalid');
     }
   }
+  const qqq=payload.backtest.qqqBenchmark;
+  if(qqq || curve.some(r=>r.qqq!==undefined)){
+    if(universe!=='nasdaq100'||qqq?.ticker!=='QQQ'||qqq.priceType!=='total_return_adjusted_close'||
+        qqq.currency!=='USD'||qqq.costBps!==0||!near(curve[0].qqq,1)||
+        qqq.from!==curve[0].date||qqq.to!==curve.at(-1).date||
+        !/^[a-f0-9]{64}$/.test(qqq.sourceGeneration??'')||
+        !/^[a-f0-9]{64}$/.test(qqq.sourceSha256??'')||
+        curve.some(r=>!Number.isFinite(r.qqq)||r.qqq<=0))invalid();
+  }
   return payload;
 }
 
@@ -202,6 +211,9 @@ export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotI
     status: curve.length >= 2 ? 'ready' : 'unavailable_before_first_observation',
     dataThrough: curve.at(-1)?.date ?? null, styles,
     backtest: { ...payload.backtest, curve, observations: curve.length, from: curve[0]?.date ?? null,
-      to: curve.at(-1)?.date ?? null, benchmark: { id: 'spy', metrics: strategyMetrics(curve.map(r => ({ date: r.date, value: r.spy }))) } },
+      to: curve.at(-1)?.date ?? null, benchmark: { id: 'spy', metrics: strategyMetrics(curve.map(r => ({ date: r.date, value: r.spy }))) },
+      ...(payload.backtest.qqqBenchmark?{qqqBenchmark:{...payload.backtest.qqqBenchmark,
+        from:curve[0]?.date??null,to:curve.at(-1)?.date??null,
+        metrics:strategyMetrics(curve.map(r=>({date:r.date,value:r.qqq})))}}:{}) },
   });
 }

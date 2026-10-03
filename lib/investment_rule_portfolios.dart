@@ -105,7 +105,13 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
   int epoch = 0, quarter = -1, hover = -1;
   RangeValues range = const RangeValues(0, 1);
   String? savedStart, savedEnd;
-  final enabled = <String>{'quality_rank', 'ackman', 'spy'};
+  final enabled = <String>{'quality_rank', 'ackman', 'spy', 'qqq'};
+  List<String> get curveIds => [
+    'quality_rank',
+    'ackman',
+    'spy',
+    if (universe == 'nasdaq100') 'qqq',
+  ];
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
   TextStyle s([double size = 13, bool bold = false, Color? color]) => TextStyle(
@@ -117,12 +123,15 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
   String name(String id) => switch (id) {
     'quality_rank' => w('Quality Rank · Top 10', '质量排名 · 前十'),
     'ackman' => w('Ackman · quantitative proxy', 'Ackman · 量化代理'),
+    'qqq' => 'QQQ',
     _ => 'SPY',
   };
   Color color(String id) => id == 'quality_rank'
       ? p.accent
       : id == 'ackman'
       ? const Color(0xff7eabfa)
+      : id == 'qqq'
+      ? p.text
       : p.secondary;
   String pct(dynamic value) => nullableNumber(value) == null
       ? '—'
@@ -505,7 +514,7 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
     final rows = curve.sublist(first, last + 1);
     final series = <String, List<double>>{},
         metrics = <String, Map<String, double?>>{};
-    for (final id in ['quality_rank', 'ackman', 'spy']) {
+    for (final id in curveIds) {
       metrics[id] = ruleRangeMetrics(curve, id, first, last, styles);
       if (!enabled.contains(id) || metrics[id]!.isEmpty) continue;
       final segments = asList(
@@ -552,7 +561,7 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              for (final id in ['quality_rank', 'ackman', 'spy'])
+              for (final id in curveIds)
                 FilterChip(
                   key: ValueKey('curve-toggle-$id'),
                   label: Text(name(id)),
@@ -569,6 +578,14 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
             ],
           ),
           const SizedBox(height: 12),
+          if (universe == 'nasdaq100' && (metrics['qqq']?.isEmpty ?? true))
+            Text(
+              w(
+                'QQQ benchmark is not available in this snapshot. No SPY data is substituted.',
+                '此快照尚无 QQQ 基准，不使用 SPY 数据替代。',
+              ),
+              style: s(12, false, p.secondary),
+            ),
           Wrap(
             spacing: 18,
             runSpacing: 6,
@@ -604,8 +621,8 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
                 );
                 return Semantics(
                   label: w(
-                    'Daily portfolio and SPY returns. Exact values shown above.',
-                    '组合与 SPY 日频收益；精确数值显示在上方。',
+                    'Daily portfolio and benchmark returns. Exact values shown above.',
+                    '组合与基准日频收益；精确数值显示在上方。',
                   ),
                   child: MouseRegion(
                     onHover: (e) => inspect(e.localPosition.dx),
@@ -766,6 +783,43 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
             ],
           ),
           const SizedBox(height: 10),
+          if (universe == 'nasdaq100' &&
+              (metrics['qqq']?.isNotEmpty ?? false)) ...[
+            Text(
+              w(
+                'QQQ benchmark · selected range · total return, before trading costs',
+                'QQQ 基准 · 所选区间 · 总回报，未计交易费用',
+              ),
+              style: s(12, true, color('qqq')),
+            ),
+            Wrap(
+              spacing: 20,
+              runSpacing: 8,
+              children: [
+                for (final item in [
+                  (
+                    w('Total return', '累计收益'),
+                    pct(metrics['qqq']!['totalReturn']),
+                  ),
+                  (w('CAGR', '年化收益'), pct(metrics['qqq']!['cagr'])),
+                  (
+                    w('Sharpe · 0% Rf', '夏普 · 0% 无风险'),
+                    decimal(metrics['qqq']!['sharpeZeroRf']),
+                  ),
+                  (
+                    w('Annualized vol', '年化波动率'),
+                    pct(metrics['qqq']!['volatility']),
+                  ),
+                  (
+                    w('Max drawdown', '最大回撤'),
+                    pct(metrics['qqq']!['maxDrawdown']),
+                  ),
+                ])
+                  Text('${item.$1}: ${item.$2}', style: s(12)),
+              ],
+            ),
+            const SizedBox(height: 10),
+          ],
           Text(
             w(
               'Statistics use every daily observation in the selected range, not sampled chart points.',

@@ -7,7 +7,7 @@ from pathlib import Path
 from .test_pipeline import RunnerTest
 from .pipeline.snapshots import freeze,load
 from .pipeline.rule_dependencies import external_input
-from .pipeline.rule_builder import new_quarter_due
+from .pipeline.rule_builder import new_quarter_due,reusable_benchmark
 from .pipeline.registry import tasks,DATA_DAILY_GROUPS
 from .pipeline.planner import plan
 
@@ -54,6 +54,15 @@ class RuleExternalSnapshotTest(unittest.TestCase):
 
 
 class QuarterClockTest(unittest.TestCase):
+    def test_unchanged_session_requires_qqq_migration_for_legacy_bundle(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            parent=Path(d);source=parent/'nasdaq100.json'
+            source.write_text(json.dumps({'backtest':{}}))
+            self.assertFalse(reusable_benchmark(parent))
+            source.write_text(json.dumps({'backtest':{'qqqBenchmark':{'ticker':'QQQ'}}}))
+            self.assertTrue(reusable_benchmark(parent))
+
     def test_only_observed_new_quarter_session_is_executable(self):
         self.assertFalse(new_quarter_due(['2026-06-30'],['2026-09-30'],'2026-09-30'))
         self.assertTrue(new_quarter_due(['2026-06-30'],['2026-09-30','2026-10-01'],'2026-10-01'))

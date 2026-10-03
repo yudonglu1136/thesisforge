@@ -644,3 +644,20 @@ all 21 scoped widget tests pass. Real ANET browser checks cover both languages
 at desktop/mobile, and the English mobile footer overflow found in testing was
 fixed. This entry records local verification, not a production release; see
 `rule-trade-intervals-2026-09-24.md`.
+
+### 2026-10-03 QQQ universe benchmark (local)
+
+Nasdaq/QQQ universe adds an independently toggled QQQ total-return benchmark,
+retaining SPY. Both languages include explicit missing-benchmark messaging and
+QQQ selected-range return, CAGR, Sharpe, volatility and drawdown. The daily bundle
+builder reads canonical QQQ adjusted marks offline; gaps fail validation instead
+of substituting SPY. Previously published benchmark history is retained and
+extensions bridge adjusted-price scaling. Legacy bundles remain readable but do
+not claim QQQ availability. New EN/ZH 390px widget tests verify universe switching,
+range rebasing and toggling; 21 scoped widget tests, 18 scoped Node tests, 60
+performance tests, Flutter analysis and production compilation pass. This entry
+does not certify browser rendering, production installation or live QQQ data.
+Full Flutter regression: 654 passed. Read-only canonical QQQ integration checks
+1,688 sessions through 2026-09-21 against the local Nasdaq snapshot; no files or
+published data were replaced. Local canonical data does not yet cover the online
+2026-10-01 endpoint, so this is not certification of that production interval.

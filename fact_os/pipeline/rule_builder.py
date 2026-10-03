@@ -23,6 +23,12 @@ def new_quarter_due(quarters,sessions,end):
     return False
 
 
+def reusable_benchmark(parent):
+    """Old same-session bundles still require the one-time QQQ migration."""
+    nasdaq=json.loads((parent/'nasdaq100.json').read_text())
+    return nasdaq.get('backtest',{}).get('qqqBenchmark',{}).get('ticker')=='QQQ'
+
+
 def build_rules(spec,snapshot,plan,store):
     from .builders import execute
     root=Path(snapshot.root);parent=root/'external/parent';bootstrap=root/'external/bootstrap'
@@ -36,7 +42,7 @@ def build_rules(spec,snapshot,plan,store):
     directory=store.root/'derived/pipeline/strategy_inputs'/plan.inputFingerprint
     directory.mkdir(parents=True,exist_ok=True)
     bundle=directory/'bundle'
-    if has_parent and end==dashboard['dataThrough'] and not bundle.exists():
+    if has_parent and end==dashboard['dataThrough'] and not bundle.exists() and reusable_benchmark(parent):
         # No new observed session: preserve exact curve and ledger bytes. A
         # financial revision cannot silently rewrite an already published run.
         import tempfile,shutil,os

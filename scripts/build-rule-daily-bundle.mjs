@@ -11,6 +11,7 @@ import {refreshRuleSnapshot} from '../server/rulePortfolioRefresh.js';
 import {buildRulePortfolioBundle,validateRulePortfolioBundle} from '../server/rulePortfolioBundleBuild.js';
 import {RULE_BUNDLE_UNIVERSES,ruleBundlePaths} from '../server/rulePortfolioBundle.js';
 import {appendRuleQuarterSelections} from '../server/ruleQuarterAppend.js';
+import {attachQqqBenchmark} from '../server/ruleBenchmark.js';
 
 // Offline worker only. No network fetch, mutable writer database or API request
 // computation. Caller freezes the canonical root and exact parent artifacts.
@@ -51,7 +52,11 @@ for(const universe of RULE_BUNDLE_UNIVERSES){
   const current=await canonicalRulePrices(request);
   current.set('SPY',new Map(benchmark.map(r=>[r.date,r.value])));
   const vintage=extendPublishedPriceVintage(source,ledger,current,{newSymbols:appended.newSymbols});
-  const result=refreshRuleSnapshot(appended.snapshot,vintage.prices,end);
+  let result=refreshRuleSnapshot(appended.snapshot,vintage.prices,end);
+  if(universe==='nasdaq100'){
+    const qqq=await queryFacts('get_price_history',['QQQ',source.backtest.from,end,PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE]);
+    result=attachQqqBenchmark(source,result,qqq,generation);
+  }
   result.lineage={...result.lineage,dailyRefresh:{method:'rule-daily-vintage-v1',sourceManifestSha256,
     sourceGeneration:generation,parentSnapshot:source.snapshotId,parentBundle:parent?.identity??null,
     priceVintage:vintage.basis,bridges:vintage.bridges,archiveIdentity:archive.archiveIdentity,

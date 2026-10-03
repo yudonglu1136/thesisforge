@@ -130,6 +130,21 @@ class _RuleApi extends ApiClient {
   }
 }
 
+class _QqqRuleApi extends _RuleApi {
+  @override
+  Map<String, dynamic> payload([String universe = 'all']) {
+    final value = super.payload(universe);
+    if (universe == 'nasdaq100') {
+      final rows = value['backtest']['curve'] as List;
+      for (var i = 0; i < rows.length; i++) {
+        rows[i]['qqq'] =
+            1 + i / 1000; // Widget fixture, not published market data.
+      }
+    }
+    return value;
+  }
+}
+
 Future<void> _mount(
   WidgetTester tester,
   _RuleApi api, {
@@ -165,6 +180,45 @@ Future<void> _mount(
 }
 
 void main() {
+  for (final language in [AppLanguage.en, AppLanguage.zh]) {
+    testWidgets(
+      'QQQ benchmark switches with universe and rebases range: $language',
+      (tester) async {
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final api = _QqqRuleApi();
+        await _mount(
+          tester,
+          api,
+          size: const Size(390, 844),
+          language: language,
+        );
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('curve-toggle-qqq')), findsNothing);
+        await tester.tap(find.byKey(const ValueKey('rule-universe-nasdaq100')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('curve-toggle-qqq')), findsOneWidget);
+        expect(find.byKey(const ValueKey('curve-toggle-spy')), findsOneWidget);
+        StrategyCurvePainter painter() => tester
+            .widgetList<CustomPaint>(find.byType(CustomPaint))
+            .map((w) => w.painter)
+            .whereType<StrategyCurvePainter>()
+            .first;
+        expect(painter().series['qqq']!.first, 100);
+        tester.widget<RangeSlider>(find.byType(RangeSlider)).onChanged!(
+          const RangeValues(.5, 1),
+        );
+        await tester.pumpAndSettle();
+        expect(painter().series['qqq']!.first, 100);
+        final qqq = find.byKey(const ValueKey('curve-toggle-qqq'));
+        await tester.ensureVisible(qqq);
+        await tester.tap(qqq);
+        await tester.pumpAndSettle();
+        expect(painter().series.containsKey('qqq'), isFalse);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
   testWidgets('warming retries stop at the bound and cancel when disposed', (
     tester,
   ) async {
