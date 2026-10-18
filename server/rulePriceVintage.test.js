@@ -35,3 +35,21 @@ test('exchange equivalent marks are resolved from existing audited entitlement, 
   assert.equal(result.prices.get('NEW').get('2026-09-22'),55);
   assert.equal(result.prices.has('OLD'),false);
 });
+
+test('terminal-day first selection uses its observed entry close without inventing a historical anchor',()=>{
+  const s=structuredClone(snapshot);
+  s.styles[0].quarters=[{executionDate:s.dataThrough,positions:[{ticker:'NEW'}]}];
+  s.styles[0].trades=[];
+  const current=new Map([['NEW',new Map([[s.dataThrough,50],['2026-09-22',55]])]]);
+  const out=extendPublishedPriceVintage(s,fixture(),current);
+  assert.equal(out.prices.get('NEW').get(s.dataThrough),50);
+  assert.equal(out.prices.get('NEW').get('2026-09-22'),55);
+  assert.equal(out.bridges.NEW.factor,1);
+  assert.throws(()=>extendPublishedPriceVintage(s,fixture(),new Map([
+    ['NEW',new Map([['2026-09-22',55]])]])),/new_entry_missing/);
+  s.styles[0].trades=[{date:s.dataThrough}];
+  assert.throws(()=>extendPublishedPriceVintage(s,fixture(),current),/anchor_missing/);
+  s.styles[0].trades=[];
+  s.styles[0].quarters.unshift({executionDate:'2026-06-01',positions:[{ticker:'NEW'}]});
+  assert.throws(()=>extendPublishedPriceVintage(s,fixture(),current),/anchor_missing/);
+});
