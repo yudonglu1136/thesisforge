@@ -53,3 +53,21 @@ test('terminal-day first selection uses its observed entry close without inventi
   s.styles[0].quarters.unshift({executionDate:'2026-06-01',positions:[{ticker:'NEW'}]});
   assert.throws(()=>extendPublishedPriceVintage(s,fixture(),current),/anchor_missing/);
 });
+
+test('terminal-day re-entry bridges its actual execution mark while preserving older history',()=>{
+  const s=structuredClone(snapshot),l=fixture();
+  s.styles[0].quarters=[{executionDate:'2026-06-01',positions:[{ticker:'A'}]},
+    {executionDate:s.dataThrough,positions:[{ticker:'A'}]}];
+  s.styles[0].trades=[];
+  l.styles[0].days[1].positions.clear();
+  const current=new Map([['A',new Map([['2026-09-18',50],[s.dataThrough,60],['2026-09-22',65]])]]);
+  const out=extendPublishedPriceVintage(s,l,current);
+  assert.equal(out.prices.get('A').get('2026-09-18'),100);
+  assert.equal(out.prices.get('A').get(s.dataThrough),120);
+  assert.equal(out.prices.get('A').get('2026-09-22'),130);
+  assert.equal(out.prices.get('A').size,3);
+  current.get('A').delete(s.dataThrough);
+  assert.throws(()=>extendPublishedPriceVintage(s,l,current),/new_entry_missing/);
+  s.styles[0].trades=[{date:s.dataThrough}];
+  assert.equal(extendPublishedPriceVintage(s,l,current).prices.get('A').has(s.dataThrough),false);
+});

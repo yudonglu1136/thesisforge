@@ -44,10 +44,11 @@ export function extendPublishedPriceVintage(snapshot, ledger, current,{newSymbol
     // simulator executes only quarters strictly before its end. It therefore
     // has no inherited units. Require the actual boundary close, and never
     // apply this exception to a previously selected or executed security.
-    const boundaryEntry = snapshot.styles.some(s =>
+    const boundarySelection = snapshot.styles.some(s =>
       (s.quarters??[]).some(q => q.executionDate===snapshot.dataThrough &&
         q.positions.some(p=>p.ticker===ticker)) &&
-      !(s.trades??[]).some(t=>t.date===snapshot.dataThrough)) &&
+      !(s.trades??[]).some(t=>t.date===snapshot.dataThrough));
+    const boundaryEntry = boundarySelection &&
       snapshot.styles.every(s => !(s.quarters??[]).some(q =>
         q.executionDate<snapshot.dataThrough && q.positions.some(p=>p.ticker===ticker)));
     const entry = boundaryEntry ? snapshot.dataThrough : newSymbols[ticker];
@@ -67,6 +68,15 @@ export function extendPublishedPriceVintage(snapshot, ledger, current,{newSymbol
     if(!(Number.isFinite(before)&&before>0))throw new Error('vintage_invalid_anchor');
     const factor=recorded.get(anchor)/before;
     bridges[ticker]={date:anchor,recordedPrice:recorded.get(anchor),currentPrice:before,factor};
+    // A previously exited stock can re-enter at the unexecuted terminal
+    // selection. Its ledger has older units but no terminal-day position mark.
+    // Add only that actual execution observation, bridged to the same units;
+    // never fill historical holding gaps or overwrite an existing mark.
+    if(boundarySelection&&!recorded.has(snapshot.dataThrough)){
+      const p=observations.get(snapshot.dataThrough);
+      if(!(Number.isFinite(p)&&p>0))throw new Error('vintage_new_entry_missing');
+      recorded.set(snapshot.dataThrough,p*factor);
+    }
     for(const [d,p] of future){
       if(!(Number.isFinite(p)&&p>0))throw new Error('vintage_invalid_price');
       recorded.set(d,p*factor);
