@@ -28,6 +28,7 @@ data/fact_os/
 # Immutable local release databases are built/deployed artifacts, never source.
 data/releases/
 .venv-fact-os/
+tmp/futu-connector-venv/
 
 # Backend/runtime data artifacts belong in AWS, not GitHub/Vercel.
 server/data/*
