@@ -256,6 +256,35 @@ function decryptJson(value, aad = encryptionAad) {
 const reportHash = value => crypto.createHash("sha256").update(value).digest("hex");
 const reportAad = user => Buffer.from(`thesisforge-portfolio-report-v1:${userHashFromUser(user)}`);
 const analysisAad = user => Buffer.from(`thesisforge-portfolio-analysis-v1:${userHashFromUser(user)}`);
+
+// New broker connections coexist with IBKR; never change its revision or reports.
+export function brokerOwnerHash(user) { return userHashFromUser(user); }
+export function updateReadOnlyBroker(user, provider, update) {
+  if (!['questrade', 'futu'].includes(provider)) throw new Error('broker_invalid');
+  const db = openUserDb(user);
+  db.exec(`CREATE TABLE IF NOT EXISTS readonly_brokers (
+    provider TEXT PRIMARY KEY, encrypted_json TEXT NOT NULL)`);
+  const aad = Buffer.from(`readonly-broker-v1:${userHashFromUser(user)}:${provider}`);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const row = db.prepare('SELECT encrypted_json FROM readonly_brokers WHERE provider=?').get(provider);
+    const old = row ? decryptJson(row.encrypted_json, aad) : null;
+    const value = update(old);
+    if (value !== undefined) {
+      if (value === null) db.prepare('DELETE FROM readonly_brokers WHERE provider=?').run(provider);
+      else db.prepare(`INSERT INTO readonly_brokers VALUES (?,?)
+        ON CONFLICT(provider) DO UPDATE SET encrypted_json=excluded.encrypted_json`)
+        .run(provider, encryptJson(value, aad));
+    }
+    db.exec('COMMIT');
+    return value === undefined ? old : value;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+export function readReadOnlyBroker(user, provider) {
+  if (!['questrade', 'futu'].includes(provider)) throw new Error('broker_invalid');
+  if (!fs.existsSync(userDbPath(user))) return null;
+  return updateReadOnlyBroker(user, provider, () => undefined);
+}
 const reportError = code => Object.assign(new Error(code), { code });
 const reportDate = value => {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;

@@ -93,7 +93,47 @@ class ConnectApi extends ApiClient {
   }
 }
 
+class ReadOnlyApi extends ConnectApi {
+  @override
+  Future<Map<String, dynamic>> getJson(String path) async => {
+    'connected': true, 'status': 'connected', 'snapshot': {
+      'retrievedAt': '2026-10-30T07:00:00Z', 'accounts': [{
+        'id': '1234', 'name': 'Synthetic',
+        'balances': [{'currency': 'CAD', 'totalEquity': 100, 'cash': 10}],
+        'positions': [{'ticker': 'EXAMPLE', 'quantity': 2, 'price': 45, 'value': 90}],
+      }],
+    },
+  };
+}
+
 void main() {
+  for (final lang in [AppLanguage.en, AppLanguage.zh]) {
+    for (final provider in ['questrade', 'futu']) {
+      testWidgets('read-only $provider dialog fits mobile ${lang.name}', (t) async {
+        t.view.physicalSize = const Size(390, 844);
+        t.view.devicePixelRatio = 1;
+        addTearDown(t.view.resetPhysicalSize);
+        addTearDown(t.view.resetDevicePixelRatio);
+        final api = ReadOnlyApi();
+        await t.pumpWidget(MaterialApp(home: LanguageScope(language: lang,
+          child: Scaffold(body: PortfolioReadOnlyBroker(api: api, palette: Palette(false), provider: provider)))));
+        await t.pumpAndSettle();
+        expect(t.takeException(), isNull);
+        expect(api.writes, isEmpty);
+        expect(find.textContaining('CAD'), findsOneWidget);
+        if (provider == 'questrade') {
+          expect(t.widget<TextField>(find.byType(TextField)).obscureText, isTrue);
+          await t.enterText(find.byType(TextField), 'synthetic-questrade-token');
+          await t.ensureVisible(find.text(lang == AppLanguage.en ? 'Connect & sync' : '连接并同步'));
+          await t.tap(find.text(lang == AppLanguage.en ? 'Connect & sync' : '连接并同步'));
+          await t.pumpAndSettle();
+          expect(api.writes.single['path'], '/api/portfolio/broker/questrade/connect');
+          expect(api.writes.single.containsKey('ibkrFlexToken'), isFalse);
+          expect(t.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
+        }
+      });
+    }
+  }
   testWidgets(
     'risk route separates real NAV from simulation and exposes benchmark inputs',
     (t) async {
@@ -194,7 +234,7 @@ void main() {
       expect(find.byType(PortfolioIbkrSetup), findsNothing);
     },
   );
-  testWidgets('unconfigured brokers never submit IBKR credentials', (t) async {
+  testWidgets('switching brokers never submits IBKR credentials', (t) async {
     final api = ConnectApi();
     await t.pumpWidget(MaterialApp(home: LanguageScope(
       language: AppLanguage.en,
@@ -206,7 +246,7 @@ void main() {
     await t.tap(find.text('Questrade').last);
     await t.pumpAndSettle();
     expect(find.byType(TextField), findsNothing);
-    expect(t.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNull);
+    expect(t.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNotNull);
     expect(api.writes, isEmpty);
     await t.tap(find.text('Questrade'));
     await t.pumpAndSettle();

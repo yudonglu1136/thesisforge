@@ -155,7 +155,11 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
   }
 
   Future<void> save() async {
-    if (broker != 'ibkr_flex') return;
+    if (broker != 'ibkr_flex') {
+      await showDialog<void>(context: context, builder: (_) => PortfolioReadOnlyBroker(
+        api: widget.api, palette: widget.palette, provider: broker));
+      return;
+    }
     if (token.text.trim().isEmpty ||
         !RegExp(r'^\d+$').hasMatch(query.text.trim()) ||
         (history.text.trim().isNotEmpty &&
@@ -241,10 +245,10 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
                 Text(w('Read-only account access', '只读账户访问')),
                 const SizedBox(height: 12),
                 Text(broker == 'questrade'
-                    ? w('Questrade uses broker authorization. The authorization integration is not enabled on this platform yet. No account has been connected; do not enter your broker password here.',
-                        'Questrade 使用券商授权。本平台尚未启用该授权接入。目前没有连接任何账户，请勿在此输入券商密码。')
-                    : w('Futu / moomoo requires its official OpenD gateway. The gateway integration is not enabled on this platform yet. No account has been connected; do not expose your OpenD port to the internet.',
-                        '富途／moomoo 需要官方 OpenD 网关。本平台尚未启用网关接入。目前没有连接任何账户，请勿将 OpenD 端口暴露到公网。'),
+                    ? w('Use a personal API token from Questrade API Centre. Never enter your trading password. Account snapshots are kept separately from IBKR.',
+                        '使用 Questrade API Centre 生成的个人 API Token，请勿输入交易密码。账户快照与 IBKR 分开保存。')
+                    : w('Connect the official OpenD gateway on your Mac. The connector uploads read-only snapshots; keep the OpenD port private.',
+                        '连接这台 Mac 上的官方 OpenD 网关。连接器上传只读快照，请勿将 OpenD 端口暴露到公网。'),
                   style: TextStyle(color: p.muted, height: 1.5)),
                 const SizedBox(height: 12),
                 Text(w('No order placement, cancellation or transfers.', '不提供下单、撤单或转账功能。')),
@@ -317,12 +321,127 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
           child: Text(w('Cancel', '取消')),
         ),
         FilledButton(
-          onPressed: saving || broker != 'ibkr_flex' ? null : save,
+          onPressed: saving ? null : save,
           child: Text(broker == 'ibkr_flex'
               ? w('Connect & sync', '连接并同步')
-              : w('Integration not enabled', '接入尚未启用')),
+              : w('Set up / view account', '设置／查看账户')),
         ),
       ],
+    );
+  }
+}
+
+class PortfolioReadOnlyBroker extends StatefulWidget {
+  const PortfolioReadOnlyBroker({super.key, required this.api,
+    required this.palette, required this.provider});
+  final ApiClient api;
+  final Palette palette;
+  final String provider;
+  @override
+  State<PortfolioReadOnlyBroker> createState() => _PortfolioReadOnlyBrokerState();
+}
+
+class _PortfolioReadOnlyBrokerState extends State<PortfolioReadOnlyBroker> {
+  final token = TextEditingController();
+  Map<String, dynamic>? state;
+  String? pairingToken, failure;
+  bool busy = false;
+  String w(String en, String zh) => context.tr(zh, en);
+  String get endpoint => '/api/portfolio/broker/${widget.provider}';
+  @override
+  void initState() { super.initState(); read(); }
+  @override
+  void dispose() { token.clear(); token.dispose(); super.dispose(); }
+  Future<void> run(Future<void> Function() action) async {
+    setState(() { busy = true; failure = null; });
+    try { await action(); }
+    catch (_) { if (mounted) { setState(() => failure = w(
+      'Request failed. Any saved snapshot remains available; it is not a new sync.',
+      '请求失败。已保存的快照仍保留，但不代表本次同步成功。')); } }
+    finally { if (mounted) setState(() => busy = false); }
+  }
+  Future<void> read() => run(() async {
+    final result = await widget.api.getJson(endpoint);
+    if (mounted) setState(() => state = result);
+  });
+  Future<void> connect() => run(() async {
+    if (widget.provider == 'questrade') {
+      final result = await widget.api.postJson('$endpoint/connect', {'refreshToken': token.text.trim()});
+      token.clear();
+      if (mounted) setState(() => state = result);
+    } else {
+      final result = await widget.api.postJson('$endpoint/pair', {});
+      if (mounted) setState(() => pairingToken = result['connectorToken'] as String?);
+    }
+  });
+  Future<void> sync() => run(() async {
+    final result = await widget.api.postJson('$endpoint/sync', {});
+    if (mounted) setState(() => state = result);
+  });
+  Future<void> disconnect() => run(() async {
+    await widget.api.deleteJson(endpoint);
+    if (mounted) setState(() { state = null; pairingToken = null; token.clear(); });
+  });
+  String value(dynamic n) => n is num ? n.toStringAsFixed(2) : '—';
+  @override
+  Widget build(BuildContext context) {
+    final q = widget.provider == 'questrade';
+    final snapshot = asMap(state?['snapshot']);
+    final accounts = (snapshot['accounts'] as List? ?? []).map(asMap).toList();
+    return AlertDialog(
+      backgroundColor: widget.palette.panel,
+      title: Text('${q ? 'Questrade' : 'Futu / moomoo'} · ${w('Read only', '只读')}'),
+      content: SizedBox(width: 720, child: SingleChildScrollView(child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(w('Broker snapshots · separate from IBKR analysis. No orders or transfers. Values retain broker units; currencies are never added together.',
+            '券商快照，与 IBKR 分析分开显示。不提供下单或转账。保留券商金额单位，不将不同币种直接相加。')),
+          const SizedBox(height: 12),
+          if (q) ...[
+            TextField(controller: token, obscureText: true, autocorrect: false, enableSuggestions: false,
+              decoration: InputDecoration(labelText: w('Personal refresh token', '个人 Refresh Token'))),
+            TextButton(onPressed: () => openBrowserPath('https://www.questrade.com/api/documentation/getting-started'),
+              child: Text(w('Questrade API Centre instructions ↗', 'Questrade API Centre 操作说明 ↗'))),
+          ] else ...[
+            Text(w('Log in to official OpenD on this Mac. Generate a connector token below, then run the connector and paste the token into its hidden prompt. It expires in 30 days; disconnect revokes it immediately.',
+              '在这台 Mac 登录官方 OpenD。下方生成连接器 Token，然后运行连接器，在隐藏输入提示中粘贴。Token 30 天过期；断开连接会立即撤销。')),
+            SelectableText('tmp/futu-connector-venv/bin/python scripts/futu_connector.py --account-id YOUR_ACCOUNT_ID --firm FUTUSECURITIES'),
+            if (pairingToken != null) ...[
+              const SizedBox(height: 12),
+              Text(w('Copy now; this token is only shown here. Keep it private.', '请立即复制；Token 仅在此显示，请勿分享。')),
+              SelectableText(pairingToken!),
+            ],
+          ],
+          Wrap(spacing: 8, children: [
+            FilledButton(onPressed: busy ? null : connect, child: Text(q
+              ? w('Connect & sync', '连接并同步') : w('Generate connector token', '生成连接器 Token'))),
+            if (q && state?['connected'] == true)
+              TextButton(onPressed: busy ? null : sync, child: Text(w('Sync now', '立即同步'))),
+            TextButton(onPressed: busy ? null : read, child: Text(w('Reload snapshot', '重新读取快照'))),
+            if (state?['connected'] == true || pairingToken != null)
+              TextButton(onPressed: busy ? null : disconnect, child: Text(w('Disconnect', '断开连接'))),
+          ]),
+          if (busy) const LinearProgressIndicator(),
+          if (failure != null) Text(failure!, style: TextStyle(color: widget.palette.secondary)),
+          if (state?['status'] == 'error') Text(w('Last sync failed. Snapshot below is retained from an earlier sync.', '最近同步失败。下方为之前保存的快照。')),
+          if (snapshot['retrievedAt'] != null) Text('${w('Retrieved', '读取时间')}: ${snapshot['retrievedAt']}'),
+          if (accounts.isEmpty) Text(w('No account snapshot received yet.', '尚未收到账户快照。')),
+          for (final account in accounts) ...[
+            const Divider(),
+            Text('${account['name']} · ${account['id']}'),
+            for (final b in (account['balances'] as List? ?? []).map(asMap))
+              Text('${b['currency']} · ${w('Equity', '净资产')} ${value(b['totalEquity'])} · ${w('Cash', '现金')} ${value(b['cash'])}'),
+            Text(w('Position values use the broker currency; — means the source did not specify it.', '持仓金额使用券商币种；— 表示来源未提供币种。')),
+            SingleChildScrollView(scrollDirection: Axis.horizontal, child: DataTable(columns: [
+              for (final label in [w('Symbol', '代码'), w('Quantity', '数量'), w('Price', '价格'), w('Value', '市值'), w('Currency', '币种')])
+                DataColumn(label: Text(label)),
+            ], rows: [for (final pos in (account['positions'] as List? ?? []).map(asMap))
+              DataRow(cells: [DataCell(Text('${pos['ticker']}')), DataCell(Text(value(pos['quantity']))),
+                DataCell(Text(value(pos['price']))), DataCell(Text(value(pos['value']))), DataCell(Text('${pos['currency'] ?? '—'}'))])])),
+          ],
+        ],
+      ))),
+      actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(w('Close', '关闭')))],
     );
   }
 }

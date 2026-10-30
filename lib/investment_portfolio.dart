@@ -570,6 +570,10 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
               onPressed: loading ? null : load,
               icon: Icon(Icons.refresh_rounded, color: p.accent),
             ),
+            for (final provider in ['questrade', 'futu'])
+              OutlinedButton(onPressed: () => showDialog<void>(context: context,
+                builder: (_) => PortfolioReadOnlyBroker(api: widget.api, palette: p, provider: provider)),
+                child: Text(provider == 'questrade' ? 'Questrade' : 'Futu / moomoo')),
             privacyToggle(),
           ],
         ),

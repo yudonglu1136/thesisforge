@@ -1,5 +1,13 @@
 # Bilingual Coverage Audit
 
+### 2026-10-30: Questrade and Futu read-only account dialogs (local)
+
+Added bilingual connection, synchronization, retained-snapshot failure,
+disconnect and Mac connector setup states. Both dialogs were widget-tested at
+390x844 in English and Chinese. No real account credentials used. Full Flutter
+suite: 660 passing; static analysis and literal audit passed. Web build passed.
+Production publication and real broker acceptance remain separate pending gates.
+
 ### 2026-09-24: Interval distribution and turnover
 
 EN/ZH now covers two shared-scale loss-to-profit charts, stock counts, exact

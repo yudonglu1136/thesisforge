@@ -444,6 +444,9 @@ app.post("/api/internal/gurus/refresh", requireLoopbackRequest, requireInternalC
 });
 
 app.use("/api/admin", adminResponsePrivacy);
+// Connector capability is upload-only and independently authenticated.
+const {mountBrokerRoutes, mountFutuConnectorRoute} = await import('./readOnlyBrokers.js');
+mountFutuConnectorRoute(app);
 app.use("/api", requireAuth);
 // Apply the owner gate to every current and future Admin route, before reads.
 app.use("/api/admin", requireAdmin);
@@ -494,6 +497,12 @@ app.get("/api/portfolio", async (request, response) => {
     if (respondPortfolioBusy(error, response)) return;
     response.status(500).json({ error: error.message });
   }
+});
+
+mountBrokerRoutes(app);
+app.get("/api/portfolio/brokers", async (_request, response) => {
+  const { portfolioBrokerCatalog } = await import('./portfolioBrokerCatalog.js');
+  response.json(portfolioBrokerCatalog());
 });
 
 app.get("/api/portfolio/connection", async (request, response) => {
