@@ -194,4 +194,30 @@ void main() {
       expect(find.byType(PortfolioIbkrSetup), findsNothing);
     },
   );
+  testWidgets('unconfigured brokers never submit IBKR credentials', (t) async {
+    final api = ConnectApi();
+    await t.pumpWidget(MaterialApp(home: LanguageScope(
+      language: AppLanguage.en,
+      child: Scaffold(body: PortfolioIbkrSetup(api: api, palette: Palette(false))),
+    )));
+    await t.enterText(find.byType(TextField).first, 'synthetic-secret');
+    await t.tap(find.text('Interactive Brokers'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Questrade').last);
+    await t.pumpAndSettle();
+    expect(find.byType(TextField), findsNothing);
+    expect(t.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNull);
+    expect(api.writes, isEmpty);
+    await t.tap(find.text('Questrade'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Futu / moomoo').last);
+    await t.pumpAndSettle();
+    expect(find.byType(TextField), findsNothing);
+    expect(api.writes, isEmpty);
+    await t.tap(find.text('Futu / moomoo'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Interactive Brokers').last);
+    await t.pumpAndSettle();
+    expect(t.widget<TextField>(find.byType(TextField).first).controller!.text, isEmpty);
+  });
 }

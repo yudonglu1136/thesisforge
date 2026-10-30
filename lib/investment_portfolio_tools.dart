@@ -142,6 +142,7 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
       query = TextEditingController(),
       history = TextEditingController();
   bool saving = false;
+  String broker = 'ibkr_flex';
   String? error;
   String w(String en, String zh) => context.tr(zh, en);
   @override
@@ -154,6 +155,7 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
   }
 
   Future<void> save() async {
+    if (broker != 'ibkr_flex') return;
     if (token.text.trim().isEmpty ||
         !RegExp(r'^\d+$').hasMatch(query.text.trim()) ||
         (history.text.trim().isNotEmpty &&
@@ -210,7 +212,7 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
     final p = widget.palette;
     return AlertDialog(
       backgroundColor: p.panel,
-      title: Text(w('Connect your IBKR portfolio', '连接你的 IBKR 组合')),
+      title: Text(w('Add a brokerage account', '添加券商账户')),
       content: SizedBox(
         width: 500,
         child: SingleChildScrollView(
@@ -218,6 +220,36 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              DropdownButtonFormField<String>(
+                initialValue: broker,
+                decoration: InputDecoration(labelText: w('Broker', '券商')),
+                items: const [
+                  DropdownMenuItem(value: 'ibkr_flex', child: Text('Interactive Brokers')),
+                  DropdownMenuItem(value: 'questrade', child: Text('Questrade')),
+                  DropdownMenuItem(value: 'futu', child: Text('Futu / moomoo')),
+                ],
+                onChanged: saving ? null : (value) {
+                  if (value == null) return;
+                  token.clear();
+                  query.clear();
+                  history.clear();
+                  setState(() { broker = value; error = null; });
+                },
+              ),
+              const SizedBox(height: 16),
+              if (broker != 'ibkr_flex') ...[
+                Text(w('Read-only account access', '只读账户访问')),
+                const SizedBox(height: 12),
+                Text(broker == 'questrade'
+                    ? w('Questrade uses broker authorization. The authorization integration is not enabled on this platform yet. No account has been connected; do not enter your broker password here.',
+                        'Questrade 使用券商授权。本平台尚未启用该授权接入。目前没有连接任何账户，请勿在此输入券商密码。')
+                    : w('Futu / moomoo requires its official OpenD gateway. The gateway integration is not enabled on this platform yet. No account has been connected; do not expose your OpenD port to the internet.',
+                        '富途／moomoo 需要官方 OpenD 网关。本平台尚未启用网关接入。目前没有连接任何账户，请勿将 OpenD 端口暴露到公网。'),
+                  style: TextStyle(color: p.muted, height: 1.5)),
+                const SizedBox(height: 12),
+                Text(w('No order placement, cancellation or transfers.', '不提供下单、撤单或转账功能。')),
+              ],
+              if (broker == 'ibkr_flex') ...[
               Text(
                 w(
                   'Read-only reporting access. Never enter your IBKR trading password.',
@@ -274,6 +306,7 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
                 const LinearProgressIndicator(),
                 Text(w('IBKR is preparing your report…', 'IBKR 正在准备报告…')),
               ],
+              ],
             ],
           ),
         ),
@@ -284,8 +317,10 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
           child: Text(w('Cancel', '取消')),
         ),
         FilledButton(
-          onPressed: saving ? null : save,
-          child: Text(w('Connect & sync', '连接并同步')),
+          onPressed: saving || broker != 'ibkr_flex' ? null : save,
+          child: Text(broker == 'ibkr_flex'
+              ? w('Connect & sync', '连接并同步')
+              : w('Integration not enabled', '接入尚未启用')),
         ),
       ],
     );
