@@ -11,7 +11,8 @@ from .checks import verify_files
 from .builders import build
 
 
-def run(store,*,profile='local',scheduled_for=None,failed_sources=(),specs=None,builder=build,external=None):
+def run(store,*,profile='local',scheduled_for=None,failed_sources=(),specs=None,builder=build,external=None,capacity_check=None):
+    if capacity_check:capacity_check('snapshot')
     specs=tuple(specs or tasks(profile=profile))
     ledger=Ledger(store)
     version=digest([record(s) for s in specs])
@@ -37,8 +38,10 @@ def run(store,*,profile='local',scheduled_for=None,failed_sources=(),specs=None,
             elif item.reusedOutputs:
                 result={**item.reusedOutputs,'status':'unchanged'}
             else:
+                if capacity_check:capacity_check('build:'+spec.id)
                 ledger.task(run_id,spec.id,item.inputFingerprint,'running')
                 result=record(builder(spec,snapshot,item,store))
+                if capacity_check:capacity_check('built:'+spec.id)
                 verify_files(store.root,result['files'])
                 ledger.task(run_id,spec.id,item.inputFingerprint,'succeeded',result)
             if result['status'] in ('blocked','failed'):

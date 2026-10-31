@@ -228,12 +228,13 @@ class Synchronizer:
                     'length':match[1] if match else probe.headers.get('content-length')}
                 next(probe.iter_bytes(chunk_size=1),b'')
             length=int(identity['length'] or 0)
-            if length<=0 or length+5*1024**3>shutil.disk_usage(self.store.root).free:
-                raise UpstreamError('bulk length unavailable or insufficient disk headroom')
+            from .capacity import capacity_budget
+            # Budget actual bytes still to download, not a fixed 5 GiB margin.
             saved=json.loads(meta.read_text()) if meta.exists() else None
             offset=target.stat().st_size if target.exists() and identity['etag'] and saved==identity else 0
+            if length<=0 or offset>length or capacity_budget(self.store.root,length-offset)['status']=='blocked':
+                raise UpstreamError('bulk length unavailable or insufficient disk headroom')
             meta.write_text(json.dumps(identity))
-            if offset>length:raise UpstreamError('partial download exceeds verified source length')
             if length>=32*1024*1024 and match:
                 self._segmented_download(download,url,target,identity,offset,length)
             elif offset<length:

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+from ..capacity import capacity_budget
 import time
 from ..contracts import TABLES
 from ..store import Store,now
@@ -95,18 +96,21 @@ def main():
         if args.data_only and receipt.get('profile')!='aws-data-daily':
             raise ValueError('data_daily_resume_profile_mismatch')
     else:
-        # Conservative launch budget for raw staging, changed partitions and
-        # builds. Retention is deliberate: never delete archives/pins to make
-        # a scheduled run green. Recheck actual capacity on every invocation.
-        free=shutil.disk_usage(root).free
-        budget={'scheduledFor':args.scheduled_for,'checkedAt':now(),
-                'freeBytes':free,'estimatedAdditionalBytes':8*1024**3,
-                'reserveBytes':8*1024**3,'sourceFetchStarted':False,
-                'status':'ready' if free>=16*1024**3 else 'blocked',
-                'retention':'preserve_raw_archives_saved_snapshots_and_rollback'}
-        (root/'audit/pipeline').mkdir(parents=True,exist_ok=True)
-        Store._atomic_if_changed(root/'audit/pipeline/capacity-latest.json',encode(budget).decode())
-        emit({'phase':'capacity',**budget})
+        # A free-space floor is not a measured daily increment. Do not charge
+        # every small incremental run a fictitious 8 GiB build allocation.
+        # Known payload sizes are budgeted separately by their transfer code.
+        source_fetch_started=False
+        def check_capacity(stage):
+            budget={'scheduledFor':args.scheduled_for,'checkedAt':now(),
+                    **capacity_budget(root),'stage':stage,
+                    'sourceFetchStarted':source_fetch_started,
+                    'estimateBasis':'known_additional_bytes_only',
+                    'retention':'preserve_raw_archives_saved_snapshots_and_rollback'}
+            (root/'audit/pipeline').mkdir(parents=True,exist_ok=True)
+            Store._atomic_if_changed(root/'audit/pipeline/capacity-latest.json',encode(budget).decode())
+            emit({'phase':'capacity',**budget})
+            return budget
+        budget=check_capacity('launch')
         if budget['status']=='blocked':return 2
         key=boto3.client('secretsmanager').get_secret_value(SecretId=os.environ['FACT_OS_SECRET_ID'])['SecretString']
         if not key or key=='test-api-key':raise ValueError('paid_native_key_required')
@@ -119,11 +123,14 @@ def main():
             with sync.job_lock():
                 store.recover_catalog()
                 for table in TABLES:
+                    if check_capacity('source:'+table)['status']=='blocked':return 2
+                    source_fetch_started=True
                     try:emit({'phase':'source','table':table,**sync_source(sync,table,emit)})
                     except Exception as error:
                         code=str(error) if isinstance(error,UpstreamError) else type(error).__name__
                         store.record_error(table,code);failed.append(table)
                         emit({'phase':'source','table':table,'status':'failed','code':code})
+                if check_capacity('dependencies')['status']=='blocked':return 2
                 external={};specs=None
                 if args.rule_portfolios:
                     from .registry import tasks
@@ -134,8 +141,10 @@ def main():
                         emit({'phase':'rule_dependencies','status':'failed','errorType':type(error).__name__})
                         # Missing external inputs block this group and prevent
                         # activation; accepted source facts remain retained.
+                def require_build_space(stage):
+                    if check_capacity(stage)['status']=='blocked':raise ValueError('insufficient_worker_capacity')
                 receipt={**run(store,profile='aws-data-daily' if args.data_only else 'aws-daily',scheduled_for=args.scheduled_for,failed_sources=failed,
-                              specs=specs,external=external),
+                              specs=specs,external=external,capacity_check=require_build_space),
                          'workerCodeCommit':code_commit}
         finally:sync.close()
     # Publication has its own serialized fence even during resume.

@@ -55,8 +55,9 @@ class WorkerBoundaryTest(unittest.TestCase):
     def setUp(self):
         # Synthetic worker roots live under /tmp, not the production data
         # volume. These protocol tests must not depend on the host root disk's
-        # free space; the dedicated capacity test overrides this with 1 KiB.
-        capacity=patch.object(aws_worker.shutil,'disk_usage',return_value=SimpleNamespace(free=32*1024**3))
+        # free space. 3 GiB also proves the former 16 GiB gate is gone;
+        # the dedicated capacity test overrides this with 1 KiB.
+        capacity=patch.object(aws_worker.shutil,'disk_usage',return_value=SimpleNamespace(free=3*1024**3))
         capacity.start();self.addCleanup(capacity.stop)
 
     def test_activation_requires_explicit_daily_profile(self):

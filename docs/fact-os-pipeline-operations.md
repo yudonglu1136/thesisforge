@@ -155,11 +155,16 @@ expiry is enabled until saved-research and rollback retention reconciliation is
 verified. Raw archives are never GC candidates. This conservative retention
 requires capacity monitoring; it is not an unlimited-storage claim.
 
-The worker now records `audit/pipeline/capacity-latest.json` before resolving
-the source credential: an 8 GiB incremental/staging/build allowance plus an
-8 GiB free-space reserve. Insufficient space fails before source fetch. This
-is a conservative launch budget, not an upper bound on future supplier history;
-capacity must still be reviewed as coverage grows.
+The worker records `audit/pipeline/capacity-latest.json` before resolving the
+source credential. The 2026-10-31 user-authorized policy replaces the fixed
+8 GiB build allowance plus 8 GiB reserve with a **2 GiB free-space floor**.
+Launch does not invent an additional-byte estimate. Recheck before each source,
+external dependencies, snapshot creation, and before/after each changed build.
+Full-archive transfers separately budget their verified remaining bytes plus
+the 2 GiB floor (replacing the former 5 GiB margin). The API installer's separate
+1 GiB reserve and actual candidate-byte checks remain unchanged. Stage checks
+are not continuous peak-allocation measurements; a large single build can still
+need more space. Code/test success does not prove deployment of this new policy.
 
 For operator-authorized consolidation of legacy duplicate canonical files,
 `scripts/deduplicate-canonical-release-files.py --root /var/app/data/fact-os`
