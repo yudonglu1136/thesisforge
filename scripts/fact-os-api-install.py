@@ -8,6 +8,7 @@ import pwd
 import sqlite3
 import subprocess
 import sys
+import time
 import urllib.request
 from datetime import date
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
@@ -17,6 +18,24 @@ from fact_os.pipeline.contracts import digest
 from fact_os.contracts import TABLES
 
 PUBLIC_DAILY_GROUPS={'canonical','ai_insights','institutional_13f','public_observations','research_inputs','strategy_inputs'}
+
+def validator_environment(environment=None):
+    # Offline validators must leave memory for the live API on the 2 GiB host.
+    # An allocation failure rejects installation; it never skips validation.
+    return {**(os.environ if environment is None else environment),
+            'NODE_OPTIONS':'--max-old-space-size=256'}
+
+def wait_for_ack(request, *, opener=urllib.request.urlopen, clock=time.monotonic, sleep=time.sleep, budget=600):
+    """202 is preparation, never an ACK. Terminal failures retain rollback semantics."""
+    deadline=clock()+budget
+    while clock()<deadline:
+        with opener(request,timeout=min(120,deadline-clock())) as response:
+            body=json.load(response)
+            if response.status==200:return body
+            if response.status!=202 or body.get('status')!='preparing':
+                raise ValueError('live_api_verification_failed')
+        sleep(min(2,max(0,deadline-clock())))
+    raise TimeoutError('live_api_verification_deadline')
 
 def scoped_candidate(candidate,scope):
     if scope=='public-daily':
@@ -103,7 +122,7 @@ def main():
                 raise ValueError('canonical_input_vector_invalid')
             if name!='strategy_inputs' or manifest.get('compatibilityVersion')!='rule-portfolio-bundle-v1':return
             script="import {validateRulePortfolioBundle} from './server/rulePortfolioBundleBuild.js'; validateRulePortfolioBundle(process.argv[1]);"
-            result=subprocess.run(['runuser','-u','webapp','--','node','--input-type=module','-e',script,str(path)],capture_output=True,timeout=120)
+            result=subprocess.run(['runuser','-u','webapp','--','node','--input-type=module','-e',script,str(path)],capture_output=True,timeout=120,env=validator_environment())
             if result.returncode:raise ValueError('rule_bundle_production_validator_failed')
             return
         if name=='ai_insights':
@@ -111,7 +130,7 @@ def main():
         elif name=='institutional_13f':
             script="import {validateInstitutional13fArtifact} from './server/investmentRuntimeConfig.js'; validateInstitutional13fArtifact(process.argv[1]+'/13f-insights.sqlite',process.argv[1]+'/manifest.json');"
         else:raise ValueError('unregistered_install_validator')
-        result=subprocess.run(['runuser','-u','webapp','--','node','--input-type=module','-e',script,str(path)],capture_output=True)
+        result=subprocess.run(['runuser','-u','webapp','--','node','--input-type=module','-e',script,str(path)],capture_output=True,timeout=120,env=validator_environment())
         if result.returncode:raise ValueError('existing_production_validator_failed:'+name)
     def probe(installed,activated):
         canonical=installed['groups'].get('canonical',{}).get('root')
@@ -132,7 +151,7 @@ def main():
         if not secret:raise ValueError('internal_ack_credential_missing')
         endpoint='/api/internal/research-data-release' if args.scope=='research' else '/api/internal/data-release'
         request=urllib.request.Request('http://127.0.0.1:'+str(api_port(config))+endpoint,headers={'Authorization':'Bearer '+secret})
-        with urllib.request.urlopen(request,timeout=120) as response:body=json.load(response)
+        body=wait_for_ack(request)
         validate_live_ack(body,installed,args.scope)
         return {'status':'verified','releaseId':installed['releaseId'],'actualApiUserRead':True,'canonicalReadVerified':True,
                 'groups':{k:v['generationId'] for k,v in body['groups'].items()},'scope':args.scope,

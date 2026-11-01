@@ -1,4 +1,5 @@
 import importlib.util
+import io
 from pathlib import Path
 import unittest
 import tempfile
@@ -86,6 +87,35 @@ class ApiInstallPortTest(unittest.TestCase):
                 installer.validate_live_ack({**body,'groups':groups},installed)
         with self.assertRaisesRegex(ValueError,'live_api_coverage_incomplete'):
             installer.validate_live_ack({**body,'coverage':body['coverage'][:-1]},installed)
+
+
+class ValidatorBudgetTest(unittest.TestCase):
+    def test_heap_is_bounded_without_mutating_parent_environment(self):
+        original={'NODE_OPTIONS':'--max-old-space-size=4096','PATH':'/usr/bin'}
+        result=installer.validator_environment(original)
+        self.assertEqual(result['NODE_OPTIONS'],'--max-old-space-size=256')
+        self.assertEqual(result['PATH'],'/usr/bin')
+        self.assertEqual(original['NODE_OPTIONS'],'--max-old-space-size=4096')
+
+class AckPollingTest(unittest.TestCase):
+    def test_pending_is_not_success(self):
+        now=[0];statuses=iter([(202,{'status':'preparing'}),(200,{'status':'verified'})])
+        def opener(request,timeout):
+            status,body=next(statuses)
+            response=io.StringIO(json.dumps(body));response.status=status
+            return response
+        result=installer.wait_for_ack(None,opener=opener,clock=lambda:now[0],sleep=lambda s:now.__setitem__(0,now[0]+s))
+        self.assertEqual(result['status'],'verified');self.assertEqual(now[0],2)
+
+    def test_pending_deadline_and_terminal_failure(self):
+        for status,body,error in [(202,{'status':'preparing'},TimeoutError),(503,{'status':'failed'},ValueError),
+                                  (202,{'status':'verified'},ValueError)]:
+            now=[0]
+            def opener(request,timeout):
+                response=io.StringIO(json.dumps(body));response.status=status;return response
+            with self.assertRaises(error):
+                installer.wait_for_ack(None,opener=opener,clock=lambda:now[0],
+                    sleep=lambda s:now.__setitem__(0,now[0]+s),budget=3)
 
 
 if __name__ == '__main__':
