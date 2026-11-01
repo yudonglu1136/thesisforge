@@ -63,9 +63,14 @@ def open_reader_check(targets):
                 if any(value==str(p) or value.startswith(str(p)+'/') for p in targets):raise ValueError('open_reader')
         except FileNotFoundError:continue
 
-def prune(root,lease_root,candidate,s3,bucket,*,apply=False):
+def prune(root,lease_root,candidate,s3,bucket,*,apply=False,retired_failed_generation=None):
     root=Path(root).resolve();lease_root=Path(lease_root).resolve()
-    report={'applied':apply,'deletedFiles':0,'deletedGenerations':[],'restorableFromS3':True}
+    if retired_failed_generation is not None and (
+            not HEX.fullmatch(retired_failed_generation) or len(candidate['groups'])!=1 or
+            next(iter(candidate['groups'].values()))['generationId']!=retired_failed_generation):
+        raise ValueError('invalid_failed_generation_override')
+    report={'applied':apply,'deletedFiles':0,'deletedGenerations':[],'restorableFromS3':True,
+            'retiredFailedGeneration':retired_failed_generation}
     with ExitStack() as stack:
         lock=stack.enter_context((root/'install.lock').open('a'));fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         protected,pointers=referenced(root);report['pointerChecksums']=pointers
@@ -76,7 +81,9 @@ def prune(root,lease_root,candidate,s3,bucket,*,apply=False):
             if (group,generation) in protected:raise ValueError('active_reference')
             base=member(root,'releases/'+group+'/'+generation)
             if not base.exists():continue
-            if base.stat().st_mtime>time.time()-7*86400:raise ValueError('retention_window')
+            # Explicit operator retirement of one rejected candidate may skip
+            # the age window; every reference, lease and checksum gate remains.
+            if generation!=retired_failed_generation and base.stat().st_mtime>time.time()-7*86400:raise ValueError('retention_window')
             lease=stack.enter_context((lease_root/(hashlib.sha256(str(base).encode()).hexdigest()+'.lock')).open('a'))
             fcntl.flock(lease,fcntl.LOCK_EX|fcntl.LOCK_NB)
             key=item['manifestKey']

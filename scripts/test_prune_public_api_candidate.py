@@ -37,4 +37,12 @@ class Tests(unittest.TestCase):
  def test_local_corruption(self):
   self.file.chmod(0o644);self.file.write_bytes(b'changed');self.file.chmod(0o444)
   with self.assertRaisesRegex(ValueError,'checksum'):self.run_prune(True)
+ def test_exact_rejected_candidate_retirement_still_protects_active(self):
+  os.utime(self.base,None)
+  with self.assertRaisesRegex(ValueError,'retention'):self.run_prune()
+  result=m.prune(self.root,self.lease,self.candidate,self.s3,'bucket',retired_failed_generation=self.gen)
+  self.assertEqual(result['status'],'dry_run');self.assertTrue(self.file.exists())
+  self.pointer.write_text(json.dumps(self.candidate))
+  with self.assertRaisesRegex(ValueError,'active_reference'):
+   m.prune(self.root,self.lease,self.candidate,self.s3,'bucket',apply=True,retired_failed_generation=self.gen)
 if __name__=='__main__':unittest.main()
