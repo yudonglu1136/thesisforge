@@ -45,4 +45,19 @@ class Tests(unittest.TestCase):
   self.pointer.write_text(json.dumps(self.candidate))
   with self.assertRaisesRegex(ValueError,'active_reference'):
    m.prune(self.root,self.lease,self.candidate,self.s3,'bucket',apply=True,retired_failed_generation=self.gen)
+ def test_operator_retirement_exact_scope_and_integrity(self):
+  os.utime(self.base,None)
+  with self.assertRaisesRegex(ValueError,'invalid_failed_generation_override'):
+   m.prune(self.root,self.lease,self.candidate,self.s3,'bucket',retired_generation='c'*64)
+  with patch.object(m,'open_reader_check',side_effect=ValueError('open_reader')):
+   with self.assertRaisesRegex(ValueError,'open_reader'):
+    m.prune(self.root,self.lease,self.candidate,self.s3,'bucket',apply=True,retired_generation=self.gen)
+  self.assertTrue(self.file.exists())
+  result=m.prune(self.root,self.lease,self.candidate,self.s3,'bucket',apply=True,retired_generation=self.gen)
+  self.assertEqual(result['deletedFiles'],1)
+  self.assertEqual(result['operatorRetiredGeneration'],self.gen)
+ def test_operator_retirement_never_removes_reference(self):
+  self.pointer.write_text(json.dumps(self.candidate))
+  with self.assertRaisesRegex(ValueError,'active_reference'):
+   m.prune(self.root,self.lease,self.candidate,self.s3,'bucket',apply=True,retired_generation=self.gen)
 if __name__=='__main__':unittest.main()

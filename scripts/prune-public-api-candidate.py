@@ -63,14 +63,17 @@ def open_reader_check(targets):
                 if any(value==str(p) or value.startswith(str(p)+'/') for p in targets):raise ValueError('open_reader')
         except FileNotFoundError:continue
 
-def prune(root,lease_root,candidate,s3,bucket,*,apply=False,retired_failed_generation=None):
+def prune(root,lease_root,candidate,s3,bucket,*,apply=False,retired_failed_generation=None,retired_generation=None):
     root=Path(root).resolve();lease_root=Path(lease_root).resolve()
-    if retired_failed_generation is not None and (
-            not HEX.fullmatch(retired_failed_generation) or len(candidate['groups'])!=1 or
-            next(iter(candidate['groups'].values()))['generationId']!=retired_failed_generation):
+    if retired_generation is not None and retired_failed_generation is not None:
+        raise ValueError('ambiguous_retirement_override')
+    retirement = retired_generation if retired_generation is not None else retired_failed_generation
+    if retirement is not None and (
+            not HEX.fullmatch(retirement) or len(candidate['groups'])!=1 or
+            next(iter(candidate['groups'].values()))['generationId']!=retirement):
         raise ValueError('invalid_failed_generation_override')
     report={'applied':apply,'deletedFiles':0,'deletedGenerations':[],'restorableFromS3':True,
-            'retiredFailedGeneration':retired_failed_generation}
+            'retiredFailedGeneration':retired_failed_generation,'operatorRetiredGeneration':retired_generation}
     with ExitStack() as stack:
         lock=stack.enter_context((root/'install.lock').open('a'));fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         protected,pointers=referenced(root);report['pointerChecksums']=pointers
@@ -81,9 +84,9 @@ def prune(root,lease_root,candidate,s3,bucket,*,apply=False,retired_failed_gener
             if (group,generation) in protected:raise ValueError('active_reference')
             base=member(root,'releases/'+group+'/'+generation)
             if not base.exists():continue
-            # Explicit operator retirement of one rejected candidate may skip
+            # Explicit operator retirement of one exact generation may skip
             # the age window; every reference, lease and checksum gate remains.
-            if generation!=retired_failed_generation and base.stat().st_mtime>time.time()-7*86400:raise ValueError('retention_window')
+            if generation!=retirement and base.stat().st_mtime>time.time()-7*86400:raise ValueError('retention_window')
             lease=stack.enter_context((lease_root/(hashlib.sha256(str(base).encode()).hexdigest()+'.lock')).open('a'))
             fcntl.flock(lease,fcntl.LOCK_EX|fcntl.LOCK_NB)
             key=item['manifestKey']
