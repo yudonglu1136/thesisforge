@@ -1,5 +1,6 @@
 import express from "express";
-import { dataReleaseMiddleware,dataReleaseStatus } from './dataReleaseContext.js';
+import { dataReleaseMiddleware,dataReleaseStatus,retainDataRelease } from './dataReleaseContext.js';
+import { DataReleaseVerification } from './dataReleaseVerification.js';
 import { queryFacts } from './factRepository.js';
 import { verifyReleasedFundamentals } from './fundamentalReleaseProbe.js';
 import { verifyReleasedResearch } from './researchReleaseProbe.js';
@@ -59,6 +60,7 @@ import {
   startDividendCalendarRefresher
 } from "./dividendClient.js";
 import { buildAdminSystemHealth } from "./systemHealth.js";
+import { projectAdminHealth } from "./adminHealthProjection.js";
 import { createPublicHealthService } from "./publicHealthService.js";
 import { createPublicHealthWorkerBuilder } from "./publicHealthWorkerRunner.js";
 import { installJsonTransport } from "./jsonTransport.js";
@@ -128,16 +130,23 @@ app.get('/api/internal/research-data-release',requireLoopbackRequest,requireInte
     response.json({status:'verified',releaseId:release.releaseId,groups:release.groups,coverage,research});
   }catch{return response.status(503).json({error:'research_release_probe_failed'});}
 });
+const dataReleaseVerification=new DataReleaseVerification();
 app.get('/api/internal/data-release',requireLoopbackRequest,requireInternalCron,async (_request,response)=>{
   try {
     const release=dataReleaseStatus();
     if(!release)return response.status(503).json({error:'data_release_not_activated'});
-    const coverage=await queryFacts('get_coverage');
-    const fundamentals=await verifyReleasedFundamentals(new Date().toISOString().slice(0,10));
-    const publicAnalysis=process.env.INVESTMENT_WORKFLOW_ENABLED==='true'
-      ?await publicAnalysisArtifacts.warmCurrent(new Date().toISOString().slice(0,10)):null;
-    const research=await verifyReleasedResearch(new Date().toISOString().slice(0,10));
-    response.json({status:'verified',releaseId:release.releaseId,groups:release.groups,coverage,fundamentals,publicAnalysis,research});
+    const asOf=new Date().toISOString().slice(0,10);
+    const result=dataReleaseVerification.poll({key:`${release.releaseId}:${asOf}`,pin:retainDataRelease,
+      run:async stage=>{
+        const coverage=await stage('coverage',()=>queryFacts('get_coverage'));
+        const fundamentals=await stage('fundamentals',()=>verifyReleasedFundamentals(asOf));
+        const publicAnalysis=process.env.INVESTMENT_WORKFLOW_ENABLED==='true'
+          ?await stage('publicAnalysis',()=>publicAnalysisArtifacts.warmCurrent(asOf)):null;
+        const research=await stage('research',()=>verifyReleasedResearch(asOf));
+        return {status:'verified',releaseId:release.releaseId,groups:release.groups,coverage,fundamentals,publicAnalysis,research};
+      }});
+    response.set('Cache-Control','no-store');
+    response.status(result.status==='verified'?200:result.status==='preparing'?202:503).json(result);
   }catch{return response.status(503).json({error:'data_release_probe_failed'});}
 });
 registerRetiredProductRoutes(app);
@@ -660,10 +669,11 @@ registerAdminPortfolioUsersRoute(app);
 app.get("/api/admin/system-health", requireAdmin, async (_request, response) => {
   try {
     response.setHeader("Cache-Control", "no-store");
-    response.json(buildAdminSystemHealth({
+    const publicHealth = await publicHealthService.read();
+    response.json(projectAdminHealth(buildAdminSystemHealth({
       allowedOrigins,
       adminEmails: [ADMIN_OWNER_EMAIL]
-    }));
+    }), publicHealth));
   } catch (error) {
     response.status(500).json({
       error: "admin_system_health_failed",

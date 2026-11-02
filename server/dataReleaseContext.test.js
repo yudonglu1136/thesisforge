@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { dataReleaseMiddleware,releaseRoot,releaseResource,readDataRelease,dataReleaseId,researchReleaseManifest } from './dataReleaseContext.js';
+import { dataReleaseMiddleware,releaseRoot,releaseResource,readDataRelease,dataReleaseId,researchReleaseManifest,retainDataRelease } from './dataReleaseContext.js';
 import { factGeneration as valuationGeneration } from './valuationFacts.js';
 
 test('requests pin release, old resources drain, new requests switch and restart reloads manifest',async()=>{
@@ -38,6 +38,26 @@ test('requests pin release, old resources drain, new requests switch and restart
     secondResponse.emit('finish');assert.equal(closed,0);releaseOld();await old;
     assert.equal(readDataRelease(active).manifest.releaseId,'b'.repeat(64));
     fs.writeFileSync(active,'{}');assert.throws(()=>readDataRelease(active),/invalid/);
+  }finally{
+    if(previous===undefined)delete process.env.FACT_OS_ACTIVE_MANIFEST;else process.env.FACT_OS_ACTIVE_MANIFEST=previous;
+    fs.rmSync(directory,{recursive:true,force:true});
+  }
+});
+
+test('background verification retains retired readers after polling response closes',()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'verification-lease-'));
+  const previous=process.env.FACT_OS_ACTIVE_MANIFEST;
+  const active=path.join(directory,'active.json');process.env.FACT_OS_ACTIVE_MANIFEST=active;
+  try{
+    const root=path.join(directory,'releases','canonical');fs.mkdirSync(root,{recursive:true});
+    const publish=id=>fs.writeFileSync(active,JSON.stringify({schemaVersion:1,state:'verified',releaseId:id.repeat(64),groups:{canonical:{root}}}));
+    publish('c');let release,closed=0;
+    const response=Object.assign(new EventEmitter(),{setHeader(){}});
+    dataReleaseMiddleware({},response,()=>{
+      release=retainDataRelease();releaseResource('test',()=>({}),()=>closed++);
+    });
+    response.emit('finish');publish('d');readDataRelease();
+    assert.equal(closed,0);release();assert.equal(closed,1);release();assert.equal(closed,1);
   }finally{
     if(previous===undefined)delete process.env.FACT_OS_ACTIVE_MANIFEST;else process.env.FACT_OS_ACTIVE_MANIFEST=previous;
     fs.rmSync(directory,{recursive:true,force:true});

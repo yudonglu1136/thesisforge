@@ -9,6 +9,7 @@ class _AdminAccessApi extends ApiClient {
 
   final paths = <String>[];
   Completer<Map<String, dynamic>>? pendingAdmin;
+  List<Map<String, dynamic>> users = [];
 
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
@@ -17,7 +18,7 @@ class _AdminAccessApi extends ApiClient {
       if (pendingAdmin != null) return pendingAdmin!.future;
       return {
         'summary': {'users': 0, 'linked': 0, 'accounts': 0, 'errors': 0},
-        'users': <Map<String, dynamic>>[],
+        'users': users,
       };
     }
     if (path == '/api/admin/system-health') {
@@ -50,6 +51,27 @@ Widget _terminal(
 );
 
 void main() {
+  testWidgets('admin defaults to a linked user and skips empty portfolio analysis', (tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _AdminAccessApi()..users = [
+      {'userHash': 'empty', 'name': 'Empty account', 'lastSignInAt': '2026-10-07', 'connection': {'registered': false}},
+      {'userHash': 'linked', 'name': 'Linked account', 'lastSignInAt': '2026-09-01', 'connection': {'registered': true}},
+    ];
+    await tester.pumpWidget(_terminal(api));
+    await tester.pumpAndSettle();
+    expect(api.paths, contains('/api/admin/portfolio-users/linked'));
+    expect(api.paths, isNot(contains('/api/admin/portfolio-users/empty')));
+    await tester.tap(find.textContaining('Empty account').first);
+    await tester.pumpAndSettle();
+    expect(api.paths, isNot(contains('/api/admin/portfolio-users/empty')));
+    expect(find.byType(PortfolioDashboard), findsNothing);
+    expect(find.text('No portfolio is connected. No portfolio analysis has been calculated.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
   test('admin presentation requires the exact owner and a non-dev session', () {
     expect(
       canShowAdmin(email: ' LUYUDONG1136@gmail.com ', accessToken: 'session'),

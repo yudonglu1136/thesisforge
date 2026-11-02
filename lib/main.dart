@@ -609,6 +609,7 @@ const _uiChinese = <String, String>{
   'Portfolio NAV recorder': '组合净值记录器',
   'Run started but no completion was recorded.': '任务已开始，但没有完成记录。',
   'No recorded run yet.': '尚无运行记录。',
+  'Guru market prices': 'Guru 市场价格',
   'Latest run is getting stale.': '最近一次运行数据开始陈旧。',
   'Status': '状态',
   'Paid': '已支付',
@@ -12498,7 +12499,10 @@ class _AdminPortfolioDashboardState extends State<AdminPortfolioDashboard> {
       (user) => text(user['userHash']) == _selectedHash,
     );
     if (!force && selectedExists && _selectedHash.isNotEmpty) return;
-    final nextHash = text(users.first['userHash']);
+    final linked = users.where(
+      (user) => adminUserPortfolioRegistration(user) == 'registered',
+    );
+    final nextHash = text((linked.isEmpty ? users.first : linked.first)['userHash']);
     if (nextHash.isEmpty || nextHash == _selectedHash) return;
     setState(() {
       _selectedHash = nextHash;
@@ -12511,6 +12515,16 @@ class _AdminPortfolioDashboardState extends State<AdminPortfolioDashboard> {
   Future<void> _loadDetail([String? hash, bool refresh = false]) async {
     final targetHash = hash ?? _selectedHash;
     if (targetHash.isEmpty) return;
+    final selected = _users.where((user) => text(user['userHash']) == targetHash);
+    if (selected.isNotEmpty &&
+        adminUserPortfolioRegistration(selected.first) == 'not_registered') {
+      setState(() {
+        _loadingDetail = false;
+        _detailError = null;
+        _detail = {'user': selected.first, 'noPortfolio': true};
+      });
+      return;
+    }
     setState(() {
       _loadingDetail = true;
       _detailError = null;
@@ -12736,7 +12750,10 @@ class _AdminSystemHealthPanel extends StatelessWidget {
               children: [
                 MiniMetric(
                   'API',
-                  _adminHealthLabel(status, context.language),
+                  _adminHealthLabel(
+                    error != null ? 'failed' : text(service['status'], 'unknown'),
+                    context.language,
+                  ),
                   Icons.cloud_done_rounded,
                   palette,
                 ),
@@ -12865,6 +12882,7 @@ class _AdminJobHealthTile extends StatelessWidget {
     ];
     final message = text(job['message']);
     final finishedAt = text(job['finishedAt']);
+    final sourceAsOf = text(job['sourceAsOf']);
 
     return Container(
       padding: const EdgeInsets.all(13),
@@ -12919,6 +12937,13 @@ class _AdminJobHealthTile extends StatelessWidget {
               fontSize: 12,
             ),
           ),
+          if (sourceAsOf.isNotEmpty) ...[
+            const SizedBox(height: 7),
+            Text(context.tr(
+              '数据截至 ${formatDate(sourceAsOf)}',
+              'Data through ${formatDate(sourceAsOf)}',
+            ), style: TextStyle(color: palette.muted, fontSize: 12)),
+          ],
           if (detailPieces.isNotEmpty) ...[
             const SizedBox(height: 7),
             Text(
@@ -13452,6 +13477,23 @@ class _AdminPortfolioDetailPanel extends StatelessWidget {
     }
 
     final user = asMap(detail!['user']);
+    if (detail!['noPortfolio'] == true) {
+      return Panel(
+        palette: palette,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(text(user['name'], text(user['email'])),
+                style: TextStyle(color: palette.text, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Text(context.tr(
+              '尚未绑定投资组合，未计算组合分析。',
+              'No portfolio is connected. No portfolio analysis has been calculated.',
+            ), style: TextStyle(color: palette.muted)),
+          ],
+        ),
+      );
+    }
     final portfolio = asMap(detail!['portfolio']);
     final summary = asMap(portfolio['summary']);
     final connection = asMap(user['connection']);

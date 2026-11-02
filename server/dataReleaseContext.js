@@ -90,3 +90,13 @@ export function dataReleaseStatus() {
   const entry=context.getStore()??readDataRelease();
   return entry?{releaseId:entry.manifest.releaseId,groups:entry.manifest.groups,readers:entry.readers}:null;
 }
+
+// Background release verification outlives the polling HTTP response. Keep
+// the exact generation/resources alive until the verification has settled.
+export function retainDataRelease() {
+  const entry=context.getStore();
+  if(!entry)throw Error('pinned_data_release_required');
+  entry.readers++;
+  let closed=false;
+  return ()=>{if(closed)return;closed=true;entry.readers--;dispose(entry);};
+}
