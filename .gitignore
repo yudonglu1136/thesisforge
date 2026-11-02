@@ -36,3 +36,8 @@ server/data/*
 server/reports/*.json
 !server/reports/.gitkeep
 !server/reports/valuation-audit-ledger.json
+
+# Separate research export and local artifacts; retained outside app releases.
+/cloud-research/
+/data/research-output/
+/tmp/
