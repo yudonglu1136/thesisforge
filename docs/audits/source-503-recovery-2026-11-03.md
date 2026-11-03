@@ -1,43 +1,60 @@
 # Public daily source 503 recovery
 
-The November 3 scheduled run failed on holdings HTTP 503. Thirteen other
-sources succeeded; canonical and institutional groups were blocked. Strategy
-built but was not published. The November 2 serving pointer was retained.
+## Outcome
 
-The source query already had four attempts, but HTTP 5xx without Retry-After
-waited only about 1/2/4 seconds. Apply the existing shared 30/60/120-second
-cooldown to HTTP 500/502/503/504 as well as 429. Respect longer bounded provider
-hints, keep four attempts, and emit only status/attempt/delay metadata. No
-schema, completeness, identity, history or publication gates change. Persistent
-errors remain failures; no unconditional whole-table retry is introduced.
+The November 3 scheduler failed on holdings HTTP 503. Thirteen sources
+succeeded, but canonical and institutional groups were blocked, so the website
+correctly retained its previous complete release. Capacity was not the cause.
 
-Deploy only the exact sync.py patch onto the current immutable worker release,
-fenced by its existing SHA-256. Preserve its dependencies and prior release.
-Pause public scheduling for validation; restore original schedule after success
-or restore prior code on failure. No private jobs or capacity changes.
-Production recovery is not proven by tests: require all fourteen sources, six
-groups, atomic strategy curve/ledger install and actual API ACK. Store actual
-run and activation evidence under data/fact_os/audit.
+The authorized manual recovery completed and activated on November 4 Saudi
+time (November 3 UTC). All fourteen sources are ready. Canonical, institutional
+13F and strategy inputs rebuilt successfully; AI Insights, public observations
+and Research inputs reused verified unchanged artifacts. Independent API reads
+confirm Fundamentals, Research, public analysis and rule portfolios ready.
 
-The first manual repair recovered real funds HTTP 503 responses after 30/60
-second cooldowns, but holdings still exhausted retries. A second candidate
-reduces holdings CSV requests from 100,000 to 10,000 rows, using the existing
-exhaustive ticker-range splitting and second-pass verification. It does not
-cap total holdings or change the three-quarter refresh window. This is a
-request-size mitigation pending real provider validation, not proof that the
-upstream outage is resolved. Targeted sync/extraction/worker tests: 77 passed.
+- Worker: `5057558-holdings-961226d`, commit `961226d2e84c76c010b889cdd3018a8a27d6c2cb`.
+- Run: `c9ca1aa11930d6dfdd4a80f257a574ab214f313c2ac6cf5960a08ac1df98746b`.
+- Serving release: `49ae8b523905e650dfc9490462247a0758830d0af69b07a28bc8ba86832f1803`.
+- All/sp500/nasdaq100 curves and ledgers: through `2026-11-02`.
+- QQQ benchmark remains present in the verified Nasdaq bundle.
+- Actual API ACK, host pointer and published group generations match; bundle
+  identity and each universe snapshot hash match the installation manifest.
+- API free: 6,989,672,448 bytes; worker free: 9,434,296,320 bytes at final checks.
+- Original daily schedule restored: ENABLED, 07:30 Asia/Riyadh, RunDocument 7.
 
-Persistent holdings service errors can now request exhaustive subdivision after
-all four attempts. Extraction splits date scopes, then verified ticker ranges
-for a single day. It retains both halves of the complete parent interval,
-including symbols absent from discovery. Unsplittable scopes fail closed;
-auth/schema/429 errors and second-pass failures are never converted to splits.
-Tests cover range coverage, indivisible failures, successful HTTP recovery and
-verification failure preserving accepted history. Full Fact OS suite: 284 passed.
-This additional candidate still requires production validation.
+This is manual recovery, not proof of the next scheduled execution. Independently
+accept November 4's real `trigger=scheduler` run. Guru legacy curves/prices and
+reviewed valuation warnings remain separate; this is not a whole-site health claim.
 
-Production experiment: the blanket 10,000-row limit generated 636 requests
-without a complete leaf after roughly 30 minutes. Stop this bounded operator
-trial and retain the normal 100,000-row holdings cap. Adaptive subdivision of
-only failed ranges avoids multiplying requests for healthy scopes. No accepted
-source versions or serving pointers were changed by the incomplete trial.
+## Change
+
+Source queries already had four attempts, but 5xx without Retry-After previously
+waited about 1/2/4 seconds. Apply the existing shared 30/60/120-second cooldown to
+500/502/503/504, respect bounded provider hints, and emit sanitized retry metadata.
+Persistent holdings failures can subdivide after all attempts: dates first, then
+verified exhaustive ticker ranges. Both halves cover the entire parent interval,
+including symbols absent from discovery. Unsplittable scopes, auth/schema/429
+errors and second-pass failures remain fatal. No publication gates were relaxed.
+
+A fixed 10,000-row experiment produced 636 requests without a complete leaf after
+roughly 30 minutes; it was cancelled, with code rollback and schedule restoration.
+The final version retains normal 100,000-row holdings requests and subdivides only
+saturated or persistently failing scopes. No partial trial changed serving data.
+
+## Validation and preservation
+
+Full Fact OS suite: 284 passed. Tests cover provider cooldowns, exhaustive range
+coverage, indivisible failures and second-pass failure retaining accepted history.
+The final manual run reused thirteen same-day verified source content versions,
+then re-read only holdings. It verified 81 leaves / 5,786,581 range records twice
+and rechecked ticker discovery. This is processed volume, not newly added rows.
+
+Accepted holdings retain 82,096,521 rows from 2013-06-30 through 2026-09-30.
+Same-input replay returned `unchanged`: content version, partitions, counts and
+oldest/newest dates were unchanged. No database copies, historical cleanup,
+capacity expansion, private jobs or old Research pointer restoration occurred.
+
+Operational evidence: `data/fact_os/audit/source-recovery-adaptive-2026-11-03.json`,
+including independent API command `974f7815-47b6-4584-99b2-23676f3f5ecc` and replay
+command `d055dd75-f5d6-4baa-ab39-358bd8266b6e`. Failed/cancelled earlier trials are
+retained as small receipts, not relabelled as successful runs.
