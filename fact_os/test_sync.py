@@ -62,6 +62,28 @@ class SyncTest(unittest.TestCase):
             self.sync.sync('stocks')
         self.assertGreater(sleep.call_args_list[0].args[0],29)
 
+    def test_transient_service_failures_share_bounded_cooldown(self):
+        for status in (500,502,503,504):
+            with self.subTest(status=status):
+                calls=[]
+                def handler(req):
+                    calls.append(req)
+                    return httpx.Response(status) if len(calls)<=3 else httpx.Response(200,json={'count':0,'data':[]})
+                self.mock(handler)
+                with patch.object(self.sync.request_gate,'wait'), patch.object(self.sync.request_gate,'cooldown') as cooldown:
+                    self.sync.sync('stocks')
+                self.assertEqual([c.args[0] for c in cooldown.call_args_list],[30,60,120])
+
+    def test_persistent_service_failure_preserves_history_and_stops(self):
+        self.mock(lambda req:httpx.Response(503))
+        before=next(v for v in self.store.status() if v['dataset']=='stocks')
+        with patch.dict('os.environ',{'FACT_OS_SYNC_WORKERS':'1'}), patch.object(self.sync.request_gate,'wait'), patch.object(self.sync.request_gate,'cooldown'), self.assertRaisesRegex(UpstreamError,'HTTP 503'):
+            self.sync.sync('stocks')
+        self.assertEqual(len(self.requests),4)
+        after=next(v for v in self.store.status() if v['dataset']=='stocks')
+        self.assertEqual(after['row_count'],before['row_count'])
+        self.assertEqual(after['min_date'],before['min_date'])
+
     def test_rate_limit_honors_retry_after_instead_of_clipping_to_sixty(self):
         calls=0
         def handler(req):

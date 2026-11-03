@@ -392,7 +392,10 @@ class Synchronizer:
                             response=httpx.Response(upstream.status_code)
                             if upstream.status_code in (429,500,502,503,504):
                                 retry_after=retry_delay(upstream.headers.get('retry-after','0'))
-                            if upstream.status_code==429:
+                            if upstream.status_code in (429,500,502,503,504):
+                                # Transient service failures need the same shared
+                                # recovery window as throttling. Four rapid retries
+                                # otherwise exhaust before a short outage recovers.
                                 # A missing provider hint is not permission to
                                 # hammer again after 1s. Share the cooldown with
                                 # every worker and the next table, even on the
@@ -431,7 +434,11 @@ class Synchronizer:
                     if attempt==3:raise UpstreamError('sync read timeout; local history retained') from None
                 except httpx.TransportError:
                     if attempt==3:raise UpstreamError('sync transport failed; local history retained') from None
-                if response is not None and response.status_code==429:
+                if response is not None and response.status_code in (429,500,502,503,504):
+                    if self.progress:
+                        self.progress({'phase':'query_retry','dataset':dataset,
+                            'attempt':attempt+2,'httpStatus':response.status_code,
+                            'delaySeconds':retry_after})
                     continue  # wait through the shared gate on the next attempt
                 time.sleep(max(retry_after,min(8,2**attempt))+random.uniform(0,.5))
             raise UpstreamError('sync retry limit reached')
