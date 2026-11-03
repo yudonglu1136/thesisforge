@@ -70,9 +70,19 @@ class SyncTest(unittest.TestCase):
                     calls.append(req)
                     return httpx.Response(status) if len(calls)<=3 else httpx.Response(200,json={'count':0,'data':[]})
                 self.mock(handler)
-                with patch.object(self.sync.request_gate,'wait'), patch.object(self.sync.request_gate,'cooldown') as cooldown:
+                with patch.dict('os.environ',{'FACT_OS_SYNC_WORKERS':'1'}), patch.object(self.sync.request_gate,'wait'), patch.object(self.sync.request_gate,'cooldown') as cooldown:
                     self.sync.sync('stocks')
                 self.assertEqual([c.args[0] for c in cooldown.call_args_list],[30,60,120])
+
+    def test_service_failure_honors_longer_provider_hint(self):
+        calls=[]
+        def handler(req):
+            calls.append(req)
+            return httpx.Response(503,headers={'Retry-After':'180'}) if len(calls)==1 else httpx.Response(200,json={'count':0,'data':[]})
+        self.mock(handler)
+        with patch.dict('os.environ',{'FACT_OS_SYNC_WORKERS':'1'}), patch.object(self.sync.request_gate,'wait'), patch.object(self.sync.request_gate,'cooldown') as cooldown:
+            self.sync.sync('stocks')
+        cooldown.assert_called_once_with(180)
 
     def test_persistent_service_failure_preserves_history_and_stops(self):
         self.mock(lambda req:httpx.Response(503))
