@@ -291,7 +291,7 @@ class Synchronizer:
         # split every full response; a smaller limit is never a coverage cap.
         # Holdings also hit repeated 503s at 100k. Use the same smaller
         # complete-query leaves; exhaustive ticker ranges and replay remain.
-        default_size=10000 if response_format=='json' or table in ('stocks','funds','daily','holdings') else 100000
+        default_size=10000 if response_format=='json' or table in ('stocks','funds','daily') else 100000
         page_size=max(1,min(default_size,int(os.environ.get('FACT_OS_SYNC_PAGE_SIZE',str(default_size)))))
         params={'format':response_format,'limit':page_size,'from':'1900-01-01','to':date.today().isoformat()}
         if table in ('tickers','descriptions'):

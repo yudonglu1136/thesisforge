@@ -35,3 +35,9 @@ auth/schema/429 errors and second-pass failures are never converted to splits.
 Tests cover range coverage, indivisible failures, successful HTTP recovery and
 verification failure preserving accepted history. Full Fact OS suite: 284 passed.
 This additional candidate still requires production validation.
+
+Production experiment: the blanket 10,000-row limit generated 636 requests
+without a complete leaf after roughly 30 minutes. Stop this bounded operator
+trial and retain the normal 100,000-row holdings cap. Adaptive subdivision of
+only failed ranges avoids multiplying requests for healthy scopes. No accepted
+source versions or serving pointers were changed by the incomplete trial.

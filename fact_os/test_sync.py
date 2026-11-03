@@ -412,7 +412,7 @@ class SyncTest(unittest.TestCase):
                 self.assertEqual(self.store.status(),before)
         self.assertFalse(list((self.store.root/'raw').glob('*sync*.csv')))
         self.assertFalse(list((self.store.root/'staging').glob('*sync*.csv')))
-    def test_holdings_csv_uses_small_queries_without_dropping_history(self):
+    def test_holdings_csv_uses_bounded_queries_without_dropping_history(self):
         ddl='CREATE TABLE IF NOT EXISTS "holdings" ("ticker" TEXT,"date" TEXT,"value" REAL,PRIMARY KEY ("ticker","date"));'
         self.store.install_contract('holdings',ddl)
         seed=self.root/'holdings.csv';seed.write_text('ticker,date,value\nABC,2026-03-31,1\n')
@@ -422,7 +422,7 @@ class SyncTest(unittest.TestCase):
         with patch.dict('os.environ',{'FACT_OS_SYNC_FORMAT':'csv','FACT_OS_SYNC_WORKERS':'1'}):
             result=self.sync.sync('holdings')
         self.assertEqual(result['local_rows'],2)
-        self.assertTrue(all(int(r.url.params['limit'])==10000 for r in self.requests))
+        self.assertTrue(all(int(r.url.params['limit'])==100000 for r in self.requests))
         self.assertTrue(all(n==2 for n in Counter(tuple(sorted(r.url.params.multi_items())) for r in self.requests).values()))
 
     def test_holdings_failed_scope_splits_but_verification_failure_stays_fatal(self):
