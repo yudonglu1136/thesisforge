@@ -18,3 +18,11 @@ or restore prior code on failure. No private jobs or capacity changes.
 Production recovery is not proven by tests: require all fourteen sources, six
 groups, atomic strategy curve/ledger install and actual API ACK. Store actual
 run and activation evidence under data/fact_os/audit.
+
+The first manual repair recovered real funds HTTP 503 responses after 30/60
+second cooldowns, but holdings still exhausted retries. A second candidate
+reduces holdings CSV requests from 100,000 to 10,000 rows, using the existing
+exhaustive ticker-range splitting and second-pass verification. It does not
+cap total holdings or change the three-quarter refresh window. This is a
+request-size mitigation pending real provider validation, not proof that the
+upstream outage is resolved. Targeted sync/extraction/worker tests: 77 passed.
