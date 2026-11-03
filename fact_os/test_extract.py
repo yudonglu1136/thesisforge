@@ -73,6 +73,23 @@ class ExtractTest(unittest.TestCase):
             next(iterator)
         self.assertEqual(len(calls), 1)
 
+    def test_failed_day_range_splits_exhaustively_including_undiscovered_symbols(self):
+        query = {'from': '2026-06-30', 'to': '2026-06-30',
+                 'ticker.gt': 'A', 'ticker.lte': 'Z'}
+        rows = [{'ticker': ticker, 'date': query['from']} for ticker in ('B', 'C', 'M', 'Z')]
+        base = self.fetcher(rows)
+        def fetch(q):
+            if q.get('ticker.gt') == 'A' and q.get('ticker.lte') == 'Z':
+                raise SplitQueryRequired('service unavailable')
+            return base(q)
+        leaves = list(complete_queries(query, fetch, 100, lambda _: ['B', 'Z'], ticker_ranges=True))
+        self.assertEqual([row for _, values in leaves for row in values], rows)
+        self.assertEqual(len(leaves), 2)
+        self.assertEqual(leaves[0][0]['ticker.lte'], leaves[1][0]['ticker.gt'])
+        for discovery in (lambda _: ['B'], lambda _: ['0', 'Z']):
+            with self.assertRaises(ExtractionError):
+                list(complete_queries(query, fetch, 100, discovery, ticker_ranges=True))
+
     def test_ordinary_failures_are_not_eligible_for_date_subdivision(self):
         for error in (RuntimeError('source denied'), ExtractionError('schema drift')):
             with self.subTest(error=error):

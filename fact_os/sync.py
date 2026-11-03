@@ -423,6 +423,9 @@ class Synchronizer:
                                 if not query['lastupdated.gte']<=str(row['lastupdated'])<=query['lastupdated.lte']:
                                     raise UpstreamError('query returned a record outside its update window')
                         return rows
+                    if (attempt==3 and split_read_timeout and dataset=='holdings'
+                            and response.status_code in (500,502,503,504)):
+                        raise SplitQueryRequired('holdings service failed; subdivide verified scope')
                     if response.status_code not in (429,500,502,503,504) or attempt==3:
                         raise UpstreamError(f'sync HTTP {response.status_code}; local history retained')
                 except httpx.ReadTimeout:

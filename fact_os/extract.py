@@ -16,10 +16,11 @@ class ExtractionError(RuntimeError):
 
 
 class SplitQueryRequired(ExtractionError):
-    """The caller identified a transient read failure eligible for date splitting.
+    """The caller identified a transient read failure eligible for exhaustive subdivision.
 
-    This is never an empty result or proof of completeness. Only a multi-day
-    query can be subdivided; an unresolved single-day query aborts extraction.
+    This is never an empty result or proof of completeness. A multi-day
+    query can split dates; enabled ticker ranges can split a single day.
+    An unresolved indivisible scope aborts extraction.
     Authentication, schema, source-integrity and ordinary errors must not use
     this signal.
     """
@@ -94,7 +95,8 @@ def complete_queries(params, fetch, limit, discover_tickers=None, workers=3, dat
     explicitly because this algorithm cannot prove that response is complete.
     ``fetch`` may explicitly raise ``SplitQueryRequired`` for a read failure:
     a multi-day scope then splits into two exhaustive date intervals. A failing
-    single day or any other exception aborts; no error is treated as no rows.
+    single day may split into exhaustive ticker ranges when enabled; an
+    unsplittable scope or any other exception aborts. No error means no rows.
 
     All yielded leaves must finish and pass the caller's second-pass comparison
     before anything is published. A later failure invalidates earlier leaves.
@@ -177,7 +179,17 @@ def complete_queries(params, fetch, limit, discover_tickers=None, workers=3, dat
                 if isinstance(rows, SplitQueryRequired):
                     low, high = date.fromisoformat(current['from']), date.fromisoformat(current['to'])
                     if low == high:
-                        raise rows
+                        if not ticker_ranges or 'ticker' in current or not callable(discover_tickers):
+                            raise rows
+                        tickers = _tickers(discover_tickers(dict(current)), discovery=True)
+                        if any(not _within_ticker_bounds(ticker, current) for ticker in tickers):
+                            raise ExtractionError('ticker discovery returned a symbol outside its requested bounds')
+                        if len(tickers) < 2:
+                            raise rows
+                        pivot = sorted(tickers)[(len(tickers) - 1) // 2]
+                        pending.append({**current, 'ticker.lte': pivot})
+                        pending.append({**current, 'ticker.gt': pivot})
+                        continue
                     midpoint = low + (high - low) // 2
                     pending.append({**current, 'to': midpoint.isoformat()})
                     pending.append({**current, 'from': (midpoint + timedelta(days=1)).isoformat()})

@@ -425,6 +425,36 @@ class SyncTest(unittest.TestCase):
         self.assertTrue(all(int(r.url.params['limit'])==10000 for r in self.requests))
         self.assertTrue(all(n==2 for n in Counter(tuple(sorted(r.url.params.multi_items())) for r in self.requests).values()))
 
+    def test_holdings_failed_scope_splits_but_verification_failure_stays_fatal(self):
+        ddl='CREATE TABLE IF NOT EXISTS "holdings" ("ticker" TEXT,"date" TEXT,"value" REAL,PRIMARY KEY ("ticker","date"));'
+        self.store.install_contract('holdings',ddl)
+        seed=self.root/'holdings.csv';seed.write_text('ticker,date,value\nABC,2026-03-31,1\n')
+        self.store.ingest('holdings',seed,scope='verified_full_bulk')
+        rows=[{'ticker':t,'date':'2026-03-31','value':2} for t in ('ABC','MNO','XYZ')]
+        counts=Counter();fail_verify=False
+        def handler(req):
+            q=req.url.params;signature=tuple(sorted(q.multi_items()));counts[signature]+=1
+            discovery=req.url.path.endswith('holdings_ticker')
+            if not discovery and q['from']=='2026-03-31' and ('ticker.lte' not in q and 'ticker.gt' not in q):
+                return httpx.Response(503)
+            if fail_verify and not discovery and 'ticker.lte' in q and counts[signature]>1:
+                return httpx.Response(503)
+            selected=[r for r in rows if q['from']<=r['date']<=q['to']
+                      and ('ticker.gt' not in q or r['ticker']>q['ticker.gt'])
+                      and ('ticker.lte' not in q or r['ticker']<=q['ticker.lte'])]
+            fields=['ticker'] if discovery else ['ticker','date','value']
+            out=io.StringIO();w=csv.DictWriter(out,fieldnames=fields);w.writeheader()
+            w.writerows({k:r[k] for k in fields} for r in selected)
+            return httpx.Response(200,content=out.getvalue().encode())
+        self.mock(handler)
+        with patch.dict('os.environ',{'FACT_OS_SYNC_FORMAT':'csv','FACT_OS_SYNC_WORKERS':'1'}), patch.object(self.sync.request_gate,'wait'), patch.object(self.sync.request_gate,'cooldown'):
+            self.assertEqual(self.sync.sync('holdings')['local_rows'],3)
+            before=self.store.status();fail_verify=True;counts.clear()
+            with self.assertRaisesRegex(UpstreamError,'sync HTTP 503'):
+                self.sync.sync('holdings')
+            self.assertEqual(self.store.status(),before)
+        self.assertTrue(any('ticker.lte' in r.url.params for r in self.requests))
+
     def test_holdings_range_partitions_are_complete_and_out_of_range_rows_are_rejected(self):
         ddl='CREATE TABLE IF NOT EXISTS "holdings_ticker" ("ticker" TEXT,"date" TEXT,"value" REAL,PRIMARY KEY ("ticker","date"));'
         self.store.install_contract('holdings_ticker',ddl)

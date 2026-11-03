@@ -26,3 +26,12 @@ exhaustive ticker-range splitting and second-pass verification. It does not
 cap total holdings or change the three-quarter refresh window. This is a
 request-size mitigation pending real provider validation, not proof that the
 upstream outage is resolved. Targeted sync/extraction/worker tests: 77 passed.
+
+Persistent holdings service errors can now request exhaustive subdivision after
+all four attempts. Extraction splits date scopes, then verified ticker ranges
+for a single day. It retains both halves of the complete parent interval,
+including symbols absent from discovery. Unsplittable scopes fail closed;
+auth/schema/429 errors and second-pass failures are never converted to splits.
+Tests cover range coverage, indivisible failures, successful HTTP recovery and
+verification failure preserving accepted history. Full Fact OS suite: 284 passed.
+This additional candidate still requires production validation.
