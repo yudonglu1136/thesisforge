@@ -40,7 +40,7 @@ export function simulateFlexibleCta({rules,targets,dates,priceMaps,multiple=1}) 
     const marked=active?markPositions(active,date,priceMaps):{ok:true,portfolioValue:0,values:[]};
     if(!marked.ok)return fail(marked.failure.code,date,marked.failure);
     if(marked.transitionPending?.length)return fail('corporate_action_transition_requires_review',date);
-    if(marked.values.some(h=>h.corporateActionResolution?.considerationType==='cash'))return fail('cash_settlement_requires_reinvestment',date);
+    if(marked.values.some(h=>['cash','stock_and_cash'].includes(h.corporateActionResolution?.considerationType)))return fail('cash_settlement_requires_reinvestment',date);
     const beforeCta=ctaUnits*price,beforeEquity=marked.portfolioValue;
     const beforeAssets=beforeEquity+beforeCta,nav=i?beforeAssets-debt:1;
     if(!(nav>0))return fail('leverage_equity_exhausted',date);

@@ -190,3 +190,33 @@ test("active TWTR requires its October 27 public close before cash conversion", 
     endExclusive: "2022-10-28"
   }]);
 });
+
+test("active ROKU carries FOXA + $95.30 mixed conversion starting Nov 9, 2026", () => {
+  const snapshot = {
+    reportDate: "2026-06-30",
+    holdings: [holding({
+      ticker: "ROKU",
+      cusip: "77543R102",
+      issuer: "Roku, Inc.",
+      value: 100
+    })]
+  };
+  const requirements = manager13fPriceRequirements(snapshot, "2026-08-14", {
+    guruId: "renaissance-technologies"
+  });
+  assert.deepEqual(requirements, [
+    { ticker: "ROKU", endExclusive: "2026-11-09" },
+    { ticker: "FOXA", startInclusive: "2026-11-09" }
+  ]);
+
+  const weights = buildManager13fWeights(snapshot, new Map([
+    ["ROKU", new Map([["2026-08-14", 98.5]])],
+    ["FOXA", new Map([["2026-11-09", 67.69]])]
+  ]), "2026-08-14", { guruId: "renaissance-technologies" });
+  assert.equal(weights.coveragePct, 1);
+  assert.equal(weights.weights[0].corporateAction.actionId, "roku-fox-2026");
+  assert.equal(weights.weights[0].corporateAction.considerationType, "stock_and_cash");
+  assert.equal(weights.weights[0].corporateAction.successorTicker, "FOXA");
+  assert.equal(weights.weights[0].corporateAction.successorSharesPerShare, 0.9799);
+  assert.equal(weights.weights[0].corporateAction.terminalCashEntitlementPerShare, 95.30);
+});

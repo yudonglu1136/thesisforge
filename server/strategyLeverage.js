@@ -35,8 +35,10 @@ export function financeStrategy(gross,targets,config,costBps) {
       for(const h of index?gross.quarterContributions[index-1].contributions:[]) {
         const a=h.corporateActionResolution;
         if(a?.considerationType==='cash')continue;
-        const t=a?.considerationType==='stock'?a.successorTicker:h.priceSymbol??h.ticker;
-        old.set(t,(old.get(t)??0)+factor*h.endingWeight);
+        const converted=['stock','stock_and_cash'].includes(a?.considerationType);
+        const t=converted?a.successorTicker:h.priceSymbol??h.ticker;
+        const stockFraction=a?.considerationType==='stock_and_cash'?(a.successorPrice*a.successorSharesPerShare)/h.endPrice:1;
+        old.set(t,(old.get(t)??0)+factor*h.endingWeight*stockFraction);
       }
       const next=new Map();
       for(const h of target.weights) {const t=h.priceSymbol??h.ticker;next.set(t,(next.get(t)??0)+L*h.weight);}

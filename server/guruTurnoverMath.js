@@ -29,6 +29,15 @@ export function weights(q, ending = false) {
       const action = c.corporateActionResolution;
       if (action.considerationType === 'cash') key = cash;
       else if (action.considerationType === 'stock') key = action.successorTicker;
+      else if (action.considerationType === 'stock_and_cash') {
+        const stockFrac = (action.successorPrice * action.successorSharesPerShare) / c.endPrice;
+        assert(finite(stockFrac) && stockFrac >= 0 && stockFrac <= 1, 'Invalid mixed consideration fraction');
+        assert(action.successorTicker, 'Missing successor identity');
+        m.set(action.successorTicker, (m.get(action.successorTicker) ?? 0) + w * stockFrac);
+        m.set(cash, (m.get(cash) ?? 0) + w * (1 - stockFrac));
+        total += w;
+        continue;
+      }
     }
     assert(key, 'Missing security identity');
     m.set(key, (m.get(key) ?? 0) + w); total += w;

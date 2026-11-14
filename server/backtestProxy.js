@@ -28,7 +28,11 @@ function holdingHasAuditedValue(holding, date, priceMaps) {
     return finitePositive(action?.terminalCashEntitlementPerShare);
   }
   if (effectiveDate && date >= effectiveDate) {
-    if (action?.considerationType === "stock") {
+    if (["stock", "stock_and_cash"].includes(action?.considerationType)) {
+      if (action?.considerationType === "stock_and_cash" &&
+          !finitePositive(action?.terminalCashEntitlementPerShare)) {
+        return false;
+      }
       const firstTradingDate = String(
         action?.successorFirstTradingDate || effectiveDate
       );

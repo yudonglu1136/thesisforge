@@ -98,3 +98,15 @@ test("ARCH resolves as an exact stock conversion and never as terminal cash", ()
     holderHasPrivateRollover: true
   }), null);
 });
+
+test("ROKU resolves as an exact stock-and-cash conversion after Nov 6, 2026 close", () => {
+  const holding = { cusip: "77543R102", ticker: "ROKU" };
+  assert.equal(cashAcquisitionForHolding(holding), null);
+  const active = activeStockConversion(holding, { executionDate: "2026-08-14" });
+  assert.equal(active?.id, "roku-fox-2026");
+  assert.equal(active?.effectiveDate, "2026-11-09");
+  assert.equal(active?.consideration.type, "stock_and_cash");
+  assert.equal(active?.consideration.successorTicker, "FOXA");
+  assert.equal(active?.consideration.successorSharesPerShare, 0.9799);
+  assert.equal(active?.consideration.totalCashEntitlementPerShare, 95.30);
+});

@@ -1177,22 +1177,42 @@ export function buildManager13fWeights(
       isTicker(priceSymbol) &&
       Number.isFinite(priceMaps.get(priceSymbol)?.get(executionDate));
   });
-  const pricedValue = priced.reduce((sum, { holding }) => sum + holding.value, 0);
+  const preExecutionStockEquityFraction = ({ preExecutionStock }) => {
+    if (preExecutionStock?.consideration?.type !== "stock_and_cash") return 1;
+    const successorTicker = preExecutionStock.consideration.successorTicker;
+    const successorPrice = Number(priceMaps.get(successorTicker)?.get(executionDate));
+    const ratio = Number(preExecutionStock.consideration.successorSharesPerShare);
+    const cashPerShare = Number(preExecutionStock.consideration.totalCashEntitlementPerShare);
+    const stockPart = successorPrice * ratio;
+    const totalPart = stockPart + cashPerShare;
+    return Number.isFinite(totalPart) && totalPart > 0 ? stockPart / totalPart : 0;
+  };
+  const pricedValue = priced.reduce(
+    (sum, row) => sum + row.holding.value * preExecutionStockEquityFraction(row),
+    0
+  );
+  const mixedPreExecutionCashValue = priced.reduce(
+    (sum, row) => sum + row.holding.value * (1 - preExecutionStockEquityFraction(row)),
+    0
+  );
   const cashSettledValue = cashSettled.reduce(
     (sum, { holding }) => sum + holding.value,
     0
-  );
+  ) + mixedPreExecutionCashValue;
   const executionResolvedValue = pricedValue + cashSettledValue;
   const weights = selectedValue
-    ? priced.map(({
-      holding,
-      preExecutionStock,
-      activeCash,
-      activeStock,
-      activePrivateRollover
-    }) => {
+    ? priced.map((row) => {
+      const {
+        holding,
+        preExecutionStock,
+        activeCash,
+        activeStock,
+        activePrivateRollover
+      } = row;
       const ticker = executableDisplayTicker({ holding, preExecutionStock });
       const priceSymbol = executablePriceSymbol({ holding, preExecutionStock });
+      const equityFraction = preExecutionStockEquityFraction(row);
+      const effectiveValue = holding.value * equityFraction;
       return {
         ticker,
         ...(priceSymbol !== ticker ? {
@@ -1204,8 +1224,8 @@ export function buildManager13fWeights(
         issuer: holding.issuer,
         sector: holding.sector || null,
         industry: holding.industry || null,
-        value: holding.value,
-        weight: holding.value / selectedValue,
+        value: effectiveValue,
+        weight: effectiveValue / selectedValue,
         ...(preExecutionStock ? {
           corporateActionResolution: {
             ...compactStockConversionResolution(preExecutionStock, holding),

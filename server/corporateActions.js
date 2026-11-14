@@ -227,6 +227,30 @@ export const manager13fStockConversions = Object.freeze([
     sources: Object.freeze([
       "https://www.sec.gov/Archives/edgar/data/1037676/000110465925003782/tm252363d1_8k.htm"
     ])
+  }),
+  Object.freeze({
+    id: "roku-fox-2026",
+    cusip: "77543R102",
+    ticker: "ROKU",
+    issuer: "Roku, Inc.",
+    actionType: "stock_and_cash_conversion",
+    legalCompletionDate: "2026-11-06",
+    effectiveDate: "2026-11-09",
+    successorFirstTradingDate: "2026-11-09",
+    consideration: Object.freeze({
+      type: "stock_and_cash",
+      successorTicker: "FOXA",
+      successorSharesPerShare: 0.9799,
+      amountPerShare: 95.30,
+      additionalCashPerShare: 0,
+      totalCashEntitlementPerShare: 95.30,
+      currency: "USD"
+    }),
+    publicShareScope: "non_excluded_public_common_shares",
+    sources: Object.freeze([
+      "https://www.sec.gov/Archives/edgar/data/1428439/000119312526451874/d181620d8k.htm",
+      "https://www.sec.gov/Archives/edgar/data/1428439/000135445726001058/xslF25X02/primary_doc.xml"
+    ])
   })
 ]);
 
@@ -304,12 +328,25 @@ function isAuditedPublicStockConversion(action) {
   const successorSharesPerShare = Number(
     action?.consideration?.successorSharesPerShare
   );
+  const isPureStock = action?.actionType === "stock_conversion" &&
+    action?.consideration?.type === "stock";
+  const row = canonicalAction(action);
+  const isMixedStockAndCash = action?.actionType === "stock_and_cash_conversion" &&
+    action?.consideration?.type === "stock_and_cash" &&
+    row.amountPerShare != null &&
+    Number.isFinite(row.additionalCashPerShare) &&
+    row.additionalCashPerShare >= 0 &&
+    row.totalCashEntitlementPerShare != null &&
+    Math.abs(
+      row.amountPerShare + row.additionalCashPerShare -
+      row.totalCashEntitlementPerShare
+    ) < 1e-9 &&
+    row.currency.length === 3;
   return String(action?.id || "").trim() &&
     cusip.length === 9 &&
     effectiveDate &&
     successorFirstTradingDate >= effectiveDate &&
-    action?.actionType === "stock_conversion" &&
-    action?.consideration?.type === "stock" &&
+    (isPureStock || isMixedStockAndCash) &&
     successorTicker &&
     Number.isFinite(successorSharesPerShare) &&
     successorSharesPerShare > 0 &&
@@ -448,18 +485,40 @@ export function compactCashAcquisitionResolution(action, holding = {}) {
 
 export function compactStockConversionResolution(action, holding = {}) {
   if (!isAuditedPublicStockConversion(action)) return null;
+  const considerationType = String(action.consideration.type || "stock");
+  const isMixed = considerationType === "stock_and_cash";
+  const amountPerShare = isMixed
+    ? Number(action.consideration.amountPerShare)
+    : null;
+  const additionalCashPerShare = isMixed
+    ? Number(action.consideration.additionalCashPerShare || 0)
+    : null;
+  const totalCashEntitlementPerShare = isMixed
+    ? Number(action.consideration.totalCashEntitlementPerShare)
+    : null;
   return {
     actionId: action.id,
     actionType: action.actionType,
     cusip: normalizedCusip(action.cusip),
     ticker: normalizedTicker(holding?.ticker || action.ticker) || null,
     issuer: holding?.issuer || action.issuer,
+    ...(action.legalCompletionDate
+      ? { legalCompletionDate: action.legalCompletionDate }
+      : {}),
     effectiveDate: action.effectiveDate,
-    considerationType: "stock",
+    considerationType,
     successorTicker: normalizedTicker(action.consideration.successorTicker),
     successorSharesPerShare: Number(
       action.consideration.successorSharesPerShare
     ),
+    ...(isMixed
+      ? {
+          terminalCashPrice: amountPerShare,
+          additionalCashPerShare,
+          terminalCashEntitlementPerShare: totalCashEntitlementPerShare,
+          currency: action.consideration.currency
+        }
+      : {}),
     successorFirstTradingDate: action.successorFirstTradingDate,
     publicShareScope: action.publicShareScope,
     sources: [...action.sources]
