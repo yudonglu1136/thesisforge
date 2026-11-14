@@ -17,21 +17,24 @@ class StrategyWorkspacePanel extends StatefulWidget {
 }
 
 class _StrategyWorkspacePanelState extends State<StrategyWorkspacePanel> {
-  bool rules = false, opened = false;
+  bool rules = true, opened = true;
+  bool builderOpened = false;
   @override
   void initState() {
     super.initState();
-    rules = readBrowserQuery()['strategyTab'] == 'rules';
+    rules = readBrowserQuery()['strategyTab'] != 'builder';
     opened = rules;
+    builderOpened = !rules;
   }
 
   void tab(bool value) {
     setState(() {
       rules = value;
       opened = opened || value;
+      builderOpened = builderOpened || !value;
     });
     replaceBrowserQuery({
-      'strategyTab': value ? 'rules' : 'builder',
+      'strategyTab': value ? 'portfolio' : 'builder',
     }, replaceCurrent: true);
   }
 
@@ -44,34 +47,37 @@ class _StrategyWorkspacePanelState extends State<StrategyWorkspacePanel> {
         runSpacing: 8,
         children: [
           ChoiceChip(
+            key: const ValueKey('strategy-styles-tab'),
+            selected: rules,
+            label: Text(
+              context.tr('Strategy Portfolio · 策略组合', 'Strategy Portfolio'),
+            ),
+            onSelected: (_) => tab(true),
+          ),
+          ChoiceChip(
             key: const ValueKey('strategy-builder-tab'),
             selected: !rules,
             label: Text(context.tr('策略构建器', 'Strategy builder')),
             onSelected: (_) => tab(false),
           ),
-          ChoiceChip(
-            key: const ValueKey('strategy-styles-tab'),
-            selected: rules,
-            label: Text(context.tr('规则组合', 'Rule portfolios')),
-            onSelected: (_) => tab(true),
-          ),
         ],
       ),
       const SizedBox(height: 16),
-      // Preserve the user's builder state when comparing the separate rule portfolios.
-      Offstage(
-        offstage: rules,
-        child: StrategyLabPanel(
-          api: widget.api,
-          palette: widget.palette,
-          asOf: widget.asOf,
-          onCompany: widget.onCompany,
+      // Lazy-mount builder only when selected so opening Strategy Portfolio never triggers unnecessary builder API calls.
+      if (builderOpened)
+        Offstage(
+          offstage: rules,
+          child: StrategyLabPanel(
+            api: widget.api,
+            palette: widget.palette,
+            asOf: widget.asOf,
+            onCompany: widget.onCompany,
+          ),
         ),
-      ),
       if (opened)
         Offstage(
           offstage: !rules,
-          child: InvestorStylesDashboard(
+          child: StrategyPortfolioPanel(
             api: widget.api,
             palette: widget.palette,
             asOf: widget.asOf,
@@ -89,11 +95,15 @@ class InvestorStylesDashboard extends StatefulWidget {
     required this.palette,
     required this.asOf,
     required this.onCompany,
+    this.focusedStyleId,
+    this.onDataLoaded,
   });
   final ApiClient api;
   final Palette palette;
   final String asOf;
   final ValueChanged<String> onCompany;
+  final String? focusedStyleId;
+  final ValueChanged<Map<String, dynamic>>? onDataLoaded;
   @override
   State<InvestorStylesDashboard> createState() => _RulePortfolioState();
 }
@@ -148,6 +158,9 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
   @override
   void initState() {
     super.initState();
+    if (widget.focusedStyleId != null) {
+      active = widget.focusedStyleId!;
+    }
     final query = readBrowserQuery();
     if (const [
       'all',
@@ -164,6 +177,12 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
   @override
   void didUpdateWidget(covariant InvestorStylesDashboard old) {
     super.didUpdateWidget(old);
+    if (widget.focusedStyleId != null && widget.focusedStyleId != active) {
+      setState(() {
+        active = widget.focusedStyleId!;
+        quarter = quarters.length - 1;
+      });
+    }
     if (old.asOf != widget.asOf || old.api != widget.api) unawaited(load());
   }
 
@@ -182,6 +201,9 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
       if (!mounted || request != epoch) return;
       if ((asMap(response['universe'])['id'] ?? 'all') != requestedUniverse) {
         throw StateError('rule_universe_mismatch');
+      }
+      if (requestedUniverse == 'all') {
+        widget.onDataLoaded?.call(response);
       }
       setState(() {
         data = response;
@@ -379,6 +401,195 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
     );
   }
 
+  Widget focusedBlueprint() {
+    final isQuality = active == 'quality_rank';
+    final steps = isQuality
+        ? [
+            (
+              '01',
+              w('Eligible Universe', '合格样本池'),
+              w(
+                'US common stocks ≥ \$1B market cap (excl. financials & real estate); switchable across All / S&P 500 / Nasdaq 100.',
+                '市值 ≥ 10 亿美元美股普通股（剔除金融与房地产），支持全市场 / S&P 500 / 纳指 100 切换。',
+              ),
+            ),
+            (
+              '02',
+              w('Four-Factor Score', '四因子等权打分'),
+              w(
+                '25% Rev YoY + 25% TTM Op Margin + 25% TTM FCF Margin + 25% 5Y Min Pretax Capital Return percentile.',
+                '季度收入增速 + TTM 营业利润率 + TTM FCF 利润率 + 五年最低税前资本回报分位数各 25% 等权。',
+              ),
+            ),
+            (
+              '03',
+              w('Quality & WACC Gates', '盈利与 WACC 门槛'),
+              w(
+                'Rev YoY > 8%, Op Margin ≥ 10%, FCF Margin ≥ 5%, 5Y Pretax ROIC ≥ 10% each year, and latest ROIC > assumed WACC.',
+                '收入同比 > 8%、营业利润率 ≥ 10%、FCF 利润率 ≥ 5%、五年税前回报每年 ≥ 10% 且高于假设 WACC。',
+              ),
+            ),
+            (
+              '04',
+              w('Top 10 Conviction Sizing', '前十名信念配权'),
+              w(
+                'Hold ranks 1–10 only; weight ∝ √(11 − rank), capped at 15% per stock (excess held in cash, zero leverage).',
+                '仅持有前 10 名；权重正比于 √(11 − 排名)，单股上限 15%（超额留作现金，零杠杆）。',
+              ),
+            ),
+            (
+              '05',
+              w('Quarterly Execution', '季度收盘调仓'),
+              w(
+                'Quarter-end PIT facts executed at next SPY session close; charges 25 bps on both buys and sells.',
+                '按季末已披露基本面在下一交易日收盘调仓；买卖双边各计 25 bps 交易成本。',
+              ),
+            ),
+          ]
+        : [
+            (
+              '01',
+              w('Eligible Universe', '合格样本池'),
+              w(
+                'US common stocks ≥ \$1B market cap (excl. financials & real estate); switchable across All / S&P 500 / Nasdaq 100.',
+                '市值 ≥ 10 亿美元美股普通股（剔除金融与房地产），支持全市场 / S&P 500 / 纳指 100 切换。',
+              ),
+            ),
+            (
+              '02',
+              w('40 / 30 / 30 Composite', '三维度综合评分'),
+              w(
+                '40% Quality (ROIC, FCF & Op Margin) + 30% Valuation (FCF Yield, EBIT/EV) + 30% Margin & Net Payout Improvement.',
+                '40% 质量（资本回报、FCF 与营业利润率）+ 30% 估值（FCF 收益率、EBIT/EV）+ 30% 利润率与净回购改善。',
+              ),
+            ),
+            (
+              '03',
+              w('Balance-Sheet Gates', '现金流与杠杆门槛'),
+              w(
+                'Positive revenue, FCF, EBITDA and simplified EV, plus Net Debt / EBITDA ≤ 3.0x.',
+                '要求收入、自由现金流、EBITDA 与企业价值均为正，且净债务 / EBITDA ≤ 3.0 倍。',
+              ),
+            ),
+            (
+              '04',
+              w('Top 20 Equal Slots', '前二十名等权分仓'),
+              w(
+                'Allocate 5% to each of the top 20 qualifying stocks; unfilled slots remain uninvested cash.',
+                '前 20 名入选公司每只配置 5% 等权仓位；不足 20 名部分保留现金。',
+              ),
+            ),
+            (
+              '05',
+              w('Quarterly Rebalance', '季度再平衡与成本'),
+              w(
+                'Rebalance quarterly at next SPY session close after quarter-end; charges 25 bps per dollar traded.',
+                '每季度末下一交易日收盘重置目标权重并退出落选标的；买卖各计 25 bps 交易成本。',
+              ),
+            ),
+          ];
+    return KeyedSubtree(
+      key: ValueKey('style-$active'),
+      child: panel(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: color(active).withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text('01', style: s(12, true, color(active))),
+              ),
+              Text(
+                w(
+                  'How It Works · 5-Step Execution Blueprint',
+                  '策略运作蓝图 · 五步执行规则',
+                ),
+                style: s(18, true),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            w(
+              'Observed through ${data?['dataThrough']} · Quarterly fundamental rebalance · 25 bps on buys + sells',
+              '实测数据至 ${data?['dataThrough']} · 季度基本面调仓 · 买卖各计 25 bps 成本',
+            ),
+            style: s(12, false, p.secondary),
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final cols = constraints.maxWidth >= 1100
+                  ? 5
+                  : constraints.maxWidth >= 700
+                  ? 3
+                  : 1;
+              final gap = 10.0;
+              final itemWidth =
+                  (constraints.maxWidth - gap * (cols - 1)) / cols;
+              return Wrap(
+                spacing: gap,
+                runSpacing: gap,
+                children: [
+                  for (final step in steps)
+                    Container(
+                      width: itemWidth,
+                      padding: const EdgeInsets.all(13),
+                      decoration: BoxDecoration(
+                        color: p.card,
+                        borderRadius: BorderRadius.circular(11),
+                        border: Border.all(color: p.border),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'STEP ${step.$1}',
+                            style: s(10, true, color(active)),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(step.$2, style: s(14, true)),
+                          const SizedBox(height: 6),
+                          Text(step.$3, style: s(12, false, p.muted)),
+                        ],
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+      ),
+    );
+  }
+
+  Widget moduleTag(String code, String enTitle, String zhTitle) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: color(active).withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(code, style: s(11, true, color(active))),
+        ),
+        const SizedBox(width: 8),
+        Expanded(child: Text(w(enTitle, zhTitle), style: s(14, true, p.muted))),
+      ],
+    ),
+  );
+
   Widget content() {
     if (loading) {
       return panel(
@@ -430,6 +641,52 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
           ),
           style: s(15),
         ),
+      );
+    }
+    if (widget.focusedStyleId != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          focusedBlueprint(),
+          const SizedBox(height: 16),
+          moduleTag(
+            '02',
+            'Performance & Underwater Drawdown',
+            '净值曲线与水下回撤表现',
+          ),
+          chart(curve),
+          const SizedBox(height: 16),
+          moduleTag(
+            '03',
+            'Selected Range Attribution, Win/Payoff & 9-Band P&L Distribution',
+            '所选区间归因、胜率盈亏比与 9 档盈亏分布',
+          ),
+          RuleRangeAnalysisPanel(
+            api: widget.api,
+            palette: p,
+            asOf: widget.asOf,
+            universe: universe,
+            snapshotId: text(data?['snapshotId']),
+            curve: curve,
+            styles: styles,
+            range: range,
+            onCompany: widget.onCompany,
+          ),
+          const SizedBox(height: 16),
+          moduleTag(
+            '04',
+            'Quarterly Holdings, Factor Percentiles & Exits',
+            '季度持仓明细、因子分位数证据与调出记录',
+          ),
+          holdings(),
+          const SizedBox(height: 16),
+          moduleTag(
+            '05',
+            'Methodology Details & Research Guardrails',
+            '方法论细则与研究边界声明',
+          ),
+          method(),
+        ],
       );
     }
     return Column(

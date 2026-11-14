@@ -8,6 +8,273 @@ class WorkflowTestApi extends ApiClient {
   final calls = <(String, Map<String, dynamic>)>[];
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
+    if (path.contains('/breakout-pullback/analysis')) {
+      final q = Uri.parse(path).queryParameters;
+      return {
+        'version': 'breakout-pullback-attribution-v1',
+        'snapshotId': q['snapshotId'] ?? 'fixture-breakout',
+        'mode': q['mode'] ?? 'flagship',
+        'start': q['start'] ?? '2026-01-02',
+        'end': q['end'] ?? '2026-06-01',
+        'observations': 3,
+        'illustrativeCapital': 100000,
+        'currency': 'USD',
+        'metrics': {
+          'endingValue': 1.18,
+          'totalReturn': .18,
+          'cagr': .2445,
+          'annualizedVolatility': .2375,
+          'sharpeZeroRf': 1.03,
+          'maxDrawdown': -.06,
+          'calmar': .82,
+        },
+        'benchmarks': {
+          'spy': {'totalReturn': .07, 'cagr': .135, 'maxDrawdown': -.04},
+          'qqq': {'totalReturn': .09, 'cagr': .193, 'maxDrawdown': -.05},
+        },
+        'reconciliation': {
+          'stockPnl': .18,
+          'grossPnl': .181,
+          'costs': .001,
+          'portfolioReturn': .18,
+          'difference': 0.0,
+        },
+        'tradeStats': {
+          'stocks': 2,
+          'wins': 2,
+          'losses': 0,
+          'flat': 0,
+          'open': 1,
+          'winRate': 1.0,
+          'payoffRatio': 2.5,
+          'lotCount': 2,
+          'closedLotCount': 1,
+          'lotWinRate': 1.0,
+          'lotPayoffRatio': 2.5,
+          'avgHoldingDays': 38.0,
+          'hardStopCount': 0,
+          'profitExitCount': 1,
+          'stopLossExitShare': 0.0,
+          'profitExitShare': 1.0,
+        },
+        'turnover': {
+          'version': 'breakout-range-turnover-v1',
+          'oneWay': .35,
+          'annualizedOneWay': .82,
+          'executions': 3,
+        },
+        'distribution': [
+          for (var i = 0; i < 9; i++)
+            {
+              'index': i,
+              'count': i == 7 ? 2 : 0,
+              'share': i == 7 ? 1.0 : 0.0,
+            },
+        ],
+        'topWinners': [
+          {
+            'ticker': 'NVDA',
+            'name': 'NVIDIA Corp',
+            'isDelisted': false,
+            'netContribution': .12,
+            'grossContribution': .121,
+            'costContribution': .001,
+            'openAtStart': false,
+            'openAtEnd': true,
+            'lots': [],
+          },
+        ],
+        'topLosers': [],
+        'holdings': [
+          {
+            'ticker': 'NVDA',
+            'name': 'NVIDIA Corp',
+            'isDelisted': false,
+            'netContribution': .12,
+            'grossContribution': .121,
+            'costContribution': .001,
+            'openAtStart': false,
+            'openAtEnd': true,
+            'lots': [],
+          },
+        ],
+        'trades': [],
+      };
+    }
+    if (path.contains('/breakout-pullback')) {
+      final reqMode = Uri.parse(path).queryParameters['mode'] ?? 'flagship';
+      Map<String, dynamic> modeSummary(String id, double mult, double sharpe) => {
+        'id': id,
+        'badge': {'en': 'Champion', 'zh': '冠军版'},
+        'name': {'en': 'Flagship', 'zh': '旗舰版'},
+        'subtitle': {'en': 'Top 50', 'zh': 'Top 50'},
+        'parameters': {'maxPositions': 10, 'timeStopDays': id == 'balanced' ? 180 : null},
+        'blueprint': [
+          {
+            'step': 1,
+            'title': {'en': 'Universe', 'zh': '样本池'},
+            'summary': {'en': 'Top 50 Dollar Volume', 'zh': 'Top 50 成交额'},
+          },
+        ],
+        'avgExposure': .84,
+        'episodeStats': {'fillRate': .42},
+        'metrics': {
+          'endingValue': mult,
+          'totalReturn': mult - 1,
+          'cagr': .2445,
+          'annualizedVolatility': .2375,
+          'sharpeZeroRf': sharpe,
+          'maxDrawdown': -.2989,
+          'calmar': .82,
+        },
+      };
+      final summaries = {
+        'flagship': modeSummary('flagship', 8.91, 1.03),
+        'balanced': modeSummary('balanced', 7.54, 1.12),
+      };
+      return {
+        'version': 'breakout-pullback-dashboard-v1',
+        'status': 'ready',
+        'snapshotId': 'fixture-breakout',
+        'requestedAsOf': Uri.parse(path).queryParameters['asOf'] ?? '2026-06-01',
+        'dataThrough': '2026-06-01',
+        'inceptionDate': '2016-11-10',
+        'lineage': {'delistedStocksIncluded': 183},
+        'methodology': {},
+        'mode': reqMode,
+        'modeOrder': ['flagship', 'balanced'],
+        'modesSummary': summaries,
+        'activeMode': {
+          ...summaries[reqMode]!,
+          'tradeSummary': {
+            'totalTrades': 12,
+            'closedTrades': 11,
+            'openTrades': 1,
+            'winRate': .434,
+            'payoffRatio': 2.09,
+            'avgHoldingDays': 38.4,
+          },
+        },
+        'yearlyReturns': [
+          {
+            'year': 2026,
+            'label': '2026*',
+            'partial': true,
+            'from': '2026-01-02',
+            'to': '2026-06-01',
+            'flagship': .18,
+            'balanced': .15,
+            'spy': .07,
+            'qqq': .09,
+          },
+        ],
+        'empiricalProof': {'totalConfigurationsTested': 6912},
+        'liveBook': {
+          'asOfDate': '2026-06-01',
+          'maxSlots': 10,
+          'usedSlots': 1,
+          'freeSlots': 9,
+          'cashWeight': .895,
+          'investedWeight': .105,
+          'openPositions': [
+            {
+              'lotId': 'NVDA-1',
+              'ticker': 'NVDA',
+              'name': 'NVIDIA Corp',
+              'isDelisted': false,
+              'breakoutDate': '2026-04-02',
+              'breakoutClose': 126.5,
+              'waitDays': 5,
+              'entryDate': '2026-04-10',
+              'entryPrice': 120.0,
+              'latestClose': 138.0,
+              'highestHigh': 140.0,
+              'latestAtr14': 3.5,
+              'weight': .105,
+              'unrealizedNetReturn': .15,
+              'holdingDays': 35,
+              'hardStopPrice': 111.25,
+              'chandelierStopPrice': 126.0,
+              'targetPrice': null,
+              'effectiveStopPrice': 126.0,
+              'remainingTimeStopDays': null,
+            },
+          ],
+          'pendingWatchlist': [
+            {
+              'ticker': 'AVGO',
+              'name': 'Broadcom Inc',
+              'breakoutDate': '2026-05-22',
+              'breakoutClose': 178.0,
+              'prev63High': 176.0,
+              'peakClose': 180.0,
+              'latestClose': 175.5,
+              'limitBuyPrice': 171.0,
+              'distanceToLimitPct': -.0256,
+              'pullbackFromPeakPct': -.025,
+              'elapsedDays': 6,
+              'remainingWatchDays': 9,
+              'dvolRank': 12,
+              'dvol20': 3200000000,
+            },
+          ],
+        },
+        'trades': [
+          {
+            'lotId': 'ANET-1',
+            'ticker': 'ANET',
+            'name': 'Arista Networks',
+            'isDelisted': false,
+            'breakoutDate': '2026-01-12',
+            'breakoutClose': 100.0,
+            'dvolRankAtBreakout': 18,
+            'waitDays': 5,
+            'entryDate': '2026-01-20',
+            'entryPrice': 95.0,
+            'exitDate': '2026-04-02',
+            'exitPrice': 118.0,
+            'hardStopPrice': 88.0,
+            'targetPrice': null,
+            'holdDays': 50,
+            'netReturn': .241,
+            'exitReason': 'Trailing_TakeProfit',
+            'isOpen': false,
+          },
+        ],
+        'backtest': {
+          'from': '2026-01-02',
+          'to': '2026-06-01',
+          'observations': 3,
+          'benchmarks': {
+            'spy': {'id': 'spy', 'ticker': 'SPY', 'metrics': {'endingValue': 1.07, 'cagr': .135}},
+            'qqq': {'id': 'qqq', 'ticker': 'QQQ', 'metrics': {'endingValue': 1.09, 'cagr': .193}},
+          },
+          'curve': [
+            {'date': '2026-01-02', 'flagship': 1.0, 'balanced': 1.0, 'spy': 1.0, 'qqq': 1.0, 'flagshipCashWeight': .2, 'balancedCashWeight': .2},
+            {'date': '2026-03-16', 'flagship': 1.09, 'balanced': 1.07, 'spy': 1.03, 'qqq': 1.04, 'flagshipCashWeight': .1, 'balancedCashWeight': .2},
+            {'date': '2026-06-01', 'flagship': 1.18, 'balanced': 1.15, 'spy': 1.07, 'qqq': 1.09, 'flagshipCashWeight': .2, 'balancedCashWeight': .2},
+          ],
+        },
+      };
+    }
+    if (path.contains('/investor-styles')) {
+      return {
+        'version': 'investor-style-dashboard-v4',
+        'snapshotId': 'fixture-styles',
+        'requestedAsOf': '2026-06-01',
+        'effectiveAsOf': '2026-06-01',
+        'styles': [
+          {
+            'id': 'quality_rank',
+            'metrics': {'endingValue': 5.10, 'cagr': .131, 'sharpeZeroRf': .94},
+          },
+          {
+            'id': 'ackman',
+            'metrics': {'endingValue': 4.10, 'cagr': .113, 'sharpeZeroRf': .79},
+          },
+        ],
+      };
+    }
     if (path.contains('/research/')) {
       return {
         'ticker': 'TEST',
@@ -931,6 +1198,8 @@ void main() {
       DiscoveryFixtureApi(),
     );
     await tester.tap(find.text('Strategies'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('strategy-builder-tab')));
     await tester.pumpAndSettle();
     expect(
       tester

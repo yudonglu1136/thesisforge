@@ -19,6 +19,7 @@ import { researchDocuments, researchFundamentals, researchInstitutions, research
   saveResearchRecord, listResearchRecords } from './researchWorkbench.js';
 import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
 import { createRuleAnalysisService,analyzeRuleRange,hydrateRuleLedger } from './rulePortfolioAnalysis.js';
+import { loadBreakoutPullbackDashboard, analyzeBreakoutPullbackRange } from './breakoutPullbackStrategy.js';
 import { researchInsiders } from './researchInsiders.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
 import { factOsEnabled } from './factRepository.js';
@@ -87,6 +88,18 @@ export function registerInvestmentRoutes(app,service) {
         sourceSnapshotGeneration:value.sourceGeneration,readerFingerprint:snapshot.fingerprint,
         allDailyNavReconciled:true,adjustmentBasis:value.adjustmentBasis??'vendor_current_adjustment_factors',method:'rule-range-attribution-v2'}};
   });
+  route('get','/breakout-pullback',(_,r)=>loadBreakoutPullbackDashboard({
+    asOf:service.date(r.query.asOf),
+    mode:r.query.mode??'flagship',
+    snapshotId:r.query.snapshotId??null,
+  }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
+  route('get','/breakout-pullback/analysis',(_,r)=>analyzeBreakoutPullbackRange({
+    asOf:service.date(r.query.asOf),
+    mode:r.query.mode??'flagship',
+    snapshotId:r.query.snapshotId??null,
+    start:r.query.start??null,
+    end:r.query.end??null,
+  }));
   route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
     search:r.query.search,limit:r.query.limit,
   }));
