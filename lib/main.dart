@@ -52,6 +52,7 @@ part 'investment_strategy_chart.dart';
 part 'investment_rule_portfolios.dart';
 part 'investment_rule_analysis.dart';
 part 'investment_breakout_pullback.dart';
+part 'investment_qqq_schd_rotation.dart';
 part 'investment_ai_insights.dart';
 part 'investment_ai_insights_export.dart';
 part 'investment_fundamentals.dart';

@@ -21,8 +21,10 @@ class StrategyPortfolioPanel extends StatefulWidget {
 class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
   String selectedStrategy = 'breakout_pullback';
   bool rulePortfoliosOpened = false;
+  bool rotationOpened = false;
   Map<String, dynamic>? breakoutSummary;
   Map<String, dynamic>? ruleAllMarketSummary;
+  Map<String, dynamic>? rotationSummary;
 
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
@@ -43,10 +45,13 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
       'breakout_pullback',
       'quality_rank',
       'ackman',
+      'qqq_schd_rotation',
     ].contains(initial)) {
       selectedStrategy = initial!;
     }
-    rulePortfoliosOpened = selectedStrategy != 'breakout_pullback';
+    rulePortfoliosOpened =
+        selectedStrategy == 'quality_rank' || selectedStrategy == 'ackman';
+    rotationOpened = selectedStrategy == 'qqq_schd_rotation';
     unawaited(_prefetchRuleSummary());
   }
 
@@ -74,8 +79,11 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
     if (selectedStrategy == id) return;
     setState(() {
       selectedStrategy = id;
-      if (id != 'breakout_pullback') {
+      if (id == 'quality_rank' || id == 'ackman') {
         rulePortfoliosOpened = true;
+      }
+      if (id == 'qqq_schd_rotation') {
+        rotationOpened = true;
       }
     });
     replaceBrowserQuery({
@@ -248,6 +256,33 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
             '25 bps',
           ];
 
+    final m6LiveMetrics = asMap(
+      asMap(
+        asMap(asMap(rotationSummary?['modesSummary'])['m6'])['metricsByWindow'],
+      )['live_2011'],
+    );
+    final m6FullMetrics = asMap(
+      asMap(
+        asMap(asMap(rotationSummary?['modesSummary'])['m6'])['metricsByWindow'],
+      )['full_2000'],
+    );
+    final rotationPills = m6LiveMetrics.isNotEmpty
+        ? [
+            'Live ${_fmtMult(m6LiveMetrics['endingMultiple'])}',
+            'CAGR ${_fmtPct(m6LiveMetrics['cagr'])}',
+            'Sharpe ${_fmtDec(m6LiveMetrics['sharpe'])}',
+            if (m6FullMetrics.isNotEmpty)
+              '27Y ${_fmtMult(m6FullMetrics['endingMultiple'])}',
+            '5 bps',
+          ]
+        : [
+            'Live 16.74x',
+            'CAGR 20.6%',
+            'Sharpe 1.02',
+            '27Y 39.17x',
+            '5 bps',
+          ];
+
     final cards = [
       _buildSelectorCard(
         id: 'breakout_pullback',
@@ -291,6 +326,20 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
         ),
         statPills: ackmanPills,
       ),
+      _buildSelectorCard(
+        id: 'qqq_schd_rotation',
+        categoryLabel: w(
+          'ETF MACRO & VALUATION ROTATION',
+          'ETF 宏观估值恐慌轮动',
+        ),
+        accentColor: const Color(0xff14b8a6),
+        title: w('QQQ ⇄ SCHD Rotation (M6)', 'QQQ ⇄ SCHD 估值恐慌轮动 (M6)'),
+        subtitle: w(
+          'Dual-Anchor Valuation + Slow-Sell (70%->45%->0%) / VIX & RSI Panic All-In Buy · M6 / M4 / M7',
+          '双锚估值护栏 + 慢卖分批止盈 (70%→45%→0%) + VIX/RSI 恐慌一把满仓抄底 · 含 M6/M4/M7',
+        ),
+        statPills: rotationPills,
+      ),
     ];
 
     return Column(
@@ -327,7 +376,7 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
-                      w('3 Audited Model Portfolios', '3 套实证规则模型组合'),
+                      w('4 Audited Model Portfolios', '4 套实证规则模型组合'),
                       style: s(11, true, p.accent),
                     ),
                   ),
@@ -336,15 +385,15 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
               const SizedBox(height: 6),
               Text(
                 w(
-                  'Institutional rule-based model portfolios · Select one strategy card below to inspect its dedicated controls, 5-step execution blueprint, audited backtest, range attribution, and live holdings/signals without cross-strategy confusion.',
-                  '机构级规则化模型组合 · 点击下方任一策略名片卡，独立检视其专属参数开关、五步执行蓝图、实证净值曲线、区间逐股归因与当前持仓/观察池信号（互不干扰）。',
+                  'Institutional rule-based model portfolios · Select one strategy card below to inspect its dedicated controls, execution blueprint, audited backtest, range attribution, and live holdings/signals without cross-strategy confusion.',
+                  '机构级规则化模型组合 · 点击下方任一策略名片卡，独立检视其专属参数开关、执行蓝图、实证净值曲线、区间归因与当下实盘仓位/信号（互不干扰）。',
                 ),
                 style: s(12.5, false, p.muted),
               ),
               const SizedBox(height: 16),
               LayoutBuilder(
                 builder: (context, constraints) {
-                  if (constraints.maxWidth >= 980) {
+                  if (constraints.maxWidth >= 1320) {
                     return Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -353,6 +402,32 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
                         Expanded(child: cards[1]),
                         const SizedBox(width: 12),
                         Expanded(child: cards[2]),
+                        const SizedBox(width: 12),
+                        Expanded(child: cards[3]),
+                      ],
+                    );
+                  }
+                  if (constraints.maxWidth >= 720) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: cards[0]),
+                            const SizedBox(width: 12),
+                            Expanded(child: cards[1]),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: cards[2]),
+                            const SizedBox(width: 12),
+                            Expanded(child: cards[3]),
+                          ],
+                        ),
                       ],
                     );
                   }
@@ -364,6 +439,8 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
                       cards[1],
                       const SizedBox(height: 10),
                       cards[2],
+                      const SizedBox(height: 10),
+                      cards[3],
                     ],
                   );
                 },
@@ -389,7 +466,9 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
         ),
         if (rulePortfoliosOpened)
           Offstage(
-            offstage: selectedStrategy == 'breakout_pullback',
+            offstage:
+                selectedStrategy != 'quality_rank' &&
+                selectedStrategy != 'ackman',
             child: InvestorStylesDashboard(
               api: widget.api,
               palette: p,
@@ -401,6 +480,22 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
               onDataLoaded: (payload) {
                 if (!mounted) return;
                 setState(() => ruleAllMarketSummary = payload);
+              },
+            ),
+          ),
+        if (rotationOpened)
+          Offstage(
+            offstage: selectedStrategy != 'qqq_schd_rotation',
+            child: QqqSchdRotationDashboard(
+              api: widget.api,
+              palette: p,
+              asOf: widget.asOf,
+              onCompany: widget.onCompany,
+              onSummaryLoaded: (payload) {
+                if (!mounted) return;
+                if (rotationSummary?['snapshotId'] != payload['snapshotId']) {
+                  setState(() => rotationSummary = payload);
+                }
               },
             ),
           ),

@@ -20,6 +20,7 @@ import { researchDocuments, researchFundamentals, researchInstitutions, research
 import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
 import { createRuleAnalysisService,analyzeRuleRange,hydrateRuleLedger } from './rulePortfolioAnalysis.js';
 import { loadBreakoutPullbackDashboard, analyzeBreakoutPullbackRange } from './breakoutPullbackStrategy.js';
+import { loadQqqSchdRotationDashboard, analyzeQqqSchdRotationRange } from './qqqSchdRotationStrategy.js';
 import { researchInsiders } from './researchInsiders.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
 import { factOsEnabled } from './factRepository.js';
@@ -96,6 +97,20 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/breakout-pullback/analysis',(_,r)=>analyzeBreakoutPullbackRange({
     asOf:service.date(r.query.asOf),
     mode:r.query.mode??'flagship',
+    snapshotId:r.query.snapshotId??null,
+    start:r.query.start??null,
+    end:r.query.end??null,
+  }));
+  route('get','/qqq-schd-rotation',(_,r)=>loadQqqSchdRotationDashboard({
+    asOf:service.date(r.query.asOf),
+    mode:r.query.mode??'m6',
+    window:r.query.window??'live_2011',
+    snapshotId:r.query.snapshotId??null,
+  }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
+  route('get','/qqq-schd-rotation/analysis',(_,r)=>analyzeQqqSchdRotationRange({
+    asOf:service.date(r.query.asOf),
+    mode:r.query.mode??'m6',
+    window:r.query.window??'live_2011',
     snapshotId:r.query.snapshotId??null,
     start:r.query.start??null,
     end:r.query.end??null,

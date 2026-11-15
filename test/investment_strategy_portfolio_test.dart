@@ -8,7 +8,10 @@ Map<String, dynamic> _loadRealBreakoutFixtures() {
   final res = Process.runSync('node', [
     '-e',
     '''
-import('./server/breakoutPullbackStrategy.js').then(m => {
+Promise.all([
+  import('./server/breakoutPullbackStrategy.js'),
+  import('./server/qqqSchdRotationStrategy.js'),
+]).then(([m, r]) => {
   const dashFlagship = m.loadBreakoutPullbackDashboard({ asOf: '2026-11-10', mode: 'flagship' });
   const dashBalanced = m.loadBreakoutPullbackDashboard({ asOf: '2026-11-10', mode: 'balanced' });
   const attrFlagship = m.analyzeBreakoutPullbackRange({
@@ -23,12 +26,27 @@ import('./server/breakoutPullbackStrategy.js').then(m => {
     start: dashBalanced.backtest.from,
     end: dashBalanced.backtest.to,
   });
-  process.stdout.write(JSON.stringify({ dashFlagship, dashBalanced, attrFlagship, attrBalanced }));
+  const rotM6Live = r.loadQqqSchdRotationDashboard({ asOf: '2026-11-13', mode: 'm6', window: 'live_2011' });
+  const rotM4Live = r.loadQqqSchdRotationDashboard({ asOf: '2026-11-13', mode: 'm4', window: 'live_2011' });
+  const rotM7Live = r.loadQqqSchdRotationDashboard({ asOf: '2026-11-13', mode: 'm7', window: 'live_2011' });
+  const rotM6Full = r.loadQqqSchdRotationDashboard({ asOf: '2026-11-13', mode: 'm6', window: 'full_2000' });
+  const rotBear2022 = r.analyzeQqqSchdRotationRange({
+    asOf: '2026-11-13',
+    mode: 'm6',
+    window: 'live_2011',
+    snapshotId: rotM6Live.snapshotId,
+    start: '2021-11-19',
+    end: '2022-12-28',
+  });
+  process.stdout.write(JSON.stringify({
+    dashFlagship, dashBalanced, attrFlagship, attrBalanced,
+    rotM6Live, rotM4Live, rotM7Live, rotM6Full, rotBear2022,
+  }));
 });
 ''',
   ]);
   if (res.exitCode != 0) {
-    throw StateError('Failed to load real breakout fixtures: ${res.stderr}');
+    throw StateError('Failed to load real strategy fixtures: ${res.stderr}');
   }
   return jsonDecode(res.stdout as String) as Map<String, dynamic>;
 }
@@ -116,6 +134,22 @@ class _StrategyPortfolioTestApi extends ApiClient {
         _realBreakoutBundle[mode == 'balanced' ? 'dashBalanced' : 'dashFlagship']
             as Map,
       );
+    }
+    if (path.contains('/api/investment/qqq-schd-rotation/analysis')) {
+      return Map<String, dynamic>.from(_realBreakoutBundle['rotBear2022'] as Map);
+    }
+    if (path.contains('/api/investment/qqq-schd-rotation')) {
+      final mode = uri.queryParameters['mode'] ?? 'm6';
+      final win = uri.queryParameters['window'] ?? 'live_2011';
+      if (win == 'full_2000') {
+        return Map<String, dynamic>.from(_realBreakoutBundle['rotM6Full'] as Map);
+      }
+      final key = switch (mode) {
+        'm4' => 'rotM4Live',
+        'm7' => 'rotM7Live',
+        _ => 'rotM6Live',
+      };
+      return Map<String, dynamic>.from(_realBreakoutBundle[key] as Map);
     }
     if (path.contains('/api/investment/investor-styles/analysis')) {
       return _buildStyleAnalysis(uri);
@@ -206,6 +240,10 @@ void main() {
           );
           expect(
             find.byKey(const ValueKey('portfolio-card-ackman')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('portfolio-card-qqq_schd_rotation')),
             findsOneWidget,
           );
           expect(
@@ -351,4 +389,110 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final size in [const Size(1487, 1058), const Size(390, 844)]) {
+    testWidgets(
+      'QQQ-SCHD Rotation (M6/M4/M7) renders all 5 modules, switches modes/windows/presets without overflow ($size)',
+      (tester) async {
+        final api = _StrategyPortfolioTestApi();
+        String? openedTicker;
+        await _mountWorkspace(
+          tester,
+          api,
+          size: size,
+          language: AppLanguage.zh,
+          onCompany: (t) => openedTicker = t,
+        );
+
+        final m6Card = find.byKey(
+          const ValueKey('portfolio-card-qqq_schd_rotation'),
+        );
+        await tester.ensureVisible(m6Card);
+        await tester.tap(m6Card);
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(
+          find.byKey(const ValueKey('rotation-dashboard-heading')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('breakout-mode-flagship')),
+          findsNothing,
+        );
+        expect(find.textContaining('16.74x'), findsWidgets);
+        expect(find.textContaining('20.57%'), findsWidgets);
+        expect(
+          find.byKey(const ValueKey('rotation-live-position-banner')),
+          findsOneWidget,
+        );
+
+        // Switch to M4 Offensive Champion (21.39% / 18.55x)
+        final m4Btn = find.byKey(const ValueKey('rotation-mode-m4'));
+        await tester.ensureVisible(m4Btn);
+        await tester.tap(m4Btn);
+        await tester.pumpAndSettle();
+        expect(find.textContaining('18.55x'), findsWidgets);
+        expect(tester.takeException(), isNull);
+
+        // Switch to M7 Taxable Core-Satellite (19.91% / 15.42x)
+        final m7Btn = find.byKey(const ValueKey('rotation-mode-m7'));
+        await tester.ensureVisible(m7Btn);
+        await tester.tap(m7Btn);
+        await tester.pumpAndSettle();
+        expect(find.textContaining('15.42x'), findsWidgets);
+        expect(tester.takeException(), isNull);
+
+        // Switch back to M6 and toggle Full 27Y Cycle (39.17x)
+        final m6Btn = find.byKey(const ValueKey('rotation-mode-m6'));
+        await tester.ensureVisible(m6Btn);
+        await tester.tap(m6Btn);
+        await tester.pumpAndSettle();
+
+        final fullWin = find.byKey(const ValueKey('rotation-window-full_2000'));
+        await tester.ensureVisible(fullWin);
+        await tester.tap(fullWin);
+        await tester.pumpAndSettle();
+        expect(find.textContaining('39.17x'), findsWidgets);
+        expect(tester.takeException(), isNull);
+
+        // Switch back to Live ETF Era and apply 2022 Rate-Hike Bear preset
+        final liveWin = find.byKey(const ValueKey('rotation-window-live_2011'));
+        await tester.ensureVisible(liveWin);
+        await tester.tap(liveWin);
+        await tester.pumpAndSettle();
+
+        final bearPreset = find.byKey(const ValueKey('rotation-preset-bear2022'));
+        await tester.ensureVisible(bearPreset);
+        await tester.tap(bearPreset);
+        await tester.pumpAndSettle();
+        expect(
+          api.requestedPaths.any((p) => p.contains('/qqq-schd-rotation/analysis')),
+          isTrue,
+        );
+        expect(tester.takeException(), isNull);
+
+        // Toggle 5x5 Parameter Robustness Grid & Tax Sensitivity tabs
+        final gridChip = find.byKey(const ValueKey('rotation-proof-grid'));
+        await tester.ensureVisible(gridChip);
+        await tester.tap(gridChip);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+
+        final taxChip = find.byKey(const ValueKey('rotation-sop-tax'));
+        await tester.ensureVisible(taxChip);
+        await tester.tap(taxChip);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+
+        // Inspect QQQ button triggers company navigation cleanly
+        final qqqBtn = find.text('查看 QQQ');
+        await tester.ensureVisible(qqqBtn);
+        await tester.tap(qqqBtn);
+        await tester.pumpAndSettle();
+        expect(openedTicker, 'QQQ');
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }
