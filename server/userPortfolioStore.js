@@ -183,6 +183,14 @@ function initUserDb(db) {
 
     CREATE INDEX IF NOT EXISTS idx_portfolio_analysis_snapshots_latest
       ON portfolio_analysis_snapshots (scope, connection_revision, as_of, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS portfolio_passive_ledgers (
+      provider TEXT NOT NULL,
+      connection_revision TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      encrypted_json TEXT NOT NULL,
+      PRIMARY KEY (provider, connection_revision)
+    );
   `);
 }
 
@@ -300,6 +308,65 @@ export function portfolioConnectionRevision(user) {
   return row ? reportHash(row.encrypted_json) : null;
 }
 
+function nextIsoDay(isoDateText) {
+  const parsed = new Date(`${isoDateText}T00:00:00Z`);
+  if (!Number.isFinite(parsed.getTime())) return isoDateText;
+  parsed.setUTCDate(parsed.getUTCDate() + 1);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function dedupeByEventKey(prevRows = [], nextRows = []) {
+  const byKey = new Map();
+  for (const r of prevRows) if (r?.eventKey) byKey.set(r.eventKey, r);
+  for (const r of nextRows) if (r?.eventKey) byKey.set(r.eventKey, r);
+  return [...byKey.values()].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+}
+
+function extractPassiveSlot(account, index) {
+  const h = account?.historyEvidence;
+  if (!h?.fromDate || !h?.toDate || h.fromDate > h.toDate || h.incomeStatus !== "ready") return null;
+  if (h.expiredCallsStatus !== "ready" || !Array.isArray(h.expiredShortCalls)) return null;
+  const accountKey = String(account.accountId || `slot-${index}:${account.currency || ""}`);
+  return {
+    accountKey,
+    currency: String(account.currency || ""),
+    fromDate: h.fromDate,
+    toDate: h.toDate,
+    incomeStatus: "ready",
+    dividendTaxStatus: h.dividendTaxStatus === "ready" ? "ready" : "unavailable",
+    expiredCallsStatus: "ready",
+    income: (h.income || []).filter(r => r?.eventKey && (r.category === "dividends" || r.category === "substitute_dividends")),
+    dividendTaxes: h.dividendTaxStatus === "ready" ? (h.dividendTaxes || []).filter(r => r?.eventKey) : [],
+    expiredShortCalls: (h.expiredShortCalls || []).filter(r => r?.eventKey),
+  };
+}
+
+function mergePassiveLedgerSlots(previousSlots = [], analysisAccounts = []) {
+  const prevByKey = new Map((previousSlots || []).filter(s => s?.accountKey).map(s => [s.accountKey, s]));
+  return (analysisAccounts || []).map((account, index) => {
+    const current = extractPassiveSlot(account, index);
+    const fallbackKey = String(account?.accountId || `slot-${index}:${account?.currency || ""}`);
+    const prev = prevByKey.get(current?.accountKey || fallbackKey) || null;
+    if (!current) return prev;
+    if (!prev || prev.currency !== current.currency) return current;
+    const contiguous = prev.fromDate <= nextIsoDay(current.toDate) && current.fromDate <= nextIsoDay(prev.toDate);
+    if (!contiguous) return current.toDate >= prev.toDate ? current : prev;
+    const taxReady = prev.dividendTaxStatus === "ready" && current.dividendTaxStatus === "ready";
+    return {
+      accountKey: current.accountKey,
+      currency: current.currency,
+      fromDate: prev.fromDate < current.fromDate ? prev.fromDate : current.fromDate,
+      toDate: prev.toDate > current.toDate ? prev.toDate : current.toDate,
+      incomeStatus: "ready",
+      dividendTaxStatus: taxReady ? "ready" : "unavailable",
+      expiredCallsStatus: "ready",
+      income: dedupeByEventKey(prev.income, current.income),
+      dividendTaxes: taxReady ? dedupeByEventKey(prev.dividendTaxes, current.dividendTaxes) : [],
+      expiredShortCalls: dedupeByEventKey(prev.expiredShortCalls, current.expiredShortCalls),
+    };
+  }).filter(Boolean);
+}
+
 export function writeUserPortfolioReport(user, payload, { connectionRevision, now = new Date() } = {}) {
   const asOf = reportDate(payload?.source?.asOf);
   const retrievedAt = normalizedNow(now).toISOString();
@@ -326,6 +393,7 @@ export function writeUserPortfolioReport(user, payload, { connectionRevision, no
     const previous = db.prepare("SELECT max(report_date) AS report_date FROM portfolio_report_snapshots WHERE provider = ? AND connection_revision = ?")
       .get("ibkr_flex", connectionRevision);
     if (previous.report_date && previous.report_date > asOf) throw reportError("portfolio_report_older_than_saved");
+    const aad = reportAad(user);
     db.prepare(`INSERT INTO portfolio_report_snapshots
       (provider, connection_revision, report_date, retrieved_at, payload_sha256, encrypted_json)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -333,13 +401,42 @@ export function writeUserPortfolioReport(user, payload, { connectionRevision, no
         retrieved_at = excluded.retrieved_at,
         payload_sha256 = excluded.payload_sha256,
         encrypted_json = excluded.encrypted_json`)
-      .run("ibkr_flex", connectionRevision, asOf, retrievedAt, reportHash(json), encryptJson(stored, reportAad(user)));
+      .run("ibkr_flex", connectionRevision, asOf, retrievedAt, reportHash(json), encryptJson(stored, aad));
+    const existingLedgerRow = db.prepare(`SELECT encrypted_json FROM portfolio_passive_ledgers
+      WHERE provider = ? AND connection_revision = ?`).get("ibkr_flex", connectionRevision);
+    const prevSlots = existingLedgerRow ? (decryptJson(existingLedgerRow.encrypted_json, aad)?.slots || []) : [];
+    const mergedSlots = mergePassiveLedgerSlots(prevSlots, stored.analysisAccounts);
+    if (mergedSlots.length) {
+      db.prepare(`INSERT INTO portfolio_passive_ledgers (provider, connection_revision, updated_at, encrypted_json)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(provider, connection_revision) DO UPDATE SET
+          updated_at = excluded.updated_at,
+          encrypted_json = excluded.encrypted_json`)
+        .run("ibkr_flex", connectionRevision, retrievedAt, encryptJson({ version: 1, slots: mergedSlots }, aad));
+    }
     db.exec("COMMIT");
     return { reportAsOf: asOf, retrievedAt };
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+export function readUserPortfolioPassiveLedger(user) {
+  const revision = portfolioConnectionRevision(user);
+  if (!revision) return [];
+  const db = openUserDb(user);
+  const aad = reportAad(user);
+  const row = db.prepare(`SELECT encrypted_json FROM portfolio_passive_ledgers
+    WHERE provider = ? AND connection_revision = ?`).get("ibkr_flex", revision);
+  if (row) {
+    try {
+      return decryptJson(row.encrypted_json, aad)?.slots || [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 export function readUserPortfolioReport(user) {

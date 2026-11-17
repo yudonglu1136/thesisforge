@@ -453,4 +453,238 @@ void main() {
       expect(t.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'annual dropdown, same-period YoY comparison, and distinct call vs dividend colors work across years',
+    (t) async {
+      for (final p in [Palette(false), Palette(true)]) {
+        expect(passiveCallColor(p), isNot(equals(passiveDividendColor(p))));
+      }
+
+      final multiYear = {
+        'status': 'ready',
+        'fromDate': '2025-01-01',
+        'toDate': '2026-06-30',
+        'totalConfirmed': 1580,
+        'dividends': {
+          'status': 'ready',
+          'grossAmount': 450,
+          'withholdingTax': -45,
+          'netAmount': 405,
+          'eventCount': 3,
+        },
+        'expiredCalls': {
+          'status': 'ready',
+          'amount': 1130,
+          'settlementCount': 3,
+          'contractCount': 4,
+        },
+        'availableYears': ['2026', '2025'],
+        'annual': {
+          '2026': {
+            'year': '2026',
+            'fromDate': '2026-01-01',
+            'toDate': '2026-06-30',
+            'isFullYear': false,
+            'isYtd': true,
+            'totalConfirmed': 600,
+            'dividends': {
+              'grossAmount': 150,
+              'withholdingTax': -15,
+              'netAmount': 135,
+              'eventCount': 1,
+            },
+            'expiredCalls': {
+              'amount': 450,
+              'settlementCount': 1,
+              'contractCount': 2,
+            },
+            'monthly': [
+              for (var m = 1; m <= 12; m++)
+                {
+                  'month': '2026-${m.toString().padLeft(2, '0')}',
+                  'covered': m <= 6,
+                  'dividends': m == 3 ? 150 : 0,
+                  'expiredCalls': m == 2 ? 450 : 0,
+                  'total': m == 2 ? 450 : (m == 3 ? 150 : 0),
+                  'dividendCount': m == 3 ? 1 : 0,
+                  'callCount': m == 2 ? 2 : 0,
+                  'priorYearMonth': '2025-${m.toString().padLeft(2, '0')}',
+                  'priorYearCovered': true,
+                  'priorYearDividends': m == 3 ? 120 : 0,
+                  'priorYearCalls': m == 2 ? 280 : 0,
+                  'priorYearTotal': m == 2 ? 280 : (m == 3 ? 120 : 0),
+                },
+            ],
+            'byTicker': [
+              {
+                'ticker': 'NVDA',
+                'dividends': 0,
+                'expiredCalls': 450,
+                'total': 450,
+                'share': 0.75,
+              },
+              {
+                'ticker': 'QQQ',
+                'dividends': 150,
+                'expiredCalls': 0,
+                'total': 150,
+                'share': 0.25,
+              },
+            ],
+            'recentEvents': [
+              {
+                'date': '2026-03-15',
+                'ticker': 'QQQ',
+                'kind': 'dividend',
+                'amount': 150,
+              },
+              {
+                'date': '2026-02-20',
+                'ticker': 'NVDA',
+                'kind': 'expired_call',
+                'strike': 260,
+                'amount': 450,
+              },
+            ],
+            'yoy': {
+              'status': 'full_same_period',
+              'priorYear': '2025',
+              'currentFrom': '2026-01-01',
+              'currentTo': '2026-06-30',
+              'priorFrom': '2025-01-01',
+              'priorTo': '2025-06-30',
+              'currentTotal': 600,
+              'priorTotal': 400,
+              'deltaTotal': 200,
+              'pctTotal': 0.5,
+              'currentCalls': 450,
+              'priorCalls': 280,
+              'deltaCalls': 170,
+              'pctCalls': 170 / 280,
+              'currentDividends': 150,
+              'priorDividends': 120,
+              'deltaDividends': 30,
+              'pctDividends': 0.25,
+            },
+          },
+          '2025': {
+            'year': '2025',
+            'fromDate': '2025-01-01',
+            'toDate': '2025-12-31',
+            'isFullYear': true,
+            'isYtd': false,
+            'totalConfirmed': 980,
+            'dividends': {
+              'grossAmount': 300,
+              'withholdingTax': -30,
+              'netAmount': 270,
+              'eventCount': 2,
+            },
+            'expiredCalls': {
+              'amount': 680,
+              'settlementCount': 2,
+              'contractCount': 2,
+            },
+            'monthly': [
+              for (var m = 1; m <= 12; m++)
+                {
+                  'month': '2025-${m.toString().padLeft(2, '0')}',
+                  'covered': true,
+                  'dividends': m == 3 ? 120 : (m == 9 ? 180 : 0),
+                  'expiredCalls': m == 2 ? 280 : (m == 11 ? 400 : 0),
+                  'total': m == 2
+                      ? 280
+                      : (m == 3 ? 120 : (m == 9 ? 180 : (m == 11 ? 400 : 0))),
+                  'priorYearCovered': false,
+                  'priorYearTotal': 0,
+                },
+            ],
+            'byTicker': [
+              {
+                'ticker': 'NVDA',
+                'dividends': 0,
+                'expiredCalls': 680,
+                'total': 680,
+                'share': 680 / 980,
+              },
+              {
+                'ticker': 'QQQ',
+                'dividends': 300,
+                'expiredCalls': 0,
+                'total': 300,
+                'share': 300 / 980,
+              },
+            ],
+            'recentEvents': [
+              {
+                'date': '2025-11-21',
+                'ticker': 'NVDA',
+                'kind': 'expired_call',
+                'strike': 220,
+                'amount': 400,
+              },
+            ],
+            'yoy': {'status': 'prior_year_unavailable', 'priorYear': '2024'},
+          },
+        },
+        'monthly': [
+          {'month': '2025-02', 'dividends': 0, 'expiredCalls': 280, 'total': 280},
+          {'month': '2025-03', 'dividends': 120, 'expiredCalls': 0, 'total': 120},
+          {'month': '2025-09', 'dividends': 180, 'expiredCalls': 0, 'total': 180},
+          {'month': '2025-11', 'dividends': 0, 'expiredCalls': 400, 'total': 400},
+          {'month': '2026-02', 'dividends': 0, 'expiredCalls': 450, 'total': 450},
+          {'month': '2026-03', 'dividends': 150, 'expiredCalls': 0, 'total': 150},
+        ],
+        'byTicker': [
+          {
+            'ticker': 'NVDA',
+            'dividends': 0,
+            'expiredCalls': 1130,
+            'total': 1130,
+            'share': 1130 / 1580,
+          },
+          {
+            'ticker': 'QQQ',
+            'dividends': 450,
+            'expiredCalls': 0,
+            'total': 450,
+            'share': 450 / 1580,
+          },
+        ],
+        'recentEvents': [],
+        'pendingShortCalls': {'count': 0, 'rows': []},
+      };
+
+      await mount(
+        t,
+        PortfolioPassiveIncomeCard(
+          passiveIncome: multiYear,
+          currency: 'USD',
+          palette: Palette(false),
+          hideAmounts: false,
+        ),
+        lang: AppLanguage.zh,
+      );
+
+      // Defaults to 2026 (YTD) and shows +USD 200 (+50.0%) vs 2025 same period
+      expect(find.text('USD 600'), findsOneWidget);
+      expect(find.text('+USD 200'), findsOneWidget);
+      expect(find.text('+50.0%'), findsOneWidget);
+      expect(find.byKey(const ValueKey('passive-yoy-card')), findsOneWidget);
+
+      // Switch dropdown to 2025 Full Year
+      await tap(t, find.byKey(const ValueKey('passive-year-dropdown')));
+      await tap(t, find.text('2025 全年').last);
+      expect(find.text('USD 980'), findsOneWidget);
+      expect(find.text('基准记录年'), findsOneWidget);
+
+      // Switch dropdown to All years combined
+      await tap(t, find.byKey(const ValueKey('passive-year-dropdown')));
+      await tap(t, find.text('全部年份累计').last);
+      expect(find.text('USD 1,580'), findsOneWidget);
+      expect(find.text('共 2 个年度'), findsOneWidget);
+      expect(t.takeException(), isNull);
+    },
+  );
 }

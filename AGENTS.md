@@ -799,8 +799,16 @@ Chinese and English are release-critical product modes, not best-effort labels.
     expired short Calls (`putCall === 'C'`, `buySell === 'BUY'`,
     `tradePrice === 0`, `tradeDate === expiry`, `fifoPnlRealized > 0`). Open,
     manually bought-to-close, or ITM-assigned short calls remain isolated from
-    confirmed passive income. Keep `My holdings` (`lib/investment_portfolio_home.dart`)
-    in its clean single-row table layout without inline multi-line Guru clutter.
+    confirmed passive income.
+  - Keep Expired Short Calls (`#F5A623` warm amber-gold) and Cash Dividends
+    (`#20C997` emerald-jade; `#38BDF8` in color-blind mode) visually distinct
+    even in Black Edition (`blackEditionPreview`, where `palette.accent` is
+    blue), retain encrypted multi-year passive ledger accumulation in
+    `portfolio_passive_ledgers` (`server/userPortfolioStore.js`), and preserve
+    the annual passive income dropdown (`passive-year-dropdown`) plus strict
+    same-period YoY comparison (`passive-yoy-card`). Keep `My holdings`
+    (`lib/investment_portfolio_home.dart`) in its clean single-row table layout
+    without inline multi-line Guru clutter.
 - **Discover -> Guru Rankings & Partial-Quarter Scope (`GuruHoldingsMatrix`):**
   - `GuruHoldingsMatrix` (`lib/investment_guru_holdings.dart`) must default to
     `allGurusScope = true` (all reporting Gurus) rather than a hardcoded subset

@@ -135,3 +135,47 @@ test('passiveIncome confirms cash dividends and expired OTM short calls while is
   assert.equal(fallback.status,'ready');
   assert.equal(fallback.expiredCalls.amount,240);
 });
+
+test('passiveIncome computes multi-year annual summaries and strict same-period YoY comparisons',()=>{
+  const s=statement();
+  s.fromDate='20250101';s.toDate='20260630';
+  s.CashTransactions={CashTransaction:[
+    receipt('Dividends',120,'QQQ',{transactionID:'D25A',dateTime:'20250315;120000'}),
+    receipt('Dividends',180,'QQQ',{transactionID:'D25B',dateTime:'20250915;120000'}),
+    receipt('Dividends',150,'QQQ',{transactionID:'D26A',dateTime:'20260315;120000'}),
+  ]};
+  s.Trades={Trade:[
+    {tradeID:'C25A',assetCategory:'OPT',symbol:'NVDA  250221C00200000',description:'NVDA 21FEB25 200 C',
+      transactionType:'BookTrade',openCloseIndicator:'C',buySell:'BUY',quantity:1,tradePrice:0,proceeds:0,
+      tradeDate:'20250221',expiry:'20250221',strike:200,fifoPnlRealized:280,currency:'USD',fxRateToBase:1},
+    {tradeID:'C25B',assetCategory:'OPT',symbol:'NVDA  251121C00220000',description:'NVDA 21NOV25 220 C',
+      transactionType:'BookTrade',openCloseIndicator:'C',buySell:'BUY',quantity:1,tradePrice:0,proceeds:0,
+      tradeDate:'20251121',expiry:'20251121',strike:220,fifoPnlRealized:400,currency:'USD',fxRateToBase:1},
+    {tradeID:'C26A',assetCategory:'OPT',symbol:'NVDA  260220C00260000',description:'NVDA 20FEB26 260 C',
+      transactionType:'BookTrade',openCloseIndicator:'C',buySell:'BUY',quantity:2,tradePrice:0,proceeds:0,
+      tradeDate:'20260220',expiry:'20260220',strike:260,fifoPnlRealized:450,currency:'USD',fxRateToBase:1},
+  ]};
+  const passive=portfolioPassiveIncome(accounts(s),'USD');
+  assert.deepEqual(passive.availableYears,['2026','2025']);
+  const y2026=passive.annual['2026'];
+  const y2025=passive.annual['2025'];
+  // 2026 YTD (Jan-Jun): 150 div + 450 call = 600
+  assert.equal(y2026.totalConfirmed,600);
+  assert.equal(y2026.isYtd,true);
+  assert.equal(y2026.monthly.length,12);
+  // Same-period YoY compares 2026-01-01..2026-06-30 (600) strictly against 2025-01-01..2025-06-30 (120 + 280 = 400),
+  // NOT full-year 2025 (980)!
+  assert.equal(y2026.yoy.status,'full_same_period');
+  assert.equal(y2026.yoy.priorFrom,'2025-01-01');
+  assert.equal(y2026.yoy.priorTo,'2025-06-30');
+  assert.equal(y2026.yoy.currentTotal,600);
+  assert.equal(y2026.yoy.priorTotal,400);
+  assert.equal(y2026.yoy.deltaTotal,200);
+  assert.ok(Math.abs(y2026.yoy.pctTotal-0.5)<1e-12);
+  assert.equal(y2026.yoy.deltaCalls,170);
+  assert.equal(y2026.yoy.deltaDividends,30);
+  // 2025 full year: 300 div + 680 call = 980, baseline year with no 2024 history
+  assert.equal(y2025.totalConfirmed,980);
+  assert.equal(y2025.isFullYear,true);
+  assert.equal(y2025.yoy.status,'prior_year_unavailable');
+});

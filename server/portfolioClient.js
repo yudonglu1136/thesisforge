@@ -33,6 +33,7 @@ import {
   readPortfolioConnection,
   readPortfolioConnectionStatus,
   readUserPortfolioAnalysis,
+  readUserPortfolioPassiveLedger,
   readUserPortfolioReport,
   readUserPortfolioNavPoints,
   writeUserPortfolioAnalysis,
@@ -1384,14 +1385,21 @@ function mergeAccountNavHistory(account = {}, storedPoints = []) {
 function attachStoredAnalysisNavHistory(payload, {user = null, fallbackAccountId = ""} = {}) {
   if (!user || !Array.isArray(payload.analysisAccounts) || !payload.analysisAccounts.length) return payload;
   const brokerAccounts = payload.accounts || [];
+  const passiveSlots = readUserPortfolioPassiveLedger(user);
+  const passiveByKey = new Map(passiveSlots.filter(s => s?.accountKey).map(s => [s.accountKey, s]));
   const analysisAccounts = payload.analysisAccounts.map((account, index) => {
     const accountId = textValue(
       account.accountId || brokerAccounts[index]?.id ||
         (payload.analysisAccounts.length === 1 ? fallbackAccountId : "")
     );
-    if (!accountId) return account;
+    const slotKey = String(account.accountId || `slot-${index}:${account.currency || ""}`);
+    const passiveSlot = passiveByKey.get(slotKey) || (accountId ? passiveByKey.get(accountId) : null) || null;
+    const withPassive = passiveSlot && passiveSlot.currency === account.currency
+      ? {...account, passiveHistoryEvidence: passiveSlot}
+      : account;
+    if (!accountId) return withPassive;
     return mergeAccountNavHistory(
-      {...account, accountId},
+      {...withPassive, accountId},
       readUserPortfolioNavPoints(user, accountId)
     );
   });
@@ -1927,6 +1935,8 @@ async function loadFreshPortfolioDashboard({ user = null, captureNav = true } = 
         });
     if (scopedUser && !reportErrors.length) {
       const saved = writeUserPortfolioReport(scopedUser, result, {connectionRevision});
+      const enriched = attachStoredAnalysisNavHistory(result, {user: scopedUser});
+      result.analysisAccounts = enriched.analysisAccounts;
       result.freshness = {status:"current_report",basis:"last_successful_broker_report",...saved,live:false};
     }
     return result;

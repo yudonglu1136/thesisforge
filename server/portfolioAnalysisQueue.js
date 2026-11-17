@@ -24,7 +24,7 @@ export function portfolioAnalysisIdentity(payload,{asOf,scope,riskFreeRate,relea
   const dependencies=['canonical','institutional_13f','public_observations'];
   const groups=Object.fromEntries(dependencies.filter(key=>release?.groups?.[key])
     .map(key=>[key,release.groups[key].generationId]));
-  return {inputFingerprint:sha({version:'portfolio-analysis-snapshot-v1',asOf,scope,riskFreeRate,
+  return {inputFingerprint:sha({version:'portfolio-analysis-snapshot-v2',asOf,scope,riskFreeRate,
       report,connectionRevision,release:Object.keys(groups).length?null:release?.releaseId??null,groups,
       investmentReleaseId}),
     reportDate:reportDates.at(-1)??payload?.source?.asOf??asOf};

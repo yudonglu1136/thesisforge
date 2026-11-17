@@ -229,10 +229,72 @@ function collectPendingShortCalls(accounts, baseCurrency) {
   };
 }
 
+function isLeapYear(year) {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+function mapMonthDayToYear(targetYear, mmdd) {
+  if (mmdd === '02-29' && !isLeapYear(targetYear)) return `${String(targetYear).padStart(4, '0')}-02-28`;
+  return `${String(targetYear).padStart(4, '0')}-${mmdd}`;
+}
+
+function buildTickerBreakdown(divEvents, callEvents, totalAmount) {
+  const map = new Map();
+  const ensure = ticker => {
+    const key = ticker || 'OTHER';
+    if (!map.has(key)) {
+      map.set(key, {ticker: key, dividends: 0, expiredCalls: 0, total: 0, dividendCount: 0, callCount: 0});
+    }
+    return map.get(key);
+  };
+  for (const r of divEvents) {
+    const tb = ensure(r.ticker || 'CASH');
+    tb.dividends += r.amount;
+    tb.total += r.amount;
+    tb.dividendCount += 1;
+  }
+  for (const r of callEvents) {
+    const tb = ensure(r.ticker || 'OPT');
+    tb.expiredCalls += r.amount;
+    tb.total += r.amount;
+    tb.callCount += (r.contracts ?? 1);
+  }
+  return [...map.values()]
+    .map(row => ({...row, share: totalAmount > 0 ? row.total / totalAmount : 0}))
+    .sort((a, b) => b.total - a.total || a.ticker.localeCompare(b.ticker));
+}
+
+function buildConfirmedEventRows(divEvents, callEvents, limit = 30) {
+  return [
+    ...divEvents.map(r => ({
+      date: r.date,
+      ticker: r.ticker || 'CASH',
+      kind: 'dividend',
+      label: r.category === 'substitute_dividends' ? 'PIL dividend' : 'Cash dividend',
+      contracts: null,
+      strike: null,
+      expiry: null,
+      amount: r.amount,
+    })),
+    ...callEvents.map(r => ({
+      date: r.date,
+      ticker: r.ticker,
+      kind: 'expired_call',
+      label: r.name || r.contract,
+      contracts: r.contracts,
+      strike: r.strike,
+      expiry: r.expiry,
+      amount: r.amount,
+    })),
+  ]
+    .sort((a, b) => b.date.localeCompare(a.date) || b.amount - a.amount)
+    .slice(0, limit);
+}
+
 export function portfolioPassiveIncome(accounts, baseCurrency = null) {
   const scoped = baseCurrency ? (accounts ?? []).filter(a => a.currency === baseCurrency) : (accounts ?? []);
   const pendingShortCalls = collectPendingShortCalls(scoped, baseCurrency);
-  const histories = scoped.map(a => a.historyEvidence);
+  const histories = scoped.map(a => a.passiveHistoryEvidence ?? a.historyEvidence);
   const covered = histories.length > 0 && histories.every(h => h?.fromDate && h?.toDate);
   const fromDate = covered ? histories.map(h => h.fromDate).sort().at(-1) : null;
   const toDate = covered ? histories.map(h => h.toDate).sort()[0] : null;
@@ -275,14 +337,6 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
       {month: m, dividends: 0, expiredCalls: 0, total: 0, dividendCount: 0, callCount: 0},
     ])
   );
-  const tickerMap = new Map();
-  const ensureTicker = ticker => {
-    const key = ticker || 'OTHER';
-    if (!tickerMap.has(key)) {
-      tickerMap.set(key, {ticker: key, dividends: 0, expiredCalls: 0, total: 0, dividendCount: 0, callCount: 0});
-    }
-    return tickerMap.get(key);
-  };
 
   if (ready) {
     for (const r of dividendEvents) {
@@ -293,10 +347,6 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
         bucket.total += r.amount;
         bucket.dividendCount += 1;
       }
-      const tb = ensureTicker(r.ticker || 'CASH');
-      tb.dividends += r.amount;
-      tb.total += r.amount;
-      tb.dividendCount += 1;
     }
     for (const r of expiredCallEvents) {
       const ym = r.date.slice(0, 7);
@@ -306,45 +356,150 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
         bucket.total += r.amount;
         bucket.callCount += 1;
       }
-      const tb = ensureTicker(r.ticker || 'OPT');
-      tb.expiredCalls += r.amount;
-      tb.total += r.amount;
-      tb.callCount += (r.contracts ?? 1);
     }
   }
 
-  const byTicker = ready
-    ? [...tickerMap.values()]
-        .map(row => ({...row, share: totalConfirmed > 0 ? row.total / totalConfirmed : 0}))
-        .sort((a, b) => b.total - a.total || a.ticker.localeCompare(b.ticker))
-    : [];
+  const byTicker = ready ? buildTickerBreakdown(dividendEvents, expiredCallEvents, totalConfirmed) : [];
+  const recentEvents = ready ? buildConfirmedEventRows(dividendEvents, expiredCallEvents, 30) : [];
 
-  const recentEvents = ready
-    ? [
-        ...dividendEvents.map(r => ({
-          date: r.date,
-          ticker: r.ticker || 'CASH',
-          kind: 'dividend',
-          label: r.category === 'substitute_dividends' ? 'PIL dividend' : 'Cash dividend',
-          contracts: null,
-          strike: null,
-          expiry: null,
-          amount: r.amount,
-        })),
-        ...expiredCallEvents.map(r => ({
-          date: r.date,
-          ticker: r.ticker,
-          kind: 'expired_call',
-          label: r.name || r.contract,
-          contracts: r.contracts,
-          strike: r.strike,
-          expiry: r.expiry,
-          amount: r.amount,
-        })),
-      ]
-        .sort((a, b) => b.date.localeCompare(a.date) || b.amount - a.amount)
-        .slice(0, 30)
-    : [];
+  const availableYears = [];
+  const annual = {};
+  if (ready) {
+    const startY = Number(fromDate.slice(0, 4));
+    const endY = Number(toDate.slice(0, 4));
+    for (let y = endY; y >= startY; y -= 1) {
+      const yr = String(y).padStart(4, '0');
+      const priorYr = String(y - 1).padStart(4, '0');
+      availableYears.push(yr);
+      const yrStart = fromDate > `${yr}-01-01` ? fromDate : `${yr}-01-01`;
+      const yrEnd = toDate < `${yr}-12-31` ? toDate : `${yr}-12-31`;
+      const yrDivs = dividendEvents.filter(r => r.date >= yrStart && r.date <= yrEnd);
+      const yrTaxes = taxEvents.filter(r => r.date >= yrStart && r.date <= yrEnd);
+      const yrCalls = expiredCallEvents.filter(r => r.date >= yrStart && r.date <= yrEnd);
+
+      const yrDivGross = yrDivs.reduce((s, r) => s + r.amount, 0);
+      const yrTaxSum = taxReady ? yrTaxes.reduce((s, r) => s + r.amount, 0) : null;
+      const yrDivNet = yrTaxSum !== null ? yrDivGross + yrTaxSum : null;
+      const yrCallSum = yrCalls.reduce((s, r) => s + r.amount, 0);
+      const yrTotal = yrDivGross + yrCallSum;
+
+      const monthly12 = [];
+      for (let m = 1; m <= 12; m += 1) {
+        const mm = String(m).padStart(2, '0');
+        const ym = `${yr}-${mm}`;
+        const priorYm = `${priorYr}-${mm}`;
+        const curBucket = monthMap.get(ym);
+        const prevBucket = monthMap.get(priorYm);
+        monthly12.push({
+          month: ym,
+          covered: Boolean(curBucket),
+          dividends: curBucket?.dividends ?? 0,
+          expiredCalls: curBucket?.expiredCalls ?? 0,
+          total: curBucket?.total ?? 0,
+          dividendCount: curBucket?.dividendCount ?? 0,
+          callCount: curBucket?.callCount ?? 0,
+          priorYearMonth: priorYm,
+          priorYearCovered: Boolean(prevBucket),
+          priorYearDividends: prevBucket?.dividends ?? 0,
+          priorYearCalls: prevBucket?.expiredCalls ?? 0,
+          priorYearTotal: prevBucket?.total ?? 0,
+        });
+      }
+
+      const targetPriorStart = mapMonthDayToYear(y - 1, yrStart.slice(5));
+      const targetPriorEnd = mapMonthDayToYear(y - 1, yrEnd.slice(5));
+      const overlapPriorStart = fromDate > targetPriorStart ? fromDate : targetPriorStart;
+      const overlapPriorEnd = toDate < targetPriorEnd ? toDate : targetPriorEnd;
+
+      let yoy;
+      if (overlapPriorStart <= overlapPriorEnd) {
+        const compCurrStart = mapMonthDayToYear(y, overlapPriorStart.slice(5));
+        const compCurrEnd = mapMonthDayToYear(y, overlapPriorEnd.slice(5));
+        const currDivComp = dividendEvents
+          .filter(r => r.date >= compCurrStart && r.date <= compCurrEnd)
+          .reduce((s, r) => s + r.amount, 0);
+        const currCallComp = expiredCallEvents
+          .filter(r => r.date >= compCurrStart && r.date <= compCurrEnd)
+          .reduce((s, r) => s + r.amount, 0);
+        const currTotalComp = currDivComp + currCallComp;
+
+        const priorDivComp = dividendEvents
+          .filter(r => r.date >= overlapPriorStart && r.date <= overlapPriorEnd)
+          .reduce((s, r) => s + r.amount, 0);
+        const priorCallComp = expiredCallEvents
+          .filter(r => r.date >= overlapPriorStart && r.date <= overlapPriorEnd)
+          .reduce((s, r) => s + r.amount, 0);
+        const priorTotalComp = priorDivComp + priorCallComp;
+        const fullSamePeriod = overlapPriorStart === targetPriorStart && overlapPriorEnd === targetPriorEnd;
+
+        yoy = {
+          status: fullSamePeriod ? 'full_same_period' : 'overlapping_subperiod',
+          priorYear: priorYr,
+          currentFrom: compCurrStart,
+          currentTo: compCurrEnd,
+          priorFrom: overlapPriorStart,
+          priorTo: overlapPriorEnd,
+          currentTotal: currTotalComp,
+          priorTotal: priorTotalComp,
+          deltaTotal: currTotalComp - priorTotalComp,
+          pctTotal: priorTotalComp > 0 ? (currTotalComp - priorTotalComp) / priorTotalComp : null,
+          currentCalls: currCallComp,
+          priorCalls: priorCallComp,
+          deltaCalls: currCallComp - priorCallComp,
+          pctCalls: priorCallComp > 0 ? (currCallComp - priorCallComp) / priorCallComp : null,
+          currentDividends: currDivComp,
+          priorDividends: priorDivComp,
+          deltaDividends: currDivComp - priorDivComp,
+          pctDividends: priorDivComp > 0 ? (currDivComp - priorDivComp) / priorDivComp : null,
+        };
+      } else {
+        yoy = {
+          status: 'prior_year_unavailable',
+          priorYear: priorYr,
+          currentFrom: yrStart,
+          currentTo: yrEnd,
+          priorFrom: null,
+          priorTo: null,
+          currentTotal: yrTotal,
+          priorTotal: null,
+          deltaTotal: null,
+          pctTotal: null,
+          currentCalls: yrCallSum,
+          priorCalls: null,
+          deltaCalls: null,
+          pctCalls: null,
+          currentDividends: yrDivGross,
+          priorDividends: null,
+          deltaDividends: null,
+          pctDividends: null,
+        };
+      }
+
+      annual[yr] = {
+        year: yr,
+        fromDate: yrStart,
+        toDate: yrEnd,
+        isFullYear: yrStart === `${yr}-01-01` && yrEnd === `${yr}-12-31`,
+        isYtd: yr === toDate.slice(0, 4) && yrStart === `${yr}-01-01` && yrEnd < `${yr}-12-31`,
+        totalConfirmed: yrTotal,
+        dividends: {
+          grossAmount: yrDivGross,
+          withholdingTax: yrTaxSum,
+          netAmount: yrDivNet,
+          eventCount: yrDivs.length,
+        },
+        expiredCalls: {
+          amount: yrCallSum,
+          settlementCount: yrCalls.length,
+          contractCount: yrCalls.reduce((s, r) => s + (r.contracts ?? 1), 0),
+        },
+        monthly: monthly12,
+        byTicker: buildTickerBreakdown(yrDivs, yrCalls, yrTotal),
+        recentEvents: buildConfirmedEventRows(yrDivs, yrCalls, 50),
+        yoy,
+      };
+    }
+  }
 
   return {
     status: ready ? 'ready' : (dividendsReady || expiredCallsReady) ? 'partial' : 'history_required',
@@ -364,6 +519,8 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
       settlementCount: expiredCallEvents.length,
       contractCount: expiredCallEvents.reduce((s, r) => s + (r.contracts ?? 1), 0),
     },
+    availableYears,
+    annual,
     monthly: [...monthMap.values()],
     byTicker,
     recentEvents,
