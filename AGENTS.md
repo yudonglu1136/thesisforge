@@ -768,3 +768,53 @@ Chinese and English are release-critical product modes, not best-effort labels.
   ThesisForge mark, `thesisforge.tech` CTA, and exact copy recorded in the
   companion manifest. The `500+ companies` statement is a coverage claim, not
   a performance claim. Keep `Research only · not investment advice` visible.
+
+## Production Memory, Portfolio & Guru Leaderboard Contract (2026-11-17)
+
+- **Commit-Before-Deploy (No Ephemeral Releases):** Never deploy uncommitted
+  working-tree patches via temporary `GIT_INDEX_FILE` or ad-hoc archives. Every
+  verified backend or frontend change MUST be committed onto local `trunk` and
+  pushed to `origin/trunk` on GitHub so subsequent strategy or feature commits
+  never silently overwrite prior production fixes.
+- **Production `t3.small` Memory & Latency Guardrails:**
+  - Retain `.platform/hooks/predeploy/01_create_data_dir.sh` (2 GiB `/var/swapfile`
+    provisioning and `/var/app/data/user-portfolios` `webapp:webapp` `0700`
+    ownership). Whenever running SSM commands on the Elastic Beanstalk host,
+    never leave root-owned files inside `/var/app/data/user-portfolios`.
+  - Retain the `< 3.5 GiB` total-RAM guards in both
+    `server/breakoutPullbackStrategy.js` and `server/qqqSchdRotationStrategy.js`
+    so Python strategy artifact rebuilds never spawn in-process on `t3.small`.
+  - Retain `server/heavyWorkerLimiter.js`, `lazy_views=True` and bounded DuckDB
+    memory limits in `fact_os/repository.py` and `fact_os/rpc.py`,
+    `PRAGMA data_version` read caches in `server/investmentSource.js`,
+    single-date price caching in `server/portfolioRisk.js`, expired-JWT `401`
+    handling in `lib/main.dart`, and HTTPS keep-alive in `api/proxy.js`.
+- **Multi-Account IBKR Aggregation & Confirmed Passive Income (`Portfolio`):**
+  - Keep cross-account same-security aggregation in `server/investmentPortfolio.js`
+    and IBKR Flex `Error 1018` rate-limit backoff retries in
+    `server/portfolioClient.js` (`loadIbkrFlexXml`).
+  - Confirmed passive income (`server/portfolioIncome.js`,
+    `lib/investment_portfolio_passive_income.dart`) includes strictly settled
+    cash dividends (`netCash` after withholding tax) plus IBKR `BookTrade` OTM
+    expired short Calls (`putCall === 'C'`, `buySell === 'BUY'`,
+    `tradePrice === 0`, `tradeDate === expiry`, `fifoPnlRealized > 0`). Open,
+    manually bought-to-close, or ITM-assigned short calls remain isolated from
+    confirmed passive income. Keep `My holdings` (`lib/investment_portfolio_home.dart`)
+    in its clean single-row table layout without inline multi-line Guru clutter.
+- **Discover -> Guru Rankings & Partial-Quarter Scope (`GuruHoldingsMatrix`):**
+  - `GuruHoldingsMatrix` (`lib/investment_guru_holdings.dart`) must default to
+    `allGurusScope = true` (all reporting Gurus) rather than a hardcoded subset
+    of four managers, preventing empty screens during partial 13F filing-season
+    quarters (e.g., 12/30 early Q3 filers) while offering a one-click switch to
+    the latest full 30/30 quarter.
+  - Preserve compact holding delta recovery (`action`, `changeShares`,
+    `previousShares`, `previousWeight`) in `opportunityOwnership` and row-level
+    conviction/net-flow metrics (`sumWeight`, `maxWeight`, `conviction5Count`,
+    `conviction10Count`, `netAdds`, `netTrims`, `quarterCounts`,
+    `reportedGuruIds`) in `buildGuruHoldingsMatrix`
+    (`server/investmentOpportunities.js`).
+  - Keep the three primary institutional leaderboards (`集中仓位排行 / Concentrated Rankings`,
+    `加仓排行（净加） / Net Buying` with `netAdds > 0`, and `净减仓排行 / Net Selling`
+    with `netTrims > 0`) alongside the `Guru Matrix` comparison tab and lazy-loaded
+    `Style & performance` study panel.
+
