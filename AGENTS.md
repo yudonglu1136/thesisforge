@@ -825,4 +825,19 @@ Chinese and English are release-critical product modes, not best-effort labels.
     `加仓排行（净加） / Net Buying` with `netAdds > 0`, and `净减仓排行 / Net Selling`
     with `netTrims > 0`) alongside the `Guru Matrix` comparison tab and lazy-loaded
     `Style & performance` study panel.
+- **Single-Guru Research Dossier (`GuruResearchDossier` & `enrichGuruDetail`):**
+  - Keep single-Guru profile drill-down (`Discover -> Guru -> <Manager>`) rendered
+    through `GuruResearchDossier` (`lib/investment_guru_dossier.dart`, wired from
+    `guruDetailPage()` in `lib/investment_discovery.dart`) and enriched by
+    `enrichGuruDetail` (`server/investmentGuruProfile.js`, wired into
+    `guruDetail()` in `server/investmentSource.js`).
+  - Preserve quantitative style DNA (`concentrationTier`, `turnoverTier`,
+    `avgQuarterlyTurnover`, `latestTop5Weight`), auto-synthesized `Systematic Dossier Insights`,
+    cutoff-bounded `1Y / 3Y / 5Y / 10Y` 13F copy-simulation equity curves vs SPY
+    with cumulative stock contributors and quarterly alpha attribution, categorized
+    quarterly `New & Increased` / `Reduced & Exited` operations, 12-quarter 13F
+    book trajectory & sector mix, and dated ThesisForge valuation overlay
+    (`fairValue`, `marketPrice`, `modelGap` strictly `<= asOf`), while honoring
+    `source_error` and `previous_source_error` fail-closed contracts.
+
 

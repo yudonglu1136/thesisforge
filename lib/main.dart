@@ -17,6 +17,7 @@ part 'current_valuation_scenario.dart';
 part 'investment_workflow.dart';
 part 'investment_graphite.dart';
 part 'investment_discovery.dart';
+part 'investment_guru_dossier.dart';
 part 'investment_guru_study.dart';
 part 'investment_guru_holdings.dart';
 part 'investment_guru_scatter.dart';

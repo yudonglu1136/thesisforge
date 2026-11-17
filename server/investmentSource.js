@@ -8,6 +8,7 @@ import { guruCapitalStructure } from './guruCapitalStructures.js';
 import path from 'node:path';
 import { releaseRoot,releaseResource,dataReleaseId } from './dataReleaseContext.js';
 import { marketFactsVersion,marketPriceHistory } from './investmentMarketContext.js';
+import { enrichGuruDetail } from './investmentGuruProfile.js';
 
 export const SOURCE_ADAPTER_VERSION='investment-pit-adapter-v1';
 const metricNames=['revenueGrowth','operatingMargin','fcfMargin','capexIntensity'];
@@ -190,8 +191,8 @@ export class InvestmentSource {
     // Read the existing public-disclosure history. Never import a later book
     // into a historical route, infer missing holdings, or recalculate returns.
     const history=this.guruHistory(guruId,asOf);
-    return {guru,asOf,history,latest:history.at(-1)??null,
-      coverage:'reported_top_holdings_and_largest_changes_only',retrospective:true};
+    return enrichGuruDetail(this,{guru,asOf,history,latest:history.at(-1)??null,
+      coverage:'reported_top_holdings_and_largest_changes_only',retrospective:true});
   }
   guruHistory(guruId,asOf) {
     const p=this.guruExposure(guruId);
