@@ -964,11 +964,26 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
   }
 
   Widget portfolioDesk(Map<String, dynamic> g) {
-    final hasHistory = asMap(g['home']).isNotEmpty;
+    final h = asMap(g['home']);
+    final hasHistory = h.isNotEmpty;
+    final passive = asMap(h['passiveIncome']);
+    final hasPassive =
+        passive['status'] == 'ready' ||
+        asList(asMap(passive['pendingShortCalls'])['rows']).isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (hasHistory) portfolioVisualHero(g) else portfolioAllocationPanel(g),
+        if (hasPassive) ...[
+          const SizedBox(height: 18),
+          PortfolioPassiveIncomeCard(
+            passiveIncome: passive,
+            currency: selectedCurrency,
+            palette: p,
+            hideAmounts: hideAmounts,
+            onCompany: widget.onCompany,
+          ),
+        ],
         const SizedBox(height: 18),
         portfolioHoldingsTable(g),
       ],
@@ -1309,7 +1324,11 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
                     children: [
                       Text(text(row['ticker']), style: heading(14)),
                       Text(
-                        text(row['name']),
+                        [
+                          text(row['name']),
+                          if (!hideAmounts && number(row['accountCount']) > 1)
+                            '${row['accountCount']} ${w('accounts', '个账户')}',
+                        ].join(' · '),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: p.muted, fontSize: 11),
@@ -1328,7 +1347,9 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
                 : nullableNumber(row['quantity']) == null
                 ? '—'
                 : formatNumber(number(row['quantity'])),
-            text(row['reportDate'], '—'),
+            !hideAmounts && number(row['accountCount']) > 1
+                ? '${row['accountCount']} ${w('accounts', '个账户')} · ${text(row['reportDate'], '—')}'
+                : text(row['reportDate'], '—'),
             alignEnd: true,
           ),
         ),
@@ -1471,7 +1492,11 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
                     children: [
                       Text(text(row['ticker']), style: heading(15)),
                       Text(
-                        text(row['name']),
+                        [
+                          text(row['name']),
+                          if (!hideAmounts && number(row['accountCount']) > 1)
+                            '${row['accountCount']} ${w('accounts', '个账户')}',
+                        ].join(' · '),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: p.muted, fontSize: 11),

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import {brokerIncome, portfolioIncome} from './portfolioIncome.js';
+import {brokerIncome, brokerExpiredShortCalls, portfolioIncome, portfolioPassiveIncome} from './portfolioIncome.js';
 
 const number = v => v == null || v === '' || typeof v === 'boolean' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const date = v => {
@@ -32,7 +32,10 @@ export function brokerStatementHistory(statement, currency, rows) {
   const cashStatus = !rows(statement, 'CashTransactions').length ? 'cash_section_missing' :
     !validPeriod || cash.some(r => !cashTypes.has(r.type) && !incomeTypes.has(r.type)) ||
     cashFlows.some(r => !r.date || r.date < fromDate || r.date > toDate || r.amount === null) ? 'cash_rows_need_review' : 'ready';
-  return {fromDate, toDate, tradeStatus, cashStatus, ...brokerIncome(statement, currency, rows), realized: tradeStatus === 'ready' ? realized : [],
+  return {fromDate, toDate, tradeStatus, cashStatus,
+    ...brokerIncome(statement, currency, rows),
+    ...brokerExpiredShortCalls(statement, currency, rows),
+    realized: tradeStatus === 'ready' ? realized : [],
     cashFlows: cashStatus === 'ready' ? cashFlows : [],
     // This adapter does not reconcile asset transfers, corporate actions or
     // broker TWR. Cash-adjusted NAV is explicitly an estimate, never audited P&L.
@@ -70,6 +73,7 @@ export function portfolioHistory(accounts, nav) {
   }) : [];
   return {
     income: portfolioIncome(accounts),
+    passiveIncome: portfolioPassiveIncome(accounts),
     realized: {status: realizedReady ? 'ready' : 'trade_history_required', fromDate, toDate,
       total: realizedReady ? cumulative : null, tradeCount: realizedEvents.length, rows: realizedRows,
       byInstrument: [...byInstrument.values()].map(({eventKey, ...r}) => r).sort((a, b) => b.pnl - a.pnl),

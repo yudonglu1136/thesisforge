@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { dataReleaseStatus } from './dataReleaseContext.js';
+import { heavyWorkerLimiter } from './heavyWorkerLimiter.js';
 import { resolveInvestmentRuntimeConfig } from './investmentRuntimeConfig.js';
 
 const stable=(value)=>{
@@ -79,12 +80,12 @@ export class PortfolioAnalysisQueue {
     this.dependencies();
     const config=this.runtimeConfig,paths=job.dataPaths;
     if(!config)throw new Error('investment_runtime_unavailable');
-    return new Promise((resolve,reject)=>{
+    return heavyWorkerLimiter.run(()=>new Promise((resolve,reject)=>{
       const worker=new Worker(new URL('./portfolioAnalysisWorker.js',import.meta.url),{
         workerData:{...job,researchFile:config.research,investmentReleaseId:config.releaseId,
           canonicalRoot:paths.canonicalRoot,publicFactsFile:paths.publicFactsFile,
           insightsFile:paths.insightsFile??config.insights},
-        resourceLimits:{maxOldGenerationSizeMb:384,maxYoungGenerationSizeMb:32,stackSizeMb:8},
+        resourceLimits:{maxOldGenerationSizeMb:768,maxYoungGenerationSizeMb:48,stackSizeMb:8},
       });
       let settled=false;
       const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);worker.terminate().catch(()=>{});error?reject(error):resolve(value);};
@@ -92,7 +93,7 @@ export class PortfolioAnalysisQueue {
       worker.once('message',message=>message?.ok?finish(null,message.result):finish(new Error(message?.error??'portfolio_analysis_worker_failed')));
       worker.once('error',error=>finish(error));
       worker.once('exit',code=>{if(code&&!settled)finish(new Error('portfolio_analysis_worker_exit'));});
-    });
+    }),{priority:'high'});
   }
 }
 

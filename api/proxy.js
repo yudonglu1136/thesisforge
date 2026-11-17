@@ -10,6 +10,11 @@ const LEGACY_AWS_ORIGIN =
   process.env.AWS_API_ORIGIN ||
   "https://backend.thesisforge.tech";
 const PRODUCTION = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production";
+const UPSTREAM_HTTPS_AGENT = new https.Agent({
+  keepAlive: true,
+  maxSockets: 64,
+  keepAliveMsecs: 30_000
+});
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -209,7 +214,8 @@ export function createProxyHandler({ production = PRODUCTION, maxBodyBytes = 102
     };
     const upstreamRequest = transport.request(target, {
       method: request.method,
-      headers: forwardedHeaders(request)
+      headers: forwardedHeaders(request),
+      ...(production && target.protocol === "https:" ? { agent: UPSTREAM_HTTPS_AGENT } : {})
     }, (upstream) => {
       response.statusCode = upstream.statusCode || 502;
       for (const [key, value] of forwardedResponseHeaders(upstream.headers)) {

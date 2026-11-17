@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {reportAnalysisAccounts} from './portfolioReport.js';
-import {portfolioIncome} from './portfolioIncome.js';
+import {portfolioIncome, portfolioPassiveIncome} from './portfolioIncome.js';
 import {importOwnerReport, localOwnerPortfolio} from './portfolioSnapshotStore.js';
 
 const receipt = (type, amount, symbol, extra = {}) => ({type, amount, symbol, currency:'USD', dateTime:'20260105;120000', ...extra});
@@ -76,4 +76,62 @@ test('v4 stores income structurally with provenance; pre-income snapshots stay r
     db.exec("UPDATE snapshot SET version='owner-portfolio-v3'; DROP TABLE income_events;");db.close();
     assert.equal(portfolioIncome(localOwnerPortfolio({id:'local-dev-user'},env).analysisAccounts).grossReceived,null);
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('passiveIncome confirms cash dividends and expired OTM short calls while isolating open, early-closed and assigned calls',()=>{
+  const s=statement();
+  s.fromDate='20260101';s.toDate='20260228';
+  s.Trades={Trade:[
+    // 1. Confirmed expired worthless short Call (+240)
+    {tradeID:'T1',assetCategory:'OPT',symbol:'NVDA  260116C00250000',description:'NVDA 16JAN26 250 C',
+      transactionType:'BookTrade',openCloseIndicator:'C',buySell:'BUY',quantity:2,tradePrice:0,proceeds:0,
+      tradeDate:'20260116',expiry:'20260116',strike:250,fifoPnlRealized:240,currency:'USD',fxRateToBase:1},
+    // 2. Early bought-to-close short Call (+90) -> NOT expired, must NOT enter passiveIncome
+    {tradeID:'T2',assetCategory:'OPT',symbol:'GOOG  260220C00400000',description:'GOOG 20FEB26 400 C',
+      transactionType:'ExchTrade',openCloseIndicator:'C',buySell:'BUY',quantity:1,tradePrice:0.5,proceeds:-50,
+      tradeDate:'20260205',expiry:'20260220',strike:400,fifoPnlRealized:90,currency:'USD',fxRateToBase:1},
+    // 3. Assigned ITM short Call (fifoPnlRealized = 0) -> NOT expired worthless income
+    {tradeID:'T3',assetCategory:'OPT',symbol:'GOOG  260116C00330000',description:'GOOG 16JAN26 330 C',
+      transactionType:'BookTrade',openCloseIndicator:'C',buySell:'BUY',quantity:1,tradePrice:0,proceeds:0,
+      tradeDate:'20260116',expiry:'20260116',strike:330,fifoPnlRealized:0,currency:'USD',fxRateToBase:1},
+    // 4. Long Call expired worthless (-15) -> NOT short call income
+    {tradeID:'T4',assetCategory:'OPT',symbol:'QQQ   260116C00750000',description:'QQQ 16JAN26 750 C',
+      transactionType:'BookTrade',openCloseIndicator:'C',buySell:'SELL',quantity:-1,tradePrice:0,proceeds:0,
+      tradeDate:'20260116',expiry:'20260116',strike:750,fifoPnlRealized:-15,currency:'USD',fxRateToBase:1},
+    // 5. Expired Put (+180) -> Put, NOT Call
+    {tradeID:'T5',assetCategory:'OPT',symbol:'SPCX  260116P00095000',description:'SPCX 16JAN26 95 P',
+      transactionType:'BookTrade',openCloseIndicator:'C',buySell:'BUY',quantity:1,tradePrice:0,proceeds:0,
+      tradeDate:'20260116',expiry:'20260116',strike:95,fifoPnlRealized:180,currency:'USD',fxRateToBase:1},
+  ]};
+  s.OpenPosition=[
+    {symbol:'PLTR  260320C00250000',description:'PLTR 20MAR26 250 C',assetCategory:'OPT',currency:'USD',
+      quantity:-3,markPrice:0.5,positionValue:-150,costBasisMoney:-420,strike:250,expiry:'20260320',multiplier:100},
+  ];
+  const accs=accounts(s);
+  const passive=portfolioPassiveIncome(accs,'USD');
+  assert.equal(passive.status,'ready');
+  // Dividends (100) + PIL Dividends (15) = 115; Bond/Cash interest excluded from dividend stream
+  assert.equal(passive.dividends.grossAmount,115);
+  assert.equal(passive.dividends.withholdingTax,-15);
+  assert.equal(passive.dividends.netAmount,100);
+  // Only T1 (+240) qualifies as confirmed expired short Call
+  assert.equal(passive.expiredCalls.amount,240);
+  assert.equal(passive.expiredCalls.settlementCount,1);
+  assert.equal(passive.expiredCalls.contractCount,2);
+  assert.equal(passive.totalConfirmed,355);
+  assert.equal(passive.monthly.length,2);
+  assert.equal(passive.monthly[0].month,'2026-01');
+  assert.equal(passive.monthly[0].dividends,115);
+  assert.equal(passive.monthly[0].expiredCalls,240);
+  assert.equal(passive.pendingShortCalls.confirmed,false);
+  assert.equal(passive.pendingShortCalls.count,1);
+  assert.equal(passive.pendingShortCalls.totalContracts,3);
+  assert.equal(passive.pendingShortCalls.collectedPremium,420);
+
+  // Also verify v4 fallback when expiredShortCalls array was not stored on an older saved account
+  const legacyAcc=structuredClone(accs[0]);
+  delete legacyAcc.historyEvidence.expiredCallsStatus;
+  delete legacyAcc.historyEvidence.expiredShortCalls;
+  const fallback=portfolioPassiveIncome([legacyAcc],'USD');
+  assert.equal(fallback.status,'ready');
+  assert.equal(fallback.expiredCalls.amount,240);
 });

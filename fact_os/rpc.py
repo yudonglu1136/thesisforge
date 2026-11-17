@@ -115,7 +115,7 @@ def main():
     repo = None
     try:
         request = json.loads(sys.stdin.read(1024 * 1024))
-        repo = FactRepository(options.root)
+        repo = FactRepository(options.root, lazy_views=True)
         if isinstance(request, dict) and isinstance(request.get('batch'), list):
             if not 1 <= len(request['batch']) <= 256: raise ValueError('batch too large')
             result = {'ok': True, 'result': [dispatch_result(repo, entry) for entry in request['batch']]}

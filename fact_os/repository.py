@@ -66,9 +66,27 @@ def _cik(value):
     return str(int(candidate)) if candidate and candidate.isdigit() and int(candidate) > 0 else None
 
 
+def _default_duckdb_limits():
+    mem = os.environ.get('FACT_OS_MEMORY_LIMIT', '').strip().upper()
+    if not re.fullmatch(r'[1-9]\d{1,4}(?:MB|GB)', mem):
+        low_ram = False
+        try:
+            low_ram = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') < 4 * 1024 ** 3
+        except (AttributeError, ValueError, OSError):
+            low_ram = False
+        mem = '256MB' if low_ram else '512MB'
+    raw_threads = os.environ.get('FACT_OS_THREADS', '').strip()
+    if raw_threads.isdigit() and 1 <= int(raw_threads) <= 8:
+        threads = int(raw_threads)
+    else:
+        threads = 1 if mem == '256MB' else 2
+    return mem, threads
+
+
 class FactRepository:
-    def __init__(self, root):
+    def __init__(self, root, *, lazy_views=False):
         self.root = Path(root).resolve()
+        self._lazy_views = bool(lazy_views)
         self.db, self._reader_lock, self._query_temporary = None, None, None
         if not (self.root / 'manifests/catalog.json').exists() and not (self.root / 'fact_os.duckdb').exists():
             raise MissingData('local Fact OS has not been backfilled')
@@ -90,6 +108,7 @@ class FactRepository:
 
     def _open_snapshot(self):
         self._contracts, self._states, self._datasets = {}, {}, set()
+        self._partition_files, self._bound_views = {}, set()
         self._identities, self._investors = {}, None
         self._master_ready = False
         manifest = self.root / 'manifests' / 'catalog.json'
@@ -106,8 +125,9 @@ class FactRepository:
             if temporary_root:Path(temporary_root).mkdir(parents=True,exist_ok=True)
             self._query_temporary=tempfile.TemporaryDirectory(prefix='fact-query-',dir=temporary_root)
             self.db = duckdb.connect(':memory:',config={'temp_directory':self._query_temporary.name})
-            self.db.execute("SET memory_limit='512MB'")
-            self.db.execute('SET threads=2')
+            mem_limit, thread_count = _default_duckdb_limits()
+            self.db.execute(f"SET memory_limit='{mem_limit}'")
+            self.db.execute(f'SET threads={thread_count}')
             try:
                 for table, item in catalog.get('datasets', {}).items():
                     self._contracts[table] = Contract.from_ddl(table, item['ddl'])
@@ -142,9 +162,17 @@ class FactRepository:
 
     def _bind(self, table, files):
         if files:
+            self._datasets.add(table)
+            self._partition_files[table] = list(files)
+            if not self._lazy_views:
+                self._ensure_view(table)
+
+    def _ensure_view(self, table):
+        if table not in self._bound_views and table in self._partition_files:
+            files = self._partition_files[table]
             self.db.execute(f'CREATE TEMP VIEW {ident(table)} AS SELECT * FROM read_parquet([' +
                             ','.join(_literal(path) for path in files) + '], union_by_name=true)')
-            self._datasets.add(table)
+            self._bound_views.add(table)
 
     def __enter__(self):
         return self
@@ -174,6 +202,7 @@ class FactRepository:
     def _require(self, table):
         if table not in self._datasets:
             raise MissingData(f'{table}: no local dataset; network fallback is disabled')
+        self._ensure_view(table)
 
     def _lineage(self, table, row):
         return {'source': 'Sharadar', 'table': table,
@@ -238,6 +267,7 @@ class FactRepository:
         rows = self._rows(f'SELECT * FROM _master WHERE {field}=? AND {clause}', [value, *SECURITY_TABLES])
         alias_evidence = []
         if not rows and not by_id and 'actions' in self._datasets:
+            self._require('actions')
             # Merger, spinoff and relatedticker links do NOT establish one security.
             alias_evidence = self._rows("SELECT * FROM actions WHERE contraticker=? AND action IN ('tickerchangefrom','tickerchangeto')", [value])
             candidates = sorted({row['ticker'] for row in alias_evidence})
@@ -638,6 +668,7 @@ class FactRepository:
     def get_fundamental_change_universe(self, as_of, *, limit=6000):
         """One compact PIT scan for discovery; no valuation-model dependency."""
         self._require('fundamentals')
+        self._require('stocks')
         self._master()
         limit = int(limit)
         if limit < 1 or limit > 10000:

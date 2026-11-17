@@ -59,6 +59,8 @@ export class InvestmentSource {
     this.basePublicFactsDb?.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=3000;');
     this.companyCache=new Map(); this.cacheGeneration=null;
     this.guruExposureCache=new Map(); this.guruExposureGeneration=null;
+    this.discoveryCache=new Map(); this.discoveryGeneration=null;
+    this.guruCatalogCache=null; this.guruCatalogGeneration=null;
   }
   get insightsDb(){
     const root=releaseRoot('institutional_13f',null);
@@ -137,6 +139,9 @@ export class InvestmentSource {
   }
   discovery(asOf) {
     isoDate(asOf);
+    const generation=this.db.prepare('PRAGMA data_version').get().data_version;
+    if(generation!==this.discoveryGeneration){this.discoveryCache.clear();this.discoveryGeneration=generation;}
+    if(this.discoveryCache.has(asOf))return structuredClone(this.discoveryCache.get(asOf));
     // Bounded scalar SQL extraction avoids loading all transcript/snapshot blobs.
     const rows=this.db.prepare(`WITH ranked AS (SELECT ticker,fiscal_period,as_of_date,input_json,
       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY as_of_date DESC,model_version DESC) n
@@ -150,11 +155,16 @@ export class InvestmentSource {
     for(const r of rows) {if(seen.has(r.ticker))continue;seen.add(r.ticker);
       const route=valuationModelRoute(JSON.parse(r.score??'{}'));
       if(['operating_company','multi_method_growth','revenue_stage'].includes(route)&&finite(r.growth)&&r.growth>=15) eligible.push({ticker:r.ticker,period:r.fiscal_period,availableAt:r.as_of_date,revenueGrowth:r.growth/100});}
-    return eligible.sort((a,b)=>compare(a.ticker,b.ticker));
+    const result=eligible.sort((a,b)=>compare(a.ticker,b.ticker));
+    if(this.discoveryCache.size>=8)this.discoveryCache.delete(this.discoveryCache.keys().next().value);
+    this.discoveryCache.set(asOf,result);
+    return structuredClone(result);
   }
   guruCatalog() {
+    const generation=this.db.prepare('PRAGMA data_version').get().data_version;
+    if(generation===this.guruCatalogGeneration&&this.guruCatalogCache)return structuredClone(this.guruCatalogCache);
     const configured=new Map(gurus.map(g=>[g.id,g]));
-    return this.db.prepare('SELECT guru_id FROM guru_exposure_snapshots ORDER BY guru_id').all()
+    const result=this.db.prepare('SELECT guru_id FROM guru_exposure_snapshots ORDER BY guru_id').all()
       .filter(r=>!configured.has(r.guru_id)||guruIsVisible(r.guru_id)).map(r=>{
       const g=configured.get(r.guru_id);
       if(g)return {id:g.id,name:g.name,entityName:g.entityName??'',avatar:`/guru-avatars/${g.id}.png`,capitalStructure:guruCapitalStructure(g)};
@@ -163,6 +173,9 @@ export class InvestmentSource {
       const p=this.guruExposure(r.guru_id);
       return {id:r.guru_id,name:p?.guru?.name??r.guru_id,entityName:p?.guru?.entityName??'',avatar:p?.guru?.avatarUrl??`/guru-avatars/${r.guru_id}.png`,capitalStructure:guruCapitalStructure(r.guru_id)};
     });
+    this.guruCatalogGeneration=generation;
+    this.guruCatalogCache=result;
+    return structuredClone(result);
   }
   guruExposure(guruId) {
     const generation=this.db.prepare('PRAGMA data_version').get().data_version;

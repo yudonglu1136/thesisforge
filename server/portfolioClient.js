@@ -32,8 +32,10 @@ import {
   portfolioConnectionAccounts,
   readPortfolioConnection,
   readPortfolioConnectionStatus,
+  readUserPortfolioAnalysis,
   readUserPortfolioReport,
   readUserPortfolioNavPoints,
+  writeUserPortfolioAnalysis,
   writeUserPortfolioReport,
   writeUserPortfolioNavPoint
 } from "./userPortfolioStore.js";
@@ -882,12 +884,30 @@ export async function loadIbkrFlexXml(queryId = ibkrFlexQueryId, connection = {}
   sendUrl.searchParams.set("v", "3");
   for (const [key, value] of Object.entries(dates)) sendUrl.searchParams.set(key, value);
 
-  const sendXml = await fetchXml(sendUrl, "IBKR Flex SendRequest");
-  const sendParsed = xmlParser.parse(sendXml);
-  const sendRoot = flexResponseRoot(sendParsed);
-  const status = textValue(sendRoot.Status || sendRoot.status).toLowerCase();
-  if (status && status !== "success" && status !== "ok") {
-    throw new Error(`IBKR SendRequest: ${flexErrorMessage(sendRoot, "Request failed.")}`);
+  const sendDelays = Array.isArray(range?.sendRetryDelays)
+    ? range.sendRetryDelays
+    : [0, 3500, 7000, 12_000];
+  let sendRoot = null;
+  let lastSendError = null;
+  for (const delayMs of sendDelays) {
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const sendXml = await fetchXml(sendUrl, "IBKR Flex SendRequest");
+    const sendParsed = xmlParser.parse(sendXml);
+    sendRoot = flexResponseRoot(sendParsed);
+    const status = textValue(sendRoot.Status || sendRoot.status).toLowerCase();
+    if (!status || status === "success" || status === "ok") {
+      lastSendError = null;
+      break;
+    }
+    const errorCode = textValue(sendRoot.ErrorCode || sendRoot.errorCode);
+    lastSendError = new Error(`IBKR SendRequest: ${flexErrorMessage(sendRoot, "Request failed.")}`);
+    if (errorCode === "1018" || /too many requests|try again shortly|rate limit/i.test(lastSendError.message)) {
+      continue;
+    }
+    throw lastSendError;
+  }
+  if (lastSendError) {
+    throw lastSendError;
   }
 
   const referenceCode = textValue(
@@ -2049,7 +2069,8 @@ export async function syncRegisteredPortfolioUsers({
       const payload = await loadDashboard({
         user,
         forceRefresh: true,
-        captureNav: true
+        captureNav: true,
+        includeAnalytics: false
       });
       const current = ["live", "multi_account_live"].includes(payload?.source?.mode) &&
         payload?.freshness?.status !== "stale" &&
@@ -2067,9 +2088,108 @@ export async function syncRegisteredPortfolioUsers({
   return result;
 }
 
+export async function warmRegisteredPortfolioAnalyses({
+  asOf = new Date().toISOString().slice(0, 10),
+  scopes = ["home", "summary"],
+  riskFreeRate = 0.04,
+  listUsers = listAdminPortfolioUsers,
+  loadDashboard = loadPortfolioDashboard
+} = {}) {
+  const [{ portfolioAnalysisIdentity, portfolioAnalysisQueue }, { analysePortfolio }] =
+    await Promise.all([
+      import("./portfolioAnalysisQueue.js"),
+      import("./investmentPortfolio.js")
+    ]);
+  const dependencies = portfolioAnalysisQueue.dependencies();
+  if (!portfolioAnalysisQueue.runtimeConfig) return { enqueued: 0, skipped: 0 };
+  const inventory = await listUsers();
+  const targets = (inventory?.users || []).filter(
+    (row) =>
+      productionUserId.test(String(row?.userId || "")) &&
+      row?.connection?.configured === true
+  );
+  let enqueued = 0;
+  let skipped = 0;
+  for (const target of targets) {
+    const user = { id: target.userId };
+    try {
+      if (!readUserPortfolioReport(user)) {
+        skipped += 1;
+        continue;
+      }
+      const connectionRevision = portfolioConnectionRevision(user);
+      if (!connectionRevision) {
+        skipped += 1;
+        continue;
+      }
+      const payload = await loadDashboard({
+        user,
+        forceRefresh: false,
+        preferSaved: true,
+        includeAnalytics: false
+      });
+      if (!analysePortfolio(payload, { asOf }).groups?.length) {
+        skipped += 1;
+        continue;
+      }
+      for (const scope of scopes) {
+        const identity = portfolioAnalysisIdentity(payload, {
+          asOf,
+          scope,
+          riskFreeRate,
+          connectionRevision,
+          ...dependencies
+        });
+        let saved = null;
+        try {
+          saved = readUserPortfolioAnalysis(user, {
+            scope,
+            inputFingerprint: identity.inputFingerprint,
+            asOf
+          });
+        } catch {}
+        if (saved?.exact) {
+          skipped += 1;
+          continue;
+        }
+        const added = portfolioAnalysisQueue.enqueue(
+          {
+            inputFingerprint: identity.inputFingerprint,
+            payload,
+            asOf,
+            scope,
+            riskFreeRate
+          },
+          {
+            onSuccess: (result) => {
+              try {
+                writeUserPortfolioAnalysis(user, {
+                  scope,
+                  inputFingerprint: identity.inputFingerprint,
+                  asOf,
+                  reportDate: identity.reportDate,
+                  payload: result,
+                  connectionRevision
+                });
+              } catch {}
+            },
+            onFailure: () => {}
+          }
+        );
+        if (added) enqueued += 1;
+      }
+    } catch (_) {
+      skipped += 1;
+    }
+  }
+  return { enqueued, skipped };
+}
+
 export function startPortfolioNavRecorder({
   initialDelayMs = finiteNumber(process.env.PORTFOLIO_NAV_CAPTURE_INITIAL_DELAY_MS, 30_000),
   intervalMs = finiteNumber(process.env.PORTFOLIO_NAV_CAPTURE_INTERVAL_MS, 24 * 60 * 60 * 1000),
+  warmDelayMs = finiteNumber(process.env.PORTFOLIO_ANALYSIS_WARM_DELAY_MS, 8_000),
+  warmIntervalMs = finiteNumber(process.env.PORTFOLIO_ANALYSIS_WARM_INTERVAL_MS, 15 * 60 * 1000),
   syncUsers = syncRegisteredPortfolioUsers
 } = {}) {
   if (portfolioNavRecorderStarted) return;
@@ -2101,6 +2221,7 @@ export function startPortfolioNavRecorder({
       console.log(
         `Portfolio daily sync complete: ${status.synced}/${status.connected} current; ${status.degraded} degraded; ${status.failed} failed.`
       );
+      await warmRegisteredPortfolioAnalyses().catch(() => {});
     } catch (error) {
       writeBackgroundJobRun("portfolio_nav_capture", {
         startedAt,
@@ -2114,6 +2235,15 @@ export function startPortfolioNavRecorder({
       console.warn(`Portfolio NAV capture failed: ${error.message}`);
     }
   };
+
+  const bootWarmTimer = setTimeout(() => {
+    warmRegisteredPortfolioAnalyses().catch(() => {});
+  }, Math.max(1000, warmDelayMs));
+  bootWarmTimer.unref?.();
+  const warmTimer = setInterval(() => {
+    warmRegisteredPortfolioAnalyses().catch(() => {});
+  }, Math.max(60_000, warmIntervalMs));
+  warmTimer.unref?.();
 
   const initialTimer = setTimeout(capture, Math.max(1000, initialDelayMs));
   initialTimer.unref?.();

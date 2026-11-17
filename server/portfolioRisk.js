@@ -136,14 +136,15 @@ export function portfolioMarketContext(source,analysis,payload,asOf,{riskFreeRat
   const models=portfolioValuations(source,date),prices=new Map();
   const pq=source.db.prepare("SELECT json_extract(payload_json,'$.currency') currency,json_extract(payload_json,'$.priceHistory') history FROM valuation_ticker_snapshots WHERE ticker=?");
   for(const t of new Set([...rows.map(r=>r.ticker),...symbols])) {
-    let r=cache.snapshots.get(t);
-    if(!cache.snapshots.has(t)) {
+    const snapshotKey=`${t}:${date}`;
+    let p=cache.snapshots.get(snapshotKey);
+    if(p===undefined) {
       const raw=pq.get(t);
-      r=raw?{currency:raw.currency,prices:new Map(JSON.parse(raw.history??'[]').map(p=>[p.date,p]))}:null;
-      remember(cache.snapshots,t,r,900);
+      const match=raw?JSON.parse(raw.history??'[]').find(pt=>pt.date===date):null;
+      p=match?{value:match.close,date,currency:raw.currency}:null;
+      remember(cache.snapshots,snapshotKey,p,1200);
     }
-    const p=r?.prices.get(date);
-    if(p)prices.set(t,{value:p.close,date,currency:r.currency});
+    if(p)prices.set(t,p);
     else {
       const usd=universe.companies.some(c=>c.currency==='USD'&&c.shareClasses?.some(s=>s.ticker===t))||analysis.groups.some(g=>g.positions.some(p=>p.ticker===t&&p.currency==='USD'));
       const raw=usd?source.db.prepare("SELECT close FROM price_points WHERE symbol=? AND date=? AND source LIKE 'sharadar_fact_os_%'").get(t,date):null;

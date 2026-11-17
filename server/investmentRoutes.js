@@ -217,6 +217,11 @@ export function enableInvestmentPreview(app) {
   // request. A daily Fact OS release changes their fingerprint and starts a
   // new immutable generation while the last-good response remains readable.
   setImmediate(()=>{
+    try{
+      const today=service.date();
+      source.discovery(today);
+      source.guruCatalog();
+    }catch{}
     try{publicAnalysisArtifacts.warmCurrent(service.date()).catch(()=>{});}catch{}
   });
   return service;

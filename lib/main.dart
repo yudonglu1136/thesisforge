@@ -44,6 +44,7 @@ part 'investment_portfolio_home.dart';
 part 'investment_portfolio_privacy.dart';
 part 'investment_portfolio_gurus.dart';
 part 'investment_portfolio_visuals.dart';
+part 'investment_portfolio_passive_income.dart';
 part 'investment_strategy_lab.dart';
 part 'investment_strategy_mix.dart';
 part 'investment_strategy_cta.dart';
@@ -1263,7 +1264,7 @@ class _AuthGateState extends State<AuthGate> {
           });
         },
       );
-      if (_session != null && _returnTo != null) {
+      if (_session != null && (_returnTo != null || _session!.isExpired)) {
         try {
           final refreshed = await client.auth.refreshSession();
           _session = refreshed.session ?? client.auth.currentSession;
@@ -1278,7 +1279,7 @@ class _AuthGateState extends State<AuthGate> {
             );
           }
         }
-        if (_session != null) {
+        if (_session != null && _returnTo != null) {
           final session = _session!;
           await recordAuthenticatedVisit(ApiClient(() => session.accessToken));
           openBrowserPath(_returnTo);

@@ -14,7 +14,12 @@ export const BREAKOUT_MODES = Object.freeze(['flagship', 'balanced']);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultFile = path.resolve(projectRoot, 'server/config/hot-breakout-pullback-dashboard.json');
 const builderScript = path.resolve(projectRoot, 'scripts/build-breakout-pullback-artifact.py');
-const runtimeCacheDir = path.join(os.tmpdir(), 'thesisforge-breakout-pullback-cache');
+const runtimeCacheDir = path.resolve(
+  process.env.BREAKOUT_PULLBACK_CACHE_DIR ||
+    (process.env.NODE_ENV === 'production' && fs.existsSync('/var/app/data')
+      ? '/var/app/data/breakout-pullback-cache'
+      : path.join(os.tmpdir(), 'thesisforge-breakout-pullback-cache')),
+);
 
 function fail(code, status = 503) {
   throw Object.assign(new Error(code), { status });
@@ -234,9 +239,17 @@ export async function refreshBreakoutPullbackFromCanonical({ factRoot = null, cu
   }
 }
 
+const MIN_AUTO_REFRESH_MEMORY_BYTES = 3.5 * 1024 * 1024 * 1024;
+
 function maybeScheduleBackgroundRefresh(currentDataThrough) {
   if (process.env.BREAKOUT_PULLBACK_AUTO_REFRESH === '0') return;
   if (process.env.NODE_ENV !== 'production' && process.env.BREAKOUT_PULLBACK_AUTO_REFRESH !== '1') return;
+  // Rebuilding the 10-year OHLCV strategy tensor requires ~1.5-2.0 GiB of RAM.
+  // On 2 GiB web instances (e.g. t3.small), skip in-process rebuilds unless
+  // explicitly forced so API traffic never live-locks on page-fault thrashing.
+  if (process.env.BREAKOUT_PULLBACK_AUTO_REFRESH !== '1' && os.totalmem() < MIN_AUTO_REFRESH_MEMORY_BYTES) {
+    return;
+  }
   if (refreshInFlight) return;
   try {
     const root = path.resolve(

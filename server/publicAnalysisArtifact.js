@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { dataReleaseStatus } from './dataReleaseContext.js';
+import { heavyWorkerLimiter } from './heavyWorkerLimiter.js';
 import { resolveInvestmentRuntimeConfig } from './investmentRuntimeConfig.js';
 import { analysisFailureCode } from './analysisFailure.js';
 import {defaultRuleLedgerRoot,ruleLedgerArchiveIdentity} from './ruleLedgerArchive.js';
@@ -20,9 +21,11 @@ function defaultRoot() {
 }
 
 export class PublicAnalysisArtifacts {
-  constructor({root=defaultRoot(),maxActive=1,compute=null,runtimeConfig=null}={}) {
+  constructor({root=defaultRoot(),maxActive=1,compute=null,runtimeConfig=null,retentionDays=14,minCohortsPerFamily=3}={}) {
     this.root=path.resolve(root);this.maxActive=Math.max(1,Math.min(2,maxActive));this.compute=compute;
     this.runtimeConfig=runtimeConfig;this.runtimeConfigResolved=runtimeConfig!==null;
+    this.retentionMs=Math.max(1,Number(retentionDays)||14)*86_400_000;
+    this.minCohortsPerFamily=Math.max(2,Number(minCohortsPerFamily)||3);
     this.pending=[];this.active=0;this.keys=new Set();this.warming=new Set();this.cache=new Map();this.failures=new Map();
   }
   context() {
@@ -147,27 +150,78 @@ export class PublicAnalysisArtifacts {
   async #run(job) {
     if(this.compute)return this.compute(job);
     fs.mkdirSync(path.join(this.root,'releases'),{recursive:true,mode:0o755});
-    return new Promise((resolve,reject)=>{
+    return heavyWorkerLimiter.run(()=>new Promise((resolve,reject)=>{
       const worker=new Worker(new URL('./publicAnalysisWorker.js',import.meta.url),{workerData:{...job,root:this.root},
         resourceLimits:{maxOldGenerationSizeMb:512,maxYoungGenerationSizeMb:48,stackSizeMb:8}});
       let settled=false;const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);worker.terminate().catch(()=>{});error?reject(error):resolve(value);};
       const timer=setTimeout(()=>finish(new Error('public_analysis_worker_timeout')),180_000);
       worker.once('message',m=>m?.ok?finish(null,m.entry):finish(new Error(m?.error??'public_analysis_worker_failed')));
       worker.once('error',e=>finish(e));worker.once('exit',code=>{if(code&&!settled)finish(new Error('public_analysis_worker_exit'));});
-    });
+    }),{priority:'normal'});
   }
   #activate(job,entry) {
     if(entry.fingerprint!==job.fingerprint)return;
     const index=this.#index();index.entries[job.logicalKey]=entry;
     this.#writeIndex(index);
   }
-  #writeIndex(index) {
+  #pruneIndexEntries(entries,nowMs=Date.now()) {
+    const cutoff=nowMs-this.retentionMs,byFamily=new Map(),retained={};
+    for(const [key,entry] of Object.entries(entries??{})){
+      const parts=String(key).split(':'),family=`${entry?.kind??parts[0]}:${parts.slice(2).join(':')||'default'}`;
+      if(!byFamily.has(family))byFamily.set(family,[]);
+      byFamily.get(family).push([key,entry]);
+    }
+    for(const items of byFamily.values()){
+      items.sort(([,a],[,b])=>String(b?.asOf??'').localeCompare(String(a?.asOf??''))||
+        String(b?.createdAt??'').localeCompare(String(a?.createdAt??'')));
+      items.forEach(([key,entry],rank)=>{
+        const createdMs=entry?.createdAt?Date.parse(entry.createdAt):NaN;
+        const recent=Number.isNaN(createdMs)||createdMs>=cutoff;
+        const activeBuild=entry?.fingerprint&&(this.keys.has(entry.fingerprint)||this.warming.has(entry.fingerprint));
+        if(rank<this.minCohortsPerFamily||recent||activeBuild)retained[key]=entry;
+      });
+    }
+    return retained;
+  }
+  #pruneReleaseDirs(retainedEntries,nowMs=Date.now()) {
+    const releasesRoot=path.join(this.root,'releases');
+    if(!fs.existsSync(releasesRoot))return;
+    const cutoff=nowMs-this.retentionMs;
+    const protectedFingerprints=new Set([...this.keys,...this.warming]);
+    for(const entry of Object.values(retainedEntries??{})){
+      if(entry?.fingerprint)protectedFingerprints.add(entry.fingerprint);
+      if(typeof entry?.path==='string'){
+        const parts=entry.path.split(/[\\/]/);
+        if(parts[0]==='releases'&&parts[1])protectedFingerprints.add(parts[1]);
+      }
+    }
+    for(const dirent of fs.readdirSync(releasesRoot,{withFileTypes:true})){
+      if(!dirent.isDirectory()||dirent.isSymbolicLink()||!/^[a-f0-9]{64}$/.test(dirent.name))continue;
+      if(protectedFingerprints.has(dirent.name))continue;
+      const dirPath=path.join(releasesRoot,dirent.name);
+      const dirStat=fs.lstatSync(dirPath);
+      if(dirStat.isSymbolicLink())continue;
+      const children=fs.readdirSync(dirPath,{withFileTypes:true});
+      if(children.some(child=>child.isSymbolicLink()||(child.name!=='artifact.json'&&!child.name.startsWith('artifact.json.'))))continue;
+      let latestMs=dirStat.mtimeMs;
+      for(const child of children)latestMs=Math.max(latestMs,fs.lstatSync(path.join(dirPath,child.name)).mtimeMs);
+      if(latestMs>=cutoff)continue;
+      for(const child of children){
+        const filePath=path.join(dirPath,child.name);
+        fs.chmodSync(filePath,0o644);fs.unlinkSync(filePath);
+      }
+      fs.rmdirSync(dirPath);
+    }
+  }
+  #writeIndex(index,nowMs=Date.now()) {
+    const next={...index,entries:this.#pruneIndexEntries(index.entries,nowMs)};
     fs.mkdirSync(this.root,{recursive:true,mode:0o755});
     const temporary=path.join(this.root,`.active.${process.pid}.tmp`);
     const handle=fs.openSync(temporary,'w',0o644);
-    try{fs.writeFileSync(handle,JSON.stringify(index));fs.fsyncSync(handle);}finally{fs.closeSync(handle);}
+    try{fs.writeFileSync(handle,JSON.stringify(next));fs.fsyncSync(handle);}finally{fs.closeSync(handle);}
     fs.renameSync(temporary,path.join(this.root,'active.json'));
     const directory=fs.openSync(this.root,'r');try{fs.fsyncSync(directory);}finally{fs.closeSync(directory);}
+    try{this.#pruneReleaseDirs(next.entries,nowMs);}catch{}
   }
 }
 

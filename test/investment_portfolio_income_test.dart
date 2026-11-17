@@ -315,4 +315,142 @@ void main() {
       expect(t.takeException(), isNull);
     });
   }
+
+  testWidgets(
+    'confirmed passive income visualizes dividends and expired short calls, isolating pending short calls and respecting privacy',
+    (t) async {
+      final fixture = <String, dynamic>{
+        'status': 'ready',
+        'fromDate': '2026-01-01',
+        'toDate': '2026-03-31',
+        'totalConfirmed': 1000,
+        'dividends': {
+          'status': 'ready',
+          'grossAmount': 300,
+          'withholdingTax': -45,
+          'netAmount': 255,
+          'eventCount': 4,
+        },
+        'expiredCalls': {
+          'status': 'ready',
+          'amount': 700,
+          'settlementCount': 3,
+          'contractCount': 5,
+        },
+        'monthly': [
+          {
+            'month': '2026-01',
+            'dividends': 100,
+            'expiredCalls': 200,
+            'total': 300,
+            'dividendCount': 1,
+            'callCount': 1,
+          },
+          {
+            'month': '2026-02',
+            'dividends': 0,
+            'expiredCalls': 250,
+            'total': 250,
+            'dividendCount': 0,
+            'callCount': 2,
+          },
+          {
+            'month': '2026-03',
+            'dividends': 200,
+            'expiredCalls': 250,
+            'total': 450,
+            'dividendCount': 3,
+            'callCount': 2,
+          },
+        ],
+        'byTicker': [
+          {
+            'ticker': 'QQQ',
+            'dividends': 200,
+            'expiredCalls': 500,
+            'total': 700,
+            'share': 0.7,
+          },
+          {
+            'ticker': 'NVDA',
+            'dividends': 100,
+            'expiredCalls': 200,
+            'total': 300,
+            'share': 0.3,
+          },
+        ],
+        'recentEvents': [
+          {
+            'date': '2026-03-20',
+            'ticker': 'QQQ',
+            'kind': 'expired_call',
+            'strike': 680,
+            'amount': 250,
+          },
+          {
+            'date': '2026-03-15',
+            'ticker': 'QQQ',
+            'kind': 'dividend',
+            'amount': 200,
+          },
+        ],
+        'pendingShortCalls': {
+          'count': 1,
+          'totalContracts': 2,
+          'collectedPremium': 180,
+          'confirmed': false,
+          'rows': [
+            {
+              'ticker': 'PLTR',
+              'strike': 250,
+              'expiry': '2026-04-17',
+              'contracts': 2,
+            },
+          ],
+        },
+      };
+
+      await mount(
+        t,
+        PortfolioPassiveIncomeCard(
+          passiveIncome: fixture,
+          currency: 'USD',
+          palette: Palette(false),
+          hideAmounts: false,
+        ),
+      );
+      expect(find.text('Confirmed passive income'), findsOneWidget);
+      expect(find.text('USD 1,000'), findsOneWidget);
+      expect(find.text('USD 700'), findsWidgets);
+      expect(find.text('USD 300'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('passive-pending-short-calls')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('PLTR 250C · 2026-04-17 ×2'), findsOneWidget);
+
+      await tap(t, find.byKey(const ValueKey('passive-income-ledger-toggle')));
+      expect(find.textContaining('QQQ · Expired Short Call'), findsOneWidget);
+
+      // Privacy mode hides all currency figures, strikes, and contract counts
+      await mount(
+        t,
+        PortfolioPassiveIncomeCard(
+          passiveIncome: fixture,
+          currency: 'USD',
+          palette: Palette(false),
+          hideAmounts: true,
+        ),
+        size: const Size(390, 844),
+        lang: AppLanguage.zh,
+        scale: 1.4,
+      );
+      expect(find.text('已收被动收入（已确认）'), findsOneWidget);
+      expect(find.text('70.0%'), findsWidgets);
+      expect(find.text('30.0%'), findsWidgets);
+      expect(find.textContaining('USD'), findsNothing);
+      expect(find.textContaining('250C'), findsNothing);
+      expect(t.takeException(), isNull);
+    },
+  );
 }

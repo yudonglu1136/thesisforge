@@ -377,51 +377,93 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
             ),
           ],
           const SizedBox(height: 18),
-          homeAllocationOverview(g),
-          const SizedBox(height: 18),
-          panel([
-            Wrap(
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                title('Portfolio value & P&L', '组合净值与盈亏'),
-                copy(
-                  'Broker history · inspect any date',
-                  '券商历史 · 查看任意日期',
-                  size: 11,
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            PortfolioAccountValueChart(
-              key: ValueKey('account-nav-$selectedCurrency'),
-              rows: asList(asMap(h['nav'])['rows']),
-              history: history,
+          homeHeroOverview(g, h, history),
+          if (_hasPassiveIncomeContent(h)) ...[
+            const SizedBox(height: 18),
+            PortfolioPassiveIncomeCard(
+              passiveIncome: asMap(h['passiveIncome']),
               currency: selectedCurrency,
               palette: p,
               hideAmounts: hideAmounts,
-              chartHeight: 250,
+              onCompany: widget.onCompany,
             ),
-            if (asList(asMap(h['nav'])['rows']).length < 2) ...[
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: homeHistoryHelp,
-                  icon: const Icon(Icons.add_chart, size: 17),
-                  label: Text(w('Set up account history', '设置账户历史数据')),
-                ),
-              ),
-            ],
-          ]),
+          ],
           const SizedBox(height: 18),
           homeMovers(h, asList(g['positions'])),
           const SizedBox(height: 18),
           homeHoldings(g),
         ],
       ],
+    );
+  }
+
+  bool _hasPassiveIncomeContent(Map<String, dynamic> h) {
+    final passive = asMap(h['passiveIncome']);
+    if (passive['status'] == 'ready') return true;
+    return asList(asMap(passive['pendingShortCalls'])['rows']).isNotEmpty;
+  }
+
+  Widget homeHeroOverview(
+    Map<String, dynamic> g,
+    Map<String, dynamic> h,
+    Map<String, dynamic> history,
+  ) {
+    final navPanel = panel([
+      Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 12,
+        runSpacing: 8,
+        children: [
+          title('Portfolio value & P&L', '组合净值与盈亏'),
+          copy(
+            'Broker history · inspect any date',
+            '券商历史 · 查看任意日期',
+            size: 11,
+          ),
+        ],
+      ),
+      const SizedBox(height: 16),
+      PortfolioAccountValueChart(
+        key: ValueKey('account-nav-$selectedCurrency'),
+        rows: asList(asMap(h['nav'])['rows']),
+        history: history,
+        currency: selectedCurrency,
+        palette: p,
+        hideAmounts: hideAmounts,
+        chartHeight: 235,
+      ),
+      if (asList(asMap(h['nav'])['rows']).length < 2) ...[
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: homeHistoryHelp,
+            icon: const Icon(Icons.add_chart, size: 17),
+            label: Text(w('Set up account history', '设置账户历史数据')),
+          ),
+        ),
+      ],
+    ]);
+    final allocPanel = homeAllocationOverview(g);
+    return LayoutBuilder(
+      builder: (_, c) {
+        if (c.maxWidth >= 1020 &&
+            MediaQuery.textScalerOf(context).scale(1) <= 1.25) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(flex: 7, child: navPanel),
+              const SizedBox(width: 18),
+              Expanded(flex: 5, child: allocPanel),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [navPanel, const SizedBox(height: 18), allocPanel],
+        );
+      },
     );
   }
 
@@ -477,118 +519,9 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
   );
 
   Widget homeAllocationOverview(Map<String, dynamic> g) {
-    final rows =
-        asList(
-          g['positions'],
-        ).where((r) => !['cash', 'accrual'].contains(r['kind'])).toList()..sort(
-          (a, b) =>
-              number(b['value']).abs().compareTo(number(a['value']).abs()),
-        );
-    Widget positionTable() => Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Expanded(flex: 5, child: copy('Position', '持仓', size: 11)),
-            Expanded(
-              flex: 3,
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: copy('Value', '市值', size: 11),
-              ),
-            ),
-            const SizedBox(width: 12),
-            SizedBox(
-              width: 82,
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: copy('Allocation', '占比', size: 11),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Divider(height: 1, color: p.border),
-        for (final r in rows.take(6))
-          InkWell(
-            key: ValueKey('home-allocation-${r['id'] ?? r['ticker']}'),
-            onTap: r['kind'] == 'equity'
-                ? () => widget.onCompany(text(r['ticker']), 'evidence')
-                : null,
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 13),
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: p.border)),
-              ),
-              child: Row(
-                children: [
-                  if (r['kind'] == 'equity')
-                    StockLogo(ticker: text(r['ticker']), palette: p, size: 31)
-                  else
-                    Icon(Icons.layers_outlined, color: p.secondary, size: 31),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    flex: 5,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          text(r['ticker']),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: heading(14),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          text(r['name'], text(r['assetCategory'])),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: p.muted, fontSize: 11),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    flex: 3,
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: Text(amount(r['value']), style: heading(13)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 82,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(percent(r['netWeight']), style: heading(13)),
-                        const SizedBox(height: 5),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(2),
-                          child: LinearProgressIndicator(
-                            value: number(r['netWeight']).abs().clamp(0, 1),
-                            minHeight: 3,
-                            backgroundColor: p.border,
-                            color: p.accent,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            onPressed: widget.onDetails,
-            child: Text(w('View all positions →', '查看全部持仓 →')),
-          ),
-        ),
-      ],
-    );
+    final rows = asList(
+      g['positions'],
+    ).where((r) => !['cash', 'accrual'].contains(r['kind'])).toList();
     return panel([
       Wrap(
         alignment: WrapAlignment.spaceBetween,
@@ -598,46 +531,20 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
         children: [
           title('Portfolio allocation', '资产配置'),
           copy(
-            '${rows.length} ${w('positions', '项持仓')} · ${percent(asMap(g['coverage'])['weight'])} ${w('valuation coverage', '估值覆盖')}',
-            '${rows.length} 项持仓 · 估值覆盖 ${percent(asMap(g['coverage'])['weight'])}',
+            '${rows.length} ${w('positions', '项持仓')} · ${percent(asMap(g['coverage'])['weight'])} ${w('covered', '估值覆盖')}',
+            '${rows.length} 项持仓 · 覆盖 ${percent(asMap(g['coverage'])['weight'])}',
             size: 11,
           ),
         ],
       ),
-      const SizedBox(height: 18),
-      LayoutBuilder(
-        builder: (_, c) {
-          final chart = PortfolioAllocationChart(
-            hideAmounts: hideAmounts,
-            group: g,
-            palette: p,
-            onHolding: (ticker) =>
-                widget.onCompany(portfolioValuationTicker(g, ticker), 'value'),
-          );
-          if (c.maxWidth >= 1040 &&
-              MediaQuery.textScalerOf(context).scale(1) <= 1.2) {
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(flex: 5, child: chart),
-                const SizedBox(width: 26),
-                Container(width: 1, height: 420, color: p.border),
-                const SizedBox(width: 26),
-                Expanded(flex: 7, child: positionTable()),
-              ],
-            );
-          }
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              chart,
-              const SizedBox(height: 18),
-              Divider(color: p.border),
-              const SizedBox(height: 8),
-              positionTable(),
-            ],
-          );
-        },
+      const SizedBox(height: 14),
+      PortfolioAllocationChart(
+        hideAmounts: hideAmounts,
+        compact: true,
+        group: g,
+        palette: p,
+        onHolding: (ticker) =>
+            widget.onCompany(portfolioValuationTicker(g, ticker), 'value'),
       ),
     ]);
   }
@@ -942,190 +849,549 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
         ],
       );
 
+  void _openHomeGuruDialog(Map<String, dynamic> position) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: p.panel,
+        title: Text(
+          '${position['ticker']} · ${w('Guru filing evidence', '大佬持仓证据')}',
+        ),
+        content: SizedBox(
+          width: 620,
+          child: SingleChildScrollView(
+            child: portfolioGuruEvidence(
+              position,
+              beforeNavigate: () => Navigator.of(dialogContext).pop(),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(w('Close', '关闭')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _homeValuationPill(Map<String, dynamic> r) {
+    final gap = nullableNumber(r['modelGap']);
+    final key = ValueKey('home-valuation-${r['id'] ?? r['ticker']}');
+    final modelTicker = text(asMap(r['model'])['modelTicker'] ?? r['ticker']);
+    if (gap == null) {
+      return Text('—', key: key, style: TextStyle(color: p.muted, fontSize: 13));
+    }
+    final positive = gap >= 0;
+    final tint = positive ? p.accent : p.negative;
+    return InkWell(
+      key: key,
+      onTap: () => widget.onCompany(modelTicker, 'value'),
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: tint.withValues(alpha: .10),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: tint.withValues(alpha: .24)),
+        ),
+        child: Text(
+          '${positive ? '+' : ''}${percent(gap)}',
+          style: TextStyle(
+            color: tint,
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _homeGuruPill(Map<String, dynamic> r) {
+    final activity = asMap(r['guruActivity']);
+    final guruRows = asList(activity['rows']);
+    if (guruRows.isEmpty) {
+      return Text('—', style: TextStyle(color: p.muted, fontSize: 13));
+    }
+    final holders = number(activity['holders'] ?? guruRows.length).round();
+    final adds = number(activity['adds']).round();
+    final trims = number(activity['trims']).round();
+    return InkWell(
+      key: ValueKey('home-guru-open-${r['id'] ?? r['ticker']}'),
+      onTap: () => _openHomeGuruDialog(r),
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: p.card.withValues(alpha: .65),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: p.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.groups_outlined, size: 14, color: p.accent),
+            const SizedBox(width: 5),
+            Text(
+              '$holders',
+              style: TextStyle(
+                color: p.text,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            if (adds > 0 || trims > 0) ...[
+              const SizedBox(width: 5),
+              Text(
+                '+$adds/-$trims',
+                style: TextStyle(color: p.muted, fontSize: 11),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget homeHoldings(Map<String, dynamic> g) {
-    final rows =
+    final allNonCash =
         asList(
           g['positions'],
         ).where((r) => !['cash', 'accrual'].contains(r['kind'])).toList()..sort(
           (a, b) =>
               number(b['value']).abs().compareTo(number(a['value']).abs()),
         );
+    final equities = allNonCash.where((r) => r['kind'] == 'equity').toList();
+    final otherRows = allNonCash.where((r) => r['kind'] != 'equity').toList();
+    final rows = equities.isNotEmpty ? equities : allNonCash;
+
+    double? openPnlRateFor(Map<String, dynamic> r) {
+      final val = nullableNumber(r['value']);
+      final gain = nullableNumber(r['unrealizedPnl']);
+      if (val == null ||
+          gain == null ||
+          !val.isFinite ||
+          !gain.isFinite ||
+          number(r['quantity']) <= 0 ||
+          val - gain <= 0) {
+        return null;
+      }
+      return portfolioRatio(gain, val - gain);
+    }
+
     return panel([
       Wrap(
         alignment: WrapAlignment.spaceBetween,
         crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 16,
+        spacing: 12,
+        runSpacing: 6,
         children: [
-          title('My holdings', '我的持仓'),
+          Wrap(
+            spacing: 10,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              title('My holdings', '我的持仓'),
+              tag(
+                '${equities.length} ${w('equities', '只股票/ETF')}',
+                '${equities.length} 只股票/ETF',
+              ),
+            ],
+          ),
           TextButton(
             onPressed: widget.onDetails,
             child: Text(w('All positions & analysis →', '全部持仓与分析 →')),
           ),
         ],
       ),
-      copy(
-        'Your stocks, their valuation and the Gurus behind them. Expand Guru activity to see who added or reduced.',
-        '你的持仓、估值与大佬动向放在一起。展开大佬动向，查看具体加减仓名单。',
-        size: 12,
-      ),
-      copy(
-        'Valuations as of ${widget.asOf} · compared with broker report marks.',
-        '估值信息截止 ${widget.asOf} · 与券商报告市价比较。',
-        size: 11,
-      ),
       const SizedBox(height: 12),
-      for (final r in rows.take(holdingLimit))
-        LayoutBuilder(
-          builder: (_, c) {
-            final stock = r['kind'] == 'equity',
-                gap = nullableNumber(r['modelGap']);
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
+      LayoutBuilder(
+        builder: (_, c) {
+          final wide =
+              c.maxWidth >= 760 &&
+              MediaQuery.textScalerOf(context).scale(1) <= 1.25;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (wide) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 6,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(flex: 4, child: copy('Holding', '持仓标的', size: 11)),
+                      Expanded(
+                        flex: 3,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: copy('Market value', '市值与单价', size: 11),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      SizedBox(
+                        width: 92,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: copy('Weight', '净值占比', size: 11),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        flex: 2,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: copy('Open P&L', '累计浮盈亏', size: 11),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      SizedBox(
+                        width: 96,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: copy('Valuation', '模型空间', size: 11),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      SizedBox(
+                        width: 112,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: copy('Gurus', '大佬持仓', size: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(height: 1, color: p.border),
+              ],
+              for (final r in rows.take(holdingLimit))
                 InkWell(
                   key: ValueKey('home-position-${r['id'] ?? r['ticker']}'),
-                  onTap: stock
+                  onTap: r['kind'] == 'equity'
                       ? () => widget.onCompany(text(r['ticker']), 'evidence')
                       : null,
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 11,
+                    ),
                     decoration: BoxDecoration(
                       border: Border(bottom: BorderSide(color: p.border)),
                     ),
-                    child: Row(
-                      children: [
-                        if (stock)
-                          StockLogo(
-                            ticker: text(r['ticker']),
-                            palette: p,
-                            size: 34,
-                          )
-                        else
-                          Icon(
-                            Icons.layers_outlined,
-                            color: p.secondary,
-                            size: 34,
-                          ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          flex: 3,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                    child: wide
+                        ? Row(
                             children: [
-                              Text(
-                                text(r['ticker']),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: heading(15),
+                              Expanded(
+                                flex: 4,
+                                child: Row(
+                                  children: [
+                                    if (r['kind'] == 'equity')
+                                      StockLogo(
+                                        ticker: text(r['ticker']),
+                                        palette: p,
+                                        size: 32,
+                                      )
+                                    else
+                                      Icon(
+                                        Icons.layers_outlined,
+                                        color: p.secondary,
+                                        size: 30,
+                                      ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Flexible(
+                                                child: Text(
+                                                  text(r['ticker']),
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: heading(14),
+                                                ),
+                                              ),
+                                              if (!hideAmounts &&
+                                                  number(r['accountCount']) >
+                                                      1) ...[
+                                                const SizedBox(width: 6),
+                                                Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 5,
+                                                        vertical: 1.5,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color: p.accent.withValues(
+                                                      alpha: .10,
+                                                    ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          4,
+                                                        ),
+                                                  ),
+                                                  child: Text(
+                                                    '${r['accountCount']} ${w('accts', '账户')}',
+                                                    style: TextStyle(
+                                                      color: p.accent,
+                                                      fontSize: 10,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            text(r['name']),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: p.muted,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                stock
-                                    ? text(r['name'])
-                                    : '${r['assetCategory']} · ${w('Not an equity valuation', '不适用股票估值')}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: p.muted, fontSize: 12),
+                              Expanded(
+                                flex: 3,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(amount(r['value']), style: heading(13)),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      hideAmounts
+                                          ? '••••'
+                                          : nullableNumber(r['quantity']) !=
+                                                null
+                                          ? '${formatNumber(number(r['quantity']))} · ${amount(r['price'], text(r['currency']))}'
+                                          : '—',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: p.muted,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          flex: 2,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(amount(r['value']), style: heading(14)),
-                              const SizedBox(height: 4),
-                              copy(
-                                '${percent(r['netWeight'])} ${w('of net marks', '占净市值')}',
-                                '${percent(r['netWeight'])} 占净市值',
-                                size: 11,
+                              const SizedBox(width: 14),
+                              SizedBox(
+                                width: 92,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      percent(r['netWeight']),
+                                      style: heading(13),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    SizedBox(
+                                      width: 68,
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(2),
+                                        child: LinearProgressIndicator(
+                                          value: number(
+                                            r['netWeight'],
+                                          ).abs().clamp(0, 1),
+                                          minHeight: 3.5,
+                                          backgroundColor: p.border,
+                                          color: p.accent,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ],
-                          ),
-                        ),
-                        if (c.maxWidth > 650) ...[
-                          const SizedBox(width: 22),
-                          SizedBox(
-                            width: 155,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  gap == null
-                                      ? '—'
-                                      : '${gap > 0 ? '+' : ''}${percent(gap)}',
-                                  style: heading(14).copyWith(
-                                    color: gap == null
-                                        ? p.muted
-                                        : gap < 0
-                                        ? p.negative
-                                        : p.accent,
+                              const SizedBox(width: 14),
+                              Expanded(
+                                flex: 2,
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Builder(
+                                    builder: (_) {
+                                      final pnl = nullableNumber(
+                                        r['unrealizedPnl'],
+                                      );
+                                      if (pnl == null) {
+                                        return Text(
+                                          '—',
+                                          style: TextStyle(
+                                            color: p.muted,
+                                            fontSize: 13,
+                                          ),
+                                        );
+                                      }
+                                      final color = pnl < 0
+                                          ? p.negative
+                                          : p.accent;
+                                      final rate = openPnlRateFor(r);
+                                      return Text(
+                                        hideAmounts
+                                            ? (rate == null
+                                                  ? '—'
+                                                  : '${rate > 0 ? '+' : ''}${percent(rate)}')
+                                            : '${pnl > 0 ? '+' : ''}${amount(pnl)}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: color,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      );
+                                    },
                                   ),
                                 ),
-                                const SizedBox(height: 4),
-                                copy(
-                                  'Model / price − 1',
-                                  '模型 / 市价 − 1',
-                                  size: 11,
+                              ),
+                              const SizedBox(width: 14),
+                              SizedBox(
+                                width: 96,
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: _homeValuationPill(r),
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              SizedBox(
+                                width: 112,
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: _homeGuruPill(r),
+                                ),
+                              ),
+                            ],
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                children: [
+                                  if (r['kind'] == 'equity')
+                                    StockLogo(
+                                      ticker: text(r['ticker']),
+                                      palette: p,
+                                      size: 30,
+                                    )
+                                  else
+                                    Icon(
+                                      Icons.layers_outlined,
+                                      color: p.secondary,
+                                      size: 28,
+                                    ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          text(r['ticker']),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: heading(14),
+                                        ),
+                                        Text(
+                                          text(r['name']),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: p.muted,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Text(
+                                        amount(r['value']),
+                                        style: heading(13),
+                                      ),
+                                      Text(
+                                        percent(r['netWeight']),
+                                        style: TextStyle(
+                                          color: p.muted,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              if (r['kind'] == 'equity' &&
+                                  (nullableNumber(r['modelGap']) != null ||
+                                      asList(
+                                        asMap(r['guruActivity'])['rows'],
+                                      ).isNotEmpty)) ...[
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 6,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    if (nullableNumber(r['modelGap']) != null)
+                                      _homeValuationPill(r),
+                                    if (asList(
+                                      asMap(r['guruActivity'])['rows'],
+                                    ).isNotEmpty)
+                                      _homeGuruPill(r),
+                                  ],
                                 ),
                               ],
-                            ),
+                            ],
                           ),
-                        ],
-                        if (stock)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 10),
-                            child: Icon(
-                              Icons.chevron_right,
-                              color: p.accent,
-                              size: 18,
-                            ),
-                          ),
-                      ],
-                    ),
                   ),
                 ),
-                if (stock) ...[
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      if (c.maxWidth <= 650)
-                        copy(
-                          'Model / price − 1: ${percent(gap)}',
-                          '模型 / 市价 − 1：${percent(gap)}',
-                          size: 12,
-                        ),
-                      TextButton(
-                        onPressed: () => widget.onCompany(
-                          text(asMap(r['model'])['modelTicker'] ?? r['ticker']),
-                          'value',
-                        ),
-                        child: Text(w('Valuation →', '查看估值 →')),
-                      ),
-                      TextButton(
-                        onPressed: () =>
-                            widget.onCompany(text(r['ticker']), 'evidence'),
-                        child: Text(w('Financials & sources →', '财务与来源 →')),
-                      ),
-                    ],
-                  ),
-                  portfolioGuruEvidence(r),
-                ],
-              ],
-            );
-          },
-        ),
+            ],
+          );
+        },
+      ),
       if (rows.length > holdingLimit)
         TextButton(
           onPressed: () => homeUpdate(() => holdingLimit += 20),
           child: Text(w('Show more holdings', '显示更多持仓')),
         ),
+      if (equities.isNotEmpty && otherRows.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: widget.onDetails,
+            icon: Icon(Icons.layers_outlined, size: 15, color: p.muted),
+            label: Text(
+              hideAmounts
+                  ? w(
+                      'Option positions · open Full analysis →',
+                      '期权持仓 · 打开完整分析查看 →',
+                    )
+                  : w(
+                      '${otherRows.length} option / derivative positions · open Full analysis →',
+                      '另有 ${otherRows.length} 项期权持仓 · 打开完整分析查看 →',
+                    ),
+              style: TextStyle(color: p.muted, fontSize: 11.5),
+            ),
+          ),
+        ),
+      ],
     ]);
   }
 

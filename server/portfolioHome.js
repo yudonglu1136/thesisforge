@@ -1,5 +1,6 @@
 import {finite, isoDate} from './investmentMath.js';
 import {portfolioHistory} from './portfolioHistory.js';
+import {portfolioPassiveIncome} from './portfolioIncome.js';
 
 const date = x => { try { return isoDate(x); } catch { return null; } };
 const sum = xs => xs.reduce((a,b)=>a+b,0);
@@ -39,8 +40,10 @@ export function portfolioHome(accounts, positions, currency) {
   const dailyRows=dailyReady?combine(dailyAccounts.flatMap(a=>a.rows)):[];
   const unrealized=positions.filter(p=>p.kind==='equity'&&finite(p.unrealizedPnl))
     .map(p=>({ticker:p.ticker,name:p.name,assetCategory:p.assetCategory,pnl:p.unrealizedPnl}));
+  const history=portfolioHistory(accounts,navHistory);
   return {version:'portfolio-home-v2',reportDate,reportDates,accountValue,
-    history:portfolioHistory(accounts,navHistory),
+    history,
+    passiveIncome:portfolioPassiveIncome(accounts,currency),
     nav:{status:navHistory.length>=2?'ready':navHistory.length===1?'single_observation':'history_required',
       basis:'broker_account_value_not_cash_flow_adjusted_return',rows:navHistory,accountCount:accounts.length},
     daily:{status:dailyReady?'ready':'daily_mtm_required',date:reportDate,

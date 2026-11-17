@@ -133,6 +133,10 @@ void main() {
       );
       await fixtures.tap(
         t,
+        find.byKey(const ValueKey('home-guru-open-AAA')),
+      );
+      await fixtures.tap(
+        t,
         find.text(
           lang == AppLanguage.en ? 'Guru activity · 2026 Q2' : '大佬动向 · 2026 Q2',
         ),
@@ -146,7 +150,11 @@ void main() {
       expect(find.textContaining('15.0%'), findsWidgets);
       await fixtures.tap(
         t,
-        find.text(lang == AppLanguage.en ? 'Valuation →' : '查看估值 →').last,
+        find.text(lang == AppLanguage.en ? 'Close' : '关闭'),
+      );
+      await fixtures.tap(
+        t,
+        find.byKey(const ValueKey('home-valuation-AAA')),
       );
       expect(actions, [('AAA', 'value')]);
       expect(t.takeException(), isNull);

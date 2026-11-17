@@ -22,3 +22,23 @@ test('period override reaches only the allowed SendRequest, never GetStatement',
   await assert.rejects(()=>loadIbkrFlexXml('12345',{ibkrFlexToken:'synthetic-token',ibkrFlexBaseUrl:'https://example.test'}),/not allowed/);
   assert.equal(calls.length,0);
 });
+test('SendRequest retries transient Error 1018 rate limits without delaying permanent errors',async()=>{
+  let sendAttempts=0;
+  globalThis.fetch=async u=>{
+    const url=new URL(u);
+    if(url.pathname.endsWith('SendRequest')) {
+      sendAttempts+=1;
+      if(sendAttempts===1) {
+        return {ok:true,text:async()=>'<FlexStatementResponse><Status>Fail</Status><ErrorCode>1018</ErrorCode><ErrorMessage>Too many requests have been made from this token. Please try again shortly.</ErrorMessage></FlexStatementResponse>'};
+      }
+      return {ok:true,text:async()=>'<FlexStatementResponse><Status>Success</Status><ReferenceCode>FIXTURE2</ReferenceCode></FlexStatementResponse>'};
+    }
+    return {ok:true,text:async()=>'<FlexQueryResponse><FlexStatements><FlexStatement fromDate="20250910" toDate="20260909" /></FlexStatements></FlexQueryResponse>'};
+  };
+  await loadIbkrFlexXml('12345',{ibkrFlexToken:'synthetic-token'},{periodDays:365,sendRetryDelays:[0,5,10]});
+  assert.equal(sendAttempts,2);
+  let badAttempts=0;
+  globalThis.fetch=async()=>{badAttempts+=1;return {ok:true,text:async()=>'<FlexStatementResponse><Status>Fail</Status><ErrorCode>1015</ErrorCode><ErrorMessage>Token is invalid.</ErrorMessage></FlexStatementResponse>'};};
+  await assert.rejects(()=>loadIbkrFlexXml('12345',{ibkrFlexToken:'synthetic-token'},{sendRetryDelays:[0,5000]}),/Token is invalid/);
+  assert.equal(badAttempts,1);
+});

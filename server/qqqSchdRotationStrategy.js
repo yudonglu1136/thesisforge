@@ -405,9 +405,14 @@ export async function refreshQqqSchdRotationFromCanonical({ factRoot = null, cur
   }
 }
 
+const MIN_AUTO_REFRESH_MEMORY_BYTES = 3.5 * 1024 * 1024 * 1024;
+
 function maybeScheduleBackgroundRefresh(currentDataThrough) {
   if (process.env.QQQ_SCHD_ROTATION_AUTO_REFRESH === '0') return;
   if (process.env.NODE_ENV !== 'production' && process.env.QQQ_SCHD_ROTATION_AUTO_REFRESH !== '1') return;
+  if (process.env.QQQ_SCHD_ROTATION_AUTO_REFRESH !== '1' && os.totalmem() < MIN_AUTO_REFRESH_MEMORY_BYTES) {
+    return;
+  }
   if (refreshInFlight) return;
   try {
     const root = path.resolve(

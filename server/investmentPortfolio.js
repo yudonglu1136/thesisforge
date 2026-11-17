@@ -83,6 +83,84 @@ export function attachPortfolioTrailingDividends(analysis,calendar,{asOf,startDa
   return analysis;
 }
 
+function stripLotInternals(lot) {
+  const {_localValue, _consistent, ...clean} = lot;
+  return clean;
+}
+
+function canAggregateLot(lot) {
+  if (['cash', 'accrual'].includes(lot.kind)) return false;
+  if (!symbol(lot.ticker) || lot.modelStatus === 'identity_unresolved') return false;
+  if (!lot.reportDate || !finite(lot.value) || !finite(lot.quantity) || lot.quantity === 0) return false;
+  if (!finite(lot.price) || !(lot.price > 0) || !finite(lot.fxRateToBase) || !(lot.fxRateToBase > 0)) return false;
+  if (!finite(lot._localValue)) return false;
+  if (lot.kind === 'equity') return Boolean(lot._consistent);
+  const contractFactor = lot.multiplier > 0 ? lot.multiplier : 1;
+  return Math.abs(lot.quantity * lot.price * contractFactor - lot._localValue) <= Math.max(1, Math.abs(lot._localValue) * .01);
+}
+
+function aggregateGroupPositions(lotPositions) {
+  const buckets = [];
+  for (const lot of lotPositions) {
+    if (!canAggregateLot(lot)) {
+      buckets.push({key: null, cusip: lot.cusip || null, lots: [lot]});
+      continue;
+    }
+    const key = [
+      lot.ticker,
+      lot.kind,
+      lot.assetCategory,
+      lot.currency,
+      lot.reportDate,
+      lot.quantity > 0 ? 'long' : 'short',
+      lot.multiplier ?? '',
+      lot.strike ?? '',
+      lot.expiry ?? '',
+      lot.modelStatus,
+    ].join('|');
+    const existing = buckets.find(b =>
+      b.key === key && (!b.cusip || !lot.cusip || b.cusip === lot.cusip)
+    );
+    if (existing) {
+      if (!existing.cusip && lot.cusip) existing.cusip = lot.cusip;
+      existing.lots.push(lot);
+    } else {
+      buckets.push({key, cusip: lot.cusip || null, lots: [lot]});
+    }
+  }
+  return buckets.map(({cusip, lots}) => {
+    const first = stripLotInternals(lots[0]);
+    if (lots.length === 1) return {...first, accountCount: 1};
+    const accountNumbers = [...new Set(lots.map(l => l.accountNumber))];
+    const quantity = sum(lots.map(l => l.quantity));
+    const totalLocalValue = sum(lots.map(l => l._localValue));
+    const value = sum(lots.map(l => l.value));
+    const contractFactor = first.multiplier > 0 ? first.multiplier : 1;
+    const price = totalLocalValue / (quantity * contractFactor);
+    const fxRateToBase = totalLocalValue !== 0 ? value / totalLocalValue : first.fxRateToBase;
+    const covered = first.modelStatus === 'covered';
+    const modelValue = covered ? sum(lots.map(l => l.modelValue)) : null;
+    const modelDelta = covered ? sum(lots.map(l => l.modelDelta)) : null;
+    const modelGap = covered ? (value > 0 ? modelValue / value - 1 : first.model.fairValue / price - 1) : null;
+    const unrealizedPnl = lots.every(l => finite(l.unrealizedPnl)) ? sum(lots.map(l => l.unrealizedPnl)) : null;
+    return {
+      ...first,
+      accountNumber: accountNumbers.length === 1 ? accountNumbers[0] : accountNumbers.join(', '),
+      accountNumbers,
+      accountCount: accountNumbers.length,
+      cusip,
+      quantity,
+      price,
+      value,
+      fxRateToBase,
+      unrealizedPnl,
+      modelValue,
+      modelGap,
+      modelDelta,
+    };
+  });
+}
+
 // No sample/legacy operator portfolio can be re-labelled as an account owner.
 // The broker adapter supplies untouched report inputs, before display heuristics.
 export function analysePortfolio(payload, {asOf, valuations = new Map(), books = [], sectors = new Map(), guruCoverage = {}, includeComparisons = true} = {}) {
@@ -98,7 +176,7 @@ export function analysePortfolio(payload, {asOf, valuations = new Map(), books =
   const guruContext=portfolioGuruContext(books,asOf,guruCoverage);
   for (const base of [...new Set(payload.analysisAccounts.map(a => currency(a.currency)))]) {
     const accounts = payload.analysisAccounts.filter(a => currency(a.currency) === base);
-    const positions = accounts.flatMap((a, ai) => (a.positions ?? []).map((h, hi) => {
+    const lotPositions = accounts.flatMap((a, ai) => (a.positions ?? []).map((h, hi) => {
       const quoteCurrency = currency(h.currency), reportDate = day(a.reportDate);
       const kind = String(h.assetCategory ?? '').toUpperCase();
       const cash = kind === 'CASH';
@@ -121,7 +199,7 @@ export function analysePortfolio(payload, {asOf, valuations = new Map(), books =
       return {id: `${base ?? 'unknown'}:${ai}:${hi}`, accountNumber: ai + 1, ticker: ticker ?? String(h.ticker ?? 'Unresolved'),
         name: String(h.name ?? h.ticker ?? ''), cusip: h.cusip || null, assetCategory: kind,
         kind: cash ? 'cash' : kind==='ACCRUAL'?'accrual':stock ? 'equity' : 'other', currency: quoteCurrency, reportDate,
-        quantity, price, value, fxRateToBase: n(fx), sector: sectors.get(ticker) ?? null,
+        quantity, price, _localValue: n(h.localValue), _consistent: consistent, value, fxRateToBase: n(fx), sector: sectors.get(ticker) ?? null,
         unrealizedPnl: stock && consistent && value !== null && finite(h.costBasisMoney)
           ? (h.localValue-h.costBasisMoney)*fx : null,
         multiplier:n(h.multiplier),strike:n(h.strike),expiry:day(h.expiry),
@@ -130,6 +208,7 @@ export function analysePortfolio(payload, {asOf, valuations = new Map(), books =
         modelGap: covered ? model.fairValue / price - 1 : null,
         modelDelta: covered ? quantity * model.fairValue * fx - value : null};
     }));
+    const positions = aggregateGroupPositions(lotPositions);
     const known = positions.filter(p => finite(p.value));
     const unpriced = positions.length - known.length;
     const net = unpriced || !base ? null : sum(known.map(p => p.value));

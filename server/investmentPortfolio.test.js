@@ -30,6 +30,48 @@ test('uniform stock stress includes missing-model equity and does not invent exp
 test('concentration aggregates same name across accounts, without mixing base currencies',()=>{
   const p=base();p.analysisAccounts.push(account([pos('AAA',10,100)]));p.analysisAccounts.push(account([pos('EU',2,30,{currency:'EUR'})],'EUR'));
   const r=run(p);assert.equal(r.groups.length,2);near(r.groups[0].netValue,4000);near(r.groups[1].netValue,60);near(r.groups[0].concentration[0].weight,2000/3500);
+  const aaaRows=r.groups[0].positions.filter(row=>row.ticker==='AAA');
+  assert.equal(aaaRows.length,1);
+  assert.equal(aaaRows[0].accountCount,2);
+  assert.deepEqual(aaaRows[0].accountNumbers,[1,2]);
+  near(aaaRows[0].quantity,20);
+  near(aaaRows[0].value,2000);
+  near(aaaRows[0].modelValue,2400);
+  near(aaaRows[0].modelDelta,400);
+  near(aaaRows[0].modelGap,.2);
+  assert.equal(r.groups[0].coverage.count,2);
+  assert.equal(r.groups[0].coverage.total,3);
+});
+test('multi-account holdings aggregate foreign-currency equities and unrealized P&L cleanly',()=>{
+  const p=payload([
+    account([
+      pos('LSEG',10,100,{currency:'GBP',fxRateToBase:1.25,costBasisMoney:800}),
+      pos('QQQ',5,500,{costBasisMoney:2000}),
+    ]),
+    account([
+      pos('LSEG',6,100,{currency:'GBP',fxRateToBase:1.25,costBasisMoney:500}),
+      pos('QQQ',3,500,{costBasisMoney:1300}),
+      pos('MSFT',4,400,{costBasisMoney:1500}),
+    ]),
+  ]);
+  p.analysisAccounts[0].reportedNav=10*100*1.25+5*500;
+  p.analysisAccounts[1].reportedNav=6*100*1.25+3*500+4*400;
+  const g=run(p).groups[0];
+  assert.equal(g.positions.length,3);
+  const lseg=g.positions.find(row=>row.ticker==='LSEG');
+  const qqq=g.positions.find(row=>row.ticker==='QQQ');
+  const msft=g.positions.find(row=>row.ticker==='MSFT');
+  assert.equal(lseg.accountCount,2);
+  near(lseg.quantity,16);
+  near(lseg.value,2000);
+  near(lseg.unrealizedPnl,(1000-800+600-500)*1.25);
+  assert.equal(qqq.accountCount,2);
+  near(qqq.quantity,8);
+  near(qqq.value,4000);
+  near(qqq.unrealizedPnl,700);
+  assert.equal(msft.accountCount,1);
+  assert.equal(g.home.unrealized.covered,3);
+  assert.equal(g.home.unrealized.total,3);
 });
 test('missing market value is not zero; no whole-book percentage or NAV scenario',()=>{
   const p=base();p.analysisAccounts[0].positions.push(pos('MISSING',1,2,{localValue:null}));
