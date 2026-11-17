@@ -33,6 +33,7 @@ class _GuruDiscoveryDeskState extends State<GuruDiscoveryDesk> {
   late Map<String, dynamic> selection;
   late List<Map<String, dynamic>> gurus;
   bool showStudy = false;
+
   @override
   void initState() {
     super.initState();
@@ -90,23 +91,25 @@ class _GuruDiscoveryDeskState extends State<GuruDiscoveryDesk> {
         onStudy: openStudy,
       ),
       const SizedBox(height: 28),
-      Row(
+      Wrap(
         key: studyKey,
+        spacing: 12,
+        runSpacing: 8,
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Expanded(
-            child: Text(
-              context.tr('风格与业绩对比', 'Style & performance'),
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w700,
-                color: widget.palette.text,
-              ),
+          Text(
+            context.tr('风格与业绩对比', 'Style & performance'),
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
+              color: widget.palette.text,
             ),
           ),
           TextButton.icon(
             onPressed: () => reveal(holdingsKey),
             icon: const Icon(Icons.arrow_upward, size: 16),
-            label: Text(context.tr('返回持仓', 'Back to holdings')),
+            label: Text(context.tr('返回排行', 'Back to rankings')),
           ),
         ],
       ),
@@ -117,7 +120,7 @@ class _GuruDiscoveryDeskState extends State<GuruDiscoveryDesk> {
           decoration: BoxDecoration(
             color: widget.palette.panel,
             border: Border.all(color: widget.palette.border),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(10),
           ),
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -129,8 +132,8 @@ class _GuruDiscoveryDeskState extends State<GuruDiscoveryDesk> {
                   Expanded(
                     child: Text(
                       context.tr(
-                        '按需加载换手率、复合收益与夏普对比，不影响上方持仓首屏。',
-                        'Load turnover, CAGR and Sharpe comparisons on demand without delaying holdings.',
+                        '按需加载换手率、复合收益与夏普对比，不影响上方持仓排行首屏。',
+                        'Load turnover, CAGR and Sharpe comparisons on demand without delaying rankings.',
                       ),
                       style: TextStyle(
                         fontSize: 13,
@@ -199,55 +202,253 @@ double? guruShareChange(Map<String, dynamic> holding) {
   return prior != null && prior > 0 && delta != null ? delta / prior : null;
 }
 
+bool _guruIsActiveHolder(Map<String, dynamic> m) {
+  if (m['action'] == 'sold_out') return false;
+  final shares = nullableNumber(m['shares']);
+  if (shares != null) return shares > 0;
+  return (nullableNumber(m['weight']) ?? 0) > 0;
+}
+
+class _GuruRowStats {
+  const _GuruRowStats({
+    required this.row,
+    required this.scoped,
+    required this.held,
+    required this.buyers,
+    required this.sellers,
+    required this.holdersCount,
+    required this.core5Count,
+    required this.core10Count,
+    required this.sumWeight,
+    required this.maxWeight,
+    required this.buyerWeight,
+    required this.sellerWeight,
+    required this.newCount,
+    required this.increasedCount,
+    required this.reducedCount,
+    required this.exitedCount,
+  });
+
+  final Map<String, dynamic> row;
+  final List<Map<String, dynamic>> scoped;
+  final List<Map<String, dynamic>> held;
+  final List<Map<String, dynamic>> buyers;
+  final List<Map<String, dynamic>> sellers;
+  final int holdersCount;
+  final int core5Count;
+  final int core10Count;
+  final double sumWeight;
+  final double maxWeight;
+  final double buyerWeight;
+  final double sellerWeight;
+  final int newCount;
+  final int increasedCount;
+  final int reducedCount;
+  final int exitedCount;
+
+  int get adds => newCount + increasedCount;
+  int get trims => reducedCount + exitedCount;
+  int get netAdds => adds - trims;
+  int get netTrims => trims - adds;
+}
+
+_GuruRowStats _computeGuruRowStats(
+  Map<String, dynamic> row,
+  Set<String> selected,
+) {
+  final scoped = asList(
+    row['managers'],
+  ).where((m) => selected.contains(text(m['guruId']))).toList();
+  final held = scoped.where(_guruIsActiveHolder).toList()
+    ..sort(
+      (a, b) => (nullableNumber(b['weight']) ?? 0).compareTo(
+        nullableNumber(a['weight']) ?? 0,
+      ),
+    );
+  final buyers =
+      scoped
+          .where((m) => m['action'] == 'new' || m['action'] == 'increased')
+          .toList()
+        ..sort(
+          (a, b) => (nullableNumber(b['weight']) ?? 0).compareTo(
+            nullableNumber(a['weight']) ?? 0,
+          ),
+        );
+  final sellers =
+      scoped
+          .where((m) => m['action'] == 'sold_out' || m['action'] == 'reduced')
+          .toList()
+        ..sort((a, b) {
+          final aExit = a['action'] == 'sold_out' ? 1 : 0;
+          final bExit = b['action'] == 'sold_out' ? 1 : 0;
+          if (bExit != aExit) return bExit.compareTo(aExit);
+          final aw =
+              nullableNumber(a['previousWeight']) ??
+              nullableNumber(a['weight']) ??
+              0;
+          final bw =
+              nullableNumber(b['previousWeight']) ??
+              nullableNumber(b['weight']) ??
+              0;
+          return bw.compareTo(aw);
+        });
+  var core5 = 0, core10 = 0;
+  var sumWeight = 0.0, maxWeight = 0.0;
+  for (final m in held) {
+    final w = nullableNumber(m['weight']) ?? 0;
+    sumWeight += w;
+    if (w > maxWeight) maxWeight = w;
+    if (w >= 0.05) core5++;
+    if (w >= 0.10) core10++;
+  }
+  final buyerWeight = buyers.fold<double>(
+    0.0,
+    (s, m) => s + (nullableNumber(m['weight']) ?? 0),
+  );
+  final sellerWeight = sellers.fold<double>(
+    0.0,
+    (s, m) =>
+        s +
+        (nullableNumber(m['previousWeight']) ??
+            nullableNumber(m['weight']) ??
+            0),
+  );
+  final newCount = scoped.where((m) => m['action'] == 'new').length;
+  final increasedCount = scoped.where((m) => m['action'] == 'increased').length;
+  final reducedCount = scoped.where((m) => m['action'] == 'reduced').length;
+  final exitedCount = scoped.where((m) => m['action'] == 'sold_out').length;
+  return _GuruRowStats(
+    row: row,
+    scoped: scoped,
+    held: held,
+    buyers: buyers,
+    sellers: sellers,
+    holdersCount: held.length,
+    core5Count: core5,
+    core10Count: core10,
+    sumWeight: sumWeight,
+    maxWeight: maxWeight,
+    buyerWeight: buyerWeight,
+    sellerWeight: sellerWeight,
+    newCount: newCount,
+    increasedCount: increasedCount,
+    reducedCount: reducedCount,
+    exitedCount: exitedCount,
+  );
+}
+
 List<Map<String, dynamic>> filterGuruMatrix(
   List<Map<String, dynamic>> rows,
   Set<String> selected, {
   String query = '',
   bool concentrated = false,
   String sort = 'holders',
+  String board = 'matrix',
+  bool multiHolderOnly = false,
 }) {
-  final result = rows.where((row) {
-    final people = asList(
-      row['managers'],
-    ).where((m) => selected.contains(m['guruId']));
-    return people.isNotEmpty &&
-        (!concentrated ||
-            people.any((m) => (nullableNumber(m['weight']) ?? -1) >= .10)) &&
-        '${row['ticker']} ${row['name']}'.toLowerCase().contains(
-          query.trim().toLowerCase(),
-        );
-  }).toList();
-  double rank(Map<String, dynamic> row) {
-    final people = asList(
-      row['managers'],
-    ).where((m) => selected.contains(m['guruId']));
-    if (sort == 'weight') {
-      return people.fold(0.0, (v, m) => math.max(v, number(m['weight'])));
+  if (selected.isEmpty) return const [];
+  final needle = query.trim().toLowerCase();
+  final statsList = <_GuruRowStats>[];
+  for (final row in rows) {
+    if (needle.isNotEmpty &&
+        !'${row['ticker']} ${row['name']}'.toLowerCase().contains(needle)) {
+      continue;
     }
-    if (sort == 'changes') {
-      return people
-          .where(
-            (m) => {
-              'new',
-              'increased',
-              'reduced',
-              'sold_out',
-            }.contains(m['action']),
-          )
-          .length
-          .toDouble();
+    final st = _computeGuruRowStats(row, selected);
+    if (st.scoped.isEmpty) continue;
+    if (concentrated &&
+        !st.scoped.any((m) => (nullableNumber(m['weight']) ?? -1) >= .10)) {
+      continue;
     }
-    return number(row['managerCount']);
+    if (board == 'conviction') {
+      if (st.holdersCount == 0) continue;
+      if (multiHolderOnly && st.holdersCount < 2) continue;
+    } else if (board == 'net_adds') {
+      if (st.netAdds <= 0) continue;
+    } else if (board == 'net_trims') {
+      if (st.netTrims <= 0) continue;
+    }
+    statsList.add(st);
   }
 
-  result.sort(
-    (a, b) => sort == 'ticker'
-        ? text(a['ticker']).compareTo(text(b['ticker']))
-        : rank(b).compareTo(rank(a)) != 0
-        ? rank(b).compareTo(rank(a))
-        : text(a['ticker']).compareTo(text(b['ticker'])),
-  );
-  return result;
+  int cmpDouble(double a, double b) => b.compareTo(a);
+  int cmpInt(int a, int b) => b.compareTo(a);
+  int cmpTicker(_GuruRowStats a, _GuruRowStats b) =>
+      text(a.row['ticker']).compareTo(text(b.row['ticker']));
+
+  statsList.sort((a, b) {
+    if (sort == 'ticker') return cmpTicker(a, b);
+    if (board == 'conviction') {
+      if (sort == 'weight' || sort == 'max_weight') {
+        final c = cmpDouble(a.maxWeight, b.maxWeight);
+        if (c != 0) return c;
+        final c2 = cmpDouble(a.sumWeight, b.sumWeight);
+        return c2 != 0 ? c2 : cmpTicker(a, b);
+      }
+      if (sort == 'holders') {
+        final c = cmpInt(a.holdersCount, b.holdersCount);
+        if (c != 0) return c;
+        final c2 = cmpDouble(a.sumWeight, b.sumWeight);
+        return c2 != 0 ? c2 : cmpTicker(a, b);
+      }
+      if (sort == 'core') {
+        final c = cmpInt(a.core5Count, b.core5Count);
+        if (c != 0) return c;
+        final c2 = cmpDouble(a.sumWeight, b.sumWeight);
+        return c2 != 0 ? c2 : cmpTicker(a, b);
+      }
+      final c = cmpDouble(a.sumWeight, b.sumWeight);
+      if (c != 0) return c;
+      final c2 = cmpInt(a.holdersCount, b.holdersCount);
+      return c2 != 0 ? c2 : cmpTicker(a, b);
+    }
+    if (board == 'net_adds') {
+      if (sort == 'buyer_weight') {
+        final c = cmpDouble(a.buyerWeight, b.buyerWeight);
+        if (c != 0) return c;
+      } else if (sort == 'new_positions') {
+        final c = cmpInt(a.newCount, b.newCount);
+        if (c != 0) return c;
+      }
+      final c = cmpInt(a.netAdds, b.netAdds);
+      if (c != 0) return c;
+      final c2 = cmpInt(a.adds, b.adds);
+      if (c2 != 0) return c2;
+      final c3 = cmpDouble(a.buyerWeight, b.buyerWeight);
+      return c3 != 0 ? c3 : cmpTicker(a, b);
+    }
+    if (board == 'net_trims') {
+      if (sort == 'exits') {
+        final c = cmpInt(a.exitedCount, b.exitedCount);
+        if (c != 0) return c;
+      } else if (sort == 'seller_weight') {
+        final c = cmpDouble(a.sellerWeight + a.sumWeight, b.sellerWeight + b.sumWeight);
+        if (c != 0) return c;
+      }
+      final c = cmpInt(a.netTrims, b.netTrims);
+      if (c != 0) return c;
+      final c2 = cmpInt(a.trims, b.trims);
+      if (c2 != 0) return c2;
+      final c3 = cmpDouble(a.sumWeight + a.sellerWeight, b.sumWeight + b.sellerWeight);
+      return c3 != 0 ? c3 : cmpTicker(a, b);
+    }
+    // Matrix sort compatibility
+    if (sort == 'weight') {
+      final c = cmpDouble(a.maxWeight, b.maxWeight);
+      return c != 0 ? c : cmpTicker(a, b);
+    }
+    if (sort == 'changes') {
+      final c = cmpInt(a.adds + a.trims, b.adds + b.trims);
+      return c != 0 ? c : cmpTicker(a, b);
+    }
+    final c = cmpDouble(
+      nullableNumber(a.row['managerCount']) ?? a.holdersCount.toDouble(),
+      nullableNumber(b.row['managerCount']) ?? b.holdersCount.toDouble(),
+    );
+    return c != 0 ? c : cmpTicker(a, b);
+  });
+
+  return statsList.map((st) => st.row).toList();
 }
 
 class GuruHoldingsMatrix extends StatefulWidget {
@@ -279,6 +480,9 @@ class GuruHoldingsMatrix extends StatefulWidget {
 }
 
 class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
+  static const int _leaderboardPageSize = 10;
+  static const int _matrixPageSize = 5;
+
   final managerSearch = TextEditingController(),
       stockSearch = TextEditingController();
   final horizontal = ScrollController();
@@ -286,17 +490,22 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
   Map<String, dynamic>? data;
   final Map<String, Map<String, dynamic>> companyDetails = {};
   List<String> selected = [];
+  bool allGurusScope = true;
+  bool showGuruDrawer = false;
+  bool multiHolderOnly = false;
+  String board = 'conviction';
   String quarter = '',
       ticker = '',
       focusedGuru = '',
       capitalFilter = 'all',
       mode = 'weight',
-      sort = 'holders';
+      sort = 'conviction';
   bool loading = true,
       failed = false,
       concentrated = false,
       changesDetail = false;
   int request = 0, managerPage = 0, stockPage = 0;
+
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
   TextStyle s([double size = 13, bool bold = false, Color? color]) => TextStyle(
@@ -305,42 +514,130 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
     color: color ?? p.text,
   );
-  String pct(dynamic value, {bool signed = false}) =>
+
+  String pct(dynamic value, {bool signed = false, int digits = 2}) =>
       nullableNumber(value) == null
       ? '—'
-      : '${signed && number(value) > 0 ? '+' : ''}${(number(value) * 100).toStringAsFixed(2)}%';
+      : '${signed && number(value) > 0 ? '+' : ''}${(number(value) * 100).toStringAsFixed(digits)}%';
+
   List<Map<String, dynamic>> get rows => asList(data?['rows']);
+
   List<Map<String, dynamic>> get availableGurus {
     final embedded = asList(data?['gurus']);
     return embedded.isNotEmpty ? embedded : widget.gurus;
   }
 
+  Set<String> get reportedGuruSet {
+    final raw = data?['reportedGuruIds'];
+    if (raw is List && raw.isNotEmpty) {
+      return raw.map((e) => text(e)).where((s) => s.isNotEmpty).toSet();
+    }
+    final inferred = <String>{};
+    for (final row in rows) {
+      for (final m in asList(row['managers'])) {
+        final id = text(m['guruId']);
+        if (id.isNotEmpty) inferred.add(id);
+      }
+    }
+    return inferred;
+  }
+
+  bool matchesCapital(Map<String, dynamic> g) {
+    if (capitalFilter == 'all') return true;
+    final structure = asMap(g['capitalStructure']);
+    return structure['category'] == capitalFilter;
+  }
+
+  List<String> get effectiveSelected {
+    final baseIds = allGurusScope
+        ? availableGurus.map((g) => text(g['id'])).toList()
+        : selected
+              .where((id) => availableGurus.any((g) => g['id'] == id))
+              .toList();
+    if (capitalFilter == 'all') return baseIds;
+    return baseIds.where((id) => matchesCapital(manager(id))).toList();
+  }
+
+  Set<String> get activeGuruSet => effectiveSelected.toSet();
+
+  List<Map<String, dynamic>> boardRows(String targetBoard, {String? sortBy}) =>
+      filterGuruMatrix(
+        rows,
+        activeGuruSet,
+        query: stockSearch.text,
+        concentrated: concentrated,
+        sort: sortBy ?? _defaultSortForBoard(targetBoard),
+        board: targetBoard,
+        multiHolderOnly: targetBoard == 'conviction' && multiHolderOnly,
+      );
+
+  String _defaultSortForBoard(String targetBoard) => switch (targetBoard) {
+    'conviction' => 'conviction',
+    'net_adds' => 'net_adds',
+    'net_trims' => 'net_trims',
+    _ => 'holders',
+  };
+
   List<Map<String, dynamic>> get matches => filterGuruMatrix(
     rows,
-    selected.toSet(),
+    activeGuruSet,
     query: stockSearch.text,
     concentrated: concentrated,
     sort: sort,
+    board: board,
+    multiHolderOnly: board == 'conviction' && multiHolderOnly,
   );
+
   Map<String, dynamic> get current =>
       matches.where((r) => r['ticker'] == ticker).firstOrNull ?? {};
+
   Map<String, dynamic> manager(String id) =>
       availableGurus.where((g) => g['id'] == id).firstOrNull ??
       {'id': id, 'name': id};
-  List<String> get validSelected =>
-      selected.where((id) => availableGurus.any((g) => g['id'] == id)).toList();
+
   String qLabel(String value) => value.length < 7
       ? value
-      : '${value.substring(0, 4)} Q${(int.parse(value.substring(5, 7)) + 2) ~/ 3}';
+      : '${value.substring(0, 4)} Q${((int.parse(value.substring(5, 7)) + 2) / 3).floor()}';
+
+  int? quarterManagerCount(String q) {
+    final counts = asMap(data?['quarterCounts']);
+    final n = nullableNumber(counts[q]);
+    return n?.round();
+  }
+
+  String? get latestFullQuarter {
+    final qs = (data?['quarters'] as List? ?? []).map((e) => text(e)).toList();
+    final eligible =
+        nullableNumber(asMap(data?['coverage'])['eligibleManagers'])?.round() ??
+        availableGurus.length;
+    if (eligible <= 0) return null;
+    for (final q in qs) {
+      final c = quarterManagerCount(q);
+      if (c != null && c >= eligible) return q;
+    }
+    return qs.length > 1 ? qs[1] : null;
+  }
 
   @override
   void initState() {
     super.initState();
     final v = widget.initialSelection;
-    selected = List<String>.from(
-      v['selected'] ??
-          ['li-lu', 'warren-buffett', 'chase-coleman', 'bill-ackman'],
+    final hasExplicitSelected = v.containsKey('selected') && v['selected'] is List;
+    allGurusScope = v.containsKey('allGurusScope')
+        ? v['allGurusScope'] == true
+        : !hasExplicitSelected;
+    if (hasExplicitSelected) {
+      selected = List<String>.from(v['selected'] as List);
+    } else {
+      selected = widget.gurus.map((g) => text(g['id'])).toList();
+    }
+    final savedBoard = text(
+      v['board'],
+      hasExplicitSelected && !v.containsKey('board') ? 'matrix' : 'conviction',
     );
+    board = {'conviction', 'net_adds', 'net_trims', 'matrix'}.contains(savedBoard)
+        ? savedBoard
+        : 'conviction';
     quarter = text(v['quarter']);
     ticker = text(v['ticker']);
     focusedGuru = text(v['focusedGuru'], selected.firstOrNull ?? '');
@@ -357,8 +654,9 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
         ? savedCapitalFilter
         : 'all';
     mode = text(v['mode'], 'weight');
-    sort = text(v['sort'], 'holders');
+    sort = text(v['sort'], _defaultSortForBoard(board));
     concentrated = v['concentrated'] == true;
+    multiHolderOnly = v['multiHolderOnly'] == true;
     stockSearch.text = text(v['query']);
     unawaited(load());
   }
@@ -384,7 +682,9 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
   }
 
   void remember() => widget.onSelection?.call({
-    'selected': selected.toList(),
+    'selected': effectiveSelected,
+    'allGurusScope': allGurusScope,
+    'board': board,
     'quarter': quarter,
     'ticker': ticker,
     'focusedGuru': focusedGuru,
@@ -392,8 +692,10 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     'mode': mode,
     'sort': sort,
     'concentrated': concentrated,
+    'multiHolderOnly': multiHolderOnly,
     'query': stockSearch.text,
   });
+
   void update(VoidCallback action, {bool reset = false}) {
     final previousTicker = ticker;
     setState(() {
@@ -408,6 +710,14 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
         (ticker != previousTicker || !companyDetails.containsKey(ticker))) {
       scheduleCompanyDetail(ticker);
     }
+  }
+
+  void switchBoard(String nextBoard) {
+    if (board == nextBoard) return;
+    update(() {
+      board = nextBoard;
+      sort = _defaultSortForBoard(nextBoard);
+    }, reset: true);
   }
 
   void scheduleCompanyDetail(String symbol) {
@@ -454,6 +764,10 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
       update(() {
         data = next;
         quarter = text(next['reportDate']);
+        if (allGurusScope) {
+          final catalog = embeddedGurus.isNotEmpty ? embeddedGurus : widget.gurus;
+          selected = catalog.map((g) => text(g['id'])).toList();
+        }
       }, reset: true);
       if (embeddedGurus.isNotEmpty) widget.onCatalog?.call(embeddedGurus);
     } catch (_) {
@@ -503,28 +817,37 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     }
   }
 
-  Widget panel(Widget child, {EdgeInsets padding = const EdgeInsets.all(12)}) =>
+  Widget panel(Widget child, {EdgeInsets padding = const EdgeInsets.all(14)}) =>
       Container(
         padding: padding,
         decoration: BoxDecoration(
           color: p.panel,
           border: Border.all(color: p.border),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(10),
         ),
         child: child,
       );
-  Widget chip(String en, String zh, bool active, VoidCallback action) =>
-      ChoiceChip(
-        label: Text(w(en, zh), style: s(12)),
-        selected: active,
-        onSelected: (_) => action(),
-        visualDensity: VisualDensity.compact,
-      );
+
+  Widget chip(
+    String en,
+    String zh,
+    bool active,
+    VoidCallback action, {
+    Key? key,
+  }) => ChoiceChip(
+    key: key,
+    label: Text(w(en, zh), style: s(12, active)),
+    selected: active,
+    onSelected: (_) => action(),
+    visualDensity: VisualDensity.compact,
+  );
+
   Widget avatar(Map<String, dynamic> g, double size) => GuruAvatar(
     guru: {...g, 'avatarUrl': g['avatar']},
     palette: p,
     size: size,
   );
+
   Widget search(
     TextEditingController controller,
     String en,
@@ -538,40 +861,46 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
       hintText: w(en, zh),
       prefixIcon: const Icon(Icons.search, size: 18),
       isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
     ),
   );
+
   Widget selectControl(
     String key,
     String value,
     List<(String, String)> options,
     ValueChanged<String> action,
     double width,
-  ) => SizedBox(
-    width: width,
-    child: DropdownButtonFormField<String>(
-      key: ValueKey('matrix-$key-$value'),
-      initialValue: value,
-      isExpanded: true,
-      style: s(12),
-      dropdownColor: p.panel,
-      decoration: const InputDecoration(
-        isDense: true,
-        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+  ) {
+    final safeValue = options.any((o) => o.$1 == value)
+        ? value
+        : (options.firstOrNull?.$1 ?? value);
+    return SizedBox(
+      width: width,
+      child: DropdownButtonFormField<String>(
+        key: ValueKey('matrix-$key-$safeValue'),
+        initialValue: safeValue,
+        isExpanded: true,
+        style: s(12),
+        dropdownColor: p.panel,
+        decoration: const InputDecoration(
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        ),
+        items: options
+            .map(
+              (e) => DropdownMenuItem(
+                value: e.$1,
+                child: Text(e.$2, overflow: TextOverflow.ellipsis),
+              ),
+            )
+            .toList(),
+        onChanged: (v) {
+          if (v != null) action(v);
+        },
       ),
-      items: options
-          .map(
-            (e) => DropdownMenuItem(
-              value: e.$1,
-              child: Text(e.$2, overflow: TextOverflow.ellipsis),
-            ),
-          )
-          .toList(),
-      onChanged: (v) {
-        if (v != null) action(v);
-      },
-    ),
-  );
+    );
+  }
 
   String actionName(Map<String, dynamic> m) => switch (m['action']) {
     'new' => w('New', '新建'),
@@ -582,8 +911,9 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     'mixed_claims' => w('Mixed claims', '多类证券'),
     _ => w('Reported', '已披露'),
   };
+
   Color actionColor(Map<String, dynamic> m) => switch (m['action']) {
-    'new' || 'increased' => p.accent,
+    'new' || 'increased' => const Color(0xFF2ECC8F),
     'reduced' => p.secondary,
     'sold_out' => p.negative,
     _ => p.muted,
@@ -591,396 +921,580 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
-    builder: (_, c) {
-      final desktop = c.maxWidth >= 1000;
-      final work = Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          toolbar(),
-          const SizedBox(height: 8),
-          if (loading)
-            panel(
-              const Padding(
-                padding: EdgeInsets.all(24),
-                child: LinearProgressIndicator(),
-              ),
-            )
-          else if (failed)
-            panel(
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    w('Could not load this quarter.', '暂时无法加载此季度。'),
-                    style: s(16, true),
-                  ),
-                  TextButton(
-                    onPressed: load,
-                    child: Text(w('Retry disclosures', '重试披露')),
-                  ),
-                ],
-              ),
-            )
-          else ...[
-            table(availableWidth: desktop ? c.maxWidth - 232 : c.maxWidth),
-            const SizedBox(height: 8),
-            if (!desktop && c.maxWidth < 700)
-              Text(
-                w(
-                  'Swipe across the table to compare all columns.',
-                  '横向滑动表格，比较全部列。',
-                ),
-                style: s(11, false, p.accent),
-              ),
-            Text(
-              w(
-                '% / shading = each Guru’s reported book weight. Consensus counts cover all reporting Gurus, not just those selected. Labels show reported share changes, not live trades. Missing rows are not exits.',
-                '百分比与颜色深浅 = 单个 Guru 的披露持仓权重。共识人数统计全部已披露 Guru，不仅是勾选的人。标签表示披露股数变化，非实时交易；缺失记录不代表清仓。',
-              ),
-              style: s(11, false, p.muted),
-            ),
-            Text(
-              w(
-                '${asMap(data?['coverage'])['reportedManagers'] ?? '—'} managers in this disclosure view · All ${availableGurus.length} profiles remain available below.',
-                '此披露视图包含 ${asMap(data?['coverage'])['reportedManagers'] ?? '—'} 位经理 · 下方保留全部 ${availableGurus.length} 个资料。',
-              ),
-              style: s(11, false, p.muted),
-            ),
-            if (asMap(data?['coverage'])['scope'] != 'full_current_books')
-              Text(
-                w(
-                  'Historical extracts are partial. View the filing for complete holdings.',
-                  '历史摘录并非完整持仓，请查看原始披露。',
-                ),
-                style: s(11, false, p.secondary),
-              ),
-            const SizedBox(height: 12),
-            if (current.isNotEmpty) companyDetail(),
-          ],
+    builder: (_, c) => Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        headerAndTabs(c.maxWidth),
+        if (showGuruDrawer) ...[
+          const SizedBox(height: 10),
+          guruFilterDrawer(c.maxWidth),
         ],
-      );
-      return desktop
-          ? Row(
+        const SizedBox(height: 10),
+        if (loading)
+          panel(
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: LinearProgressIndicator(),
+            ),
+          )
+        else if (failed)
+          panel(
+            Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(width: 220, height: 800, child: rail()),
-                const SizedBox(width: 12),
-                Expanded(child: work),
-              ],
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(
-                  height: 430 * MediaQuery.textScalerOf(context).scale(1),
-                  child: rail(),
+                Text(
+                  w('Could not load this quarter.', '暂时无法加载此季度。'),
+                  style: s(16, true),
                 ),
-                const SizedBox(height: 12),
-                work,
+                TextButton(
+                  onPressed: load,
+                  child: Text(w('Retry disclosures', '重试披露')),
+                ),
               ],
-            );
-    },
+            ),
+          )
+        else ...[
+          summaryCards(c.maxWidth),
+          const SizedBox(height: 10),
+          filterBar(c.maxWidth),
+          const SizedBox(height: 10),
+          if (board == 'matrix')
+            matrixTable(availableWidth: c.maxWidth)
+          else
+            leaderboardPanel(c.maxWidth),
+          const SizedBox(height: 8),
+          methodologyFooter(),
+          const SizedBox(height: 12),
+          if (current.isNotEmpty) companyDetail(),
+        ],
+      ],
+    ),
   );
 
-  Widget rail() {
-    final catalog = availableGurus.where((g) {
-      final structure = asMap(g['capitalStructure']);
-      return (capitalFilter == 'all' ||
-              structure['category'] == capitalFilter) &&
-          '${g['name']} ${g['entityName']}'.toLowerCase().contains(
-            managerSearch.text.trim().toLowerCase(),
-          );
-    }).toList();
-    catalog.sort((a, b) {
-      final ai = selected.indexOf(text(a['id']));
-      final bi = selected.indexOf(text(b['id']));
-      if (ai >= 0 && bi >= 0) return ai.compareTo(bi);
-      if (ai >= 0) return -1;
-      if (bi >= 0) return 1;
-      return text(a['name']).compareTo(text(b['name']));
-    });
+  Widget headerAndTabs(double maxWidth) {
+    final cov = asMap(data?['coverage']);
+    final reported = nullableNumber(cov['reportedManagers'])?.round();
+    final eligible =
+        nullableNumber(cov['eligibleManagers'])?.round() ??
+        availableGurus.length;
+    final partialQuarter =
+        !loading &&
+        !failed &&
+        reported != null &&
+        eligible > 0 &&
+        reported < eligible;
+    final fullQ = latestFullQuarter;
+
     return panel(
       Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            w(
-              'All Gurus (${availableGurus.length})',
-              '全部 Guru（${availableGurus.length}）',
-            ),
-            style: s(17, true),
-          ),
-          const SizedBox(height: 10),
-          search(
-            managerSearch,
-            'Search Guru name',
-            '搜索 Guru 姓名',
-            () => setState(() {}),
-          ),
-          const SizedBox(height: 8),
-          DropdownButtonFormField<String>(
-            key: ValueKey('guru-capital-filter-$capitalFilter'),
-            initialValue: capitalFilter,
-            isExpanded: true,
-            style: s(11),
-            dropdownColor: p.panel,
-            decoration: InputDecoration(
-              labelText: w('Capital structure', '资本结构'),
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 9,
-              ),
-            ),
-            items:
-                [
-                      ('all', w('All structures', '全部结构')),
-                      ('permanent', w('Permanent capital', '永续资本')),
-                      (
-                        'owner_controlled',
-                        w('Owner / family capital', '所有者 / 家族资本'),
-                      ),
-                      ('mixed', w('Mixed capital', '混合资本')),
-                      (
-                        'external_client',
-                        w('External / client capital', '外部 / 客户资本'),
-                      ),
-                      ('archived', w('Historical vehicle', '历史载体')),
-                    ]
-                    .map(
-                      (e) => DropdownMenuItem(value: e.$1, child: Text(e.$2)),
-                    )
-                    .toList(),
-            onChanged: (value) =>
-                update(() => capitalFilter = value ?? 'all', reset: true),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            w(
-              'Permanent means no ordinary outside-investor redemption. Family capital and mixed managers are shown separately.',
-              '“永续”仅指没有普通外部投资者赎回机制；家族资本与混合型机构单独列示。',
-            ),
-            style: s(10, false, p.muted),
-          ),
           Wrap(
+            spacing: 12,
+            runSpacing: 10,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              TextButton(
-                onPressed: () => update(() {
-                  selected = availableGurus.map((g) => text(g['id'])).toList();
-                  managerPage = 0;
-                }, reset: true),
-                child: Text(
-                  w('Select all', '全选'),
-                  style: s(11, false, p.accent),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: math.max(220, maxWidth - 36),
                 ),
-              ),
-              TextButton(
-                onPressed: () => update(() {
-                  selected = [];
-                  managerPage = 0;
-                }, reset: true),
-                child: Text(w('Clear', '清空'), style: s(11, false, p.muted)),
-              ),
-            ],
-          ),
-          Expanded(
-            child: catalog.isEmpty
-                ? Text(
-                    w('No Gurus match.', '没有匹配的 Guru。'),
-                    style: s(12, false, p.muted),
-                  )
-                : ListView.builder(
-                    key: const ValueKey('matrix-guru-list'),
-                    itemCount: catalog.length,
-                    itemBuilder: (_, i) {
-                      final g = catalog[i],
-                          id = text(g['id']),
-                          active = selected.contains(id);
-                      final structure = asMap(g['capitalStructure']);
-                      final category = text(
-                        structure['category'],
-                        'unclassified',
-                      );
-                      final capitalLabel = w(
-                        text(structure['label'], 'Not classified'),
-                        text(structure['labelZh'], '尚未分类'),
-                      );
-                      final capitalDetail = w(
-                        text(
-                          structure['detail'],
-                          'This capital structure has not been verified.',
-                        ),
-                        text(structure['detailZh'], '该资本结构尚未核实。'),
-                      );
-                      final capitalColor = switch (category) {
-                        'permanent' => p.accent,
-                        'mixed' => p.secondary,
-                        'owner_controlled' => const Color(0xFF76BCEB),
-                        _ => p.muted,
-                      };
-                      return SizedBox(
-                        height: 52,
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 28,
-                              child: Checkbox(
-                                value: active,
-                                semanticLabel: w(
-                                  'Show ${g['name']}',
-                                  '显示 ${g['name']}',
-                                ),
-                                onChanged: (_) => update(() {
-                                  if (active) {
-                                    selected.remove(id);
-                                  } else {
-                                    selected.add(id);
-                                  }
-                                  managerPage = 0;
-                                }, reset: true),
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: InkWell(
-                                key: ValueKey('matrix-portrait-$id'),
-                                onTap: () => unawaited(exploreQuarter(id)),
-                                child: Row(
-                                  children: [
-                                    avatar(g, 28),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Column(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            text(g['name']),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: s(12),
-                                          ),
-                                          Tooltip(
-                                            message: capitalDetail,
-                                            child: Text(
-                                              capitalLabel,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: s(9, false, capitalColor),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-          ),
-          const SizedBox(height: 10),
-          InkWell(
-            key: const ValueKey('matrix-study-link'),
-            onTap: widget.onStudy,
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: p.accent.withValues(alpha: .10),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.bar_chart, color: p.accent),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          w('Style & performance', '风格与业绩对比'),
-                          style: s(12, true, p.accent),
+                        Icon(Icons.leaderboard_outlined, color: p.accent, size: 20),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            w(
+                              'Guru conviction & net flow rankings',
+                              '大佬集中持仓与净调仓排行',
+                            ),
+                            style: s(16, true),
+                          ),
                         ),
-                        Text(
-                          w('Turnover · CAGR · Sharpe', '换手率 · 复合收益 · 夏普'),
-                          style: s(10, false, p.muted),
+                        Tooltip(
+                          triggerMode: TooltipTriggerMode.tap,
+                          message: w(
+                            'Percentages are weights in each Guru’s reported 13F common-long book, not total fund assets. Net buying = (New + Added) minus (Reduced + Exited) across active Gurus. Reported share changes are delayed 13F disclosures, not live trade signals. Missing entries do not establish a zero position.',
+                            '百分比为各位大佬已披露 13F 普通股多头持仓权重，非基金全部资产。净加仓 =（新建 + 加仓人数）−（减仓 + 清仓人数）。所有变动均为 13F 延迟披露股数变化，非实时交易信号；缺失记录不代表零持仓。',
+                          ),
+                          child: Semantics(
+                            label: w(
+                              'How to read consensus holdings',
+                              '如何读共识持仓',
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              child: Icon(
+                                Icons.info_outline,
+                                size: 17,
+                                color: p.muted,
+                              ),
+                            ),
+                          ),
                         ),
                       ],
                     ),
+                    const SizedBox(height: 3),
+                    Text(
+                      w(
+                        'Concentrated core positions, net buying (net additions), and net selling across 13F disclosures.',
+                        '一眼看清机构核心重仓排行、当季净加仓排行（净加）与净减仓排行。',
+                      ),
+                      style: s(12, false, p.muted),
+                    ),
+                  ],
+                ),
+              ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  if (quarter.isNotEmpty &&
+                      (data?['quarters'] as List? ?? []).contains(quarter))
+                    selectControl(
+                      'quarter',
+                      quarter,
+                      [
+                        for (final q in data!['quarters'])
+                          (
+                            q as String,
+                            quarterManagerCount(q) != null
+                                ? '${qLabel(q)} ($q) · ${quarterManagerCount(q)}/$eligible'
+                                : '${qLabel(q)} ($q)',
+                          ),
+                      ],
+                      (v) {
+                        quarter = v;
+                        unawaited(load());
+                      },
+                      math.min(225, math.max(150, maxWidth - 40)),
+                    ),
+                  OutlinedButton.icon(
+                    key: const ValueKey('matrix-study-link'),
+                    onPressed: widget.onStudy,
+                    icon: Icon(Icons.bar_chart, size: 16, color: p.accent),
+                    label: Text(
+                      w('Style & performance', '风格与业绩对比'),
+                      style: s(12, true, p.accent),
+                    ),
                   ),
-                  Icon(Icons.arrow_forward, size: 16, color: p.accent),
+                ],
+              ),
+            ],
+          ),
+          if (partialQuarter) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: p.accent.withValues(alpha: .08),
+                border: Border.all(color: p.accent.withValues(alpha: .28)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 6,
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    w(
+                      '${qLabel(quarter)} filing season in progress: $reported / $eligible Gurus reported as of ${widget.asOf}.',
+                      '${qLabel(quarter)} 披露进行中：截至 ${widget.asOf} 已收录 $reported / $eligible 位大佬持仓，其余机构待后续快照更新。',
+                    ),
+                    style: s(12, false, p.text),
+                  ),
+                  if (fullQ != null && fullQ != quarter)
+                    TextButton.icon(
+                      key: const ValueKey('guru-switch-full-quarter'),
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                      ),
+                      onPressed: () {
+                        quarter = fullQ;
+                        unawaited(load());
+                      },
+                      icon: Icon(Icons.history, size: 15, color: p.accent),
+                      label: Text(
+                        w(
+                          'Switch to ${qLabel(fullQ)} (${quarterManagerCount(fullQ) ?? eligible}/$eligible full)',
+                          '查看 ${qLabel(fullQ)}（${quarterManagerCount(fullQ) ?? eligible} 位完整披露）',
+                        ),
+                        style: s(12, true, p.accent),
+                      ),
+                    ),
                 ],
               ),
             ),
+          ],
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _boardTabButton(
+                id: 'conviction',
+                keyName: 'guru-tab-conviction',
+                icon: Icons.workspace_premium_outlined,
+                en: 'Concentrated Rankings',
+                zh: '集中仓位排行',
+                tint: p.accent,
+              ),
+              _boardTabButton(
+                id: 'net_adds',
+                keyName: 'guru-tab-net-adds',
+                icon: Icons.trending_up,
+                en: 'Net Buying',
+                zh: '加仓排行（净加）',
+                tint: const Color(0xFF2ECC8F),
+              ),
+              _boardTabButton(
+                id: 'net_trims',
+                keyName: 'guru-tab-net-trims',
+                icon: Icons.trending_down,
+                en: 'Net Selling',
+                zh: '净减仓排行',
+                tint: p.negative,
+              ),
+              _boardTabButton(
+                id: 'matrix',
+                keyName: 'guru-tab-matrix',
+                icon: Icons.grid_view_outlined,
+                en: 'Guru Matrix',
+                zh: '持仓对比矩阵',
+                tint: p.secondary,
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget toolbar() => panel(
-    Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
+  Widget _boardTabButton({
+    required String id,
+    required String keyName,
+    required IconData icon,
+    required String en,
+    required String zh,
+    required Color tint,
+  }) {
+    final active = board == id;
+    return InkWell(
+      key: ValueKey(keyName),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => switchBoard(id),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? tint.withValues(alpha: .15) : p.card,
+          border: Border.all(
+            color: active ? tint : p.border,
+            width: active ? 1.4 : 1,
+          ),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.people_outline, color: p.accent, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
+            Icon(icon, size: 16, color: active ? tint : p.muted),
+            const SizedBox(width: 6),
+            Flexible(
               child: Text(
-                w('Consensus = shared holdings', '共识持仓 = 多位 Guru 共同持有'),
-                style: s(15, true, p.accent),
-              ),
-            ),
-            Tooltip(
-              triggerMode: TooltipTriggerMode.tap,
-              message: w(
-                'Read across a row to compare one stock across Gurus. Read down a column to see one Guru’s holdings. Percentages are weights in each Guru’s reported book, not a combined portfolio or total fund assets. Holder counts cover all reporting Gurus for this quarter, not just your selection. Added / Reduced describe reported share changes, not live trades. Missing entries do not mean an exit.',
-                '横向看同一只股票由哪些 Guru 持有，纵向看某位 Guru 的持仓。百分比是各自披露持仓中的权重，不是合并组合权重，也不代表基金全部资产。持有人数统计该季度所有已披露 Guru，不仅是勾选的人。加减仓指披露股数变化，非实时交易；缺失记录不代表清仓。',
-              ),
-              child: Semantics(
-                label: w('How to read consensus holdings', '如何读共识持仓'),
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Icon(Icons.info_outline, size: 18, color: p.muted),
-                ),
+                w(en, zh),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: s(12.5, active, active ? p.text : p.muted),
               ),
             ),
           ],
         ),
-        Text(
-          w(
-            'Overlap is not unanimous conviction or a buy signal. A Guru may still hold a stock while reducing it.',
-            '共同持有不代表一致看多或买入建议；仍持有的 Guru 也可能正在减仓。',
+      ),
+    );
+  }
+
+  Widget summaryCards(double maxWidth) {
+    final conv = boardRows('conviction');
+    final adds = boardRows('net_adds');
+    final trims = boardRows('net_trims');
+
+    final topConv = conv.isEmpty
+        ? null
+        : _computeGuruRowStats(conv.first, activeGuruSet);
+    final topAdd = adds.isEmpty
+        ? null
+        : _computeGuruRowStats(adds.first, activeGuruSet);
+    final topTrim = trims.isEmpty
+        ? null
+        : _computeGuruRowStats(trims.first, activeGuruSet);
+
+    Widget kpiCard({
+      required String targetBoard,
+      required String titleEn,
+      required String titleZh,
+      required String countEn,
+      required String countZh,
+      required String leadEn,
+      required String leadZh,
+      required Color tint,
+    }) {
+      final active = board == targetBoard;
+      return InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => switchBoard(targetBoard),
+        child: Container(
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+            color: active ? tint.withValues(alpha: .08) : p.panel,
+            border: Border.all(
+              color: active ? tint.withValues(alpha: .85) : p.border,
+            ),
+            borderRadius: BorderRadius.circular(10),
           ),
-          style: s(12, false, p.muted),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            if (quarter.isNotEmpty &&
-                (data?['quarters'] as List? ?? []).contains(quarter))
-              selectControl(
-                'quarter',
-                quarter,
-                [
-                  for (final q in data!['quarters'])
-                    (q as String, '${qLabel(q)} ($q)'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: tint,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      w(titleEn, titleZh),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: s(12, true, active ? tint : p.muted),
+                    ),
+                  ),
+                  Text(w(countEn, countZh), style: s(11, false, p.muted)),
                 ],
-                (v) {
-                  quarter = v;
-                  unawaited(load());
-                },
-                185,
               ),
+              const SizedBox(height: 7),
+              Text(
+                w(leadEn, leadZh),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: s(13.5, true),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final cards = [
+      kpiCard(
+        targetBoard: 'conviction',
+        titleEn: 'Concentrated Conviction',
+        titleZh: '集中仓位排行',
+        countEn: '${conv.length} stocks',
+        countZh: '${conv.length} 只持仓',
+        leadEn: topConv == null
+            ? 'No active holdings in scope'
+            : '#1 ${topConv.row['ticker']} · ${topConv.holdersCount} Gurus · Max ${pct(topConv.maxWeight, digits: 1)}',
+        leadZh: topConv == null
+            ? '当前筛选范围内暂无持仓'
+            : '榜首 ${topConv.row['ticker']} · ${topConv.holdersCount} 位持有 · 最高 ${pct(topConv.maxWeight, digits: 1)}',
+        tint: p.accent,
+      ),
+      kpiCard(
+        targetBoard: 'net_adds',
+        titleEn: 'Net Buying (Net Adds)',
+        titleZh: '加仓排行（净加）',
+        countEn: '${adds.length} net bought',
+        countZh: '${adds.length} 只净加仓',
+        leadEn: topAdd == null
+            ? 'No net additions in scope'
+            : '#1 ${topAdd.row['ticker']} · Net +${topAdd.netAdds} (${topAdd.adds} buy / ${topAdd.trims} sell)',
+        leadZh: topAdd == null
+            ? '当前筛选范围内暂无净加仓'
+            : '榜首 ${topAdd.row['ticker']} · 净 +${topAdd.netAdds} 位（${topAdd.adds} 加 / ${topAdd.trims} 减）',
+        tint: const Color(0xFF2ECC8F),
+      ),
+      kpiCard(
+        targetBoard: 'net_trims',
+        titleEn: 'Net Selling (Net Trims)',
+        titleZh: '净减仓排行',
+        countEn: '${trims.length} net sold',
+        countZh: '${trims.length} 只净减仓',
+        leadEn: topTrim == null
+            ? 'No net reductions in scope'
+            : '#1 ${topTrim.row['ticker']} · Net -${topTrim.netTrims} (${topTrim.trims} sell / ${topTrim.adds} buy)',
+        leadZh: topTrim == null
+            ? '当前筛选范围内暂无净减仓'
+            : '榜首 ${topTrim.row['ticker']} · 净 -${topTrim.netTrims} 位（${topTrim.trims} 减 / ${topTrim.adds} 加）',
+        tint: p.negative,
+      ),
+    ];
+
+    if (maxWidth >= 880) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: cards[0]),
+          const SizedBox(width: 10),
+          Expanded(child: cards[1]),
+          const SizedBox(width: 10),
+          Expanded(child: cards[2]),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        cards[0],
+        const SizedBox(height: 8),
+        cards[1],
+        const SizedBox(height: 8),
+        cards[2],
+      ],
+    );
+  }
+
+  List<(String, String)> _sortOptionsForBoard() => switch (board) {
+    'conviction' => [
+      ('conviction', w('Conviction weight sum', '按合计重仓权重')),
+      ('weight', w('Max single weight', '按单人最高仓位')),
+      ('core', w('Core ≥ 5% holders', '按 ≥5% 重仓人数')),
+      ('holders', w('Most holders', '按持有人数最多')),
+      ('ticker', w('Ticker A–Z', '代码 A–Z')),
+    ],
+    'net_adds' => [
+      ('net_adds', w('Net buyers (+N)', '按净加仓人数（净加）')),
+      ('buyer_weight', w('Buyer book weight', '按买方合计仓位')),
+      ('new_positions', w('New positions count', '按新建仓人数')),
+      ('ticker', w('Ticker A–Z', '代码 A–Z')),
+    ],
+    'net_trims' => [
+      ('net_trims', w('Net sellers (-N)', '按净减仓人数（净减）')),
+      ('exits', w('Full exits count', '按清仓人数')),
+      ('seller_weight', w('Prior / remaining weight', '按涉及仓位规模')),
+      ('ticker', w('Ticker A–Z', '代码 A–Z')),
+    ],
+    _ => [
+      ('holders', w('Most holders', '持有人数最多')),
+      ('changes', w('Most quarterly moves', '季度变动最多')),
+      ('weight', w('Highest conviction', '持仓权重最高')),
+      ('ticker', w('Ticker A–Z', '代码 A–Z')),
+    ],
+  };
+
+  Widget filterBar(double maxWidth) {
+    final chosenCount = effectiveSelected.length;
+    final totalCount = availableGurus.length;
+    final reportedSet = reportedGuruSet;
+    final reportedSelectedCount = effectiveSelected
+        .where(reportedSet.contains)
+        .length;
+
+    return panel(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      Wrap(
+        spacing: 10,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          SizedBox(
+            width: math.min(200, math.max(140, maxWidth - 32)),
+            child: search(
+              stockSearch,
+              'Find a company',
+              '搜索股票代码或名称',
+              () => update(() {}, reset: true),
+            ),
+          ),
+          SizedBox(
+            width: math.min(185, math.max(140, maxWidth - 32)),
+            child: DropdownButtonFormField<String>(
+              key: ValueKey('guru-capital-filter-$capitalFilter'),
+              initialValue: capitalFilter,
+              isExpanded: true,
+              style: s(12),
+              dropdownColor: p.panel,
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+              ),
+              items:
+                  [
+                        ('all', w('All structures', '全部资金结构')),
+                        ('permanent', w('Permanent capital', '永续资本')),
+                        (
+                          'owner_controlled',
+                          w('Owner / family capital', '所有者 / 家族资本'),
+                        ),
+                        ('mixed', w('Mixed capital', '混合资本')),
+                        (
+                          'external_client',
+                          w('External / client capital', '外部 / 客户资本'),
+                        ),
+                        ('archived', w('Historical vehicle', '历史载体')),
+                      ]
+                      .map(
+                        (e) => DropdownMenuItem(
+                          value: e.$1,
+                          child: Text(e.$2, overflow: TextOverflow.ellipsis),
+                        ),
+                      )
+                      .toList(),
+              onChanged: (value) =>
+                  update(() => capitalFilter = value ?? 'all', reset: true),
+            ),
+          ),
+          OutlinedButton.icon(
+            key: const ValueKey('guru-filter-toggle'),
+            onPressed: () => setState(() => showGuruDrawer = !showGuruDrawer),
+            icon: Icon(
+              showGuruDrawer ? Icons.expand_less : Icons.tune,
+              size: 16,
+              color: allGurusScope && capitalFilter == 'all'
+                  ? p.muted
+                  : p.accent,
+            ),
+            label: Text(
+              allGurusScope && capitalFilter == 'all'
+                  ? w(
+                      'All Gurus ($reportedSelectedCount/$totalCount filed)',
+                      '全部大佬（本季已披露 $reportedSelectedCount/$totalCount）',
+                    )
+                  : w(
+                      'Gurus: $chosenCount selected',
+                      '已筛选 $chosenCount 位大佬',
+                    ),
+              style: s(12, !allGurusScope || capitalFilter != 'all'),
+            ),
+          ),
+          selectControl(
+            'sort',
+            sort,
+            _sortOptionsForBoard(),
+            (v) => update(() => sort = v, reset: true),
+            math.min(195, math.max(145, maxWidth - 32)),
+          ),
+          if (board == 'matrix') ...[
             chip(
               'Holding weight',
               '持仓权重',
@@ -993,105 +1507,925 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
               mode == 'change',
               () => update(() => mode = 'change'),
             ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Semantics(
-                  label: w('Only positions of at least 10%', '只显示至少 10% 的持仓'),
-                  child: Switch(
-                    key: const ValueKey('matrix-concentrated'),
-                    value: concentrated,
-                    onChanged: (v) =>
-                        update(() => concentrated = v, reset: true),
-                  ),
-                ),
-                Flexible(
-                  child: Text(
-                    w('Only ≥ 10% positions', '只看 ≥ 10% 重仓'),
-                    style: s(12),
-                  ),
-                ),
-              ],
-            ),
           ],
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 10,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            SizedBox(
-              width: 200,
-              child: search(
-                stockSearch,
-                'Find a company',
-                '查找公司',
-                () => update(() {}, reset: true),
+          if (board == 'conviction')
+            chip(
+              '≥ 2 Gurus',
+              '多人共识 (≥2位)',
+              multiHolderOnly,
+              () => update(
+                () => multiHolderOnly = !multiHolderOnly,
+                reset: true,
+              ),
+              key: const ValueKey('guru-multi-holder'),
+            ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Semantics(
+                label: w('Only positions of at least 10%', '只显示至少 10% 的持仓'),
+                child: Switch(
+                  key: const ValueKey('matrix-concentrated'),
+                  value: concentrated,
+                  onChanged: (v) => update(() => concentrated = v, reset: true),
+                ),
+              ),
+              Flexible(
+                child: Text(
+                  w('Only ≥ 10% positions', '只看 ≥ 10% 重仓'),
+                  style: s(12),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget guruFilterDrawer(double maxWidth) {
+    final reportedSet = reportedGuruSet;
+    final catalog = availableGurus.where((g) {
+      return matchesCapital(g) &&
+          '${g['name']} ${g['entityName']}'.toLowerCase().contains(
+            managerSearch.text.trim().toLowerCase(),
+          );
+    }).toList();
+    catalog.sort((a, b) {
+      final aRep = reportedSet.contains(text(a['id'])) ? 1 : 0;
+      final bRep = reportedSet.contains(text(b['id'])) ? 1 : 0;
+      if (bRep != aRep) return bRep.compareTo(aRep);
+      return text(a['name']).compareTo(text(b['name']));
+    });
+    final activeIds = activeGuruSet;
+
+    return panel(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: math.min(240, math.max(150, maxWidth - 40)),
+                child: search(
+                  managerSearch,
+                  'Search Guru name',
+                  '搜索大佬姓名或机构',
+                  () => setState(() {}),
+                ),
+              ),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  TextButton(
+                    onPressed: () => update(() {
+                      allGurusScope = true;
+                      selected = availableGurus
+                          .map((g) => text(g['id']))
+                          .toList();
+                      managerPage = 0;
+                    }, reset: true),
+                    child: Text(
+                      w('Select all', '全选'),
+                      style: s(12, true, p.accent),
+                    ),
+                  ),
+                  if (reportedSet.isNotEmpty)
+                    TextButton(
+                      onPressed: () => update(() {
+                        allGurusScope = false;
+                        selected = availableGurus
+                            .map((g) => text(g['id']))
+                            .where(reportedSet.contains)
+                            .toList();
+                        managerPage = 0;
+                      }, reset: true),
+                      child: Text(
+                        w(
+                          'Reported in ${qLabel(quarter)} (${reportedSet.length})',
+                          '仅选本季已披露（${reportedSet.length}）',
+                        ),
+                        style: s(12, false, p.text),
+                      ),
+                    ),
+                  TextButton(
+                    onPressed: () => update(() {
+                      allGurusScope = false;
+                      selected = [];
+                      managerPage = 0;
+                    }, reset: true),
+                    child: Text(w('Clear', '清空'), style: s(12, false, p.muted)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (catalog.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                w('No Gurus match.', '没有匹配的 Guru。'),
+                style: s(12, false, p.muted),
+              ),
+            )
+          else
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 240),
+              child: SingleChildScrollView(
+                key: const ValueKey('matrix-guru-list'),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final g in catalog)
+                      _guruPickerChip(
+                        g,
+                        active: activeIds.contains(text(g['id'])),
+                        reported: reportedSet.contains(text(g['id'])),
+                      ),
+                  ],
+                ),
               ),
             ),
-            selectControl(
-              'sort',
-              sort,
-              [
-                ('holders', w('Most holders', '持有人数最多')),
-                ('changes', w('Most quarterly moves', '季度变动最多')),
-                ('weight', w('Highest conviction', '持仓权重最高')),
-                ('ticker', w('Ticker A–Z', '代码 A–Z')),
-              ],
-              (v) => update(() => sort = v, reset: true),
-              175,
+        ],
+      ),
+    );
+  }
+
+  Widget _guruPickerChip(
+    Map<String, dynamic> g, {
+    required bool active,
+    required bool reported,
+  }) {
+    final id = text(g['id']);
+    final structure = asMap(g['capitalStructure']);
+    final capitalLabel = w(
+      text(structure['label'], 'Institutional'),
+      text(structure['labelZh'], '机构管理人'),
+    );
+    return Container(
+      width: 220,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: active ? p.accent.withValues(alpha: .08) : p.card,
+        border: Border.all(
+          color: active ? p.accent.withValues(alpha: .65) : p.border,
+        ),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 26,
+            height: 26,
+            child: Checkbox(
+              value: active,
+              semanticLabel: w('Show ${g['name']}', '显示 ${g['name']}'),
+              onChanged: (_) => update(() {
+                final base = effectiveSelected.toList();
+                allGurusScope = false;
+                if (active) {
+                  base.remove(id);
+                } else if (!base.contains(id)) {
+                  base.add(id);
+                }
+                selected = base;
+                managerPage = 0;
+              }, reset: true),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: InkWell(
+              key: ValueKey('matrix-portrait-$id'),
+              onTap: () => unawaited(exploreQuarter(id)),
+              child: Row(
+                children: [
+                  avatar(g, 26),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          text(g['name']),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: s(11.5, true),
+                        ),
+                        Text(
+                          reported
+                              ? '${w('Filed', '已披露')} · $capitalLabel'
+                              : '${w('Pending', '待披露')} · $capitalLabel',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: s(
+                            9.5,
+                            false,
+                            reported ? p.accent : p.muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget emptyStatePanel() {
+    final chosen = effectiveSelected;
+    final reportedSet = reportedGuruSet;
+    final noneReportedAmongChosen =
+        chosen.isNotEmpty &&
+        reportedSet.isNotEmpty &&
+        chosen.where(reportedSet.contains).isEmpty;
+    return panel(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            chosen.isEmpty
+                ? w('Choose Gurus to compare', '请选择至少一位大佬')
+                : noneReportedAmongChosen
+                ? w(
+                    'Selected Gurus have not filed ${qLabel(quarter)} in this snapshot yet.',
+                    '当前勾选的大佬尚未包含在 ${qLabel(quarter)} 已披露名单中。',
+                  )
+                : w('No disclosed holdings match.', '没有匹配的已披露持仓。'),
+            style: s(16, true),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            w(
+              'Change your selection or filters. An unavailable book is not a zero holding.',
+              '请调整筛选条件或查看全部已披露大佬；未披露不代表零持仓。',
+            ),
+            style: s(12, false, p.muted),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              if (chosen.isEmpty || noneReportedAmongChosen || !allGurusScope)
+                FilledButton.tonal(
+                  onPressed: () => update(() {
+                    allGurusScope = true;
+                    capitalFilter = 'all';
+                    selected = availableGurus
+                        .map((g) => text(g['id']))
+                        .toList();
+                  }, reset: true),
+                  child: Text(
+                    w('Show all reporting Gurus', '显示全部已披露大佬'),
+                  ),
+                ),
+              if (stockSearch.text.isNotEmpty ||
+                  concentrated ||
+                  multiHolderOnly)
+                TextButton(
+                  onPressed: () => update(() {
+                    stockSearch.clear();
+                    concentrated = false;
+                    multiHolderOnly = false;
+                  }, reset: true),
+                  child: Text(w('Clear stock filters', '清空股票筛选')),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget leaderboardPanel(double maxWidth) {
+    final list = matches;
+    if (effectiveSelected.isEmpty || list.isEmpty) {
+      return emptyStatePanel();
+    }
+    final safePage = math.min(
+      stockPage,
+      ((list.length - 1) / _leaderboardPageSize).floor(),
+    );
+    final pageRows = list
+        .skip(safePage * _leaderboardPageSize)
+        .take(_leaderboardPageSize)
+        .toList();
+    final maxConvictionSum = list.fold<double>(0.01, (mx, r) {
+      final st = _computeGuruRowStats(r, activeGuruSet);
+      return math.max(mx, st.sumWeight);
+    });
+    final desktop = maxWidth >= 780;
+
+    return panel(
+      padding: EdgeInsets.zero,
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (desktop) _leaderboardHeaderRow(),
+          for (var i = 0; i < pageRows.length; i++)
+            _leaderboardRow(
+              pageRows[i],
+              rank: safePage * _leaderboardPageSize + i + 1,
+              maxConvictionSum: maxConvictionSum,
+              desktop: desktop,
+            ),
+          _paginationFooter(
+            total: list.length,
+            page: safePage,
+            pageSize: _leaderboardPageSize,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _leaderboardHeaderRow() {
+    final col2 = switch (board) {
+      'conviction' => w('Conviction weight', '集中仓位强度'),
+      'net_adds' => w('Net buying (+N)', '净加仓强度（净加）'),
+      _ => w('Net selling (-N)', '净减仓强度（净减）'),
+    };
+    final col3 = switch (board) {
+      'conviction' => w('Quarter net flow', '当季加减动向'),
+      'net_adds' => w('Current book size', '当前持仓规模'),
+      _ => w('Remaining book', '剩余持仓状态'),
+    };
+    final col4 = switch (board) {
+      'conviction' => w('Top holding Gurus (book %)', '重仓大佬与仓位占比'),
+      'net_adds' => w('Who added / initiated', '新建与加仓大佬明细'),
+      _ => w('Who reduced / exited', '减仓与清仓大佬明细'),
+    };
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: p.card,
+        border: Border(bottom: BorderSide(color: p.border)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(9)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 210,
+            child: Text(w('#  Company', '#  股票标的'), style: s(11.5, true, p.muted)),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 195,
+            child: Text(col2, style: s(11.5, true, p.muted)),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 165,
+            child: Text(col3, style: s(11.5, true, p.muted)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Text(col4, style: s(11.5, true, p.muted))),
+        ],
+      ),
+    );
+  }
+
+  Widget _leaderboardRow(
+    Map<String, dynamic> row, {
+    required int rank,
+    required double maxConvictionSum,
+    required bool desktop,
+  }) {
+    final sym = text(row['ticker']);
+    final selectedRow = ticker == sym;
+    final st = _computeGuruRowStats(row, activeGuruSet);
+
+    final stockIdentity = Row(
+      children: [
+        Container(
+          width: 28,
+          height: 24,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: rank <= 3
+                ? p.accent.withValues(alpha: .16)
+                : p.card,
+            borderRadius: BorderRadius.circular(5),
+          ),
+          child: Text(
+            '$rank',
+            style: s(11.5, true, rank <= 3 ? p.accent : p.muted),
+          ),
+        ),
+        const SizedBox(width: 9),
+        StockLogo(ticker: sym, palette: p, size: 30),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(sym, style: s(13.5, true)),
+              Text(
+                text(row['name']),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: s(11, false, p.muted),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    final primaryMetric = _buildPrimaryMetricCell(st, maxConvictionSum);
+    final secondaryMetric = _buildSecondaryMetricCell(st);
+    final peoplePills = _buildGuruPills(st);
+
+    return InkWell(
+      key: ValueKey('matrix-stock-$sym'),
+      onTap: () => update(() {
+        ticker = sym;
+        focusedGuru = '';
+      }),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: selectedRow ? p.accent.withValues(alpha: .08) : null,
+          border: Border(
+            left: BorderSide(
+              color: selectedRow ? p.accent : Colors.transparent,
+              width: 3,
+            ),
+            bottom: BorderSide(color: p.border.withValues(alpha: .65)),
+          ),
+        ),
+        child: desktop
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(width: 207, child: stockIdentity),
+                  const SizedBox(width: 12),
+                  SizedBox(width: 195, child: primaryMetric),
+                  const SizedBox(width: 12),
+                  SizedBox(width: 165, child: secondaryMetric),
+                  const SizedBox(width: 12),
+                  Expanded(child: peoplePills),
+                ],
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  stockIdentity,
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 14,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [primaryMetric, secondaryMetric],
+                  ),
+                  const SizedBox(height: 8),
+                  peoplePills,
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _buildPrimaryMetricCell(_GuruRowStats st, double maxConvictionSum) {
+    if (board == 'conviction') {
+      final ratio = (st.sumWeight / math.max(0.01, maxConvictionSum))
+          .clamp(0.05, 1.0)
+          .toDouble();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                '${w('Sum', '合计')} ${pct(st.sumWeight, digits: 1)}',
+                style: s(13.5, true, p.accent),
+              ),
+              Text(
+                '· ${w('Max', '最高')} ${pct(st.maxWeight, digits: 1)}',
+                style: s(11.5, false, p.text),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: ratio,
+              minHeight: 5,
+              backgroundColor: p.border.withValues(alpha: .5),
+              valueColor: AlwaysStoppedAnimation<Color>(p.accent),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            w(
+              '${st.holdersCount} holders${st.core5Count > 0 ? ' · ${st.core5Count} core ≥5%' : ''}${st.core10Count > 0 ? ' (${st.core10Count} ≥10%)' : ''}',
+              '${st.holdersCount} 位持有${st.core5Count > 0 ? ' · ${st.core5Count} 位 ≥5%' : ''}${st.core10Count > 0 ? '（${st.core10Count} 位 ≥10%）' : ''}',
+            ),
+            style: s(10.5, false, p.muted),
+          ),
+        ],
+      );
+    }
+
+    if (board == 'net_adds') {
+      const buyColor = Color(0xFF2ECC8F);
+      final totalMoves = math.max(1, st.adds + st.trims);
+      final buyShare = (st.adds / totalMoves).clamp(0.0, 1.0).toDouble();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: buyColor.withValues(alpha: .16),
+                  borderRadius: BorderRadius.circular(5),
+                ),
+                child: Text(
+                  w('Net +${st.netAdds}', '净 +${st.netAdds} 位'),
+                  style: s(12.5, true, buyColor),
+                ),
+              ),
+              Text(
+                w(
+                  '${st.newCount > 0 ? '${st.newCount} new · ' : ''}${st.increasedCount} add${st.trims > 0 ? ' / ${st.trims} trim' : ''}',
+                  '${st.newCount > 0 ? '${st.newCount} 新建 · ' : ''}${st.increasedCount} 加仓${st.trims > 0 ? ' / ${st.trims} 减' : ''}',
+                ),
+                style: s(11, false, p.muted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(
+              value: buyShare,
+              minHeight: 4,
+              backgroundColor: st.trims > 0
+                  ? p.negative.withValues(alpha: .45)
+                  : p.border.withValues(alpha: .4),
+              valueColor: const AlwaysStoppedAnimation<Color>(buyColor),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // net_trims
+    final totalMoves = math.max(1, st.adds + st.trims);
+    final sellShare = (st.trims / totalMoves).clamp(0.0, 1.0).toDouble();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: p.negative.withValues(alpha: .16),
+                borderRadius: BorderRadius.circular(5),
+              ),
+              child: Text(
+                w('Net -${st.netTrims}', '净 -${st.netTrims} 位'),
+                style: s(12.5, true, p.negative),
+              ),
             ),
             Text(
-              w('Available by ${widget.asOf}', '披露截至 ${widget.asOf}'),
+              w(
+                '${st.exitedCount > 0 ? '${st.exitedCount} exit · ' : ''}${st.reducedCount} trim${st.adds > 0 ? ' / ${st.adds} add' : ''}',
+                '${st.exitedCount > 0 ? '${st.exitedCount} 清仓 · ' : ''}${st.reducedCount} 减仓${st.adds > 0 ? ' / ${st.adds} 加' : ''}',
+              ),
               style: s(11, false, p.muted),
             ),
           ],
+        ),
+        const SizedBox(height: 5),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: LinearProgressIndicator(
+            value: sellShare,
+            minHeight: 4,
+            backgroundColor: st.adds > 0
+                ? const Color(0xFF2ECC8F).withValues(alpha: .45)
+                : p.border.withValues(alpha: .4),
+            valueColor: AlwaysStoppedAnimation<Color>(p.negative),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSecondaryMetricCell(_GuruRowStats st) {
+    if (board == 'conviction') {
+      if (st.netAdds > 0) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              w('Net +${st.netAdds} buying', '净加仓 +${st.netAdds} 位'),
+              style: s(12, true, const Color(0xFF2ECC8F)),
+            ),
+            Text(
+              w(
+                '${st.adds} added · ${st.trims} trimmed',
+                '${st.adds} 加/新 · ${st.trims} 减/清',
+              ),
+              style: s(10.5, false, p.muted),
+            ),
+          ],
+        );
+      }
+      if (st.netTrims > 0) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              w('Net -${st.netTrims} selling', '净减仓 -${st.netTrims} 位'),
+              style: s(12, true, p.negative),
+            ),
+            Text(
+              w(
+                '${st.trims} trimmed · ${st.adds} added',
+                '${st.trims} 减/清 · ${st.adds} 加/新',
+              ),
+              style: s(10.5, false, p.muted),
+            ),
+          ],
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            st.adds > 0
+                ? w('Balanced (${st.adds}/${st.trims})', '加减持平 (${st.adds}/${st.trims})')
+                : w('Steady holdings', '持仓稳定'),
+            style: s(12, false, p.muted),
+          ),
+          Text(
+            w('No net directional skew', '当季无净增减倾斜'),
+            style: s(10.5, false, p.muted),
+          ),
+        ],
+      );
+    }
+
+    if (board == 'net_adds') {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            w(
+              '${st.holdersCount} holders · Max ${pct(st.maxWeight, digits: 1)}',
+              '${st.holdersCount} 位持有 · 最高 ${pct(st.maxWeight, digits: 1)}',
+            ),
+            style: s(12, true),
+          ),
+          Text(
+            w(
+              'Buyer sum ${pct(st.buyerWeight, digits: 1)}',
+              '买方合计占仓 ${pct(st.buyerWeight, digits: 1)}',
+            ),
+            style: s(10.5, false, p.muted),
+          ),
+        ],
+      );
+    }
+
+    // net_trims
+    if (st.holdersCount == 0) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(w('All exited', '已全部清仓'), style: s(12, true, p.negative)),
+          Text(
+            st.sellerWeight > 0
+                ? w(
+                    'Prior weight ${pct(st.sellerWeight, digits: 1)}',
+                    '清仓前占仓 ${pct(st.sellerWeight, digits: 1)}',
+                  )
+                : w('0 active holders left', '当前无剩余持有'),
+            style: s(10.5, false, p.muted),
+          ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          w(
+            '${st.holdersCount} still hold · Max ${pct(st.maxWeight, digits: 1)}',
+            '仍余 ${st.holdersCount} 位持有 · 最高 ${pct(st.maxWeight, digits: 1)}',
+          ),
+          style: s(12, true),
+        ),
+        Text(
+          w(
+            'Remaining sum ${pct(st.sumWeight, digits: 1)}',
+            '剩余合计占仓 ${pct(st.sumWeight, digits: 1)}',
+          ),
+          style: s(10.5, false, p.muted),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGuruPills(_GuruRowStats st) {
+    final sourceList = switch (board) {
+      'conviction' => st.held,
+      'net_adds' => st.buyers,
+      _ => st.sellers,
+    };
+    final visible = sourceList.take(3).toList();
+    final overflowCount = sourceList.length - visible.length;
+
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final m in visible) _singleGuruPill(m),
+        if (overflowCount > 0)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+            decoration: BoxDecoration(
+              color: p.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: p.border),
+            ),
+            child: Text('+$overflowCount', style: s(11, true, p.muted)),
+          ),
+      ],
+    );
+  }
+
+  Widget _singleGuruPill(Map<String, dynamic> m) {
+    final id = text(m['guruId']);
+    final g = {...manager(id), ...m};
+    final shareDelta = guruShareChange(m);
+    final weightVal = nullableNumber(m['weight']);
+    final prevWeightVal = nullableNumber(m['previousWeight']);
+
+    String badgeText;
+    if (board == 'conviction') {
+      final act = switch (m['action']) {
+        'new' => w('New', '新'),
+        'increased' => '+',
+        'reduced' => '−',
+        _ => '',
+      };
+      badgeText = '${pct(weightVal, digits: 1)}${act.isEmpty ? '' : ' $act'}';
+    } else if (board == 'net_adds') {
+      if (m['action'] == 'new') {
+        badgeText = '${w('New', '新建')} · ${pct(weightVal, digits: 1)}';
+      } else {
+        final deltaStr = shareDelta != null
+            ? '${pct(shareDelta, signed: true, digits: 0)} · '
+            : '';
+        badgeText = '$deltaStr${pct(weightVal, digits: 1)}';
+      }
+    } else {
+      if (m['action'] == 'sold_out') {
+        badgeText = prevWeightVal != null && prevWeightVal > 0
+            ? '${w('Exited', '清仓')} (${pct(prevWeightVal, digits: 1)})'
+            : w('Exited', '清仓');
+      } else {
+        final deltaStr = shareDelta != null
+            ? '${pct(shareDelta, signed: true, digits: 0)} · '
+            : '';
+        badgeText = '$deltaStr${pct(weightVal, digits: 1)}';
+      }
+    }
+
+    final pillTint = actionColor(m);
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () {
+        final acc = text(m['accession']);
+        if (acc.isNotEmpty) {
+          widget.onExplore(id, acc);
+        } else {
+          unawaited(exploreQuarter(id));
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: p.card,
+          border: Border.all(color: p.border),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            avatar(g, 18),
+            const SizedBox(width: 5),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 105),
+              child: Text(
+                text(g['name']),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: s(11, false),
+              ),
+            ),
+            const SizedBox(width: 5),
+            Text(
+              badgeText,
+              style: s(
+                11,
+                true,
+                board == 'conviction' ? p.accent : pillTint,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _paginationFooter({
+    required int total,
+    required int page,
+    required int pageSize,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            w(
+              '${page * pageSize + 1}–${math.min((page + 1) * pageSize, total)} / $total stocks · ${effectiveSelected.length} Gurus in scope',
+              '${page * pageSize + 1}–${math.min((page + 1) * pageSize, total)} / $total 只股票 · 当前纳入 ${effectiveSelected.length} 位大佬',
+            ),
+            style: s(11, false, p.muted),
+          ),
+        ),
+        IconButton(
+          tooltip: w('Previous stocks', '上一页股票'),
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          padding: EdgeInsets.zero,
+          onPressed: page > 0 ? () => update(() => stockPage = page - 1) : null,
+          icon: const Icon(Icons.chevron_left, size: 18),
+        ),
+        IconButton(
+          tooltip: w('Next stocks', '下一页股票'),
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          padding: EdgeInsets.zero,
+          onPressed: (page + 1) * pageSize < total
+              ? () => update(() => stockPage = page + 1)
+              : null,
+          icon: const Icon(Icons.chevron_right, size: 18),
         ),
       ],
     ),
   );
 
-  Widget table({required double availableWidth}) {
+  Widget matrixTable({required double availableWidth}) {
     final perPage = availableWidth >= 700 && availableWidth < 840 ? 3 : 4;
-    final chosen = validSelected;
+    final chosen = effectiveSelected;
+    final list = matches;
+    if (chosen.isEmpty || list.isEmpty) {
+      return emptyStatePanel();
+    }
     final start = math.min(
       managerPage * perPage,
       math.max(0, chosen.length - 1),
     );
     final columns = chosen.skip(start).take(perPage).map(manager).toList();
-    final list = matches, pageRows = list.skip(stockPage * 5).take(5).toList();
-    if (chosen.isEmpty || list.isEmpty) {
-      return panel(
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              chosen.isEmpty
-                  ? w('Choose Gurus to compare', '选择 Guru 开始比较')
-                  : w('No disclosed holdings match.', '没有匹配的已披露持仓。'),
-              style: s(17, true),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              w(
-                'Change your selection or filters. An unavailable book is not a zero holding.',
-                '请调整选择或筛选；没有可用披露不代表零持仓。',
-              ),
-              style: s(12, false, p.muted),
-            ),
-            if (chosen.isNotEmpty)
-              TextButton(
-                onPressed: () => update(() {
-                  stockSearch.clear();
-                  concentrated = false;
-                }, reset: true),
-                child: Text(w('Clear stock filters', '清空股票筛选')),
-              ),
-          ],
-        ),
-      );
-    }
+    final safePage = math.min(
+      stockPage,
+      ((list.length - 1) / _matrixPageSize).floor(),
+    );
+    final pageRows = list
+        .skip(safePage * _matrixPageSize)
+        .take(_matrixPageSize)
+        .toList();
+
     return panel(
       padding: EdgeInsets.zero,
       Column(
@@ -1100,9 +2434,9 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
             builder: (_, c) {
               final width = math.max(
                 c.maxWidth,
-                155 + columns.length * 126 + 180.0,
+                165 + columns.length * 130 + 185.0,
               );
-              final cw = (width - 155 - 180) / columns.length;
+              final cw = (width - 165 - 185) / columns.length;
               Widget cell(Widget child, double width, {Color? color}) =>
                   Container(
                     width: width,
@@ -1131,15 +2465,18 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                   alignment: Alignment.centerLeft,
                                   child: Text(
                                     w('Company', '公司'),
-                                    style: s(14, true),
+                                    style: s(13.5, true),
                                   ),
                                 ),
-                                155,
+                                165,
                                 color: p.card,
                               ),
                               for (final g in columns)
                                 cell(
                                   InkWell(
+                                    key: ValueKey(
+                                      'matrix-header-portrait-${g['id']}',
+                                    ),
                                     onTap: () => unawaited(
                                       exploreQuarter(text(g['id'])),
                                     ),
@@ -1147,13 +2484,13 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                       mainAxisAlignment:
                                           MainAxisAlignment.center,
                                       children: [
-                                        avatar(g, 48),
+                                        avatar(g, 42),
                                         const SizedBox(height: 4),
                                         Text(
                                           text(g['name']),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
-                                          style: s(13, true),
+                                          style: s(12.5, true),
                                         ),
                                         Text(
                                           text(g['entityName']),
@@ -1185,8 +2522,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                           ),
                                           padding: EdgeInsets.zero,
                                           onPressed: managerPage > 0
-                                              ? () =>
-                                                    update(() => managerPage--)
+                                              ? () => update(() => managerPage--)
                                               : null,
                                           icon: const Icon(
                                             Icons.chevron_left,
@@ -1208,8 +2544,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                           padding: EdgeInsets.zero,
                                           onPressed:
                                               start + perPage < chosen.length
-                                              ? () =>
-                                                    update(() => managerPage++)
+                                              ? () => update(() => managerPage++)
                                               : null,
                                           icon: const Icon(
                                             Icons.chevron_right,
@@ -1220,7 +2555,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                     ),
                                     Text(
                                       w('Consensus', '共识概览'),
-                                      style: s(14, true),
+                                      style: s(13.5, true),
                                     ),
                                     Text(
                                       w(
@@ -1231,7 +2566,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                     ),
                                   ],
                                 ),
-                                180,
+                                185,
                                 color: p.card,
                               ),
                             ],
@@ -1267,7 +2602,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                             children: [
                                               Text(
                                                 text(row['ticker']),
-                                                style: s(12, true),
+                                                style: s(12.5, true),
                                               ),
                                               Text(
                                                 text(row['name']),
@@ -1281,7 +2616,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                       ],
                                     ),
                                   ),
-                                  155,
+                                  165,
                                   color: ticker == row['ticker']
                                       ? p.accent.withValues(alpha: .10)
                                       : null,
@@ -1311,7 +2646,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                                   '${row['managerCount']} holders',
                                                   '${row['managerCount']} 位持有者',
                                                 ),
-                                                style: s(13, true),
+                                                style: s(12.5, true),
                                               ),
                                               Text(
                                                 w(
@@ -1327,10 +2662,8 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                       ],
                                     ),
                                   ),
-                                  180,
-                                  color: ticker == row['ticker']
-                                      ? p.card
-                                      : null,
+                                  185,
+                                  color: ticker == row['ticker'] ? p.card : null,
                                 ),
                               ],
                             ),
@@ -1342,45 +2675,10 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
               );
             },
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    w(
-                      '${stockPage * 5 + 1}–${math.min(stockPage * 5 + 5, list.length)} / ${list.length} stocks · ${chosen.length} Gurus selected',
-                      '${stockPage * 5 + 1}–${math.min(stockPage * 5 + 5, list.length)} / ${list.length} 只股票 · 已选 ${chosen.length} 位 Guru',
-                    ),
-                    style: s(11, false, p.muted),
-                  ),
-                ),
-                IconButton(
-                  tooltip: w('Previous stocks', '上一页股票'),
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
-                  ),
-                  padding: EdgeInsets.zero,
-                  onPressed: stockPage > 0
-                      ? () => update(() => stockPage--)
-                      : null,
-                  icon: const Icon(Icons.chevron_left, size: 18),
-                ),
-                IconButton(
-                  tooltip: w('Next stocks', '下一页股票'),
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
-                  ),
-                  padding: EdgeInsets.zero,
-                  onPressed: (stockPage + 1) * 5 < list.length
-                      ? () => update(() => stockPage++)
-                      : null,
-                  icon: const Icon(Icons.chevron_right, size: 18),
-                ),
-              ],
-            ),
+          _paginationFooter(
+            total: list.length,
+            page: safePage,
+            pageSize: _matrixPageSize,
           ),
         ],
       ),
@@ -1457,6 +2755,38 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     );
   }
 
+  Widget methodologyFooter() {
+    final cov = asMap(data?['coverage']);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          w(
+            'Book weights reflect reported Form 13F common-long holdings, not total fund AUM. Net buying & net selling rank quarterly disclosed manager counts (New + Added vs Reduced + Exited); missing filings are not exits.',
+            '持仓权重基于各机构 Form 13F 已披露美股多头市值计算，不代表基金总资产。净加仓与净减仓按当季披露动作净人数（新建+加仓 vs 减仓+清仓）排序；未披露不代表清仓。',
+          ),
+          style: s(11, false, p.muted),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          w(
+            '${cov['reportedManagers'] ?? '—'} managers in ${qLabel(quarter)} disclosure view · All ${availableGurus.length} profiles remain available.',
+            '${qLabel(quarter)} 视图已纳入 ${cov['reportedManagers'] ?? '—'} 位管理人 · 共覆盖 ${availableGurus.length} 位机构档案。',
+          ),
+          style: s(11, false, p.muted),
+        ),
+        if (cov['scope'] != null && cov['scope'] != 'full_current_books')
+          Text(
+            w(
+              'Historical extracts are partial. View the filing for complete holdings.',
+              '历史季度摘录可能仅含主要持仓与变动，点击大佬可查看完整原始披露。',
+            ),
+            style: s(11, false, p.secondary),
+          ),
+      ],
+    );
+  }
+
   Widget companyDetail() {
     final row = current,
         people = asList(row['managers']),
@@ -1480,6 +2810,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
           }.contains(m['action']),
         )
         .toList();
+
     Widget metric(
       String en,
       String zh,
@@ -1503,9 +2834,10 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
             ratio ? (number(amount) < 0 ? p.negative : p.accent) : null,
           ),
         ),
-        Text(date, style: s(10, false, p.muted)),
+        if (date.isNotEmpty) Text(date, style: s(10, false, p.muted)),
       ],
     );
+
     return panel(
       Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1517,22 +2849,24 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 SizedBox(
-                  width: math.min(c.maxWidth, 260),
+                  width: math.min(c.maxWidth, 250),
                   child: Row(
                     children: [
                       StockLogo(
                         ticker: text(row['ticker']),
                         palette: p,
-                        size: 40,
+                        size: 38,
                       ),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(text(row['ticker']), style: s(23, true)),
+                            Text(text(row['ticker']), style: s(21, true)),
                             Text(
                               text(row['name']),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: s(11, false, p.muted),
                             ),
                           ],
@@ -1575,36 +2909,37 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
           Text(
             w(
               '${row['managerCount']} holders · ${qLabel(quarter)} · ${people.length} disclosed entries',
-              '${row['managerCount']} 位持有者 · ${qLabel(quarter)} · ${people.length} 条披露',
+              '${row['managerCount']} 位持有者 · ${qLabel(quarter)} · ${people.length} 条披露记录',
             ),
             style: s(11, false, p.muted),
           ),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
+            runSpacing: 6,
             children: [
               chip(
-                'Holding sources',
-                '持仓来源',
+                'Holding weights',
+                '持仓权重明细',
                 !changesDetail,
                 () => update(() => changesDetail = false),
               ),
               chip(
-                'Quarterly changes',
-                '季度变化',
+                'Quarterly share Δ',
+                '季度股数变化',
                 changesDetail,
                 () => update(() => changesDetail = true),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           LayoutBuilder(
             builder: (_, c) {
               final groups = [
                 group(
                   w('New & added (${adds.length})', '新建与加仓（${adds.length}）'),
                   adds,
-                  p.accent,
+                  const Color(0xFF2ECC8F),
                 ),
                 group(
                   w(
@@ -1620,7 +2955,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(child: groups[0]),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 14),
                         Expanded(child: groups[1]),
                       ],
                     )
@@ -1638,17 +2973,18 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
               tilePadding: EdgeInsets.zero,
               title: Text(
                 w(
-                  'Other reported holdings (${others.length})',
-                  '其他已披露持仓（${others.length}）',
+                  'Unchanged / other reported (${others.length})',
+                  '持仓不变及其他披露（${others.length}）',
                 ),
                 style: s(12),
               ),
               children: others.map(person).toList(),
             ),
+          const SizedBox(height: 6),
           Text(
             w(
               '13F is delayed. Share changes may include corporate actions; book weights do not represent total fund assets.',
-              '13F 披露有延迟。股数变化可能包含公司行动，持仓权重不代表基金全部资产。',
+              '13F 披露存在延迟。股数变动可能受拆合股等公司行动影响，持仓权重不代表基金全部资产。',
             ),
             style: s(10, false, p.muted),
           ),
@@ -1665,19 +3001,23 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
           const SizedBox(height: 4),
           if (people.isEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
+              padding: const EdgeInsets.symmetric(vertical: 14),
               child: Text(
                 w('No reported moves in this group.', '此组没有已披露变动。'),
                 style: s(12, false, p.muted),
               ),
             )
           else
-            SizedBox(
-              height: math.min(people.length * 60.0, 180),
-              child: ListView(children: people.map(person).toList()),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 210),
+              child: ListView(
+                shrinkWrap: true,
+                children: people.map(person).toList(),
+              ),
             ),
         ],
       );
+
   Widget person(Map<String, dynamic> m) => Container(
     decoration: BoxDecoration(
       color: focusedGuru == m['guruId']
@@ -1691,7 +3031,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
         child: Row(
           children: [
-            avatar({...manager(text(m['guruId'])), ...m}, 30),
+            avatar({...manager(text(m['guruId'])), ...m}, 28),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -1704,7 +3044,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                     style: s(12, true),
                   ),
                   Text(
-                    '${w('Filed', '披露')} ${m['availableAt']}',
+                    '${w('Filed', '披露')} ${m['availableAt'] ?? '—'}',
                     style: s(10, false, p.muted),
                   ),
                 ],

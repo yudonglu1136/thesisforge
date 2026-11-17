@@ -260,3 +260,45 @@ test('personal decision retains server-verified candidate context without opting
   assert.ok(!d.candidateContext.evidence.some(e=>e.guruId==='forged'));
   assert.throws(()=>service.saveDecision('alice',{...body,operationId:'decision_fixture_002',candidateContext:{lens:'unverified'}}));
 });
+
+test('Guru matrix recovers compact holding deltas and exposes conviction and net flow leaderboards',t=>{
+  const {source,db}=fixture(t);
+  db.prepare(`INSERT INTO guru_exposure_snapshots VALUES(?,?)`).run('seth-klarman',JSON.stringify({
+    guru:{name:'Seth Klarman'},
+    history:[{accessionNumber:'sk-q3',reportDate:'2026-09-30',filingDate:'2026-11-13',topHoldings:[],largestChanges:[]}],
+  }));
+  db.prepare(`INSERT INTO guru_snapshots VALUES(?,?)`).run('seth-klarman',JSON.stringify({
+    summary:{reportDate:'2026-09-30',filingDate:'2026-11-13',totalPositions:2,previousCommonLongValue:1000},
+    latestFiling:{accessionNumber:'sk-q3'},
+    holdings:[
+      {id:'AMZN-COMMON',cusip:'AMZN',ticker:'AMZN',issuer:'Amazon',shares:100,value:185,pctCommonLong:0.185,action:'unchanged',changeShares:0},
+      {id:'FERG-COMMON',cusip:'FERG',ticker:'FERG',issuer:'Ferguson',shares:120,value:70,pctCommonLong:0.07,action:'increased',changeShares:20,previousValue:50},
+    ],
+    activity:[
+      {id:'PAYC-COMMON',cusip:'PAYC',ticker:'PAYC',issuer:'Paycom',shares:0,value:0,prevShares:50,previousValue:40,changeShares:-50,action:'sold_out'},
+    ],
+  }));
+  const q3=buildGuruHoldingsMatrix(source,'2026-11-17');
+  assert.equal(q3.reportDate,'2026-09-30');
+  assert.deepEqual(q3.reportedGuruIds,['seth-klarman']);
+  assert.equal(q3.quarterCounts['2026-09-30'],1);
+  assert.equal(q3.quarterCounts['2026-06-30'],3);
+  const amzn=q3.rows.find(r=>r.ticker==='AMZN');
+  assert.equal(amzn.managers[0].action,'unchanged');
+  assert.equal(amzn.managers[0].previousShares,100);
+  assert.equal(amzn.conviction10Count,1);
+  assert.equal(amzn.conviction5Count,1);
+  near(amzn.sumWeight,0.185);
+  near(amzn.maxWeight,0.185);
+  const ferg=q3.rows.find(r=>r.ticker==='FERG');
+  assert.equal(ferg.netAdds,1);
+  assert.equal(ferg.netTrims,-1);
+  assert.equal(ferg.managers[0].previousShares,100);
+  near(ferg.managers[0].previousWeight,0.05);
+  const payc=q3.rows.find(r=>r.ticker==='PAYC');
+  assert.equal(payc.managerCount,0);
+  assert.equal(payc.exits,1);
+  assert.equal(payc.netTrims,1);
+  assert.equal(payc.netAdds,-1);
+  near(payc.managers[0].previousWeight,0.04);
+});

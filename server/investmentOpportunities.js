@@ -72,6 +72,7 @@ export function opportunityBooks(source, asOf, reportDate = null) {
   const eligible=catalog.filter(g=>configured.get(g.id)?.type==='manager13f');
   const histories=eligible.map(g=>({g,history:source.guruHistory(g.id,asOf)}));
   const quarters=[...new Set(histories.flatMap(x=>x.history.map(h=>h.reportDate)))].sort().reverse();
+  const quarterCounts=Object.fromEntries(quarters.map(q=>[q,histories.filter(x=>x.history.some(h=>h.reportDate===q)).length]));
   const selected=reportDate??quarters[0]??null;
   assert(!reportDate || quarters.includes(reportDate),'report_quarter_not_available');
   const snapshots=new Map(source.db.prepare('SELECT guru_id,payload_json FROM guru_snapshots').all().map(r=>[r.guru_id,parse(r)]));
@@ -86,9 +87,10 @@ export function opportunityBooks(source, asOf, reportDate = null) {
     const holdings=(full?snap.holdings:filing.topHoldings)??[];
     const activity=(full?snap.activity:filing.largestChanges)??[];
     books.push({guru:g,filing,full,reportedPositionCount:full?meta.totalPositions:filing.positionCount,
+      previousCommonLongValue:full?scalar(meta.previousCommonLongValue??meta.previousValue):null,
       holdings:holdings.filter(common),activity:activity.filter(common)});
   }
-  return {asOf,reportDate:selected,quarters,eligibleManagers:eligible.length,books};
+  return {asOf,reportDate:selected,quarters,quarterCounts,eligibleManagers:eligible.length,books};
 }
 
 export function opportunityValuations(source,asOf,tickers=null) {
@@ -279,15 +281,23 @@ export function opportunityOwnership(books) {
       const id=h.cusip??h.id, previous=claims.get(id);
       if(previous && previous.ticker!==h.ticker)continue;
       const weight=scalar(h.pctCommonLong??h.pctPortfolio);
-      claims.set(id,{...h,shares:(previous?.shares??0)+h.shares,value:previous?sumKnown(previous.value,h.value):scalar(h.value),weight:previous?sumKnown(previous.weight,weight):weight});
+      claims.set(id,{...h,merged:!!previous,shares:(previous?.shares??0)+h.shares,value:previous?sumKnown(previous.value,h.value):scalar(h.value),weight:previous?sumKnown(previous.weight,weight):weight});
     }
     for(const h of b.activity??[])if(symbol(h) && h.action==='sold_out' && !claims.has(h.cusip??h.id))claims.set(h.cusip??h.id,{...h,weight:0});
     const perTicker=new Map();
     for(const [id,h] of claims) {
-      const a=(b.activity??[]).find(x=>(x.cusip??x.id)===id), old=perTicker.get(h.ticker);
-      if(old) {old.shares=sumKnown(old.shares,h.shares);old.value=sumKnown(old.value,h.value);old.weight=sumKnown(old.weight,h.weight);old.claims.push(id);old.action='mixed_claims';old.changeShares=null;continue;}
+      const rawA=(b.activity??[]).find(x=>(x.cusip??x.id)===id);
+      const compactDelta=!rawA && !h.merged && finite(h.changeShares) && finite(h.shares) && h.shares-h.changeShares>=0 &&
+        ['new','increased','reduced','unchanged'].includes(h.action)
+        ? {action:h.action,changeShares:h.changeShares,prevShares:h.shares-h.changeShares,previousValue:h.previousValue,corporateActionAdjusted:h.corporateActionAdjusted}
+        : null;
+      const a=rawA??compactDelta, old=perTicker.get(h.ticker);
+      if(old) {old.shares=sumKnown(old.shares,h.shares);old.value=sumKnown(old.value,h.value);old.weight=sumKnown(old.weight,h.weight);old.claims.push(id);old.action='mixed_claims';old.changeShares=null;old.previousWeight=null;continue;}
+      const previousWeight=a?.action==='new'?0:
+        finite(a?.previousValue)&&a.previousValue>=0&&finite(b.previousCommonLongValue)&&b.previousCommonLongValue>0
+          ?a.previousValue/b.previousCommonLongValue:null;
       perTicker.set(h.ticker,{guruId:b.guru.id,name:b.guru.name,avatar:b.guru.avatar,ticker:h.ticker,issuer:h.issuer,
-        claims:[id],shares:scalar(h.shares),value:scalar(h.value),weight:h.weight,
+        claims:[id],shares:scalar(h.shares),value:scalar(h.value),weight:h.weight,previousWeight,
         changeShares:scalar(a?.changeShares),previousShares:scalar(a?.prevShares),action:a?.action??'reported_holding',
         comparisonStatus:a?.corporateActionAdjusted===true?'adjusted':'corporate_action_unverified',
         reportDate:b.filing.reportDate,availableAt:b.filing.filingDate,accession:b.filing.accessionNumber,
@@ -313,14 +323,19 @@ export function buildGuruHoldingsMatrix(source,asOf,reportDate=null) {
   const data=opportunityBooks(source,asOf,reportDate), byTicker=opportunityOwnership(data.books);
   const rows=[...byTicker.values()].map(row=>{
     const held=row.managers.filter(m=>m.shares>0);
+    const weights=held.map(m=>m.weight).filter(finite);
     const newPositions=row.managers.filter(m=>m.action==='new').length;
     const increases=row.managers.filter(m=>m.action==='increased').length;
     const reductions=row.managers.filter(m=>m.action==='reduced').length;
     const exits=row.managers.filter(m=>m.action==='sold_out').length;
-    return {...row,managerCount:held.length,medianWeight:median(held.map(m=>m.weight)),
-      newPositions,increases,reductions,exits,adds:newPositions+increases,trims:reductions+exits};
+    const adds=newPositions+increases, trims=reductions+exits;
+    return {...row,managerCount:held.length,medianWeight:median(weights),
+      sumWeight:weights.reduce((s,v)=>s+v,0),maxWeight:weights.length?Math.max(...weights):null,
+      conviction5Count:weights.filter(w=>w>=0.05).length,conviction10Count:weights.filter(w=>w>=0.10).length,
+      newPositions,increases,reductions,exits,adds,trims,netAdds:adds-trims,netTrims:trims-adds};
   }).sort((a,b)=>b.managerCount-a.managerCount || (b.medianWeight??0)-(a.medianWeight??0) || a.ticker.localeCompare(b.ticker));
   const result={version:'guru-holdings-matrix-v2',asOf,reportDate:data.reportDate,quarters:data.quarters,
+    quarterCounts:data.quarterCounts,reportedGuruIds:data.books.map(b=>b.guru.id),
     coverage:{eligibleManagers:data.eligibleManagers,reportedManagers:data.books.length,fullBooks:data.books.filter(b=>b.full).length,
       extractedBooks:data.books.filter(b=>!b.full).length,total:rows.length,
       scope:data.books.every(b=>b.full)?'full_current_books':'includes_historical_extracts'},rows};
