@@ -1,124 +1,112 @@
 <div align="center">
   <img src="web/icons/Icon-192.png" width="82" alt="ThesisForge app icon" />
   <h1>ThesisForge</h1>
-  <p><strong>Point-in-time public-equity research and private portfolio intelligence.</strong></p>
+  <p><strong>Point-in-time public-equity research, institutional 13F intelligence, quantitative strategies, and private multi-account portfolio analytics.</strong></p>
   <p>
-    Follow great investors, replay what the market knew, value companies from
-    reported fundamentals, and monitor a real portfolio in one research terminal.
+    Audit what the market actually knew at any date, track high-conviction institutional books,
+    underwrite companies from reported fundamentals, and monitor confirmed passive income in one Black Edition research terminal.
   </p>
   <p>
-    <a href="https://thesisforge.tech"><strong>Open the terminal</strong></a>
+    <a href="https://www.thesisforge.tech"><strong>Open the terminal</strong></a>
     &nbsp;&middot;&nbsp;
-    <a href="docs/deployment-contract.md">Deployment contract</a>
+    <a href="AGENTS.md">Agent Operating Contract</a>
+    &nbsp;&middot;&nbsp;
+    <a href="docs/deployment-contract.md">Deployment Contract</a>
   </p>
   <p>
-    <img src="https://img.shields.io/badge/Flutter-Web-54C5F8?logo=flutter&logoColor=white" alt="Flutter Web" />
-    <img src="https://img.shields.io/badge/Node.js-Express-3C873A?logo=node.js&logoColor=white" alt="Node.js and Express" />
+    <img src="https://img.shields.io/badge/Flutter-Web_%26_iOS-54C5F8?logo=flutter&logoColor=white" alt="Flutter Web and iOS" />
+    <img src="https://img.shields.io/badge/Node.js-Express_5-3C873A?logo=node.js&logoColor=white" alt="Node.js and Express" />
+    <img src="https://img.shields.io/badge/Warehouse-Fact_OS_(DuckDB_%2B_Parquet)-FFF000?logo=duckdb&logoColor=black" alt="Fact OS DuckDB and Parquet" />
     <img src="https://img.shields.io/badge/Frontend-Vercel-000000?logo=vercel&logoColor=white" alt="Vercel frontend" />
-    <img src="https://img.shields.io/badge/API-AWS-FF9900?logo=amazonaws&logoColor=white" alt="AWS API" />
+    <img src="https://img.shields.io/badge/API_%26_Data-AWS_EB_%2B_S3-FF9900?logo=amazonaws&logoColor=white" alt="AWS API and S3" />
     <img src="https://img.shields.io/badge/Auth-Supabase-3ECF8E?logo=supabase&logoColor=white" alt="Supabase authentication" />
   </p>
 </div>
 
-![Valuation market map showing industry-level fair-value distribution](docs/images/valuation-market-map.png)
+![Company Research Cockpit showing executive valuation hero, ROIC & margin KPI strip, fundamental diagnosis, and valuation architecture](docs/images/research-cockpit-overview.png)
 
-<p align="center"><sub>Valuation Market Map: browse the research universe by industry, valuation gap, and model quality.</sub></p>
+<p align="center"><sub><strong>Company Research Cockpit:</strong> persistent executive valuation header, 4-card operating &amp; ROIC KPI strip, automated Fact OS fundamental diagnosis, and published model reconciliation.</sub></p>
 
-## The Product
+---
 
-ThesisForge is a buy-side research workspace built around a simple idea:
-every conclusion should be traceable to what was actually knowable at that
-moment.
+## Product Overview
 
-It connects public filings, 13F portfolios, insider activity, point-in-time
-financials, management guidance, earnings-call Q&A, market prices, podcast
-commentary, and user-linked brokerage data without turning the experience into
-a collection of disconnected dashboards.
+ThesisForge is a bilingual (`EN` / `中文`), high-density buy-side research and portfolio workspace built around strict **point-in-time (PIT) provenance**: every financial ratio, institutional position, valuation input, and backtest signal is anchored to what was publicly observable on or before the selected `As of` date.
 
-The interface is bilingual, responsive, and intentionally dense. It is designed
-for repeated research work rather than a marketing landing page.
+## Core Modules & Visual Walkthrough
 
-## Research Surfaces
+| Module | What It Answers | Key Workflows |
+| :--- | :--- | :--- |
+| **Home** | What needs attention in my book and research today? | Unified multi-account NAV trajectory, top movers, holdings pulse, privacy masking, and thesis review alerts |
+| **Discover · Guru & 13F** | Where is institutional conviction concentrating or rotating? | Concentrated-conviction, net-buying, and net-selling leaderboards, cross-manager matrix, active-fund sector rotations, and full single-Guru research dossiers |
+| **Discover · Fundamentals & AI Insights** | Which sectors and companies are hitting fundamental inflections? | Multi-quarter revenue acceleration matrices, top sector contributors (`+pp`), ROIC/margin screeners, and PNG/CSV research exports |
+| **Research** | What is a company worth from reported filings, and what is my thesis? | Executive company hero, 3-statement interactive comparison charts, bilingual earnings Q&A, SEC/UK guidance, Form 4 insider activity, 3-mode Valuation Workspace (`Published model` / `My DCF` / `Reverse DCF`), and persistent research records |
+| **Portfolio** | How is my real multi-account brokerage book performing and generating cash? | Encrypted multi-account IBKR Flex & read-only broker aggregation, confirmed passive income ledger (settled net dividends vs expired OTM short calls, annual history & same-period YoY), and portfolio valuation/Guru overlap |
+| **Strategies** | How do systematic factor and tactical rules perform without survivorship bias? | Rule portfolios (`Quality Top 10`, `Ackman Top 20`), `Hot Breakout Pullback` (delisting-inclusive), `QQQ ⇄ SCHD Valuation & Panic Rotation`, and custom `Strategy Builder` |
+| **Admin** | Are all data planes, curves, and storage volumes healthy? | Multi-module freshness diagnostics, release verification, and encrypted user-store operations |
 
-| Surface | What it answers | Key workflows |
-| --- | --- | --- |
-| **Guru** | What are high-conviction investors doing? | 13F and Form 4 tracking, new buys and exits, position history, quarterly contribution, portfolio-vs-SPY simulation, signal board, crowded holdings |
-| **Ontology** | Where are fundamental inflections appearing? | Point-in-time event signals, peer confirmation, industry graphs, decision replay, strategy comparison, model holdings |
-| **Valuation** | What is a company worth using only visible inputs? | Industry market map, historical fair value, quarterly research cards, economic-profile models, earnings-call Q&A, management guidance, podcast evidence |
-| **Portfolio** | How does the user's real book look now? | Encrypted IBKR/Yodlee sync, NAV history, holdings and allocation, cash flows, valuation gaps, dividends, Sharpe and scenario analytics |
-| **Admin** | Is the platform and its data healthy? | User portfolio audit, data-job health, backend status, refresh controls, account drilldown |
+---
 
-## ThesisForge
+### 1. Institutional Consensus Leaderboards & Single-Guru Research Dossier
 
-![Guru dashboard with manager selection, portfolio simulation, signal board, and crowded holdings](docs/images/guru-dashboard.png)
+![Guru holdings & consensus 3-leaderboards](docs/images/guru-leaderboards.png)
 
-The Guru workspace brings manager selection, filing metadata, holdings changes,
-backtests, and cross-manager signals into one scan-friendly view. Public filing
-data remains separate from private user portfolio data.
+<p align="center"><sub><strong>Guru Consensus 3-Leaderboards:</strong> rank the institutional universe by concentrated book conviction, net buying (net additions), and net selling (net trims), or compare managers side by side in the Guru Matrix.</sub></p>
 
-## Point-In-Time Valuation
+![Single-Guru Institutional Research Dossier](docs/images/guru-research-dossier.png)
 
-Valuation nodes are historical research decisions, not present-day estimates
-painted backward onto old dates.
+<p align="center"><sub><strong>Single-Guru Research Dossier:</strong> quantitative style DNA, auto-synthesized dossier insights, filing-execution-dated 13F copy-simulation vs SPY, cumulative stock attribution, quarterly operations, and dated ThesisForge valuation overlays.</sub></p>
 
-- Financials use the earliest available filing record for each fiscal period.
-- Management guidance must have been observable on or before the model date.
-- Market price is a comparison output and is excluded from fair-value inputs.
-- Methods vary by economic profile; banks, insurers, software companies,
-  cyclicals, and asset managers do not share one generic DCF.
-- Every model node retains its financial source, guidance evidence, method
-  outputs, assumptions, weights, and price-at-date.
-- Release checks reject future-dated inputs, unexplained history gaps,
-  non-positive prices, invalid DCF bounds, and non-deterministic rebuilds.
+---
 
-For a growth company, a quarterly research card may combine an EV/sales equity
-value, normalized earnings power, and a five-year FCFE DCF. The exact weights
-and assumptions are visible in the product rather than hidden behind a single
-target price.
+### 2. Three-Mode Interactive Valuation Workspace & AI Insights
 
-## System Architecture
+![Interactive 3-mode Valuation Workspace](docs/images/research-valuation-workspace.png)
+
+<p align="center"><sub><strong>Valuation Workspace:</strong> inspect the platform's published economic-profile model alongside an isolated personal DCF sandbox (<code>Simplified FCFE</code> &amp; <code>Operating FCFF</code> with optimistic auto-save) and single-variable <code>Reverse DCF</code>.</sub></p>
+
+![AI Insights sector growth acceleration matrix](docs/images/ai-insights-inflections.png)
+
+<p align="center"><sub><strong>AI Insights:</strong> track quarterly YoY and QoQ sector growth inflections paired with the exact company contributing the largest percentage-point acceleration.</sub></p>
+
+---
+
+### 3. Survivorship-Free Quantitative & Tactical Strategy Portfolios
+
+![Audited Hot Breakout Pullback Strategy Portfolio](docs/images/strategies-tactical-portfolios.png)
+
+<p align="center"><sub><strong>Strategies Workspace:</strong> full-cycle equity curves, underwater drawdown ribbons, lot-level trade ledgers (including delisted equities), and daily Fact OS updates across rule-based and tactical rotation portfolios.</sub></p>
+
+---
+
+## System & Data Architecture
 
 ```mermaid
 flowchart LR
-  Client["Flutter Web"]
-  Vercel["Vercel static frontend"]
-  Proxy["Same-origin /api proxy"]
+  Sharadar["Sharadar (14 Tables)<br/>SEC 13F / Guidance / Transcripts"]
+  FactOS["Local Fact OS Warehouse<br/>Immutable Raw + Canonical Parquet<br/>+ 6 Derived Groups"]
+  S3["AWS S3 Content-Addressed<br/>Artifact Store"]
+  EB["AWS Elastic Beanstalk (Node + Express)<br/>Atomic active.json + SQLite Stores<br/>+ Rolling Release Eviction"]
+  Proxy["Vercel Same-Origin<br/>Streaming /api Proxy"]
+  Client["Flutter Web (Black Edition)<br/>& Native iOS Shell"]
   Auth["Supabase Auth"]
-  API["AWS Elastic Beanstalk<br/>Node + Express"]
-  DB["Runtime SQLite<br/>PIT snapshots + user stores"]
-  Jobs["Import, enrichment,<br/>and audit jobs"]
-  Sources["SEC / 13F / Sharadar / Prices<br/>Transcripts / Podcasts / IBKR"]
 
-  Client --> Vercel
+  Sharadar --> FactOS
+  FactOS -->|"fact-os-aws-sync.py"| S3
+  S3 -->|"Fenced SSM Install & ACK"| EB
   Client --> Auth
-  Vercel --> Proxy
-  Proxy --> API
-  API --> DB
-  Sources --> Jobs
-  Jobs --> DB
+  Client --> Proxy
+  Proxy --> EB
 ```
 
-The deployment boundary is deliberate:
+### Key Architectural Invariants
+- **Deployment Split**: Vercel serves the compiled Flutter web frontend (`thesisforge.tech` and `www.thesisforge.tech` aliased to the same `trunk` deployment) and streams `/api/*` requests to AWS Elastic Beanstalk.
+- **Immutable & Content-Addressed Fact OS**: Raw provider archives (`data/fact_os/raw`) and derived Parquet/SQLite generations (`canonical`, `public_observations`, `research_inputs`, `institutional_13f`, `ai_insights`, `strategy_inputs`) publish manifest-last and atomically switch on EC2 via `/var/app/data/fact-os/active.json`, retaining `active + rollback` generations after S3 verification.
+- **Strict Private/Public Separation**: User brokerage credentials, multi-year passive income ledgers, watchlists, and DCF worksheets are AES-GCM encrypted / owner-scoped inside `USER_DATA_ROOT` on the backend and never enter Git, Fact OS, or client bundles.
 
-- Vercel owns the public Flutter frontend.
-- AWS Elastic Beanstalk owns the API and runtime data.
-- Both `thesisforge.tech` and `www.thesisforge.tech` point to the same Vercel
-  production deployment.
-- The browser calls only same-origin `/api/*`; AWS is not compiled into the
-  Flutter bundle.
-- Supabase service-role credentials and brokerage credentials never enter the
-  client.
-
-Read [the deployment contract](docs/deployment-contract.md) before changing
-DNS, Vercel, AWS, CI, CORS, or API routing.
+---
 
 ## Local Development
-
-### Requirements
-
-- Flutter SDK
-- Node.js and npm
-- Local environment variables based on `.env.example`
 
 ```bash
 npm install
@@ -127,93 +115,51 @@ npm run dev
 ```
 
 | Service | Local URL |
-| --- | --- |
-| Flutter web client | `http://127.0.0.1:5174` |
-| Express API | `http://127.0.0.1:8787` |
+| :--- | :--- |
+| Flutter Web Client | `http://127.0.0.1:5174` |
+| Express API Server | `http://127.0.0.1:8787` |
 
-Local development uses the explicit backend-only auth bypass. Production must
-use Supabase authentication and must never ship development bypass settings.
+---
+
+## All-Corners Data Refresh & Common Operations
+
+```bash
+# Full end-to-end daily/earnings data sync across Fact OS (14 tables + 6 groups),
+# tactical strategy artifacts (QQQ <-> SCHD & Breakout Pullback), and AWS activation:
+npm run refresh:all-corners
+
+# Run local Fact OS Sharadar sync only:
+npm run fact-os:sync
+
+# Check local vs AWS S3/EC2 active Fact OS release status:
+npm run fact-os:aws-status
+
+# Publish and atomically activate verified local Fact OS artifacts on AWS:
+npm run fact-os:aws-sync
+
+# Build production Flutter web bundle & package AWS backend:
+npm run build
+npm run package:aws
+```
 
 ### Quality Gates
 
 ```bash
 flutter analyze
 flutter test
-node --test server/*.test.js
-node --test server/retiredProductRoutes.test.js server/backendPackaging.test.js server/caddyRetirement.test.js
+npm run test:server
 npm run test:proxy
-npm run build
+npm run test:performance
+.venv-fact-os/bin/python -m unittest discover -s fact_os -p 'test_*.py'
 ```
 
-PIT valuation releases have an additional deterministic audit:
+Full operational contracts for **All-Corners Earnings & Market Refreshes**, **13F Updates**, **PIT Valuations**, **AWS Rolling Retention**, and **GitHub Screenshot Synchronization** live in [AGENTS.md](AGENTS.md).
 
-```bash
-node server/verifyPitValuationRelease.js baseline.sqlite run1.sqlite run2.sqlite
-```
+---
 
-## Common Operations
+## Security & Disclaimer
 
-```bash
-# Build the Vercel frontend
-npm run build
+- Brokerage tokens (IBKR Flex / read-only connectors) are encrypted at rest on the backend and isolated per authenticated Supabase user UUID.
+- Runtime databases, licensed market datasets, credentials, and private user ledgers are strictly excluded from version control.
 
-# Package the API for Elastic Beanstalk
-npm run package:aws
-
-# Refresh dividend data
-npm run refresh:dividends
-
-# Audit valuation coverage and model quality
-npm run audit:valuation
-
-```
-
-Operational rules for 13F refreshes, valuation migrations, AWS publication,
-and frontend deployment live in [AGENTS.md](AGENTS.md).
-
-## Representative API
-
-| Route | Purpose |
-| --- | --- |
-| `GET /api/health` | API, database, and data-job health |
-| `GET /api/gurus` | Guru universe and dashboard payload |
-| `GET /api/gurus/:id/backtest` | Manager portfolio-vs-SPY simulation |
-| `GET /api/strategies` | Ontology strategy research catalog |
-| `GET /api/decision/snapshot` | Historical point-in-time decision state |
-| `GET /api/valuation` | Fair-value market map |
-| `GET /api/valuation/:ticker` | Ticker history, model book, Q&A, and evidence |
-| `GET /api/portfolio` | Authenticated user's portfolio cockpit |
-| `POST /api/portfolio/sync` | Refresh linked portfolio data |
-| `GET /api/admin/system-health` | Admin-only operational health |
-
-Protected routes require a valid Supabase-authenticated request in production.
-
-## Repository Guide
-
-| Path | Responsibility |
-| --- | --- |
-| `lib/main.dart` | Flutter terminal UI and responsive workflows |
-| `server/` | Express API, models, clients, importers, audits, and tests |
-| `api/proxy.js` | Vercel same-origin proxy to AWS |
-| `scripts/` | Build, deployment, refresh, migration, and audit tooling |
-| `web/ontology/` | Authenticated Ontology research explorer |
-| `web/guru-avatars/` | Public manager avatar assets |
-| `docs/` | Architecture, deployment, and audit documentation |
-
-## Security And Data Boundaries
-
-- Portfolio data is scoped to the authenticated user.
-- IBKR/Yodlee credentials are encrypted and stored only on the backend.
-- Admin routes are restricted to configured admin identities.
-- Account deletion removes user-owned portfolio data before Auth deletion.
-- Runtime databases, paid datasets, secrets, and user records are not committed
-  to Git.
-
-## Status
-
-ThesisForge is an active private product build. The responsive web
-terminal is the current production surface.
-
-> **Research software, not investment advice.** Model outputs depend on source
-> quality and stated assumptions. They should be reviewed as research evidence,
-> not treated as an instruction to buy or sell a security.
+> **Research software, not investment advice.** All valuation outputs, institutional 13F simulations, and quantitative strategy series depend on historical source disclosures and stated modeling assumptions; they are provided strictly as research evidence and never as instructions to buy or sell any security.

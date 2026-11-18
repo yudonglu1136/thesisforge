@@ -24,6 +24,7 @@ import { loadQqqSchdRotationDashboard, analyzeQqqSchdRotationRange } from './qqq
 import { researchInsiders } from './researchInsiders.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
 import { factOsEnabled } from './factRepository.js';
+import { withActiveDataRelease } from './dataReleaseContext.js';
 import { publicAnalysisArtifacts } from './publicAnalysisArtifact.js';
 
 export function registerInvestmentRoutes(app,service) {
@@ -217,12 +218,14 @@ export function enableInvestmentPreview(app) {
   // request. A daily Fact OS release changes their fingerprint and starts a
   // new immutable generation while the last-good response remains readable.
   setImmediate(()=>{
-    try{
-      const today=service.date();
-      source.discovery(today);
-      source.guruCatalog();
-    }catch{}
-    try{publicAnalysisArtifacts.warmCurrent(service.date()).catch(()=>{});}catch{}
+    withActiveDataRelease(()=>{
+      try{
+        const today=service.date();
+        source.discovery(today);
+        source.guruCatalog();
+      }catch{}
+      try{return publicAnalysisArtifacts.warmCurrent(service.date()).catch(()=>{});}catch{}
+    });
   });
   return service;
 }

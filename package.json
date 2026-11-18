@@ -57,6 +57,7 @@
     "import:valuation-aliases": "node server/importValuationAliases.js",
     "fact-os:status": "bash bin/fact-os status",
     "fact-os:sync": "bash bin/fact-os bulk-sync --profile aws-data-daily",
+    "refresh:all-corners": "bash scripts/refresh-all-corners.sh",
     "fact-os:bulk-sync": "bash bin/fact-os bulk-sync --profile aws-data-daily",
     "fact-os:query-sync": "bash bin/fact-os sync",
     "fact-os:aws-status": ".venv-fact-os/bin/python scripts/fact-os-aws-sync.py status",

@@ -733,7 +733,7 @@ app.get("/api/valuation", async (_request, response) => {
   }
 });
 
-app.post("/api/valuation/:ticker/import", async (request, response) => {
+app.post("/api/valuation/:ticker/import", requireAdmin, async (request, response) => {
   try {
     const payload = await importValuationTicker(request.params.ticker, {
       pricePoints: request.query.pricePoints || request.body?.pricePoints

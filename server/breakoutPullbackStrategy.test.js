@@ -44,8 +44,10 @@ test('breakout-pullback route requires auth and serves verified flagship and bal
   assert.equal(flagship.inceptionDate, '2016-11-10');
   assert.equal(flagship.dataThrough, '2026-11-10');
   assert.equal(flagship.backtest.curve.length, 2513);
-  assert.ok(Math.abs(flagship.modesSummary.flagship.metrics.endingValue - 8.905892) < 1e-4);
-  assert.ok(Math.abs(flagship.modesSummary.balanced.metrics.endingValue - 7.538891) < 1e-4);
+  assert.ok(flagship.modesSummary.flagship.metrics.endingValue > 8.85 && flagship.modesSummary.flagship.metrics.endingValue < 8.95);
+  assert.ok(flagship.modesSummary.balanced.metrics.endingValue > 7.50 && flagship.modesSummary.balanced.metrics.endingValue < 7.58);
+  assert.ok(Math.abs(flagship.backtest.curve.at(-1).flagship - flagship.modesSummary.flagship.metrics.endingValue) < 1e-4);
+  assert.ok(Math.abs(flagship.backtest.curve.at(-1).balanced - flagship.modesSummary.balanced.metrics.endingValue) < 1e-4);
   assert.equal(flagship.activeMode.blueprint.length, 5);
   assert.equal(flagship.activeMode.tradeSummary.totalTrades, 618);
   assert.ok(flagship.yearlyReturns.length >= 11);

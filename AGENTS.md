@@ -858,12 +858,84 @@ Chinese and English are release-critical product modes, not best-effort labels.
 - **Fact OS Sharadar Sync & Rolling AWS Retention (`fact_os/` & `scripts/fact-os-aws-sync.py`):**
   - Keep `npm run fact-os:sync` (`bash bin/fact-os bulk-sync --profile aws-data-daily`),
     `npm run fact-os:aws-sync` (`.venv-fact-os/bin/python scripts/fact-os-aws-sync.py sync --activate`),
+    `npm run refresh:all-corners` (`bash scripts/refresh-all-corners.sh`),
     `post_install_maintenance` in `scripts/fact-os-api-install.py`, and
     `--auto-retain --keep-releases 2` in `scripts/prune-public-api-candidate.py`
     committed onto `trunk` and deployed to Elastic Beanstalk so superseded
     `/var/app/data/fact-os/releases/*` generations beyond `active + rollback` are
     automatically S3-verified and evicted rather than exhausting the 60 GiB root
     volume (`insufficient_install_capacity`).
+
+## All-Corners Earnings, Market & 13F Refresh Contract (2026-11-18)
+
+Whenever the user asks to **update earnings / financial reports (`更新财报`), sync Sharadar, refresh market data, or update 13F/strategies**, you MUST treat it as a **complete All-Corners Refresh** rather than updating only one storage layer. Leaving any downstream module on an older date cut while claiming a completed refresh is a contract violation.
+
+### 1. Production Three-Plane Storage Map (Know Where Every Corner Reads)
+
+Production serves modules across three distinct storage layers that must be kept aligned:
+
+1. **Plane 1 — Fact OS Active Release (`/var/app/data/fact-os/active.json`, local `data/fact_os`)**:
+   - **14 Sharadar Canonical Tables**: `tickers`, `stocks`, `funds`, `fundamentals` (`SF1` ARQ/ARY/ART), `daily`, `actions`, `events`, `insiders` (`SF2`), `metrics`, `sp500`, `holdings` / `holdings_ticker` / `holdings_investor` (`SF3/A/B`), `descriptions`.
+   - **6 Derived Groups (`DATA_DAILY_GROUPS`)**:
+     - `canonical`: Parquet warehouse read by `Fundamentals` screener, `/api/investment/research/:ticker/fundamentals`, `/api/investment/research/:ticker/insiders`, and live `RAW_CLOSE` overlays.
+     - `public_observations` (`observations.sqlite`): `investment_current_quotes` (latest prices across `Home`, `Discover`, `Research`, `Guru Dossier`, `Portfolio`) and `investment_quality_annual` (annual `ROIC`, `operatingMargin`, `fcfMargin`, `cashConversion`).
+     - `research_inputs`: company fundamentals, corporate actions, and event inputs for `Research`.
+     - `institutional_13f` (`13f-insights.sqlite`): `Discover -> 13F Insights` active-manager consensus, sector inflows/outflows, and same-manager rotations.
+     - `ai_insights`: `Discover -> AI Insights` quarterly YoY/QoQ revenue acceleration and top `+pp` sector contributors.
+     - `strategy_inputs` (`rulePortfolios`): `Strategies -> Four-Factor Quality Top 10` & `Ackman Top 20` (`investor-styles`).
+2. **Plane 2 — Tactical Strategy Snapshots & Runtime SQLite (`server/config/*-dashboard.json` + `SQLITE_DB_PATH`)**:
+   - `server/config/qqq-schd-rotation-dashboard.json` (`QQQ ⇄ SCHD Rotation`) and `server/config/hot-breakout-pullback-dashboard.json` (`Hot Breakout Pullback`): Because `t3.small` (`< 3.5 GiB` RAM) intentionally blocks in-process Python rebuilds, **every Fact OS / earnings sync MUST also run `scripts/build-qqq-schd-rotation-artifact.py --forward-extend` and `scripts/build-breakout-pullback-artifact.py` locally**, commit the updated JSONs to `trunk`, and deploy the backend package so tactical strategies never freeze behind `Fact OS`.
+   - `SQLITE_DB_PATH` (`/var/app/data/thesisforge.sqlite`, local `server/data/guru-analysis.sqlite`): Read by `/api/health`, `/api/admin/system-health`, `/api/gurus/:id/backtest`, and base `/api/valuation` snapshots. Background refreshers (`startGuruBacktestRefresher`) and startup pre-warming (`server/investmentRoutes.js`) MUST resolve Fact OS via `withActiveDataRelease` / `releaseRoot` fallback (`server/dataReleaseContext.js`) rather than empty `AsyncLocalStorage`.
+3. **Plane 3 — Bootstrapped Investment Source Trio (`INVESTMENT_SOURCE_DB_PATH` `research.sqlite` + `strategy.sqlite` + `composition.sqlite`)**:
+   - Supplies modeled PIT fair-value snapshots (`valuation_pit_model_runs`, `valuation_pit_financials`, `valuation_pit_guidance`), curated 30-Guru SEC 13F books & copy-simulation curves (`guru_snapshots`, `guru_exposure_snapshots`, `guru_backtests`), and `Strategy Lab` inputs. When new quarterly PIT valuation runs or new SEC 13F manager filings are accepted, rebuild and publish the verified `research.sqlite` release (`npm run build:production-research` / `scripts/install-investment-release.mjs`) so `Discover`, `Guru Leaderboards`, `Guru Research Dossier`, and `Research` fair values advance together.
+
+### 2. Mandatory End-to-End Refresh Sequence (`npm run refresh:all-corners`)
+
+Run `npm run refresh:all-corners` (`bash scripts/refresh-all-corners.sh`) and complete the applicable quarterly gates below:
+
+1. **Sync All 14 Sharadar Tables & Rebuild All 6 Fact OS Derived Groups**:
+   - Execute `bash bin/fact-os bulk-sync --profile aws-data-daily` (`npm run fact-os:sync`). Confirm `14/14` tables pass natural-key uniqueness and zero invalid prices, and all 6 groups (`canonical`, `public_observations`, `research_inputs`, `institutional_13f`, `ai_insights`, `strategy_inputs`) succeed.
+2. **Refresh Tactical Strategy Artifacts (`QQQ ⇄ SCHD` & `Hot Breakout Pullback`)**:
+   - Execute `.venv-fact-os/bin/python scripts/build-qqq-schd-rotation-artifact.py --forward-extend --fact-root data/fact_os --output server/config/qqq-schd-rotation-dashboard.json` and `.venv-fact-os/bin/python scripts/build-breakout-pullback-artifact.py --fact-root data/fact_os --output server/config/hot-breakout-pullback-dashboard.json`. Verify `dataThrough` matches the latest market session in Fact OS `stocks`/`funds`.
+3. **Earnings-Season Company PIT Refresh (When Updating Quarterly Financials / Guidance / Valuations)**:
+   - Ingest official SEC/UK guidance (`scripts/import-sec-official-guidance.py`, `scripts/import-official-uk-pit.py`) and earnings-call Q&A transcripts (`scripts/sync-pit-earnings-transcripts.py`, `npm run enrich:valuation-transcript-qa`).
+   - Recompute deterministic PIT company valuation snapshots (`scripts/refresh-pit-from-sharadar-api.py` / `scripts/build-pit-valuation-source.py`), pass `npm run audit:pit-release` (`verifyPitValuationRelease.js`) and `npm run audit:valuation`, build migration artifacts (`npm run build:pit-migration`), and verify `npm run build:research -- --check`.
+4. **45-Day SEC 13F Window Refresh (When New Institutional Filings Arrive)**:
+   - Update CUSIP & security master (`scripts/build-guru-sec-cusip-manifest.mjs`, `scripts/build-guru-security-master.py`), run the atomic 13F + 5Y/10Y curve matrix procedure (`npm run refresh:13f`), and rebuild/install the updated `research.sqlite` release (`npm run build:production-research`).
+5. **Publish & Atomically Activate on AWS S3 + Elastic Beanstalk**:
+   - Run `npm run fact-os:aws-sync` (`scripts/fact-os-aws-sync.py sync --activate` with proxy env vars unset if no local proxy is running) and confirm `aws.activeRelease.releaseId == aws.dataReady.releaseId` with `publicationStatus: "verified"` and EC2 root disk `< 75%` used (`active + rollback` retention).
+   - Commit updated `server/config/*-dashboard.json` (and any code/doc updates) onto `trunk`, push to `origin/trunk`, and deploy the backend bundle (`npm run package:aws` -> AWS Elastic Beanstalk) so live strategies and API caches serve the new date cut immediately.
+6. **Corner-by-Corner Live Verification Checklist**:
+   - Before reporting completion, verify live data freshness across **every active surface**:
+     - `Home` & `Discover` (`opportunities` + `13F Insights` + `AI Insights` + `Fundamentals`)
+     - `Discover -> Guru` (3 leaderboards + `GuruResearchDossier` valuation overlay & curve)
+     - `Research` (`priceComparison.priceDate`, latest `SF1` `ARQ`/`ARY` filing period, `qualityAnnual.roic`, `Valuation workspace`)
+     - `Portfolio` (latest mark comparison date, passive income ledger, encrypted `user-portfolios` `0700` `webapp:webapp` intact)
+     - `Strategies` (`investor-styles`, `qqq-schd-rotation`, and `breakout-pullback` `dataThrough` all matching latest market close)
+
+### 3. GitHub Visual Showcase & `README.md` Screenshot Synchronization Contract
+
+Whenever UI modules are redesigned OR a major quarterly earnings / 13F data refresh materially updates visible dashboards, keep GitHub (`origin/trunk`) visually current so `https://github.com/yudonglu1136/thesisforge` always reflects the real live product:
+
+- **Canonical Showcase Screenshots (`docs/images/`)**:
+  - `docs/images/research-cockpit-overview.png` — `Research` Executive Company Hero, 4-card ROIC/Operating KPI strip, Fundamental Diagnosis & Valuation Architecture
+  - `docs/images/research-valuation-workspace.png` — `Research -> Valuation workspace` (`Published model` / `My DCF` / `Reverse DCF`)
+  - `docs/images/guru-leaderboards.png` — `Discover -> Guru` 3-Leaderboards (`Concentrated Conviction`, `Net Buying`, `Net Selling`) & Matrix
+  - `docs/images/guru-research-dossier.png` — Single-Guru Institutional Research Dossier & 13F Copy-Simulation Curve vs SPY
+  - `docs/images/ai-insights-inflections.png` — `Discover -> AI Insights` Sector Growth Acceleration & Top Contributors Matrix
+  - `docs/images/strategies-tactical-portfolios.png` — `Strategies` Full-Cycle Equity Curve, Underwater Drawdown & Tactical KPIs
+- **Strict Zero-PII Capture Isolation**:
+  - Always capture showcase screenshots against an **isolated local showcase build** (`FLUTTER_BUILD_OUTPUT` under `tmp/`, removed immediately after capture) backed by an **isolated temporary `USER_DATA_ROOT` / `INVESTMENT_DB_PATH` under `tmp/`** (never port `9222`, and **NEVER** connected to real private `server/data/user-portfolios` or real IBKR dollar balances!).
+  - Capture at `1440x900` desktop viewport only after all loading skeletons disappear and charts/logos finish rendering. Verify every PNG visually before committing.
+- **Synchronize `README.md` + `AGENTS.md` + `origin/trunk`**:
+  - Keep `README.md` module descriptions, architecture diagrams, CLI commands, and inline `docs/images/*.png` references synchronized with the current production product, commit onto `trunk`, and `git push origin trunk`.
+
+### 4. Security, Backup & Runtime Pinning Guardrails (2026-11-18)
+
+- Keep `requireAdmin` enforced on `POST /api/valuation/:ticker/import` (`server/index.js`) so non-admin users can never trigger server-side valuation importer subprocesses.
+- Keep `kinds.portfolio` in `server/userDataBackup.js` synchronized with every table created in `server/userPortfolioStore.js` (including `portfolio_analysis_snapshots`, `portfolio_passive_ledgers`, and `readonly_brokers`) so encrypted user-data backups (`npm run user-data -- backup`) never fail on schema checks.
+- Keep `withActiveDataRelease` (`server/dataReleaseContext.js`) wrapping startup pre-warming (`server/investmentRoutes.js`) and `releaseRoot()` falling back to `readDataRelease()` outside HTTP middleware so cold requests never hit unpinned `14s+` discovery rebuilds and background jobs always resolve `/var/app/data/fact-os/active.json`.
+
 
 
 

@@ -15,7 +15,15 @@ const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 const kinds = {
   registry: ['portfolio_user_registry'],
   login: ['login_activity_users'],
-  portfolio: ['portfolio_connections','portfolio_connection_recovery','portfolio_nav_points','portfolio_report_snapshots'],
+  portfolio: [
+    'portfolio_connections',
+    'portfolio_connection_recovery',
+    'portfolio_nav_points',
+    'portfolio_report_snapshots',
+    'portfolio_analysis_snapshots',
+    'portfolio_passive_ledgers',
+    'readonly_brokers'
+  ],
   investment: ['investment_events']
 };
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');

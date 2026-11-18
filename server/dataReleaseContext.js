@@ -74,7 +74,28 @@ export function dataReleaseMiddleware(req,res,next) {
 }
 
 export function releaseRoot(group,fallback) {
-  return context.getStore()?.manifest.groups?.[group]?.root??fallback;
+  const store=context.getStore();
+  if(store)return store.manifest.groups?.[group]?.root??fallback;
+  try{return readDataRelease()?.manifest.groups?.[group]?.root??fallback;}
+  catch{return fallback;}
+}
+
+export function withActiveDataRelease(fn) {
+  let entry;
+  try{entry=readDataRelease();}catch{entry=null;}
+  if(!entry)return fn();
+  entry.readers++;
+  let done=false;
+  const finish=()=>{if(done)return;done=true;entry.readers--;dispose(entry);};
+  try{
+    const out=context.run(entry,fn);
+    if(out&&typeof out.finally==='function')return out.finally(finish);
+    finish();
+    return out;
+  }catch(error){
+    finish();
+    throw error;
+  }
 }
 
 export function dataReleaseId() {return context.getStore()?.manifest.releaseId??null;}
