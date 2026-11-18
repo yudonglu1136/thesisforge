@@ -153,8 +153,11 @@ export function companyQuarter(company, periods, quarter, asOf) {
   const oldPrior = rowAt(periods, quarter, -5);
   const priorYearQoQ = comparablePeriods(yearAgo, oldPrior, 1) ? change(revenueUsd(yearAgo), revenueUsd(oldPrior)) : null;
   const ttmCashFlow = ttm(rows, 'ncfo');
+  const providerFcfKnown = rows && rows.every(r => finite(r.fcf));
   const cashKnown = rows && rows.every(r => finite(r.capex) && (r.capex !== 0 || r.capexZeroVerified));
-  const ttmFcf = cashKnown && finite(ttmCashFlow) ? ttmCashFlow + ttm(rows, 'capex') : null;
+  const ttmFcf = providerFcfKnown
+    ? ttm(rows, 'fcf')
+    : (cashKnown && finite(ttmCashFlow) ? ttmCashFlow + ttm(rows, 'capex') : null);
   const cashQualityIssues = rows?.some(r => r.capex > 0) ? ['net_disposal_inflow_requires_bridge'] : [];
   const averageAssets = current && yearAgo && finite(current.assets) && finite(yearAgo.assets)
     && current.currency === yearAgo.currency ? (current.assets + yearAgo.assets) / 2 : null;

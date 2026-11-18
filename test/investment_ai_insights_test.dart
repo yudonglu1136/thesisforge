@@ -787,4 +787,73 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'contracting sector cells (-32%) never crown a winner logo and revenue contributions exclude negative decliners',
+    (tester) async {
+      final baseApi = AiInsightsFixtureApi();
+      final custom = _ContractingSectorFixtureApi(baseApi);
+      await mountAi(tester, custom);
+      // Contracting -32.2% sector cell must NOT display INTC StockLogo badge
+      final cell = find.byKey(
+        const ValueKey('ai-sector-cell-interconnect-2026Q2'),
+      );
+      expect(find.descendant(of: cell, matching: find.text('-32.2%')), findsOneWidget);
+      expect(find.descendant(of: cell, matching: find.byType(StockLogo)), findsNothing);
+      expect(find.descendant(of: cell, matching: find.text('Sector dip')), findsOneWidget);
+      // "Who added the most revenue?" must NOT list INTC (-$5.0B) ahead of NVDA (+$4.0B)
+      expect(find.text('+\$4.0B'), findsOneWidget);
+      expect(find.text('−\$5.0B'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+}
+
+class _ContractingSectorFixtureApi extends AiInsightsFixtureApi {
+  _ContractingSectorFixtureApi(this.inner);
+  final AiInsightsFixtureApi inner;
+
+  @override
+  Map<String, dynamic> response(String date, {String quarter = '2026Q2'}) {
+    final map = inner.response(date, quarter: quarter);
+    final hw = Map<String, dynamic>.from(
+      (map['summary'] as Map)['hardware'] as Map,
+    );
+    hw['yoyComparison'] = {
+      'contributions': [
+        {'ticker': 'INTC', 'delta': -5e9, 'contribution': -.32},
+        {'ticker': 'NVDA', 'delta': 4e9, 'contribution': .25},
+      ],
+    };
+    (map['summary'] as Map)['hardware'] = hw;
+    final sec = Map<String, dynamic>.from((map['sectors'] as List).first as Map);
+    final pts = List<Map<String, dynamic>>.from(sec['series'] as List);
+    pts[1] = {
+      'quarter': '2026Q2',
+      'yoy': -.322,
+      'qoq': -.322,
+      'yoyComparison': {
+        'priorQuarter': '2025Q2',
+        'prior': 21.6e9,
+        'current': 14.6e9,
+        'comparable': 2,
+        'leaderStatus': 'available',
+        'topContributor': {
+          'ticker': 'INTC',
+          'name': 'Intel',
+          'delta': 1e9,
+          'current': 4e9,
+          'prior': 3e9,
+          'contribution': .046,
+          'tiedCount': 1,
+          'currentEvidence': {'reportperiod': '2026-06-30', 'datekey': '2026-08-01'},
+          'priorEvidence': {'reportperiod': '2025-06-30', 'datekey': '2025-08-01'},
+        },
+      },
+      'qoqComparison': {'leaderStatus': 'no_positive_contributor'},
+    };
+    sec['series'] = pts;
+    map['sectors'] = [sec];
+    return map;
+  }
 }

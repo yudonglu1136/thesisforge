@@ -62,11 +62,21 @@ function sectorMetric(metric, index, quarter, { allowSignedBase = false } = {}) 
       && finite(comparison.prior) && comparison.prior > 0
       && finite(comparison.current) && comparison.current < 0;
     const valid = finite(comparison.growth) && comparison.prior > 0 && !flippedNegative;
-    const positive = valid ? comparison.contributions.filter(c => finite(c.contribution) && c.delta > 0)
-      .sort((a, b) => b.delta - a.delta || a.ticker.localeCompare(b.ticker)) : [];
+    // For profit and FCF (allowSignedBase), a winner must be genuinely profitable /
+    // cash-generative in the current period (current > 0) and ranked by net positive
+    // generation above breakeven (current - max(0, prior)), so a company rebounding
+    // from a massive prior write-off/burn to barely breakeven never beats real compounders.
+    const aboveBreakevenGain = c => allowSignedBase ? c.current - Math.max(0, c.prior) : c.delta;
+    const eligibleWinner = c => finite(c.delta) && c.delta > 0
+      && (!allowSignedBase || (finite(c.current) && c.current > 0 && aboveBreakevenGain(c) > 0));
+    const rankWinner = (a, b) => aboveBreakevenGain(b) - aboveBreakevenGain(a)
+      || b.delta - a.delta || a.ticker.localeCompare(b.ticker);
+    const positive = valid ? comparison.contributions
+      .filter(c => finite(c.contribution) && eligibleWinner(c))
+      .sort(rankWinner) : [];
     const leader = positive[0];
     compact.leaderStatus = !valid ? 'unavailable' : leader ? 'available' : 'no_positive_contributor';
-    compact.topContributor = leader ? { ...leader, tiedCount: positive.filter(c => c.delta === leader.delta).length,
+    compact.topContributor = leader ? { ...leader, tiedCount: positive.filter(c => aboveBreakevenGain(c) === aboveBreakevenGain(leader) && c.delta === leader.delta).length,
       currentEvidence: evidenceFor(leader.ticker, quarter), priorEvidence: evidenceFor(leader.ticker, comparison.priorQuarter) } : null;
     if (flippedNegative) {
       compact.growth = null;
@@ -75,10 +85,11 @@ function sectorMetric(metric, index, quarter, { allowSignedBase = false } = {}) 
     } else if (allowSignedBase && !valid && comparison.comparable > 0 && finite(comparison.prior) && comparison.prior < 0 && finite(comparison.current)) {
       compact.turnaroundStatus = comparison.current > 0 ? 'turnaround_positive'
         : comparison.delta > 0 ? 'loss_narrowed' : 'loss_widened';
-      const improvers = comparison.contributions.filter(c => finite(c.delta) && c.delta > 0)
-        .sort((a, b) => b.delta - a.delta || a.ticker.localeCompare(b.ticker));
+      const improvers = comparison.current > 0
+        ? comparison.contributions.filter(eligibleWinner).sort(rankWinner)
+        : [];
       const best = improvers[0];
-      compact.topImprover = best ? { ...best, tiedCount: improvers.filter(c => c.delta === best.delta).length,
+      compact.topImprover = best ? { ...best, tiedCount: improvers.filter(c => aboveBreakevenGain(c) === aboveBreakevenGain(best) && c.delta === best.delta).length,
         currentEvidence: evidenceFor(best.ticker, quarter), priorEvidence: evidenceFor(best.ticker, comparison.priorQuarter) } : null;
     }
   }

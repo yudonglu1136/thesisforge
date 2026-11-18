@@ -232,3 +232,27 @@ test('sector heatmap exposes operating profit and FCF series with signed-base tu
   assert.equal(fcf.topContributor.ticker, 'LEAD');
   assert.ok(Math.abs(fcf.topContributor.contribution - 0.8) < 1e-12);
 });
+
+test('profit and FCF sector leaders exclude cash-burning/loss-making companies and prefer above-breakeven compounders over write-off rebounds', () => {
+  const raw = artifact();
+  raw.companies = [
+    { ticker: 'NVDA', name: 'NVIDIA', group: 'hardware', sector: 'chips' },
+    { ticker: 'INTC', name: 'Intel', group: 'hardware', sector: 'chips' },
+  ];
+  // 2026Q1 -> 2026Q2 QoQ:
+  // Profit: INTC rebounded from -$9,000M write-off to +$400M (raw delta +$9,400M, above-breakeven +$400M),
+  // while NVDA grew profit from +$21,000M to +$25,000M (above-breakeven +$4,000M) -> NVDA must win!
+  // FCF: INTC narrowed cash burn from -$4,400M to -$1,500M (delta +$2,900M, still < 0!),
+  // while NVDA had a seasonal dip +$20,000M -> +$14,000M -> INTC must NOT be crowned FCF winner!
+  raw.facts = [
+    { ticker: 'NVDA', calendardate: '2026-03-31', reportperiod: '2026-03-31', datekey: '2026-05-01', currency: 'USD', revenue: 40000, revenueusd: 40000, opinc: 21000, ncfo: 21000, capex: -1000, fcf: 20000 },
+    { ticker: 'INTC', calendardate: '2026-03-31', reportperiod: '2026-03-31', datekey: '2026-05-01', currency: 'USD', revenue: 12000, revenueusd: 12000, opinc: -9000, ncfo: -1400, capex: -3000, fcf: -4400 },
+    { ticker: 'NVDA', calendardate: '2026-06-30', reportperiod: '2026-06-30', datekey: '2026-08-01', currency: 'USD', revenue: 46000, revenueusd: 46000, opinc: 25000, ncfo: 15500, capex: -1500, fcf: 14000 },
+    { ticker: 'INTC', calendardate: '2026-06-30', reportperiod: '2026-06-30', datekey: '2026-08-01', currency: 'USD', revenue: 12500, revenueusd: 12500, opinc: 400, ncfo: 1000, capex: -2500, fcf: -1500 },
+  ];
+  const view = createAiInsightsService({ now, artifactLoader: () => raw }).overview({ quarter: '2026Q2', asOf: '2026-09-22' });
+  const sec = view.sectors[0];
+  assert.equal(sec.profitSeries.at(-1).qoqComparison.topContributor.ticker, 'NVDA');
+  assert.equal(sec.fcfSeries.at(-1).qoqComparison.topContributor, null);
+  assert.equal(sec.fcfSeries.at(-1).qoqComparison.leaderStatus, 'no_positive_contributor');
+});

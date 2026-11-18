@@ -952,15 +952,25 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
           ),
           const SizedBox(height: 12),
           rankingTable(
-            filterAiInsightsCompanies(
-              companies,
-              sort: 'composite',
-            ).take(6).toList(),
+            overviewLeaderRows(),
             compact: true,
           ),
         ]),
       ],
     );
+  }
+
+  List<Map<String, dynamic>> overviewLeaderRows() {
+    final ranked = filterAiInsightsCompanies(companies, sort: 'composite');
+    final dualWinners = ranked
+        .where(
+          (r) =>
+              (nullableNumber(r['revenueYoY']) ?? 0) > 0 &&
+              (nullableNumber(r['ttmOperatingMargin']) ?? 0) > 0 &&
+              (nullableNumber(r['ttmFcfMargin']) ?? 0) > 0,
+        )
+        .toList();
+    return (dualWinners.length >= 6 ? dualWinners : ranked).take(6).toList();
   }
 
   Widget legend(List<(String, String, Color)> items) => Wrap(
@@ -1348,16 +1358,22 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
         ? asMap(comparison['topContributor'])
         : asMap(comparison['topImprover']);
     final hasLeader = value != null
-        ? (nullableNumber(leader['contribution']) ?? 0) > 0
-        : turnaround.isNotEmpty &&
-              turnaround != 'flipped_negative' &&
-              (nullableNumber(leader['delta']) ?? 0) > 0;
+        ? (nullableNumber(leader['contribution']) ?? 0) >= .0005 &&
+              (nullableNumber(leader['current']) ?? 0) > 0
+        : turnaround == 'turnaround_positive' &&
+              (nullableNumber(leader['delta']) ?? 0) > 0 &&
+              (nullableNumber(leader['current']) ?? 0) > 0;
+    final showWinnerBadge =
+        hasLeader &&
+        ((value != null && value > 0) || turnaround == 'turnaround_positive');
     final name = localized(row['label'], text(row['id']));
     final basis = metric == 'yoy' ? 'YoY' : 'QoQ';
     final empty = pendingQuarter
         ? w('0/$expectedCov filed', '0/$expectedCov 已披露')
         : comparison['leaderStatus'] == 'no_positive_contributor'
         ? w('No positive contributor', '暂无正贡献公司')
+        : (value != null && value <= 0)
+        ? w('Sector dip', '行业回落')
         : w('Not comparable', '暂无可比贡献');
     final current = asMap(leader['currentEvidence']);
     final prior = asMap(leader['priorEvidence']);
@@ -1374,8 +1390,8 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
             _ => aiInsightsPercent(value),
           };
     final cellPositive = value != null
-        ? value >= 0
-        : turnaround == 'turnaround_positive' || turnaround == 'loss_narrowed';
+        ? value > 0
+        : turnaround == 'turnaround_positive';
     final cellStrength = value != null
         ? math.min(value.abs(), 1.0)
         : (turnaround == 'turnaround_positive' ||
@@ -1400,7 +1416,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
         )
       else ...[
         'YoY ${aiInsightsPercent(point?['yoy'])} · QoQ ${aiInsightsPercent(point?['qoq'])} ${w('(unadjusted)', '（未季调）')}',
-        if (sectorLens != 'revenue' && hasDollarBridge && !hasLeader)
+        if (hasDollarBridge && !showWinnerBadge)
           w(
             'Sector $lensEn ($basis): ${aiInsightsAmount(comparison['prior'])} → ${aiInsightsAmount(comparison['current'])} (${comparison['comparable']} comparable)',
             '行业$lensZh ($basis)：${aiInsightsAmount(comparison['prior'])} → ${aiInsightsAmount(comparison['current'])}（${comparison['comparable']} 家可比）',
@@ -1408,23 +1424,27 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
       ],
       if (hasLeader) ...[
         '${text(leader['ticker'])} · ${text(leader['name'])}',
-        if (value != null) ...[
+        if (value != null && value <= 0)
+          w(
+            'Offsetting positive mover (sector contracted overall): ${pp(leader['contribution'])}',
+            '逆势正增长公司（行业整体回落）：${pp(leader['contribution'])}',
+          )
+        else if (value != null)
           w(
             'Largest positive $basis contribution: ${pp(leader['contribution'])}',
             '$basis 最大正贡献：${pp(leader['contribution'])}',
-          ),
-          '${aiInsightsAmount(leader['prior'])} → ${aiInsightsAmount(leader['current'])}',
-          w(
-            '$lensEn increase ${aiInsightsAmount(leader['delta'])} ÷ sector base ${aiInsightsAmount(comparison['prior'])}',
-            '$lensZh增量 ${aiInsightsAmount(leader['delta'])} ÷ 行业基期 ${aiInsightsAmount(comparison['prior'])}',
-          ),
-        ] else ...[
+          )
+        else
           w(
             'Largest $basis dollar improvement: +${aiInsightsAmount(leader['delta'])}',
             '$basis 最大金额改善：+${aiInsightsAmount(leader['delta'])}',
           ),
-          '${aiInsightsAmount(leader['prior'])} → ${aiInsightsAmount(leader['current'])}',
-        ],
+        '${aiInsightsAmount(leader['prior'])} → ${aiInsightsAmount(leader['current'])}',
+        if (value != null)
+          w(
+            '$lensEn increase ${aiInsightsAmount(leader['delta'])} ÷ sector base ${aiInsightsAmount(comparison['prior'])}',
+            '$lensZh增量 ${aiInsightsAmount(leader['delta'])} ÷ 行业基期 ${aiInsightsAmount(comparison['prior'])}',
+          ),
         '${text(comparison['priorQuarter'])} → ${text(period['quarter'])} · ${comparison['comparable']} ${w('comparable companies', '家可比公司')}',
         w(
           'Report ends: ${text(prior['reportperiod'], '—')} → ${text(current['reportperiod'], '—')}',
@@ -1439,7 +1459,9 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
             '$ties tied leaders; first ticker shown alphabetically.',
             '$ties 家并列第一，按代码顺序展示。',
           ),
-      ] else if (turnaround == 'loss_widened' || turnaround == 'flipped_negative')
+      ] else if (turnaround == 'loss_widened' ||
+          turnaround == 'loss_narrowed' ||
+          turnaround == 'flipped_negative')
         '${text(comparison['priorQuarter'])} → ${text(period['quarter'])} · ${comparison['comparable']} ${w('comparable companies', '家可比公司')}'
       else if (!pendingQuarter)
         empty,
@@ -1471,7 +1493,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                 sort = sectorLens == 'revenue'
                     ? (metric == 'yoy' ? 'revenueYoY' : 'revenueQoQ')
                     : 'quality';
-                if (hasLeader) selectedTicker = text(leader['ticker']);
+                if (showWinnerBadge) selectedTicker = text(leader['ticker']);
                 if (period['quarter'] != quarter) {
                   setQuarter(text(period['quarter']));
                 } else {
@@ -1496,7 +1518,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    if (hasLeader) ...[
+                    if (showWinnerBadge) ...[
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -1526,8 +1548,9 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                         ),
                       ),
                     ] else if (!pendingQuarter &&
-                        (turnaround.isNotEmpty ||
-                            (sectorLens != 'revenue' && hasDollarBridge))) ...[
+                        comparison['leaderStatus'] !=
+                            'no_positive_contributor' &&
+                        (turnaround.isNotEmpty || hasDollarBridge)) ...[
                       FittedBox(
                         fit: BoxFit.scaleDown,
                         child: Text(
@@ -1539,7 +1562,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                       if (turnaround.isEmpty) ...[
                         const SizedBox(height: 3),
                         Text(
-                          w('Seasonal / dip', '单季回落'),
+                          w('Sector dip', '行业回落'),
                           textAlign: TextAlign.center,
                           style: style(9.5, false, p.muted),
                         ),
@@ -1560,14 +1583,18 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
     );
   }
 
-  List<Map<String, dynamic>> contributionRows(String id) {
+  List<Map<String, dynamic>> allContributionRows(String id) {
     final summary = asMap(asMap(data?['summary'])[id]);
-    final rows = [
-      ...asList(asMap(summary['${metric}Comparison'])['contributions']),
-    ];
+    return [...asList(asMap(summary['${metric}Comparison'])['contributions'])];
+  }
+
+  List<Map<String, dynamic>> contributionRows(String id) {
+    final rows = allContributionRows(id)
+        .where((row) => (nullableNumber(row['delta']) ?? 0) > 0)
+        .toList();
     rows.sort(
-      (a, b) => (nullableNumber(b['delta']) ?? 0).abs().compareTo(
-        (nullableNumber(a['delta']) ?? 0).abs(),
+      (a, b) => (nullableNumber(b['delta']) ?? 0).compareTo(
+        nullableNumber(a['delta']) ?? 0,
       ),
     );
     return rows;
@@ -1578,14 +1605,16 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
       'Who added the most revenue?',
       '谁贡献了最多收入增量？',
       hintEn:
-          '${metric == 'yoy' ? 'YoY' : 'QoQ'} dollar changes on comparable company pairs',
-      hintZh: '${metric == 'yoy' ? 'YoY' : 'QoQ'} 可比公司美元收入增量',
+          '${metric == 'yoy' ? 'YoY' : 'QoQ'} positive dollar additions on comparable company pairs',
+      hintZh: '${metric == 'yoy' ? 'YoY' : 'QoQ'} 可比公司美元收入正增量排行',
     ),
     for (final id in ['hardware', 'software']) ...[
       Text(seriesLabel(id), style: style(12, true, seriesColor(id))),
       const SizedBox(height: 8),
-      if (contributionRows(id).isEmpty)
-        caption('No comparable pairs available.', '暂无可比公司对。'),
+      if (allContributionRows(id).isEmpty)
+        caption('No comparable pairs available.', '暂无可比公司对。')
+      else if (contributionRows(id).isEmpty)
+        caption('No positive revenue additions in this period.', '本期无收入正增长公司。'),
       for (final row in contributionRows(id).take(4))
         Padding(
           padding: const EdgeInsets.only(bottom: 10),
@@ -1597,7 +1626,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
               ),
               Expanded(
                 child: Text(
-                  aiInsightsAmount(row['delta']),
+                  '+${aiInsightsAmount(row['delta'])}',
                   style: style(13, true),
                 ),
               ),
@@ -1611,8 +1640,8 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
       const SizedBox(height: 10),
     ],
     caption(
-      'Percentage-point contributions sum to the basket growth rate. Negative contributors are retained.',
-      '增速贡献以百分点显示，合计等于样本增速；保留负贡献。',
+      'Shows the largest positive dollar revenue contributors on matched pairs (percentage-point contribution to basket growth on the right).',
+      '展示可比口径下美元收入正增量最大的前四家公司（右侧为对样本增速的百分点贡献）。',
     ),
   ]);
 
