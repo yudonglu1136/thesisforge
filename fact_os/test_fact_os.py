@@ -149,4 +149,29 @@ class FactOSTest(unittest.TestCase):
         try:self.assertEqual(r.resolve_security('ABC')['security_id'],'sharadar:security:123')
         finally:r.close()
 
+    def test_short_bulk_archive_merges_and_appends_without_replacing_full_history(self):
+        import zipfile
+        # Establish full history spanning 2000..2024
+        self.put('stocks',[
+            ['ABC','2000-01-03',5,4,20,'2024-01-01'],
+            ['ABC','2024-01-02',10,9,10,'2024-01-02'],
+        ],scope='verified_full_bulk')
+        # Simulate a short bulk ZIP containing only 2024 revision + 2026 new row
+        short_zip=self.root/'stocks-short-bulk.zip'
+        with zipfile.ZipFile(short_zip,'w',compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('stocks.csv',
+                'ticker,date,close,closeadj,closeunadj,lastupdated\n'
+                'ABC,2024-01-02,10,8.5,10,2026-11-10\n'
+                'ABC,2026-11-10,15,15,15,2026-11-10\n')
+        res=self.store.ingest('stocks',short_zip,scope='incremental')
+        self.assertEqual(res['local_rows'],3)
+        self.assertEqual(res['min_date'],'2000-01-03')
+        self.assertEqual(res['max_date'],'2026-11-10')
+        r=FactRepository(self.store.root)
+        try:
+            self.assertEqual(r.get_price('ABC','2000-01-03',PriceType.RAW_CLOSE)['value'],20)
+            self.assertEqual(r.get_price('ABC','2024-01-02',PriceType.TOTAL_RETURN_ADJUSTED_CLOSE)['value'],8.5)
+            self.assertEqual(r.get_price('ABC','2026-11-10',PriceType.SPLIT_ADJUSTED_CLOSE)['value'],15)
+        finally:r.close()
+
 if __name__=='__main__':unittest.main()

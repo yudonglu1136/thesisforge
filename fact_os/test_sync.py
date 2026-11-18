@@ -526,5 +526,34 @@ class SyncTest(unittest.TestCase):
         self.assertFalse(other.status()[0]['backfill_complete'])
         other.ingest('stocks',self.seed,scope='verified_full_bulk')
         self.assertTrue(other.status()[0]['backfill_complete'])
+    def test_bulk_sync_falls_back_to_five_year_tier_and_merges_without_truncating_full_history(self):
+        full_manifest=self.store.root/'manifests/stocks-full-archive.json'
+        full_manifest.write_text('{"history":"full","preserved":true}')
+        short_csv='ticker,date,close,closeadj,closeunadj,lastupdated\nABC,2026-11-10,9,9,9,2026-11-10\n'
+        memory=io.BytesIO()
+        with zipfile.ZipFile(memory,'w') as z:z.writestr('stocks.csv',short_csv)
+        data=memory.getvalue();seen=[];client=httpx.Client
+        def handler(req):
+            seen.append(req)
+            if req.url.host=='api.sharadar.com':
+                years=req.url.params.get('years')
+                if years in ('full','10'):
+                    return httpx.Response(403)
+                self.assertEqual(years,'5')
+                return httpx.Response(302,headers={'location':'https://download.example/stocks-5y.zip'})
+            self.assertNotIn('x-api-key',req.headers)
+            if req.headers.get('range')=='bytes=0-0':
+                return httpx.Response(206,headers={'content-range':f'bytes 0-0/{len(data)}','etag':'5y'},content=data[:1])
+            return httpx.Response(200,headers={'etag':'5y'},content=data)
+        transport=httpx.MockTransport(handler)
+        self.sync.http.close();self.sync.http=client(transport=transport,headers={'x-api-key':'private-test-credential'})
+        with patch('fact_os.sync.httpx.Client',side_effect=lambda **kwargs:client(transport=transport,**kwargs)), \
+             patch('fact_os.capacity.shutil.disk_usage',return_value=SimpleNamespace(free=16*1024**3)):
+            result=self.sync.bulk_sync('stocks')
+        self.assertEqual(result['bulk_window'],'5y')
+        self.assertEqual(result['local_rows'],2)
+        self.assertEqual(result['min_date'],'2000-01-03')
+        self.assertEqual(result['max_date'],'2026-11-10')
+        self.assertEqual(json.loads(full_manifest.read_text()),{'history':'full','preserved':True})
 
 if __name__=='__main__':unittest.main()

@@ -88,11 +88,38 @@ def validate_live_ack(body,installed,scope='all'):
     return True
 
 
+def post_install_maintenance(root, lease_root, s3, bucket, *, keep_releases=2):
+    """Best-effort post-ACK eviction of superseded API releases beyond active+rollback."""
+    try:
+        import importlib.util
+        prune_path = Path(__file__).with_name('prune-public-api-candidate.py')
+        spec = importlib.util.spec_from_file_location('fact_os_prune_api', prune_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        report = mod.prune_superseded_releases(
+            root, lease_root, s3, bucket, keep_releases=keep_releases, apply=True
+        )
+        return {
+            'status': report['status'],
+            'keepReleases': report.get('keepReleases', keep_releases),
+            'deletedFiles': report.get('deletedFiles', 0),
+            'prunedGenerationsCount': len(report.get('prunedGenerations', ())),
+            'deferredGenerationsCount': len(report.get('deferredGenerations', ())),
+            'canonicalDedupReplacedPaths': report.get('canonicalDedupReplacedPaths', 0),
+            'reclaimedBytes': report.get('reclaimedBytes', 0),
+            'freeBytesAfter': report.get('freeBytesAfter', 0),
+        }
+    except Exception as error:
+        return {'status': 'skipped_on_error', 'errorType': type(error).__name__}
+
+
 def main():
     if os.geteuid()!=0:raise ValueError('root_installer_required')
     parser=argparse.ArgumentParser();parser.add_argument('--bucket',required=True);parser.add_argument('--candidate-key',required=True)
     parser.add_argument('--expected-release',required=True,help='Exact previous root release id, or none for first install')
     parser.add_argument('--scope',choices=('all','research','public-daily'),default='all')
+    parser.add_argument('--keep-releases',type=int,default=2,help='Number of verified releases (active + rollback) to keep locally')
+    parser.add_argument('--skip-post-prune',action='store_true',help='Skip post-ACK rolling release eviction')
     args=parser.parse_args()
     import boto3
     s3=boto3.client('s3')
@@ -159,6 +186,8 @@ def main():
                    {'fundamentals':body['fundamentals'],'publicAnalysis':body['publicAnalysis']})}
     result=install(s3,args.bucket,candidate,root,validate_group=validate,probe=probe,expected_release=expected,
                    active_name='research-active.json' if args.scope=='research' else 'active.json')
+    if args.scope!='research' and not args.skip_post_prune:
+        result={**result,'maintenance':post_install_maintenance(root,lease,s3,args.bucket,keep_releases=args.keep_releases)}
     print(json.dumps(result))
 
 

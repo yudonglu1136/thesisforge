@@ -11,7 +11,7 @@ def main():
     p=argparse.ArgumentParser(prog='fact-os')
     p.add_argument('--root',default=os.environ.get('FACT_OS_ROOT',str(Path(__file__).resolve().parents[1]/'data/fact_os')))
     p.add_argument('--env-file',default=os.environ.get('FACT_OS_ENV_FILE',str(Path(__file__).resolve().parents[1]/'.env.local')))
-    p.add_argument('command',choices=['inspect','backfill','sync','status','import-archive','gc','ai-insights','pipeline'])
+    p.add_argument('command',choices=['inspect','backfill','sync','bulk-sync','status','import-archive','gc','ai-insights','pipeline'])
     p.add_argument('--pipeline-action',choices=['plan','run','resume','status','reconcile'],default='run')
     p.add_argument('--profile',default='local')
     p.add_argument('--scheduled-for')
@@ -19,6 +19,7 @@ def main():
     p.add_argument('--archive')
     p.add_argument('--quarters',type=int,default=3)
     p.add_argument('--apply',action='store_true',help='Apply safe derived-generation garbage collection only')
+    p.add_argument('--prune-pipeline',action='store_true',help='Also retire expired pipeline snapshot-pins, snapshot trees, and derived caches')
     p.add_argument('--retention-days',type=int,default=7)
     args=p.parse_args()
     store=Store(args.root)
@@ -31,8 +32,9 @@ def main():
         from .ai_insights import build_ai_insights
         emit(build_ai_insights(store.root));return 0
     if args.command=='gc':
-        from .maintenance import collect_unreferenced
-        emit(collect_unreferenced(store,retention_days=args.retention_days,apply=args.apply));return 0
+        from .maintenance import collect_unreferenced, prune_writer_retention
+        runner=prune_writer_retention if args.prune_pipeline else collect_unreferenced
+        emit(runner(store,retention_days=args.retention_days,apply=args.apply));return 0
     if args.command=='import-archive':
         if not args.archive or len(args.tables)!=1: p.error('import requires --archive and exactly one --tables value')
         from .pipeline.cli import ingestion_lock,drain
@@ -40,7 +42,7 @@ def main():
             emit(store.ingest(args.tables[0],args.archive))
             return drain(store,args,emit)
     from .sync import Synchronizer,load_key
-    sync=Synchronizer(store,load_key(args.env_file))
+    sync=Synchronizer(store,load_key(args.env_file),progress=emit if args.command=='bulk-sync' else None)
     errors=0
     failed_sources=[]
     try:
@@ -55,6 +57,8 @@ def main():
                         if not states.get(table,{}).get('backfill_complete'):
                             result=sync.inspect([table]);emit(result)
                         emit(sync.backfill(table))
+                    elif args.command=='bulk-sync':
+                        emit(sync.bulk_sync(table))
                     else: emit(sync.sync(table,quarters=args.quarters))
                 except Exception as e:
                     # Network exceptions can embed signed URLs. Only our own

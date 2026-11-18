@@ -285,3 +285,38 @@ class PublicationTest(unittest.TestCase):
         stage.mkdir(parents=True);(stage/'source.sqlite').symlink_to(self.root/'source.sqlite')
         with self.assertRaisesRegex(ValueError,'install_path_escape'):
             install(self.s3,'bucket',candidate,self.root/'symlink',validate_group=lambda *args:None,probe=lambda *args:{})
+
+    def test_rollback_active_pointer_and_installed_candidate_descriptor_lifecycle(self):
+        first=self.candidate();target=self.root/'installed-rollback'
+        install(self.s3,'bucket',first,target,validate_group=lambda *args:None,
+                probe=lambda c,active:self.ack(c))
+        self.assertFalse((target/'rollback-active.json').exists())
+        self.assertTrue((target/'audit/installed-candidates'/(first['releaseId']+'.json')).is_file())
+
+        # Transition to second release records first release as rollback-active.json (0o444).
+        self.receipt['groups']['institutional_13f']['generationId']='b'*64
+        second=self.candidate()
+        install(self.s3,'bucket',second,target,validate_group=lambda *args:None,
+                probe=lambda c,active:self.ack(c),expected_release=first['releaseId'])
+        rollback_path=target/'rollback-active.json'
+        self.assertTrue(rollback_path.is_file())
+        self.assertEqual(rollback_path.stat().st_mode & 0o777,0o444)
+        self.assertEqual(json.loads(rollback_path.read_text())['releaseId'],first['releaseId'])
+        self.assertTrue((target/'audit/installed-candidates'/(second['releaseId']+'.json')).is_file())
+
+        # Idempotent reinstall of second release must NOT overwrite rollback-active.json with second.
+        install(self.s3,'bucket',second,target,validate_group=lambda *args:None,
+                probe=lambda c,active:self.ack(c),expected_release=second['releaseId'])
+        self.assertEqual(json.loads(rollback_path.read_text())['releaseId'],first['releaseId'])
+
+        # Failed third install restores active.json to second and leaves rollback-active.json at first.
+        self.receipt['groups']['institutional_13f']['generationId']='c'*64
+        third=self.candidate()
+        def fail_live(c,active):
+            if active:raise ValueError('third_ack_failed')
+            return {}
+        with self.assertRaisesRegex(ValueError,'third_ack_failed'):
+            install(self.s3,'bucket',third,target,validate_group=lambda *args:None,
+                    probe=fail_live,expected_release=second['releaseId'])
+        self.assertEqual(json.loads((target/'active.json').read_text())['releaseId'],second['releaseId'])
+        self.assertEqual(json.loads(rollback_path.read_text())['releaseId'],first['releaseId'])

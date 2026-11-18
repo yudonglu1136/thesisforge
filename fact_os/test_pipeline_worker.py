@@ -85,6 +85,13 @@ class WorkerBoundaryTest(unittest.TestCase):
                 aws_worker.sync_source(sync,'funds',lambda v:None)
             self.assertEqual(sync.sync.call_count,expected_calls)
 
+    def test_bulk_sync_mode_uses_bulk_sync_for_source_fetch(self):
+        sync=MagicMock();sync.bulk_sync.return_value={'status':'ingested','bulk_window':'5y'}
+        result=aws_worker.sync_source(sync,'funds',lambda v:None,bulk=True)
+        self.assertEqual(result['bulk_window'],'5y')
+        sync.bulk_sync.assert_called_once_with('funds')
+        sync.sync.assert_not_called()
+
     def test_data_only_syncs_all_tables_and_stages_without_api_install(self):
         self.run_daily_fixture()
 
@@ -203,6 +210,36 @@ class WorkerBoundaryTest(unittest.TestCase):
             self.assertEqual(saved['actualApiActivation'],'not_attempted')
             self.assertNotIn('synthetic-fixture-not-a-real-key',output.getvalue())
             self.assertNotIn('synthetic-fixture-not-a-real-key',json.dumps(saved))
+
+    def test_retention_maintenance_is_fault_isolated_and_runs_after_publish(self):
+        events=[]
+        store=MagicMock()
+        with patch('fact_os.maintenance.prune_writer_retention',side_effect=RuntimeError('disk_stat_glitch')):
+            summary=aws_worker.run_retention_maintenance(store,events.append)
+        self.assertEqual(summary,{'status':'skipped_on_error','errorType':'RuntimeError'})
+        self.assertEqual(events,[{'phase':'retention_maintenance','status':'skipped_on_error','errorType':'RuntimeError'}])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);(root/'audit/pipeline').mkdir(parents=True)
+            from .store import Store
+            store=MagicMock(root=root)
+            receipt,candidate=DataReadyBoundaryTest().fixture()
+            s3=MagicMock();ssm=MagicMock();ledger=MagicMock()
+            ssm.send_command.return_value={'Command':{'CommandId':'cmd-1'}}
+            ack={'status':'verified','releaseId':candidate['releaseId'],'groups':{k:v['generationId'] for k,v in candidate['groups'].items()}}
+            ssm.get_command_invocation.return_value={'Status':'Success','StandardOutputContent':json.dumps(ack)+'\n'}
+            emitted=[]
+            with patch.dict(os.environ,{'FACT_OS_API_INSTANCE_ID':'i-synthetic','FACT_OS_INSTALL_DOCUMENT':'doc','FACT_OS_INSTALL_DOCUMENT_VERSION':'1'}), \
+                 patch.object(aws_worker,'Store',Store), \
+                 patch.object(aws_worker,'load_active',return_value=(None,None)), \
+                 patch.object(aws_worker,'prepare',return_value=(candidate,{'status':'uploaded'})), \
+                 patch.object(aws_worker,'activate',return_value={'status':'activated'}), \
+                 patch.object(aws_worker.time,'sleep'), \
+                 patch('fact_os.maintenance.prune_writer_retention',side_effect=ValueError('corrupt_pin')) as prune_mock:
+                code=aws_worker.publish(store,receipt,s3,ssm,'synthetic-bucket',emitted.append,ledger)
+            self.assertEqual(code,0)
+            prune_mock.assert_called_once_with(store,retention_days=7,apply=True)
+            self.assertEqual(emitted[-1],{'phase':'retention_maintenance','status':'skipped_on_error','errorType':'ValueError'})
 
 
 if __name__=='__main__':unittest.main()

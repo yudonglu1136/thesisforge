@@ -264,6 +264,85 @@ class Synchronizer:
         return result
 
     @serialized_job
+    def bulk_sync(self, table):
+        """Download bulk ZIP and locally merge/append by natural key without truncating local full history."""
+        state=next((s for s in self.store.status() if s['dataset']==table),None)
+        has_full=bool(state and state['backfill_complete'])
+        url=''
+        bulk_window='full'
+        for years_opt in ('full','10','5'):
+            with self.http.stream('GET',BASE+'/data/'+table,params={'years':years_opt}) as response:
+                if response.status_code in (301,302,303,307,308):
+                    url=response.headers.get('location','')
+                    bulk_window='full' if years_opt=='full' else f'{years_opt}y'
+                    break
+                if response.status_code in (401,403) and has_full and years_opt!='5':
+                    # Tier limited to shorter bulk window (e.g. 5y): merge/append locally
+                    # onto existing full-history partitions without replacing old years.
+                    continue
+                raise UpstreamError(f'bulk archive unavailable (years={years_opt}): HTTP {response.status_code}')
+        if not url.startswith('https://'):
+            raise UpstreamError('invalid bulk redirect')
+        if not has_full and bulk_window!='full':
+            raise UpstreamError('validated full backfill required before short bulk merge')
+        target=self.store.root/'staging'/f'{table}-bulk.zip.part'
+        meta=self.store.root/'staging'/f'{table}-bulk.resume.json'
+        with httpx.Client(timeout=120,follow_redirects=True,limits=httpx.Limits(max_connections=16)) as download:
+            with download.stream('GET',url,headers={'Range':'bytes=0-0'}) as probe:
+                if probe.status_code not in (200,206):
+                    raise UpstreamError(f'bulk metadata HTTP {probe.status_code}')
+                match=re.fullmatch(r'bytes 0-0/(\d+)',probe.headers.get('content-range',''))
+                if probe.status_code==206 and not match:
+                    raise UpstreamError('invalid bulk metadata range')
+                identity={'etag':probe.headers.get('etag'),
+                    'length':match[1] if match else probe.headers.get('content-length')}
+                next(probe.iter_bytes(chunk_size=1),b'')
+            length=int(identity['length'] or 0)
+            from .capacity import capacity_budget
+            saved=json.loads(meta.read_text()) if meta.exists() else None
+            offset=target.stat().st_size if target.exists() and identity['etag'] and saved==identity else 0
+            if length<=0 or offset>length or capacity_budget(self.store.root,length-offset)['status']=='blocked':
+                raise UpstreamError('bulk length unavailable or insufficient disk headroom')
+            if self.progress:
+                self.progress({'phase':'bulk_download_start','dataset':table,'bytes':length,
+                    'resumedOffset':offset,'bulkWindow':bulk_window})
+            meta.write_text(json.dumps(identity))
+            if length>=32*1024*1024 and match:
+                self._segmented_download(download,url,target,identity,offset,length)
+            elif offset<length:
+                with download.stream('GET',url,headers={'Range':f'bytes={offset}-'} if offset else {}) as stream:
+                    if stream.status_code not in (200,206):
+                        raise UpstreamError(f'bulk transfer HTTP {stream.status_code}')
+                    if offset and stream.status_code==200:
+                        offset=0
+                    elif offset and not stream.headers.get('content-range','').startswith(f'bytes {offset}-'):
+                        raise UpstreamError('incorrect resumed download range')
+                    with target.open('ab' if offset else 'wb') as file:
+                        for chunk in stream.iter_bytes(1024*1024):
+                            file.write(chunk)
+                        file.flush();os.fsync(file.fileno())
+        if target.stat().st_size!=length or not zipfile.is_zipfile(target):
+            raise UpstreamError('incomplete or invalid bulk archive')
+        meta.unlink(missing_ok=True)
+        digest=checksum(target)
+        # Never overwrite {table}-full-archive.json during bulk_sync, and avoid
+        # byte-identical duplicates if the archive matches an existing raw ZIP.
+        existing_full=self.store.root/'raw'/f'{table}-{digest}.zip'
+        canonical=existing_full if existing_full.exists() else (self.store.root/'raw'/f'{table}-sync-{digest}.zip')
+        if canonical.exists():
+            target.unlink()
+        else:
+            target.replace(canonical)
+        if self.progress:
+            self.progress({'phase':'bulk_ingest_start','dataset':table,'bytes':length,
+                'sha256Prefix':digest[:16],'bulkWindow':bulk_window})
+        scope='incremental' if has_full else 'verified_full_bulk'
+        result=self.store.ingest(table,canonical,scope=scope)
+        result['bulk_window']=bulk_window
+        result['bytes']=length
+        return result
+
+    @serialized_job
     @disposable_sync_stage
     def sync(self,table,quarters=3,overlap_days=14):
         states={s['dataset']:s for s in self.store.status()}

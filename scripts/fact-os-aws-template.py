@@ -58,7 +58,8 @@ serial="$(echo "$volume" | tr -d '-')"
 device="/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$serial"
 for attempt in $(seq 1 120); do test -b "$device" && break; sleep 5; done
 test -b "$device"
-if ! blkid "$device"; then mkfs.ext4 "$device"; fi
+if ! blkid "$device"; then mkfs.ext4 -m 1 "$device"; fi
+tune2fs -m 1 "$device"
 uuid="$(blkid -s UUID -o value "$device")"
 test -n "$uuid"
 printf 'UUID=%s /var/lib/fact-os ext4 defaults,nofail 0 2\n' "$uuid" >> /etc/fstab

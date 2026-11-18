@@ -19,15 +19,29 @@ from .registry import DATA_DAILY_GROUPS
 
 DATA_READY_KEY='fact-os/data-ready/latest.json'
 
-def sync_source(sync,table,emit):
-    """Retry only an invalidated snapshot once under the existing writer lock."""
+
+def run_retention_maintenance(store,emit,*,retention_days=7):
+    """Best-effort post-publication Writer retention; never fails a verified release."""
     try:
-        return sync.sync(table)
+        from ..maintenance import prune_writer_retention
+        report=prune_writer_retention(store,retention_days=retention_days,apply=True)
+        emit({'phase':'retention_maintenance',**{k:v for k,v in report.items() if k!='candidates'}})
+        return report
+    except Exception as error:
+        summary={'status':'skipped_on_error','errorType':type(error).__name__}
+        emit({'phase':'retention_maintenance',**summary})
+        return summary
+
+def sync_source(sync,table,emit,*,bulk=False):
+    """Retry only an invalidated snapshot once under the existing writer lock."""
+    fetch=sync.bulk_sync if bulk else sync.sync
+    try:
+        return fetch(table)
     except UpstreamSnapshotChanged:
         emit({'phase':'source_retry','table':table,'attempt':2,
               'reason':'upstream_snapshot_changed','delaySeconds':30})
         time.sleep(30)
-        return sync.sync(table)
+        return fetch(table)
 
 
 def load_data_ready(s3,bucket):
@@ -72,6 +86,7 @@ def main():
     modes.add_argument('--data-only',action='store_true',help='Daily 14-table sync and automatic derived artifacts; defer reviewed models/backtests and do not activate API')
     parser.add_argument('--activate-daily',action='store_true',help='With --data-only: also require verified API installation and live ACK; enable only after the production activation gates pass')
     parser.add_argument('--rule-portfolios',action='store_true',help='Include the reviewed three-universe public curve/ledger bundle and quarterly selections')
+    parser.add_argument('--bulk-sync',action='store_true',help='Use bulk ZIP download + local natural-key merge/append instead of paginated REST queries')
     args=parser.parse_args()
     if args.activate_daily and not args.data_only:
         parser.error('--activate-daily requires --data-only')
@@ -122,10 +137,11 @@ def main():
         try:
             with sync.job_lock():
                 store.recover_catalog()
+                use_bulk=args.bulk_sync or os.environ.get('FACT_OS_AWS_SYNC_MODE')=='bulk'
                 for table in TABLES:
                     if check_capacity('source:'+table)['status']=='blocked':return 2
                     source_fetch_started=True
-                    try:emit({'phase':'source','table':table,**sync_source(sync,table,emit)})
+                    try:emit({'phase':'source','table':table,**sync_source(sync,table,emit,bulk=use_bulk)})
                     except Exception as error:
                         code=str(error) if isinstance(error,UpstreamError) else type(error).__name__
                         store.record_error(table,code);failed.append(table)
@@ -184,7 +200,10 @@ def main():
                   'candidateReleaseId':candidate['releaseId'],
                   **({'dataSyncStatus':'verified','actualApiActivation':'not_requested'} if args.data_only else {})})
             if not args.activate_daily:
-                return 0 if args.data_only else 2
+                if args.data_only:
+                    run_retention_maintenance(store,emit)
+                    return 0
+                return 2
             # Data readiness is retained separately if installation fails. This
             # opt-in uses exactly the same fenced installer and live ACK as a
             # reviewed publication; it never turns staging into serving success.
@@ -231,7 +250,10 @@ def publish(store,receipt,s3,ssm,bucket,emit,ledger):
         s3.put_object(Bucket=bucket,Key='fact-os/runs/'+receipt['runId']+'.json',Body=encode(final),ServerSideEncryption='AES256')
         emit({'phase':'final','runId':receipt['runId'],'status':receipt['status'],'publication':result})
         # Scheduling/transport success cannot hide incomplete required consumers.
-        return 0 if receipt['status'] in ('succeeded','no_change') else 2
+        if receipt['status'] in ('succeeded','no_change'):
+            run_retention_maintenance(store,emit)
+            return 0
+        return 2
 
 
 if __name__=='__main__':

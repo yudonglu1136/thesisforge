@@ -252,7 +252,7 @@ class Store:
                 buckets = [r[0] for r in db.execute(f'SELECT DISTINCT {bucket_expr} FROM incoming ORDER BY 1').fetchall()]
                 changed_partitions = 0
                 changed_buckets = []
-                previous_state = db.execute('SELECT backfill_complete FROM sync_state WHERE dataset=?',[table]).fetchone()
+                previous_state = db.execute('SELECT backfill_complete, min_date, row_count FROM sync_state WHERE dataset=?',[table]).fetchone()
                 db.execute('BEGIN TRANSACTION')
                 try:
                     for bucket in buckets:
@@ -304,6 +304,11 @@ class Store:
                     dates = f'min({ident(date_col)}),max({ident(date_col)})' if date_col else 'NULL,NULL'
                     watermark = 'max(lastupdated)' if 'lastupdated' in found else 'NULL'
                     lo,hi,water,rows = db.execute(f'SELECT {dates},{watermark},count(*) FROM {ident(table)}').fetchone()
+                    if previous_state and previous_state[2] is not None and rows < previous_state[2]:
+                        raise ValueError('local history shrink rejected; incoming data must merge/append')
+                    if (previous_state and previous_state[1] is not None and 'date' in contract.keys
+                            and (lo is None or lo > previous_state[1])):
+                        raise ValueError('local history min_date truncation rejected; full history preserved')
                     db.execute('''INSERT INTO sync_state VALUES (?,?,?,?,?,?,NULL,?) ON CONFLICT(dataset) DO UPDATE SET
                         last_success=excluded.last_success,watermark=excluded.watermark,min_date=excluded.min_date,
                         max_date=excluded.max_date,row_count=excluded.row_count,last_error=NULL,

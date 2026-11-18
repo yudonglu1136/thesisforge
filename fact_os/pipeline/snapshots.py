@@ -2,7 +2,7 @@
 import json
 import os
 from pathlib import Path
-from ..store import checksum, Store
+from ..store import checksum, Store, now
 from .contracts import InputSnapshot, digest, encode, record
 
 
@@ -61,7 +61,13 @@ def freeze(store, *, code_version, configs=None, external=None):
         Store._atomic_if_changed(root/'snapshot.json',encode(record(snapshot)).decode())
         pins=store.root/'sync/snapshot-pins'
         pins.mkdir(exist_ok=True)
-        Store._atomic_if_changed(pins/(snapshot_id+'.json'),encode({'snapshotId':snapshot_id,
+        pin_file=pins/(snapshot_id+'.json')
+        existing_created=None
+        if pin_file.is_file():
+            try:existing_created=json.loads(pin_file.read_text()).get('createdAt')
+            except Exception:existing_created=None
+        Store._atomic_if_changed(pin_file,encode({'snapshotId':snapshot_id,
+            'createdAt':existing_created or now(),
             'reason':'pipeline-replay-and-rollback','paths':[p['path'] for i in inputs.values() for p in i['partitions']]}).decode())
     return snapshot
 

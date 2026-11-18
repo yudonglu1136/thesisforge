@@ -164,4 +164,14 @@ def install(s3,bucket,candidate,root,*,validate_group,probe,expected_release=Non
             if prior is not None: Store._atomic_if_changed(active,prior)
             else: active.unlink(missing_ok=True)
             raise
+        if active_name=='active.json' and prior is not None and (previous or {}).get('releaseId')!=candidate['releaseId']:
+            rollback=root/'rollback-active.json'
+            Store._atomic_if_changed(rollback,prior);rollback.chmod(0o444)
+        rel_id=candidate.get('releaseId','')
+        if len(rel_id)==64 and all(c in 'abcdef0123456789' for c in rel_id):
+            catalog_dir=root/'audit/installed-candidates'
+            catalog_dir.mkdir(parents=True,exist_ok=True)
+            Store._atomic_if_changed(catalog_dir/(rel_id+'.json'),encode(candidate).decode())
+            cached=sorted(catalog_dir.glob('*.json'),key=lambda p:p.stat().st_mtime,reverse=True)
+            for stale in cached[64:]:stale.unlink(missing_ok=True)
         return acknowledgement

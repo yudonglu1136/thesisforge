@@ -855,6 +855,16 @@ Chinese and English are release-critical product modes, not best-effort labels.
     unified Guru + 13F `Institutional holdings` KPIs, 3-mode `Valuation workspace`
     (`Published model` / `My DCF` / `Reverse DCF`), and full-width 2-column
     `Research records` thesis composer.
+- **Fact OS Sharadar Sync & Rolling AWS Retention (`fact_os/` & `scripts/fact-os-aws-sync.py`):**
+  - Keep `npm run fact-os:sync` (`bash bin/fact-os bulk-sync --profile aws-data-daily`),
+    `npm run fact-os:aws-sync` (`.venv-fact-os/bin/python scripts/fact-os-aws-sync.py sync --activate`),
+    `post_install_maintenance` in `scripts/fact-os-api-install.py`, and
+    `--auto-retain --keep-releases 2` in `scripts/prune-public-api-candidate.py`
+    committed onto `trunk` and deployed to Elastic Beanstalk so superseded
+    `/var/app/data/fact-os/releases/*` generations beyond `active + rollback` are
+    automatically S3-verified and evicted rather than exhausting the 60 GiB root
+    volume (`insufficient_install_capacity`).
+
 
 
 

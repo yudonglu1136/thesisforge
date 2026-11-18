@@ -60,4 +60,78 @@ class Tests(unittest.TestCase):
   self.pointer.write_text(json.dumps(self.candidate))
   with self.assertRaisesRegex(ValueError,'active_reference'):
    m.prune(self.root,self.lease,self.candidate,self.s3,'bucket',apply=True,retired_generation=self.gen)
+ def test_rollback_active_pointer_protects_immediate_rollback_generation(self):
+  (self.root/'rollback-active.json').write_text(json.dumps(self.candidate))
+  with self.assertRaisesRegex(ValueError,'active_reference'):
+   self.run_prune(True)
+  self.assertTrue(self.file.exists())
+ def test_prune_superseded_releases_keeps_active_and_rollback_evicts_older_and_dedups_canonical(self):
+  root=self.root/'rolling';lease=root/'leases';lease.mkdir(parents=True)
+  objects={}
+  s3=type('S3',(),{'get_object':lambda _,**kw:{'Body':io.BytesIO(objects[kw['Key']])}})()
+  canonical_bytes=b'immutable-canonical-parquet-payload'
+  canonical_sha=hashlib.sha256(canonical_bytes).hexdigest()
+  canonical_obj_key='fact-os/published/objects/'+canonical_sha
+  objects[canonical_obj_key]=canonical_bytes
+  prev_rel=None;releases=[]
+  for idx,ch in enumerate(('1','2','3','4'),start=1):
+   gen=ch*64;rel_id=hex(idx)[2:].zfill(64)
+   # institutional_13f group
+   g1_dir=root/'releases/institutional_13f'/gen;g1_dir.mkdir(parents=True)
+   payload=f'13f-v{idx}'.encode();sha=hashlib.sha256(payload).hexdigest()
+   obj_key='fact-os/published/objects/'+sha;objects[obj_key]=payload
+   f1=g1_dir/'13f-insights.sqlite';f1.write_bytes(payload);f1.chmod(0o444);g1_dir.chmod(0o555)
+   m1={'groupId':'institutional_13f','generationId':gen,'files':[{'path':'13f-insights.sqlite','bytes':len(payload),'sha256':sha,'key':obj_key}]}
+   m1_raw=json.dumps(m1).encode();m1_sha=hashlib.sha256(m1_raw).hexdigest()
+   m1_key='fact-os/published/groups/institutional_13f/'+m1_sha+'.json';objects[m1_key]=m1_raw
+   # canonical group (independent inodes initially for r3 and r4 so dedup consolidates them)
+   c_root=root/'releases/canonical'/gen
+   c_dir=c_root/'parquet/stocks';c_dir.mkdir(parents=True)
+   rel_part='parquet/stocks/2020-'+'a'*32+'.parquet'
+   cf=c_root/rel_part;cf.write_bytes(canonical_bytes);cf.chmod(0o444)
+   cat_dir=c_root/'manifests';cat_dir.mkdir(parents=True)
+   cat_bytes=json.dumps({'datasets':{'stocks':{'partitions':[{'path':rel_part,'sha256':canonical_sha,'bytes':len(canonical_bytes)}]}}}).encode()
+   cat_sha=hashlib.sha256(cat_bytes).hexdigest();cat_obj_key='fact-os/published/objects/'+cat_sha;objects[cat_obj_key]=cat_bytes
+   cat_file=cat_dir/'catalog.json';cat_file.write_bytes(cat_bytes);cat_file.chmod(0o444)
+   cat_dir.chmod(0o555);c_dir.chmod(0o555);c_dir.parent.chmod(0o555);c_root.chmod(0o555)
+   mc={'groupId':'canonical','generationId':gen,'files':[
+    {'path':rel_part,'bytes':len(canonical_bytes),'sha256':canonical_sha,'key':canonical_obj_key},
+    {'path':'manifests/catalog.json','bytes':len(cat_bytes),'sha256':cat_sha,'key':cat_obj_key},
+   ]}
+   mc_raw=json.dumps(mc).encode();mc_sha=hashlib.sha256(mc_raw).hexdigest()
+   mc_key='fact-os/published/groups/canonical/'+mc_sha+'.json';objects[mc_key]=mc_raw
+   desc={'releaseId':rel_id,'previousRelease':prev_rel,'groups':{
+    'institutional_13f':{'generationId':gen,'manifestKey':m1_key,'manifestSha256':m1_sha,'root':str(g1_dir)},
+    'canonical':{'generationId':gen,'manifestKey':mc_key,'manifestSha256':mc_sha,'root':str(root/'releases/canonical'/gen)},
+   }}
+   objects['fact-os/published/releases/'+rel_id+'.json']=json.dumps(desc).encode()
+   releases.append(desc);prev_rel=rel_id
+  (root/'active.json').write_text(json.dumps(releases[3]))
+  (root/'rollback-active.json').write_text(json.dumps(releases[2]))
+  # Dry run reports 4 superseded group generations (r1 + r2 across 2 groups) without deleting.
+  dry=m.prune_superseded_releases(root,lease,s3,'bucket',keep_releases=2,apply=False)
+  self.assertEqual(dry['status'],'dry_run')
+  self.assertEqual(len(dry['prunedGenerations']),4)
+  self.assertTrue((root/'releases/institutional_13f'/('1'*64)).exists())
+  # Simulate open reader on r2 institutional_13f: r2 institutional_13f defers, others evict cleanly.
+  r2_13f=str((root/'releases/institutional_13f'/('2'*64)).resolve())
+  def selective_reader(targets):
+   if any(str(t)==r2_13f for t in targets):raise ValueError('open_reader')
+  with patch.object(m,'open_reader_check',side_effect=selective_reader):
+   partial=m.prune_superseded_releases(root,lease,s3,'bucket',keep_releases=2,apply=True)
+  self.assertEqual(len(partial['prunedGenerations']),3)
+  self.assertEqual(partial['deferredGenerations'],[{'group':'institutional_13f','generationId':'2'*64,'reason':'open_reader'}])
+  self.assertTrue((root/'releases/institutional_13f'/('2'*64)).exists())
+  # Once reader closes, next run evicts r2 institutional_13f and consolidates r3+r4 canonical hardlinks.
+  final=m.prune_superseded_releases(root,lease,s3,'bucket',keep_releases=2,apply=True)
+  self.assertEqual(len(final['prunedGenerations']),1)
+  self.assertEqual(final['deferredGenerations'],[])
+  self.assertFalse((root/'releases/institutional_13f'/('1'*64)).exists())
+  self.assertFalse((root/'releases/institutional_13f'/('2'*64)).exists())
+  self.assertTrue((root/'releases/institutional_13f'/('3'*64)).exists())
+  self.assertTrue((root/'releases/institutional_13f'/('4'*64)).exists())
+  c3=root/'releases/canonical'/('3'*64)/'parquet/stocks'/('2020-'+'a'*32+'.parquet')
+  c4=root/'releases/canonical'/('4'*64)/'parquet/stocks'/('2020-'+'a'*32+'.parquet')
+  self.assertEqual(c3.stat().st_ino,c4.stat().st_ino)
+  self.assertTrue((root/'audit/api-retention-latest.json').is_file())
 if __name__=='__main__':unittest.main()
