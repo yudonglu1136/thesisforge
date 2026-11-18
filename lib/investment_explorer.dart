@@ -209,6 +209,7 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
         'window',
         'tab',
         'metric',
+        'sectorLens',
         'group',
         'sector',
         'sort',

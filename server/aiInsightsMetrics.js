@@ -57,11 +57,20 @@ export function revenueUsd(row) {
   if (finite(row.revenueusd)) return row.revenueusd;
   return row.currency === 'USD' && row.currencyBasis !== 'current_financial_master_not_period_verified' ? value(row.revenue) : null;
 }
-function flowUsd(row, metric) {
-  if (!row || !finite(row[metric])) return null;
+export function flowUsd(row, metric) {
+  if (!row || row.ambiguous || !finite(row[metric])) return null;
   if (finite(row.revenueusd) && row.revenueusd > 0 && finite(row.revenue) && row.revenue > 0)
     return row[metric] * row.revenueusd / row.revenue;
   return row.currency === 'USD' && row.currencyBasis !== 'current_financial_master_not_period_verified' ? row[metric] : null;
+}
+export function fcfUsd(row) {
+  if (!row || row.ambiguous) return null;
+  if (finite(row.ncfo) && finite(row.capex)) {
+    if (row.capex === 0 && row.capexZeroVerified !== true) return null;
+    const ocf = flowUsd(row, 'ncfo'), capex = flowUsd(row, 'capex');
+    return finite(ocf) && finite(capex) ? ocf + capex : null;
+  }
+  return flowUsd(row, 'fcf');
 }
 export function capexValue(row) {
   if (!row || row.ambiguous || !finite(row.capex)) return { amount: null, status: 'missing_capex', conversion: null };
@@ -239,7 +248,10 @@ export function aggregateQuarter(companies, index, quarter, metric = 'revenue', 
   const get = (ticker, offset) => {
     if (exclusion(ticker, offset)) return null;
     const row = rowAt(index.get(ticker), quarter, offset);
-    return metric === 'capex' ? capexValue(row).amount : revenueUsd(row);
+    if (metric === 'capex') return capexValue(row).amount;
+    if (metric === 'profit') return flowUsd(row, 'opinc');
+    if (metric === 'fcf') return fcfUsd(row);
+    return revenueUsd(row);
   };
   const pairExclusion = (company, offset) => {
     const currentRow = rowAt(index.get(company.ticker), quarter), base = rowAt(index.get(company.ticker), quarter, offset);

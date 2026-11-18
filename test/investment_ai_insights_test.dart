@@ -153,6 +153,104 @@ class AiInsightsFixtureApi extends ApiClient {
               },
             },
         ],
+        'profitSeries': [
+          {
+            'quarter': '2026Q1',
+            'yoy': null,
+            'qoq': null,
+            'yoyComparison': {
+              'priorQuarter': '2025Q1',
+              'prior': -15e6,
+              'current': 35e6,
+              'delta': 50e6,
+              'comparable': 2,
+              'leaderStatus': 'unavailable',
+              'turnaroundStatus': 'turnaround_positive',
+              'topImprover': {
+                'ticker': 'CRDO',
+                'name': 'Credo fixture',
+                'delta': 45e6,
+                'current': 30e6,
+                'prior': -15e6,
+                'tiedCount': 1,
+                'currentEvidence': {
+                  'reportperiod': '2026-03-31',
+                  'datekey': '2026-05-01',
+                },
+                'priorEvidence': {
+                  'reportperiod': '2025-03-31',
+                  'datekey': '2025-05-01',
+                },
+              },
+            },
+            'qoqComparison': {'leaderStatus': 'unavailable'},
+          },
+          {
+            'quarter': '2026Q2',
+            'yoy': .65,
+            'qoq': .12,
+            'yoyComparison': {
+              'priorQuarter': '2025Q2',
+              'prior': 40e6,
+              'current': 66e6,
+              'delta': 26e6,
+              'comparable': 2,
+              'leaderStatus': 'available',
+              'topContributor': {
+                'ticker': 'ALAB',
+                'name': 'Astera fixture',
+                'delta': 22e6,
+                'current': 42e6,
+                'prior': 20e6,
+                'contribution': .55,
+                'tiedCount': 1,
+                'currentEvidence': {
+                  'reportperiod': '2026-06-30',
+                  'datekey': '2026-08-01',
+                },
+                'priorEvidence': {
+                  'reportperiod': '2025-06-30',
+                  'datekey': '2025-08-01',
+                },
+              },
+            },
+            'qoqComparison': {'leaderStatus': 'no_positive_contributor'},
+          },
+        ],
+        'fcfSeries': [
+          for (final q in ['2026Q1', '2026Q2'])
+            {
+              'quarter': q,
+              'yoy': .85,
+              'qoq': .25,
+              'yoyComparison': {
+                'priorQuarter': q == '2026Q1' ? '2025Q1' : '2025Q2',
+                'prior': 50e6,
+                'current': 92.5e6,
+                'delta': 42.5e6,
+                'comparable': 2,
+                'leaderStatus': 'available',
+                'topContributor': {
+                  'ticker': 'ALAB',
+                  'name': 'Astera fixture',
+                  'delta': 35e6,
+                  'current': 60e6,
+                  'prior': 25e6,
+                  'contribution': .70,
+                  'tiedCount': 1,
+                  'currentEvidence': {
+                    'reportperiod': '2026-06-30',
+                    'datekey': '2026-08-01',
+                  },
+                  'priorEvidence': {
+                    'reportperiod': '2025-06-30',
+                    'datekey': '2025-08-01',
+                  },
+                },
+              },
+              'qoqComparison': {'leaderStatus': 'no_positive_contributor'},
+            },
+        ],
       },
     ],
   };
@@ -330,6 +428,32 @@ void main() {
       expect(selection['selected'], 'CRDO');
       expect(selection['tab'], 'companies');
       expect(api.calls.length, 2);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'sector heatmap switches cleanly between Revenue, Operating profit (including turnarounds) and FCF without refetching',
+    (tester) async {
+      final api = AiInsightsFixtureApi();
+      Map<String, dynamic> selection = {};
+      await mountAi(tester, api, onSelection: (value) => selection = value);
+      expect(find.byKey(const ValueKey('ai-sector-lens-revenue')), findsOneWidget);
+      expect(find.byKey(const ValueKey('ai-sector-lens-profit')), findsOneWidget);
+      expect(find.byKey(const ValueKey('ai-sector-lens-fcf')), findsOneWidget);
+
+      await tapAi(tester, find.byKey(const ValueKey('ai-sector-lens-profit')));
+      expect(selection['sectorLens'], 'profit');
+      expect(find.text('Turned +'), findsOneWidget);
+      expect(find.text('+\$45.0M'), findsOneWidget);
+      expect(find.text('65.0%'), findsOneWidget);
+      expect(find.text('+55.0 pp'), findsOneWidget);
+
+      await tapAi(tester, find.byKey(const ValueKey('ai-sector-lens-fcf')));
+      expect(selection['sectorLens'], 'fcf');
+      expect(find.text('85.0%'), findsNWidgets(2));
+      expect(find.text('+70.0 pp'), findsNWidgets(2));
+      expect(api.calls.length, 1);
       expect(tester.takeException(), isNull);
     },
   );

@@ -46,10 +46,15 @@ function lightMetric(metric) {
     priorQuarter: comparison.priorQuarter });
   return { ...metric, yoyComparison: compact(metric.yoyComparison), qoqComparison: compact(metric.qoqComparison) };
 }
-function sectorMetric(metric, index, quarter) {
+function sectorMetric(metric, index, quarter, { allowSignedBase = false } = {}) {
   const result = lightMetric(metric);
   // This is a compact view of the SAME matched population, not a second
   // company-growth ranking. Retain one leader per basis; no per-cell requests.
+  const evidenceFor = (ticker, q) => {
+    const row = index.get(ticker)?.get(q);
+    return { reportperiod: row?.reportperiod ?? null, datekey: row?.datekey ?? null,
+      sourceRevisionId: row?.sourceRevisionId ?? null };
+  };
   for (const basis of ['yoy', 'qoq']) {
     const comparison = metric[`${basis}Comparison`];
     const compact = result[`${basis}Comparison`];
@@ -57,14 +62,18 @@ function sectorMetric(metric, index, quarter) {
     const positive = valid ? comparison.contributions.filter(c => finite(c.contribution) && c.delta > 0)
       .sort((a, b) => b.delta - a.delta || a.ticker.localeCompare(b.ticker)) : [];
     const leader = positive[0];
-    const evidence = q => {
-      const row = index.get(leader.ticker)?.get(q);
-      return { reportperiod: row?.reportperiod ?? null, datekey: row?.datekey ?? null,
-        sourceRevisionId: row?.sourceRevisionId ?? null };
-    };
     compact.leaderStatus = !valid ? 'unavailable' : leader ? 'available' : 'no_positive_contributor';
     compact.topContributor = leader ? { ...leader, tiedCount: positive.filter(c => c.delta === leader.delta).length,
-      currentEvidence: evidence(quarter), priorEvidence: evidence(comparison.priorQuarter) } : null;
+      currentEvidence: evidenceFor(leader.ticker, quarter), priorEvidence: evidenceFor(leader.ticker, comparison.priorQuarter) } : null;
+    if (allowSignedBase && !valid && comparison.comparable > 0 && finite(comparison.prior) && comparison.prior < 0 && finite(comparison.current)) {
+      compact.turnaroundStatus = comparison.current > 0 ? 'turnaround_positive'
+        : comparison.delta > 0 ? 'loss_narrowed' : 'loss_widened';
+      const improvers = comparison.contributions.filter(c => finite(c.delta) && c.delta > 0)
+        .sort((a, b) => b.delta - a.delta || a.ticker.localeCompare(b.ticker));
+      const best = improvers[0];
+      compact.topImprover = best ? { ...best, tiedCount: improvers.filter(c => c.delta === best.delta).length,
+        currentEvidence: evidenceFor(best.ticker, quarter), priorEvidence: evidenceFor(best.ticker, comparison.priorQuarter) } : null;
+    }
   }
   return result;
 }
@@ -225,8 +234,12 @@ export function createAiInsightsService({ factRoot = process.env.FACT_OS_ROOT ||
     });
     const sectors = [...new Set(artifact.companies.filter(c => c.group !== 'capex').map(c => c.sector))].map(id => {
       const cohort = artifact.companies.filter(c => c.group !== 'capex' && c.sector === id);
-      return { id, label: cohort[0].sectorLabel ?? id, group: cohort[0].group,
-        series: quarters.map(q => ({ quarter: q, ...sectorMetric(aggregateQuarter(cohort, index, q, 'revenue', { asOf }), index, q) })) };
+      return {
+        id, label: cohort[0].sectorLabel ?? id, group: cohort[0].group,
+        series: quarters.map(q => ({ quarter: q, ...sectorMetric(aggregateQuarter(cohort, index, q, 'revenue', { asOf }), index, q) })),
+        profitSeries: quarters.map(q => ({ quarter: q, ...sectorMetric(aggregateQuarter(cohort, index, q, 'profit', { asOf }), index, q, { allowSignedBase: true }) })),
+        fcfSeries: quarters.map(q => ({ quarter: q, ...sectorMetric(aggregateQuarter(cohort, index, q, 'fcf', { asOf }), index, q, { allowSignedBase: true }) })),
+      };
     });
     const base = metadata(artifact, context);
     const overview = { ...base, summary,

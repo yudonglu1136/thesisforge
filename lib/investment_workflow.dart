@@ -336,6 +336,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         'quarter',
         'tab',
         'metric',
+        'sectorLens',
         'group',
         'sector',
         'sort',

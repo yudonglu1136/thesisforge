@@ -81,7 +81,7 @@ class AiInsightsPanel extends StatefulWidget {
 
 class _AiInsightsPanelState extends State<AiInsightsPanel> {
   Map<String, dynamic>? data, comparison;
-  String quarter = '', tab = 'overview', metric = 'yoy';
+  String quarter = '', tab = 'overview', metric = 'yoy', sectorLens = 'revenue';
   String group = 'all', sector = '', sort = 'growth';
   String selectedTicker = '';
   int window = 8, requestSerial = 0, comparisonSerial = 0;
@@ -177,6 +177,11 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
         ? text(initial['tab'])
         : 'overview';
     metric = initial['metric'] == 'qoq' ? 'qoq' : 'yoy';
+    sectorLens = const {'revenue', 'profit', 'fcf'}.contains(
+      initial['sectorLens'],
+    )
+        ? text(initial['sectorLens'])
+        : 'revenue';
     final requestedWindow = int.tryParse(text(initial['window']));
     if (const {8, 12, 20}.contains(requestedWindow)) window = requestedWindow!;
     group = const {'all', 'hardware', 'software'}.contains(initial['group'])
@@ -237,6 +242,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
     'window': window,
     'tab': tab,
     'metric': metric,
+    'sectorLens': sectorLens,
     'group': group,
     'sector': sector,
     'sort': sort,
@@ -495,6 +501,29 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
         if (value != null) onChanged(value);
       },
     ),
+  );
+
+  void setSectorLens(String next) {
+    if (next == sectorLens) return;
+    setState(() => sectorLens = next);
+    remember();
+  }
+
+  Widget sectorLensToggle() => Wrap(
+    spacing: 6,
+    children: [
+      for (final item in [
+        ('revenue', w('Revenue', '收入')),
+        ('profit', w('Operating profit', '营业利润')),
+        ('fcf', w('FCF', 'FCF')),
+      ])
+        ChoiceChip(
+          key: ValueKey('ai-sector-lens-${item.$1}'),
+          label: Text(item.$2),
+          selected: sectorLens == item.$1,
+          onSelected: (_) => setSectorLens(item.$1),
+        ),
+    ],
   );
 
   Widget basisToggle() => Wrap(
@@ -1080,25 +1109,60 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
 
   Widget sectorHeatmap() {
     final sectors = asList(data?['sectors']);
+    final hintEn = switch (sectorLens) {
+      'profit' =>
+        'Sector operating profit growth + largest positive profit contributor',
+      'fcf' =>
+        'Sector free cash flow (OCF − CapEx) growth + largest positive FCF contributor',
+      _ => 'Sector growth + the company contributing most to it',
+    };
+    final hintZh = switch (sectorLens) {
+      'profit' => '子行业营业利润增速 + 每季利润增量贡献最大的公司',
+      'fcf' => '子行业自由现金流（OCF − CapEx）增速 + 每季现金流增量贡献最大的公司',
+      _ => '子行业增速 + 每季增长贡献最大的公司',
+    };
+    final captionEn = switch (sectorLens) {
+      'profit' =>
+        'Logo = largest positive operating profit increase · pp = contribution to sector profit growth (turnaround status shown when prior base < 0).',
+      'fcf' =>
+        'Logo = largest positive FCF increase · pp = contribution to sector FCF growth (cash-burn status shown when prior base < 0).',
+      _ =>
+        'Logo = largest positive revenue contribution · pp = contribution to sector growth, not the company’s own growth. Hover or long-press for evidence; select a cell for rankings.',
+    };
+    final captionZh = switch (sectorLens) {
+      'profit' =>
+        'Logo 标记营业利润增量贡献第一名 · pp 为对子行业利润增速的贡献（基期亏损时展示扭亏/减亏状态）。悬停查看依据，点击格子打开榜单。',
+      'fcf' =>
+        'Logo 标记自由现金流增量贡献第一名 · pp 为对子行业 FCF 增速的贡献（基期净流出时展示转正/收窄/扩大）。悬停查看依据，点击格子打开榜单。',
+      _ =>
+        'Logo 标记收入增量贡献第一名 · pp 为对子行业增速的贡献，不是公司自身增速。悬停或长按查看依据，点击格子打开榜单。',
+    };
     return panel([
       Wrap(
         alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
         spacing: 16,
         runSpacing: 8,
         children: [
           title(
             'Where is growth accelerating?',
             '哪些环节增长更快？',
-            hintEn: 'Sector growth + the company contributing most to it',
-            hintZh: '子行业增速 + 每季增长贡献最大的公司',
+            hintEn: hintEn,
+            hintZh: hintZh,
           ),
-          basisToggle(),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              sectorLensToggle(),
+              Container(width: 1, height: 22, color: p.border),
+              basisToggle(),
+            ],
+          ),
         ],
       ),
-      caption(
-        'Logo = largest positive revenue contribution · pp = contribution to sector growth, not the company’s own growth. Hover or long-press for evidence; select a cell for rankings.',
-        'Logo 标记收入增量贡献第一名 · pp 为对子行业增速的贡献，不是公司自身增速。悬停或长按查看依据，点击格子打开榜单。',
-      ),
+      caption(captionEn, captionZh),
       const SizedBox(height: 16),
       if (sectors.isEmpty)
         caption('No comparable sector data for this cutoff.', '该截止日暂无可比环节数据。')
@@ -1220,14 +1284,35 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
     Map<String, dynamic> row,
     Map<String, dynamic> period,
   ) {
-    final point = asList(
-      row['series'],
-    ).where((v) => v['quarter'] == period['quarter']).firstOrNull;
+    final seriesKey = switch (sectorLens) {
+      'profit' => 'profitSeries',
+      'fcf' => 'fcfSeries',
+      _ => 'series',
+    };
+    final lensEn = switch (sectorLens) {
+      'profit' => 'Operating profit',
+      'fcf' => 'Free cash flow',
+      _ => 'Revenue',
+    };
+    final lensZh = switch (sectorLens) {
+      'profit' => '营业利润',
+      'fcf' => '自由现金流',
+      _ => '收入',
+    };
+    final rawPoints = asList(row[seriesKey]);
+    final points = rawPoints.isNotEmpty ? rawPoints : asList(row['series']);
+    final point = points
+        .where((v) => v['quarter'] == period['quarter'])
+        .firstOrNull;
     final value = nullableNumber(point?[metric]);
     final comparison = asMap(point?['${metric}Comparison']);
-    final leader = asMap(comparison['topContributor']);
-    final hasLeader =
-        value != null && (nullableNumber(leader['contribution']) ?? 0) > 0;
+    final turnaround = text(comparison['turnaroundStatus']);
+    final leader = value != null
+        ? asMap(comparison['topContributor'])
+        : asMap(comparison['topImprover']);
+    final hasLeader = value != null
+        ? (nullableNumber(leader['contribution']) ?? 0) > 0
+        : turnaround.isNotEmpty && (nullableNumber(leader['delta']) ?? 0) > 0;
     final name = localized(row['label'], text(row['id']));
     final basis = metric == 'yoy' ? 'YoY' : 'QoQ';
     final empty = comparison['leaderStatus'] == 'no_positive_contributor'
@@ -1236,20 +1321,50 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
     final current = asMap(leader['currentEvidence']);
     final prior = asMap(leader['priorEvidence']);
     final ties = (nullableNumber(leader['tiedCount']) ?? 1).toInt();
+    final turnaroundHeadline = switch (turnaround) {
+      'turnaround_positive' => w('Turned +', '扭亏转正'),
+      'loss_narrowed' =>
+        sectorLens == 'fcf' ? w('Burn ↓', '流出收窄') : w('Loss ↓', '亏损收窄'),
+      'loss_widened' =>
+        sectorLens == 'fcf' ? w('FCF < 0', '净流出扩大') : w('Loss ↑', '亏损扩大'),
+      _ => aiInsightsPercent(value),
+    };
+    final cellPositive = value != null
+        ? value >= 0
+        : turnaround == 'turnaround_positive' || turnaround == 'loss_narrowed';
+    final cellStrength = value != null
+        ? math.min(value.abs(), 1.0)
+        : (turnaround == 'turnaround_positive' || turnaround == 'loss_widened'
+              ? .55
+              : .25);
     final tooltip = [
-      '$name · ${text(period['quarter'])}',
-      'YoY ${aiInsightsPercent(point?['yoy'])} · QoQ ${aiInsightsPercent(point?['qoq'])} ${w('(unadjusted)', '（未季调）')}',
+      '$name · ${text(period['quarter'])}${sectorLens == 'revenue' ? '' : ' · ${w(lensEn, lensZh)}'}',
+      if (turnaround.isNotEmpty)
+        w(
+          '$lensEn ($basis): ${aiInsightsAmount(comparison['prior'])} → ${aiInsightsAmount(comparison['current'])} (Δ ${aiInsightsAmount(comparison['delta'])})',
+          '$lensZh ($basis)：${aiInsightsAmount(comparison['prior'])} → ${aiInsightsAmount(comparison['current'])}（增量 ${aiInsightsAmount(comparison['delta'])}）',
+        )
+      else
+        'YoY ${aiInsightsPercent(point?['yoy'])} · QoQ ${aiInsightsPercent(point?['qoq'])} ${w('(unadjusted)', '（未季调）')}',
       if (hasLeader) ...[
         '${text(leader['ticker'])} · ${text(leader['name'])}',
-        w(
-          'Largest positive $basis contribution: ${pp(leader['contribution'])}',
-          '$basis 最大正贡献：${pp(leader['contribution'])}',
-        ),
-        '${aiInsightsAmount(leader['prior'])} → ${aiInsightsAmount(leader['current'])}',
-        w(
-          'Revenue increase ${aiInsightsAmount(leader['delta'])} ÷ sector base ${aiInsightsAmount(comparison['prior'])}',
-          '收入增量 ${aiInsightsAmount(leader['delta'])} ÷ 行业基期 ${aiInsightsAmount(comparison['prior'])}',
-        ),
+        if (value != null) ...[
+          w(
+            'Largest positive $basis contribution: ${pp(leader['contribution'])}',
+            '$basis 最大正贡献：${pp(leader['contribution'])}',
+          ),
+          '${aiInsightsAmount(leader['prior'])} → ${aiInsightsAmount(leader['current'])}',
+          w(
+            '$lensEn increase ${aiInsightsAmount(leader['delta'])} ÷ sector base ${aiInsightsAmount(comparison['prior'])}',
+            '$lensZh增量 ${aiInsightsAmount(leader['delta'])} ÷ 行业基期 ${aiInsightsAmount(comparison['prior'])}',
+          ),
+        ] else ...[
+          w(
+            'Largest $basis dollar improvement: +${aiInsightsAmount(leader['delta'])}',
+            '$basis 最大金额改善：+${aiInsightsAmount(leader['delta'])}',
+          ),
+          '${aiInsightsAmount(leader['prior'])} → ${aiInsightsAmount(leader['current'])}',
+        ],
         '${text(comparison['priorQuarter'])} → ${text(period['quarter'])} · ${comparison['comparable']} ${w('comparable companies', '家可比公司')}',
         w(
           'Report ends: ${text(prior['reportperiod'], '—')} → ${text(current['reportperiod'], '—')}',
@@ -1264,7 +1379,9 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
             '$ties tied leaders; first ticker shown alphabetically.',
             '$ties 家并列第一，按代码顺序展示。',
           ),
-      ] else
+      ] else if (turnaround == 'loss_widened')
+        '${text(comparison['priorQuarter'])} → ${text(period['quarter'])} · ${comparison['comparable']} ${w('comparable companies', '家可比公司')}'
+      else
         empty,
     ].join('\n');
     return Padding(
@@ -1278,10 +1395,10 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
           label: tooltip,
           button: true,
           child: Material(
-            color: value == null
+            color: (value == null && turnaround.isEmpty)
                 ? p.card
-                : (value >= 0 ? p.accent : p.secondary).withValues(
-                    alpha: .08 + math.min(value.abs(), 1) * .32,
+                : (cellPositive ? p.accent : p.secondary).withValues(
+                    alpha: .08 + cellStrength * .32,
                   ),
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
@@ -1291,7 +1408,9 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                 group = text(row['group'], 'all');
                 sector = text(row['id']);
                 tab = 'companies';
-                sort = metric == 'yoy' ? 'revenueYoY' : 'revenueQoQ';
+                sort = sectorLens == 'revenue'
+                    ? (metric == 'yoy' ? 'revenueYoY' : 'revenueQoQ')
+                    : 'quality';
                 if (hasLeader) selectedTicker = text(leader['ticker']);
                 if (period['quarter'] != quarter) {
                   setQuarter(text(period['quarter']));
@@ -1305,7 +1424,13 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(aiInsightsPercent(value), style: style(16, true)),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        turnaroundHeadline,
+                        style: style(turnaround.isNotEmpty ? 13 : 16, true),
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     if (hasLeader) ...[
                       Row(
@@ -1327,11 +1452,25 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        pp(leader['contribution']),
-                        style: style(11, false, p.text),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          value != null
+                              ? pp(leader['contribution'])
+                              : '+${aiInsightsAmount(leader['delta'])}',
+                          style: style(11, false, p.text),
+                        ),
                       ),
-                    ] else
+                    ] else if (turnaround.isNotEmpty)
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          '${aiInsightsAmount(comparison['prior'])} → ${aiInsightsAmount(comparison['current'])}',
+                          textAlign: TextAlign.center,
+                          style: style(10, false, p.text),
+                        ),
+                      )
+                    else
                       Text(
                         empty,
                         textAlign: TextAlign.center,

@@ -203,3 +203,31 @@ test('defaultQuarter advances to 2026Q3 once Big 4 capex is 100% complete, hardw
   assert.equal(inspectedOlder.series.at(-1).quarter, '2026Q3', 'inspecting an in-window bar must keep 2026Q1-2026Q3 visible');
   assert.equal(inspectedOlder.sectors[0].series.at(-1).quarter, '2026Q3');
 });
+
+test('sector heatmap exposes operating profit and FCF series with signed-base turnaround handling', () => {
+  const raw = artifact();
+  raw.companies = [
+    { ticker: 'LEAD', name: 'Leader', group: 'software', sector: 'cloud' },
+    { ticker: 'PEER', name: 'Peer', group: 'software', sector: 'cloud' },
+  ];
+  // 2025Q2: sector opinc = -30 + 10 = -20 (negative base), fcf = 40 + 60 = 100
+  // 2026Q2: sector opinc = +50 + 20 = +70 (turnaround_positive!), fcf = 120 + 70 = 190 (+90% YoY, LEAD +80pp)
+  raw.facts = [
+    { ticker: 'LEAD', calendardate: '2025-06-30', reportperiod: '2025-06-30', datekey: '2025-07-25', currency: 'USD', revenue: 200, revenueusd: 200, opinc: -30, ncfo: 60, capex: -20, fcf: 40 },
+    { ticker: 'PEER', calendardate: '2025-06-30', reportperiod: '2025-06-30', datekey: '2025-07-25', currency: 'USD', revenue: 200, revenueusd: 200, opinc: 10, ncfo: 80, capex: -20, fcf: 60 },
+    { ticker: 'LEAD', calendardate: '2026-06-30', reportperiod: '2026-06-30', datekey: '2026-07-25', currency: 'USD', revenue: 300, revenueusd: 300, opinc: 50, ncfo: 150, capex: -30, fcf: 120 },
+    { ticker: 'PEER', calendardate: '2026-06-30', reportperiod: '2026-06-30', datekey: '2026-07-25', currency: 'USD', revenue: 250, revenueusd: 250, opinc: 20, ncfo: 95, capex: -25, fcf: 70 },
+  ];
+  const view = createAiInsightsService({ now, artifactLoader: () => raw }).overview({ quarter: '2026Q2', asOf: '2026-09-22' });
+  const sec = view.sectors[0];
+  const prof = sec.profitSeries.at(-1).yoyComparison;
+  assert.equal(prof.growth, null);
+  assert.equal(prof.turnaroundStatus, 'turnaround_positive');
+  assert.equal(prof.topImprover.ticker, 'LEAD');
+  assert.equal(prof.topImprover.delta, 80);
+
+  const fcf = sec.fcfSeries.at(-1).yoyComparison;
+  assert.ok(Math.abs(fcf.growth - 0.9) < 1e-12);
+  assert.equal(fcf.topContributor.ticker, 'LEAD');
+  assert.ok(Math.abs(fcf.topContributor.contribution - 0.8) < 1e-12);
+});
