@@ -60,6 +60,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   String? researchFinancialsError;
   String researchStatement = 'income';
   String researchFinancialFrequency = 'annual';
+  String researchFinancialsFocus = 'all';
   List<String> researchFinancialMetrics = ['revenue', 'netinccmn'];
   Map<String, dynamic> assumptions = {};
   bool busy = false, ownership = false, priority = false;
@@ -541,6 +542,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       researchFinancialsLoading = false;
       researchFinancialsError = null;
       researchStatement = 'income';
+      researchFinancialsFocus = 'all';
       researchFinancialMetrics = ['revenue', 'netinccmn'];
       review = null;
       scenarioId = null;
@@ -1379,17 +1381,16 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     final c = company!;
     final snap = asMap(c['snapshot']);
     final price = asMap(snap['price']);
+    final src = asMap(snap['source']);
+    final guidanceList = asList(asMap(c['guidance'])['evidence']);
     return [
       card([
-        title('What is changing?', '什么发生了变化？'),
+        title('Operating Metrics & Historical Percentiles', '核心经营指标与历史分位'),
         financialComparisonGrid(),
         label(
-          'Growth is quarterly YoY; margins and capex use TTM. Historical percentile uses up to 20 prior available periods, at least 4 valid observations.',
-          '增长为季度同比，利润率和资本开支为 TTM。历史分位使用最多 20 个过去可用期，至少 4 个有效样本。',
-        ),
-        label(
-          'Peer cohort, ROIC and operating KPIs are not verified in this slice. Missing is not zero.',
-          '本轮暂未验证同行样本、ROIC 和运营指标。缺失不等于零。',
+          'Revenue growth is quarterly YoY; margins and capex intensity use TTM. Historical percentiles compare against up to 20 prior point-in-time periods.',
+          '收入增速采用单季同比，利润率与资本开支强度采用 TTM 口径；历史分位基于过去最多 20 个历史时点样本计算。',
+          size: 11,
         ),
       ]),
       if (includeHistory)
@@ -1429,34 +1430,72 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       disclosedHoldersWorkspace(),
       card([
         ExpansionTile(
+          tilePadding: EdgeInsets.zero,
           title: Text(w('Sources, formulas and dates', '来源、公式和日期')),
           children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Wrap(
+                spacing: 18,
+                runSpacing: 8,
+                children: [
+                  label(
+                    'Dataset: ${text(src['dataset'], '—')}',
+                    '数据集：${text(src['dataset'], '—')}',
+                    size: 11,
+                  ),
+                  label(
+                    'Period end: ${text(snap['periodEnd'], '—')}',
+                    '报告期末：${text(snap['periodEnd'], '—')}',
+                    size: 11,
+                  ),
+                  label(
+                    'Available at: ${text(snap['availableAt'], '—')}',
+                    '公开可见日：${text(snap['availableAt'], '—')}',
+                    size: 11,
+                  ),
+                  label(
+                    'Model version: ${text(src['modelVersion'], '—')}',
+                    '模型版本：${text(src['modelVersion'], '—')}',
+                    size: 11,
+                  ),
+                ],
+              ),
+            ),
             for (final m in asList(c['metrics']))
               ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
                 title: Text(metricName(text(m['key']))),
-                subtitle: SelectableText(
-                  '${m['formula']}\n${m['source']} · ${m['availableAt']}',
+                subtitle: Text(
+                  '${text(m['formula'])} · ${text(m['source'])} (${text(m['availableAt'])})',
+                  style: TextStyle(color: p.muted, fontSize: 11),
                 ),
               ),
-            SelectableText(
-              const JsonEncoder.withIndent('  ').convert(snap),
-              style: TextStyle(fontSize: 11, color: p.muted),
-            ),
           ],
         ),
-        ExpansionTile(
-          title: Text(w('Stored management guidance evidence', '已存管理层指引证据')),
-          children: [
-            label(
-              'Evidence only. Changing the sandbox does not reinterpret or re-extract management statements.',
-              '仅作为证据，修改试算不会重新解释或提取管理层表述。',
-            ),
-            SelectableText(
-              const JsonEncoder.withIndent('  ').convert(c['guidance']),
-              style: TextStyle(fontSize: 11, color: p.muted),
-            ),
-          ],
-        ),
+        if (guidanceList.isNotEmpty)
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: Text(w('Stored management guidance evidence', '已存管理层指引证据')),
+            children: [
+              for (final g in guidanceList)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    text(g['excerpt'], text(g['quote'])),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: p.text, fontSize: 12),
+                  ),
+                  subtitle: Text(
+                    '${text(g['speaker'], '—')} · ${text(g['observedAt'], '—')}',
+                    style: TextStyle(color: p.muted, fontSize: 11),
+                  ),
+                ),
+            ],
+          ),
       ]),
     ];
   }

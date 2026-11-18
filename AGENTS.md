@@ -839,5 +839,22 @@ Chinese and English are release-critical product modes, not best-effort labels.
     book trajectory & sector mix, and dated ThesisForge valuation overlay
     (`fairValue`, `marketPrice`, `modelGap` strictly `<= asOf`), while honoring
     `source_error` and `previous_source_error` fail-closed contracts.
+- **Company Research Cockpit Redesign (`Research` Module — `lib/investment_research.dart`):**
+  - Keep `InvestmentSource.company()` (`server/investmentSource.js`) enriched with
+    strictly point-in-time `companyMeta` (`sector`, `modelRoute`, `marketCapM`,
+    `cycleOperatingMargin`, `cycleFcfMargin`, `targetPE`) and `qualityAnnual`
+    (`roic`, `operatingMargin`, `fcfMargin`, `cashConversion` from
+    `investment_quality_annual` where `available_at <= asOf` and
+    `report_period <= asOf`), without mutating the signed `snapshot` hash.
+  - Keep the persistent Executive Company Hero (`research-executive-hero`),
+    4-card Core Operating & ROIC KPI strip (`research-overview-kpis`),
+    Fact OS fundamental diagnosis synthesis, non-repetitive Valuation Architecture
+    cards, Guru & Management Guidance pulse, interactive 3-statement chart/table,
+    focused `Announcements & financials` filter bar (`researchFinancialsFocus`,
+    consolidated filing table without repeated body warnings or raw JSON dumps),
+    unified Guru + 13F `Institutional holdings` KPIs, 3-mode `Valuation workspace`
+    (`Published model` / `My DCF` / `Reverse DCF`), and full-width 2-column
+    `Research records` thesis composer.
+
 
 

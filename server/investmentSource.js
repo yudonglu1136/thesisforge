@@ -126,7 +126,40 @@ export class InvestmentSource {
     const snapshot={ticker,asOf,period:latest.period,periodEnd:latest.periodEnd,availableAt:latest.availableAt,base,metrics:latest.metrics,
       source:latest.source,adapterVersion:SOURCE_ADAPTER_VERSION,price:this.price(ticker,asOf,snap)};
     const guidanceReview=this.reviewGuidance(ticker,latest)??{};
-    const result={ticker,name:snap?.name??ticker,currency,asOf,base,snapshot:{...snapshot,id:signature(snapshot)},metrics,history:displayHistory,
+    const qDb=this.publicFactsDb??this.db;
+    let qualityAnnual=[];
+    try {
+      if(qDb.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='investment_quality_annual'").get()){
+        const qRows=qDb.prepare(`WITH eligible AS (
+          SELECT *, ROW_NUMBER() OVER(PARTITION BY report_period ORDER BY available_at,source_hash) pn
+          FROM investment_quality_annual
+          WHERE ticker=? AND available_at<=? AND report_period<=? AND dimension='ART'
+        ) SELECT fiscal_year,report_period,available_at,roic,invested_capital_avg,operating_margin,fcf_margin,cash_conversion
+          FROM eligible WHERE pn=1 ORDER BY fiscal_year DESC,report_period DESC LIMIT 6`).all(ticker,asOf,asOf);
+        qualityAnnual=qRows.map(r=>({
+          year:r.fiscal_year,periodEnd:r.report_period,availableAt:r.available_at,
+          roic:finite(r.roic)&&r.invested_capital_avg>0?r.roic:null,
+          operatingMargin:finite(r.operating_margin)?r.operating_margin:null,
+          fcfMargin:finite(r.fcf_margin)?r.fcf_margin:null,
+          cashConversion:finite(r.cash_conversion)?r.cash_conversion:null,
+        }));
+      }
+    } catch (_) { qualityAnnual=[]; }
+    const pxVal=snapshot.price?.value;
+    const marketCapM=finite(pxVal)&&pxVal>0&&finite(base.sharesM)&&base.sharesM>0&&snapshot.price?.currency===currency?pxVal*base.sharesM:null;
+    const snapDate=String(snap?.sourceAsOf??snap?.asOfDate??snap?.availableAt??'').slice(0,10);
+    const snapAllowed=snap&&(!snapDate||snapDate<=asOf);
+    const companyMeta={
+      sector:typeof snap?.sector==='string'&&snap.sector.trim()?snap.sector.trim():null,
+      cik:typeof snap?.cik==='string'&&snap.cik.trim()?snap.cik.trim():null,
+      modelRoute:latest.score?.modelRoute??null,
+      marketCapM,
+      description:snapAllowed&&typeof snap?.description==='string'&&snap.description.trim()?snap.description.trim():null,
+      cycleOperatingMargin:finite(latest.score?.cycleOperatingMargin)?latest.score.cycleOperatingMargin:null,
+      cycleFcfMargin:finite(latest.score?.cycleFcfMargin)?latest.score.cycleFcfMargin:null,
+      targetPE:finite(latest.score?.targetPE)?latest.score.targetPE:null,
+    };
+    const result={ticker,name:snap?.name??ticker,currency,asOf,base,companyMeta,qualityAnnual,snapshot:{...snapshot,id:signature(snapshot)},metrics,history:displayHistory,
       published:{fairValue:latest.publishedFairValue,formula:latest.publishedFormula,dcf:latest.score.equityDcf?.fairValue??null,modelVersion:latest.source.modelVersion},
       templates,templateReconciliation:reconciliation,templatePolicy:reconciliation?.basis==='user_defined_cashflow_path'
         ? 'Independent private worksheet prefilled with disclosed analyst starting assumptions, not issuer guidance or a published DCF. Ke 10% and g 2.5% are illustrative. Confirm parent ownership before saving a formal scenario.'
