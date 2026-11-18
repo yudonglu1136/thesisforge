@@ -1095,3 +1095,15 @@ String polishStrategyProseZh(String raw, AppLanguage language) {
       .replaceAll('单笔怒赚', '单笔录得')
       .replaceAll('怒赚', '斩获');
 }
+
+String cleanTranscriptMojibake(String raw) {
+  if (raw.isEmpty) return raw;
+  return raw
+      .replaceAll('Â±', '±')
+      .replaceAll('Â ', ' ')
+      .replaceAll('â€™', '’')
+      .replaceAll('â€œ', '“')
+      .replaceAll('â€\x9d', '”')
+      .replaceAll('â€“', '–')
+      .replaceAll('â€”', '—');
+}

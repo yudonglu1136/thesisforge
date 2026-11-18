@@ -696,9 +696,13 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         scenarioName.text = 'Base';
         inspectInputs = false;
         assumptions = asMap(asMap(data['templates'])['Base']);
-        researchFundamental = asMap(data['fundamental']).isEmpty
-            ? null
-            : asMap(data['fundamental']);
+        final cachedFullFacts =
+            _researchFundamentalsCache[widget.api]?['$ticker|$asOf'];
+        researchFundamental =
+            cachedFullFacts ??
+            (asMap(data['fundamental']).isEmpty
+                ? null
+                : asMap(data['fundamental']));
         researchRecordsData = {'rows': asList(data['researchRecords'])};
         worksheetHead = data['worksheetHead'] as String?;
         final saved = asList(data['scenarios']);

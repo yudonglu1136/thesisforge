@@ -97,6 +97,7 @@ class FactRepository:
         # writable directory, keyed by immutable release root, never in Parquet.
         lease_dir = Path(os.environ['FACT_OS_LEASE_ROOT']).resolve() if os.environ.get('FACT_OS_LEASE_ROOT') else self.root / 'sync'
         lease_dir.mkdir(parents=True,exist_ok=True)
+        self._lease_dir = lease_dir
         lease_name = hashlib.sha256(str(self.root).encode()).hexdigest()+'.lock' if os.environ.get('FACT_OS_LEASE_ROOT') else 'readers.lock'
         self._reader_lock = (lease_dir / lease_name).open('a')
         try:
@@ -108,9 +109,10 @@ class FactRepository:
 
     def _open_snapshot(self):
         self._contracts, self._states, self._datasets = {}, {}, set()
-        self._partition_files, self._bound_views = {}, set()
+        self._partition_files, self._partition_buckets, self._bound_views = {}, {}, set()
         self._identities, self._investors = {}, None
         self._master_ready = False
+        self._fund_research_index = False
         manifest = self.root / 'manifests' / 'catalog.json'
         if manifest.exists():
             manifest_bytes = manifest.read_bytes()
@@ -128,11 +130,13 @@ class FactRepository:
             mem_limit, thread_count = _default_duckdb_limits()
             self.db.execute(f"SET memory_limit='{mem_limit}'")
             self.db.execute(f'SET threads={thread_count}')
+            self.db.execute('SET enable_object_cache=true')
+            self.db.execute('SET enable_progress_bar=false')
             try:
                 for table, item in catalog.get('datasets', {}).items():
                     self._contracts[table] = Contract.from_ddl(table, item['ddl'])
                     self._states[table] = item.get('state') or {}
-                    files = []
+                    files, bucketed = [], []
                     for part in item.get('partitions', []):
                         relative = Path(part['path'])
                         path = (self.root / relative).resolve()
@@ -141,7 +145,8 @@ class FactRepository:
                         if not path.is_file():
                             raise MissingData(f'{table}: catalog partition file is missing')
                         files.append(str(path))
-                    self._bind(table, files)
+                        bucketed.append((part.get('bucket'), str(path)))
+                    self._bind(table, files, bucketed)
             except Exception:
                 self.db.close()
                 raise
@@ -152,20 +157,37 @@ class FactRepository:
             if not (self.root / 'fact_os.duckdb').exists():
                 raise MissingData('local Fact OS has not been backfilled')
             self.db = duckdb.connect(str(self.root / 'fact_os.duckdb'), read_only=True)
+            self.db.execute('SET enable_object_cache=true')
+            self.db.execute('SET enable_progress_bar=false')
             for table, ddl in self.db.execute('SELECT dataset,ddl FROM contracts').fetchall():
                 self._contracts[table] = Contract.from_ddl(table, ddl)
             self._states = {row['dataset']: row for row in self._rows('SELECT * FROM sync_state')}
             for (table,) in self.db.execute('SELECT DISTINCT dataset FROM partitions').fetchall():
-                files = [str(self.root / row[0]) for row in self.db.execute(
-                    'SELECT path FROM partitions WHERE dataset=? ORDER BY bucket', [table]).fetchall()]
-                self._bind(table, files)
+                part_rows = self.db.execute(
+                    'SELECT bucket, path FROM partitions WHERE dataset=? ORDER BY bucket', [table]).fetchall()
+                files = [str(self.root / row[1]) for row in part_rows]
+                bucketed = [(row[0], str(self.root / row[1])) for row in part_rows]
+                self._bind(table, files, bucketed)
 
-    def _bind(self, table, files):
+    def _bind(self, table, files, bucketed=None):
         if files:
             self._datasets.add(table)
             self._partition_files[table] = list(files)
+            self._partition_buckets[table] = list(bucketed) if bucketed is not None else [(None, f) for f in files]
             if not self._lazy_views:
                 self._ensure_view(table)
+
+    def _bucket_files(self, table, *, min_bucket=None, max_bucket=None):
+        """Return yearly partition paths matching [min_bucket, max_bucket], or None if unbucketed."""
+        bucketed = self._partition_buckets.get(table) or []
+        if (min_bucket is None and max_bucket is None) or len(bucketed) < 2:
+            return None
+        if not all(isinstance(b, int) and b >= 1900 for b, _ in bucketed):
+            return None
+        return [
+            path for bucket, path in bucketed
+            if (min_bucket is None or bucket >= min_bucket) and (max_bucket is None or bucket <= max_bucket)
+        ]
 
     def _ensure_view(self, table):
         if table not in self._bound_views and table in self._partition_files:
@@ -315,12 +337,7 @@ class FactRepository:
             event['provenance'].append(self._lineage('actions', row))
         return list(events.values())
 
-    def _security_rows(self, table, identity, condition='', params=(), order='date'):
-        self._require(table)
-        aliases = identity['aliases']
-        marks = ','.join('?' for _ in aliases)
-        rows = self._rows(f'SELECT * FROM {ident(table)} WHERE ticker IN ({marks})' +
-                         (' AND ' + condition if condition else '') + f' ORDER BY {order}', [*aliases, *params])
+    def _dedupe_security_rows(self, table, rows):
         # Retained old-name archives may coexist with rewired current history.
         # Deduplicate identical facts only. Conflicts are explicit, not guessed.
         keys = [key for key in self._contracts[table].keys if key != 'ticker']
@@ -336,6 +353,25 @@ class FactRepository:
             seen[key] = comparable
             result.append(row)
         return result
+
+    def _table_source_sql(self, table, *, min_bucket=None, max_bucket=None):
+        pruned = self._bucket_files(table, min_bucket=min_bucket, max_bucket=max_bucket)
+        if pruned is None or len(pruned) >= len(self._partition_files.get(table, ())):
+            return ident(table)
+        if not pruned:
+            return None
+        return 'read_parquet([' + ','.join(_literal(path) for path in pruned) + '], union_by_name=true)'
+
+    def _security_rows(self, table, identity, condition='', params=(), order='date', *, min_bucket=None, max_bucket=None):
+        self._require(table)
+        source_sql = self._table_source_sql(table, min_bucket=min_bucket, max_bucket=max_bucket)
+        if source_sql is None:
+            return []
+        aliases = identity['aliases']
+        marks = ','.join('?' for _ in aliases)
+        rows = self._rows(f'SELECT * FROM {source_sql} WHERE ticker IN ({marks})' +
+                         (' AND ' + condition if condition else '') + f' ORDER BY {order}', [*aliases, *params])
+        return self._dedupe_security_rows(table, rows)
 
     def _price_basis(self, price_type):
         if isinstance(price_type, PriceType):
@@ -369,9 +405,13 @@ class FactRepository:
         if dataset not in ('stocks', 'funds'):
             raise ValueError('invalid price dataset')
         basis = self._price_basis(price_type)
-        if _date(start) > _date(end):
+        s_date, e_date = _date(start), _date(end)
+        if s_date > e_date:
             raise ValueError('start must not be after end')
-        rows = self._security_rows(dataset, identity, 'date BETWEEN ? AND ?', [start, end])
+        rows = self._security_rows(
+            dataset, identity, 'date BETWEEN ? AND ?', [start, end],
+            min_bucket=s_date.year, max_bucket=e_date.year,
+        )
         return [self._price_result(row, basis, identity, dataset) for row in rows]
 
     def get_price_histories(self, spans, price_type):
@@ -402,16 +442,20 @@ class FactRepository:
         for dataset, wanted in groups.items():
             if not wanted:
                 continue
+            min_start, max_end = min(r[2] for r in wanted), max(r[3] for r in wanted)
+            source_sql = self._table_source_sql(dataset, min_bucket=min_start.year, max_bucket=max_end.year)
+            if source_sql is None:
+                continue
             aliases = sorted({row[1] for row in wanted})
             # Explicit ticker/date predicates preserve Parquet pruning, while
             # the join applies each requested security's exact date bounds.
-            sql = (f'SELECT w.requested, p.* FROM {ident(dataset)} p JOIN '
+            sql = (f'SELECT w.requested, p.* FROM {source_sql} p JOIN '
                    f'(VALUES {",".join("(?,?,?,?)" for _ in wanted)}) w(requested,alias,start_date,end_date) '
                    'ON p.ticker=w.alias AND p.date BETWEEN w.start_date AND w.end_date '
                    f'WHERE p.ticker IN ({",".join("?" for _ in aliases)}) AND p.date BETWEEN ? AND ? '
                    'ORDER BY w.requested,p.date,p.ticker')
             cursor = self.db.execute(sql, [v for row in wanted for v in row] + aliases +
-                                     [min(r[2] for r in wanted), max(r[3] for r in wanted)])
+                                     [min_start, max_end])
             columns = [c[0] for c in cursor.description]
             ignored = {'requested', 'ticker', 'lastupdated', '_ingestion_run', '_observed_at'}
             previous_key, previous_fact = None, None
@@ -446,6 +490,20 @@ class FactRepository:
         self._require(dataset)
         basis = self._price_basis(price_type)
         marks = ','.join('?' for _ in identity['aliases'])
+        cutoff_year = _date(as_of).year
+        bucketed = self._partition_buckets.get(dataset) or []
+        if len(bucketed) >= 2 and all(isinstance(b, int) and b >= 1900 for b, _ in bucketed):
+            for bucket, path in reversed(bucketed):
+                if bucket > cutoff_year:
+                    continue
+                last = self.db.execute(
+                    f'SELECT max(date) FROM read_parquet({_literal(path)}) WHERE ticker IN ({marks}) AND date<=?',
+                    [*identity['aliases'], as_of],
+                ).fetchone()[0]
+                if last is not None:
+                    rows = self._security_rows(dataset, identity, 'date=?', [last], min_bucket=bucket, max_bucket=bucket)
+                    return self._price_result(rows[0], basis, identity, dataset)
+            return None
         last = self.db.execute(f'SELECT max(date) FROM {ident(dataset)} WHERE ticker IN ({marks}) AND date<=?', [*identity['aliases'], as_of]).fetchone()[0]
         if last is None:
             return None
@@ -483,26 +541,44 @@ class FactRepository:
                 pass
         if not identities:
             return dict.fromkeys(requested)
-        pairs = [(ticker, alias) for ticker, identity in identities.items() for alias in identity['aliases']]
-        values = ','.join('(?,?)' for _ in pairs)
-        rows = self._rows(f'SELECT p.*,requested FROM {ident(dataset)} p JOIN (VALUES {values}) wanted(requested,alias) ON p.ticker=wanted.alias WHERE p.date<=? QUALIFY p.date=max(p.date) OVER (PARTITION BY requested)',
-                          [item for pair in pairs for item in pair] + [as_of])
         result = dict.fromkeys(requested)
         invalid = set()
-        for row in rows:
-            ticker = row.pop('requested')
-            if ticker in invalid:
-                continue
-            try:
-                fact = self._price_result(row, basis, identities[ticker], dataset)
-                if result[ticker] is not None and result[ticker]['value'] != fact['value']:
-                    raise MissingData(f'{dataset}: conflicting retained ticker-alias prices')
-                result[ticker] = fact
-            except MissingData:
-                # Fail this security closed, not every unrelated quote in the
-                # dashboard. Singular methods retain the explicit exception.
-                result[ticker] = None
-                invalid.add(ticker)
+        cutoff_year = _date(as_of).year
+
+        def populate_from_window(subset_tickers, min_b, max_b):
+            if not subset_tickers:
+                return
+            source_sql = self._table_source_sql(dataset, min_bucket=min_b, max_bucket=max_b)
+            if source_sql is None:
+                return
+            pairs = [(t, alias) for t in subset_tickers for alias in identities[t]['aliases']]
+            values = ','.join('(?,?)' for _ in pairs)
+            rows = self._rows(
+                f'SELECT p.*,requested FROM {source_sql} p JOIN (VALUES {values}) wanted(requested,alias) ON p.ticker=wanted.alias WHERE p.date<=? QUALIFY p.date=max(p.date) OVER (PARTITION BY requested)',
+                [item for pair in pairs for item in pair] + [as_of],
+            )
+            for row in rows:
+                ticker_key = row.pop('requested')
+                if ticker_key in invalid:
+                    continue
+                try:
+                    fact = self._price_result(row, basis, identities[ticker_key], dataset)
+                    if result[ticker_key] is not None and result[ticker_key]['value'] != fact['value']:
+                        raise MissingData(f'{dataset}: conflicting retained ticker-alias prices')
+                    result[ticker_key] = fact
+                except MissingData:
+                    # Fail this security closed, not every unrelated quote in the
+                    # dashboard. Singular methods retain the explicit exception.
+                    result[ticker_key] = None
+                    invalid.add(ticker_key)
+
+        if self._bucket_files(dataset, min_bucket=cutoff_year - 1, max_bucket=cutoff_year) is not None:
+            populate_from_window(list(identities.keys()), cutoff_year - 1, cutoff_year)
+            unresolved = [t for t in identities if result[t] is None and t not in invalid]
+            if unresolved:
+                populate_from_window(unresolved, None, cutoff_year - 2)
+        else:
+            populate_from_window(list(identities.keys()), None, None)
         return result
 
     def get_latest_fundamentals(self, tickers, dimension='ART', *, as_of=None):
@@ -815,6 +891,53 @@ class FactRepository:
             'companies': matched,
         }
 
+    def _fundamental_research_index_path(self):
+        """Build or reuse a ticker-sorted ARQ/ARY Parquet cache for fast per-company statements."""
+        if self._fund_research_index is not False:
+            return self._fund_research_index
+        files = self._partition_files.get('fundamentals') or []
+        if not self.generation or len(files) < 10:
+            self._fund_research_index = None
+            return None
+        root_tag = hashlib.sha256(str(self.root).encode()).hexdigest()[:8]
+        target = self._lease_dir / f'fund-ar-research-{root_tag}-{self.generation[:24]}.parquet'
+        try:
+            if target.is_file() and target.stat().st_size > 0:
+                self._fund_research_index = str(target)
+                return self._fund_research_index
+            for old in self._lease_dir.glob(f'fund-ar-research-{root_tag}-*.parquet'):
+                if old != target:
+                    old.unlink(missing_ok=True)
+            avail = {c[0] for c in self._contracts['fundamentals'].columns} | {
+                '_ingestion_run', '_observed_at', '_quality_issues',
+            }
+            cols = [
+                c for c in dict.fromkeys([
+                    *self._FUNDAMENTAL_RESEARCH_FIELDS,
+                    *self._contracts['fundamentals'].keys,
+                    '_ingestion_run', '_observed_at', '_quality_issues',
+                ])
+                if c in avail
+            ]
+            col_sql = ', '.join(ident(c) for c in cols)
+            tmp = self._lease_dir / f'.fund-ar-research-{root_tag}-{self.generation[:24]}-{os.getpid()}.tmp.parquet'
+            try:
+                self.db.execute(
+                    f"COPY (SELECT {col_sql} FROM read_parquet(?, union_by_name=true) "
+                    "WHERE dimension IN ('ARQ','ARY') AND reportperiod<=date "
+                    f"ORDER BY ticker, dimension, reportperiod, date) TO {_literal(str(tmp))} "
+                    "(FORMAT PARQUET, ROW_GROUP_SIZE 2048, COMPRESSION ZSTD)",
+                    [files],
+                )
+                os.replace(tmp, target)
+                self._fund_research_index = str(target)
+                return self._fund_research_index
+            finally:
+                tmp.unlink(missing_ok=True)
+        except Exception:
+            self._fund_research_index = None
+            return None
+
     def get_fundamental_research(self, ticker, as_of, *, quarters=16, years=8):
         """Bounded source facts for one company; restated dimensions are never mixed into PIT."""
         quarters, years = int(quarters), int(years)
@@ -822,9 +945,21 @@ class FactRepository:
             raise ValueError('invalid fundamental research history bound')
         identity = self.resolve_security(ticker)
         self._master()
-        rows = self._security_rows('fundamentals', identity,
-            "dimension IN ('ARQ','ARY') AND date<=? AND reportperiod<=date AND reportperiod<=?",
-            [as_of, as_of], 'dimension,reportperiod,date')
+        self._require('fundamentals')
+        index_path = self._fundamental_research_index_path()
+        if index_path:
+            marks = ','.join('?' for _ in identity['aliases'])
+            raw_rows = self._rows(
+                f'SELECT * FROM read_parquet({_literal(index_path)}) '
+                f'WHERE ticker IN ({marks}) AND date<=? AND reportperiod<=? '
+                'ORDER BY dimension,reportperiod,date',
+                [*identity['aliases'], as_of, as_of],
+            )
+            rows = self._dedupe_security_rows('fundamentals', raw_rows)
+        else:
+            rows = self._security_rows('fundamentals', identity,
+                "dimension IN ('ARQ','ARY') AND date<=? AND reportperiod<=date AND reportperiod<=?",
+                [as_of, as_of], 'dimension,reportperiod,date')
         latest = {}
         for row in rows:
             latest[(row['dimension'], row['reportperiod'])] = row
@@ -877,7 +1012,11 @@ class FactRepository:
 
     def get_dividends(self, ticker, start, end):
         identity = self.resolve_security(ticker)
-        rows = self._security_rows('actions', identity, "action='dividend' AND date BETWEEN ? AND ?", [start, end])
+        s_date, e_date = _date(start), _date(end)
+        rows = self._security_rows(
+            'actions', identity, "action='dividend' AND date BETWEEN ? AND ?", [start, end],
+            min_bucket=s_date.year, max_bucket=e_date.year,
+        )
         # Official descriptions/actiontypes/dividend: USD/share, adjusted for
         # stock splits and stock dividends. Date is EX date, not payment date.
         return [{'date': row['date'], 'ex_date': row['date'], 'payment_date': None,

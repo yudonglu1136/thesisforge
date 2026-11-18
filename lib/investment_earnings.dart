@@ -226,10 +226,12 @@ class _EarningsResearchPanelState extends State<EarningsResearchPanel> {
             ),
           ),
         SelectableText(
-          text(
-            context.isChinese && text(g['excerptZh']).isNotEmpty
-                ? g['excerptZh']
-                : g['excerpt'],
+          cleanTranscriptMojibake(
+            text(
+              context.isChinese && text(g['excerptZh']).isNotEmpty
+                  ? g['excerptZh']
+                  : g['excerpt'],
+            ),
           ),
           style: TextStyle(color: p.text, fontSize: 14, height: 1.6),
         ),

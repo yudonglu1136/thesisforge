@@ -24,7 +24,7 @@ import { loadQqqSchdRotationDashboard, analyzeQqqSchdRotationRange } from './qqq
 import { researchInsiders } from './researchInsiders.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
 import { factOsEnabled } from './factRepository.js';
-import { withActiveDataRelease } from './dataReleaseContext.js';
+import { withActiveDataRelease, withResearchDataRelease, dataReleaseId, retainDataRelease } from './dataReleaseContext.js';
 import { publicAnalysisArtifacts } from './publicAnalysisArtifact.js';
 
 export function registerInvestmentRoutes(app,service) {
@@ -172,7 +172,16 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/watches/:id',(owner,r)=>reviewWatch(service,owner,r.params.id,r.query.asOf));
   route('post','/watch-reviews',(owner,r)=>saveWatchReview(service,owner,r.body));
   route('get','/gurus/:id',(_,r)=>service.source.guruDetail(r.params.id,service.date(r.query.asOf)));
-  route('get','/research/:ticker',(owner,r)=>service.research(owner,r.params.ticker,r.query.asOf));
+  route('get','/research/:ticker',(owner,r)=>{
+    if (!service.marketReadOptions && service.source?.canonicalMarket && typeof service.source?.db?.prepare === 'function') {
+      const releasePin = dataReleaseId() ? retainDataRelease() : () => {};
+      Promise.resolve()
+        .then(() => researchFundamentals(service, r.params.ticker, r.query.asOf))
+        .catch(() => {})
+        .finally(releasePin);
+    }
+    return service.research(owner,r.params.ticker,r.query.asOf);
+  });
   route('get','/research/:ticker/documents',(_,r)=>researchDocuments(service.source,r.params.ticker,service.date(r.query.asOf)));
   route('get','/research/:ticker/insiders',(_,r)=>(service.researchInsiders??researchInsiders)(r.params.ticker,service.date(r.query.asOf),r.query));
   route('get','/research/:ticker/fundamentals',(_,r)=>researchFundamentals(service,r.params.ticker,r.query.asOf));
@@ -231,6 +240,11 @@ export function enableInvestmentPreview(app) {
       }catch{}
       try{return publicAnalysisArtifacts.warmCurrent(service.date()).catch(()=>{});}catch{}
     });
+    if (source.canonicalMarket) {
+      try{
+        withResearchDataRelease(()=>buildFundamentalCompany(source,'NVDA',service.date()).catch(()=>{}));
+      }catch{}
+    }
   });
   return service;
 }

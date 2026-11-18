@@ -372,9 +372,65 @@ function startDate(asOf, days) {
   const date = new Date(`${asOf}T00:00:00Z`); date.setUTCDate(date.getUTCDate() - days); return date.toISOString().slice(0, 10);
 }
 
+const companyFundamentalCaches = new WeakMap();
+const fallbackCompanySource = {};
+const COMPANY_FUNDAMENTAL_TTL_MS = 10 * 60_000;
+
+function getCompanyFundamentalStore(source) {
+  const key = source && typeof source === 'object' ? source : fallbackCompanySource;
+  let store = companyFundamentalCaches.get(key);
+  if (!store) {
+    store = { entries: new Map(), inFlight: new Map() };
+    companyFundamentalCaches.set(key, store);
+  }
+  return store;
+}
+
 export async function buildFundamentalCompany(source, ticker, asOf, options = {}) {
   ticker = tickerKey(ticker); isoDate(asOf);
-  if(source?.canonicalMarket&&!marketFactsVersion())return withCanonicalMarket([ticker],asOf,()=>buildFundamentalCompany(source,ticker,asOf,options));
+  const store = getCompanyFundamentalStore(source);
+  let factGen = 'none';
+  try { factGen = (await factGeneration()) || 'none'; } catch { factGen = 'none'; }
+  let sqliteGen = 'no-db';
+  try {
+    if (typeof source?.db?.prepare === 'function') {
+      const dv = source.db.prepare('PRAGMA data_version').get()?.data_version ?? 0;
+      const tc = source.db.prepare('SELECT total_changes() n').get()?.n ?? 0;
+      sqliteGen = `${dv}:${tc}`;
+    }
+  } catch { sqliteGen = 'no-db'; }
+  const cacheKey = `${ticker}|${asOf}|${options.lens ?? ''}|${factGen}|${sqliteGen}`;
+  const now = Date.now();
+  const hit = store.entries.get(cacheKey);
+  if (hit && hit.expiresAt > now && factGen !== 'none') {
+    store.entries.delete(cacheKey);
+    store.entries.set(cacheKey, hit);
+    return structuredClone(hit.value);
+  }
+  if (store.inFlight.has(cacheKey)) {
+    return structuredClone(await store.inFlight.get(cacheKey));
+  }
+
+  const compute = (async () => {
+    if(source?.canonicalMarket&&!marketFactsVersion())return withCanonicalMarket([ticker],asOf,()=>buildFundamentalCompanyUncached(source,ticker,asOf,options));
+    return buildFundamentalCompanyUncached(source,ticker,asOf,options);
+  })();
+  store.inFlight.set(cacheKey, compute);
+  try {
+    const result = await compute;
+    if (factGen !== 'none') {
+      if (store.entries.size >= 128) {
+        store.entries.delete(store.entries.keys().next().value);
+      }
+      store.entries.set(cacheKey, { value: result, expiresAt: Date.now() + COMPANY_FUNDAMENTAL_TTL_MS });
+    }
+    return structuredClone(result);
+  } finally {
+    if (store.inFlight.get(cacheKey) === compute) store.inFlight.delete(cacheKey);
+  }
+}
+
+async function buildFundamentalCompanyUncached(source, ticker, asOf, options = {}) {
   const requests = [
     { method: 'get_fundamental_research', args: [ticker, asOf], kwargs: { quarters: 16, years: 8 } },
     { method: 'get_price_history', args: [ticker, startDate(asOf, 400), asOf, PRICE_TYPES.SPLIT_ADJUSTED_CLOSE] },

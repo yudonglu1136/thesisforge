@@ -98,6 +98,27 @@ export function withActiveDataRelease(fn) {
   }
 }
 
+export function withResearchDataRelease(fn) {
+  let entry;
+  try{
+    const research=researchReleaseManifest({method:'GET',originalUrl:'/api/investment/research/_warm/fundamentals'});
+    entry=research?readDataRelease(research):readDataRelease();
+  }catch{entry=null;}
+  if(!entry)return fn();
+  entry.readers++;
+  let done=false;
+  const finish=()=>{if(done)return;done=true;entry.readers--;dispose(entry);};
+  try{
+    const out=context.run(entry,fn);
+    if(out&&typeof out.finally==='function')return out.finally(finish);
+    finish();
+    return out;
+  }catch(error){
+    finish();
+    throw error;
+  }
+}
+
 export function dataReleaseId() {return context.getStore()?.manifest.releaseId??null;}
 
 export function releaseResource(key,create,close) {

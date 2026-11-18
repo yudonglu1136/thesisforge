@@ -1,5 +1,8 @@
 part of 'main.dart';
 
+final Expando<Map<String, Map<String, dynamic>>> _researchFundamentalsCache =
+    Expando<Map<String, Map<String, dynamic>>>();
+
 // Route fallback is exact, never a substitute company. An explicit research
 // ticker wins over the candidate retained by the discovery workspace.
 String researchEntryTicker(String page, String explicit, String? candidate) =>
@@ -1343,6 +1346,15 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   Future<void> loadResearchOverviewFinancials() async {
     if (researchFinancialsLoading || ticker.isEmpty) return;
     final symbol = ticker, cutoff = asOf, serial = requestSerial;
+    final cached = _researchFundamentalsCache[widget.api]?['$symbol|$cutoff'];
+    if (cached != null) {
+      updateUI(() {
+        researchFundamental = cached;
+        researchFinancialsLoading = false;
+        researchFinancialsError = null;
+      });
+      return;
+    }
     updateUI(() {
       researchFinancialsLoading = true;
       researchFinancialsError = null;
@@ -1352,6 +1364,10 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         '/api/investment/research/${Uri.encodeComponent(symbol)}/fundamentals?asOf=$cutoff',
       );
       if (!mounted || serial != requestSerial || ticker != symbol) return;
+      final store = _researchFundamentalsCache[widget.api] ??=
+          <String, Map<String, dynamic>>{};
+      if (store.length >= 24) store.remove(store.keys.first);
+      store['$symbol|$cutoff'] = value;
       updateUI(() => researchFundamental = value);
     } catch (e) {
       if (mounted && serial == requestSerial && ticker == symbol) {
@@ -2279,7 +2295,9 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  text(e['excerpt'], text(e['quote'])),
+                  cleanTranscriptMojibake(
+                    text(e['excerpt'], text(e['quote'])),
+                  ),
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: p.text, fontSize: 12.5, height: 1.45),

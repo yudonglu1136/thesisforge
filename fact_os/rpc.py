@@ -108,19 +108,68 @@ def dispatch_result(repo, request):
         return {'ok': False, 'error': {'code': 'local_data_unavailable', 'message': str(error)}}
 
 
+def execute_payload(repo, request):
+    try:
+        if isinstance(request, dict) and isinstance(request.get('batch'), list):
+            if not 1 <= len(request['batch']) <= 256:
+                raise ValueError('batch too large')
+            return {'ok': True, 'result': [dispatch_result(repo, entry) for entry in request['batch']]}
+        return dispatch_result(repo, request)
+    except PITUnavailable as error:
+        return {'ok': False, 'error': {'code': 'pit_unavailable', 'message': str(error)}}
+    except MissingData as error:
+        return {'ok': False, 'error': {'code': 'local_data_unavailable', 'message': str(error)}}
+    except (ValueError, TypeError, KeyError):
+        return {'ok': False, 'error': {'code': 'invalid_fact_query', 'message': 'Invalid or unsupported local query.'}}
+    except Exception:
+        return {'ok': False, 'error': {'code': 'local_data_unavailable', 'message': 'Local Fact OS is not ready for this query. Run backfill or sync separately; provider fallback is disabled.'}}
+
+
+def _startup_error_payload(error):
+    if isinstance(error, PITUnavailable):
+        return {'ok': False, 'error': {'code': 'pit_unavailable', 'message': str(error)}}
+    if isinstance(error, MissingData):
+        return {'ok': False, 'error': {'code': 'local_data_unavailable', 'message': str(error)}}
+    return {'ok': False, 'error': {'code': 'local_data_unavailable', 'message': 'Local Fact OS is not ready for this query. Run backfill or sync separately; provider fallback is disabled.'}}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', required=True)
+    parser.add_argument('--daemon', action='store_true')
     options = parser.parse_args()
+    if options.daemon:
+        repo = None
+        startup_error = None
+        try:
+            repo = FactRepository(options.root, lazy_views=True)
+        except Exception as error:
+            startup_error = _startup_error_payload(error)
+        try:
+            for raw_line in sys.stdin:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                req_id = None
+                try:
+                    envelope = json.loads(line)
+                    req_id = envelope.get('id') if isinstance(envelope, dict) else None
+                    payload = envelope.get('payload') if isinstance(envelope, dict) else None
+                    response = startup_error if startup_error is not None else execute_payload(repo, payload)
+                except Exception:
+                    response = {'ok': False, 'error': {'code': 'invalid_fact_query', 'message': 'Invalid or unsupported local query.'}}
+                sys.stdout.write(json.dumps({'id': req_id, 'response': response}, allow_nan=False, separators=(',', ':')) + '\n')
+                sys.stdout.flush()
+        finally:
+            if repo is not None:
+                repo.close()
+        return
+
     repo = None
     try:
         request = json.loads(sys.stdin.read(1024 * 1024))
         repo = FactRepository(options.root, lazy_views=True)
-        if isinstance(request, dict) and isinstance(request.get('batch'), list):
-            if not 1 <= len(request['batch']) <= 256: raise ValueError('batch too large')
-            result = {'ok': True, 'result': [dispatch_result(repo, entry) for entry in request['batch']]}
-        else:
-            result = dispatch_result(repo, request)
+        result = execute_payload(repo, request)
     except PITUnavailable as error:
         result = {'ok': False, 'error': {'code': 'pit_unavailable', 'message': str(error)}}
     except MissingData as error:

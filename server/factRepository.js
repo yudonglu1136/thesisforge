@@ -119,17 +119,182 @@ export function queryFactsBatch(requests) {
   return result;
 }
 
+const MAX_DAEMONS = 2;
+const DAEMON_IDLE_MS = 300_000;
+const daemons = new Map();
+let daemonReqSeq = 0;
+
+function resolvePythonAndEnv() {
+  const root = path.resolve(releaseRoot('canonical', process.env.FACT_OS_ROOT || path.join(projectRoot, "data/fact_os")));
+  const python = process.env.FACT_OS_PYTHON || (process.env.NODE_ENV === 'production' && existsSync('/opt/thesisforge-fact-os/bin/python')
+    ? '/opt/thesisforge-fact-os/bin/python'
+    : path.join(projectRoot, ".venv-fact-os/bin/python"));
+  const leaseRoot = process.env.FACT_OS_LEASE_ROOT
+    ? process.env.FACT_OS_LEASE_ROOT
+    : dataReleaseId()
+      ? '/var/app/data/fact-os-leases'
+      : '';
+  const env = {
+    PATH: process.env.PATH || "/usr/bin:/bin",
+    PYTHONUNBUFFERED: "1",
+    LANG: "en_US.UTF-8",
+    ...(leaseRoot ? { FACT_OS_LEASE_ROOT: leaseRoot } : {}),
+  };
+  return { root, python, leaseRoot, env };
+}
+
+function unrefDaemon(worker) {
+  worker.child.unref?.();
+  worker.child.stdout?.unref?.();
+  worker.child.stderr?.unref?.();
+  worker.child.stdin?.unref?.();
+}
+
+function refDaemon(worker) {
+  worker.child.ref?.();
+  worker.child.stdout?.ref?.();
+}
+
+function destroyDaemon(key, worker, error) {
+  if (daemons.get(key) === worker) daemons.delete(key);
+  if (worker.idleTimer) {
+    clearTimeout(worker.idleTimer);
+    worker.idleTimer = null;
+  }
+  try { worker.child.kill(); } catch {}
+  for (const pending of worker.pending.values()) {
+    clearTimeout(pending.timer);
+    pending.reject(error || new FactDataError("local_query_failed", "Local Fact OS worker closed before completing this read. No legacy data was substituted."));
+  }
+  worker.pending.clear();
+}
+
+function touchDaemonIdle(key, worker) {
+  if (worker.idleTimer) clearTimeout(worker.idleTimer);
+  if (worker.pending.size === 0) {
+    unrefDaemon(worker);
+    worker.idleTimer = setTimeout(() => {
+      if (worker.pending.size === 0) destroyDaemon(key, worker);
+    }, DAEMON_IDLE_MS);
+    worker.idleTimer.unref?.();
+  }
+}
+
+function getOrCreateDaemon(info, generationKey) {
+  const key = `${generationKey || info.root}|${info.leaseRoot}|${info.python}`;
+  let worker = daemons.get(key);
+  if (worker && !worker.closed) {
+    daemons.delete(key);
+    daemons.set(key, worker);
+    return { key, worker };
+  }
+  while (daemons.size >= MAX_DAEMONS) {
+    const oldestKey = daemons.keys().next().value;
+    const oldest = daemons.get(oldestKey);
+    if (oldest && oldest.pending.size === 0) {
+      destroyDaemon(oldestKey, oldest);
+    } else {
+      break;
+    }
+  }
+  const child = spawn(info.python, ["-m", "fact_os.rpc", "--root", info.root, "--daemon"], {
+    cwd: projectRoot,
+    env: info.env,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  worker = {
+    child,
+    buffer: "",
+    closed: false,
+    pending: new Map(),
+    idleTimer: null,
+  };
+  child.stderr.resume();
+  child.stdin.on("error", () => {});
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", chunk => {
+    worker.buffer += chunk;
+    if (Buffer.byteLength(worker.buffer, "utf8") > 64 * 1024 * 1024) {
+      worker.closed = true;
+      destroyDaemon(key, worker, new FactDataError("local_result_too_large", "Narrow the local data query."));
+      return;
+    }
+    let newlineIndex;
+    while ((newlineIndex = worker.buffer.indexOf("\n")) !== -1) {
+      const line = worker.buffer.slice(0, newlineIndex);
+      worker.buffer = worker.buffer.slice(newlineIndex + 1);
+      if (!line.trim()) continue;
+      let parsed;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        worker.closed = true;
+        destroyDaemon(key, worker, new FactDataError("local_query_failed", "Local Fact OS returned invalid JSON. No legacy data was substituted."));
+        return;
+      }
+      const entry = worker.pending.get(parsed?.id);
+      if (!entry) continue;
+      worker.pending.delete(parsed.id);
+      clearTimeout(entry.timer);
+      touchDaemonIdle(key, worker);
+      const response = parsed.response;
+      if (response?.ok) {
+        entry.resolve(response.result);
+      } else {
+        entry.reject(new FactDataError(
+          response?.error?.code || "local_data_unavailable",
+          response?.error?.message || "Local data is unavailable; sync separately.",
+        ));
+      }
+    }
+  });
+  child.on("error", () => {
+    worker.closed = true;
+    destroyDaemon(key, worker, new FactDataError("local_runtime_unavailable", "Fact OS Python runtime is unavailable. Run the local setup before starting the app."));
+  });
+  child.on("close", code => {
+    worker.closed = true;
+    destroyDaemon(key, worker, new FactDataError("local_query_failed", `Local Fact OS could not complete this read (${code ?? "interrupted"}). No legacy data was substituted.`));
+  });
+  daemons.set(key, worker);
+  touchDaemonIdle(key, worker);
+  return { key, worker };
+}
+
 function runRequest(request) {
+  const info = resolvePythonAndEnv();
+  const { key, worker } = getOrCreateDaemon(info, cachedGeneration);
   return new Promise((resolve, reject) => {
-    const root = path.resolve(releaseRoot('canonical',process.env.FACT_OS_ROOT || path.join(projectRoot, "data/fact_os")));
-    const python = process.env.FACT_OS_PYTHON || (process.env.NODE_ENV==='production'&&existsSync('/opt/thesisforge-fact-os/bin/python')
-      ? '/opt/thesisforge-fact-os/bin/python':path.join(projectRoot, ".venv-fact-os/bin/python"));
-    const child = spawn(python, ["-m", "fact_os.rpc", "--root", root], {
+    const id = ++daemonReqSeq;
+    refDaemon(worker);
+    if (worker.idleTimer) {
+      clearTimeout(worker.idleTimer);
+      worker.idleTimer = null;
+    }
+    const timer = setTimeout(() => {
+      worker.pending.delete(id);
+      worker.closed = true;
+      destroyDaemon(key, worker, new FactDataError("local_query_timeout", "Local Fact OS query timed out; no provider fallback was used."));
+      reject(new FactDataError("local_query_timeout", "Local Fact OS query timed out; no provider fallback was used."));
+    }, 120_000);
+    worker.pending.set(id, { resolve, reject, timer });
+    try {
+      worker.child.stdin.write(JSON.stringify({ id, payload: request }) + "\n");
+    } catch {
+      worker.pending.delete(id);
+      clearTimeout(timer);
+      worker.closed = true;
+      destroyDaemon(key, worker);
+      runRequestOnce(request, info).then(resolve, reject);
+    }
+  });
+}
+
+function runRequestOnce(request, info = resolvePythonAndEnv()) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(info.python, ["-m", "fact_os.rpc", "--root", info.root], {
       cwd: projectRoot,
-      // Provider keys and private user credentials are not inherited by readers.
-      env: { PATH: process.env.PATH || "/usr/bin:/bin", PYTHONUNBUFFERED: "1", LANG: "en_US.UTF-8",
-        ...(process.env.FACT_OS_LEASE_ROOT?{FACT_OS_LEASE_ROOT:process.env.FACT_OS_LEASE_ROOT}:
-          dataReleaseId()?{FACT_OS_LEASE_ROOT:'/var/app/data/fact-os-leases'}:{}) },
+      env: info.env,
       stdio: ["pipe", "pipe", "pipe"]
     });
     let output = ""; let finished = false;

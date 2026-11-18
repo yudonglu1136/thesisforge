@@ -165,7 +165,10 @@ export class InvestmentSource {
         ? 'Independent private worksheet prefilled with disclosed analyst starting assumptions, not issuer guidance or a published DCF. Ke 10% and g 2.5% are illustrative. Confirm parent ownership before saving a formal scenario.'
         : 'Revenue starts from the stored normalized growth assumption and fades to terminal growth. FCFE margins reconcile the unchanged published cash-flow path before post-DCF adjustments. Neither path is annual management guidance. Bear/Bull are editable stresses; saved user assumptions are never replaced.',
       provenance:this.guruEvidence(ticker,asOf),priceHistory:(marketPriceHistory(ticker,asOf)??snap?.priceHistory??[]).filter(x=>x.date<=asOf && finite(x.close)&&x.close>0).slice(-900),
-      guidance:{maxObservedAt:latest.guidance.maxObservedAt??null,selection:latest.guidance.guidanceSelection??{},evidence:(latest.guidance.evidence??[]).filter(x=>x.observedAt<=asOf),...guidanceReview},
+      guidance:{maxObservedAt:latest.guidance.maxObservedAt??null,selection:latest.guidance.guidanceSelection??{},evidence:(latest.guidance.evidence??[]).filter(x=>x.observedAt<=asOf).map(x=>({...x,
+        ...(typeof x.excerpt==='string'?{excerpt:x.excerpt.replaceAll('Â±','±').replaceAll('Â ',' ').replaceAll('â€™','’').replaceAll('â€“','–').replaceAll('â€”','—')}:{}),
+        ...(typeof x.quote==='string'?{quote:x.quote.replaceAll('Â±','±').replaceAll('Â ',' ').replaceAll('â€™','’').replaceAll('â€“','–').replaceAll('â€”','—')}:{}),
+      })),...guidanceReview},
       coverage:{scenario:templates?'supported':currencyComparable?'existing_method_only':'currency_reconciliation_required',peers:'not_available_reviewed_cohort',kpis:'not_available',roic:'not_available'},
       retrospective:true};
     if(this.companyCache.size>=128)this.companyCache.delete(this.companyCache.keys().next().value);
