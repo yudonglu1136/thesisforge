@@ -391,13 +391,13 @@ function normalizeActionItem(item, totalCommonValue, previousCommonValue) {
 
 export function enrichGuruDetail(source, base) {
   const guruId = base.guru.id, asOf = base.asOf;
-  const generation = `${source.db.prepare('PRAGMA data_version').get().data_version}:${dataReleaseId() ?? 'legacy'}:${marketFactsVersion() ?? 'stored'}`;
+  const generation = `${source.db.prepare('PRAGMA data_version').get().data_version}:${dataReleaseId() ?? 'legacy'}`;
   let cache = profileCaches.get(source);
   if (!cache || cache.generation !== generation) {
     cache = { generation, items: new Map() };
     profileCaches.set(source, cache);
   }
-  const cacheKey = `${guruId}:${asOf}`;
+  const cacheKey = `${guruId}:${asOf}:${marketFactsVersion() ?? 'stored'}`;
   if (cache.items.has(cacheKey)) return structuredClone(cache.items.get(cacheKey));
 
   const configured = gurus.find(g => g.id === guruId) ?? null;
@@ -581,7 +581,7 @@ export function enrichGuruDetail(source, base) {
       : base.coverage,
   };
 
-  if (cache.items.size >= 24) cache.items.delete(cache.items.keys().next().value);
+  if (cache.items.size >= 64) cache.items.delete(cache.items.keys().next().value);
   cache.items.set(cacheKey, enriched);
   return structuredClone(enriched);
 }

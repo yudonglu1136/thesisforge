@@ -45,25 +45,49 @@ bool writePortfolioPrivacyPreference(bool hidden) {
   }
 }
 
-String? readAppLanguagePreference() {
+String? _readCookieLanguage() {
   try {
-    return web.window.localStorage.getItem('thesisforge.language.v1');
+    final raw = web.document.cookie;
+    final match = RegExp(r'(?:^|;\s*)tf_lang=(zh|en)(?:;|$)', caseSensitive: false)
+        .firstMatch(raw);
+    return match?.group(1)?.toLowerCase();
   } catch (_) {
     return null;
   }
 }
 
-bool writeAppLanguagePreference(String code) {
+String? readAppLanguagePreference() {
+  String? stored;
   try {
-    web.window.localStorage.setItem('thesisforge.language.v1', code);
+    stored = web.window.localStorage.getItem('thesisforge.language.v1');
+  } catch (_) {}
+  if (stored != null && stored.trim().isNotEmpty) return stored.trim();
+  return _readCookieLanguage();
+}
+
+bool writeAppLanguagePreference(String code) {
+  final normalized = code.trim().toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  var saved = false;
+  try {
+    web.window.localStorage.setItem('thesisforge.language.v1', normalized);
+    saved = true;
+  } catch (_) {}
+  try {
+    final host = web.window.location.hostname.toLowerCase();
+    final domainAttr = host.endsWith('thesisforge.tech')
+        ? '; Domain=.thesisforge.tech'
+        : '';
+    web.document.cookie =
+        'tf_lang=$normalized; Path=/; Max-Age=31536000; SameSite=Lax$domainAttr';
+    saved = true;
+  } catch (_) {}
+  try {
     web.document.documentElement?.setAttribute(
       'lang',
-      code == 'zh' ? 'zh-CN' : 'en',
+      normalized == 'zh' ? 'zh-CN' : 'en',
     );
-    return true;
-  } catch (_) {
-    return false;
-  }
+  } catch (_) {}
+  return saved;
 }
 
 Map<String, String> readBrowserQuery() => Uri.base.queryParameters;
@@ -104,4 +128,15 @@ void replaceBrowserQuery(
 
 void openBrowserPath(String path) {
   web.window.location.href = path;
+}
+
+void openExternalUrl(String url) {
+  try {
+    final opened = web.window.open(url, '_blank', 'noopener,noreferrer');
+    if (opened == null) {
+      web.window.location.href = url;
+    }
+  } catch (_) {
+    web.window.location.href = url;
+  }
 }

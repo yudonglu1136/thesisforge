@@ -612,6 +612,7 @@ export function analyzeBreakoutPullbackRange({
   snapshotId = null,
   start = null,
   end = null,
+  includeTrades = true,
 } = {}) {
   if (asOf !== null && !isIsoDate(asOf)) fail('invalid_as_of', 400);
   if (!BREAKOUT_MODES.includes(mode)) fail('invalid_strategy_mode', 400);
@@ -897,7 +898,9 @@ export function analyzeBreakoutPullbackRange({
     topWinners: winners.slice(0, 3),
     topLosers: [...losers].reverse().slice(0, 3),
     holdings,
-    trades: [...rangeLotRecords].sort((a, b) => b.rangeNetContribution - a.rangeNetContribution),
+    trades: includeTrades
+      ? [...rangeLotRecords].sort((a, b) => b.rangeNetContribution - a.rangeNetContribution)
+      : [],
     reconciliation: {
       stockPnl: totalNet,
       grossPnl: totalGross,

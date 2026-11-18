@@ -191,6 +191,22 @@ function initUserDb(db) {
       encrypted_json TEXT NOT NULL,
       PRIMARY KEY (provider, connection_revision)
     );
+
+    CREATE TABLE IF NOT EXISTS portfolio_account_sync_status (
+      account_id TEXT PRIMARY KEY,
+      query_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      holdings_count INTEGER,
+      last_synced_at TEXT,
+      last_error TEXT,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 }
 
@@ -752,6 +768,22 @@ export function readPortfolioConnectionStatus(user) {
     WHERE provider = ? AND connection_revision = ?
     ORDER BY report_date DESC, retrieved_at DESC LIMIT 1
   `).get("ibkr_flex", connection.revision) : null;
+  const accountSyncRows = db.prepare(`
+    SELECT account_id, query_id, status, holdings_count, last_synced_at, last_error, updated_at
+    FROM portfolio_account_sync_status
+  `).all();
+  const syncByAccountId = new Map(accountSyncRows.map((row) => [String(row.account_id), row]));
+  const syncByQueryId = new Map(accountSyncRows.map((row) => [String(row.query_id), row]));
+  const enrichedAccounts = (status.accounts || []).map((account) => {
+    const syncRow = syncByAccountId.get(String(account.id)) || syncByQueryId.get(String(account.queryId)) || null;
+    return {
+      ...account,
+      syncStatus: syncRow?.status || (status.status === "linked" || status.status === "linked_empty" ? "verified" : "pending"),
+      holdingsCount: syncRow?.holdings_count ?? null,
+      lastSyncAt: syncRow?.last_synced_at || "",
+      lastError: syncRow?.last_error || ""
+    };
+  });
   const syncState = status.status === "linked" || status.status === "linked_empty"
     ? "connected"
     : status.status === "error" || status.lastError
@@ -759,6 +791,7 @@ export function readPortfolioConnectionStatus(user) {
       : "saved_needs_validation";
   return {
     ...status,
+    accounts: enrichedAccounts,
     syncState,
     dailySyncEnabled: process.env.PORTFOLIO_NAV_AUTO_CAPTURE !== "false",
     latestReport: latestReport ? {
@@ -774,6 +807,49 @@ export function readPortfolioConnectionStatus(user) {
   };
 }
 
+export function writePortfolioAccountSyncStatuses(user, entries = []) {
+  if (!user || !Array.isArray(entries) || !entries.length) return;
+  const db = openUserDb(user);
+  const now = new Date().toISOString();
+  const upsert = db.prepare(`
+    INSERT INTO portfolio_account_sync_status (
+      account_id, query_id, status, holdings_count, last_synced_at, last_error, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(account_id) DO UPDATE SET
+      query_id = excluded.query_id,
+      status = excluded.status,
+      holdings_count = COALESCE(excluded.holdings_count, portfolio_account_sync_status.holdings_count),
+      last_synced_at = CASE
+        WHEN excluded.last_synced_at != '' THEN excluded.last_synced_at
+        ELSE portfolio_account_sync_status.last_synced_at
+      END,
+      last_error = excluded.last_error,
+      updated_at = excluded.updated_at
+  `);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const entry of entries) {
+      const accountId = cleanString(entry?.accountId || entry?.id);
+      const queryId = cleanQueryId(entry?.queryId || entry?.ibkrFlexQueryId);
+      if (!accountId) continue;
+      const ok = Boolean(entry?.ok);
+      upsert.run(
+        accountId,
+        queryId,
+        ok ? "verified" : "failed",
+        Number.isFinite(entry?.holdingsCount) ? Number(entry.holdingsCount) : null,
+        ok ? now : "",
+        ok ? "" : cleanString(entry?.error).slice(0, 500),
+        now
+      );
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export function savePortfolioConnection(user, input = {}) {
   const config = normalizePortfolioConnectionInput(input);
   const db = openUserDb(user);
@@ -782,6 +858,7 @@ export function savePortfolioConnection(user, input = {}) {
     SELECT created_at FROM portfolio_connections WHERE provider = ?
   `).get(config.provider);
   const encryptedJson = encryptJson(config);
+  const keepAccountIds = new Set((config.accounts || []).map((acc) => String(acc.id)));
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare(`
@@ -811,6 +888,13 @@ export function savePortfolioConnection(user, input = {}) {
     );
     db.prepare("DELETE FROM portfolio_connection_recovery WHERE provider = ?")
       .run(config.provider);
+    const existingSyncRows = db.prepare("SELECT account_id FROM portfolio_account_sync_status").all();
+    const deleteSync = db.prepare("DELETE FROM portfolio_account_sync_status WHERE account_id = ?");
+    for (const row of existingSyncRows) {
+      if (!keepAccountIds.has(String(row.account_id))) {
+        deleteSync.run(row.account_id);
+      }
+    }
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -823,8 +907,41 @@ export function addPortfolioAccount(user, input = {}) {
   const db = openUserDb(user);
   const existing = readPortfolioConnection(user);
   const accounts = existing.config ? portfolioConnectionAccounts(existing.config) : [];
-  const nextAccount = normalizePortfolioAccountInput(input, accounts.length);
-  const nextAccounts = accounts.filter((account) => account.id !== nextAccount.id);
+  const replaceTarget = cleanString(input.replaceAccountId || "");
+  const replaceFailed = input.replaceFailedAccounts === true || input.replaceFailedAccounts === "true";
+  const failedIds = new Set();
+  if (replaceFailed) {
+    const rows = db.prepare(
+      "SELECT account_id, query_id FROM portfolio_account_sync_status WHERE status = 'failed'"
+    ).all();
+    for (const row of rows) {
+      if (row.account_id) failedIds.add(String(row.account_id));
+      if (row.query_id) failedIds.add(String(row.query_id));
+    }
+  }
+  const matchingIndex = accounts.findIndex(
+    (account) =>
+      (replaceTarget && (account.id === replaceTarget || account.ibkrFlexQueryId === replaceTarget)) ||
+      account.ibkrFlexQueryId === cleanQueryId(input.ibkrFlexQueryId || input.queryId || input.portfolioQueryId)
+  );
+  const nextAccount = normalizePortfolioAccountInput(
+    {
+      ...input,
+      createdAt: matchingIndex >= 0 ? accounts[matchingIndex].createdAt : input.createdAt
+    },
+    matchingIndex >= 0 ? matchingIndex : accounts.length
+  );
+  const nextAccounts = accounts.filter((account) => {
+    if (account.id === nextAccount.id) return false;
+    if (account.ibkrFlexQueryId === nextAccount.ibkrFlexQueryId) return false;
+    if (replaceTarget && (account.id === replaceTarget || account.ibkrFlexQueryId === replaceTarget)) {
+      return false;
+    }
+    if (replaceFailed && (failedIds.has(account.id) || failedIds.has(account.ibkrFlexQueryId))) {
+      return false;
+    }
+    return true;
+  });
   nextAccounts.push(nextAccount);
   const status = savePortfolioConnection(user, {
     provider: "ibkr_flex",
@@ -835,7 +952,11 @@ export function addPortfolioAccount(user, input = {}) {
     SET last_connected_at = COALESCE(last_connected_at, '')
     WHERE provider = ?
   `).run("ibkr_flex");
-  return status;
+  return {
+    ...status,
+    addedAccountId: nextAccount.id,
+    addedQueryId: nextAccount.ibkrFlexQueryId
+  };
 }
 
 export function removePortfolioAccount(user, accountKey = "") {
@@ -1327,4 +1448,72 @@ export function userPortfolioInfo(user) {
 
 export function isCashTicker(value) {
   return normalizeTicker(value).startsWith("CASH");
+}
+
+function normalizeLanguagePref(value) {
+  const text = cleanString(value).toLowerCase();
+  if (text === "zh" || text === "zh-cn" || text === "zh_cn" || text === "cn") return "zh";
+  if (text === "en" || text === "en-us" || text === "en_us") return "en";
+  return null;
+}
+
+export function readUserPreferences(user) {
+  const id = userIdFromUser(user);
+  const adminHash = cleanPortfolioHash(user?.adminPortfolioHash);
+  if (!id && !adminHash) {
+    return { configured: false, language: null, colorBlind: null, updatedAt: "" };
+  }
+  const dbPath = userDbPath(user);
+  if (!fs.existsSync(dbPath)) {
+    return { configured: false, language: null, colorBlind: null, updatedAt: "" };
+  }
+  const db = openUserDb(user);
+  const row = db.prepare("SELECT value_json, updated_at FROM user_preferences WHERE key = ?").get("ui");
+  if (!row) {
+    return { configured: false, language: null, colorBlind: null, updatedAt: "" };
+  }
+  const parsed = parsePayload(row.value_json) || {};
+  return {
+    configured: true,
+    language: normalizeLanguagePref(parsed.language),
+    colorBlind: typeof parsed.colorBlind === "boolean" ? parsed.colorBlind : null,
+    updatedAt: cleanString(row.updated_at)
+  };
+}
+
+export function writeUserPreferences(user, input = {}) {
+  const id = userIdFromUser(user);
+  const adminHash = cleanPortfolioHash(user?.adminPortfolioHash);
+  if (!id && !adminHash) {
+    throw new Error("Authenticated user id is required.");
+  }
+  const current = readUserPreferences(user);
+  const nextLanguage = input.language !== undefined
+    ? normalizeLanguagePref(input.language)
+    : current.language;
+  if (input.language !== undefined && !nextLanguage) {
+    throw new Error("Unsupported language code. Expected 'zh' or 'en'.");
+  }
+  const nextColorBlind = typeof input.colorBlind === "boolean"
+    ? input.colorBlind
+    : current.colorBlind;
+  const payload = {
+    language: nextLanguage,
+    colorBlind: nextColorBlind
+  };
+  const now = new Date().toISOString();
+  const db = openUserDb(user);
+  db.prepare(`
+    INSERT INTO user_preferences (key, value_json, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      value_json = excluded.value_json,
+      updated_at = excluded.updated_at
+  `).run("ui", JSON.stringify(payload), now);
+  return {
+    configured: true,
+    language: nextLanguage,
+    colorBlind: nextColorBlind,
+    updatedAt: now
+  };
 }

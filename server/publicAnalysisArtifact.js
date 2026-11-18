@@ -27,6 +27,7 @@ export class PublicAnalysisArtifacts {
     this.retentionMs=Math.max(1,Number(retentionDays)||14)*86_400_000;
     this.minCohortsPerFamily=Math.max(2,Number(minCohortsPerFamily)||3);
     this.pending=[];this.active=0;this.keys=new Set();this.warming=new Set();this.cache=new Map();this.failures=new Map();
+    this.indexCache=null;
   }
   context() {
     // Runtime release validation hashes and opens several immutable artifacts.
@@ -58,8 +59,16 @@ export class PublicAnalysisArtifacts {
       cohortFingerprint:digest({schema:'public-analysis-cohort-v1',family:kind.startsWith('strategy')?'strategy':kind,...inputs})};
   }
   #index() {
-    try{const value=JSON.parse(fs.readFileSync(path.join(this.root,'active.json'),'utf8'));return value.schemaVersion===schema?value:{schemaVersion:schema,entries:{}};}
-    catch{return {schemaVersion:schema,entries:{}};}
+    try{
+      const indexPath=path.join(this.root,'active.json');
+      const stat=fs.statSync(indexPath);
+      const key=`${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+      if(this.indexCache?.key===key)return this.indexCache.value;
+      const parsed=JSON.parse(fs.readFileSync(indexPath,'utf8'));
+      const value=parsed.schemaVersion===schema?parsed:{schemaVersion:schema,entries:{}};
+      this.indexCache={key,value};
+      return value;
+    }catch{return {schemaVersion:schema,entries:{}};}
   }
   #read(entry,{clone=true}={}) {
     if(!entry)return null;

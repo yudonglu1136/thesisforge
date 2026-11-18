@@ -106,6 +106,31 @@ function signalsFor(company) {
   return signals.sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
 }
 
+const preparedFundamentalCache = new WeakMap();
+
+function prepareFundamentalUniverse(raw) {
+  const hit = preparedFundamentalCache.get(raw);
+  if (hit) return hit;
+  const companies = raw.companies.map(company => {
+    const template = economicTemplate(company), signals = signalsFor(company);
+    return { ...company, economicTemplate: template, signals,
+      changes: {
+        revenueGrowth: delta(company.metrics?.revenueGrowth, company.metrics?.priorRevenueGrowth),
+        operatingMargin: delta(company.metrics?.operatingMargin, company.metrics?.operatingMarginPriorQuarter),
+        fcfMargin: delta(company.metrics?.fcfMargin, company.metrics?.fcfMarginPriorYear),
+      } };
+  });
+  const counts = Object.fromEntries(LENSES.map(id => [id, companies.filter(company => company.signals.some(signal => signal.id === id)).length]));
+  const coverage = {
+    factCompanies: companies.length,
+    withSignals: companies.filter(company => company.signals.length).length,
+    latestAvailableAt: companies.map(company => company.available_at).filter(Boolean).sort().at(-1) ?? null,
+  };
+  const prepared = { companies, counts, coverage };
+  preparedFundamentalCache.set(raw, prepared);
+  return prepared;
+}
+
 export function analyzeFundamentalUniverse(raw, { lens = 'all', search = '', limit = 30, offset = 0, sort = 'recent',
   minRevenueGrowth = null, minOperatingMargin = null, minFcfMargin = null } = {}) {
   assert(raw?.version === 'fact-fundamental-universe-v1', 'invalid_fundamental_fact_payload');
@@ -119,15 +144,7 @@ export function analyzeFundamentalUniverse(raw, { lens = 'all', search = '', lim
   minRevenueGrowth=threshold(minRevenueGrowth);
   minOperatingMargin=threshold(minOperatingMargin);
   minFcfMargin=threshold(minFcfMargin);
-  const companies = raw.companies.map(company => {
-    const template = economicTemplate(company), signals = signalsFor(company);
-    return { ...company, economicTemplate: template, signals,
-      changes: {
-        revenueGrowth: delta(company.metrics?.revenueGrowth, company.metrics?.priorRevenueGrowth),
-        operatingMargin: delta(company.metrics?.operatingMargin, company.metrics?.operatingMarginPriorQuarter),
-        fcfMargin: delta(company.metrics?.fcfMargin, company.metrics?.fcfMarginPriorYear),
-      } };
-  });
+  const { companies, counts, coverage } = prepareFundamentalUniverse(raw);
   let rows = companies.filter(company => !search || `${company.ticker} ${company.name}`.toLowerCase().includes(search));
   if (!search && lens !== 'all') rows = rows.filter(company => company.signals.some(signal => signal.id === lens));
   rows=rows.filter(company=>{
@@ -150,14 +167,12 @@ export function analyzeFundamentalUniverse(raw, { lens = 'all', search = '', lim
       }
       return String(b.available_at).localeCompare(String(a.available_at)) || a.ticker.localeCompare(b.ticker);
     });
-  const counts = Object.fromEntries(LENSES.map(id => [id, companies.filter(company => company.signals.some(signal => signal.id === id)).length]));
   return { version: FUNDAMENTAL_RESEARCH_VERSION, methodVersion: FUNDAMENTAL_METHOD_VERSION,
     asOf: raw.as_of, catalogGeneration: raw.catalog_generation, lens, search,
     filters:{minRevenueGrowth,minOperatingMargin,minFcfMargin},
     rows: rows.slice(offset, offset + limit), totalMatches: rows.length, counts,
     sort, offset, limit, hasMore: offset + limit < rows.length,
-    coverage: { factCompanies: companies.length, withSignals: companies.filter(company => company.signals.length).length,
-      latestAvailableAt: companies.map(company => company.available_at).filter(Boolean).sort().at(-1) ?? null },
+    coverage,
     rankingBasis: sort === 'recent' ? text('Comparable operating histories first, then latest disclosure. All fact companies remain searchable.', '优先可比经营历史，再按最新披露排序；全部覆盖公司均可搜索。')
       : sort === 'change' ? text('Signal magnitude first, then disclosure date.', '按变化幅度，再按披露日期排序。')
       : text('Selected reported metric, highest first; missing values last. Not a stock rating.', '按所选财务指标从高到低排序；缺失值置后，不是股票评分。'),

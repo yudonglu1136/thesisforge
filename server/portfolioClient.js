@@ -36,6 +36,7 @@ import {
   readUserPortfolioPassiveLedger,
   readUserPortfolioReport,
   readUserPortfolioNavPoints,
+  writePortfolioAccountSyncStatuses,
   writeUserPortfolioAnalysis,
   writeUserPortfolioReport,
   writeUserPortfolioNavPoint
@@ -199,7 +200,9 @@ function portfolioErrorPayload(user, error, status = {}) {
       storage: status.storage || "per_user_encrypted_sqlite",
       updatedAt: status.updatedAt,
       lastConnectedAt: status.lastConnectedAt || "",
-      lastError: error.message
+      lastError: error.message,
+      accountCount: status.accountCount || 0,
+      accounts: status.accounts || []
     },
     accounts: [],
     holdings: [],
@@ -902,7 +905,11 @@ export async function loadIbkrFlexXml(queryId = ibkrFlexQueryId, connection = {}
     }
     const errorCode = textValue(sendRoot.ErrorCode || sendRoot.errorCode);
     lastSendError = new Error(`IBKR SendRequest: ${flexErrorMessage(sendRoot, "Request failed.")}`);
-    if (errorCode === "1018" || /too many requests|try again shortly|rate limit/i.test(lastSendError.message)) {
+    if (
+      errorCode === "1018" ||
+      errorCode === "1019" ||
+      /too many requests|try again shortly|rate limit|in progress|not ready/i.test(lastSendError.message)
+    ) {
       continue;
     }
     throw lastSendError;
@@ -945,9 +952,16 @@ export async function loadIbkrFlexXml(queryId = ibkrFlexQueryId, connection = {}
     if (parsed.FlexQueryResponse || parsed.FlexStatementResponse) {
       const root = flexResponseRoot(parsed);
       const rootStatus = textValue(root.Status || root.status).toLowerCase();
+      const stmtErrorCode = textValue(root.ErrorCode || root.errorCode);
       lastError = new Error(`IBKR GetStatement: ${flexErrorMessage(root, "Statement is not ready.")}`);
       if (rootStatus === "success" || rootStatus === "ok") continue;
-      if (/not ready|processing|try again|temporarily/i.test(lastError.message)) continue;
+      if (
+        stmtErrorCode === "1018" ||
+        stmtErrorCode === "1019" ||
+        /not ready|processing|in progress|try again|temporarily/i.test(lastError.message)
+      ) {
+        continue;
+      }
       throw lastError;
     }
     return parsed;
@@ -1835,6 +1849,11 @@ async function loadIbkrAccountPortfolio(connection, accountConfig, {
   const parsed = await loadIbkrFlexXml(accountConfig.ibkrFlexQueryId, accountConnection);
   let historyParsed = null;
   let historyError = null;
+  const primaryEquityRows = collectByKey(parsed, "EquitySummaryByReportDateInBase");
+  const primaryHasTrades = collectByKey(parsed, "Trades").length > 0 || collectByKey(parsed, "Trade").length > 0;
+  const primaryHasCash =
+    collectByKey(parsed, "CashTransactions").length > 0 ||
+    collectByKey(parsed, "CashTransaction").length > 0;
   if (
     accountConfig.ibkrFlexHistoryQueryId &&
     accountConfig.ibkrFlexHistoryQueryId !== accountConfig.ibkrFlexQueryId
@@ -1844,6 +1863,11 @@ async function loadIbkrAccountPortfolio(connection, accountConfig, {
     } catch (error) {
       historyError = error;
     }
+  } else if (primaryEquityRows.length >= 2 && primaryHasTrades && primaryHasCash) {
+    // Built-in IBKR Third-Party Services (e.g. Yodlee 365-day template) already
+    // embed multi-day NAV, trades, and cash rows in the primary statement.
+    // Reuse it directly to avoid back-to-back SendRequest Error 1018 rate limits.
+    historyParsed = parsed;
   } else {
     // The existing template can return daily NAV and trades without a second
     // query ID. A failed history request must not erase the current holdings.
@@ -1899,6 +1923,18 @@ async function loadFreshPortfolioDashboard({ user = null, captureNav = true } = 
         })
       )
     );
+    if (scopedUser && portfolioConnectionRevision(scopedUser) === connectionRevision) {
+      writePortfolioAccountSyncStatuses(
+        scopedUser,
+        results.map((res, index) => ({
+          id: accounts[index]?.id,
+          queryId: accounts[index]?.ibkrFlexQueryId,
+          ok: res.status === "fulfilled",
+          holdingsCount: res.status === "fulfilled" ? (res.value?.holdings?.length || 0) : null,
+          error: res.status === "rejected" ? (res.reason?.message || String(res.reason || "")) : ""
+        }))
+      );
+    }
     const payloads = results
       .filter((result) => result.status === "fulfilled")
       .map((result) => retainSavedHistoricalEvidence(result.value, scopedUser));
@@ -1916,7 +1952,13 @@ async function loadFreshPortfolioDashboard({ user = null, captureNav = true } = 
         throw Object.assign(new Error("Portfolio connection changed during synchronization."), {code:"portfolio_connection_changed"});
       }
       if (reportErrors.length) {
-        markPortfolioConnectionSync(user, {ok:false,error:"Some broker accounts could not refresh; saved report retained."});
+        const failedDetail = reportErrors.map((err) => err?.message || String(err || "")).filter(Boolean).join(" · ");
+        markPortfolioConnectionSync(user, {
+          ok: false,
+          error: failedDetail
+            ? `Some broker accounts could not refresh (${failedDetail}); saved report retained.`
+            : "Some broker accounts could not refresh; saved report retained."
+        });
         const saved = savedPortfolioReportPayload(user);
         if (saved) return saved;
       } else {
@@ -1952,10 +1994,11 @@ function savedPortfolioReportPayload(user) {
   const saved = readUserPortfolioReport(user);
   if (!saved) return null;
   const status = readPortfolioConnectionStatus(user);
+  const upstreamError = status.lastError || "";
   const message = `Broker refresh unavailable. Showing the saved report dated ${saved.reportAsOf}; not live quotes.`;
   return attachStoredAnalysisNavHistory({
     ...saved.payload,
-    connection: {...status, status:"stale_report", lastError:message, message},
+    connection: {...status, status:"stale_report", lastError:message, upstreamError, message},
     source: {...saved.payload.source, mode:"saved_broker_report", stale:true,
       retrievedAt:saved.retrievedAt, warnings:[...(saved.payload.source.warnings || []),message]},
     freshness:{status:"stale",basis:"last_successful_broker_report",
@@ -2019,7 +2062,7 @@ export async function loadPortfolioDashboard({
         ttlMs:Math.min(portfolioCacheTtlMs,60_000)
       };
     }
-    const status = isRealUser(user) ? readPortfolioConnection(user).status : {};
+    const status = isRealUser(user) ? readPortfolioConnectionStatus(user) : {};
     const fallbackPayload = isRealUser(user)
       ? portfolioErrorPayload(user, error, status)
       : {

@@ -2676,11 +2676,20 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
             grid: p.border,
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
+        Text(
+          w(
+            'Tap any line item below to plot or remove it from the chart above.',
+            '点击下方任意报表项目，即可在上方柱状图中叠加或移除对比。',
+          ),
+          style: TextStyle(color: p.muted, fontSize: 11.5),
+        ),
+        const SizedBox(height: 6),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: DataTable(
             key: ValueKey('research-financial-table-$researchStatement'),
+            showCheckboxColumn: false,
             headingRowHeight: 40,
             dataRowMinHeight: 44,
             dataRowMaxHeight: 48,
@@ -2717,7 +2726,17 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                               borderRadius: BorderRadius.circular(3),
                             ),
                           ),
-                          const SizedBox(width: 9),
+                          const SizedBox(width: 7),
+                          Icon(
+                            researchFinancialMetrics.contains(row.key)
+                                ? Icons.bar_chart_rounded
+                                : Icons.add_chart_outlined,
+                            size: 15,
+                            color: researchFinancialMetrics.contains(row.key)
+                                ? p.accent
+                                : p.muted.withValues(alpha: .65),
+                          ),
+                          const SizedBox(width: 7),
                           SizedBox(
                             width: 210,
                             child: Text(

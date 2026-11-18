@@ -185,13 +185,26 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
           'ibkrFlexHistoryQueryId': history.text.trim(),
       });
       if (!mounted) return;
-      final status = asMap(asMap(result['portfolio'])['connection'])['status'];
+      final portfolio = asMap(result['portfolio']);
+      final conn = asMap(portfolio['connection']);
+      final status = conn['status'];
       if (!['linked', 'linked_empty', 'linked_partial'].contains(status)) {
+        final firstAcc = asList(conn['accounts']).firstOrNull;
+        final rawReason = [
+          text(firstAcc?['lastError']),
+          text(conn['upstreamError']),
+          text(conn['lastError']),
+        ].firstWhere((s) => s.trim().isNotEmpty, orElse: () => '');
+        final detailed = rawReason.isNotEmpty
+            ? localizeBrokerError(rawReason, context.language)
+            : '';
         setState(
-          () => error = w(
-            'Connection saved, but the report did not load. Check token expiry, allowed IPs, query permissions and XML sections in IBKR.',
-            '连接已保存，但报告读取失败。请检查 Token 有效期、IP 限制、查询权限与 XML 报告内容。',
-          ),
+          () => error = detailed.isNotEmpty
+              ? detailed
+              : w(
+                  'Connection saved, but the report did not load. Check token expiry, allowed IPs, query permissions and XML sections in IBKR.',
+                  '连接已保存，但报告读取失败。请检查 Token 有效期、IP 限制、查询权限与 XML 报告内容。',
+                ),
         );
         return;
       }
@@ -306,6 +319,8 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
                 ),
               ),
               const SizedBox(height: 16),
+              IbkrPortalGuideBanner(palette: p, compact: true),
+              const SizedBox(height: 12),
               Text(
                 w(
                   'Yodlee is only the third-party template name inside IBKR—not another account or API key. The Activity Flex report must include positions, base-currency NAV and Detailed Cash Transactions for received dividends and interest. Credentials are encrypted per user on the server.',

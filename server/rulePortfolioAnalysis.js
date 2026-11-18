@@ -165,10 +165,16 @@ const hydratedStyle=style=>style?.segments
       fees:hydratedMap(day.fees,'rule_ledger_artifact_invalid'),positions:hydratedMap(day.positions,'rule_ledger_artifact_invalid')};
   })};
 
+const hydratedLedgerCache = new WeakMap();
+
 export function hydrateRuleLedger(value) {
   if(value?.version!=='rule-ledger-artifact-v1'||value.ledgerVersion!==RULE_ANALYSIS_VERSION||
       typeof value.snapshotId!=='string'||!Array.isArray(value.styles))fail('rule_ledger_artifact_invalid');
-  return {version:value.ledgerVersion,snapshotId:value.snapshotId,styles:value.styles.map(hydratedStyle)};
+  const hit = hydratedLedgerCache.get(value);
+  if (hit) return hit;
+  const hydrated = {version:value.ledgerVersion,snapshotId:value.snapshotId,styles:value.styles.map(hydratedStyle)};
+  hydratedLedgerCache.set(value, hydrated);
+  return hydrated;
 }
 
 // Stock-level interval P&L, not a count of daily wins or a fabricated FIFO trade

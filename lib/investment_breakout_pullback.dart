@@ -66,7 +66,7 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
   Future<void> _prefetchRuleSummary() async {
     try {
       final response = await widget.api.getJson(
-        '/api/investment/investor-styles?asOf=${Uri.encodeQueryComponent(widget.asOf)}&universe=all',
+        '/api/investment/investor-styles?asOf=${Uri.encodeQueryComponent(widget.asOf)}&universe=all&summaryOnly=1',
       );
       if (!mounted) return;
       setState(() => ruleAllMarketSummary = response);
@@ -1364,11 +1364,17 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
                           ),
                         ),
                         Text(
-                          w('Flagship 8.91x', '进攻旗舰 8.91x'),
+                          w(
+                            'Flagship ${_modeMultipleText('flagship', '8.91x')}',
+                            '进攻旗舰 ${_modeMultipleText('flagship', '8.91x')}',
+                          ),
                           style: s(11.5, true, p.positive),
                         ),
                         Text(
-                          w('Balanced 7.54x', '高夏普稳健 7.54x'),
+                          w(
+                            'Balanced ${_modeMultipleText('balanced', '7.54x')}',
+                            '高夏普稳健 ${_modeMultipleText('balanced', '7.54x')}',
+                          ),
                           style: s(11.5, true, p.accent),
                         ),
                         Text('SPY', style: s(11.5, true, p.secondary)),

@@ -41,6 +41,8 @@ class StockLogo extends StatelessWidget {
         ),
       ),
     );
+    final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 2.0;
+    final decodePx = (size * dpr).round().clamp(32, 256);
     return Semantics(
       label: context.tr('$ticker 公司标识', '$ticker company identity'),
       image: true,
@@ -58,12 +60,16 @@ class StockLogo extends StatelessWidget {
                 '/stock-logos/${Uri.encodeComponent(symbol)}.png?v=$stockLogoVersion',
                 key: ValueKey('stock-logo-$symbol'),
                 fit: BoxFit.contain,
+                cacheWidth: decodePx,
+                cacheHeight: decodePx,
                 excludeFromSemantics: true,
                 errorBuilder: (context, error, stack) => Image.network(
                   apiUri(
                     '/api/logo/${Uri.encodeComponent(symbol)}?v=$stockLogoVersion',
                   ).toString(),
                   fit: BoxFit.contain,
+                  cacheWidth: decodePx,
+                  cacheHeight: decodePx,
                   excludeFromSemantics: true,
                   errorBuilder: (context, error, stack) => fallback,
                 ),

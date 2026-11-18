@@ -191,7 +191,13 @@ export function createAiInsightsService({ factRoot = process.env.FACT_OS_ROOT ||
     const window = query.window == null || query.window === '' ? pinned?.w ?? 8 : Number(query.window);
     badRequest([8, 12, 20].includes(window), 'invalid_ai_insights_window');
     badRequest(!query.capexBasis || query.capexBasis === 'net_cash_proxy', 'unsupported_ai_insights_capex_basis');
-    if (pinned) badRequest(pinned.a === asOf && pinned.w === window && pinned.u === artifact.universeVersion, 'ai_insights_snapshot_context_mismatch');
+    if (pinned) {
+      badRequest(pinned.a === asOf && pinned.w === window && pinned.u === artifact.universeVersion, 'ai_insights_snapshot_context_mismatch');
+      const requestedQuarter = quarterOrNull(query.quarter ?? query.selectedQuarter);
+      if (requestedQuarter) badRequest(requestedQuarter === pinned.q, 'ai_insights_snapshot_context_mismatch');
+      const fastToken = snapshotToken(artifact, asOf, pinned.q, window);
+      if (models.has(fastToken)) return models.get(fastToken).value;
+    }
     const { index, issues } = selectAiInsightsFacts(artifact, asOf);
     const availableQuarters = [...new Set([...index.values()].flatMap(periods => [...periods.keys()]))]
       .filter(q => quarterIndex(q) <= quarterIndex(quarterForDate(asOf))).sort((a, b) => quarterIndex(b) - quarterIndex(a));

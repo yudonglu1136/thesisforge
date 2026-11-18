@@ -361,7 +361,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           child: Material(
-            color: const Color(0xFF111113),
+            color: p.card,
             borderRadius: BorderRadius.circular(7),
             child: InkWell(
               key: const ValueKey('global-search-trigger'),
@@ -393,7 +393,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF1C1C20),
+                        color: p.panel,
                         borderRadius: BorderRadius.circular(4),
                         border: Border.all(color: p.border),
                       ),
@@ -531,6 +531,29 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                 onPressed: () => unawaited(openGlobalCompanySearch()),
                 icon: Icon(Icons.search_rounded, color: p.muted, size: 19),
               ),
+              OutlinedButton(
+                key: const ValueKey('mobile-date-control'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                  minimumSize: const Size(0, 28),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  side: BorderSide(
+                    color: isHistoricalReplay
+                        ? const Color(0xFFF5A623).withValues(alpha: .6)
+                        : p.border,
+                  ),
+                ),
+                onPressed: showDateDialog,
+                child: Text(
+                  isHistoricalReplay ? asOf : w('Live', '最新'),
+                  style: TextStyle(
+                    color: isHistoricalReplay ? const Color(0xFFF5A623) : p.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
               IconButton(
                 tooltip: w('Preferences & account', '偏好与账户'),
                 visualDensity: VisualDensity.compact,
@@ -539,18 +562,27 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                 onPressed: showWorkspacePreferences,
                 icon: Icon(Icons.tune_outlined, color: p.muted, size: 18),
               ),
-              TextButton(
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  minimumSize: const Size(0, 32),
+              OutlinedButton(
+                key: const ValueKey('mobile-language-toggle'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: const Size(0, 28),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  side: BorderSide(color: p.border),
                 ),
                 onPressed: () => widget.onLanguage(
                   context.language == AppLanguage.en
                       ? AppLanguage.zh
                       : AppLanguage.en,
                 ),
-                child: Text(context.language == AppLanguage.en ? '中文' : 'EN'),
+                child: Text(
+                  context.language == AppLanguage.en ? '中文' : 'EN',
+                  style: TextStyle(
+                    color: p.text,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
               if (widget.onLogout != null)
                 IconButton(
@@ -610,6 +642,28 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
           alignment: WrapAlignment.end,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
+            OutlinedButton(
+              key: const ValueKey('top-utility-language-toggle'),
+              onPressed: () => widget.onLanguage(
+                context.language == AppLanguage.en
+                    ? AppLanguage.zh
+                    : AppLanguage.en,
+              ),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                minimumSize: const Size(0, 34),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                side: BorderSide(color: p.border),
+              ),
+              child: Text(
+                context.language == AppLanguage.en ? '中文' : 'EN',
+                style: TextStyle(
+                  color: p.text,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
             OutlinedButton.icon(
               key: const ValueKey('global-date-control'),
               onPressed: showDateDialog,
@@ -1410,8 +1464,12 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
         ),
         if (reverse['status'] != 'solved')
           label(
-            'Inspect inputs for the solver status and bounds.',
-            '展开输入查看求解状态与边界。',
+            reverse['status'] == 'outside_bounds'
+                ? 'Market price implies assumptions outside realistic solver bounds (very extreme growth/margin). Inspect inputs for solver bounds.'
+                : 'Inspect inputs for the solver status and bounds.',
+            reverse['status'] == 'outside_bounds'
+                ? '当前市场价格隐含的增速或利润率超出了常规合理求解边界（预期极高或极低），可展开输入查看边界详情。'
+                : '展开输入查看求解状态与边界。',
             size: 11,
           ),
         const SizedBox(height: 22),

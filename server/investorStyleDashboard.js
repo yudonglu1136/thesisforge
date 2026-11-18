@@ -152,7 +152,7 @@ export function validateInvestorStyleDashboard(payload) {
 }
 
 const caches=new Map();
-export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotId = null, universe='all', bundleRoot=null } = {}) {
+export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotId = null, universe='all', bundleRoot=null, summaryOnly=false } = {}) {
   if (asOf !== null && !date(asOf)) fail('invalid_as_of', 400);
   const option=ruleUniverses.find(r=>r.id===universe);
   if (!option) fail('invalid_rule_universe',400);
@@ -164,7 +164,7 @@ export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotI
   const bundle=!file?ruleBundlePaths(bundleRoot??releaseRoot('strategy_inputs',null),universe,
     {required:bundleRoot!==null||dataReleaseStatus()?.groups?.strategy_inputs?.rulePortfolioBundleRequired===true}):null;
   file ??= bundle?.file??universeFiles[universe];
-  let payload, id;
+  let payload, id, slices;
   try {
     const stat = fs.statSync(file), key = `${file}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
     let cached=caches.get(String(file));
@@ -172,10 +172,10 @@ export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotI
       const source = fs.readFileSync(file, 'utf8');
       payload = validateInvestorStyleDashboard(JSON.parse(source));
       id = createHash('sha256').update(source).digest('hex');
-      cached = { key, payload, id };
+      cached = { key, payload, id, slices: new Map() };
       caches.set(String(file),cached);
     }
-    ({ payload, id } = cached);
+    ({ payload, id, slices } = cached);
   } catch (error) {
     if (error.status) throw error;
     fail('investor_style_snapshot_unavailable');
@@ -184,6 +184,8 @@ export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotI
   if(bundle&&(bundle.snapshotId!==id||bundle.dataThrough!==payload.dataThrough))fail('rule_bundle_snapshot_mismatch');
   if (snapshotId && snapshotId !== id) fail('investor_style_snapshot_changed', 409);
   const cutoff = asOf ?? payload.dataThrough;
+  const sliceKey = `${asOf ?? 'latest'}:${cutoff}:${summaryOnly ? 'summary' : 'full'}`;
+  if (slices.has(sliceKey)) return structuredClone(slices.get(sliceKey));
   const curve = payload.backtest.curve.filter(r => r.date <= cutoff);
   const years = curve.length > 1 ? (Date.parse(curve.at(-1).date) - Date.parse(curve[0].date)) / (86400000 * 365.25) : 0;
   const styles = payload.styles.map(style => {
@@ -196,24 +198,43 @@ export function loadInvestorStyleDashboard({ file = null, asOf = null, snapshotI
       mature: !!q.nextExecutionDate && q.nextExecutionDate <= (curve.at(-1)?.date ?? '') && !!ruleRangeCovered(style,curve,q.executionDate,q.nextExecutionDate),
     }));
     const trades = style.trades.filter(t => t.date <= (curve.at(-1)?.date ?? ''));
-    return { ...style, trades, quarters, ...(coverage?{coverage}:{}),
-      corporateActions: (style.corporateActions ?? []).filter(a => a.effectiveDate <= cutoff),
-      reconciliation: curve.length === payload.backtest.curve.length ? style.reconciliation : null,
-      metrics: { ...(full?strategyMetrics(curve.map(r => ({ date: r.date, value: r[style.id] }))):emptyRuleMetrics()),
+    const metrics = { ...(full?strategyMetrics(curve.map(r => ({ date: r.date, value: r[style.id] }))):emptyRuleMetrics()),
       status:full?'available':'incomplete_history',
       costBps: 25, observations: curve.filter(r=>Number.isFinite(r[style.id])).length, from: curve[0]?.date ?? null, to: curve.at(-1)?.date ?? null,
       completedQuarters: quarters.filter(q => q.mature).length,
       annualizedGrossTradedNotional: full && years > 0 ? trades.reduce((v, t) => v + t.turnover, 0) / years : null,
-    } };
+    };
+    if (summaryOnly) {
+      return { id: style.id, name: style.name, metrics };
+    }
+    return { ...style, trades, quarters, ...(coverage?{coverage}:{}),
+      corporateActions: (style.corporateActions ?? []).filter(a => a.effectiveDate <= cutoff),
+      reconciliation: curve.length === payload.backtest.curve.length ? style.reconciliation : null,
+      metrics };
   });
-  return structuredClone({ ...payload, snapshotId: id, requestedAsOf: asOf,
-    universe:payload.universe ?? option,universeOptions:ruleUniverses,
-    status: curve.length >= 2 ? 'ready' : 'unavailable_before_first_observation',
-    dataThrough: curve.at(-1)?.date ?? null, styles,
-    backtest: { ...payload.backtest, curve, observations: curve.length, from: curve[0]?.date ?? null,
-      to: curve.at(-1)?.date ?? null, benchmark: { id: 'spy', metrics: strategyMetrics(curve.map(r => ({ date: r.date, value: r.spy }))) },
-      ...(payload.backtest.qqqBenchmark?{qqqBenchmark:{...payload.backtest.qqqBenchmark,
-        from:curve[0]?.date??null,to:curve.at(-1)?.date??null,
-        metrics:strategyMetrics(curve.map(r=>({date:r.date,value:r.qqq})))}}:{}) },
-  });
+  const result = summaryOnly
+    ? {
+        version: payload.version,
+        snapshotId: id,
+        requestedAsOf: asOf,
+        universe: payload.universe ?? option,
+        universeOptions: ruleUniverses,
+        status: curve.length >= 2 ? 'ready' : 'unavailable_before_first_observation',
+        dataThrough: curve.at(-1)?.date ?? null,
+        summaryOnly: true,
+        styles,
+      }
+    : { ...payload, snapshotId: id, requestedAsOf: asOf,
+        universe:payload.universe ?? option,universeOptions:ruleUniverses,
+        status: curve.length >= 2 ? 'ready' : 'unavailable_before_first_observation',
+        dataThrough: curve.at(-1)?.date ?? null, styles,
+        backtest: { ...payload.backtest, curve, observations: curve.length, from: curve[0]?.date ?? null,
+          to: curve.at(-1)?.date ?? null, benchmark: { id: 'spy', metrics: strategyMetrics(curve.map(r => ({ date: r.date, value: r.spy }))) },
+          ...(payload.backtest.qqqBenchmark?{qqqBenchmark:{...payload.backtest.qqqBenchmark,
+            from:curve[0]?.date??null,to:curve.at(-1)?.date??null,
+            metrics:strategyMetrics(curve.map(r=>({date:r.date,value:r.qqq})))}}:{}) },
+      };
+  if (slices.size >= 16) slices.delete(slices.keys().next().value);
+  slices.set(sliceKey, result);
+  return structuredClone(result);
 }

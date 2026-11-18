@@ -687,6 +687,84 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
           'Fiscal-quarter aligned · fixed current basket · disclosure-date PIT',
           '按财季对齐 · 当前固定篮子历史研究 · 披露日粒度 PIT',
         ),
+        if (!loading && companies.isNotEmpty) ...[
+          Builder(
+            builder: (_) {
+              final disclosedCount = companies
+                  .where((r) => text(r['status']) != 'missing')
+                  .length;
+              final pendingTickers = companies
+                  .where((r) => text(r['status']) == 'missing')
+                  .map((r) => text(r['ticker']))
+                  .where((t) => t.isNotEmpty)
+                  .take(5)
+                  .toList();
+              if (disclosedCount >= companies.length ||
+                  disclosedCount >= (companies.length * 0.92).floor()) {
+                return const SizedBox.shrink();
+              }
+              final prevCompleteQuarter = quarters.length > 1
+                  ? quarters[1]
+                  : '';
+              return Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: p.secondary.withValues(alpha: .10),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: p.secondary.withValues(alpha: .38),
+                    ),
+                  ),
+                  child: Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    alignment: WrapAlignment.spaceBetween,
+                    children: [
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 760),
+                        child: Text(
+                          w(
+                            'Reporting season in progress for $quarter: $disclosedCount/${companies.length} companies have filed${pendingTickers.isNotEmpty ? ' (staggered fiscal-quarter peers such as ${pendingTickers.join(', ')} have not filed this period yet)' : ''}. Totals reflect filed peers only.',
+                            '$quarter 财报季披露进行中：${companies.length} 家样本中已披露 $disclosedCount 家${pendingTickers.isNotEmpty ? '（${pendingTickers.join('、')} 等跨月财季公司尚未披露本期季报）' : ''}，当前汇总仅统计已披露可比样本。',
+                          ),
+                          style: style(12, false, p.text),
+                        ),
+                      ),
+                      if (prevCompleteQuarter.isNotEmpty &&
+                          quarter == quarters.first)
+                        ActionChip(
+                          key: const ValueKey('ai-jump-complete-quarter'),
+                          avatar: Icon(
+                            Icons.history_edu_outlined,
+                            size: 15,
+                            color: p.secondary,
+                          ),
+                          label: Text(
+                            w(
+                              'View complete $prevCompleteQuarter',
+                              '查看完整披露季 $prevCompleteQuarter',
+                            ),
+                            style: style(11.5, true, p.secondary),
+                          ),
+                          backgroundColor: p.secondary.withValues(alpha: .12),
+                          side: BorderSide(
+                            color: p.secondary.withValues(alpha: .42),
+                          ),
+                          onPressed: () => setQuarter(prevCompleteQuarter),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
         const SizedBox(height: 18),
         Wrap(
           spacing: 8,
@@ -1243,8 +1321,8 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: caption(
-                      'Scroll quarters → · sector labels stay in view',
-                      '横向滑动查看季度 → · 行业名称保持可见',
+                      'Scroll quarters → · sector labels stay in view · Top = growth · Mid = leader · Bot = pp',
+                      '横向滑动查看季度 → · 行业名称固定 · 顶行增速 · 中间正贡献龙头 · 底行拉动 pp',
                     ),
                   ),
                 Row(
@@ -1280,6 +1358,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                                 style: style(13, true),
                               ),
                             ),
+                          const SizedBox(height: 12),
                         ],
                       ),
                     ),
@@ -1732,7 +1811,10 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
   String statusLabel(dynamic status) => switch (text(status)) {
     'ready' => w('Available', '已披露'),
     'partial' => w('Partial history', '历史不完整'),
-    'missing' => w('Not disclosed', '未披露'),
+    'missing' =>
+      availableQuarterList.isNotEmpty && quarter == availableQuarterList.first
+          ? w('Pending filing (fiscal)', '待披露（跨月财季）')
+          : w('Not disclosed', '未披露'),
     'provider_zero_unverified' => w('Zero not verified', '零值未核验'),
     'missing_capex' => w('Missing investment data', '缺少投入数据'),
     'missing_usd_conversion' => w('Missing USD conversion', '缺少美元换算'),
@@ -3108,16 +3190,18 @@ class _AiInsightsChartState extends State<_AiInsightsChart> {
                     child: SizedBox(
                       width: width,
                       height: 270,
-                      child: CustomPaint(
-                        painter: _AiInsightsChartPainter(
-                          palette: widget.palette,
-                          labels: widget.labels,
-                          series: widget.series,
-                          stacked: widget.stacked,
-                          percent: widget.percent,
-                          hovered: hovered,
-                          selectedQuarter: widget.selectedQuarter,
-                          emptyLabel: widget.emptyLabel,
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          painter: _AiInsightsChartPainter(
+                            palette: widget.palette,
+                            labels: widget.labels,
+                            series: widget.series,
+                            stacked: widget.stacked,
+                            percent: widget.percent,
+                            hovered: hovered,
+                            selectedQuarter: widget.selectedQuarter,
+                            emptyLabel: widget.emptyLabel,
+                          ),
                         ),
                       ),
                     ),
@@ -3358,5 +3442,14 @@ class _AiInsightsChartPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _AiInsightsChartPainter oldDelegate) => true;
+  bool shouldRepaint(covariant _AiInsightsChartPainter oldDelegate) =>
+      oldDelegate.hovered != hovered ||
+      oldDelegate.selectedQuarter != selectedQuarter ||
+      oldDelegate.stacked != stacked ||
+      oldDelegate.percent != percent ||
+      oldDelegate.emptyLabel != emptyLabel ||
+      oldDelegate.palette != palette ||
+      oldDelegate.labels.length != labels.length ||
+      oldDelegate.series.length != series.length ||
+      !identical(oldDelegate.series, series);
 }

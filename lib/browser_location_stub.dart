@@ -32,3 +32,5 @@ void replaceBrowserQuery(
 }) {}
 
 void openBrowserPath(String path) {}
+
+void openExternalUrl(String url) {}

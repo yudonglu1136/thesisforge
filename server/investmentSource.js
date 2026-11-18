@@ -104,9 +104,9 @@ export class InvestmentSource {
   }
   company(ticker,asOf) {
     ticker=tickerKey(ticker);isoDate(asOf);
-    const generation=this.db.prepare('PRAGMA data_version').get().data_version+':'+(dataReleaseId()??'legacy')+':'+(marketFactsVersion()??'stored');
+    const generation=this.db.prepare('PRAGMA data_version').get().data_version+':'+(dataReleaseId()??'legacy');
     if(generation!==this.cacheGeneration){this.companyCache.clear();this.cacheGeneration=generation;}
-    const cacheKey=ticker+':'+asOf;
+    const cacheKey=ticker+':'+asOf+':'+(marketFactsVersion()??'stored');
     if(this.companyCache.has(cacheKey))return structuredClone(this.companyCache.get(cacheKey));
     const history=this.periods(ticker,asOf);assert(history.length,'no_pit_research_at_date');
     const latest=history.at(-1),previous=history.at(-2);
@@ -168,7 +168,7 @@ export class InvestmentSource {
       guidance:{maxObservedAt:latest.guidance.maxObservedAt??null,selection:latest.guidance.guidanceSelection??{},evidence:(latest.guidance.evidence??[]).filter(x=>x.observedAt<=asOf),...guidanceReview},
       coverage:{scenario:templates?'supported':currencyComparable?'existing_method_only':'currency_reconciliation_required',peers:'not_available_reviewed_cohort',kpis:'not_available',roic:'not_available'},
       retrospective:true};
-    if(this.companyCache.size>=8)this.companyCache.delete(this.companyCache.keys().next().value);
+    if(this.companyCache.size>=128)this.companyCache.delete(this.companyCache.keys().next().value);
     this.companyCache.set(cacheKey,result);return structuredClone(result);
   }
   discovery(asOf) {

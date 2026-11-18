@@ -123,6 +123,10 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
 
   Widget sourceBreadcrumb() {
     final entry = entryEvidence;
+    final targetPage = const {'home', 'book', 'strategies', 'discover'}
+            .contains(researchReturnPage)
+        ? researchReturnPage
+        : 'discover';
     String source = w('Direct company research', '直接研究公司');
     if (discoveryOrigin == 'fundamental_research') {
       source = w(
@@ -169,6 +173,18 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
         source += ' / ${entry['reportDate']}';
       }
     }
+    final backLabel = discoveryOrigin == 'fundamental_research'
+        ? w('Back to business changes', '返回经营变化')
+        : discoveryOrigin == 'ai_insights'
+        ? w('Back to AI Insights', '返回 AI 洞察')
+        : opportunityReturnDate.isNotEmpty
+        ? w('Back to candidates', '返回候选列表')
+        : switch (targetPage) {
+            'home' => w('Back to Home', '返回首页'),
+            'book' => w('Back to Portfolio', '返回组合'),
+            'strategies' => w('Back to Strategies', '返回策略'),
+            _ => w('Discover', '发现'),
+          };
     return Wrap(
       spacing: 8,
       runSpacing: 4,
@@ -178,18 +194,10 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
           onPressed: () => unawaited(
             opportunityReturnDate.isNotEmpty
                 ? returnToOpportunities()
-                : requestNavigate('discover'),
+                : requestNavigate(targetPage),
           ),
           icon: const Icon(Icons.arrow_back, size: 15),
-          label: Text(
-            discoveryOrigin == 'fundamental_research'
-                ? w('Back to business changes', '返回经营变化')
-                : discoveryOrigin == 'ai_insights'
-                ? w('Back to AI Insights', '返回 AI 洞察')
-                : opportunityReturnDate.isNotEmpty
-                ? w('Back to candidates', '返回候选列表')
-                : w('Discover', '发现'),
-          ),
+          label: Text(backLabel),
         ),
         FlexibleText(source, p: p),
         if (entry != null && text(entry['availableAt']).isNotEmpty)

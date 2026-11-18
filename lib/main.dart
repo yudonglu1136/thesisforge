@@ -1172,11 +1172,16 @@ class _GuruTerminalAppState extends State<GuruTerminalApp>
   );
   Uri _routeUri = Uri.base;
   int _routeRevision = 0;
+  Future<void> Function(AppLanguage language)? _accountLanguageSaver;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    final explicitLang = readBrowserQuery()['lang'];
+    if (explicitLang != null && explicitLang.trim().isNotEmpty) {
+      writeAppLanguagePreference(appLanguageCode(_language));
+    }
   }
 
   @override
@@ -1202,12 +1207,27 @@ class _GuruTerminalAppState extends State<GuruTerminalApp>
     return Future<bool>.value(true);
   }
 
+  void _applyAccountLanguage(AppLanguage accountLanguage) {
+    final explicitLang = readBrowserQuery()['lang'];
+    if (explicitLang != null && explicitLang.trim().isNotEmpty) {
+      return;
+    }
+    writeAppLanguagePreference(appLanguageCode(accountLanguage));
+    if (_language != accountLanguage && mounted) {
+      setState(() => _language = accountLanguage);
+    }
+  }
+
   void _setLanguage(AppLanguage language) {
-    if (_language == language) return;
-    setState(() => _language = language);
     final code = appLanguageCode(language);
     writeAppLanguagePreference(code);
-    replaceBrowserQuery({'lang': code});
+    replaceBrowserQuery({'lang': code}, replaceCurrent: true);
+    final saver = _accountLanguageSaver;
+    if (saver != null) {
+      unawaited(saver(language));
+    }
+    if (_language == language) return;
+    setState(() => _language = language);
   }
 
   @override
@@ -1253,6 +1273,8 @@ class _GuruTerminalAppState extends State<GuruTerminalApp>
           routeUri: _routeUri,
           routeRevision: _routeRevision,
           onLanguage: _setLanguage,
+          onAccountLanguage: _applyAccountLanguage,
+          onRegisterLanguageSaver: (saver) => _accountLanguageSaver = saver,
         ),
       ),
     );
@@ -1266,12 +1288,17 @@ class AuthGate extends StatefulWidget {
     required this.routeUri,
     this.routeRevision = 0,
     required this.onLanguage,
+    this.onAccountLanguage,
+    this.onRegisterLanguageSaver,
   });
 
   final AppLanguage language;
   final Uri routeUri;
   final int routeRevision;
   final ValueChanged<AppLanguage> onLanguage;
+  final ValueChanged<AppLanguage>? onAccountLanguage;
+  final ValueChanged<Future<void> Function(AppLanguage language)?>?
+  onRegisterLanguageSaver;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -1284,6 +1311,7 @@ class _AuthGateState extends State<AuthGate> {
   String? _authMessageEn;
   Session? _session;
   StreamSubscription<AuthState>? _authSub;
+  String? _syncedPreferenceOwner;
   late final String? _returnTo = retiredModuleReturnPath(
     readBrowserQuery()['returnTo'],
     fallbackLanguage: widget.language,
@@ -1292,7 +1320,80 @@ class _AuthGateState extends State<AuthGate> {
   @override
   void initState() {
     super.initState();
+    widget.onRegisterLanguageSaver?.call(_persistAccountLanguage);
     _bootstrap();
+    if (_localWorkspace) {
+      unawaited(
+        _syncUserLanguagePreferences(
+          ApiClient(() => _localDevToken),
+          ownerKey: 'local-workspace',
+        ),
+      );
+    }
+  }
+
+  String? _activeAccessToken() =>
+      _localWorkspace ? _localDevToken : _session?.accessToken;
+
+  Future<void> _persistAccountLanguage(AppLanguage language) async {
+    final token = _activeAccessToken();
+    final code = appLanguageCode(language);
+    if (token != null && token.isNotEmpty) {
+      try {
+        await ApiClient(
+          () => token,
+        ).postJson('/api/user/preferences', {'language': code});
+      } catch (_) {}
+    }
+    if (_authConfigured && _supabaseReady && _session != null) {
+      try {
+        await Supabase.instance.client.auth.updateUser(
+          UserAttributes(data: {'preferred_language': code}),
+        );
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _syncUserLanguagePreferences(
+    ApiClient api, {
+    required String ownerKey,
+    Map<String, dynamic>? userMetadata,
+  }) async {
+    if (_syncedPreferenceOwner == ownerKey) return;
+    _syncedPreferenceOwner = ownerKey;
+    final explicitQueryLang = readBrowserQuery()['lang'];
+    final hasExplicitQueryLang =
+        explicitQueryLang != null && explicitQueryLang.trim().isNotEmpty;
+    try {
+      final prefs = await api.getJson('/api/user/preferences');
+      final savedLang = text(prefs['language']).trim().toLowerCase();
+      if (savedLang == 'zh' || savedLang == 'en') {
+        if (hasExplicitQueryLang) {
+          final desired = appLanguageCode(widget.language);
+          if (desired != savedLang) {
+            await api.postJson('/api/user/preferences', {'language': desired});
+          }
+        } else {
+          widget.onAccountLanguage?.call(parseAppLanguage(savedLang));
+        }
+        return;
+      }
+      final metaLang = text(userMetadata?['preferred_language'])
+          .trim()
+          .toLowerCase();
+      if (!hasExplicitQueryLang && (metaLang == 'zh' || metaLang == 'en')) {
+        final parsed = parseAppLanguage(metaLang);
+        widget.onAccountLanguage?.call(parsed);
+        await api.postJson('/api/user/preferences', {'language': metaLang});
+        return;
+      }
+      final localSaved = readAppLanguagePreference()?.trim().toLowerCase();
+      if (hasExplicitQueryLang || localSaved == 'zh' || localSaved == 'en') {
+        await api.postJson('/api/user/preferences', {
+          'language': appLanguageCode(widget.language),
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _bootstrap({bool retry = false}) async {
@@ -1309,9 +1410,13 @@ class _AuthGateState extends State<AuthGate> {
           setState(() => _session = event.session);
           if (event.event == AuthChangeEvent.signedIn &&
               event.session != null) {
+            final api = ApiClient(() => event.session!.accessToken);
+            unawaited(recordAuthenticatedVisit(api));
             unawaited(
-              recordAuthenticatedVisit(
-                ApiClient(() => event.session!.accessToken),
+              _syncUserLanguagePreferences(
+                api,
+                ownerKey: event.session!.user.id,
+                userMetadata: event.session!.user.userMetadata,
               ),
             );
           }
@@ -1350,8 +1455,14 @@ class _AuthGateState extends State<AuthGate> {
       }
       final session = _session;
       if (session != null) {
+        final api = ApiClient(() => session.accessToken);
+        unawaited(recordAuthenticatedVisit(api));
         unawaited(
-          recordAuthenticatedVisit(ApiClient(() => session.accessToken)),
+          _syncUserLanguagePreferences(
+            api,
+            ownerKey: session.user.id,
+            userMetadata: session.user.userMetadata,
+          ),
         );
       }
     } else if (_authConfigured) {
@@ -1375,6 +1486,7 @@ class _AuthGateState extends State<AuthGate> {
 
   @override
   void dispose() {
+    widget.onRegisterLanguageSaver?.call(null);
     _authSub?.cancel();
     super.dispose();
   }
@@ -1391,7 +1503,11 @@ class _AuthGateState extends State<AuthGate> {
       return;
     }
     final base = Uri.base;
-    final redirectTo = base.replace(fragment: '').toString();
+    final nextQuery = Map<String, String>.from(base.queryParameters);
+    nextQuery['lang'] = appLanguageCode(widget.language);
+    final redirectTo = base
+        .replace(queryParameters: nextQuery, fragment: '')
+        .toString();
     await Supabase.instance.client.auth.signInWithOAuth(
       OAuthProvider.google,
       redirectTo: redirectTo,
@@ -1406,11 +1522,18 @@ class _AuthGateState extends State<AuthGate> {
     setState(() {
       _localWorkspace = false;
       _session = null;
+      _syncedPreferenceOwner = null;
     });
   }
 
   void _enterLocalWorkspace() {
     setState(() => _localWorkspace = true);
+    unawaited(
+      _syncUserLanguagePreferences(
+        ApiClient(() => _localDevToken),
+        ownerKey: 'local-workspace',
+      ),
+    );
     if (_returnTo != null) {
       scheduleMicrotask(() => openBrowserPath(_returnTo));
     }
@@ -14316,11 +14439,22 @@ class _PortfolioConnectionStatusPanelState
   }
 
   Future<void> _showAddAccount() async {
+    final savedAccounts = asList(widget.connection['accounts']);
+    final status = text(widget.connection['status'], 'linked');
+    final overallFailed =
+        status == 'error' ||
+        status == 'stale_report' ||
+        status == 'linked_partial' ||
+        text(widget.connection['lastError']).isNotEmpty;
+    final hasFailedAccount =
+        overallFailed ||
+        savedAccounts.any((acc) => text(acc['syncStatus']) == 'failed');
     await showDialog<void>(
       context: context,
       builder: (context) => PortfolioAddAccountDialog(
         api: widget.api,
         palette: widget.palette,
+        hasFailedExistingAccounts: hasFailedAccount && savedAccounts.isNotEmpty,
         onAdded: widget.onRefresh,
       ),
     );
@@ -14596,16 +14730,35 @@ class _PortfolioConnectionStatusPanelState
     final accountId = text(account['id'], text(account['queryId']));
     final label = text(account['label'], 'IBKR account');
     final queryId = text(account['queryId'], 'saved');
+    final syncStatus = text(account['syncStatus']);
+    final accountError = text(account['lastError']);
+    final isFailedAccount =
+        syncStatus == 'failed' || accountError.trim().isNotEmpty;
+    final isVerifiedAccount = syncStatus == 'verified' && !isFailedAccount;
     final tokenPreview = text(
       account['tokenPreview'],
       context.tr('已加密', 'encrypted'),
     );
+    final badgeColor = isFailedAccount
+        ? palette.negative
+        : isVerifiedAccount
+        ? palette.positive
+        : palette.secondary;
+    final badgeText = isFailedAccount
+        ? context.tr('同步失败', 'Sync failed')
+        : isVerifiedAccount
+        ? context.tr('已验证', 'Verified')
+        : context.tr('待验证', 'Pending');
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: palette.card,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: palette.border),
+        border: Border.all(
+          color: isFailedAccount
+              ? palette.negative.withValues(alpha: .55)
+              : palette.border,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -14613,8 +14766,10 @@ class _PortfolioConnectionStatusPanelState
           Row(
             children: [
               Icon(
-                Icons.account_balance_wallet_rounded,
-                color: palette.secondary,
+                isFailedAccount
+                    ? Icons.error_outline_rounded
+                    : Icons.account_balance_wallet_rounded,
+                color: badgeColor,
                 size: 18,
               ),
               const SizedBox(width: 10),
@@ -14622,13 +14777,43 @@ class _PortfolioConnectionStatusPanelState
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      context.ui(label),
-                      style: TextStyle(
-                        color: palette.text,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 13,
-                      ),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            context.ui(label),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: palette.text,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: badgeColor.withValues(alpha: .14),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: badgeColor.withValues(alpha: .42),
+                            ),
+                          ),
+                          child: Text(
+                            badgeText,
+                            style: TextStyle(
+                              color: badgeColor,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 5),
                     Text(
@@ -14653,6 +14838,17 @@ class _PortfolioConnectionStatusPanelState
               ),
             ],
           ),
+          if (accountError.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              localizeBrokerError(accountError, context.language),
+              style: TextStyle(
+                color: palette.negative,
+                fontSize: 11.5,
+                height: 1.35,
+              ),
+            ),
+          ],
           if (queryId != 'saved' && queryId.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
@@ -14678,6 +14874,7 @@ class _PortfolioConnectionStatusPanelState
                             palette: palette,
                             initialLabel: label,
                             initialQueryId: queryId,
+                            replaceAccountId: accountId,
                             onAdded: widget.onRefresh,
                           ),
                         ),
@@ -14714,9 +14911,144 @@ class _PortfolioConnectionStatusPanelState
                     color: palette.negative,
                   ),
                 ),
+                if (isFailedAccount)
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      foregroundColor: palette.negative,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                    ),
+                    onPressed: _updating
+                        ? null
+                        : () async {
+                            setState(() => _updating = true);
+                            try {
+                              await widget.api.deleteJson(
+                                '/api/portfolio/accounts/${Uri.encodeComponent(accountId)}',
+                              );
+                              await widget.onRefresh();
+                            } catch (e) {
+                              if (mounted) {
+                                setState(() => _error = e.toString());
+                              }
+                            } finally {
+                              if (mounted) setState(() => _updating = false);
+                            }
+                          },
+                    child: Text(
+                      context.tr('移除失效账户', 'Remove failed account'),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class IbkrPortalGuideBanner extends StatelessWidget {
+  const IbkrPortalGuideBanner({
+    super.key,
+    required this.palette,
+    this.compact = false,
+  });
+
+  final Palette palette;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(compact ? 11 : 13),
+      decoration: BoxDecoration(
+        color: palette.card.withValues(alpha: .72),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: palette.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.verified_user_outlined,
+                    size: 16,
+                    color: palette.accent,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    context.tr(
+                      '为什么没有自动网页弹窗授权？',
+                      'Why is there no OAuth popup?',
+                    ),
+                    style: TextStyle(
+                      color: palette.text,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ],
+              ),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: palette.accent,
+                  side: BorderSide(color: palette.accent.withValues(alpha: .5)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                ),
+                onPressed: () => openExternalUrl(
+                  'https://www.interactivebrokers.com/sso/Login?RL=1',
+                ),
+                icon: const Icon(Icons.open_in_new_rounded, size: 14),
+                label: Text(
+                  context.tr(
+                    '打开 IBKR 第三方服务页',
+                    'Open IBKR Portal',
+                  ),
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            context.tr(
+              '盈透证券（IBKR）未向独立研究平台开放零售网页 OAuth 弹窗，而是通过官方只读「Settings → Account Reporting → Third-Party Services → Yodlee」签发零交易权限的 Token 与 Query ID。',
+              'Interactive Brokers does not provide retail browser OAuth popups to independent research apps. Instead, enable Settings → Account Reporting → Third-Party Services → Yodlee to get a 100% read-only Token and Query ID.',
+            ),
+            style: TextStyle(color: palette.muted, fontSize: 11.5, height: 1.4),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            context.tr(
+              '注：IBKR 页面下方显示“There are no active third-party data feeds”属于完全正常现象（仅供机构专线使用），只需开启上方 Yodlee 并复制同一行的 Token 与 Query ID。',
+              'Note: “There are no active third-party data feeds” at the bottom of IBKR’s page is completely normal (institutional feeds only)—only the Yodlee row under Third-Party Services is needed.',
+            ),
+            style: TextStyle(color: palette.faint, fontSize: 11, height: 1.35),
+          ),
         ],
       ),
     );
@@ -14731,6 +15063,8 @@ class PortfolioAddAccountDialog extends StatefulWidget {
     required this.onAdded,
     this.initialLabel,
     this.initialQueryId,
+    this.replaceAccountId,
+    this.hasFailedExistingAccounts = false,
   });
 
   final ApiClient api;
@@ -14738,6 +15072,8 @@ class PortfolioAddAccountDialog extends StatefulWidget {
   final Future<void> Function() onAdded;
   final String? initialLabel;
   final String? initialQueryId;
+  final String? replaceAccountId;
+  final bool hasFailedExistingAccounts;
 
   @override
   State<PortfolioAddAccountDialog> createState() =>
@@ -14752,6 +15088,7 @@ class _PortfolioAddAccountDialogState extends State<PortfolioAddAccountDialog> {
   late final _queryController = TextEditingController(
     text: widget.initialQueryId ?? '',
   );
+  late bool _replaceFailedAccounts = widget.hasFailedExistingAccounts;
   bool _saving = false;
   bool _showToken = false;
   String? _error;
@@ -14785,23 +15122,52 @@ class _PortfolioAddAccountDialogState extends State<PortfolioAddAccountDialog> {
         'label': _labelController.text.trim(),
         'ibkrFlexToken': token,
         'ibkrFlexQueryId': queryId,
+        if (widget.replaceAccountId != null &&
+            widget.replaceAccountId!.trim().isNotEmpty)
+          'replaceAccountId': widget.replaceAccountId!.trim(),
+        if (_replaceFailedAccounts) 'replaceFailedAccounts': true,
       });
+      if (!mounted) return;
       final portfolio = asMap(payload['portfolio']);
-      final status = text(asMap(portfolio['connection'])['status']);
-      if (!['linked', 'linked_empty'].contains(status) ||
-          isSavedPortfolioReport(portfolio)) {
+      final connection = asMap(portfolio['connection']);
+      final addedAccount = asMap(payload['addedAccount']);
+      final addedSyncStatus = text(addedAccount['syncStatus']);
+      final status = text(connection['status']);
+      final addedVerified =
+          addedSyncStatus == 'verified' ||
+          (['linked', 'linked_empty', 'linked_partial'].contains(status) &&
+              !isSavedPortfolioReport(portfolio) &&
+              addedSyncStatus != 'failed');
+      if (!addedVerified) {
+        final rawReason = [
+          text(addedAccount['lastError']),
+          text(connection['upstreamError']),
+          text(connection['lastError']),
+        ].firstWhere((s) => s.trim().isNotEmpty, orElse: () => '');
+        final detailed = rawReason.isNotEmpty
+            ? localizeBrokerError(rawReason, context.language)
+            : '';
         setState(
-          () => _error = context.tr(
-            '账户凭证已保存，但 IBKR 验证没有完成。请检查 token、Query ID 与报告权限后重试。',
-            'The account credentials were saved, but IBKR validation did not complete. Check the token, Query ID and report permissions, then retry.',
-          ),
+          () => _error = detailed.isNotEmpty
+              ? detailed
+              : context.tr(
+                  '账户凭证已保存，但 IBKR 验证没有完成。请检查 token、Query ID 与报告权限后重试。',
+                  'The account credentials were saved, but IBKR validation did not complete. Check the token, Query ID and report permissions, then retry.',
+                ),
         );
         return;
       }
       await widget.onAdded();
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
-      setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
+      if (mounted) {
+        setState(
+          () => _error = localizeBrokerError(
+            error.toString(),
+            context.language,
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -14810,131 +15176,164 @@ class _PortfolioAddAccountDialogState extends State<PortfolioAddAccountDialog> {
   @override
   Widget build(BuildContext context) {
     final palette = widget.palette;
+    final isRotating =
+        widget.replaceAccountId != null &&
+        widget.replaceAccountId!.trim().isNotEmpty;
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.all(18),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
+        constraints: const BoxConstraints(maxWidth: 580),
         child: Container(
           padding: const EdgeInsets.all(18),
           decoration: panelDecoration(palette),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              PanelTitle(
-                icon: Icons.add_card_rounded,
-                kicker: 'PORTFOLIO ACCOUNT',
-                title: context.tr('添加 IBKR Flex 账户', 'Add IBKR Flex Account'),
-                palette: palette,
-                trailing: IconButton(
-                  tooltip: context.ui('Close'),
-                  onPressed: _saving ? null : () => Navigator.of(context).pop(),
-                  icon: Icon(Icons.close_rounded, color: palette.muted),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                context.tr(
-                  'Yodlee 是 IBKR 内的报告模板名称，不是另一套凭证。复制该行的 Flex token 与 Activity Flex Query ID；只有 IBKR 验证成功后才会显示为已连接。',
-                  'Yodlee is the report-template name inside IBKR, not another credential set. Copy that row’s Flex token and Activity Flex Query ID; the account is shown as connected only after IBKR verifies it.',
-                ),
-                style: TextStyle(color: palette.muted, height: 1.35),
-              ),
-              const SizedBox(height: 14),
-              _field(
-                controller: _labelController,
-                label: 'Account label',
-                hint: context.tr(
-                  '例如：盈透主账户 / 美股保证金 / 退休账户',
-                  'Example: IBKR main / Roth / Margin',
-                ),
-                icon: Icons.badge_rounded,
-              ),
-              const SizedBox(height: 10),
-              _field(
-                controller: _tokenController,
-                label: 'IBKR Flex token',
-                hint: context.tr(
-                  '复制 IBKR Yodlee 模板行的 Flex token',
-                  'Copy the Flex token from the IBKR Yodlee template row',
-                ),
-                icon: Icons.key_rounded,
-                obscure: !_showToken,
-                suffix: IconButton(
-                  tooltip: context.ui(_showToken ? 'Hide token' : 'Show token'),
-                  onPressed: () => setState(() => _showToken = !_showToken),
-                  icon: Icon(
-                    _showToken
-                        ? Icons.visibility_off_rounded
-                        : Icons.visibility_rounded,
-                    color: palette.muted,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                PanelTitle(
+                  icon: Icons.add_card_rounded,
+                  kicker: 'PORTFOLIO ACCOUNT',
+                  title: isRotating
+                      ? context.tr('更新 IBKR 账户凭证', 'Update IBKR Credentials')
+                      : context.tr('添加 IBKR Flex 账户', 'Add IBKR Flex Account'),
+                  palette: palette,
+                  trailing: IconButton(
+                    tooltip: context.ui('Close'),
+                    onPressed: _saving
+                        ? null
+                        : () => Navigator.of(context).pop(),
+                    icon: Icon(Icons.close_rounded, color: palette.muted),
                   ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              _field(
-                controller: _queryController,
-                label: 'Activity Flex Query ID',
-                hint: context.tr(
-                  '复制 IBKR Yodlee 模板行的 Activity Flex Query ID',
-                  'Copy the Activity Flex Query ID from the IBKR Yodlee template row',
-                ),
-                icon: Icons.tag_rounded,
-                keyboardType: TextInputType.number,
-              ),
-              if (_error != null) ...[
                 const SizedBox(height: 10),
-                PortfolioDataNotice(
-                  icon: Icons.error_outline_rounded,
-                  text: _error!,
-                  palette: palette,
+                IbkrPortalGuideBanner(palette: palette, compact: true),
+                const SizedBox(height: 12),
+                _field(
+                  controller: _labelController,
+                  label: 'Account label',
+                  hint: context.tr(
+                    '例如：盈透主账户 / 美股保证金 / Yodlee',
+                    'Example: IBKR main / Roth / Margin',
+                  ),
+                  icon: Icons.badge_rounded,
                 ),
-              ],
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _saving
-                          ? null
-                          : () => Navigator.of(context).pop(),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: palette.muted,
-                        side: BorderSide(color: palette.border),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: Text(context.ui('Cancel')),
+                const SizedBox(height: 10),
+                _field(
+                  controller: _tokenController,
+                  label: 'IBKR Flex token',
+                  hint: context.tr(
+                    '复制 IBKR Yodlee 模板行的 Flex token',
+                    'Copy the Flex token from the IBKR Yodlee template row',
+                  ),
+                  icon: Icons.key_rounded,
+                  obscure: !_showToken,
+                  suffix: IconButton(
+                    tooltip: context.ui(
+                      _showToken ? 'Hide token' : 'Show token',
+                    ),
+                    onPressed: () => setState(() => _showToken = !_showToken),
+                    icon: Icon(
+                      _showToken
+                          ? Icons.visibility_off_rounded
+                          : Icons.visibility_rounded,
+                      color: palette.muted,
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _saving ? null : _save,
-                      icon: _saving
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.cloud_upload_rounded),
-                      label: Text(
-                        context.ui(_saving ? 'Adding' : 'Add & update'),
+                ),
+                const SizedBox(height: 10),
+                _field(
+                  controller: _queryController,
+                  label: 'Activity Flex Query ID',
+                  hint: context.tr(
+                    '复制 IBKR Yodlee 模板行的 Activity Flex Query ID',
+                    'Copy the Activity Flex Query ID from the IBKR Yodlee template row',
+                  ),
+                  icon: Icons.tag_rounded,
+                  keyboardType: TextInputType.number,
+                ),
+                if (widget.hasFailedExistingAccounts && !isRotating) ...[
+                  const SizedBox(height: 10),
+                  CheckboxListTile(
+                    value: _replaceFailedAccounts,
+                    onChanged: _saving
+                        ? null
+                        : (v) => setState(
+                            () => _replaceFailedAccounts = v ?? false,
+                          ),
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 6),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    activeColor: palette.accent,
+                    title: Text(
+                      context.tr(
+                        '同时清理同步失败的旧账户（推荐，防止旧失效查询阻断更新）',
+                        'Also remove previously failed accounts (recommended so stale queries do not block sync)',
                       ),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: palette.accent,
-                        foregroundColor: palette.background,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                      style: TextStyle(
+                        color: palette.text,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
                 ],
-              ),
-            ],
+                if (_error != null) ...[
+                  const SizedBox(height: 10),
+                  PortfolioDataNotice(
+                    icon: Icons.error_outline_rounded,
+                    text: _error!,
+                    palette: palette,
+                  ),
+                ],
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _saving
+                            ? null
+                            : () => Navigator.of(context).pop(),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: palette.muted,
+                          side: BorderSide(color: palette.border),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: Text(context.ui('Cancel')),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _saving ? null : _save,
+                        icon: _saving
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.cloud_upload_rounded),
+                        label: Text(
+                          context.ui(_saving ? 'Adding' : 'Add & update'),
+                        ),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: palette.accent,
+                          foregroundColor: palette.background,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -15043,6 +15442,7 @@ class _PortfolioConnectionPanelState extends State<PortfolioConnectionPanel> {
         'ibkrFlexToken': token,
         'ibkrFlexQueryId': queryId,
       });
+      if (!mounted) return;
       final portfolio = asMap(payload['portfolio']);
       final connection = asMap(portfolio['connection']);
       final status = text(connection['status']);
@@ -15050,11 +15450,22 @@ class _PortfolioConnectionPanelState extends State<PortfolioConnectionPanel> {
           ['linked', 'linked_empty'].contains(status) &&
           !isSavedPortfolioReport(portfolio);
       if (!connected) {
+        final firstAccount = asList(connection['accounts']).firstOrNull;
+        final rawReason = [
+          text(firstAccount?['lastError']),
+          text(connection['upstreamError']),
+          text(connection['lastError']),
+        ].firstWhere((s) => s.trim().isNotEmpty, orElse: () => '');
+        final detailed = rawReason.isNotEmpty
+            ? localizeBrokerError(rawReason, context.language)
+            : '';
         setState(() {
-          _error = context.tr(
-            '凭证已加密保存，但 IBKR 尚未验证成功。请检查 token、Query ID 和报告权限后重试。',
-            'Credentials were encrypted and saved, but IBKR validation did not succeed. Check the token, Query ID and report permissions, then retry.',
-          );
+          _error = detailed.isNotEmpty
+              ? detailed
+              : context.tr(
+                  '凭证已加密保存，但 IBKR 尚未验证成功。请检查 token、Query ID 和报告权限后重试。',
+                  'Credentials were encrypted and saved, but IBKR validation did not succeed. Check the token, Query ID and report permissions, then retry.',
+                );
           _message = null;
         });
         return;
@@ -15234,6 +15645,8 @@ class _PortfolioConnectionPanelState extends State<PortfolioConnectionPanel> {
                 ),
               ],
               const SizedBox(height: 14),
+              IbkrPortalGuideBanner(palette: palette),
+              const SizedBox(height: 12),
               _setupGuide(palette),
               const SizedBox(height: 14),
               if (compact)

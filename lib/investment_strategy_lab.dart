@@ -595,19 +595,92 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
     });
   }
 
-  Widget managerCard() => Semantics(
-    button: true,
-    label: w('Configure equity mix', '配置股票组合'),
-    child: InkWell(
-      onTap: configureMix,
-      borderRadius: BorderRadius.circular(14),
-      child: panel([
+  void _applyQuickPreset(String preset) {
+    final availableManagers = asList(
+      catalog?['managers'],
+    ).map((g) => text(g['id'])).where((id) => id.isNotEmpty).toList();
+    setState(() {
+      error = '';
+      notice = '';
+      if (preset == 'buffett_top5') {
+        equityMix = null;
+        final buffett = availableManagers.firstWhere(
+          (id) => id.contains('buffett') || id.contains('berkshire'),
+          orElse: () => availableManagers.isNotEmpty ? availableManagers.first : '',
+        );
+        managers
+          ..clear()
+          ..addAll(buffett.isNotEmpty ? [buffett] : []);
+        topN = 5;
+        cta = 'none';
+        ctaWeight = 0;
+      } else if (preset == 'multi_guru_cta') {
+        equityMix = null;
+        managers
+          ..clear()
+          ..addAll(availableManagers.take(3));
+        topN = 5;
+        cta = 'DBMF';
+        ctaWeight = 0.25;
+      } else if (preset == 'factor_index_shield') {
+        managers.clear();
+        equityMix = {
+          'weights': {'guru': 0.0, 'factors': 0.6, 'etfs': 0.4},
+          'factors': {
+            'quality': 0.35,
+            'growth': 0.25,
+            'value': 0.20,
+            'lowVol': 0.20,
+          },
+          'etfs': {'QQQ': 0.5, 'SCHD': 0.5},
+        };
+        cta = 'none';
+        ctaWeight = 0;
+      }
+    });
+  }
+
+  Widget managerCard() => panel([
         step('1', 'Build your equity mix', '配置股票组合', Icons.tune),
         copy(
           'Guru strategies, quality factors or index ETFs. One source or your own mix.',
           '大师策略、质量四因子、指数 ETF，可单选或自由搭配。',
         ),
-        const SizedBox(height: 16),
+        if (catalog != null) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              ActionChip(
+                visualDensity: VisualDensity.compact,
+                avatar: Icon(Icons.bolt, size: 14, color: p.accent),
+                label: Text(
+                  w('Preset: Top Guru', '快捷预设：单大师核心'),
+                  style: style(11, true, p.accent),
+                ),
+                onPressed: () => _applyQuickPreset('buffett_top5'),
+              ),
+              ActionChip(
+                visualDensity: VisualDensity.compact,
+                label: Text(
+                  w('Preset: 3 Gurus + 25% CTA', '快捷预设：3 大师 + 25% CTA'),
+                  style: style(11),
+                ),
+                onPressed: () => _applyQuickPreset('multi_guru_cta'),
+              ),
+              ActionChip(
+                visualDensity: VisualDensity.compact,
+                label: Text(
+                  w('Preset: 60% Factors + 40% ETF', '快捷预设：60% 因子 + 40% 指数'),
+                  style: style(11),
+                ),
+                onPressed: () => _applyQuickPreset('factor_index_shield'),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 14),
         for (final key in strategyEquityComponents.where(
           (k) => equityMix == null
               ? k == 'guru'
@@ -630,6 +703,25 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
                   style: style(18, true, p.accent),
                 ),
               ],
+            ),
+          ),
+        if (equityMix == null && managers.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: p.secondary.withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: p.secondary.withValues(alpha: .38)),
+              ),
+              child: Text(
+                w(
+                  '0 Gurus selected · choose at least 1 Guru or pick a preset above',
+                  '当前已选 0 位大师 · 请点击下方「选择大师」或上方快捷预设开始',
+                ),
+                style: style(11.5, true, p.secondary),
+              ),
             ),
           ),
         if (equityMix != null &&
@@ -669,13 +761,15 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
           ),
         const SizedBox(height: 14),
         button('Configure mix', '配置组合', configureMix, icon: Icons.tune),
-        if (equityMix == null)
+        if (equityMix == null) ...[
+          const SizedBox(height: 8),
           button(
             'Choose Gurus',
             '选择大师',
             chooseManager,
             icon: Icons.people_outline,
           ),
+        ],
         const SizedBox(height: 12),
         copy(
           '${((1 - ctaWeight) * 100).round()}% of total portfolio · before leverage',
@@ -691,9 +785,7 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
               : '${number(asMap(equityMix?['weights'])['guru']) > 0 ? '每位大师前 $topN 大重仓 · ' : ''}季度统一调仓 · 各策略内部满仓。',
           size: 11,
         ),
-      ]),
-    ),
-  );
+      ]);
 
   Widget valuationCard() => panel([
     step('2', 'Set a price discipline', '设置估值纪律', Icons.tune),
@@ -829,14 +921,14 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
     });
   }
 
-  Widget ctaCard() => Material(
-    color: Colors.transparent,
-    child: InkWell(
-      key: const ValueKey('strategy-cta-card'),
-      onTap: cta == 'none' ? null : configureCta,
-      borderRadius: BorderRadius.circular(14),
-      child: panel([
-        step('3', 'Add a CTA sleeve', '配置 CTA 部分', Icons.balance_outlined),
+  Widget ctaCard() => Container(
+    key: const ValueKey('strategy-cta-card'),
+    child: panel([
+        InkWell(
+          onTap: cta == 'none' ? null : configureCta,
+          borderRadius: BorderRadius.circular(8),
+          child: step('3', 'Add a CTA sleeve', '配置 CTA 部分', Icons.balance_outlined),
+        ),
         Wrap(
           spacing: 7,
           runSpacing: 7,
@@ -961,7 +1053,6 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
             ),
         ],
       ]),
-    ),
   );
   Widget leverageCard() => KeyedSubtree(
     key: const Key('strategy-leverage-step'),

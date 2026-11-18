@@ -825,17 +825,81 @@ String localizeHedgeReason(String? rawReason, AppLanguage language) {
 
 String localizeBrokerError(String raw, AppLanguage language) {
   final clean = raw.replaceFirst('Exception: ', '').trim();
-  if (clean.isEmpty || language == AppLanguage.en) return clean;
+  if (clean.isEmpty) return clean;
+  final lower = clean.toLowerCase();
+  final zh = language == AppLanguage.zh;
+
+  if (lower.contains('error 1012') || lower.contains('token has expired')) {
+    return zh
+        ? 'IBKR 返回 Error 1012：该 Flex Token 已过期。请前往 IBKR「Third-Party Services」重新启用或刷新 Yodlee 行的 Token 后再试。'
+        : 'IBKR Error 1012: Flex token has expired. Re-enable or refresh the Yodlee token row in IBKR Third-Party Services and retry.';
+  }
+  if (lower.contains('error 1015') || lower.contains('token is invalid')) {
+    return zh
+        ? 'IBKR 返回 Error 1015：Token 无效。请确认复制的是 IBKR「Third-Party Services -> Yodlee」同一行的完整数字 Token（不含空格），若刚启用请等待 1 分钟生效后重试。'
+        : 'IBKR Error 1015: Token is invalid. Copy the exact numeric Token from the IBKR Third-Party Services -> Yodlee row (if just enabled, wait ~1 minute and retry).';
+  }
+  if (lower.contains('error 1013') || lower.contains('ip address')) {
+    return zh
+        ? 'IBKR 返回 Error 1013：Token 开启了 IP 白名单限制，拦截了云服务器拉取。请在 IBKR Flex 设置中清空 IP 限制或使用 Third-Party Services 默认 Yodlee 行。'
+        : 'IBKR Error 1013: IP restriction blocked cloud sync. Clear IP allowlist restrictions on the IBKR token or use the default Third-Party Services Yodlee row.';
+  }
+  if (lower.contains('error 1014') ||
+      lower.contains('query is invalid') ||
+      lower.contains('query not found')) {
+    return zh
+        ? 'IBKR 返回 Error 1014：Query ID 无效或与当前 Token 不匹配。请确认 Token 与 Query ID 来自同一账户的同一行（例如 Yodlee 行），并移除旧失效查询。'
+        : 'IBKR Error 1014: Query ID is invalid or does not match this Token. Ensure both come from the same row (e.g., Yodlee) and remove stale accounts.';
+  }
+  if (lower.contains('error 1018') ||
+      lower.contains('error 1019') ||
+      lower.contains('too many requests') ||
+      lower.contains('generation in progress')) {
+    return zh
+        ? 'IBKR 正在后台生成您的首次报表或触发短时限流（Error 1018/1019）。请等待 10–20 秒后再次点击同步即可。'
+        : 'IBKR is still generating the report or rate-limiting rapid retries (Error 1018/1019). Wait 10–20 seconds and sync again.';
+  }
+  if (lower.contains('error 1003') || lower.contains('statement is not available')) {
+    return zh
+        ? 'IBKR 返回 Error 1003：报表暂不可用。若刚新开户或刚勾选 Yodlee，IBKR 通常在数分钟或首个结算日后产出报表。'
+        : 'IBKR Error 1003: Statement is not available yet. Newly opened accounts or freshly enabled Yodlee rows may take a few minutes to populate.';
+  }
+  if (lower.contains('token format looks invalid')) {
+    return zh
+        ? 'IBKR Token 格式无效（应为 12 位以上纯数字或字母数字组合，请勿粘贴整行文字）。'
+        : 'IBKR token format looks invalid (paste only the alphanumeric token string).';
+  }
+  if (lower.contains('query id must be numeric')) {
+    return zh
+        ? 'Activity Flex Query ID 必须为纯数字（例如 Yodlee 行右侧的 6–8 位数字）。'
+        : 'Activity Flex Query ID must be numeric (the 6–8 digit number on the Yodlee row).';
+  }
+  if (language == AppLanguage.en) return clean;
   if (clean.contains('token/query id are not configured')) {
     return '尚未配置 IBKR Flex 令牌（Token）或活动查询 ID（Query ID）。';
   }
   if (clean.contains('Some broker accounts could not refresh')) {
-    return '部分券商账户刷新未完成，已保留最近一次验证通过的持仓快照。';
+    final detailMatch = RegExp(r'\((.+)\)').firstMatch(clean);
+    if (detailMatch != null && detailMatch.group(1)!.trim().isNotEmpty) {
+      final inner = localizeBrokerError(detailMatch.group(1)!, language);
+      return '部分旧账户刷新未完成（$inner）。请下方移除或替换失效账户后重新同步。';
+    }
+    return '部分券商账户刷新未完成，已保留最近一次验证通过的持仓快照。请移除或更新失效旧账户。';
+  }
+  if (clean.startsWith('Broker refresh unavailable. Showing the saved report dated ')) {
+    final dateMatch = RegExp(r'dated ([0-9-]+)').firstMatch(clean);
+    final asOf = dateMatch?.group(1) ?? '';
+    return asOf.isNotEmpty
+        ? '本次券商实时刷新未完成，当前展示 $asOf 已验证保存的持仓快照（非实时报价）。'
+        : '本次券商实时刷新未完成，当前展示最近一次已保存持仓快照。';
   }
   final aggMatch = RegExp(
     r'^Aggregated (\d+) IBKR/Yodlee account\(s\)',
   ).firstMatch(clean);
   if (aggMatch != null) {
+    if (clean.contains('failed to refresh')) {
+      return '已汇总 ${aggMatch.group(1)} 个有效账户，但仍有部分旧账户刷新失败；请移除失效旧账户以恢复完整状态。';
+    }
     return '已汇总 ${aggMatch.group(1)} 个已绑定券商账户的持仓与净值数据。';
   }
   if (clean.startsWith('IBKR SendRequest:') ||

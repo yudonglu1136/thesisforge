@@ -557,6 +557,11 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                   '${w('Unknown/mixed excluded', '排除未知/混合')} ${_integer(buckets['excluded_unknown_mixed'])}',
                   size: 11,
                 ),
+                label(
+                  'Point-in-time sample reflects 13F filings disclosed by cutoff; QoQ pulse reflects matched filers.',
+                  '按截至日已披露 13F 动态汇总；季末披露窗口期内环比变动仅反映已申报机构配对口径。',
+                  size: 11,
+                ),
               ],
             ),
           ),
@@ -1496,86 +1501,156 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           decoration: BoxDecoration(
             border: Border(bottom: BorderSide(color: p.border)),
           ),
-          child: Row(
-            children: [
-              homeStockLogo(text(row['ticker']), 30),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          child: compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      text(row['ticker']),
-                      style: TextStyle(
-                        color: p.text,
-                        fontWeight: FontWeight.w700,
+                    Row(
+                      children: [
+                        homeStockLogo(text(row['ticker']), 28),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                text(row['ticker']),
+                                style: TextStyle(
+                                  color: p.text,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              Text(
+                                text(row['name'], text(row['ticker'])),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: p.muted, fontSize: 10.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _usdMillions(row['netChangeValueM']),
+                          style: TextStyle(
+                            color: color,
+                            fontWeight: FontWeight.w700,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(Icons.chevron_right, size: 16, color: p.muted),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 4,
+                      children: [
+                        Text(
+                          '${w('Share Δ', '占比变化')} ${_percentagePoints(row['netChangePctOutstanding'])}',
+                          style: TextStyle(color: p.muted, fontSize: 11),
+                        ),
+                        Text(
+                          '${w('Institutions', '机构数')} ${_integer(row['holders'])}',
+                          style: TextStyle(color: p.muted, fontSize: 11),
+                        ),
+                        Text(
+                          '${w('Held', '持股比')} ${_percentagePoints(row['institutionalOwnershipPct'])}',
+                          style: TextStyle(color: p.muted, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    homeStockLogo(text(row['ticker']), 30),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            text(row['ticker']),
+                            style: TextStyle(
+                              color: p.text,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Text(
+                            text(row['name'], text(row['ticker'])),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: p.muted, fontSize: 10),
+                          ),
+                        ],
                       ),
                     ),
-                    Text(
-                      text(row['name'], text(row['ticker'])),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: p.muted, fontSize: 10),
+                    SizedBox(
+                      width: amountWidth,
+                      child: Text(
+                        _usdMillions(row['netChangeValueM']),
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          color: insightStockRanking == 'amount' ? color : p.text,
+                          fontWeight: insightStockRanking == 'amount'
+                              ? FontWeight.w700
+                              : FontWeight.w400,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: changeWidth,
+                      child: Text(
+                        _percentagePoints(row['netChangePctOutstanding']),
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          color: insightStockRanking == 'shareChange'
+                              ? color
+                              : p.text,
+                          fontWeight: insightStockRanking == 'shareChange'
+                              ? FontWeight.w700
+                              : FontWeight.w400,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: holdersWidth,
+                      child: Text(
+                        _integer(row['holders']),
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          color: insightStockRanking == 'institutions'
+                              ? p.accent
+                              : p.text,
+                          fontWeight: insightStockRanking == 'institutions'
+                              ? FontWeight.w700
+                              : FontWeight.w400,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: heldWidth,
+                      child: Text(
+                        _percentagePoints(row['institutionalOwnershipPct']),
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          color: insightStockRanking == 'sharesHeldPct'
+                              ? p.accent
+                              : p.text,
+                          fontWeight: insightStockRanking == 'sharesHeldPct'
+                              ? FontWeight.w700
+                              : FontWeight.w400,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
                     ),
                   ],
                 ),
-              ),
-              SizedBox(
-                width: amountWidth,
-                child: Text(
-                  _usdMillions(row['netChangeValueM']),
-                  style: TextStyle(
-                    color: insightStockRanking == 'amount' ? color : p.text,
-                    fontWeight: insightStockRanking == 'amount'
-                        ? FontWeight.w700
-                        : FontWeight.w400,
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: changeWidth,
-                child: Text(
-                  _percentagePoints(row['netChangePctOutstanding']),
-                  style: TextStyle(
-                    color: insightStockRanking == 'shareChange'
-                        ? color
-                        : p.text,
-                    fontWeight: insightStockRanking == 'shareChange'
-                        ? FontWeight.w700
-                        : FontWeight.w400,
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: holdersWidth,
-                child: Text(
-                  _integer(row['holders']),
-                  style: TextStyle(
-                    color: insightStockRanking == 'institutions'
-                        ? p.accent
-                        : p.text,
-                    fontWeight: insightStockRanking == 'institutions'
-                        ? FontWeight.w700
-                        : FontWeight.w400,
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: heldWidth,
-                child: Text(
-                  _percentagePoints(row['institutionalOwnershipPct']),
-                  style: TextStyle(
-                    color: insightStockRanking == 'sharesHeldPct'
-                        ? p.accent
-                        : p.text,
-                    fontWeight: insightStockRanking == 'sharesHeldPct'
-                        ? FontWeight.w700
-                        : FontWeight.w400,
-                  ),
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -1593,27 +1668,46 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           Container(
             color: p.card,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-            child: Row(
-              children: [
-                Expanded(child: label('Company', '公司', size: 11)),
-                SizedBox(
-                  width: amountWidth,
-                  child: label('Amount', '变动金额', size: 11),
-                ),
-                SizedBox(
-                  width: changeWidth,
-                  child: label('Share change', '市值占比变化', size: 11),
-                ),
-                SizedBox(
-                  width: holdersWidth,
-                  child: label('Institutions', '机构数', size: 11),
-                ),
-                SizedBox(
-                  width: heldWidth,
-                  child: label('Shares held %', '机构持股占比', size: 11),
-                ),
-              ],
-            ),
+            child: compact
+                ? Row(
+                    children: [
+                      Expanded(child: label('Company', '公司', size: 11)),
+                      label('Net change', '净变动金额', size: 11),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      Expanded(child: label('Company', '公司', size: 11)),
+                      SizedBox(
+                        width: amountWidth,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: label('Amount', '变动金额', size: 11),
+                        ),
+                      ),
+                      SizedBox(
+                        width: changeWidth,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: label('Share change', '市值占比变化', size: 11),
+                        ),
+                      ),
+                      SizedBox(
+                        width: holdersWidth,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: label('Institutions', '机构数', size: 11),
+                        ),
+                      ),
+                      SizedBox(
+                        width: heldWidth,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: label('Shares held %', '机构持股占比', size: 11),
+                        ),
+                      ),
+                    ],
+                  ),
           ),
           if (rows.isEmpty)
             Padding(

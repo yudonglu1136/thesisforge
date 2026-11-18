@@ -69,10 +69,12 @@ import {
   deletePortfolioConnection,
   portfolioUserForAdminHash,
   readPortfolioConnectionStatus,
+  readUserPreferences,
   recordPortfolioUser,
   removePortfolioAccount,
   restorePortfolioConnection,
-  savePortfolioConnection
+  savePortfolioConnection,
+  writeUserPreferences
 } from "./userPortfolioStore.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -105,6 +107,7 @@ const allowedOrigins = String(process.env.API_ALLOWED_ORIGINS || defaultAllowedO
 
 app.use("/api/portfolio", portfolioResponsePrivacy);
 app.use("/api/investment", portfolioResponsePrivacy);
+app.use("/api/user", portfolioResponsePrivacy);
 app.use(cors({
   origin(origin, callback) {
     const isLocalDevOrigin =
@@ -515,6 +518,25 @@ app.get("/api/portfolio/brokers", async (_request, response) => {
   response.json(portfolioBrokerCatalog());
 });
 
+app.get("/api/user/preferences", (request, response) => {
+  try {
+    recordPortfolioRequestUser(request);
+    response.json(readUserPreferences(request.user));
+  } catch (error) {
+    response.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/user/preferences", (request, response) => {
+  try {
+    recordPortfolioRequestUser(request);
+    const saved = writeUserPreferences(request.user, request.body || {});
+    response.json({ ok: true, preferences: saved });
+  } catch (error) {
+    response.status(400).json({ error: "user_preferences_invalid", message: error.message });
+  }
+});
+
 app.get("/api/portfolio/connection", async (request, response) => {
   try {
     recordPortfolioRequestUser(request);
@@ -544,12 +566,17 @@ app.post("/api/portfolio/connection", async (request, response) => {
 app.post("/api/portfolio/accounts", async (request, response) => {
   try {
     recordPortfolioRequestUser(request);
-    addPortfolioAccount(request.user, request.body || {});
+    const added = addPortfolioAccount(request.user, request.body || {});
     clearPortfolioCache(request.user);
     const payload = await loadPortfolioDashboard({ forceRefresh: true, user: request.user });
+    const connection = readPortfolioConnectionStatus(request.user);
+    const addedAccount = (connection.accounts || []).find(
+      (account) => account.id === added.addedAccountId || account.queryId === added.addedQueryId
+    ) || null;
     response.json({
       ok: true,
-      connection: readPortfolioConnectionStatus(request.user),
+      connection,
+      addedAccount,
       portfolio: payload
     });
   } catch (error) {

@@ -452,7 +452,7 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
                           true,
                           number(h['netContribution']) >= 0
                               ? p.accent
-                              : p.secondary,
+                              : p.negative,
                         ),
                       ),
                       onTap: () => showStock(h),

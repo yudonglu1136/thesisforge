@@ -180,7 +180,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       discoverCoverage = 'all',
       discoverSort = 'managers',
       discoverSearch = '',
-      opportunityReturnPage = 'home';
+      opportunityReturnPage = 'home',
+      researchReturnPage = 'discover';
   String insightQuarter = '',
       insightUniverse = 'all',
       insightAction = 'increased',
@@ -619,6 +620,9 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       if (evidenceGuruId.isNotEmpty) sourceGuruIds.add(evidenceGuruId);
       ticker = symbol.trim().toUpperCase();
       search.text = ticker;
+      if (page != 'research') {
+        researchReturnPage = page;
+      }
       page = 'research';
       decisionAction = '';
       ruleEnabled = false;
@@ -2004,7 +2008,14 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
             color: p.secondary,
           ),
         ExpansionTile(
-          title: Text(w('Evidence and immutable original', '证据及不可变原始记录')),
+          initiallyExpanded: false,
+          title: Text(
+            w(
+              'Advanced immutable audit record (JSON)',
+              '高级底层审计快照（不可变原始 JSON）',
+            ),
+            style: TextStyle(color: p.muted, fontSize: 12.5),
+          ),
           children: [
             SelectableText(
               const JsonEncoder.withIndent('  ').convert({

@@ -22,6 +22,8 @@ const kinds = {
     'portfolio_report_snapshots',
     'portfolio_analysis_snapshots',
     'portfolio_passive_ledgers',
+    'portfolio_account_sync_status',
+    'user_preferences',
     'readonly_brokers'
   ],
   investment: ['investment_events']

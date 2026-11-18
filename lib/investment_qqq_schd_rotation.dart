@@ -261,7 +261,7 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
         final detail = await widget.api.getJson(
           '/api/investment/qqq-schd-rotation/analysis?asOf=${Uri.encodeQueryComponent(widget.asOf)}'
           '&mode=$mode&window=$window&snapshotId=${Uri.encodeQueryComponent(snapId)}'
-          '&start=$startD&end=$endD',
+          '&start=$startD&end=$endD&includeCurve=0',
         );
         if (!mounted || rReq != rangeEpoch) return;
         setState(() {

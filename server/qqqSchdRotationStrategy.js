@@ -522,10 +522,142 @@ function sliceSwitchesAtCutoff(switches, fullSer, cutoffDate, windowId) {
   });
 }
 
+function hydrateLiveRadarDiagnostics(baseRadar) {
+  if (!baseRadar || typeof baseRadar !== 'object') return baseRadar;
+  const qClose = Number(baseRadar.qqqClose);
+  const dd = Number(baseRadar.dd2yPct);
+  const ma150Dist = Number(baseRadar.ma150DistPct);
+  const pe = Number(baseRadar.posPe);
+  const fcf = Number(baseRadar.fcfYieldPct);
+  const vix = Number(baseRadar.vix);
+  const rsi = Number(baseRadar.rsi14);
+  if (!Number.isFinite(qClose) || qClose <= 0) return baseRadar;
+
+  const pFcf = Number.isFinite(fcf) && fcf > 0 ? round(100 / fcf, 1) : baseRadar.pFcf;
+  const peak2y = Number.isFinite(baseRadar.qqqPeak2y) && baseRadar.qqqPeak2y > 0
+    ? Number(baseRadar.qqqPeak2y)
+    : Number.isFinite(dd) && dd > -99
+      ? round(qClose / (1 + dd / 100), 2)
+      : qClose;
+  const ma150 = Number.isFinite(baseRadar.qqqMa150) && baseRadar.qqqMa150 > 0
+    ? Number(baseRadar.qqqMa150)
+    : Number.isFinite(ma150Dist) && ma150Dist > -99
+      ? round(qClose / (1 + ma150Dist / 100), 2)
+      : qClose;
+
+  const ddText = Number.isFinite(dd) ? `${dd >= 0 ? '+' : ''}${dd.toFixed(1)}%` : '—';
+  const peText = Number.isFinite(pe) ? `${pe.toFixed(1)}x` : '—';
+  const fcfText = Number.isFinite(fcf) ? `${fcf.toFixed(2)}%` : '—';
+  const pFcfText = Number.isFinite(pFcf) ? `${Number(pFcf).toFixed(1)}x` : '—';
+  const vixText = Number.isFinite(vix) ? vix.toFixed(1) : '—';
+  const rsiText = Number.isFinite(rsi) ? rsi.toFixed(1) : '—';
+  const ma150Signed = Number.isFinite(ma150Dist)
+    ? `${ma150Dist >= 0 ? '+' : ''}${ma150Dist.toFixed(2)}%`
+    : '—';
+
+  const panicHigh = Math.round(peak2y * 0.82);
+  const panicLow = Math.round(peak2y * 0.80);
+  const targetBand = `$${panicLow}–$${panicHigh}`;
+  const rightTarget = (ma150 * 1.015).toFixed(2);
+
+  const nextAllocations = { ...(baseRadar.allocations || {}) };
+  if (nextAllocations.m6 && Number(nextAllocations.m6.qqqWeight) <= 0.01) {
+    nextAllocations.m6 = {
+      ...nextAllocations.m6,
+      actionInstruction: {
+        en: `Hold 100% SCHD tactical defense. Do NOT spend SCHD dry powder early at ${ddText} drawdown with VIX at ${vixText}, RSI at ${rsiText}, and FCF Yield at ${fcfText}.`,
+        zh: `战术仓维持 100% SCHD 防守！当前 2 年回撤 ${ddText}、VIX ${vixText}、日 RSI ${rsiText}、FCF 收益率 ${fcfText}，尚未满足左侧恐慌或右侧现金流修复买点。`,
+      },
+    };
+  }
+
+  const scissorsDiagnostic = Number.isFinite(pe) && Number.isFinite(fcf)
+    ? {
+        title: {
+          en: fcf < 2.35
+            ? `PE vs. Free Cash Flow Scissors Alert (${peText} Pos-PE vs. ${fcfText} FCF Yield)`
+            : `Valuation & Free Cash Flow Monitor (${peText} Pos-PE · ${fcfText} FCF Yield)`,
+          zh: fcf < 2.35
+            ? `盈利 PE 与自由现金流剪刀差预警（Pos-PE ${peText} vs FCF率 ${fcfText}）`
+            : `盈利 PE 与自由现金流共振监测（Pos-PE ${peText} · FCF率 ${fcfText}）`,
+        },
+        detail: {
+          en: fcf < 2.35
+            ? `Trailing accounting earnings put Pos-PE at ${peText}, while hyperscaler AI CapEx keeps aggregate Nasdaq-100 FCF Yield at ${fcfText} (${pFcfText} P/FCF) — still inside the cash-flow caution zone (< 2.35%).`
+            : `Aggregate Nasdaq-100 Pos-PE stands at ${peText} with ${fcfText} FCF Yield (${pFcfText} P/FCF), outside the cash-flow compression zone.`,
+          zh: fcf < 2.35
+            ? `科技权重股账面利润使纳指盈利股 Pos-PE 处于 ${peText}，但巨额 AI 算力资本开支使聚合自由现金流收益率处于 ${fcfText}（P/FCF 约 ${pFcfText}），现金流维度仍低于 2.35% 安全线。`
+            : `当前纳指盈利股聚合 Pos-PE 为 ${peText}，自由现金流收益率为 ${fcfText}（P/FCF 约 ${pFcfText}），现金流已脱离极端压缩区间。`,
+        },
+      }
+    : baseRadar.scissorsDiagnostic;
+
+  const nextTriggers = {
+    leftSidePanicBuy: {
+      title: baseRadar.nextTriggers?.leftSidePanicBuy?.title ?? {
+        en: 'Plan A · Left-Side Panic All-In Buy (100% SCHD -> 100% QQQ)',
+        zh: '预案 A · 左侧暴跌恐慌全仓切回抄底（全卖 SCHD → 100% QQQ）',
+      },
+      qqqTargetBand: targetBand,
+      conditions: [
+        {
+          metric: '2Y Drawdown <= -18%',
+          current: ddText,
+          target: `<= -18.0% (${targetBand})`,
+          met: Number.isFinite(dd) && dd <= -18,
+        },
+        {
+          metric: 'FCF Yield >= 2.75% & Pos-PE <= 28.5x',
+          current: `FCF ${fcfText} / PE ${peText}`,
+          target: 'FCF >= 2.75% & PE <= 28.5x',
+          met: Number.isFinite(fcf) && Number.isFinite(pe) && fcf >= 2.75 && pe <= 28.5,
+        },
+        {
+          metric: 'CBOE VIX >= 32 OR Daily RSI(14) <= 28',
+          current: `VIX ${vixText} / RSI ${rsiText}`,
+          target: 'VIX >= 32.0 or RSI <= 28.0',
+          met: (Number.isFinite(vix) && vix >= 32) || (Number.isFinite(rsi) && rsi <= 28),
+        },
+      ],
+    },
+    rightSideTrendBuy: {
+      title: baseRadar.nextTriggers?.rightSideTrendBuy?.title ?? {
+        en: 'Plan B · Right-Side Cash-Flow & Trend Re-entry (100% QQQ)',
+        zh: '预案 B · 右侧现金流修复顺势买回（站稳均线切回 100% QQQ）',
+      },
+      qqqTargetLevel: `$${rightTarget}+`,
+      conditions: [
+        {
+          metric: 'QQQ Close > MA150 + 1.5%',
+          current: `$${qClose.toFixed(2)} (${ma150Signed} vs MA150)`,
+          target: `> $${rightTarget} (MA150 + 1.5%)`,
+          met: Number.isFinite(ma150Dist) && ma150Dist > 1.5,
+        },
+        {
+          metric: 'FCF Yield >= 2.55% & Pos-PE <= 31.0x',
+          current: `FCF ${fcfText} / PE ${peText}`,
+          target: 'FCF >= 2.55% & PE <= 31.0x',
+          met: Number.isFinite(fcf) && Number.isFinite(pe) && fcf >= 2.55 && pe <= 31.0,
+        },
+      ],
+    },
+  };
+
+  return {
+    ...baseRadar,
+    qqqPeak2y: peak2y,
+    qqqMa150: ma150,
+    pFcf,
+    allocations: nextAllocations,
+    scissorsDiagnostic,
+    nextTriggers,
+  };
+}
+
 function sliceRadarAtCutoff(payload, fullSer, cutIdx) {
   const cutDate = fullSer.dates[cutIdx];
   if (cutDate === payload.dataThrough) {
-    return payload.liveRadar;
+    return hydrateLiveRadarDiagnostics(payload.liveRadar);
   }
   const qAdj = fullSer.qqqAdj[cutIdx];
   const posPe = fullSer.posPe[cutIdx];
@@ -574,10 +706,12 @@ function sliceRadarAtCutoff(payload, fullSer, cutIdx) {
     };
   };
 
-  return {
+  return hydrateLiveRadarDiagnostics({
     ...payload.liveRadar,
     asOfDate: cutDate,
     qqqClose: qAdj,
+    qqqPeak2y: null,
+    qqqMa150: null,
     dd2yPct,
     ma150DistPct,
     posPe,
@@ -590,7 +724,7 @@ function sliceRadarAtCutoff(payload, fullSer, cutIdx) {
       m4: describeAlloc(m4w),
       m7: describeAlloc(m7w),
     },
-  };
+  });
 }
 
 export function loadQqqSchdRotationDashboard({
@@ -762,6 +896,7 @@ export function analyzeQqqSchdRotationRange({
   snapshotId = null,
   start = null,
   end = null,
+  includeCurve = true,
 } = {}) {
   if (asOf !== null && !isIsoDate(asOf)) fail('invalid_as_of', 400);
   if (!QQQ_SCHD_MODES.includes(mode)) fail('invalid_strategy_mode', 400);
@@ -828,48 +963,51 @@ export function analyzeQqqSchdRotationRange({
     }
   }
 
-  const m6Dd = buildDrawdownSeries(ser.m6, last, first);
-  const m4Dd = buildDrawdownSeries(ser.m4, last, first);
-  const m7Dd = buildDrawdownSeries(ser.m7, last, first);
-  const qqqDd = buildDrawdownSeries(ser.qqq, last, first);
-  const schdDd = buildDrawdownSeries(ser.schd, last, first);
-  const s70Dd = buildDrawdownSeries(ser.static7030, last, first);
+  let rebasedCurve = [];
+  if (includeCurve) {
+    const m6Dd = buildDrawdownSeries(ser.m6, last, first);
+    const m4Dd = buildDrawdownSeries(ser.m4, last, first);
+    const m7Dd = buildDrawdownSeries(ser.m7, last, first);
+    const qqqDd = buildDrawdownSeries(ser.qqq, last, first);
+    const schdDd = buildDrawdownSeries(ser.schd, last, first);
+    const s70Dd = buildDrawdownSeries(ser.static7030, last, first);
 
-  const bM6 = ser.m6[first];
-  const bM4 = ser.m4[first];
-  const bM7 = ser.m7[first];
-  const bQqq = ser.qqq[first];
-  const bSchd = ser.schd[first];
-  const bS70 = ser.static7030[first];
+    const bM6 = ser.m6[first];
+    const bM4 = ser.m4[first];
+    const bM7 = ser.m7[first];
+    const bQqq = ser.qqq[first];
+    const bSchd = ser.schd[first];
+    const bS70 = ser.static7030[first];
 
-  const rebasedCurve = new Array(last - first + 1);
-  for (let i = first; i <= last; i++) {
-    const k = i - first;
-    rebasedCurve[k] = {
-      date: ser.dates[i],
-      m6: round(ser.m6[i] / bM6, 6),
-      m4: round(ser.m4[i] / bM4, 6),
-      m7: round(ser.m7[i] / bM7, 6),
-      qqq: round(ser.qqq[i] / bQqq, 6),
-      schd: round(ser.schd[i] / bSchd, 6),
-      static7030: round(ser.static7030[i] / bS70, 6),
-      m6Dd: m6Dd[k],
-      m4Dd: m4Dd[k],
-      m7Dd: m7Dd[k],
-      qqqDd: qqqDd[k],
-      schdDd: schdDd[k],
-      static7030Dd: s70Dd[k],
-      m6w: ser.m6w[i],
-      m4w: ser.m4w[i],
-      m7w: ser.m7w[i],
-      posPe: ser.posPe[i],
-      fcfYield: ser.fcfYield[i],
-      vix: ser.vix[i],
-      rsi14: ser.rsi14[i],
-      dd2y: ser.dd2y[i],
-      ma150Dist: ser.ma150Dist[i],
-      qqqAdj: ser.qqqAdj[i],
-    };
+    rebasedCurve = new Array(last - first + 1);
+    for (let i = first; i <= last; i++) {
+      const k = i - first;
+      rebasedCurve[k] = {
+        date: ser.dates[i],
+        m6: round(ser.m6[i] / bM6, 6),
+        m4: round(ser.m4[i] / bM4, 6),
+        m7: round(ser.m7[i] / bM7, 6),
+        qqq: round(ser.qqq[i] / bQqq, 6),
+        schd: round(ser.schd[i] / bSchd, 6),
+        static7030: round(ser.static7030[i] / bS70, 6),
+        m6Dd: m6Dd[k],
+        m4Dd: m4Dd[k],
+        m7Dd: m7Dd[k],
+        qqqDd: qqqDd[k],
+        schdDd: schdDd[k],
+        static7030Dd: s70Dd[k],
+        m6w: ser.m6w[i],
+        m4w: ser.m4w[i],
+        m7w: ser.m7w[i],
+        posPe: ser.posPe[i],
+        fcfYield: ser.fcfYield[i],
+        vix: ser.vix[i],
+        rsi14: ser.rsi14[i],
+        dd2y: ser.dd2y[i],
+        ma150Dist: ser.ma150Dist[i],
+        qqqAdj: ser.qqqAdj[i],
+      };
+    }
   }
 
   const switchesInRange = payload.modes[mode].switches.filter(

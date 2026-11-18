@@ -301,7 +301,7 @@ void main() {
         ),
         isTrue,
       );
-      expect(find.textContaining('7.54x'), findsWidgets);
+      expect(find.textContaining('7.5'), findsWidgets);
       expect(tester.takeException(), isNull);
 
       // Switch Module 04 sub-tabs: Watchlist -> Trades

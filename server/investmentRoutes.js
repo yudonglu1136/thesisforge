@@ -62,12 +62,13 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/guru-study',(_,r)=>guruStudy(service.source,service.date(r.query.asOf),r.query.period??'common'));
   route('get','/investor-styles',(_,r)=>{
     const args={asOf:service.date(r.query.asOf),universe:r.query.universe??'all'};
+    const summaryOnly=r.query.summaryOnly==='1'||r.query.summaryOnly==='true';
     // This is already an immutable, reviewed, precomputed public artifact.
     // The loader validates/caches it and slices by cutoff; it never scans the
     // financial or price databases or runs a backtest. Re-materializing it per
     // calendar day made a cold queue look like missing historical observations.
     // Attribution remains separately gated by its canonical-price/cohort checks.
-    return loadInvestorStyleDashboard({...args,snapshotId:r.query.snapshotId});
+    return loadInvestorStyleDashboard({...args,snapshotId:r.query.snapshotId,summaryOnly});
   },
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/investor-styles/analysis',async(_,r)=>{
@@ -101,6 +102,7 @@ export function registerInvestmentRoutes(app,service) {
     snapshotId:r.query.snapshotId??null,
     start:r.query.start??null,
     end:r.query.end??null,
+    includeTrades:r.query.includeTrades!=='0'&&r.query.includeTrades!=='false',
   }));
   route('get','/qqq-schd-rotation',(_,r)=>loadQqqSchdRotationDashboard({
     asOf:service.date(r.query.asOf),
@@ -115,6 +117,7 @@ export function registerInvestmentRoutes(app,service) {
     snapshotId:r.query.snapshotId??null,
     start:r.query.start??null,
     end:r.query.end??null,
+    includeCurve:r.query.includeCurve!=='0'&&r.query.includeCurve!=='false',
   }));
   route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
     search:r.query.search,limit:r.query.limit,
@@ -130,7 +133,7 @@ export function registerInvestmentRoutes(app,service) {
       minOperatingMargin:r.query.minOperatingMargin,minFcfMargin:r.query.minFcfMargin};
     if(service.fundamentalDiscovery)return service.fundamentalDiscovery(asOf,options);
     if(!precomputed())return buildFundamentalDiscovery(asOf,options);
-    const snapshot=publicAnalysis.get('fundamentals',{asOf});
+    const snapshot=publicAnalysis.get('fundamentals',{asOf},{clone:false});
     return snapshot.value?{...analyzeFundamentalUniverse(snapshot.value,options),artifact:artifactState(snapshot)}:
       {version:FUNDAMENTAL_RESEARCH_VERSION,methodVersion:FUNDAMENTAL_METHOD_VERSION,status:'updating',asOf,
         rows:[],totalMatches:0,counts:{},coverage:{factCompanies:0,withSignals:0,latestAvailableAt:null},artifact:artifactState(snapshot)};

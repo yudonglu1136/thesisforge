@@ -933,7 +933,7 @@ Whenever UI modules are redesigned OR a major quarterly earnings / 13F data refr
 ### 4. Security, Backup & Runtime Pinning Guardrails (2026-11-18)
 
 - Keep `requireAdmin` enforced on `POST /api/valuation/:ticker/import` (`server/index.js`) so non-admin users can never trigger server-side valuation importer subprocesses.
-- Keep `kinds.portfolio` in `server/userDataBackup.js` synchronized with every table created in `server/userPortfolioStore.js` (including `portfolio_analysis_snapshots`, `portfolio_passive_ledgers`, and `readonly_brokers`) so encrypted user-data backups (`npm run user-data -- backup`) never fail on schema checks.
+- Keep `kinds.portfolio` in `server/userDataBackup.js` synchronized with every table created in `server/userPortfolioStore.js` (including `portfolio_analysis_snapshots`, `portfolio_passive_ledgers`, `portfolio_account_sync_status`, `user_preferences`, and `readonly_brokers`) so encrypted user-data backups (`npm run user-data -- backup`) never fail on schema checks.
 - Keep `withActiveDataRelease` (`server/dataReleaseContext.js`) wrapping startup pre-warming (`server/investmentRoutes.js`) and `releaseRoot()` falling back to `readDataRelease()` outside HTTP middleware so cold requests never hit unpinned `14s+` discovery rebuilds and background jobs always resolve `/var/app/data/fact-os/active.json`.
 
 ### 5. Full-Product UX, Friendliness & Performance Milestones (2026-11-18)
@@ -944,6 +944,18 @@ Whenever UI modules are redesigned OR a major quarterly earnings / 13F data refr
 - **`Portfolio` (`server/investmentPortfolio.js`, `server/portfolioIncome.js`, `server/portfolioRisk.js`, `lib/investment_portfolio*.dart`)**: Restored `Valuation & stress` tab (`portfolio-tab-stress`) with Fact OS `TOTAL_RETURN_ADJUSTED_CLOSE` risk series, after-tax `totalConfirmedNet` & `pendingShortPuts` collateral/premium, `Cost & P&L` column, parsed OCC option badges clickable to underlying Research, single-account & asset-kind filters, and per-account IBKR token rotation / removal (`DELETE /api/portfolio/accounts/:accountId`).
 - **`Strategies` (`lib/investment_rule_portfolios.dart`, `lib/investment_breakout_pullback.dart`, `lib/investment_qqq_schd_rotation.dart`, `lib/investment_strategy_lab.dart`)**: Above-the-fold live model target strips + jump anchors across all 4 strategies, dynamic historical cutoff multiples, research-compliant rotation wording, lazy-mounted 3rd top-level tab `Options Hedge Lab` (`HedgeLabPanel`), and expandable/archivable saved custom strategies (`POST /api/investment/strategy-rules/archive`).
 - **Health & `60fps` Performance (`server/databaseTableSummaries.js`, `server/publicHealthWorker.js`, `server/translationClient.js`, `lib/investment_research.dart`)**: `O(1)` Fact OS `catalog.json` `stocks` freshness summary in `publicHealthWorker`, 512-entry LRU cache + per-actor rate limiting on `POST /api/translate/zh`, frozen memoized tactical strategy slices for `O(1)` `jsonTransport` `WeakMap` ETag hits, `ValueListenableBuilder` typing isolation, bounded `cacheWidth` avatar decoding, and exact `CustomPainter.shouldRepaint` predicates.
+
+### 6. IBKR Self-Service Multi-Account Flow, Per-User Language Habit Persistence & Payload Slimming (2026-11-18)
+
+- **User-Side IBKR Self-Service & Per-Account Verification (`server/userPortfolioStore.js`, `server/portfolioClient.js`, `lib/main.dart`, `lib/investment_portfolio_tools.dart`)**:
+  - `portfolio_account_sync_status` tracks per-account verification state (`verified` / `failed` / `pending`) and exact IBKR error codes (`1003`, `1012`, `1013`, `1014`, `1015`, `1018`, `1019`) without mutating `connectionRevision`.
+  - `addPortfolioAccount` deduplicates in-place by `id`, `replaceAccountId`, or matching `ibkrFlexQueryId` on token rotation, and supports `replaceFailedAccounts: true` so stale broken accounts never poison a newly verified IBKR/Yodlee account.
+  - `IbkrPortalGuideBanner` explains why IBKR uses read-only `Third-Party Services -> Yodlee` Flex tokens instead of retail browser OAuth popups, clarifies that `Third-Party Data Feeds: There are no active third-party data feeds` is normal, and opens IBKR Portal in a new tab.
+- **Cross-Session & Cross-Device Per-User Language Persistence (`server/userPortfolioStore.js`, `server/index.js`, `lib/browser_location_web.dart`, `web/index.html`, `lib/main.dart`, `lib/investment_graphite.dart`)**:
+  - Language habit (`'zh'` vs `'en'`) persists across `localStorage['thesisforge.language.v1']`, 1-year `tf_lang` cookie (`.thesisforge.tech`), OAuth `redirectTo`, and authenticated `GET/POST /api/user/preferences` (`user_preferences` table), with 1-click `中文 / EN` toggles in both desktop and mobile headers.
+- **Data Consistency & Warm-Latency Slimming (`server/qqqSchdRotationStrategy.js`, `server/investorStyleDashboard.js`, `server/fundamentalResearch.js`, `server/publicAnalysisArtifact.js`, `server/investmentSource.js`)**:
+  - `hydrateLiveRadarDiagnostics` keeps `QQQ ⇄ SCHD` radar text and `nextTriggers` aligned with live/cutoff gauges; `?summaryOnly=1` (`investor-styles`) and `?includeCurve=0` (`qqq-schd-rotation/analysis`) eliminate multi-MB unused payloads; `WeakMap` universe/ledger caches and per-entry `marketFactsVersion` keys keep warm API responses sub-2ms.
+
 
 
 

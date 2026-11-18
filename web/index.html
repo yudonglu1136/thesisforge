@@ -24,10 +24,10 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Guru Intelligence">
-  <link rel="apple-touch-icon" href="assets/assets/branding/thesisforge-black-mark.png?v=black-v1">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
-  <link rel="icon" type="image/png" href="assets/assets/branding/thesisforge-black-mark.png?v=black-v1"/>
+  <link rel="icon" type="image/png" href="favicon.png"/>
   <meta name="theme-color" content="#000000">
 
   <title>Guru Intelligence | ThesisForge</title>
@@ -118,7 +118,7 @@
 <body>
   <div id="app-loading-shell" role="status" aria-live="polite">
     <div class="app-loading-content">
-      <img class="app-loading-mark" src="assets/assets/branding/thesisforge-black-mark.png?v=black-v1" alt="">
+      <img class="app-loading-mark" src="icons/Icon-192.png" alt="">
       <div class="app-loading-title">ThesisForge</div>
       <div class="app-loading-status">Loading your research workspace…</div>
       <div class="app-loading-progress" aria-hidden="true"></div>
@@ -133,7 +133,20 @@
       try {
         storedLang = window.localStorage.getItem('thesisforge.language.v1');
       } catch (_) {}
-      const rawLang = (currentUrl.searchParams.get('lang') || storedLang || '').trim().toLowerCase();
+      if (!storedLang && document.cookie) {
+        const match = document.cookie.match(/(?:^|;\s*)tf_lang=(zh|en)(?:;|$)/i);
+        if (match) storedLang = match[1].toLowerCase();
+      }
+      const queryLang = (currentUrl.searchParams.get('lang') || '').trim().toLowerCase();
+      const rawLang = (queryLang || storedLang || '').trim().toLowerCase();
+      if (queryLang === 'zh' || queryLang === 'en' || queryLang.startsWith('zh')) {
+        const normalized = queryLang.startsWith('zh') ? 'zh' : 'en';
+        try { window.localStorage.setItem('thesisforge.language.v1', normalized); } catch (_) {}
+        try {
+          const domainPart = window.location.hostname.endsWith('thesisforge.tech') ? '; Domain=.thesisforge.tech' : '';
+          document.cookie = `tf_lang=${normalized}; Path=/; Max-Age=31536000; SameSite=Lax${domainPart}`;
+        } catch (_) {}
+      }
       if (rawLang.startsWith('zh')) {
         if (document.documentElement) document.documentElement.lang = 'zh-CN';
         document.title = 'ThesisForge · 投研工作台';
