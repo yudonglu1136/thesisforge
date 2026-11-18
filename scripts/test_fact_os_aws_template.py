@@ -90,5 +90,10 @@ class InfrastructureContractTest(unittest.TestCase):
             'Resource':{'Fn::Sub':'arn:aws:s3:::${Bucket}/investment-releases/*'},
         },statements)
 
+    def test_worker_data_volume_reduces_ext4_reserved_blocks_to_one_percent(self):
+        user_data=self.resources['Worker']['Properties']['UserData']['Fn::Base64']['Fn::Sub']
+        self.assertIn('mkfs.ext4 -m 1 "$device"',user_data)
+        self.assertIn('tune2fs -m 1 "$device"',user_data)
+
 
 if __name__=='__main__': unittest.main()

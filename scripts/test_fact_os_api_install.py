@@ -118,5 +118,21 @@ class AckPollingTest(unittest.TestCase):
                     sleep=lambda s:now.__setitem__(0,now[0]+s),budget=3)
 
 
+class PostInstallMaintenanceTest(unittest.TestCase):
+    def test_post_install_maintenance_returns_summary_and_isolates_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'fact-os'
+            lease = Path(directory) / 'leases'
+            root.mkdir()
+            lease.mkdir()
+            # No active.json yet -> returns clean no_active_release summary or applied summary
+            summary = installer.post_install_maintenance(root, lease, object(), 'bucket', keep_releases=2)
+            self.assertEqual(summary['status'], 'no_active_release')
+
+            # Invalid keep_releases (<2) raises inside prune_superseded_releases -> isolated as skipped_on_error
+            isolated = installer.post_install_maintenance(root, lease, object(), 'bucket', keep_releases=1)
+            self.assertEqual(isolated, {'status': 'skipped_on_error', 'errorType': 'ValueError'})
+
+
 if __name__ == '__main__':
     unittest.main()
