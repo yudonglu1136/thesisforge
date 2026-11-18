@@ -1,10 +1,12 @@
 part of 'main.dart';
 
+// Calm, low-glare institutional dark-mode palette:
+// Soft steel-sky blue for option premium vs muted sage-teal for cash dividends.
 Color passiveCallColor(Palette p) =>
-    p.colorBlind ? const Color(0xFFF59E0B) : const Color(0xFFF5A623);
+    p.colorBlind ? const Color(0xFF6BA3E8) : const Color(0xFF6B9FD4);
 
 Color passiveDividendColor(Palette p) =>
-    p.colorBlind ? const Color(0xFF38BDF8) : const Color(0xFF20C997);
+    p.colorBlind ? const Color(0xFF9F8FEF) : const Color(0xFF4CA98E);
 
 class PortfolioPassiveIncomeCard extends StatefulWidget {
   const PortfolioPassiveIncomeCard({
@@ -399,7 +401,7 @@ class _PortfolioPassiveIncomeCardState
                     callColor: callColor,
                     divColor: divColor,
                     months: displayMonths,
-                    activeIdx: activeIdx,
+                    hoveredIdx: hoveredIndex,
                     activeMonth: activeMonth,
                     isYearScope: isYearScope,
                     activeScope: activeScope,
@@ -538,18 +540,15 @@ class _PortfolioPassiveIncomeCardState
               width: 34,
               height: 34,
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    callColor.withValues(alpha: .22),
-                    divColor.withValues(alpha: .22),
-                  ],
-                ),
+                color: p.card,
                 borderRadius: BorderRadius.circular(9),
                 border: Border.all(color: p.border),
               ),
-              child: Icon(Icons.payments_outlined, size: 18, color: divColor),
+              child: Icon(
+                Icons.payments_outlined,
+                size: 17,
+                color: p.muted,
+              ),
             ),
             const SizedBox(width: 10),
             Flexible(
@@ -882,12 +881,10 @@ class _PortfolioPassiveIncomeCardState
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
-        color: p.card.withValues(alpha: highlight ? .68 : .45),
+        color: p.card.withValues(alpha: highlight ? .62 : .42),
         borderRadius: BorderRadius.circular(11),
         border: Border.all(
-          color: highlight
-              ? accentColor.withValues(alpha: .28)
-              : accentColor.withValues(alpha: .24),
+          color: highlight ? p.text.withValues(alpha: .16) : p.border,
         ),
       ),
       child: Column(
@@ -896,10 +893,10 @@ class _PortfolioPassiveIncomeCardState
           Row(
             children: [
               Container(
-                width: 9,
-                height: 9,
+                width: 8,
+                height: 8,
                 decoration: BoxDecoration(
-                  color: accentColor,
+                  color: accentColor.withValues(alpha: .88),
                   borderRadius: BorderRadius.circular(2.5),
                 ),
               ),
@@ -968,7 +965,7 @@ class _PortfolioPassiveIncomeCardState
     required Color callColor,
     required Color divColor,
     required List<Map<String, dynamic>> months,
-    required int? activeIdx,
+    required int? hoveredIdx,
     required Map<String, dynamic>? activeMonth,
     required bool isYearScope,
     required String activeScope,
@@ -1112,7 +1109,7 @@ class _PortfolioPassiveIncomeCardState
                       palette: p,
                       callColor: callColor,
                       divColor: divColor,
-                      activeIndex: activeIdx,
+                      activeIndex: hoveredIdx,
                       hideAmounts: widget.hideAmounts,
                       isYearScope: isYearScope,
                     ),
@@ -1284,24 +1281,24 @@ class _PortfolioPassiveIncomeCardState
                                 .toDouble()
                           : 0.0;
                       return Container(
-                        height: 6.5,
+                        height: 5.5,
                         decoration: BoxDecoration(
-                          color: p.border.withValues(alpha: .5),
-                          borderRadius: BorderRadius.circular(3.5),
+                          color: p.border.withValues(alpha: .42),
+                          borderRadius: BorderRadius.circular(3),
                         ),
                         child: Row(
                           children: [
                             if (callW > 0)
                               Container(
                                 width: callW,
-                                height: 6.5,
+                                height: 5.5,
                                 decoration: BoxDecoration(
-                                  color: callColor,
+                                  color: callColor.withValues(alpha: .82),
                                   borderRadius: BorderRadius.horizontal(
-                                    left: const Radius.circular(3.5),
+                                    left: const Radius.circular(3),
                                     right: hasBoth
                                         ? const Radius.circular(1)
-                                        : const Radius.circular(3.5),
+                                        : const Radius.circular(3),
                                   ),
                                 ),
                               ),
@@ -1309,14 +1306,14 @@ class _PortfolioPassiveIncomeCardState
                             if (divW > 0)
                               Container(
                                 width: divW,
-                                height: 6.5,
+                                height: 5.5,
                                 decoration: BoxDecoration(
-                                  color: divColor,
+                                  color: divColor.withValues(alpha: .82),
                                   borderRadius: BorderRadius.horizontal(
                                     left: hasBoth
                                         ? const Radius.circular(1)
-                                        : const Radius.circular(3.5),
-                                    right: const Radius.circular(3.5),
+                                        : const Radius.circular(3),
+                                    right: const Radius.circular(3),
                                   ),
                                 ),
                               ),
@@ -1334,15 +1331,16 @@ class _PortfolioPassiveIncomeCardState
   }
 
   Widget _miniTag(Color tint, String label) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+    padding: const EdgeInsets.symmetric(horizontal: 5.5, vertical: 1.5),
     decoration: BoxDecoration(
-      color: tint.withValues(alpha: .14),
+      color: tint.withValues(alpha: .11),
       borderRadius: BorderRadius.circular(4),
+      border: Border.all(color: tint.withValues(alpha: .22), width: 0.6),
     ),
     child: Text(
       label,
       style: TextStyle(
-        color: tint,
+        color: tint.withValues(alpha: .92),
         fontSize: 10,
         fontWeight: FontWeight.w600,
       ),
@@ -1358,9 +1356,9 @@ class _PortfolioPassiveIncomeCardState
     key: const ValueKey('passive-pending-short-calls'),
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
     decoration: BoxDecoration(
-      color: p.card.withValues(alpha: .48),
+      color: p.card.withValues(alpha: .38),
       borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: callColor.withValues(alpha: .28)),
+      border: Border.all(color: p.border),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1374,7 +1372,11 @@ class _PortfolioPassiveIncomeCardState
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.schedule_rounded, size: 15, color: callColor),
+                Icon(
+                  Icons.schedule_rounded,
+                  size: 15,
+                  color: callColor.withValues(alpha: .85),
+                ),
                 const SizedBox(width: 7),
                 Flexible(
                   child: Text(
@@ -1383,7 +1385,7 @@ class _PortfolioPassiveIncomeCardState
                       '待到期卖 Call · 未到期暂不计入确认收入',
                     ),
                     style: TextStyle(
-                      color: callColor,
+                      color: p.muted,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
@@ -1437,14 +1439,14 @@ class _PortfolioPassiveIncomeCardState
     Map<String, dynamic> pendingPuts,
     List<Map<String, dynamic>> putRows,
   ) {
-    const putColor = Color(0xFF38BDF8);
+    const putColor = Color(0xFF8E8CD8);
     return Container(
       key: const ValueKey('passive-pending-short-puts'),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
-        color: p.card.withValues(alpha: .48),
+        color: p.card.withValues(alpha: .38),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: putColor.withValues(alpha: .28)),
+        border: Border.all(color: p.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1466,8 +1468,8 @@ class _PortfolioPassiveIncomeCardState
                         'Open short puts · collateral & unconfirmed premium',
                         '在途卖 Put · 接盘备付金与待确认权利金',
                       ),
-                      style: const TextStyle(
-                        color: putColor,
+                      style: TextStyle(
+                        color: p.muted,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1722,6 +1724,10 @@ class _PassiveIncomeBarPainter extends CustomPainter {
         final hasBoth = divH > 1.5 && callH > 1.5;
         final gap = hasBoth ? 1.8 : 0.0;
 
+        final barAlpha = activeIndex == null
+            ? 0.80
+            : (isFocused ? 0.94 : 0.36);
+
         if (divH > 0) {
           final adjDivH = math.max(1.5, divH - (hasBoth ? gap * 0.5 : 0));
           final divRect = Rect.fromLTWH(
@@ -1740,7 +1746,7 @@ class _PassiveIncomeBarPainter extends CustomPainter {
                   ? const Radius.circular(1.5)
                   : const Radius.circular(3.5),
             ),
-            Paint()..color = divColor.withValues(alpha: isFocused ? 0.96 : 0.48),
+            Paint()..color = divColor.withValues(alpha: barAlpha),
           );
         }
         if (callH > 0) {
@@ -1760,8 +1766,7 @@ class _PassiveIncomeBarPainter extends CustomPainter {
               bottomLeft: hasBoth ? const Radius.circular(1.5) : Radius.zero,
               bottomRight: hasBoth ? const Radius.circular(1.5) : Radius.zero,
             ),
-            Paint()
-              ..color = callColor.withValues(alpha: isFocused ? 0.96 : 0.48),
+            Paint()..color = callColor.withValues(alpha: barAlpha),
           );
         }
       }
