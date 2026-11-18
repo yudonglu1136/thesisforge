@@ -1163,6 +1163,39 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
         ],
       ),
       caption(captionEn, captionZh),
+      if (sectorLens == 'fcf' && metric == 'qoq') ...[
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: p.accent.withValues(alpha: .08),
+            border: Border.all(color: p.accent.withValues(alpha: .28)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Icon(Icons.info_outline, size: 15, color: p.accent),
+              Text(
+                w(
+                  'Enterprise software FCF has strong Q1/Q4 billings seasonality — switch to YoY for unskewed annual trend.',
+                  '企业软件 FCF 受 Q1/Q4 年度预收款季节性影响显著，建议切换至 YoY 查看真实同比趋势。',
+                ),
+                style: style(12, false, p.text),
+              ),
+              InkWell(
+                onTap: () => setMetric('yoy'),
+                child: Text(
+                  w('Switch to YoY →', '切到 YoY →'),
+                  style: style(12, true, p.accent),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
       const SizedBox(height: 16),
       if (sectors.isEmpty)
         caption('No comparable sector data for this cutoff.', '该截止日暂无可比环节数据。')
@@ -1306,46 +1339,73 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
         .firstOrNull;
     final value = nullableNumber(point?[metric]);
     final comparison = asMap(point?['${metric}Comparison']);
+    final coverage = asMap(point?['coverage']);
+    final expectedCov = (nullableNumber(coverage['expected']) ?? 0).toInt();
+    final disclosedCov = (nullableNumber(coverage['disclosed']) ?? -1).toInt();
+    final pendingQuarter = expectedCov > 0 && disclosedCov == 0;
     final turnaround = text(comparison['turnaroundStatus']);
     final leader = value != null
         ? asMap(comparison['topContributor'])
         : asMap(comparison['topImprover']);
     final hasLeader = value != null
         ? (nullableNumber(leader['contribution']) ?? 0) > 0
-        : turnaround.isNotEmpty && (nullableNumber(leader['delta']) ?? 0) > 0;
+        : turnaround.isNotEmpty &&
+              turnaround != 'flipped_negative' &&
+              (nullableNumber(leader['delta']) ?? 0) > 0;
     final name = localized(row['label'], text(row['id']));
     final basis = metric == 'yoy' ? 'YoY' : 'QoQ';
-    final empty = comparison['leaderStatus'] == 'no_positive_contributor'
+    final empty = pendingQuarter
+        ? w('0/$expectedCov filed', '0/$expectedCov 已披露')
+        : comparison['leaderStatus'] == 'no_positive_contributor'
         ? w('No positive contributor', '暂无正贡献公司')
         : w('Not comparable', '暂无可比贡献');
     final current = asMap(leader['currentEvidence']);
     final prior = asMap(leader['priorEvidence']);
     final ties = (nullableNumber(leader['tiedCount']) ?? 1).toInt();
-    final turnaroundHeadline = switch (turnaround) {
-      'turnaround_positive' => w('Turned +', '扭亏转正'),
-      'loss_narrowed' =>
-        sectorLens == 'fcf' ? w('Burn ↓', '流出收窄') : w('Loss ↓', '亏损收窄'),
-      'loss_widened' =>
-        sectorLens == 'fcf' ? w('FCF < 0', '净流出扩大') : w('Loss ↑', '亏损扩大'),
-      _ => aiInsightsPercent(value),
-    };
+    final turnaroundHeadline = pendingQuarter
+        ? w('Pending', '待披露')
+        : switch (turnaround) {
+            'turnaround_positive' => w('Turned +', '扭亏转正'),
+            'flipped_negative' => w('Turned −', '由正转负'),
+            'loss_narrowed' =>
+              sectorLens == 'fcf' ? w('Burn ↓', '流出收窄') : w('Loss ↓', '亏损收窄'),
+            'loss_widened' =>
+              sectorLens == 'fcf' ? w('FCF < 0', '净流出扩大') : w('Loss ↑', '亏损扩大'),
+            _ => aiInsightsPercent(value),
+          };
     final cellPositive = value != null
         ? value >= 0
         : turnaround == 'turnaround_positive' || turnaround == 'loss_narrowed';
     final cellStrength = value != null
         ? math.min(value.abs(), 1.0)
-        : (turnaround == 'turnaround_positive' || turnaround == 'loss_widened'
+        : (turnaround == 'turnaround_positive' ||
+                  turnaround == 'loss_widened' ||
+                  turnaround == 'flipped_negative'
               ? .55
               : .25);
+    final hasDollarBridge =
+        nullableNumber(comparison['prior']) != null &&
+        nullableNumber(comparison['current']) != null;
     final tooltip = [
       '$name · ${text(period['quarter'])}${sectorLens == 'revenue' ? '' : ' · ${w(lensEn, lensZh)}'}',
-      if (turnaround.isNotEmpty)
+      if (pendingQuarter)
+        w(
+          '0 of $expectedCov covered companies have filed ${text(period['quarter'])} 10-Q as of ${widget.asOf} (fiscal calendar lag).',
+          '截至 ${widget.asOf}，该环节 $expectedCov 家公司因财季日历错位尚未提交 ${text(period['quarter'])} 正式 10-Q。',
+        )
+      else if (turnaround.isNotEmpty)
         w(
           '$lensEn ($basis): ${aiInsightsAmount(comparison['prior'])} → ${aiInsightsAmount(comparison['current'])} (Δ ${aiInsightsAmount(comparison['delta'])})',
           '$lensZh ($basis)：${aiInsightsAmount(comparison['prior'])} → ${aiInsightsAmount(comparison['current'])}（增量 ${aiInsightsAmount(comparison['delta'])}）',
         )
-      else
+      else ...[
         'YoY ${aiInsightsPercent(point?['yoy'])} · QoQ ${aiInsightsPercent(point?['qoq'])} ${w('(unadjusted)', '（未季调）')}',
+        if (sectorLens != 'revenue' && hasDollarBridge && !hasLeader)
+          w(
+            'Sector $lensEn ($basis): ${aiInsightsAmount(comparison['prior'])} → ${aiInsightsAmount(comparison['current'])} (${comparison['comparable']} comparable)',
+            '行业$lensZh ($basis)：${aiInsightsAmount(comparison['prior'])} → ${aiInsightsAmount(comparison['current'])}（${comparison['comparable']} 家可比）',
+          ),
+      ],
       if (hasLeader) ...[
         '${text(leader['ticker'])} · ${text(leader['name'])}',
         if (value != null) ...[
@@ -1379,9 +1439,9 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
             '$ties tied leaders; first ticker shown alphabetically.',
             '$ties 家并列第一，按代码顺序展示。',
           ),
-      ] else if (turnaround == 'loss_widened')
+      ] else if (turnaround == 'loss_widened' || turnaround == 'flipped_negative')
         '${text(comparison['priorQuarter'])} → ${text(period['quarter'])} · ${comparison['comparable']} ${w('comparable companies', '家可比公司')}'
-      else
+      else if (!pendingQuarter)
         empty,
     ].join('\n');
     return Padding(
@@ -1395,7 +1455,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
           label: tooltip,
           button: true,
           child: Material(
-            color: (value == null && turnaround.isEmpty)
+            color: (pendingQuarter || (value == null && turnaround.isEmpty))
                 ? p.card
                 : (cellPositive ? p.accent : p.secondary).withValues(
                     alpha: .08 + cellStrength * .32,
@@ -1428,7 +1488,11 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                       fit: BoxFit.scaleDown,
                       child: Text(
                         turnaroundHeadline,
-                        style: style(turnaround.isNotEmpty ? 13 : 16, true),
+                        style: style(
+                          pendingQuarter || turnaround.isNotEmpty ? 13 : 16,
+                          true,
+                          pendingQuarter ? p.muted : null,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -1461,16 +1525,26 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                           style: style(11, false, p.text),
                         ),
                       ),
-                    ] else if (turnaround.isNotEmpty)
+                    ] else if (!pendingQuarter &&
+                        (turnaround.isNotEmpty ||
+                            (sectorLens != 'revenue' && hasDollarBridge))) ...[
                       FittedBox(
                         fit: BoxFit.scaleDown,
                         child: Text(
                           '${aiInsightsAmount(comparison['prior'])} → ${aiInsightsAmount(comparison['current'])}',
                           textAlign: TextAlign.center,
-                          style: style(10, false, p.text),
+                          style: style(10.5, true, p.text),
                         ),
-                      )
-                    else
+                      ),
+                      if (turnaround.isEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          w('Seasonal / dip', '单季回落'),
+                          textAlign: TextAlign.center,
+                          style: style(9.5, false, p.muted),
+                        ),
+                      ],
+                    ] else
                       Text(
                         empty,
                         textAlign: TextAlign.center,

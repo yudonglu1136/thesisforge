@@ -65,12 +65,13 @@ export function flowUsd(row, metric) {
 }
 export function fcfUsd(row) {
   if (!row || row.ambiguous) return null;
+  if (finite(row.fcf)) return flowUsd(row, 'fcf');
   if (finite(row.ncfo) && finite(row.capex)) {
     if (row.capex === 0 && row.capexZeroVerified !== true) return null;
     const ocf = flowUsd(row, 'ncfo'), capex = flowUsd(row, 'capex');
     return finite(ocf) && finite(capex) ? ocf + capex : null;
   }
-  return flowUsd(row, 'fcf');
+  return null;
 }
 export function capexValue(row) {
   if (!row || row.ambiguous || !finite(row.capex)) return { amount: null, status: 'missing_capex', conversion: null };

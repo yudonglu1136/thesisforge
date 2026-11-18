@@ -212,10 +212,11 @@ test('sector heatmap exposes operating profit and FCF series with signed-base tu
   ];
   // 2025Q2: sector opinc = -30 + 10 = -20 (negative base), fcf = 40 + 60 = 100
   // 2026Q2: sector opinc = +50 + 20 = +70 (turnaround_positive!), fcf = 120 + 70 = 190 (+90% YoY, LEAD +80pp)
+  // Note: LEAD has capex = 0 (asset-light software like AppLovin) with explicit provider fcf = 120!
   raw.facts = [
-    { ticker: 'LEAD', calendardate: '2025-06-30', reportperiod: '2025-06-30', datekey: '2025-07-25', currency: 'USD', revenue: 200, revenueusd: 200, opinc: -30, ncfo: 60, capex: -20, fcf: 40 },
+    { ticker: 'LEAD', calendardate: '2025-06-30', reportperiod: '2025-06-30', datekey: '2025-07-25', currency: 'USD', revenue: 200, revenueusd: 200, opinc: -30, ncfo: 40, capex: 0, fcf: 40 },
     { ticker: 'PEER', calendardate: '2025-06-30', reportperiod: '2025-06-30', datekey: '2025-07-25', currency: 'USD', revenue: 200, revenueusd: 200, opinc: 10, ncfo: 80, capex: -20, fcf: 60 },
-    { ticker: 'LEAD', calendardate: '2026-06-30', reportperiod: '2026-06-30', datekey: '2026-07-25', currency: 'USD', revenue: 300, revenueusd: 300, opinc: 50, ncfo: 150, capex: -30, fcf: 120 },
+    { ticker: 'LEAD', calendardate: '2026-06-30', reportperiod: '2026-06-30', datekey: '2026-07-25', currency: 'USD', revenue: 300, revenueusd: 300, opinc: 50, ncfo: 120, capex: 0, fcf: 120 },
     { ticker: 'PEER', calendardate: '2026-06-30', reportperiod: '2026-06-30', datekey: '2026-07-25', currency: 'USD', revenue: 250, revenueusd: 250, opinc: 20, ncfo: 95, capex: -25, fcf: 70 },
   ];
   const view = createAiInsightsService({ now, artifactLoader: () => raw }).overview({ quarter: '2026Q2', asOf: '2026-09-22' });

@@ -58,14 +58,21 @@ function sectorMetric(metric, index, quarter, { allowSignedBase = false } = {}) 
   for (const basis of ['yoy', 'qoq']) {
     const comparison = metric[`${basis}Comparison`];
     const compact = result[`${basis}Comparison`];
-    const valid = finite(comparison.growth) && comparison.prior > 0;
+    const flippedNegative = allowSignedBase && comparison.comparable > 0
+      && finite(comparison.prior) && comparison.prior > 0
+      && finite(comparison.current) && comparison.current < 0;
+    const valid = finite(comparison.growth) && comparison.prior > 0 && !flippedNegative;
     const positive = valid ? comparison.contributions.filter(c => finite(c.contribution) && c.delta > 0)
       .sort((a, b) => b.delta - a.delta || a.ticker.localeCompare(b.ticker)) : [];
     const leader = positive[0];
     compact.leaderStatus = !valid ? 'unavailable' : leader ? 'available' : 'no_positive_contributor';
     compact.topContributor = leader ? { ...leader, tiedCount: positive.filter(c => c.delta === leader.delta).length,
       currentEvidence: evidenceFor(leader.ticker, quarter), priorEvidence: evidenceFor(leader.ticker, comparison.priorQuarter) } : null;
-    if (allowSignedBase && !valid && comparison.comparable > 0 && finite(comparison.prior) && comparison.prior < 0 && finite(comparison.current)) {
+    if (flippedNegative) {
+      compact.growth = null;
+      result[basis] = null;
+      compact.turnaroundStatus = 'flipped_negative';
+    } else if (allowSignedBase && !valid && comparison.comparable > 0 && finite(comparison.prior) && comparison.prior < 0 && finite(comparison.current)) {
       compact.turnaroundStatus = comparison.current > 0 ? 'turnaround_positive'
         : comparison.delta > 0 ? 'loss_narrowed' : 'loss_widened';
       const improvers = comparison.contributions.filter(c => finite(c.delta) && c.delta > 0)
