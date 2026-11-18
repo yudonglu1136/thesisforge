@@ -143,6 +143,12 @@ function aggregateGroupPositions(lotPositions) {
     const modelDelta = covered ? sum(lots.map(l => l.modelDelta)) : null;
     const modelGap = covered ? (value > 0 ? modelValue / value - 1 : first.model.fairValue / price - 1) : null;
     const unrealizedPnl = lots.every(l => finite(l.unrealizedPnl)) ? sum(lots.map(l => l.unrealizedPnl)) : null;
+    const costBasis = lots.every(l => finite(l.costBasis)) ? sum(lots.map(l => l.costBasis)) : null;
+    const avgCost = costBasis !== null && quantity !== 0 && fxRateToBase > 0
+      ? (costBasis / fxRateToBase) / (quantity * contractFactor)
+      : null;
+    const unrealizedPct = unrealizedPnl !== null && costBasis !== null && Math.abs(costBasis) > 0
+      ? unrealizedPnl / Math.abs(costBasis) : null;
     return {
       ...first,
       accountNumber: accountNumbers.length === 1 ? accountNumbers[0] : accountNumbers.join(', '),
@@ -153,7 +159,10 @@ function aggregateGroupPositions(lotPositions) {
       price,
       value,
       fxRateToBase,
+      costBasis,
+      avgCost,
       unrealizedPnl,
+      unrealizedPct,
       modelValue,
       modelGap,
       modelDelta,
@@ -196,12 +205,21 @@ export function analysePortfolio(payload, {asOf, valuations = new Map(), books =
         : !model || !(model.fairValue > 0) || !day(model.date) || model.date > asOf ? 'no_model'
         : !quoteCurrency || quoteCurrency !== model.currency ? 'currency_mismatch' : 'covered';
       const covered = modelStatus === 'covered';
-      return {id: `${base ?? 'unknown'}:${ai}:${hi}`, accountNumber: ai + 1, ticker: ticker ?? String(h.ticker ?? 'Unresolved'),
+      const costBasis = finite(h.costBasisMoney) && fx > 0 ? h.costBasisMoney * fx : null;
+      const mult = n(h.multiplier) > 0 ? n(h.multiplier) : 1;
+      const avgCost = quantity !== null && quantity !== 0 && finite(h.costBasisMoney)
+        ? h.costBasisMoney / (quantity * mult)
+        : null;
+      const unrealizedPnl = stock && consistent && value !== null && finite(h.costBasisMoney)
+        ? (h.localValue-h.costBasisMoney)*fx : null;
+      const unrealizedPct = unrealizedPnl !== null && costBasis !== null && Math.abs(costBasis) > 0
+        ? unrealizedPnl / Math.abs(costBasis) : null;
+      return {id: `${base ?? 'unknown'}:${ai}:${hi}`, accountNumber: ai + 1, accountNumbers: [ai + 1],
+        ticker: ticker ?? String(h.ticker ?? 'Unresolved'),
         name: String(h.name ?? h.ticker ?? ''), cusip: h.cusip || null, assetCategory: kind,
         kind: cash ? 'cash' : kind==='ACCRUAL'?'accrual':stock ? 'equity' : 'other', currency: quoteCurrency, reportDate,
         quantity, price, _localValue: n(h.localValue), _consistent: consistent, value, fxRateToBase: n(fx), sector: sectors.get(ticker) ?? null,
-        unrealizedPnl: stock && consistent && value !== null && finite(h.costBasisMoney)
-          ? (h.localValue-h.costBasisMoney)*fx : null,
+        costBasis, avgCost, unrealizedPnl, unrealizedPct,
         multiplier:n(h.multiplier),strike:n(h.strike),expiry:day(h.expiry),
         modelStatus, model: covered ? model : null,
         modelValue: covered ? quantity * model.fairValue * fx : null,
@@ -241,7 +259,13 @@ export function analysePortfolio(payload, {asOf, valuations = new Map(), books =
       p.guruActivity=portfolioGuruActivity(p,guruContext);
       p.gurus=p.guruActivity.rows.filter(m=>m.held);
     }
-    groups.push({currency: base, accountCount: accounts.length,
+    const accountMeta = accounts.map((a, idx) => ({
+      accountNumber: idx + 1,
+      label: String(a.label || a.accountId || `Account ${idx + 1}`),
+      reportDate: day(a.reportDate),
+      reportedNav: finite(a.reportedNav) ? a.reportedNav : null,
+    }));
+    groups.push({currency: base, accountCount: accounts.length, accountMeta,
       reportDates: [...new Set(accounts.map(a => day(a.reportDate)))],
       netValue: net, reportedNav, reconciliation: finite(net) && finite(reportedNav) ? net - reportedNav : null,
       unpriced, positions, cash: sum(known.filter(p => p.kind === 'cash').map(p => p.value)),

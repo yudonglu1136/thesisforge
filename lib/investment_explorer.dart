@@ -165,14 +165,14 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
                   ],
                 ),
               ),
-              if (!(compact && study)) ...[
+              if (!compact) ...[
                 const SizedBox(width: 12),
                 dateControl(),
               ],
             ],
           ),
-          if (compact && study) ...[
-            const SizedBox(height: 12),
+          if (compact) ...[
+            const SizedBox(height: 10),
             Align(alignment: Alignment.centerRight, child: dateControl()),
           ],
           if (showTitle && !study && !(compact && opportunityMobileDetail)) ...[

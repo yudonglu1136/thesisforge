@@ -444,6 +444,14 @@ class _PortfolioPassiveIncomeCardState
               const SizedBox(height: 16),
               _buildPendingShortCalls(p, callColor, pending, pendingRows),
             ],
+            if (asList(asMap(data['pendingShortPuts'])['rows']).isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _buildPendingShortPuts(
+                p,
+                asMap(data['pendingShortPuts']),
+                asList(asMap(data['pendingShortPuts'])['rows']),
+              ),
+            ],
             if (ready && scopedEvents.isNotEmpty) ...[
               const SizedBox(height: 10),
               Align(
@@ -1423,6 +1431,102 @@ class _PortfolioPassiveIncomeCardState
       ],
     ),
   );
+
+  Widget _buildPendingShortPuts(
+    Palette p,
+    Map<String, dynamic> pendingPuts,
+    List<Map<String, dynamic>> putRows,
+  ) {
+    const putColor = Color(0xFF38BDF8);
+    return Container(
+      key: const ValueKey('passive-pending-short-puts'),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        color: p.card.withValues(alpha: .48),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: putColor.withValues(alpha: .28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 12,
+            runSpacing: 6,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.shield_outlined, size: 15, color: putColor),
+                  const SizedBox(width: 7),
+                  Flexible(
+                    child: Text(
+                      w(
+                        'Open short puts · collateral & unconfirmed premium',
+                        '在途卖 Put · 接盘备付金与待确认权利金',
+                      ),
+                      style: const TextStyle(
+                        color: putColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (!widget.hideAmounts)
+                Text(
+                  [
+                    if (nullableNumber(pendingPuts['collectedPremium']) != null)
+                      w(
+                        'Premium: ${fmtMoney(pendingPuts['collectedPremium'])}',
+                        '权利金：${fmtMoney(pendingPuts['collectedPremium'])}',
+                      ),
+                    if (nullableNumber(pendingPuts['collateralExposure']) !=
+                        null)
+                      w(
+                        'Assignment notional: ${fmtMoney(pendingPuts['collateralExposure'])}',
+                        '行权接盘敞口：${fmtMoney(pendingPuts['collateralExposure'])}',
+                      ),
+                  ].join(' · '),
+                  style: TextStyle(
+                    color: p.text,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final r in putRows)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: p.panel,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: p.border),
+                  ),
+                  child: Text(
+                    widget.hideAmounts
+                        ? '${text(r['ticker'])} · ${text(r['expiry'], '—')}'
+                        : '${text(r['ticker'])} ${nullableNumber(r['strike']) != null ? formatNumber(number(r['strike'])) : ''}P · ${text(r['expiry'], '—')} ×${number(r['contracts']).round()}',
+                    style: TextStyle(color: p.muted, fontSize: 11),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildRecentLedger(
     Palette p,

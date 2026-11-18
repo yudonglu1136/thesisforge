@@ -18,6 +18,10 @@ extension _InvestmentHome on _InvestmentWorkspaceState {
       ),
       ...opportunityPage(),
     ] else ...[
+      if (asList(home?['attention']).isNotEmpty) ...[
+        homeReviewAlert(),
+        const SizedBox(height: 18),
+      ],
       PortfolioResearchPanel(
         key: const ValueKey('personal-home'),
         api: widget.api,
@@ -25,6 +29,11 @@ extension _InvestmentHome on _InvestmentWorkspaceState {
         asOf: asOf,
         homeMode: true,
         onDetails: () => navigate('book'),
+        onExploreDiscover: () {
+          discoveryTab = 'managers';
+          navigate('discover');
+        },
+        onExploreStrategies: () => navigate('strategies'),
         onCompany: (symbol, section) =>
             unawaited(loadCompany(symbol, initialSection: section)),
         onGuru: (id, filing) {
@@ -33,6 +42,12 @@ extension _InvestmentHome on _InvestmentWorkspaceState {
           unawaited(loadGuru(id, filingId: filing));
         },
       ),
+      if (home != null &&
+          (asList(home?['watches']).isNotEmpty ||
+              asList(home?['decisions']).isNotEmpty)) ...[
+        const SizedBox(height: 20),
+        homeSavedWatchAndDecisionStrip(),
+      ],
       const SizedBox(height: 22),
       Wrap(
         spacing: 12,
@@ -174,6 +189,90 @@ extension _InvestmentHome on _InvestmentWorkspaceState {
       label(en, zh, size: 11),
     ],
   );
+
+  Widget homeSavedWatchAndDecisionStrip() {
+    final watches = asList(home?['watches']);
+    final decisions = asList(home?['decisions']);
+    return Container(
+      key: const ValueKey('home-research-briefing'),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: p.panel,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: p.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.bookmark_added_outlined, color: p.accent, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  w('My Watchlist & Active Theses', '我的关注池与已保存研究'),
+                  style: TextStyle(
+                    color: p.text,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () => navigate('research'),
+                child: Text(w('Open Research →', '进入研究台 →')),
+              ),
+            ],
+          ),
+          if (watches.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final item in watches.take(8))
+                  ActionChip(
+                    key: ValueKey('home-watch-${text(item['ticker'])}'),
+                    avatar: homeStockLogo(text(item['ticker']), 18),
+                    backgroundColor: const Color(0xFF17171B),
+                    side: BorderSide(color: p.border),
+                    label: Text(
+                      text(item['ticker']),
+                      style: TextStyle(
+                        color: p.text,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    onPressed: () => unawaited(loadCompany(text(item['ticker']))),
+                  ),
+              ],
+            ),
+          ],
+          if (decisions.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final d in decisions.reversed.take(4))
+                  ActionChip(
+                    avatar: homeStockLogo(text(d['ticker']), 18),
+                    backgroundColor: const Color(0xFF17171B),
+                    side: BorderSide(color: p.border),
+                    label: Text(
+                      '${d['ticker']} · ${_InvestmentWorkspacePages(this).actionLabel(text(d['action']))} · ${d['decisionDate']}',
+                      style: TextStyle(color: p.muted, fontSize: 12),
+                    ),
+                    onPressed: () => unawaited(openReview(text(d['decisionId']))),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
   Widget homeReviewAlert() {
     final queue = asList(home?['attention']);

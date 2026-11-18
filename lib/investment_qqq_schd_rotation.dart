@@ -47,6 +47,7 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
   RangeValues range = const RangeValues(0, 1);
   String? savedStart;
   String? savedEnd;
+  final GlobalKey _liveRadarKey = GlobalKey();
   final Set<String> enabledCurves = {'m6', 'qqq', 'schd', 'static7030'};
 
   Palette get p => widget.palette;
@@ -1257,10 +1258,16 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                             SizedBox(
                               width: 260,
                               child: Column(
+                                mainAxisSize: MainAxisSize.min,
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('$code · ${loc(r['name'])}', style: s(12, true)),
+                                  Text(
+                                    '$code · ${loc(r['name'])}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: s(12, true),
+                                  ),
                                   Text(
                                     loc(r['rule']),
                                     maxLines: 1,
@@ -1515,7 +1522,7 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
-                      '${mode.toUpperCase()} ${w('LIVE POSITION', '当下实盘指令')}: ${loc(alloc['stateLabel'])}',
+                      '${mode.toUpperCase()} ${w('MODEL TARGET STATE (RESEARCH)', '当前模型目标状态（研究参考）')}: ${loc(alloc['stateLabel'])}',
                       key: const ValueKey('rotation-live-position-banner'),
                       style: s(16, true, bannerColor),
                     ),
@@ -1927,10 +1934,16 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                           SizedBox(
                             width: 210,
                             child: Column(
+                              mainAxisSize: MainAxisSize.min,
                               mainAxisAlignment: MainAxisAlignment.center,
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(loc(sw['signalLabel']), style: s(12, true)),
+                                Text(
+                                  loc(sw['signalLabel']),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: s(12, true),
+                                ),
                                 Text(
                                   loc(sw['explanation']),
                                   maxLines: 1,
@@ -2105,16 +2118,70 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
       );
     }
 
+    final radar = asMap(data?['liveRadar']);
+    final alloc = asMap(asMap(radar['allocations'])[mode]);
+    final qWeight = number(alloc['qqqWeight']);
+    final stripColor = qWeight >= 0.8 ? p.positive : qWeight <= 0.1 ? _amber : _sky;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (radar.isNotEmpty) ...[
+          Container(
+            key: const ValueKey('rotation-top-live-strip'),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: stripColor.withValues(alpha: 0.09),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: stripColor.withValues(alpha: 0.45)),
+            ),
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Icon(Icons.bolt_rounded, size: 17, color: stripColor),
+                Text(
+                  '${mode.toUpperCase()} ${w('Model Target State', '当前模型目标状态')} (${text(radar['asOfDate'], widget.asOf)}): ${loc(alloc['stateLabel'])}',
+                  style: s(13, true),
+                ),
+                Text(
+                  'VIX ${_dec(radar['vix'], 1)} · Pos-PE ${_dec(radar['posPe'], 1)}x',
+                  style: s(12, false, p.muted),
+                ),
+                OutlinedButton.icon(
+                  key: const ValueKey('rotation-jump-radar'),
+                  onPressed: () {
+                    final ctx = _liveRadarKey.currentContext;
+                    if (ctx != null) {
+                      Scrollable.ensureVisible(
+                        ctx,
+                        duration: const Duration(milliseconds: 260),
+                        alignment: 0.05,
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.arrow_downward_rounded, size: 14),
+                  label: Text(
+                    w('Signal Radar & Triggers ↓', '信号雷达与触发预案 ↓'),
+                    style: s(11.5, true),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
         _buildModeAndWindowBar(curve),
         const SizedBox(height: 16),
         _buildPerformanceModule(curve),
         const SizedBox(height: 16),
         _buildBlueprintAndShowdownModule(),
         const SizedBox(height: 16),
-        _buildLiveRadarAndSopModule(),
+        Container(
+          key: _liveRadarKey,
+          child: _buildLiveRadarAndSopModule(),
+        ),
         const SizedBox(height: 16),
         _buildRegimeAttributionModule(),
         const SizedBox(height: 16),

@@ -12,6 +12,8 @@ class PortfolioResearchPanel extends StatefulWidget {
     required this.onGuru,
     this.homeMode = false,
     this.onDetails,
+    this.onExploreDiscover,
+    this.onExploreStrategies,
     this.cutoffControl,
   });
   final ApiClient api;
@@ -21,6 +23,8 @@ class PortfolioResearchPanel extends StatefulWidget {
   final void Function(String id, String filing) onGuru;
   final bool homeMode;
   final VoidCallback? onDetails;
+  final VoidCallback? onExploreDiscover;
+  final VoidCallback? onExploreStrategies;
   final Widget? cutoffControl;
   @override
   State<PortfolioResearchPanel> createState() => _PortfolioResearchPanelState();
@@ -37,6 +41,8 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
   int holdingLimit = 20, comparisonLimit = 20;
   int portfolioSortColumn = 2;
   bool portfolioSortAscending = false;
+  int? selectedAccountNumber;
+  String assetKindFilter = 'all';
   double riskFreeRate = .04;
   String homePnlMode = 'auto';
   bool get hideAmounts => portfolioPrivacyMode.value;
@@ -677,10 +683,12 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
               for (final t in [
                 ('overview', 'Overview', '组合总览'),
                 ('holdings', 'Holdings & value', '持仓与估值'),
+                ('stress', 'Valuation & stress', '估值与压力测试'),
                 ('risk', 'Risk & SPY', '风险与 SPY'),
                 ('gurus', 'Compare with Gurus', '对比大佬'),
               ])
                 ChoiceChip(
+                  key: ValueKey('portfolio-tab-${t.$1}'),
                   label: Text(w(t.$2, t.$3)),
                   selected: tab == t.$1,
                   onSelected: (_) => setState(() => tab = t.$1),
@@ -729,6 +737,12 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
           ],
           if (tab == 'overview') portfolioDesk(group),
           if (tab == 'holdings') portfolioHoldingsTable(group),
+          if (tab == 'stress')
+            Column(
+              key: const ValueKey('portfolio-stress-panel'),
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: overview(group),
+            ),
           if (tab == 'risk')
             detailsLoading && group['risk'] == null
                 ? detailLoadingPanel()

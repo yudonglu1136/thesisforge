@@ -133,6 +133,31 @@ function fundamentalResearchShape(detail) {
   };
 }
 
+const RECORD_STATUSES=new Set(['open','validated','invalidated','archived']);
+
+export function foldResearchRecords(rawRows,{includeArchived=false,asOf=null}={}) {
+  const byRoot=new Map();
+  for(const row of rawRows??[]) {
+    if(asOf&&row.asOf&&row.asOf>asOf)continue;
+    const rootId=typeof row.parentRecordId==='string'&&row.parentRecordId.length>0?row.parentRecordId:row.id;
+    const prev=byRoot.get(rootId);
+    const merged={
+      ...(prev??{}),
+      ...row,
+      id:rootId,
+      latestEventId:row.id,
+      createdAt:prev?.createdAt??row.createdAt??row.asOf,
+      updatedAt:row.createdAt??row.asOf,
+      revisionCount:(prev?.revisionCount??0)+1,
+      status:RECORD_STATUSES.has(row.status)?row.status:(prev?.status??'open'),
+      tags:Array.isArray(row.tags)?row.tags:(prev?.tags??[]),
+    };
+    byRoot.set(rootId,merged);
+  }
+  const folded=[...byRoot.values()];
+  return includeArchived?folded:folded.filter(r=>r.status!=='archived');
+}
+
 function finishResearchWorkbench(service,owner,ticker,asOf,core,model) {
   let breakdown=null;
   if(model){
@@ -143,7 +168,7 @@ function finishResearchWorkbench(service,owner,ticker,asOf,core,model) {
       breakdown={status:'unavailable',reason:error.message,methods:[],reconciliation:null};
     }
   }
-  const records=service.store.list(owner,'research_record').filter(row=>row.ticker===ticker&&row.asOf<=asOf);
+  const records=foldResearchRecords(service.store.list(owner,'research_record').filter(row=>row.ticker===ticker),{asOf});
   const worksheet=model?worksheetState(service.store,owner,ticker,asOf):{activeWorksheet:null,worksheetIgnoredTestVersions:0,worksheetHead:null};
   const scenarios=model?service.store.list(owner,'scenario').filter(row=>row.ticker===ticker&&row.asOf<=asOf):[];
   const decisions=model?service.store.list(owner,'decision').filter(row=>row.ticker===ticker&&row.decisionDate<=asOf):[];
@@ -192,8 +217,18 @@ export function researchPublishedModel(service,ticker,date) {
 export function saveResearchRecord(service,owner,body) {
   const ticker=tickerKey(body.ticker),asOf=service.date(body.asOf);
   const clean=value=>String(value??'').trim().slice(0,4000);
-  let evidence=Array.isArray(body.evidenceRefs)?body.evidenceRefs.map(clean).filter(Boolean).slice(0,40):[];
-  let discoveryContext=null;
+  const parentRecordId=typeof body.parentRecordId==='string'&&body.parentRecordId.trim().length>0
+    ?body.parentRecordId.trim().slice(0,120):null;
+  const status=RECORD_STATUSES.has(body.status)?body.status:'open';
+  const tags=Array.isArray(body.tags)
+    ?[...new Set(body.tags.map(v=>String(v??'').trim().slice(0,32)).filter(Boolean))].slice(0,8)
+    :[];
+  const existingParent=parentRecordId
+    ?foldResearchRecords(service.store.list(owner,'research_record').filter(r=>r.ticker===ticker),{includeArchived:true})
+      .find(r=>r.id===parentRecordId)
+    :null;
+  let evidence=Array.isArray(body.evidenceRefs)?body.evidenceRefs.map(clean).filter(Boolean).slice(0,40):(existingParent?.evidenceRefs??[]);
+  let discoveryContext=existingParent?.discoveryContext??null;
   if(body.discoveryOrigin==='ai_insights'){
     const supplied=body.discoveryContext;
     assert(supplied&&typeof supplied.snapshotId==='string'&&supplied.snapshotId.length>0,'ai_insights_snapshot_required');
@@ -207,19 +242,30 @@ export function saveResearchRecord(service,owner,body) {
       compareTickers:Array.isArray(supplied.tickers)
         ?supplied.tickers.filter(value=>typeof value==='string'&&/^[A-Z0-9.\-]{1,12}$/.test(value)).slice(0,4):[]};
   }
-  assert(clean(body.question).length>0,'research_question_required');
+  const resolvedQuestion=clean(body.question)||clean(existingParent?.question);
+  assert(resolvedQuestion.length>0,'research_question_required');
   return service.store.write(owner,'research_record',ticker,body.operationId,body,()=>({
-    asOf,question:clean(body.question),supportingEvidence:clean(body.supportingEvidence),
-    opposingEvidence:clean(body.opposingEvidence),evidenceRefs:evidence,
-    discoveryOrigin:body.discoveryOrigin==='ai_insights'?'ai_insights':'direct_research',
+    asOf,
+    ...(parentRecordId?{parentRecordId}:{}),
+    question:resolvedQuestion,
+    supportingEvidence:body.supportingEvidence!==undefined?clean(body.supportingEvidence):clean(existingParent?.supportingEvidence),
+    opposingEvidence:body.opposingEvidence!==undefined?clean(body.opposingEvidence):clean(existingParent?.opposingEvidence),
+    evidenceRefs:evidence,
+    tags,
+    discoveryOrigin:body.discoveryOrigin==='ai_insights'?'ai_insights':(existingParent?.discoveryOrigin??'direct_research'),
     discoveryContext,
-    personalScenarioId:body.personalScenarioId??null,impliedScenario:body.impliedScenario??null,
-    invalidationCondition:clean(body.invalidationCondition),reviewDate:body.reviewDate??null,
-    status:'open',methodVersion:'research-record-v1',
+    personalScenarioId:body.personalScenarioId??existingParent?.personalScenarioId??null,
+    impliedScenario:body.impliedScenario??existingParent?.impliedScenario??null,
+    invalidationCondition:body.invalidationCondition!==undefined?clean(body.invalidationCondition):clean(existingParent?.invalidationCondition),
+    reviewDate:body.reviewDate!==undefined?(body.reviewDate??null):(existingParent?.reviewDate??null),
+    status,
+    methodVersion:'research-record-v1',
   }));
 }
 
-export function listResearchRecords(service,owner,ticker=null) {
-  const rows=service.store.list(owner,'research_record');
-  return {version:'research-record-v1',rows:ticker?rows.filter(row=>row.ticker===tickerKey(ticker)):rows};
+export function listResearchRecords(service,owner,ticker=null,{asOf=null,includeArchived=false}={}) {
+  const raw=service.store.list(owner,'research_record');
+  const filtered=ticker?raw.filter(row=>row.ticker===tickerKey(ticker)):raw;
+  const rows=foldResearchRecords(filtered,{includeArchived,asOf:asOf?service.date(asOf):null});
+  return {version:'research-record-v1',rows};
 }

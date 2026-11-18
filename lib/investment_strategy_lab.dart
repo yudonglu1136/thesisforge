@@ -64,7 +64,11 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
   final managers = <String>{};
   int topN = 5, serial = 0, years = 5, ledgerIndex = -1;
   double premium = .3, ctaWeight = .3, cost = 10;
-  bool valuation = true, loading = true, running = false, saving = false;
+  bool valuation = true,
+      loading = true,
+      running = false,
+      saving = false,
+      showAllSaved = false;
   String cta = 'KMLM',
       allocation = 'fully_invested',
       error = '',
@@ -333,6 +337,30 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
         setState(() {
           saving = false;
           error = w('Rules were not saved. Please retry.', '规则未保存，请重试。');
+        });
+      }
+    }
+  }
+
+  Future<void> archiveSaved(Map<String, dynamic> item) async {
+    final targetId = text(item['id']);
+    if (targetId.isEmpty) return;
+    try {
+      await widget.api.postJson('/api/investment/strategy-rules/archive', {
+        'targetId': targetId,
+        'operationId':
+            'strategy_archive_${DateTime.now().microsecondsSinceEpoch}',
+      });
+      if (!mounted || catalog == null) return;
+      setState(() {
+        catalog!['saved'] = asList(
+          catalog?['saved'],
+        ).where((x) => text(x['id']) != targetId).toList();
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          error = w('Could not remove saved strategy.', '无法移除已保存策略。');
         });
       }
     }
@@ -1570,20 +1598,51 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
         ),
       if (catalog != null) ...[
         if (asList(catalog!['saved']).isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final s in asList(catalog!['saved']).reversed.take(6))
-                  ActionChip(
-                    avatar: const Icon(Icons.bookmark_outline, size: 16),
-                    label: Text(text(s['name'])),
-                    onPressed: () => restore(s),
-                  ),
-              ],
-            ),
+          Builder(
+            builder: (context) {
+              final allSaved = asList(catalog!['saved']).reversed.toList();
+              final visibleSaved = showAllSaved
+                  ? allSaved
+                  : allSaved.take(6).toList();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final s in visibleSaved)
+                      InputChip(
+                        key: ValueKey('saved-strategy-${text(s['id'])}'),
+                        avatar: const Icon(Icons.bookmark_outline, size: 16),
+                        label: Text(text(s['name'])),
+                        onPressed: () => restore(s),
+                        deleteIcon: const Icon(Icons.close_rounded, size: 15),
+                        deleteButtonTooltipMessage: w(
+                          'Remove saved strategy',
+                          '移除已保存策略',
+                        ),
+                        onDeleted: text(s['id']).isEmpty
+                            ? null
+                            : () => unawaited(archiveSaved(s)),
+                      ),
+                    if (allSaved.length > 6)
+                      ActionChip(
+                        key: const ValueKey('saved-strategies-toggle-all'),
+                        label: Text(
+                          showAllSaved
+                              ? w('Show recent 6', '仅显示最近 6 条')
+                              : w(
+                                  'Show all (${allSaved.length})',
+                                  '展开全部 (${allSaved.length})',
+                                ),
+                        ),
+                        onPressed: () =>
+                            setState(() => showAllSaved = !showAllSaved),
+                      ),
+                  ],
+                ),
+              );
+            },
           ),
         LayoutBuilder(
           builder: (ctx, c) {

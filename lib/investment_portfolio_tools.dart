@@ -403,9 +403,24 @@ class _PortfolioReadOnlyBrokerState extends State<PortfolioReadOnlyBroker> {
             TextButton(onPressed: () => openBrowserPath('https://www.questrade.com/api/documentation/getting-started'),
               child: Text(w('Questrade API Centre instructions ↗', 'Questrade API Centre 操作说明 ↗'))),
           ] else ...[
-            Text(w('Log in to official OpenD on this Mac. Generate a connector token below, then run the connector and paste the token into its hidden prompt. It expires in 30 days; disconnect revokes it immediately.',
-              '在这台 Mac 登录官方 OpenD。下方生成连接器 Token，然后运行连接器，在隐藏输入提示中粘贴。Token 30 天过期；断开连接会立即撤销。')),
-            SelectableText('tmp/futu-connector-venv/bin/python scripts/futu_connector.py --account-id YOUR_ACCOUNT_ID --firm FUTUSECURITIES'),
+            Text(w('Log in to official OpenD on this Mac. Generate a 30-day read-only connector token below; disconnect revokes it immediately.',
+              '在这台 Mac 登录官方 OpenD。点击下方生成 30 天有效的只读连接器 Token；断开连接会立即撤销。')),
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              title: Text(
+                w('Local OpenD CLI command (macOS)', '本地 OpenD 终端同步命令 (macOS)'),
+                style: TextStyle(fontSize: 12.5, color: widget.palette.muted),
+              ),
+              children: const [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: SelectableText(
+                    'python3 scripts/futu_connector.py --account-id YOUR_ACCOUNT_ID --firm FUTUSECURITIES',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
             if (pairingToken != null) ...[
               const SizedBox(height: 12),
               Text(w('Copy now; this token is only shown here. Keep it private.', '请立即复制；Token 仅在此显示，请勿分享。')),

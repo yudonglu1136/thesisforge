@@ -969,7 +969,8 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
     final passive = asMap(h['passiveIncome']);
     final hasPassive =
         passive['status'] == 'ready' ||
-        asList(asMap(passive['pendingShortCalls'])['rows']).isNotEmpty;
+        asList(asMap(passive['pendingShortCalls'])['rows']).isNotEmpty ||
+        asList(asMap(passive['pendingShortPuts'])['rows']).isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1013,10 +1014,56 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
     return '${points >= 0 ? '+' : ''}${points.toStringAsFixed(1)} pp';
   }
 
+  String? _optionUnderlyingTicker(Map<String, dynamic> row) {
+    if (String.fromCharCodes(text(row['assetCategory']).codeUnits) != 'OPT') {
+      return null;
+    }
+    final raw = text(row['ticker']).trim();
+    final match = RegExp(r'^([A-Z.]+)\s*\d{6}[CP]\d+$').firstMatch(raw);
+    if (match != null) return match.group(1);
+    final parts = raw.split(RegExp(r'\s+'));
+    return parts.isNotEmpty && RegExp(r'^[A-Z.]{1,8}$').hasMatch(parts.first)
+        ? parts.first
+        : null;
+  }
+
+  String _formatOptionBadge(Map<String, dynamic> row) {
+    final raw = text(row['ticker']).trim();
+    final match = RegExp(
+      r'^([A-Z.]+)\s*(\d{2})(\d{2})(\d{2})([CP])(\d{8})$',
+    ).firstMatch(raw);
+    if (match != null) {
+      final under = match.group(1)!;
+      final exp = '20${match.group(2)}-${match.group(3)}-${match.group(4)}';
+      final right = match.group(5) == 'C' ? 'Call' : 'Put';
+      final strikeNum = (int.tryParse(match.group(6)!) ?? 0) / 1000.0;
+      final strikeStr = strikeNum == strikeNum.roundToDouble()
+          ? strikeNum.toInt().toString()
+          : strikeNum.toStringAsFixed(2);
+      final side = number(row['quantity']) < 0 ? 'Short ' : 'Long ';
+      return '$side$under · $exp · \$$strikeStr $right';
+    }
+    return text(row['name']);
+  }
+
   List<Map<String, dynamic>> portfolioTableRows(Map<String, dynamic> g) {
-    final source = asList(
+    var source = asList(
       g['positions'],
     ).where((r) => !['cash', 'accrual'].contains(r['kind'])).toList();
+    if (selectedAccountNumber != null) {
+      source = source.where((r) {
+        final nums = r['accountNumbers'];
+        if (nums is List) {
+          return nums.any((n) => number(n).round() == selectedAccountNumber);
+        }
+        return number(r['accountNumber']).round() == selectedAccountNumber;
+      }).toList();
+    }
+    if (assetKindFilter == 'equity') {
+      source = source.where((r) => r['kind'] == 'equity').toList();
+    } else if (assetKindFilter == 'options') {
+      source = source.where((r) => r['kind'] != 'equity').toList();
+    }
     final covered = source.where(
       (r) =>
           r['modelStatus'] == 'covered' &&
@@ -1059,9 +1106,10 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
       1 => nullableNumber(row['quantity']),
       2 => nullableNumber(row['value']),
       3 => nullableNumber(row['netWeight']),
-      4 => portfolioModelArchitecture(row),
-      5 => nullableNumber(row['modelGap']),
-      6 => nullableNumber(row['_structureGap']),
+      4 => nullableNumber(row['unrealizedPnl']),
+      5 => portfolioModelArchitecture(row),
+      6 => nullableNumber(row['modelGap']),
+      7 => nullableNumber(row['_structureGap']),
       _ => nullableNumber(row['value']),
     };
     rows.sort((a, b) {
@@ -1101,8 +1149,12 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
             value: 3,
             child: Text(w('Portfolio weight', '组合权重')),
           ),
-          DropdownMenuItem(value: 5, child: Text(w('Model gap', '模型价差'))),
-          DropdownMenuItem(value: 6, child: Text(w('Structure shift', '结构变化'))),
+          DropdownMenuItem(
+            value: 4,
+            child: Text(w('Unrealized P&L', '浮动盈亏')),
+          ),
+          DropdownMenuItem(value: 6, child: Text(w('Model gap', '模型价差'))),
+          DropdownMenuItem(value: 7, child: Text(w('Structure shift', '结构变化'))),
         ],
         onChanged: (value) {
           if (value == null) return;
@@ -1201,6 +1253,69 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
         ),
       ),
       const SizedBox(height: 14),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          if (number(g['accountCount']) > 1) ...[
+            ChoiceChip(
+              key: const ValueKey('portfolio-account-filter-all'),
+              visualDensity: VisualDensity.compact,
+              label: Text(
+                w(
+                  'All accounts (${g['accountCount']})',
+                  '全部账户 (${g['accountCount']})',
+                ),
+                style: const TextStyle(fontSize: 12),
+              ),
+              selected: selectedAccountNumber == null,
+              onSelected: (_) => homeUpdate(() {
+                selectedAccountNumber = null;
+                holdingLimit = 20;
+              }),
+            ),
+            for (final acc in asList(g['accountMeta']))
+              ChoiceChip(
+                key: ValueKey(
+                  'portfolio-account-filter-${acc['accountNumber']}',
+                ),
+                visualDensity: VisualDensity.compact,
+                label: Text(
+                  text(acc['label'], 'Account ${acc['accountNumber']}'),
+                  style: const TextStyle(fontSize: 12),
+                ),
+                selected:
+                    selectedAccountNumber ==
+                    number(acc['accountNumber']).round(),
+                onSelected: (_) => homeUpdate(() {
+                  selectedAccountNumber = number(acc['accountNumber']).round();
+                  holdingLimit = 20;
+                }),
+              ),
+            const SizedBox(width: 6),
+          ],
+          for (final kindItem in [
+            ('all', 'All positions', '全部持仓'),
+            ('equity', 'Equities', '股票正股'),
+            ('options', 'Options & other', '期权与其他'),
+          ])
+            ChoiceChip(
+              key: ValueKey('portfolio-kind-filter-${kindItem.$1}'),
+              visualDensity: VisualDensity.compact,
+              label: Text(
+                w(kindItem.$2, kindItem.$3),
+                style: const TextStyle(fontSize: 12),
+              ),
+              selected: assetKindFilter == kindItem.$1,
+              onSelected: (_) => homeUpdate(() {
+                assetKindFilter = kindItem.$1;
+                holdingLimit = 20;
+              }),
+            ),
+        ],
+      ),
+      const SizedBox(height: 12),
       portfolioTableSearchAndSort(rows.length),
       const SizedBox(height: 12),
       if (rows.isEmpty)
@@ -1275,6 +1390,11 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
           onSort: portfolioSort,
         ),
         DataColumn(
+          label: Text(w('Cost & P&L', '成本与浮盈')),
+          numeric: true,
+          onSort: portfolioSort,
+        ),
+        DataColumn(
           label: Text(w('Model architecture', '模型架构')),
           onSort: portfolioSort,
         ),
@@ -1304,10 +1424,17 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
     final covered = row['modelStatus'] == 'covered';
     final structureGap = nullableNumber(row['_structureGap']);
     final architecture = portfolioModelArchitecture(row);
+    final optionUnderlying = _optionUnderlyingTicker(row);
+    final targetSymbol = row['kind'] == 'equity'
+        ? text(row['ticker'])
+        : optionUnderlying;
+    final unrPnl = nullableNumber(row['unrealizedPnl']);
+    final unrPct = nullableNumber(row['unrealizedPct']);
+    final avgCost = nullableNumber(row['avgCost']);
     return DataRow(
       key: ValueKey('portfolio-table-${row['id'] ?? row['ticker']}'),
-      onSelectChanged: row['kind'] == 'equity'
-          ? (_) => widget.onCompany(text(row['ticker']), 'overview')
+      onSelectChanged: targetSymbol != null && targetSymbol.isNotEmpty
+          ? (_) => widget.onCompany(targetSymbol, 'overview')
           : null,
       cells: [
         DataCell(
@@ -1315,7 +1442,11 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
             width: 210,
             child: Row(
               children: [
-                StockLogo(ticker: text(row['ticker']), palette: p, size: 34),
+                StockLogo(
+                  ticker: optionUnderlying ?? text(row['ticker']),
+                  palette: p,
+                  size: 34,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -1325,7 +1456,9 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
                       Text(text(row['ticker']), style: heading(14)),
                       Text(
                         [
-                          text(row['name']),
+                          optionUnderlying != null
+                              ? _formatOptionBadge(row)
+                              : text(row['name']),
                           if (!hideAmounts && number(row['accountCount']) > 1)
                             '${row['accountCount']} ${w('accounts', '个账户')}',
                         ].join(' · '),
@@ -1361,6 +1494,28 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
           ),
         ),
         DataCell(Text(percent(row['netWeight']), style: heading(13))),
+        DataCell(
+          _portfolioStackedValue(
+            unrPnl == null
+                ? '—'
+                : hideAmounts
+                ? (unrPct != null
+                      ? '${unrPct >= 0 ? '+' : ''}${(unrPct * 100).toStringAsFixed(1)}%'
+                      : '••••')
+                : '${unrPnl >= 0 ? '+' : ''}${amount(unrPnl)}',
+            avgCost == null
+                ? (unrPct != null ? percent(unrPct) : '—')
+                : hideAmounts
+                ? w('Cost hidden', '成本已隐藏')
+                : '${w('Avg', '均价')} ${amount(avgCost, text(row['currency']))}${unrPct != null ? ' (${unrPct >= 0 ? '+' : ''}${(unrPct * 100).toStringAsFixed(1)}%)' : ''}',
+            color: unrPnl == null
+                ? null
+                : unrPnl >= 0
+                ? p.accent
+                : p.negative,
+            alignEnd: true,
+          ),
+        ),
         DataCell(
           Tooltip(
             message: text(model['formula'], architecture),

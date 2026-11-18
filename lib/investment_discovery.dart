@@ -71,12 +71,34 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
   }
 
   Future<void> followGuru(Map<String, dynamic> guru) => command(() async {
+    final nextFollowed = guru['followed'] != true;
     await widget.api.postJson('/api/investment/follows', {
       'operationId': op(),
       'guruId': guru['id'],
-      'followed': guru['followed'] != true,
+      'followed': nextFollowed,
     });
-    await loadDiscovery();
+    updateUI(() {
+      if (selectedGuru != null &&
+          asMap(selectedGuru?['guru'])['id'] == guru['id']) {
+        selectedGuru = {
+          ...?selectedGuru,
+          'guru': {...asMap(selectedGuru?['guru']), 'followed': nextFollowed},
+        };
+      }
+      if (home != null) {
+        final existing = asList(
+          home?['follows'],
+        ).where((f) => text(f['guruId'], text(f['id'])) != text(guru['id'])).toList();
+        home = {
+          ...?home,
+          'follows': [
+            ...existing,
+            {'guruId': guru['id'], 'followed': nextFollowed},
+          ],
+        };
+      }
+    });
+    if (discoveryData != null) await loadDiscovery();
     await loadHome();
   });
 
@@ -377,16 +399,23 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
   List<Widget> guruDetailPage() {
     final baseDetail = asMap(selectedGuru);
     final rawGuru = asMap(baseDetail['guru']);
+    final guruId = text(rawGuru['id']);
     final dirEntry = asList(
       discoveryData?['gurus'],
-    ).where((g) => g['id'] == rawGuru['id']).firstOrNull;
+    ).where((g) => g['id'] == guruId).firstOrNull;
+    final followedFromHome = asList(
+      home?['follows'],
+    ).any((f) => text(f['guruId'], text(f['id'])) == guruId && f['followed'] != false);
+    final resolvedFollowed =
+        rawGuru['followed'] as bool? ??
+        dirEntry?['followed'] as bool? ??
+        followedFromHome;
     final mergedDetail = {
       ...baseDetail,
       'guru': {
         ...?dirEntry,
         ...rawGuru,
-        if (dirEntry != null && dirEntry['followed'] != null)
-          'followed': dirEntry['followed'],
+        'followed': resolvedFollowed,
       },
     };
     return [
@@ -419,7 +448,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
           loadCompany(sym, origin: 'guru_disclosure', evidence: evidence),
         ),
         onOpenTerminal: () => unawaited(enterTerminal()),
-        onFollow: dirEntry != null
+        onFollow: guruId.isNotEmpty
             ? () => unawaited(
                 followGuru(asMap(mergedDetail['guru'])),
               )

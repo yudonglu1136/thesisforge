@@ -1,6 +1,10 @@
-import {HedgeSource} from './hedgeLab.js';
+import {HedgeSource,BundledHedgeSource} from './hedgeLab.js';
 export function registerHedgeRoutes(app,service,{file=()=>process.env.HEDGE_DB_PATH,source=null}={}){
- const withSource=fn=>{const s=source??new HedgeSource(file());try{return fn(s);}finally{if(!source)s.close();}};
+ const withSource=fn=>{
+  const resolved=file();
+  const s=source??(resolved?new HedgeSource(resolved):new BundledHedgeSource());
+  try{return fn(s);}finally{if(!source)s.close();}
+ };
  const route=(method,url,fn)=>app[method]('/api/investment/hedge'+url,(req,res)=>{
   res.setHeader('Cache-Control','private, no-store');
   if(!req.user?.id)return res.status(401).json({error:'unauthorized'});

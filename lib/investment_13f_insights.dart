@@ -895,34 +895,53 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     String title,
     Map<String, dynamic> move,
     Color color,
-  ) => Row(
-    children: [
-      Icon(icon, color: color, size: 14),
-      const SizedBox(width: 5),
-      Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: TextStyle(color: p.muted, fontSize: 9)),
-            Text(
-              text(move['ticker'], '—'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
+  ) {
+    final symbol = text(move['ticker']);
+    final content = Row(
+      children: [
+        Icon(icon, color: color, size: 14),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: TextStyle(color: p.muted, fontSize: 9)),
+              Text(
+                symbol.isEmpty ? '—' : symbol,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  decoration: symbol.isEmpty
+                      ? TextDecoration.none
+                      : TextDecoration.underline,
+                  decorationColor: color.withValues(alpha: .45),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
+      ],
+    );
+    if (symbol.isEmpty) return content;
+    return InkWell(
+      key: ValueKey('13f-active-move-$symbol'),
+      borderRadius: BorderRadius.circular(5),
+      onTap: () => unawaited(loadCompany(symbol, origin: '13f_insights')),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+        child: content,
       ),
-    ],
-  );
+    );
+  }
 
   Widget _activeRotationRow(Map<String, dynamic> rotation) {
     final added = asMap(rotation['added']);
     final reduced = asMap(rotation['reduced']);
+    final addSymbol = text(added['ticker']);
+    final redSymbol = text(reduced['ticker']);
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
@@ -948,25 +967,43 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           ),
           Expanded(
             flex: 2,
-            child: Text(
-              '↑ ${text(added['ticker'], '—')}',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: p.accent,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
+            child: InkWell(
+              onTap: addSymbol.isEmpty
+                  ? null
+                  : () => unawaited(loadCompany(addSymbol, origin: '13f_insights')),
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  '↑ ${addSymbol.isEmpty ? '—' : addSymbol}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: p.accent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
             ),
           ),
           Expanded(
             flex: 2,
-            child: Text(
-              '↓ ${text(reduced['ticker'], '—')}',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: p.secondary,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
+            child: InkWell(
+              onTap: redSymbol.isEmpty
+                  ? null
+                  : () => unawaited(loadCompany(redSymbol, origin: '13f_insights')),
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  '↓ ${redSymbol.isEmpty ? '—' : redSymbol}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: p.secondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
             ),
           ),
@@ -1429,7 +1466,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       LayoutBuilder(
         builder: (_, constraints) {
           final wide = constraints.maxWidth >= 1040;
-          final list = _insightStockList();
+          final list = _insightStockList(scrollable: wide);
           final detail = _insightStockDetail();
           if (!wide) {
             return Column(children: [list, const SizedBox(height: 16), detail]);
@@ -1447,13 +1484,111 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     ],
   );
 
-  Widget _insightStockList() {
+  Widget _insightStockList({bool scrollable = false}) {
     final rows = _insightStocks(), color = _insightColor(insightAction);
+    final visibleRows = rows.take(100).toList();
     final compact = MediaQuery.sizeOf(context).width < 620;
     final amountWidth = compact ? 64.0 : 88.0;
     final changeWidth = compact ? 54.0 : 78.0;
     final holdersWidth = compact ? 48.0 : 70.0;
     final heldWidth = compact ? 52.0 : 72.0;
+
+    Widget buildRow(Map<String, dynamic> row) => Material(
+      color: row['ticker'] == insightTicker
+          ? p.accent.withValues(alpha: .11)
+          : Colors.transparent,
+      child: InkWell(
+        key: ValueKey('13f-stock-${row['ticker']}'),
+        onTap: () => unawaited(select13FInsightStock(text(row['ticker']))),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: p.border)),
+          ),
+          child: Row(
+            children: [
+              homeStockLogo(text(row['ticker']), 30),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      text(row['ticker']),
+                      style: TextStyle(
+                        color: p.text,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      text(row['name'], text(row['ticker'])),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: p.muted, fontSize: 10),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(
+                width: amountWidth,
+                child: Text(
+                  _usdMillions(row['netChangeValueM']),
+                  style: TextStyle(
+                    color: insightStockRanking == 'amount' ? color : p.text,
+                    fontWeight: insightStockRanking == 'amount'
+                        ? FontWeight.w700
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: changeWidth,
+                child: Text(
+                  _percentagePoints(row['netChangePctOutstanding']),
+                  style: TextStyle(
+                    color: insightStockRanking == 'shareChange'
+                        ? color
+                        : p.text,
+                    fontWeight: insightStockRanking == 'shareChange'
+                        ? FontWeight.w700
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: holdersWidth,
+                child: Text(
+                  _integer(row['holders']),
+                  style: TextStyle(
+                    color: insightStockRanking == 'institutions'
+                        ? p.accent
+                        : p.text,
+                    fontWeight: insightStockRanking == 'institutions'
+                        ? FontWeight.w700
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: heldWidth,
+                child: Text(
+                  _percentagePoints(row['institutionalOwnershipPct']),
+                  style: TextStyle(
+                    color: insightStockRanking == 'sharesHeldPct'
+                        ? p.accent
+                        : p.text,
+                    fontWeight: insightStockRanking == 'sharesHeldPct'
+                        ? FontWeight.w700
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
     return Container(
       decoration: BoxDecoration(
         color: p.panel,
@@ -1493,109 +1628,19 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
             Padding(
               padding: const EdgeInsets.all(24),
               child: label('No matching 13F records.', '没有匹配的 13F 记录。'),
-            ),
-          for (final row in rows.take(100))
-            Material(
-              color: row['ticker'] == insightTicker
-                  ? p.accent.withValues(alpha: .11)
-                  : Colors.transparent,
-              child: InkWell(
-                key: ValueKey('13f-stock-${row['ticker']}'),
-                onTap: () =>
-                    unawaited(select13FInsightStock(text(row['ticker']))),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 11,
-                  ),
-                  decoration: BoxDecoration(
-                    border: Border(bottom: BorderSide(color: p.border)),
-                  ),
-                  child: Row(
-                    children: [
-                      homeStockLogo(text(row['ticker']), 30),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              text(row['ticker']),
-                              style: TextStyle(
-                                color: p.text,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            Text(
-                              text(row['name'], text(row['ticker'])),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(color: p.muted, fontSize: 10),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(
-                        width: amountWidth,
-                        child: Text(
-                          _usdMillions(row['netChangeValueM']),
-                          style: TextStyle(
-                            color: insightStockRanking == 'amount'
-                                ? color
-                                : p.text,
-                            fontWeight: insightStockRanking == 'amount'
-                                ? FontWeight.w700
-                                : FontWeight.w400,
-                          ),
-                        ),
-                      ),
-                      SizedBox(
-                        width: changeWidth,
-                        child: Text(
-                          _percentagePoints(row['netChangePctOutstanding']),
-                          style: TextStyle(
-                            color: insightStockRanking == 'shareChange'
-                                ? color
-                                : p.text,
-                            fontWeight: insightStockRanking == 'shareChange'
-                                ? FontWeight.w700
-                                : FontWeight.w400,
-                          ),
-                        ),
-                      ),
-                      SizedBox(
-                        width: holdersWidth,
-                        child: Text(
-                          _integer(row['holders']),
-                          style: TextStyle(
-                            color: insightStockRanking == 'institutions'
-                                ? p.accent
-                                : p.text,
-                            fontWeight: insightStockRanking == 'institutions'
-                                ? FontWeight.w700
-                                : FontWeight.w400,
-                          ),
-                        ),
-                      ),
-                      SizedBox(
-                        width: heldWidth,
-                        child: Text(
-                          _percentagePoints(row['institutionalOwnershipPct']),
-                          style: TextStyle(
-                            color: insightStockRanking == 'sharesHeldPct'
-                                ? p.accent
-                                : p.text,
-                            fontWeight: insightStockRanking == 'sharesHeldPct'
-                                ? FontWeight.w700
-                                : FontWeight.w400,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+            )
+          else if (scrollable)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 680),
+              child: ListView.builder(
+                key: const ValueKey('13f-stock-virtual-list'),
+                shrinkWrap: true,
+                itemCount: visibleRows.length,
+                itemBuilder: (_, idx) => buildRow(visibleRows[idx]),
               ),
-            ),
+            )
+          else
+            for (final row in visibleRows) buildRow(row),
           if (rows.length > 100)
             Padding(
               padding: const EdgeInsets.all(12),

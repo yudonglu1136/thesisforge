@@ -2517,7 +2517,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
   );
 }
 
-class _FundamentalTrendChart extends StatelessWidget {
+class _FundamentalTrendChart extends StatefulWidget {
   const _FundamentalTrendChart({
     required this.rows,
     required this.palette,
@@ -2527,17 +2527,104 @@ class _FundamentalTrendChart extends StatelessWidget {
   final Palette palette;
   final AppLanguage language;
   @override
-  Widget build(BuildContext context) => CustomPaint(
-    painter: _FundamentalTrendPainter(rows, palette, language),
-    child: const SizedBox.expand(),
+  State<_FundamentalTrendChart> createState() => _FundamentalTrendChartState();
+}
+
+class _FundamentalTrendChartState extends State<_FundamentalTrendChart> {
+  int? _hoverIndex;
+
+  void _updateHover(Offset local, double width) {
+    final n = widget.rows.length;
+    if (n == 0) return;
+    final left = 45.0, right = width - 14.0;
+    final plotWidth = math.max(1.0, right - left);
+    final ratio = ((local.dx - left) / plotWidth).clamp(0.0, 1.0);
+    final idx = n == 1 ? 0 : (ratio * (n - 1)).round().clamp(0, n - 1);
+    if (_hoverIndex != idx) setState(() => _hoverIndex = idx);
+  }
+
+  String _fmtPct(dynamic v) {
+    final n = nullableNumber(v);
+    if (n == null) return '—';
+    return '${(n * 100).toStringAsFixed(1)}%';
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (_, c) {
+      final activeRow =
+          (_hoverIndex != null &&
+              _hoverIndex! >= 0 &&
+              _hoverIndex! < widget.rows.length)
+          ? widget.rows[_hoverIndex!]
+          : null;
+      return MouseRegion(
+        onHover: (e) => _updateHover(e.localPosition, c.maxWidth),
+        onExit: (_) {
+          if (_hoverIndex != null) setState(() => _hoverIndex = null);
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (d) => _updateHover(d.localPosition, c.maxWidth),
+          onHorizontalDragUpdate: (d) =>
+              _updateHover(d.localPosition, c.maxWidth),
+          child: Stack(
+            children: [
+              CustomPaint(
+                painter: _FundamentalTrendPainter(
+                  widget.rows,
+                  widget.palette,
+                  widget.language,
+                  hoverIndex: _hoverIndex,
+                ),
+                child: const SizedBox.expand(),
+              ),
+              if (activeRow != null)
+                Positioned(
+                  right: 12,
+                  top: 0,
+                  child: IgnorePointer(
+                    child: Container(
+                      key: const ValueKey('fundamental-trend-tooltip'),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xEE141519),
+                        borderRadius: BorderRadius.circular(5),
+                        border: Border.all(color: widget.palette.border),
+                      ),
+                      child: Text(
+                        '${text(activeRow['periodEnd'])} · Rev ${_fmtPct(activeRow['revenueGrowth'])} · OpM ${_fmtPct(activeRow['operatingMargin'])}',
+                        style: TextStyle(
+                          color: widget.palette.text,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    },
   );
 }
 
 class _FundamentalTrendPainter extends CustomPainter {
-  _FundamentalTrendPainter(this.rows, this.p, this.language);
+  _FundamentalTrendPainter(
+    this.rows,
+    this.p,
+    this.language, {
+    this.hoverIndex,
+  });
   final List<Map<String, dynamic>> rows;
   final Palette p;
   final AppLanguage language;
+  final int? hoverIndex;
   @override
   void paint(Canvas canvas, Size size) {
     final plot = Rect.fromLTRB(45, 16, size.width - 14, size.height - 38),
@@ -2631,6 +2718,18 @@ class _FundamentalTrendPainter extends CustomPainter {
         9,
       );
     }
+    if (hoverIndex != null && hoverIndex! >= 0 && hoverIndex! < rows.length) {
+      final hx = rows.length == 1
+          ? plot.left
+          : plot.left + plot.width * hoverIndex! / (rows.length - 1);
+      canvas.drawLine(
+        Offset(hx, plot.top),
+        Offset(hx, plot.bottom),
+        Paint()
+          ..color = p.text.withValues(alpha: .35)
+          ..strokeWidth = 1,
+      );
+    }
     _label(
       canvas,
       language == AppLanguage.zh ? '收入同比' : 'Revenue YoY',
@@ -2666,5 +2765,8 @@ class _FundamentalTrendPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _FundamentalTrendPainter old) =>
-      old.rows != rows || old.p != p || old.language != language;
+      old.rows != rows ||
+      old.p != p ||
+      old.language != language ||
+      old.hoverIndex != hoverIndex;
 }

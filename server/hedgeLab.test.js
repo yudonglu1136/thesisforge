@@ -82,3 +82,27 @@ test('authenticated APIs isolate saved experiments and preserve immutable snapsh
  a.equal((await req('',null,'a')).body.saved.length,1);a.equal((await req('',null,'b')).body.saved.length,0);
  a.equal((await req('/save',{...save,shares:200})).status,422);
 });
+
+test('BundledHedgeSource serves verified Polygon QQQ catalog and runs Protective Put / Collar / Put Spread when HEDGE_DB_PATH is unset',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'tf-hedge-bundled-'));
+ const store=new InvestmentStore(path.join(dir,'users.sqlite'));
+ const app=express();app.use(express.json());app.use((r,_,next)=>{r.user={id:'bundled-user'};next();});
+ registerHedgeRoutes(app,{store},{file:()=>''});
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+ t.after(async()=>{await new Promise(r=>server.close(r));store.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const baseUrl=`http://127.0.0.1:${server.address().port}/api/investment/hedge`;
+ const cat=await (await fetch(baseUrl)).json();
+ a.equal(cat.status,'ready');
+ a.ok(cat.dates.length>=5);
+ a.ok(cat.spot>0);
+ const exp=cat.expiries[0].expiry;
+ const puts=cat.chain.filter(c=>c.expiry===exp&&c.type==='put'&&c.strike<=cat.spot).sort((x,y)=>y.strike-x.strike);
+ const calls=cat.chain.filter(c=>c.expiry===exp&&c.type==='call'&&c.strike>=cat.spot).sort((x,y)=>x.strike-y.strike);
+ a.ok(puts.length>=2&&calls.length>=1);
+ const calcRes=await fetch(`${baseUrl}/calculate`,{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({date:cat.date,expiry:exp,shares:100,coverage:1,fee:.65,slippage:.05,
+   putTicker:puts[0].ticker,shortPutTicker:puts[1].ticker,callTicker:calls[0].ticker})});
+ a.equal(calcRes.status,200);
+ const calc=await calcRes.json();
+ a.equal(calc.results.length,4);
+});

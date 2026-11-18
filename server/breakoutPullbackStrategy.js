@@ -123,7 +123,7 @@ function readValidatedArtifact(targetFile) {
     fail('breakout_pullback_snapshot_unavailable');
   }
   const id = createHash('sha256').update(source).digest('hex');
-  const entry = { key: cacheKey, payload: parsed, id, file: resolved };
+  const entry = { key: cacheKey, payload: parsed, id, file: resolved, slices: new Map() };
   fileCaches.set(resolved, entry);
   return entry;
 }
@@ -504,11 +504,14 @@ export function loadBreakoutPullbackDashboard({
   if (!BREAKOUT_MODES.includes(mode)) fail('invalid_strategy_mode', 400);
 
   const activeFile = file ?? promotedRuntimeFile ?? defaultFile;
-  const { payload, id } = readValidatedArtifact(activeFile);
+  const entry = readValidatedArtifact(activeFile);
+  const { payload, id } = entry;
   if (!file) maybeScheduleBackgroundRefresh(payload.dataThrough);
   if (snapshotId && snapshotId !== id) fail('breakout_pullback_snapshot_changed', 409);
 
   const cutoff = asOf ?? payload.dataThrough;
+  const sliceKey = `${asOf ?? 'latest'}:${cutoff}:${mode}`;
+  if (entry.slices.has(sliceKey)) return entry.slices.get(sliceKey);
   const curve = payload.backtest.curve.filter(r => r.date <= cutoff);
   if (curve.length < 2) {
     return {
@@ -566,7 +569,7 @@ export function loadBreakoutPullbackDashboard({
   const spyMetrics = withCalmar(strategyMetrics(curve.map(r => ({ date: r.date, value: r.spy }))));
   const qqqMetrics = withCalmar(strategyMetrics(curve.map(r => ({ date: r.date, value: r.qqq }))));
 
-  return {
+  const response = Object.freeze({
     version: payload.version,
     status: 'ready',
     snapshotId: id,
@@ -596,7 +599,10 @@ export function loadBreakoutPullbackDashboard({
       },
       curve,
     },
-  };
+  });
+  if (entry.slices.size >= 32) entry.slices.delete(entry.slices.keys().next().value);
+  entry.slices.set(sliceKey, response);
+  return response;
 }
 
 export function analyzeBreakoutPullbackRange({

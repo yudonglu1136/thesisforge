@@ -108,12 +108,14 @@ export function weightedValue(rows,models,prices,date) {
     formula:'sum(w × (fair value / price − 1)) / sum(covered w)'};
 }
 
-export function portfolioMarketContext(source,analysis,payload,asOf,{riskFreeRate=.04,spyUniverse}={}) {
+export function portfolioMarketContext(source,analysis,payload,asOf,{riskFreeRate=.04,spyUniverse,priceSeries=null}={}) {
   const symbols=new Set(['SPY',...analysis.groups.flatMap(g=>g.positions.filter(p=>p.kind==='equity'&&p.currency==='USD').map(p=>p.ticker))]);
   const series=new Map(),cache=cacheFor(source);
   const start=new Date(Date.parse(asOf+'T00:00:00Z')-367*86400000).toISOString().slice(0,10);
   const query=source.db.prepare("SELECT date,adjusted_close adjustedClose FROM price_points WHERE symbol=? AND date BETWEEN ? AND ? AND source LIKE 'sharadar_fact_os_%' ORDER BY date");
   for(const t of symbols) {
+    const provided=priceSeries?.get(t);
+    if(provided?.length){series.set(t,provided);continue;}
     const key=`${t}:${start}:${asOf}`;
     series.set(t,cache.series.get(key)??remember(cache.series,key,query.all(t,start,asOf),160));
   }

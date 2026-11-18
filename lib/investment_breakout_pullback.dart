@@ -526,6 +526,7 @@ class BreakoutPullbackDashboard extends StatefulWidget {
 }
 
 class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
+  final GlobalKey _liveBookKey = GlobalKey();
   Map<String, dynamic>? data;
   bool loading = true;
   bool failed = false;
@@ -698,9 +699,22 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
     _ => p.secondary,
   };
 
+  String _modeMultipleText(String id, String fallback) {
+    final m = asMap(asMap(asMap(data?['modesSummary'])[id])['metrics']);
+    return m.isNotEmpty && nullableNumber(m['endingValue']) != null
+        ? _mult(m['endingValue'])
+        : fallback;
+  }
+
   String _curveName(String id) => switch (id) {
-    'flagship' => w('Flagship · 8.91x', '进攻旗舰版 · 8.91x'),
-    'balanced' => w('Balanced · 7.54x', '高夏普稳健版 · 7.54x'),
+    'flagship' => w(
+      'Flagship · ${_modeMultipleText('flagship', '8.91x')}',
+      '进攻旗舰版 · ${_modeMultipleText('flagship', '8.91x')}',
+    ),
+    'balanced' => w(
+      'Balanced · ${_modeMultipleText('balanced', '7.54x')}',
+      '高夏普稳健版 · ${_modeMultipleText('balanced', '7.54x')}',
+    ),
     'qqq' => 'QQQ',
     _ => 'SPY',
   };
@@ -843,19 +857,22 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
       );
     }
 
+    final flagMult = _modeMultipleText('flagship', '8.91x');
+    final balMult = _modeMultipleText('balanced', '7.54x');
+
     final optFlagship = modeOption(
       id: 'flagship',
       accent: p.positive,
       title: w(
-        'Offensive Flagship · 8.91x Champion',
-        '进攻旗舰版 · 8.91x 总收益冠军',
+        'Offensive Flagship · $flagMult Champion',
+        '进攻旗舰版 · $flagMult 总收益冠军',
       ),
       desc: w(
         'Top 50 20d Dollar Volume + 63d High Breakout + -5% Pullback Limit (15d) + 2.5x ATR14 Stop + 4.0x ATR14 Chandelier Exit',
         'Top 50 成交额龙头 + 63 日新高 + 回撤 5% 限价挂单(15日窗口) + 2.5x ATR14 硬止损 + 4.0x ATR14 吊灯止盈',
       ),
       tags: [
-        '${w('Multiple', '累计净值')} ${fMetrics.isNotEmpty ? _mult(fMetrics['endingValue']) : '8.91x'}',
+        '${w('Multiple', '累计净值')} $flagMult',
         'CAGR ${fMetrics.isNotEmpty ? _pctUnsigned(fMetrics['cagr'], 1) : '24.4%'}',
         'Sharpe ${fMetrics.isNotEmpty ? _dec(fMetrics['sharpeZeroRf']) : '1.03'}',
         'MDD ${fMetrics.isNotEmpty ? _pctUnsigned(fMetrics['maxDrawdown'], 1) : '-29.9%'}',
@@ -866,15 +883,15 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
       id: 'balanced',
       accent: p.accent,
       title: w(
-        'High-Sharpe Defensive · 7.54x Balanced',
-        '高夏普稳健版 · 7.54x 抗跌优选',
+        'High-Sharpe Defensive · $balMult Balanced',
+        '高夏普稳健版 · $balMult 抗跌优选',
       ),
       desc: w(
         'Top 100 Dollar Volume & Close > MA50 > MA200 + 63d Breakout + -5% Pullback Limit (15d) + 3.5x ATR14 Stop + +25% Target (180d)',
         'Top 100 成交额且 Close > MA50 > MA200 + 63 日新高 + 回撤 5% 挂单 + 3.5x ATR14 止损 + +25% 目标止盈(180日兜底)',
       ),
       tags: [
-        '${w('Multiple', '累计净值')} ${bMetrics.isNotEmpty ? _mult(bMetrics['endingValue']) : '7.54x'}',
+        '${w('Multiple', '累计净值')} $balMult',
         'Sharpe ${bMetrics.isNotEmpty ? _dec(bMetrics['sharpeZeroRf']) : '1.12'}',
         'MDD ${bMetrics.isNotEmpty ? _pctUnsigned(bMetrics['maxDrawdown'], 1) : '-22.3%'}',
         w('2022 Bear: -3.6%', '2022 熊市仅 -3.6%'),
@@ -2320,9 +2337,73 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
       );
     }
 
+    final liveBook = asMap(data?['liveBook']);
+    final openPositions = asList(liveBook['openPositions']);
+    final watchlist = asList(liveBook['pendingWatchlist']);
+
+    void jumpToLiveBook(String targetTab) {
+      setState(() => bookTab = targetTab);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = _liveBookKey.currentContext;
+        if (ctx != null) {
+          Scrollable.ensureVisible(
+            ctx,
+            duration: const Duration(milliseconds: 260),
+            alignment: 0.05,
+          );
+        }
+      });
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Container(
+          key: const ValueKey('breakout-top-live-strip'),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: _curveColor(mode).withValues(alpha: 0.09),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _curveColor(mode).withValues(alpha: 0.45)),
+          ),
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Icon(Icons.bolt_rounded, size: 17, color: _curveColor(mode)),
+              Text(
+                '${w('Current Model State', '当前模型目标状态')} (${text(data?['dataThrough'], widget.asOf)}) · ${openPositions.length} ${w('Active Holdings', '只持仓')} · ${watchlist.length} ${w('-5% Watchlist', '只待回撤挂单')}',
+                style: s(13, true),
+              ),
+              for (final pos in openPositions.take(8))
+                ActionChip(
+                  visualDensity: VisualDensity.compact,
+                  label: Text(text(pos['ticker']), style: s(11.5, true)),
+                  onPressed: () => widget.onCompany(text(pos['ticker'])),
+                ),
+              OutlinedButton.icon(
+                key: const ValueKey('breakout-jump-holdings'),
+                onPressed: () => jumpToLiveBook('holdings'),
+                icon: const Icon(Icons.arrow_downward_rounded, size: 14),
+                label: Text(
+                  '${w('Holdings', '持仓明细')} (${openPositions.length}) ↓',
+                  style: s(11.5, true),
+                ),
+              ),
+              OutlinedButton.icon(
+                key: const ValueKey('breakout-jump-watchlist'),
+                onPressed: () => jumpToLiveBook('watchlist'),
+                icon: const Icon(Icons.visibility_outlined, size: 14),
+                label: Text(
+                  '${w('Watchlist', '挂单池')} (${watchlist.length}) ↓',
+                  style: s(11.5, true),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
         _buildModeSwitchBar(),
         const SizedBox(height: 16),
         _buildBlueprintModule(),
@@ -2342,7 +2423,10 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
           onCompany: widget.onCompany,
         ),
         const SizedBox(height: 16),
-        _buildLiveBookAndLedgerModule(),
+        Container(
+          key: _liveBookKey,
+          child: _buildLiveBookAndLedgerModule(),
+        ),
         const SizedBox(height: 16),
         _buildEmpiricalProofModule(),
       ],

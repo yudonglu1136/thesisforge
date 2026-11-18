@@ -1,4 +1,21 @@
+const MAX_TRANSLATION_CACHE_ENTRIES = 512;
 const translationCache = new Map();
+
+function readTranslationCache(key) {
+  if (!translationCache.has(key)) return undefined;
+  const value = translationCache.get(key);
+  translationCache.delete(key);
+  translationCache.set(key, value);
+  return value;
+}
+
+function writeTranslationCache(key, value) {
+  if (translationCache.has(key)) translationCache.delete(key);
+  while (translationCache.size >= MAX_TRANSLATION_CACHE_ENTRIES) {
+    translationCache.delete(translationCache.keys().next().value);
+  }
+  translationCache.set(key, value);
+}
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const OPENAI_TRANSLATION_MODEL =
@@ -252,14 +269,15 @@ export async function translateTextToChinese(value) {
   if (directFallback) return directFallback;
   const provider = providerForRequest();
   const key = cacheKey(`zh-CN:${provider}:${OPENAI_TRANSLATION_MODEL}`, source);
-  if (translationCache.has(key)) return translationCache.get(key);
+  const cached = readTranslationCache(key);
+  if (cached !== undefined) return cached;
   const chunks = splitForTranslation(source, provider === "openai" ? 5200 : 3600);
   const translatedChunks = [];
   for (const chunk of chunks) {
     translatedChunks.push(await translateChunkToChinese(chunk));
   }
   const translated = polishChineseTranslation(translatedChunks.join("\n\n"));
-  translationCache.set(key, translated);
+  writeTranslationCache(key, translated);
   return translated;
 }
 

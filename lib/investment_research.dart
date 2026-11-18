@@ -1098,6 +1098,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   List<Widget> researchEntry() {
     final watches = asList(home?['watches']);
     final decisions = asList(home?['decisions']);
+    final notebook = asList(home?['researchNotebook']);
 
     return [
       title('Research a company', '研究一家公司'),
@@ -1224,6 +1225,55 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
               onTap: () => loadCompany(text(d['ticker'])),
             ),
         ]),
+      if (notebook.isNotEmpty)
+        card([
+          Row(
+            key: const ValueKey('global-research-notebook'),
+            children: [
+              Icon(Icons.menu_book_outlined, size: 18, color: p.accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  w('My Research Notebook', '我的跨公司投研笔记本'),
+                  style: deskHeading(17),
+                ),
+              ),
+              researchTag('${notebook.length}', p.accent),
+            ],
+          ),
+          const SizedBox(height: 10),
+          for (final n in notebook.take(10))
+            ListTile(
+              key: ValueKey('notebook-row-${text(n['id'])}'),
+              contentPadding: EdgeInsets.zero,
+              leading: homeStockLogo(text(n['ticker']), 30),
+              title: Text(
+                '${text(n['ticker'])} · ${text(n['question'])}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: p.text,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13.5,
+                ),
+              ),
+              subtitle: Text(
+                [
+                  text(n['asOf']),
+                  _recordStatusLabel(text(n['status'], 'open')),
+                  if (text(n['reviewDate']).isNotEmpty)
+                    '${w('Review', '复核')} ${text(n['reviewDate'])}',
+                  if (asList(n['tags']).isNotEmpty)
+                    (n['tags'] as List).take(3).map((t) => '#$t').join(' '),
+                ].where((s) => s.isNotEmpty).join(' · '),
+                style: TextStyle(color: p.muted, fontSize: 12),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => unawaited(
+                loadCompany(text(n['ticker']), initialSection: 'records'),
+              ),
+            ),
+        ]),
     ];
   }
 
@@ -1231,7 +1281,13 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   // NAVIGATION & LAZY PANEL LOADERS
   // ---------------------------------------------------------------------------
 
-  Future<void> changeResearchCompany() async {
+  Future<void> openGlobalCompanySearch() async {
+    if (page == 'research' && !await allowLeaveDraft()) return;
+    if (!mounted) return;
+    await changeResearchCompany(forceNavigate: true);
+  }
+
+  Future<void> changeResearchCompany({bool forceNavigate = false}) async {
     final selected = await showDialog<String>(
       context: context,
       barrierLabel: w('Close search', '关闭搜索'),
@@ -1244,7 +1300,12 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         recentTickers: researchRecentTickers,
       ),
     );
-    if (selected != null && selected != ticker && mounted) {
+    if (selected != null &&
+        (forceNavigate ||
+            selected != ticker ||
+            page != 'research' ||
+            company == null) &&
+        mounted) {
       await loadCompany(selected);
     }
   }
@@ -1488,9 +1549,13 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
           const SizedBox(height: 4),
           Text(
             subLine,
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: deltaColor ?? p.muted, fontSize: 11),
+            style: TextStyle(
+              color: deltaColor ?? p.muted,
+              fontSize: 11,
+              height: 1.3,
+            ),
           ),
           if (percentileVal != null) ...[
             const SizedBox(height: 8),
@@ -3674,8 +3739,110 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   // TAB 5: RESEARCH RECORDS (STRUCTURED THESIS & FALSIFICATION JOURNAL)
   // ---------------------------------------------------------------------------
 
+  String _recordStatusLabel(String st) => switch (st) {
+    'validated' => w('Validated ✓', '已验证 ✓'),
+    'invalidated' => w('Invalidated ✕', '已证伪 ✕'),
+    'archived' => w('Archived', '已归档'),
+    _ => w('Active thesis', '跟踪中'),
+  };
+
+  Color _recordStatusColor(String st) => switch (st) {
+    'validated' => _emerald,
+    'invalidated' => p.negative,
+    _ => p.accent,
+  };
+
+  void _startEditingRecord(Map<String, dynamic> row) {
+    final tags = (row['tags'] is List)
+        ? (row['tags'] as List).map((e) => e.toString()).join(', ')
+        : '';
+    updateUI(() {
+      editingRecordId = text(row['id']);
+      researchQuestion.text = text(row['question']);
+      researchSupport.text = text(row['supportingEvidence']);
+      researchOpposition.text = text(row['opposingEvidence']);
+      researchInvalidation.text = text(row['invalidationCondition']);
+      researchReviewDate.text = text(row['reviewDate']);
+      researchTagsInput.text = tags;
+      researchRecordStatus = const {
+        'open',
+        'validated',
+        'invalidated',
+      }.contains(row['status'])
+          ? text(row['status'])
+          : 'open';
+    });
+  }
+
+  void _cancelEditingRecord() {
+    updateUI(() {
+      editingRecordId = null;
+      researchRecordStatus = 'open';
+      researchQuestion.clear();
+      researchSupport.clear();
+      researchOpposition.clear();
+      researchInvalidation.clear();
+      researchReviewDate.clear();
+      researchTagsInput.clear();
+    });
+  }
+
+  Future<void> _copyRecordMarkdown(Map<String, dynamic> row) async {
+    final md = StringBuffer()
+      ..writeln('## $ticker — ${text(row['question'])}')
+      ..writeln(
+        '- **Status**: ${_recordStatusLabel(text(row['status'], 'open'))} | **As of**: ${text(row['asOf'])} | **Review**: ${text(row['reviewDate'], '—')}',
+      );
+    if (row['tags'] is List && (row['tags'] as List).isNotEmpty) {
+      md.writeln(
+        '- **Tags**: ${(row['tags'] as List).map((t) => '`$t`').join(' ')}',
+      );
+    }
+    if (text(row['supportingEvidence']).isNotEmpty) {
+      md.writeln('- **Supporting Evidence**: ${text(row['supportingEvidence'])}');
+    }
+    if (text(row['opposingEvidence']).isNotEmpty) {
+      md.writeln('- **Counter / Gap**: ${text(row['opposingEvidence'])}');
+    }
+    if (text(row['invalidationCondition']).isNotEmpty) {
+      md.writeln(
+        '- **Invalidation Trigger**: ${text(row['invalidationCondition'])}',
+      );
+    }
+    await Clipboard.setData(ClipboardData(text: md.toString()));
+    if (mounted) {
+      updateUI(
+        () => notice = w(
+          'Research record copied as Markdown.',
+          '研究记录已复制为 Markdown。',
+        ),
+      );
+    }
+  }
+
+  Future<void> _updateRecordQuickStatus(
+    Map<String, dynamic> row,
+    String nextStatus,
+  ) async {
+    try {
+      await widget.api.postJson('/api/investment/research-records', {
+        'operationId': op(),
+        'ticker': ticker,
+        'asOf': asOf,
+        'parentRecordId': text(row['id']),
+        'question': text(row['question']),
+        'status': nextStatus,
+      });
+      await loadResearchPanel('records');
+      await loadHome();
+    } catch (e) {
+      if (mounted) updateUI(() => researchPanelError = e.toString());
+    }
+  }
+
   Widget researchRecordsPanel() {
-    final rows = asList(researchRecordsData?['rows']);
+    final rows = asList(researchRecordsData?['rows'] ?? company?['researchRecords']);
+    const quickTags = ['Earnings', 'Valuation', 'Moat', 'Risk', 'Catalyst'];
 
     Widget journalField(
       TextEditingController ctrl,
@@ -3711,20 +3878,57 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           researchPanelState(),
-          title('Save a falsifiable research record', '保存可证伪的研究记录'),
+          title(
+            editingRecordId != null
+                ? 'Edit research record'
+                : 'Save a falsifiable research record',
+            editingRecordId != null ? '编辑研究记录' : '保存可证伪的研究记录',
+          ),
           label(
-            'A valuation model is optional. Document your core question, supporting & opposing evidence, invalidation trigger, and review date.',
-            '无需强制绑定估值模型；结构化记录核心研究问题、正反双向证据、证伪失效条件与下次复核日期。',
+            'A valuation model is optional. Document your core question, supporting & opposing evidence, invalidation trigger, tags, and review date.',
+            '无需强制绑定估值模型；结构化记录核心研究问题、正反双向证据、证伪失效条件、标签与下次复核日期。',
           ),
           const SizedBox(height: 16),
           card([
+            if (editingRecordId != null) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: p.accent.withValues(alpha: .12),
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(color: p.accent.withValues(alpha: .35)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.edit_note, color: p.accent, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        w(
+                          'Editing saved record · saving creates a versioned revision.',
+                          '正在编辑已保存记录 · 保存后将生成带审计轨迹的新修订版。',
+                        ),
+                        style: TextStyle(color: p.text, fontSize: 12.5),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _cancelEditingRecord,
+                      child: Text(w('Cancel edit', '取消编辑')),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             journalField(
               researchQuestion,
               'Research question',
               '研究问题',
               minLines: 1,
               maxLines: 2,
-              onChanged: (_) => updateUI(() {}),
             ),
             const SizedBox(height: 12),
             LayoutBuilder(
@@ -3773,40 +3977,135 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                   minLines: 1,
                   maxLines: 2,
                 );
-                final revBox = journalField(
-                  researchReviewDate,
-                  'Review date · YYYY-MM-DD',
-                  '复核日期 · YYYY-MM-DD',
-                  minLines: 1,
-                  maxLines: 1,
+                final revRow = Row(
+                  children: [
+                    Expanded(
+                      child: journalField(
+                        researchReviewDate,
+                        'Review date · YYYY-MM-DD',
+                        '复核日期 · YYYY-MM-DD',
+                        minLines: 1,
+                        maxLines: 1,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    IconButton(
+                      key: const ValueKey('record-pick-review-date'),
+                      tooltip: w('Pick review date', '选择复核日期'),
+                      onPressed: () async {
+                        final now = DateTime.now();
+                        final initial =
+                            DateTime.tryParse(researchReviewDate.text.trim()) ??
+                            now.add(const Duration(days: 90));
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: initial,
+                          firstDate: DateTime(2020, 1, 1),
+                          lastDate: DateTime(now.year + 5, 12, 31),
+                        );
+                        if (picked != null && mounted) {
+                          updateUI(
+                            () => researchReviewDate.text =
+                                '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}',
+                          );
+                        }
+                      },
+                      icon: Icon(Icons.event_outlined, color: p.accent, size: 19),
+                    ),
+                  ],
                 );
                 if (c.maxWidth >= 640) {
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(flex: 2, child: invBox),
+                      Expanded(flex: 3, child: invBox),
                       const SizedBox(width: 12),
-                      Expanded(child: revBox),
+                      Expanded(flex: 2, child: revRow),
                     ],
                   );
                 }
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [invBox, const SizedBox(height: 12), revBox],
+                  children: [invBox, const SizedBox(height: 12), revRow],
                 );
               },
             ),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: button(
-                'Save research record',
-                '保存研究记录',
-                researchQuestion.text.trim().isEmpty
-                    ? null
-                    : () => unawaited(saveResearchRecord()),
-                primary: true,
-              ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                SizedBox(
+                  width: 240,
+                  child: journalField(
+                    researchTagsInput,
+                    'Tags (comma-separated)',
+                    '标签（逗号分隔）',
+                    minLines: 1,
+                    maxLines: 1,
+                  ),
+                ),
+                for (final qt in quickTags)
+                  ActionChip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text('#$qt', style: const TextStyle(fontSize: 11.5)),
+                    onPressed: () {
+                      final cur = researchTagsInput.text
+                          .split(',')
+                          .map((s) => s.trim())
+                          .where((s) => s.isNotEmpty)
+                          .toList();
+                      if (!cur.contains(qt)) {
+                        cur.add(qt);
+                        updateUI(() => researchTagsInput.text = cur.join(', '));
+                      }
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 12,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                SegmentedButton<String>(
+                  segments: [
+                    ButtonSegment(
+                      value: 'open',
+                      label: Text(w('Active', '跟踪中'), style: const TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment(
+                      value: 'validated',
+                      label: Text(w('Validated', '已验证'), style: const TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment(
+                      value: 'invalidated',
+                      label: Text(w('Invalidated', '已证伪'), style: const TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                  selected: {researchRecordStatus},
+                  onSelectionChanged: (s) {
+                    if (s.isNotEmpty) {
+                      updateUI(() => researchRecordStatus = s.first);
+                    }
+                  },
+                ),
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: researchQuestion,
+                  builder: (_, value, _) => button(
+                    editingRecordId != null
+                        ? 'Update research record'
+                        : 'Save research record',
+                    editingRecordId != null ? '保存修改' : '保存研究记录',
+                    value.text.trim().isEmpty
+                        ? null
+                        : () => unawaited(saveResearchRecord()),
+                    primary: true,
+                  ),
+                ),
+              ],
             ),
           ]),
           for (final row in rows.reversed)
@@ -3818,12 +4117,34 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                 runSpacing: 6,
                 children: [
                   Text(text(row['question']), style: deskHeading(16)),
-                  researchTag(
-                    '${text(row['asOf'])} · ${w('Review', '复核')} ${text(row['reviewDate'], '—')}',
-                    p.accent,
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      researchTag(
+                        _recordStatusLabel(text(row['status'], 'open')),
+                        _recordStatusColor(text(row['status'], 'open')),
+                      ),
+                      researchTag(
+                        '${text(row['asOf'])} · ${w('Review', '复核')} ${text(row['reviewDate'], '—')}',
+                        p.muted,
+                      ),
+                    ],
                   ),
                 ],
               ),
+              if (row['tags'] is List && (row['tags'] as List).isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final tg in (row['tags'] as List))
+                      researchTag('#$tg', p.accent),
+                  ],
+                ),
+              ],
               if (text(row['supportingEvidence']).isNotEmpty) ...[
                 const SizedBox(height: 10),
                 Row(
@@ -3894,6 +4215,49 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                   ],
                 ),
               ],
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  TextButton.icon(
+                    key: ValueKey('record-edit-${text(row['id'])}'),
+                    onPressed: () => _startEditingRecord(row),
+                    icon: const Icon(Icons.edit_outlined, size: 15),
+                    label: Text(w('Edit', '编辑'), style: const TextStyle(fontSize: 12)),
+                  ),
+                  if (text(row['status'], 'open') != 'validated')
+                    TextButton.icon(
+                      key: ValueKey('record-validate-${text(row['id'])}'),
+                      onPressed: () =>
+                          unawaited(_updateRecordQuickStatus(row, 'validated')),
+                      icon: const Icon(Icons.check_circle_outline, size: 15),
+                      label: Text(
+                        w('Mark validated', '标为已验证'),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  TextButton.icon(
+                    key: ValueKey('record-copy-${text(row['id'])}'),
+                    onPressed: () => unawaited(_copyRecordMarkdown(row)),
+                    icon: const Icon(Icons.copy_all_outlined, size: 15),
+                    label: Text(
+                      w('Copy Markdown', '复制 Markdown'),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                  TextButton.icon(
+                    key: ValueKey('record-archive-${text(row['id'])}'),
+                    onPressed: () =>
+                        unawaited(_updateRecordQuickStatus(row, 'archived')),
+                    icon: Icon(Icons.delete_outline, size: 15, color: p.negative),
+                    label: Text(
+                      w('Remove', '移除'),
+                      style: TextStyle(fontSize: 12, color: p.negative),
+                    ),
+                  ),
+                ],
+              ),
             ]),
         ],
       ),
@@ -3905,11 +4269,18 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   Future<void> saveResearchRecord() async {
     final question = researchQuestion.text.trim();
     if (question.isEmpty) return;
+    final parsedTags = researchTagsInput.text
+        .split(',')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .take(8)
+        .toList();
     try {
       await widget.api.postJson('/api/investment/research-records', {
         'operationId': op(),
         'ticker': ticker,
         'asOf': asOf,
+        if (editingRecordId != null) 'parentRecordId': editingRecordId,
         'question': question,
         'supportingEvidence': researchSupport.text,
         'opposingEvidence': researchOpposition.text,
@@ -3917,6 +4288,8 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         'reviewDate': researchReviewDate.text.trim().isEmpty
             ? null
             : researchReviewDate.text.trim(),
+        'tags': parsedTags,
+        'status': researchRecordStatus,
         'evidenceRefs': <String>[],
         'discoveryOrigin': discoveryOrigin,
         if (discoveryOrigin == 'ai_insights')
@@ -3926,12 +4299,9 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
             ? null
             : asMap(calculation?['reverse']),
       });
-      researchQuestion.clear();
-      researchSupport.clear();
-      researchOpposition.clear();
-      researchInvalidation.clear();
-      researchReviewDate.clear();
+      _cancelEditingRecord();
       await loadResearchPanel('records');
+      await loadHome();
     } catch (e) {
       if (mounted) updateUI(() => researchPanelError = e.toString());
     }
@@ -3951,24 +4321,38 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   );
 
   Widget researchWatchButton() {
-    if (!researchHasPlatformModel) {
-      return OutlinedButton.icon(
-        onPressed: () => selectResearchSection('records'),
-        icon: const Icon(Icons.note_add_outlined, size: 16),
-        label: Text(w('Save research note', '保存研究记录')),
-      );
-    }
     final saved = asList(home?['watches']).any((r) => r['ticker'] == ticker);
     return OutlinedButton.icon(
-      onPressed: busy || saved
+      key: const ValueKey('research-watch-toggle'),
+      onPressed: busy
           ? null
           : () => command(() async {
               final symbol = ticker, cutoff = asOf;
+              if (saved) {
+                await widget.api.postJson('/api/investment/watches', {
+                  'operationId': op(),
+                  'ticker': symbol,
+                  'asOf': cutoff,
+                  'active': false,
+                });
+                await loadHome();
+                if (mounted) {
+                  updateUI(
+                    () => notice = w(
+                      '$symbol removed from watch.',
+                      '$symbol 已移出观察列表。',
+                    ),
+                  );
+                }
+                return;
+              }
               await widget.api.postJson('/api/investment/watches', {
                 'operationId': op(),
                 'ticker': symbol,
                 'asOf': cutoff,
-                'origin': opportunityReturnDate.isNotEmpty
+                'origin': !researchHasPlatformModel
+                    ? 'fact_os'
+                    : opportunityReturnDate.isNotEmpty
                     ? opportunityLens
                     : 'value',
               });
@@ -3976,8 +4360,12 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
               if (mounted) {
                 updateUI(
                   () => notice = w(
-                    '$symbol saved to watch with its dated platform model. No investment decision was made.',
-                    '$symbol 已保存带日期的平台模型至观察列表，未记录投资决策。',
+                    researchHasPlatformModel
+                        ? '$symbol saved to watch with its dated platform model. No investment decision was made.'
+                        : '$symbol saved to watch.',
+                    researchHasPlatformModel
+                        ? '$symbol 已保存带日期的平台模型至观察列表，未记录投资决策。'
+                        : '$symbol 已加入观察列表。',
                   ),
                 );
               }

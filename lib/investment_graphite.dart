@@ -120,18 +120,28 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
     );
     return Theme(
       data: theme,
-      child: Scaffold(
-        backgroundColor: p.background,
-        body: SafeArea(
-          child: Row(
-            children: [
-              if (desktop) graphiteRail(),
-              Expanded(
-                child: Column(
-                  children: [
-                    if (!desktop) graphiteMobileHeader(),
-                    if (busy)
-                      LinearProgressIndicator(minHeight: 2, color: p.accent),
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () =>
+              unawaited(openGlobalCompanySearch()),
+          const SingleActivator(LogicalKeyboardKey.keyK, control: true): () =>
+              unawaited(openGlobalCompanySearch()),
+        },
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
+            backgroundColor: p.background,
+            body: SafeArea(
+              child: Row(
+                children: [
+                  if (desktop) graphiteRail(),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        if (!desktop) graphiteMobileHeader(),
+                        if (widget.sessionExpired) sessionExpiredBanner(),
+                        if (busy)
+                          LinearProgressIndicator(minHeight: 2, color: p.accent),
                     Expanded(
                       child: page == 'admin' && widget.adminContent != null
                           ? widget.adminContent!
@@ -244,15 +254,59 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                               ),
                             ),
                     ),
-                  ],
-                ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  String get todayUtcIso =>
+      DateTime.now().toUtc().toIso8601String().substring(0, 10);
+  bool get isHistoricalReplay => asOf.compareTo(todayUtcIso) < 0;
+
+  Widget sessionExpiredBanner() => Container(
+    key: const ValueKey('session-expired-banner'),
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+    decoration: BoxDecoration(
+      color: const Color(0xFF2A1C08),
+      border: Border(
+        bottom: BorderSide(
+          color: const Color(0xFFF5A623).withValues(alpha: .45),
+        ),
+      ),
+    ),
+    child: Row(
+      children: [
+        const Icon(
+          Icons.lock_clock_outlined,
+          color: Color(0xFFF5A623),
+          size: 18,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            w(
+              'Your sign-in session has expired. Sign in again to refresh live data while keeping saved records safe.',
+              '当前登录会话已过期，请重新登录以刷新数据（已保存记录不会丢失）。',
+            ),
+            style: TextStyle(color: p.text, fontSize: 12.5),
+          ),
+        ),
+        if (widget.onLogout != null)
+          FilledButton.tonal(
+            onPressed: () => unawaited(requestLogout()),
+            child: Text(w('Sign in again', '重新登录')),
+          ),
+      ],
+    ),
+  );
 
   List<(String, String, String, IconData)> get graphitePages => [
     ('home', 'Home', '首页', Icons.home_outlined),
@@ -301,8 +355,62 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 26, 16, 28),
+          padding: const EdgeInsets.fromLTRB(24, 26, 16, 16),
           child: brand(),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Material(
+            color: const Color(0xFF111113),
+            borderRadius: BorderRadius.circular(7),
+            child: InkWell(
+              key: const ValueKey('global-search-trigger'),
+              onTap: () => unawaited(openGlobalCompanySearch()),
+              borderRadius: BorderRadius.circular(7),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(color: p.border),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.search_rounded, color: p.muted, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        w('Search', '搜索'),
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: p.muted, fontSize: 12.5),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1C1C20),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: p.border),
+                      ),
+                      child: Text(
+                        '⌘K',
+                        style: TextStyle(
+                          color: p.muted,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
         Expanded(
           child: SingleChildScrollView(
@@ -361,7 +469,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
               TextButton(
@@ -373,6 +481,12 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                 child: Text(context.language == AppLanguage.en ? '中文' : 'EN'),
               ),
               const Spacer(),
+              IconButton(
+                key: const ValueKey('workspace-preferences-button'),
+                tooltip: w('Preferences & account', '偏好与账户'),
+                onPressed: showWorkspacePreferences,
+                icon: Icon(Icons.tune_outlined, color: p.muted, size: 19),
+              ),
               if (widget.onLogout != null)
                 IconButton(
                   tooltip: w('Sign out', '退出登录'),
@@ -407,8 +521,30 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
           padding: const EdgeInsets.fromLTRB(16, 10, 8, 4),
           child: Row(
             children: [
-              Expanded(child: brand(size: 21)),
+              Expanded(child: brand(size: 19)),
+              IconButton(
+                key: const ValueKey('mobile-search-trigger'),
+                tooltip: w('Search ticker (⌘K)', '搜索公司'),
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.all(6),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                onPressed: () => unawaited(openGlobalCompanySearch()),
+                icon: Icon(Icons.search_rounded, color: p.muted, size: 19),
+              ),
+              IconButton(
+                tooltip: w('Preferences & account', '偏好与账户'),
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.all(6),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                onPressed: showWorkspacePreferences,
+                icon: Icon(Icons.tune_outlined, color: p.muted, size: 18),
+              ),
               TextButton(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
                 onPressed: () => widget.onLanguage(
                   context.language == AppLanguage.en
                       ? AppLanguage.zh
@@ -460,68 +596,255 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
     ),
   );
 
-  Widget dateControl() => Column(
-    crossAxisAlignment: CrossAxisAlignment.end,
-    children: [
-      OutlinedButton.icon(
-        onPressed: showDateDialog,
-        icon: const Icon(Icons.calendar_today_outlined, size: 18),
-        label: Text(
-          '${w('As of', '截至')} $asOf',
-          style: TextStyle(color: p.text, fontSize: 14),
+  Widget dateControl() {
+    final replay = isHistoricalReplay;
+    final statusColor = replay
+        ? const Color(0xFFF5A623)
+        : const Color(0xFF20C997);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          alignment: WrapAlignment.end,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            OutlinedButton.icon(
+              key: const ValueKey('global-date-control'),
+              onPressed: showDateDialog,
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                minimumSize: const Size(0, 34),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                side: BorderSide(
+                  color: replay
+                      ? statusColor.withValues(alpha: .55)
+                      : p.border,
+                ),
+              ),
+              icon: Icon(
+                replay ? Icons.history_rounded : Icons.calendar_today_outlined,
+                size: 15,
+                color: replay ? statusColor : p.muted,
+              ),
+              label: Text(
+                '${w('As of', '截至')} $asOf',
+                style: TextStyle(color: p.text, fontSize: 13),
+              ),
+            ),
+            if (replay)
+              TextButton.icon(
+                key: const ValueKey('date-reset-live'),
+                onPressed: () => unawaited(applyCutoffDate(todayUtcIso)),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 4,
+                  ),
+                  minimumSize: const Size(0, 28),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: const Icon(
+                  Icons.bolt_rounded,
+                  size: 13,
+                  color: Color(0xFF20C997),
+                ),
+                label: Text(
+                  w('Live', '最新'),
+                  style: const TextStyle(
+                    color: Color(0xFF20C997),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+          ],
         ),
-      ),
-      const SizedBox(height: 7),
-      label(
-        widget.localPreview
-            ? 'Local preview · Historical PIT'
-            : 'Historical point-in-time data',
-        widget.localPreview ? '本地预览 · 历史 PIT' : '历史时点数据',
-        size: 11,
-      ),
-    ],
-  );
+        const SizedBox(height: 5),
+        Wrap(
+          spacing: 5,
+          runSpacing: 2,
+          alignment: WrapAlignment.end,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color: statusColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+            Text(
+              replay
+                  ? w(
+                      'Point-in-time replay active',
+                      '历史时点回放模式',
+                    )
+                  : widget.localPreview
+                  ? w('Local preview · Latest PIT', '本地预览 · 最新时点')
+                  : w('Live · Latest available data', '实时最新数据 · 支持时点回放'),
+              style: TextStyle(
+                color: replay ? statusColor : p.muted,
+                fontSize: 11,
+                fontWeight: replay ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
 
   Future<void> showDateDialog() async {
     if (!await allowLeaveDraft() || !mounted) return;
+    final today = todayUtcIso;
     dateInput.text = asOf;
+    final oneYearAgo = DateTime.now()
+        .toUtc()
+        .subtract(const Duration(days: 365))
+        .toIso8601String()
+        .substring(0, 10);
+    final presets = <(String, String)>[
+      (w('● Live (Today)', '● 最新数据 (今天)'), today),
+      (w('2026 Q3 End', '2026 Q3 季末'), '2026-09-30'),
+      (w('1Y Ago', '一年前'), oneYearAgo),
+      (w('2025 Year-End', '2025 年底'), '2025-12-31'),
+      (w('2022 Trough', '2022 底部'), '2022-10-14'),
+    ].where((item) => item.$2.compareTo(today) <= 0).toList();
+
     final apply = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: p.panel,
-        title: Text(
-          w('Information available by', '信息截止日期'),
-          style: TextStyle(color: p.text),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => AlertDialog(
+          backgroundColor: p.panel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: p.border),
+          ),
+          title: Text(
+            w('Information available by', '信息截止日期与历史回放'),
+            style: TextStyle(
+              color: p.text,
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  w(
+                    'Stay on Live for current research, or rewind to any historical date to inspect strictly what filings, 13F books, and prices were known then.',
+                    '保持“最新数据”进行日常研究，或切回任意历史日期回放当时真实可见的财报、13F 持仓与股价。',
+                  ),
+                  style: TextStyle(color: p.muted, fontSize: 12.5, height: 1.45),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final preset in presets)
+                      ActionChip(
+                        backgroundColor: dateInput.text.trim() == preset.$2
+                            ? p.accent.withValues(alpha: .18)
+                            : const Color(0xFF17171A),
+                        side: BorderSide(
+                          color: dateInput.text.trim() == preset.$2
+                              ? p.accent
+                              : p.border,
+                        ),
+                        label: Text(
+                          preset.$1,
+                          style: TextStyle(
+                            color: dateInput.text.trim() == preset.$2
+                                ? p.text
+                                : p.muted,
+                            fontSize: 12,
+                          ),
+                        ),
+                        onPressed: () =>
+                            setModalState(() => dateInput.text = preset.$2),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: input(dateInput, 'YYYY-MM-DD', '年-月-日', width: 240),
+                    ),
+                    const SizedBox(width: 10),
+                    OutlinedButton.icon(
+                      key: const ValueKey('date-open-calendar'),
+                      onPressed: () async {
+                        final initial =
+                            DateTime.tryParse(dateInput.text.trim()) ??
+                            DateTime.now().toUtc();
+                        final nowUtc = DateTime.now().toUtc();
+                        final picked = await showDatePicker(
+                          context: ctx,
+                          initialDate: initial.isAfter(nowUtc)
+                              ? nowUtc
+                              : initial,
+                          firstDate: DateTime.utc(2005, 1, 1),
+                          lastDate: DateTime.utc(
+                            nowUtc.year,
+                            nowUtc.month,
+                            nowUtc.day,
+                          ),
+                        );
+                        if (picked != null) {
+                          final formatted =
+                              '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+                          setModalState(() => dateInput.text = formatted);
+                        }
+                      },
+                      icon: const Icon(Icons.event_outlined, size: 16),
+                      label: Text(w('Calendar', '日历')),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(w('Cancel', '取消')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(w('Apply date', '应用日期')),
+            ),
+          ],
         ),
-        content: input(dateInput, 'YYYY-MM-DD', '年-月-日', width: 240),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(w('Cancel', '取消')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(w('Apply date', '应用日期')),
-          ),
-        ],
       ),
     );
     if (apply != true || !mounted) return;
+    await applyCutoffDate(dateInput.text.trim());
+  }
+
+  Future<void> applyCutoffDate(String requested) async {
+    if (!await allowLeaveDraft() || !mounted) return;
     await command(() async {
       final previous = asOf;
-      final requested = dateInput.text.trim();
       final parsed = DateTime.tryParse(requested);
       if (parsed == null ||
           parsed.toIso8601String().substring(0, 10) != requested ||
-          requested.compareTo(
-                DateTime.now().toUtc().toIso8601String().substring(0, 10),
-              ) >
-              0) {
+          requested.compareTo(todayUtcIso) > 0) {
         throw StateError(
           w('Enter a valid date no later than today.', '请输入不晚于今天的有效日期。'),
         );
       }
       asOf = requested;
+      dateInput.text = requested;
       // A snapshot is bound to one information cutoff even when the user
       // changes the date from another Discover module or Research. Never let a
       // hidden AI panel revive that stale generation/date tuple later.
@@ -590,6 +913,137 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
         navigate(page);
       }
     });
+  }
+
+  void showWorkspacePreferences() {
+    var cb = widget.colorBlind;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => AlertDialog(
+          backgroundColor: p.panel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: p.border),
+          ),
+          title: Text(
+            w('Workspace preferences & account', '工作区偏好与账户'),
+            style: TextStyle(
+              color: p.text,
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF141417),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: p.border),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.verified_user_outlined, color: p.accent, size: 18),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              w('Signed-in session', '当前登录账户'),
+                              style: TextStyle(color: p.muted, fontSize: 11),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              widget.localPreview
+                                  ? w('Local preview mode', '本地开发预览')
+                                  : (widget.userEmail.trim().isNotEmpty
+                                        ? widget.userEmail.trim()
+                                        : w('Authenticated investor', '已认证账户')),
+                              style: TextStyle(
+                                color: p.text,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (widget.onToggleColorBlind != null)
+                  SwitchListTile.adaptive(
+                    key: const ValueKey('toggle-color-blind-mode'),
+                    contentPadding: EdgeInsets.zero,
+                    activeThumbColor: p.accent,
+                    title: Text(
+                      w('Color-blind safe palette', '色盲友好高区分度配色'),
+                      style: TextStyle(color: p.text, fontSize: 13.5),
+                    ),
+                    subtitle: Text(
+                      w(
+                        'Replaces red/green pairs with high-contrast blue/orange cues.',
+                        '使用蓝/橙高对比视觉色替代红绿语义对比。',
+                      ),
+                      style: TextStyle(color: p.muted, fontSize: 11.5),
+                    ),
+                    value: cb,
+                    onChanged: (next) {
+                      setModalState(() => cb = next);
+                      widget.onToggleColorBlind!(next);
+                    },
+                  ),
+                const Divider(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        w('Interface language', '界面语言'),
+                        style: TextStyle(color: p.text, fontSize: 13.5),
+                      ),
+                    ),
+                    SegmentedButton<AppLanguage>(
+                      segments: const [
+                        ButtonSegment(value: AppLanguage.en, label: Text('EN')),
+                        ButtonSegment(value: AppLanguage.zh, label: Text('中文')),
+                      ],
+                      selected: {context.language},
+                      onSelectionChanged: (s) {
+                        if (s.isNotEmpty) {
+                          widget.onLanguage(s.first);
+                          Navigator.pop(ctx);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                showMethodology();
+              },
+              child: Text(w('Sources & methodology', '来源与方法')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(w('Done', '完成')),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void showMethodology() => showDialog<void>(

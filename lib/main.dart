@@ -1654,6 +1654,14 @@ class _TerminalHomeState extends State<TerminalHome>
           sessionUserId: widget.userId,
           isSessionActive: () =>
               mounted && epoch == _identityEpoch && _hasSession,
+          onSessionExpired: () {
+            if (mounted &&
+                epoch == _identityEpoch &&
+                widget.accessToken != _localDevToken &&
+                !_sessionExpired) {
+              setState(() => _sessionExpired = true);
+            }
+          },
         );
   }
 
@@ -1675,6 +1683,7 @@ class _TerminalHomeState extends State<TerminalHome>
   String? _error;
   String? _secondaryError;
   bool _colorBlind = false;
+  bool _sessionExpired = false;
   Timer? _secondaryRecoveryTimer;
   bool _secondaryRecoveryScheduled = false;
   int _guruRequestSerial = 0;
@@ -1737,10 +1746,12 @@ class _TerminalHomeState extends State<TerminalHome>
       _loadingSecondary = false;
       _error = null;
       _secondaryError = null;
+      _sessionExpired = false;
       _restoreBrowserRoute(widget.routeUri);
       return;
     }
     if (oldWidget.accessToken != widget.accessToken) {
+      _sessionExpired = false;
       _recoverSecondaryIfNeeded(forceWhenEmpty: true);
     }
     if (oldWidget.routeUri != widget.routeUri ||
@@ -2046,17 +2057,18 @@ class _TerminalHomeState extends State<TerminalHome>
   Widget build(BuildContext context) {
     if (!_hasSession) return const SizedBox.shrink();
     _scheduleSecondaryRecoveryIfStale();
+    final valuationInWorkspace =
+        investmentWorkflowEnabled && _mode == 'valuation';
     if (isInvestmentMode(_mode) ||
+        valuationInWorkspace ||
         (blackEditionPreview && _mode == 'admin' && _adminEnabled)) {
       return LanguageScope(
         language: widget.language,
         child: InvestmentWorkspace(
-          key: _mode == 'admin'
-              ? ValueKey('admin-shell-$_identityEpoch')
-              : _workspaceKey,
+          key: _workspaceKey,
           api: _api,
           palette: palette,
-          initialPage: _mode,
+          initialPage: valuationInWorkspace ? 'research' : _mode,
           initialTicker: _valuationTicker,
           initialAsOf: widget.routeUri.queryParameters['asOf'],
           initialQuery: widget.routeUri.queryParameters,
@@ -2066,6 +2078,10 @@ class _TerminalHomeState extends State<TerminalHome>
           showAdmin: _adminEnabled,
           onLogout: widget.onLogout,
           localPreview: widget.accessToken == _localDevToken,
+          userEmail: widget.userEmail,
+          colorBlind: _colorBlind,
+          onToggleColorBlind: (next) => setState(() => _colorBlind = next),
+          sessionExpired: _sessionExpired,
           adminContent: _mode == 'admin'
               ? SecondaryDashboard(
                   key: ValueKey('admin-$_identityEpoch'),
@@ -14476,6 +14492,7 @@ class _PortfolioConnectionStatusPanelState
     required Palette palette,
     required String updatedAt,
   }) {
+    final accountId = text(account['id'], text(account['queryId']));
     final label = text(account['label'], 'IBKR account');
     final queryId = text(account['queryId'], 'saved');
     final tokenPreview = text(
@@ -14489,47 +14506,116 @@ class _PortfolioConnectionStatusPanelState
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: palette.border),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            Icons.account_balance_wallet_rounded,
-            color: palette.secondary,
-            size: 18,
+          Row(
+            children: [
+              Icon(
+                Icons.account_balance_wallet_rounded,
+                color: palette.secondary,
+                size: 18,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      context.ui(label),
+                      style: TextStyle(
+                        color: palette.text,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      '${context.tr('Activity Flex Query ID', 'Activity Flex Query ID')} $queryId · $tokenPreview',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: palette.muted,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 11,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${context.tr('上次同步', 'Last sync')} $updatedAt',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: palette.faint, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          if (queryId != 'saved' && queryId.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Text(
-                  context.ui(label),
-                  style: TextStyle(
-                    color: palette.text,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 13,
+                TextButton.icon(
+                  key: ValueKey('account-rotate-token-$queryId'),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                  ),
+                  onPressed: _updating
+                      ? null
+                      : () => showDialog<void>(
+                          context: context,
+                          builder: (_) => PortfolioAddAccountDialog(
+                            api: widget.api,
+                            palette: palette,
+                            initialLabel: label,
+                            initialQueryId: queryId,
+                            onAdded: widget.onRefresh,
+                          ),
+                        ),
+                  icon: const Icon(Icons.vpn_key_outlined, size: 15),
+                  label: Text(
+                    context.tr('更新 Token', 'Update token'),
+                    style: const TextStyle(fontSize: 12),
                   ),
                 ),
-                const SizedBox(height: 5),
-                Text(
-                  '${context.tr('Activity Flex Query ID', 'Activity Flex Query ID')} $queryId · $tokenPreview',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.muted,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 11,
+                IconButton(
+                  key: ValueKey('account-remove-$queryId'),
+                  visualDensity: VisualDensity.compact,
+                  tooltip: context.tr('移除此账户', 'Remove account'),
+                  onPressed: _updating
+                      ? null
+                      : () async {
+                          setState(() => _updating = true);
+                          try {
+                            await widget.api.deleteJson(
+                              '/api/portfolio/accounts/${Uri.encodeComponent(accountId)}',
+                            );
+                            await widget.onRefresh();
+                          } catch (e) {
+                            if (mounted) {
+                              setState(() => _error = e.toString());
+                            }
+                          } finally {
+                            if (mounted) setState(() => _updating = false);
+                          }
+                        },
+                  icon: Icon(
+                    Icons.delete_outline_rounded,
+                    size: 18,
+                    color: palette.negative,
                   ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  '${context.tr('上次同步', 'Last sync')} $updatedAt',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: palette.faint, fontSize: 11),
                 ),
               ],
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -14542,11 +14628,15 @@ class PortfolioAddAccountDialog extends StatefulWidget {
     required this.api,
     required this.palette,
     required this.onAdded,
+    this.initialLabel,
+    this.initialQueryId,
   });
 
   final ApiClient api;
   final Palette palette;
   final Future<void> Function() onAdded;
+  final String? initialLabel;
+  final String? initialQueryId;
 
   @override
   State<PortfolioAddAccountDialog> createState() =>
@@ -14554,9 +14644,13 @@ class PortfolioAddAccountDialog extends StatefulWidget {
 }
 
 class _PortfolioAddAccountDialogState extends State<PortfolioAddAccountDialog> {
-  final _labelController = TextEditingController();
+  late final _labelController = TextEditingController(
+    text: widget.initialLabel ?? '',
+  );
   final _tokenController = TextEditingController();
-  final _queryController = TextEditingController();
+  late final _queryController = TextEditingController(
+    text: widget.initialQueryId ?? '',
+  );
   bool _saving = false;
   bool _showToken = false;
   String? _error;
@@ -25552,6 +25646,7 @@ class ApiClient {
     this._accessTokenProvider, {
     this.sessionUserId = '',
     this.isSessionActive,
+    this.onSessionExpired,
   });
 
   static const Duration _requestTimeout = Duration(seconds: 95);
@@ -25560,6 +25655,7 @@ class ApiClient {
   final String Function() _accessTokenProvider;
   final String sessionUserId;
   final bool Function()? isSessionActive;
+  final VoidCallback? onSessionExpired;
 
   String get accessToken {
     if (isSessionActive?.call() == false) {
@@ -25586,8 +25682,12 @@ class ApiClient {
     bool retryTransient = false,
   }) async {
     var response = await _sendOnce(send, retryTransient: retryTransient);
-    if (response.statusCode == 401 && await _refreshSession()) {
-      response = await _sendOnce(send, retryTransient: retryTransient);
+    if (response.statusCode == 401) {
+      if (await _refreshSession()) {
+        response = await _sendOnce(send, retryTransient: retryTransient);
+      } else if (isSessionActive?.call() != false) {
+        onSessionExpired?.call();
+      }
     }
     if (retryTransient && _isTransientStatus(response.statusCode)) {
       await Future<void>.delayed(_retryDelay);

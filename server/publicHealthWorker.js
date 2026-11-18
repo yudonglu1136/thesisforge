@@ -2,6 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
 import { createSystemHealth } from "./systemHealthCore.js";
 import { readDatabaseTableSummariesFrom } from "./databaseTableSummaries.js";
+import { releaseRoot, withActiveDataRelease } from "./dataReleaseContext.js";
 
 // Do not import localDatabase/systemHealth/backtest here: their legacy runtime
 // initializers create schemas and may install bundled snapshots. This worker
@@ -20,7 +21,10 @@ try {
   const health = createSystemHealth({
     ...methodIdentity,
     databaseInfo: () => ({ path: databasePath }),
-    readDatabaseTableSummaries: () => readDatabaseTableSummariesFrom(db),
+    readDatabaseTableSummaries: () => withActiveDataRelease(() => {
+      const factOsRoot = releaseRoot("canonical", process.env.FACT_OS_ROOT || null);
+      return readDatabaseTableSummariesFrom(db, { factOsRoot });
+    }),
     readGuruBacktest: (id, years) => readPayload("guru_backtests", id, years),
     readGuruBacktestProxy: (id, years) => readPayload("guru_backtest_proxies", id, years)
   });

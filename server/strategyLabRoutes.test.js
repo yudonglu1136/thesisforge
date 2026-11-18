@@ -124,3 +124,15 @@ test('fully invested subset rules are explicit, owner-private and do not rewrite
  a.equal(run.status,200);a.equal(run.data.rules.excludedAllocation,'fully_invested');
  a.equal((await req('GET','/strategy-lab?asOf=2026-08-28')).data.saved.length,2);
 });
+
+test('saved strategy archive hides target rule for owner while preserving append-only history and other rules',async t=>{
+  const {req}=await setup(t);
+  const first=await req('POST','/strategy-rules',{...body,name:'Keep me',operationId:'keep_rule_op'});
+  const second=await req('POST','/strategy-rules',{...body,name:'Archive me',operationId:'archive_rule_op'});
+  a.equal((await req('GET','/strategy-lab?asOf=2026-08-28')).data.saved.length,2);
+  const arch=await req('POST','/strategy-rules/archive',{targetId:second.data.id,operationId:'archive_operation_0001'});
+  a.equal(arch.status,200);
+  const after=await req('GET','/strategy-lab?asOf=2026-08-28');
+  a.equal(after.data.saved.length,1);
+  a.equal(after.data.saved[0].id,first.data.id);
+});

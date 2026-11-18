@@ -70,6 +70,7 @@ import {
   portfolioUserForAdminHash,
   readPortfolioConnectionStatus,
   recordPortfolioUser,
+  removePortfolioAccount,
   restorePortfolioConnection,
   savePortfolioConnection
 } from "./userPortfolioStore.js";
@@ -557,6 +558,21 @@ app.post("/api/portfolio/accounts", async (request, response) => {
   }
 });
 
+app.delete("/api/portfolio/accounts/:accountId", async (request, response) => {
+  try {
+    recordPortfolioRequestUser(request);
+    removePortfolioAccount(request.user, request.params.accountId);
+    clearPortfolioCache(request.user);
+    response.json({
+      ok: true,
+      connection: readPortfolioConnectionStatus(request.user)
+    });
+  } catch (error) {
+    if (respondPortfolioBusy(error, response)) return;
+    response.status(400).json({ error: "portfolio_account_remove_failed", message: error.message });
+  }
+});
+
 app.post("/api/portfolio/sync", async (request, response) => {
   const startedAt = new Date().toISOString();
   const userHash = String(request.user?.adminPortfolioHash || "").trim();
@@ -750,7 +766,34 @@ app.post("/api/valuation/:ticker/import", requireAdmin, async (request, response
 
 app.get("/api/valuation/:ticker", createValuationTickerHandler(loadValuationTicker));
 
+const translateRateWindowMs = 60_000;
+const translateRateMaxRequests = 45;
+const translateRateBuckets = new Map();
+
 app.post("/api/translate/zh", async (request, response) => {
+  const now = Date.now();
+  const actorKey = String(
+    request.user?.id || request.ip || request.socket?.remoteAddress || "anon"
+  );
+  if (translateRateBuckets.size > 1024) {
+    for (const [k, b] of translateRateBuckets) {
+      if (now >= b.resetAt) translateRateBuckets.delete(k);
+    }
+  }
+  const existingBucket = translateRateBuckets.get(actorKey);
+  const bucket =
+    existingBucket && now < existingBucket.resetAt
+      ? existingBucket
+      : { count: 0, resetAt: now + translateRateWindowMs };
+  bucket.count += 1;
+  translateRateBuckets.set(actorKey, bucket);
+  if (bucket.count > translateRateMaxRequests) {
+    response.status(429).json({
+      error: "translation_rate_limited",
+      message: "Too many translation requests; please wait a moment."
+    });
+    return;
+  }
   try {
     const texts = Array.isArray(request.body?.texts) ? request.body.texts : [];
     const totalChars = texts.reduce((sum, value) => sum + String(value || "").length, 0);

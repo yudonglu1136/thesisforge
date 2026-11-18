@@ -32,7 +32,8 @@ export function registerStrategyLabRoutes(app,service,{run=null,limits=strategyW
   });
   route('get','/strategy-lab',(owner,r)=>{
     const asOf=service.date(r.query.asOf);
-    return {...catalog(asOf),saved:service.store.list(owner,'strategy_lab').filter(x=>x.asOf<=asOf)};
+    const archived=new Set(service.store.list(owner,'strategy_lab_archive').map(x=>x.targetId).filter(Boolean));
+    return {...catalog(asOf),saved:service.store.list(owner,'strategy_lab').filter(x=>x.asOf<=asOf&&!archived.has(x.id))};
   });
   route('post','/strategy-backtests',async(_,r)=>{
     const inputs=catalog(service.date(r.body.asOf));
@@ -46,5 +47,13 @@ export function registerStrategyLabRoutes(app,service,{run=null,limits=strategyW
     const rules=strategyRules(r.body,catalog(service.date(r.body.asOf)).managers);
     const name=String(r.body.name??'').trim().slice(0,80)||'My strategy';
     return service.store.write(owner,'strategy_lab','',r.body.operationId,{rules,name},()=>({asOf:rules.asOf,name,rules}));
+  });
+  route('post','/strategy-rules/archive',(owner,r)=>{
+    const targetId=String(r.body?.targetId??'').trim();
+    if(!targetId)throw Object.assign(new Error('missing_target_id'),{status:400});
+    const opId=typeof r.body?.operationId==='string'&&r.body.operationId.length>=12
+      ? r.body.operationId
+      : `strategy_archive_${targetId.replace(/[^a-zA-Z0-9_-]/g,'').slice(0,48)}`;
+    return service.store.write(owner,'strategy_lab_archive','',opId,{targetId},()=>({targetId,archivedAt:new Date().toISOString()}));
   });
 }

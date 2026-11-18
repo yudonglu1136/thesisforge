@@ -1,4 +1,31 @@
+import fs from "node:fs";
+import path from "node:path";
 import { inspectDatabaseHealthIndexes, valuationHealthSourceDate } from "./databaseHealthIndexes.js";
+
+function readFactOsMarketPricesSummary(factOsRoot) {
+  if (!factOsRoot || process.env.FACT_OS_ENABLED === "0") return null;
+  try {
+    const catalogPath = path.join(path.resolve(factOsRoot), "manifests/catalog.json");
+    const stat = fs.statSync(catalogPath);
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+    const stocks = catalog?.datasets?.stocks?.state;
+    const maxDate = String(stocks?.max_date || stocks?.watermark || "").trim();
+    const rowCount = Number(stocks?.row_count) || 0;
+    if (!maxDate || !(rowCount > 0)) return null;
+    return {
+      table: "price_points",
+      label: "Market prices",
+      rowCount,
+      latestAt: stat.mtime.toISOString(),
+      sourceAt: maxDate,
+      minDate: String(stocks?.min_date || ""),
+      maxDate,
+      status: "ok"
+    };
+  } catch {
+    return null;
+  }
+}
 
 const tableSummarySpecs = [
   { table: "dashboard_snapshots", label: "Guru dashboard", latest: "generated_at" },
@@ -48,7 +75,8 @@ const tableSummarySpecs = [
   { table: "background_job_runs", label: "Background jobs", latest: "finished_at" }
 ];
 
-export function readDatabaseTableSummariesFrom(db) {
+export function readDatabaseTableSummariesFrom(db, { factOsRoot = null } = {}) {
+  const canonicalPrices = readFactOsMarketPricesSummary(factOsRoot);
   // A combined COUNT/MAX aggregate forces scans of large JSON blobs and every
   // price row. Independent scalar aggregates can use SQLite's exact MIN/MAX
   // index seeks. No cached counts/dates, sampling, or weaker freshness checks.
@@ -62,6 +90,9 @@ export function readDatabaseTableSummariesFrom(db) {
     ));
   } catch { indexedTables = new Set(); }
   return tableSummarySpecs.map((spec) => {
+    if (spec.table === "price_points" && canonicalPrices) {
+      return canonicalPrices;
+    }
     const selects = [
       "COUNT(*) AS row_count",
       spec.latest ? `MAX(${spec.latest}) AS latest_at` : "NULL AS latest_at",

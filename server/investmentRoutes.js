@@ -175,8 +175,9 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/research/:ticker/fundamentals',(_,r)=>researchFundamentals(service,r.params.ticker,r.query.asOf));
   route('get','/research/:ticker/institutions',(_,r)=>researchInstitutions(service,r.params.ticker,r.query.asOf,r.query.quarter??null));
   route('get','/research/:ticker/published-model',(_,r)=>researchPublishedModel(service,r.params.ticker,r.query.asOf));
-  route('get','/research/:ticker/records',(owner,r)=>listResearchRecords(service,owner,r.params.ticker));
+  route('get','/research/:ticker/records',(owner,r)=>listResearchRecords(service,owner,r.params.ticker,{asOf:r.query.asOf,includeArchived:r.query.includeArchived==='true'}));
   route('get','/research/:ticker/earnings',(_,r)=>earningsResearch(service.source,r.params.ticker,service.date(r.query.asOf),r.query.period));
+  route('get','/research-records',(owner,r)=>listResearchRecords(service,owner,r.query.ticker??null,{asOf:r.query.asOf,includeArchived:r.query.includeArchived==='true'}));
   route('post','/research-records',(owner,r)=>saveResearchRecord(service,owner,r.body));
   route('post','/calculate',(_,r)=>service.calculate(r.body));
   route('post','/valuation-drafts',(owner,r)=>service.saveWorksheet(owner,r.body));

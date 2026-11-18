@@ -838,6 +838,27 @@ export function addPortfolioAccount(user, input = {}) {
   return status;
 }
 
+export function removePortfolioAccount(user, accountKey = "") {
+  const target = String(accountKey ?? "").trim();
+  if (!target) throw new Error("Account identifier is required.");
+  const existing = readPortfolioConnection(user);
+  const accounts = existing.config ? portfolioConnectionAccounts(existing.config) : [];
+  if (!accounts.length) throw new Error("No IBKR account is currently connected.");
+  const remaining = accounts.filter(
+    (acc) => acc.id !== target && acc.ibkrFlexQueryId !== target
+  );
+  if (remaining.length === accounts.length) {
+    throw new Error("Matching IBKR account was not found.");
+  }
+  if (remaining.length === 0) {
+    return deletePortfolioConnection(user);
+  }
+  return savePortfolioConnection(user, {
+    provider: "ibkr_flex",
+    accounts: remaining,
+  });
+}
+
 export function markPortfolioConnectionSync(user, { ok, error = "" } = {}) {
   const db = openUserDb(user);
   db.prepare(`

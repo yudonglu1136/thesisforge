@@ -87,3 +87,38 @@ export class HedgeSource {
  }
  calculate(input){const rules=hedgeRules(input),data=this.catalog(rules.date);return hedgeExperiment(rules,data.chain,data.spot);}
 }
+
+let cachedBundledHedgeCatalog=null;
+export class BundledHedgeSource {
+ constructor(configUrl=new URL('./config/qqq-hedge-catalog.json',import.meta.url)){
+  if(!cachedBundledHedgeCatalog){
+   cachedBundledHedgeCatalog=JSON.parse(fs.readFileSync(configUrl,'utf8'));
+  }
+  this.archive=cachedBundledHedgeCatalog;
+ }
+ close(){}
+ catalog(date=null){
+  const {dates=[],latest=null,byDate={}}=this.archive??{};
+  if(!latest||!dates.length)return {version:hedgeVersion,status:'awaiting_sync',dates:[],chain:[],expiries:[],latest:null};
+  date=date??latest;
+  check(typeof date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(date)&&Boolean(byDate[date]),'hedge_invalid_date');
+  const day=byDate[date];
+  return {
+   version:hedgeVersion,
+   status:day.chain?.length?'ready':'awaiting_sync',
+   date,
+   latest,
+   spot:day.spot,
+   dates,
+   chain:day.chain??[],
+   expiries:day.expiries??[],
+   quoteBasis:'daily_close',
+   snapshotStatus:'bundled_polygon_archive',
+   sync:{status:'ready',start:dates.at(-1),end:latest,scope:'bundled_qqq_options_archive',selectedContracts:day.chain?.length??0},
+  };
+ }
+ calculate(input){
+  const rules=hedgeRules(input),data=this.catalog(rules.date);
+  return hedgeExperiment(rules,data.chain,data.spot);
+ }
+}

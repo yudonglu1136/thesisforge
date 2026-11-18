@@ -623,5 +623,22 @@ class StrategyCurvePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant StrategyCurvePainter old) => true;
+  bool shouldRepaint(covariant StrategyCurvePainter old) {
+    if (old.cursor != cursor ||
+        old.drawdown != drawdown ||
+        old.palette.colorBlind != palette.colorBlind ||
+        old.series.length != series.length) {
+      return true;
+    }
+    for (final e in series.entries) {
+      final prev = old.series[e.key];
+      if (prev == null ||
+          prev.length != e.value.length ||
+          (prev.isNotEmpty &&
+              (prev.first != e.value.first || prev.last != e.value.last))) {
+        return true;
+      }
+    }
+    return false;
+  }
 }

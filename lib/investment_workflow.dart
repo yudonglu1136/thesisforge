@@ -17,6 +17,10 @@ class InvestmentWorkspace extends StatefulWidget {
     this.showAdmin = false,
     this.onLogout,
     this.localPreview = false,
+    this.userEmail = '',
+    this.colorBlind = false,
+    this.onToggleColorBlind,
+    this.sessionExpired = false,
     this.adminContent,
   });
   final ApiClient api;
@@ -31,6 +35,10 @@ class InvestmentWorkspace extends StatefulWidget {
   final bool showAdmin;
   final VoidCallback? onLogout;
   final bool localPreview;
+  final String userEmail;
+  final bool colorBlind;
+  final ValueChanged<bool>? onToggleColorBlind;
+  final bool sessionExpired;
   @override
   State<InvestmentWorkspace> createState() => _InvestmentWorkspaceState();
 }
@@ -139,7 +147,10 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       researchSupport = TextEditingController(),
       researchOpposition = TextEditingController(),
       researchInvalidation = TextEditingController(),
-      researchReviewDate = TextEditingController();
+      researchReviewDate = TextEditingController(),
+      researchTagsInput = TextEditingController();
+  String? editingRecordId;
+  String researchRecordStatus = 'open';
   final ke = TextEditingController(),
       wacc = TextEditingController(),
       terminal = TextEditingController(),
@@ -397,6 +408,28 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   }
 
   @override
+  void didUpdateWidget(covariant InvestmentWorkspace oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialPage == 'admin' && page != 'admin') {
+      page = 'admin';
+    } else if (oldWidget.initialPage == 'admin' &&
+        widget.initialPage != 'admin' &&
+        page == 'admin') {
+      final target = widget.initialPage == 'hedge'
+          ? 'strategies'
+          : widget.initialPage;
+      page = target;
+      if (target == 'home' && home == null) {
+        unawaited(loadHome());
+      } else if (target == 'discover' && discoveryTab == 'gurus') {
+        unawaited(load13FInsights());
+      }
+    } else if (!widget.showAdmin && page == 'admin') {
+      page = 'home';
+    }
+  }
+
+  @override
   void dispose() {
     valuationTableScroll.dispose();
     semanticsHandle.dispose();
@@ -423,6 +456,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       researchOpposition,
       researchInvalidation,
       researchReviewDate,
+      researchTagsInput,
       ke,
       wacc,
       terminal,

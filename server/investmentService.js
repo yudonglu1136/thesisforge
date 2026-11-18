@@ -6,7 +6,7 @@ import fs from 'node:fs';
 const legacyValueFlowProvenance = JSON.parse(fs.readFileSync(new URL('./config/legacy-value-flow-provenance.json', import.meta.url), 'utf8'));
 import { buildFundamentals, FUNDAMENTALS_VERSION } from './investmentFundamentals.js';
 import { worksheetState, saveWorksheet } from './investmentDrafts.js';
-import { buildResearchWorkbench } from './researchWorkbench.js';
+import { buildResearchWorkbench, foldResearchRecords } from './researchWorkbench.js';
 
 const selectedManagers=['gavin-baker','bill-ackman','stanley-druckenmiller'];
 export const SHADOW_RULES=Object.freeze({version:'guru-top3-disclosure-preview-v1',managers:selectedManagers,topN:3,rank:'reported_common_long_value_desc_then_ticker',duplicate:'aggregate_CUSIP_then_union_ticker',weight:'equal_unique_security',rebalance:'first_market_session_after_public_availability',costBps:10,valuationFilter:false});
@@ -238,11 +238,14 @@ export class InvestmentService {
         if(c.reviewRequired&&(newPeriod||newGuru))attention.push({ticker:d.ticker,decisionId:d.decisionId,period:c.now.snapshot.period,triggers:c.triggers,guruChanges:c.guruChanges});
       }catch(error){attention.push({ticker:d.ticker,decisionId:d.decisionId,status:'data_unavailable',reason:error.message});}
     }
-    const watches=[...new Map(this.store.list(owner,'watch').filter(w=>w.baseline.asOf<=asOf).map(w=>[w.ticker,w])).values()].map(w=>{
+    const watches=[...new Map(this.store.list(owner,'watch').filter(w=>w.baseline.asOf<=asOf).map(w=>[w.ticker,w])).values()]
+      .filter(w=>w.active!==false)
+      .map(w=>{
       try {const r=reviewWatch(this,owner,w.id,asOf);return {id:w.id,ticker:w.ticker,asOf:w.baseline.asOf,status:r.status,modelChange:r.modelChange,priceChange:r.priceChange,newFilings:r.newFilings.length,lastReviewedAt:r.lastReviewedAt};}
       catch(e){return {id:w.id,ticker:w.ticker,asOf:w.baseline.asOf,status:'data_unavailable',modelChange:null,priceChange:null,newFilings:0,lastReviewedAt:null};}
     });
-    return {asOf,attention,watches,discovery:this.source.discovery(asOf),discoveryRule:'Latest public PIT quarterly revenue YoY >= 15%; alphabetical; not a recommendation.',
+    const researchNotebook=foldResearchRecords(this.store.list(owner,'research_record'),{asOf}).slice(-30).reverse();
+    return {asOf,attention,watches,researchNotebook,discovery:this.source.discovery(asOf),discoveryRule:'Latest public PIT quarterly revenue YoY >= 15%; alphabetical; not a recommendation.',
       gurus:this.guruDirectory(owner),decisions:this.heads(owner,asOf),portfolio:this.portfolio(owner,asOf)};
   }
   discover(owner,date) {

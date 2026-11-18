@@ -177,7 +177,7 @@ function enumerateMonths(fromDate, toDate) {
   return months;
 }
 
-function collectPendingShortCalls(accounts, baseCurrency) {
+function collectPendingShortOptions(accounts, baseCurrency, targetRight) {
   const byContract = new Map();
   for (const account of accounts ?? []) {
     if (baseCurrency && account.currency !== baseCurrency) continue;
@@ -186,12 +186,18 @@ function collectPendingShortCalls(accounts, baseCurrency) {
       const qty = finite(pos.quantity);
       if (qty === null || !(qty < 0)) continue;
       const occ = parseOccOptionSymbol(pos.ticker);
-      const right = occ?.right || (/\sC$/i.test(String(pos.name ?? '').trim()) ? 'C' : '');
-      if (right !== 'C') continue;
+      const fallbackRight = /\sC$/i.test(String(pos.name ?? '').trim())
+        ? 'C'
+        : /\sP$/i.test(String(pos.name ?? '').trim())
+          ? 'P'
+          : '';
+      const right = occ?.right || fallbackRight;
+      if (right !== targetRight) continue;
       const quoteCurrency = String(pos.currency ?? account.currency ?? '');
       const fx = quoteCurrency && quoteCurrency === account.currency ? 1 : finite(pos.fxRateToBase);
       const costBasis = finite(pos.costBasisMoney);
       const localValue = finite(pos.localValue);
+      const mult = finite(pos.multiplier) > 0 ? finite(pos.multiplier) : 100;
       const collected = costBasis !== null && costBasis < 0 && fx > 0 ? -costBasis * fx : null;
       const mark = localValue !== null && fx > 0 ? localValue * fx : null;
       const key = String(pos.ticker ?? '').trim();
@@ -199,13 +205,17 @@ function collectPendingShortCalls(accounts, baseCurrency) {
       const underlying = occ?.underlying || key.split(/\s+/)[0] || key;
       const expiry = iso(pos.expiry) || occ?.expiry || null;
       const strike = finite(pos.strike) ?? occ?.strike ?? null;
+      const contracts = (prev?.contracts ?? 0) + Math.abs(qty);
+      const collateral = strike !== null && fx > 0 ? strike * mult * contracts * fx : null;
       byContract.set(key, {
         contract: key,
         ticker: underlying,
+        right: targetRight,
         name: String(pos.name ?? key).trim(),
         strike,
         expiry,
-        contracts: (prev?.contracts ?? 0) + Math.abs(qty),
+        contracts,
+        collateralExposure: targetRight === 'P' ? collateral : null,
         collectedPremium: prev
           ? (prev.collectedPremium !== null && collected !== null ? prev.collectedPremium + collected : null)
           : collected,
@@ -220,13 +230,25 @@ function collectPendingShortCalls(accounts, baseCurrency) {
     a.ticker.localeCompare(b.ticker)
   );
   const allCollectedKnown = rows.length > 0 && rows.every(r => finite(r.collectedPremium) !== null);
+  const allCollateralKnown = targetRight === 'P' && rows.length > 0 && rows.every(r => finite(r.collateralExposure) !== null);
   return {
     count: rows.length,
     totalContracts: rows.reduce((s, r) => s + r.contracts, 0),
     collectedPremium: allCollectedKnown ? rows.reduce((s, r) => s + r.collectedPremium, 0) : null,
+    ...(targetRight === 'P'
+      ? {collateralExposure: allCollateralKnown ? rows.reduce((s, r) => s + r.collateralExposure, 0) : null}
+      : {}),
     confirmed: false,
     rows,
   };
+}
+
+function collectPendingShortCalls(accounts, baseCurrency) {
+  return collectPendingShortOptions(accounts, baseCurrency, 'C');
+}
+
+function collectPendingShortPuts(accounts, baseCurrency) {
+  return collectPendingShortOptions(accounts, baseCurrency, 'P');
 }
 
 function isLeapYear(year) {
@@ -294,6 +316,7 @@ function buildConfirmedEventRows(divEvents, callEvents, limit = 30) {
 export function portfolioPassiveIncome(accounts, baseCurrency = null) {
   const scoped = baseCurrency ? (accounts ?? []).filter(a => a.currency === baseCurrency) : (accounts ?? []);
   const pendingShortCalls = collectPendingShortCalls(scoped, baseCurrency);
+  const pendingShortPuts = collectPendingShortPuts(scoped, baseCurrency);
   const histories = scoped.map(a => a.passiveHistoryEvidence ?? a.historyEvidence);
   const covered = histories.length > 0 && histories.every(h => h?.fromDate && h?.toDate);
   const fromDate = covered ? histories.map(h => h.fromDate).sort().at(-1) : null;
@@ -330,6 +353,7 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
   const dividendsNet = dividendsReady && withholdingTax !== null ? dividendsGross + withholdingTax : null;
   const expiredCallsTotal = expiredCallsReady ? expiredCallEvents.reduce((s, r) => s + r.amount, 0) : null;
   const totalConfirmed = ready ? dividendsGross + expiredCallsTotal : null;
+  const totalConfirmedNet = ready ? (dividendsNet ?? dividendsGross) + expiredCallsTotal : null;
 
   const monthMap = new Map(
     (ready ? enumerateMonths(fromDate, toDate) : []).map(m => [
@@ -506,6 +530,7 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
     fromDate,
     toDate,
     totalConfirmed,
+    totalConfirmedNet,
     dividends: {
       status: dividendsReady ? 'ready' : 'cash_history_required',
       grossAmount: dividendsGross,
@@ -525,6 +550,7 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
     byTicker,
     recentEvents,
     pendingShortCalls,
+    pendingShortPuts,
     basis: 'confirmed_broker_cash_dividends_plus_otm_expired_short_call_fifo_net_premium',
   };
 }

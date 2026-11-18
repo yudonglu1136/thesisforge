@@ -17,25 +17,35 @@ class StrategyWorkspacePanel extends StatefulWidget {
 }
 
 class _StrategyWorkspacePanelState extends State<StrategyWorkspacePanel> {
-  bool rules = true, opened = true;
+  String activeTab = 'portfolio';
+  bool opened = true;
   bool builderOpened = false;
+  bool hedgeOpened = false;
+
   @override
   void initState() {
     super.initState();
-    rules = readBrowserQuery()['strategyTab'] != 'builder';
-    opened = rules;
-    builderOpened = !rules;
+    final qTab = readBrowserQuery()['strategyTab'];
+    if (qTab == 'builder') {
+      activeTab = 'builder';
+    } else if (qTab == 'hedge') {
+      activeTab = 'hedge';
+    } else {
+      activeTab = 'portfolio';
+    }
+    opened = activeTab == 'portfolio';
+    builderOpened = activeTab == 'builder';
+    hedgeOpened = activeTab == 'hedge';
   }
 
-  void tab(bool value) {
+  void selectTab(String next) {
     setState(() {
-      rules = value;
-      opened = opened || value;
-      builderOpened = builderOpened || !value;
+      activeTab = next;
+      opened = opened || next == 'portfolio';
+      builderOpened = builderOpened || next == 'builder';
+      hedgeOpened = hedgeOpened || next == 'hedge';
     });
-    replaceBrowserQuery({
-      'strategyTab': value ? 'portfolio' : 'builder',
-    }, replaceCurrent: true);
+    replaceBrowserQuery({'strategyTab': next}, replaceCurrent: true);
   }
 
   @override
@@ -48,25 +58,33 @@ class _StrategyWorkspacePanelState extends State<StrategyWorkspacePanel> {
         children: [
           ChoiceChip(
             key: const ValueKey('strategy-styles-tab'),
-            selected: rules,
+            selected: activeTab == 'portfolio',
             label: Text(
               context.tr('Strategy Portfolio · 策略组合', 'Strategy Portfolio'),
             ),
-            onSelected: (_) => tab(true),
+            onSelected: (_) => selectTab('portfolio'),
           ),
           ChoiceChip(
             key: const ValueKey('strategy-builder-tab'),
-            selected: !rules,
+            selected: activeTab == 'builder',
             label: Text(context.tr('策略构建器', 'Strategy builder')),
-            onSelected: (_) => tab(false),
+            onSelected: (_) => selectTab('builder'),
+          ),
+          ChoiceChip(
+            key: const ValueKey('strategy-hedge-tab'),
+            selected: activeTab == 'hedge',
+            label: Text(
+              context.tr('QQQ 期权保护实验室', 'Options Hedge Lab'),
+            ),
+            onSelected: (_) => selectTab('hedge'),
           ),
         ],
       ),
       const SizedBox(height: 16),
-      // Lazy-mount builder only when selected so opening Strategy Portfolio never triggers unnecessary builder API calls.
+      // Lazy-mount secondary tabs only when selected so opening Strategy Portfolio never triggers unnecessary API calls.
       if (builderOpened)
         Offstage(
-          offstage: rules,
+          offstage: activeTab != 'builder',
           child: StrategyLabPanel(
             api: widget.api,
             palette: widget.palette,
@@ -74,9 +92,17 @@ class _StrategyWorkspacePanelState extends State<StrategyWorkspacePanel> {
             onCompany: widget.onCompany,
           ),
         ),
+      if (hedgeOpened)
+        Offstage(
+          offstage: activeTab != 'hedge',
+          child: HedgeLabPanel(
+            api: widget.api,
+            palette: widget.palette,
+          ),
+        ),
       if (opened)
         Offstage(
-          offstage: !rules,
+          offstage: activeTab != 'portfolio',
           child: StrategyPortfolioPanel(
             api: widget.api,
             palette: widget.palette,
@@ -109,6 +135,7 @@ class InvestorStylesDashboard extends StatefulWidget {
 }
 
 class _RulePortfolioState extends State<InvestorStylesDashboard> {
+  final GlobalKey _holdingsSectionKey = GlobalKey();
   Map<String, dynamic>? data;
   bool loading = true, failed = false, drawdown = false;
   String active = 'quality_rank', universe = 'all';
@@ -644,9 +671,65 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
       );
     }
     if (widget.focusedStyleId != null) {
+      final latestQ = quarters.isEmpty ? <String, dynamic>{} : quarters.last;
+      final topRows = asList(latestQ['positions']).take(5).toList();
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (latestQ.isNotEmpty) ...[
+            Container(
+              key: ValueKey('rule-top-live-strip-$active'),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: color(active).withValues(alpha: 0.09),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: color(active).withValues(alpha: 0.45)),
+              ),
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Icon(Icons.bolt_rounded, size: 17, color: color(active)),
+                  Text(
+                    '${w('Current Model Basket', '最新季度目标持仓')} · ${text(latestQ['quarter'])} (${latestQ['selectedCount'] ?? topRows.length} ${w('stocks', '只股票')}, ${w('Cash', '现金')} ${pct(latestQ['cashWeight'])})',
+                    style: s(13, true),
+                  ),
+                  for (final r in topRows)
+                    ActionChip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text(
+                        '${text(r['ticker'])} ${pct(r['weight'])}',
+                        style: s(11.5, true),
+                      ),
+                      onPressed: () => widget.onCompany(text(r['ticker'])),
+                    ),
+                  OutlinedButton.icon(
+                    key: const ValueKey('rule-jump-holdings'),
+                    onPressed: () {
+                      setState(() => quarter = quarters.length - 1);
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        final ctx = _holdingsSectionKey.currentContext;
+                        if (ctx != null) {
+                          Scrollable.ensureVisible(
+                            ctx,
+                            duration: const Duration(milliseconds: 260),
+                            alignment: 0.05,
+                          );
+                        }
+                      });
+                    },
+                    icon: const Icon(Icons.arrow_downward_rounded, size: 14),
+                    label: Text(
+                      w('All Holdings ↓', '查看完整持仓 ↓'),
+                      style: s(11.5, true),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+          ],
           focusedBlueprint(),
           const SizedBox(height: 16),
           moduleTag(
@@ -673,12 +756,20 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
             onCompany: widget.onCompany,
           ),
           const SizedBox(height: 16),
-          moduleTag(
-            '04',
-            'Quarterly Holdings, Factor Percentiles & Exits',
-            '季度持仓明细、因子分位数证据与调出记录',
+          Container(
+            key: _holdingsSectionKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                moduleTag(
+                  '04',
+                  'Quarterly Holdings, Factor Percentiles & Exits',
+                  '季度持仓明细、因子分位数证据与调出记录',
+                ),
+                holdings(),
+              ],
+            ),
           ),
-          holdings(),
           const SizedBox(height: 16),
           moduleTag(
             '05',

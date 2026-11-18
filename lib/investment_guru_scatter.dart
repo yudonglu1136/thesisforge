@@ -512,5 +512,14 @@ class _GuruScatterAxes extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _GuruScatterAxes old) => true;
+  bool shouldRepaint(covariant _GuruScatterAxes old) =>
+      old.field != field ||
+      old.xTitle != xTitle ||
+      old.yTitle != yTitle ||
+      old.benchmark != benchmark ||
+      old.palette.colorBlind != palette.colorBlind ||
+      old.scale.xMax != scale.xMax ||
+      old.scale.yMin != scale.yMin ||
+      old.scale.yMax != scale.yMax ||
+      old.labels.length != labels.length;
 }

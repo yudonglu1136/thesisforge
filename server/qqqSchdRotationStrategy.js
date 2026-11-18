@@ -289,7 +289,7 @@ function readValidatedArtifact(targetFile) {
     fail('qqq_schd_rotation_snapshot_unavailable');
   }
   const id = createHash('sha256').update(source).digest('hex');
-  const entry = { key: cacheKey, payload: parsed, id, file: resolved };
+  const entry = { key: cacheKey, payload: parsed, id, file: resolved, slices: new Map() };
   fileCaches.set(resolved, entry);
   return entry;
 }
@@ -605,11 +605,14 @@ export function loadQqqSchdRotationDashboard({
   if (!QQQ_SCHD_WINDOWS.includes(window)) fail('invalid_strategy_window', 400);
 
   const activeFile = file ?? promotedRuntimeFile ?? defaultFile;
-  const { payload, id } = readValidatedArtifact(activeFile);
+  const entry = readValidatedArtifact(activeFile);
+  const { payload, id } = entry;
   if (!file) maybeScheduleBackgroundRefresh(payload.dataThrough);
   if (snapshotId && snapshotId !== id) fail('qqq_schd_rotation_snapshot_changed', 409);
 
   const cutoff = asOf && asOf < payload.dataThrough ? asOf : payload.dataThrough;
+  const sliceKey = `${asOf ?? 'latest'}:${cutoff}:${mode}:${window}`;
+  if (entry.slices.has(sliceKey)) return entry.slices.get(sliceKey);
   const winObj = payload.windows[window];
   const ser = winObj.series;
   const cutIdx = findCutoffIndex(ser.dates, cutoff);
@@ -683,7 +686,7 @@ export function loadQqqSchdRotationDashboard({
   const yearlyReturns = atFullEnd ? winObj.yearlyReturns : computeYearlyFromSeries(ser, cutIdx);
   const radar = sliceRadarAtCutoff(payload, fullSer, fullCutIdx);
 
-  return {
+  const response = Object.freeze({
     version: payload.version,
     status: 'ready',
     snapshotId: id,
@@ -745,7 +748,10 @@ export function loadQqqSchdRotationDashboard({
       ...payload.lineage,
       snapshotId: id,
     },
-  };
+  });
+  if (entry.slices.size >= 32) entry.slices.delete(entry.slices.keys().next().value);
+  entry.slices.set(sliceKey, response);
+  return response;
 }
 
 export function analyzeQqqSchdRotationRange({

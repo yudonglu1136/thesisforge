@@ -1,22 +1,40 @@
 part of 'main.dart';
 
 extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
+  bool get hasUnsavedResearchNoteDraft =>
+      researchQuestion.text.trim().isNotEmpty ||
+      researchSupport.text.trim().isNotEmpty ||
+      researchOpposition.text.trim().isNotEmpty ||
+      researchInvalidation.text.trim().isNotEmpty;
+
   Future<bool> allowLeaveDraft() async {
+    var dcfDirty = false;
     if (worksheetMemoryEnabled) {
-      if (await persistWorksheet()) return true;
-    } else if (!draftDirty) {
-      return true;
+      dcfDirty = !(await persistWorksheet());
+    } else {
+      dcfDirty = draftDirty;
     }
+    final noteDirty = hasUnsavedResearchNoteDraft;
+    if (!dcfDirty && !noteDirty) return true;
     if (!mounted) return false;
     final discard = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(w('Leave this unsaved scenario?', '离开未保存的情景？')),
+        title: Text(
+          noteDirty && !dcfDirty
+              ? w('Leave unsaved research note?', '离开未保存的投研记录？')
+              : w('Leave this unsaved scenario?', '离开未保存的情景？'),
+        ),
         content: Text(
-          w(
-            'Your saved versions will stay intact. This sandbox has changes that have not been saved.',
-            '已保存版本不会改变，但本次试算包含未保存的修改。',
-          ),
+          noteDirty && !dcfDirty
+              ? w(
+                  'Your already saved records stay intact, but the draft text in Research records has not been saved yet.',
+                  '已保存的研究记录不受影响，但当前输入框中的草稿尚未保存。',
+                )
+              : w(
+                  'Your saved versions will stay intact. This sandbox has changes that have not been saved.',
+                  '已保存版本不会改变，但本次试算包含未保存的修改。',
+                ),
         ),
         actions: [
           TextButton(
@@ -30,7 +48,21 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
         ],
       ),
     );
-    if (discard == true && mounted) updateUI(() => draftDirty = false);
+    if (discard == true && mounted) {
+      updateUI(() {
+        draftDirty = false;
+        if (noteDirty) {
+          researchQuestion.clear();
+          researchSupport.clear();
+          researchOpposition.clear();
+          researchInvalidation.clear();
+          researchReviewDate.clear();
+          researchTagsInput.clear();
+          editingRecordId = null;
+          researchRecordStatus = 'open';
+        }
+      });
+    }
     return discard == true;
   }
 

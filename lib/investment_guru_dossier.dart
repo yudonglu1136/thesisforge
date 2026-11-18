@@ -45,6 +45,21 @@ class _GuruResearchDossierState extends State<GuruResearchDossier> {
 
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
+  final GlobalKey _backtestAnchorKey = GlobalKey();
+  final GlobalKey _holdingsAnchorKey = GlobalKey();
+
+  void _scrollToSection(GlobalKey key) {
+    final ctx = key.currentContext;
+    if (ctx != null) {
+      unawaited(
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    }
+  }
 
   String fmtPct(dynamic v, {bool signed = false, int digits = 1}) {
     final n = nullableNumber(v);
@@ -145,10 +160,17 @@ class _GuruResearchDossierState extends State<GuruResearchDossier> {
           _buildErrorNotice(f, sourceError, errorCodes),
         if (!sourceError) ...[
           _buildSystematicInsights(f, comparisonError),
-          if (backtest['status'] == 'ready') _buildBacktestSection(),
+          if (backtest['status'] == 'ready')
+            KeyedSubtree(
+              key: _backtestAnchorKey,
+              child: _buildBacktestSection(),
+            ),
           if (!comparisonError) _buildKeyMovesAndScaleSection(f),
           if (comparisonError) _buildBookScaleAndSectorsOnly(f),
-          _buildHoldingsAndTrajectorySection(f, comparisonError),
+          KeyedSubtree(
+            key: _holdingsAnchorKey,
+            child: _buildHoldingsAndTrajectorySection(f, comparisonError),
+          ),
         ],
         Padding(
           padding: const EdgeInsets.only(top: 4, bottom: 8),
@@ -181,6 +203,7 @@ class _GuruResearchDossierState extends State<GuruResearchDossier> {
         children: [
           if (widget.onFollow != null)
             OutlinedButton.icon(
+              key: const ValueKey('dossier-follow-button'),
               onPressed: widget.onFollow,
               icon: Icon(
                 guru['followed'] == true ? Icons.check : Icons.add,
@@ -192,12 +215,23 @@ class _GuruResearchDossierState extends State<GuruResearchDossier> {
                     : w('Follow', '关注'),
               ),
             ),
+          if (backtest['status'] == 'ready')
+            OutlinedButton.icon(
+              key: const ValueKey('dossier-jump-backtest'),
+              onPressed: () => _scrollToSection(_backtestAnchorKey),
+              icon: Icon(Icons.query_stats, size: 16, color: p.accent),
+              label: Text(
+                w('Backtest & attribution ↓', '回测与归因 ↓'),
+                style: TextStyle(color: p.accent, fontSize: 12.5),
+              ),
+            ),
           OutlinedButton.icon(
-            onPressed: widget.onOpenTerminal,
-            icon: Icon(Icons.science_outlined, size: 16, color: p.accent),
+            key: const ValueKey('dossier-jump-holdings'),
+            onPressed: () => _scrollToSection(_holdingsAnchorKey),
+            icon: Icon(Icons.pie_chart_outline_rounded, size: 16, color: p.muted),
             label: Text(
-              w('Open full backtest terminal', '打开完整回测终端'),
-              style: TextStyle(color: p.accent, fontSize: 12.5),
+              w('Holdings & history ↓', '持仓与历史 ↓'),
+              style: TextStyle(color: p.text, fontSize: 12.5),
             ),
           ),
         ],
@@ -575,7 +609,7 @@ class _GuruResearchDossierState extends State<GuruResearchDossier> {
             (h) =>
                 '${text(h['ticker'])} (${fmtPct(h['pctPortfolio'], digits: 1)})',
           )
-          .join('、');
+          .join(w(', ', '、'));
       bullets.add((
         Icons.workspace_premium_outlined,
         p.accent,

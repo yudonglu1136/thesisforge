@@ -1,6 +1,116 @@
 part of 'main.dart';
 
 extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
+  Widget homeQuickstartLaunchpad() {
+    const featured = ['NVDA', 'AMZN', 'MSFT', 'GOOGL', 'META'];
+    return Container(
+      key: const ValueKey('home-quickstart-launchpad'),
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF14181D), Color(0xFF101114)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: p.accent.withValues(alpha: .32)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome_outlined, color: p.accent, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  w(
+                    'START EXPLORING IMMEDIATELY · NO BROKER CONNECTION REQUIRED',
+                    '无需绑定券商即可立即开始投研探索',
+                  ),
+                  style: TextStyle(
+                    color: p.accent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: .6,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            w(
+              'Explore company valuations, institutional 13F books, or audited strategies in one click',
+              '一键体验个股深度估值、机构 13F 持仓共识与量化策略',
+            ),
+            style: TextStyle(
+              color: p.text,
+              fontSize: 19,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                w('Popular valuations:', '热门公司估值驾驶舱：'),
+                style: TextStyle(color: p.muted, fontSize: 12.5),
+              ),
+              for (final symbol in featured)
+                ActionChip(
+                  key: ValueKey('quickstart-ticker-$symbol'),
+                  avatar: StockLogo(ticker: symbol, palette: p, size: 18),
+                  backgroundColor: const Color(0xFF181A20),
+                  side: BorderSide(color: p.border),
+                  label: Text(
+                    symbol,
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  onPressed: () => widget.onCompany(symbol, 'evidence'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              if (widget.onExploreDiscover != null)
+                FilledButton.tonalIcon(
+                  key: const ValueKey('quickstart-discover'),
+                  onPressed: widget.onExploreDiscover,
+                  icon: const Icon(Icons.explore_outlined, size: 16),
+                  label: Text(
+                    w(
+                      'Explore 30 Guru 13F Books & AI Insights',
+                      '浏览 30 位大师持仓与 AI 洞察',
+                    ),
+                  ),
+                ),
+              if (widget.onExploreStrategies != null)
+                OutlinedButton.icon(
+                  key: const ValueKey('quickstart-strategies'),
+                  onPressed: widget.onExploreStrategies,
+                  icon: const Icon(Icons.layers_outlined, size: 16),
+                  label: Text(
+                    w('Inspect Audited Strategies', '查看零幸存者偏差量化策略'),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget personalHome(
     List<Map<String, dynamic>> groups,
     Map<String, dynamic> g,
@@ -82,6 +192,9 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                   onPressed:
                       loading ||
                           portfolioSyncing ||
+                          (groups.isEmpty &&
+                              asMap(data?['connection'])['configured'] !=
+                                  true) ||
                           data?['status'] == 'preview_account' ||
                           data?['source'] == 'local_owner_broker_snapshot'
                       ? null
@@ -162,9 +275,14 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
             ),
             TextButton(onPressed: load, child: Text(w('Try again', '重试'))),
           ])
-        else if (groups.isEmpty)
-          emptyState()
-        else ...[
+        else if (groups.isEmpty) ...[
+          if (widget.homeMode &&
+              asMap(data?['connection'])['configured'] != true) ...[
+            homeQuickstartLaunchpad(),
+            const SizedBox(height: 18),
+          ],
+          emptyState(),
+        ] else ...[
           if (data?['status'] == 'partial_accounts') ...[
             tag(
               'Partial account coverage · not your complete portfolio',

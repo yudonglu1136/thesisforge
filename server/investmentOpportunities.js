@@ -402,12 +402,16 @@ export function opportunityTimeline(source,ticker,asOf) {
 export function watchBaseline(source,ticker,asOf,reportDate) {
   const row=buildOpportunities(source,asOf,reportDate).rows.find(r=>r.ticker===ticker);
   let c=null,unavailable=null;
-  try {c=source.company(ticker,asOf);}catch(e){if(e.status!==422)throw e;unavailable=e.message;}
-  assert(row||c,'unknown_watch_company');
-  return {asOf,reportDate:reportDate??row?.managers[0]?.reportDate??null,price:c?.snapshot.price??row?.price??null,
+  try {c=source.company(ticker,asOf);}catch(e){
+    if(e.status!==422&&e.message!=='no_pit_research_at_date')throw e;
+    unavailable=e.message;
+  }
+  const factQuote=!row&&!c?investmentCurrentQuotes(source,[ticker],asOf).get(ticker)??null:null;
+  assert(row||c||factQuote,'unknown_watch_company');
+  return {asOf,reportDate:reportDate??row?.managers[0]?.reportDate??null,price:c?.snapshot.price??row?.price??factQuote??null,
     published:c?.published??null,snapshot:c?.snapshot??null,unavailable,evidence:row?.managers??[],
     // Frozen platform model is not a user-endorsed assumption set.
-    baselineKind:'published_model_observation_not_personal_scenario'};
+    baselineKind:c||row?'published_model_observation_not_personal_scenario':'fact_os_quote_observation'};
 }
 
 export function reviewWatch(service,owner,id,date) {
@@ -434,8 +438,18 @@ export function reviewWatch(service,owner,id,date) {
 
 export function saveWatch(service,owner,body) {
   const ticker=tickerKey(body.ticker),asOf=service.date(body.asOf);
+  if(body.active===false){
+    return service.store.write(owner,'watch',ticker,body.operationId,body,()=>({
+      baseline:{asOf,reportDate:null,price:null,published:null,snapshot:null,unavailable:'unwatched',evidence:[],baselineKind:'unwatch_event'},
+      active:false,
+      origin:'unwatch',
+      researchEvidence:null,
+      retrospective:true,
+    }));
+  }
   return service.store.write(owner,'watch',ticker,body.operationId,body,()=>({baseline:watchBaseline(service.source,ticker,asOf,body.reportDate??null),
-    origin:['holdings','adds','trims','value','13f_insight'].includes(body.origin)?body.origin:'holdings',
+    active:true,
+    origin:['holdings','adds','trims','value','13f_insight','fact_os'].includes(body.origin)?body.origin:'holdings',
     researchEvidence:body.origin==='13f_insight'?bounded13fResearchEvidence(body.researchEvidence):null,
     retrospective:true}));
 }
