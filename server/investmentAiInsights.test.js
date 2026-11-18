@@ -172,3 +172,29 @@ test('immutable current and historical generations both require valid checksums;
   fs.appendFileSync(path.join(root, 'derived/ai-insights/generations/generationB.json'), ' ');
   assert.throws(() => createAiInsightsService({ factRoot: root, now }).overview(), /checksum_mismatch/);
 });
+
+test('defaultQuarter advances to 2026Q3 once Big 4 capex is 100% complete, hardware >=75% and calendar-quarter software reaches 50% (>=60% combined)', () => {
+  const raw = artifact();
+  // Add 10 hardware + 10 software so 5/10 software = 50% and 8/10 hardware = 80% (13/20 = 65% combined)
+  raw.companies = [
+    ...Array.from({ length: 10 }, (_, i) => ({ ticker: `HW${i}`, name: `HW ${i}`, issuerId: `hw:${i}`, group: 'hardware', sector: 'chips', currency: 'USD' })),
+    ...Array.from({ length: 10 }, (_, i) => ({ ticker: `SW${i}`, name: `SW ${i}`, issuerId: `sw:${i}`, group: 'software', sector: 'saas', currency: 'USD' })),
+    { ticker: 'CAP', name: 'Big4', issuerId: 'cap', group: 'capex', sector: 'hyperscaler', capexGroup: 'big4' },
+  ];
+  raw.facts = [];
+  for (const c of raw.companies) {
+    for (const [q, period, filed] of [['2026Q2', '2026-06-30', '2026-07-30'], ['2026Q3', '2026-09-30', '2026-10-30']]) {
+      if (q === '2026Q3' && c.group === 'hardware' && Number(c.ticker.slice(2)) >= 8) continue;
+      if (q === '2026Q3' && c.group === 'software' && Number(c.ticker.slice(2)) >= 5) continue;
+      raw.facts.push({
+        ticker: c.ticker, calendardate: period, reportperiod: period, datekey: filed, currency: 'USD',
+        revenue: 1000, revenueusd: 1000, gp: 600, opinc: 200, ncfo: 250, netinc: 180, capex: -300, assets: 5000, sbcomp: 40,
+        sourceRevisionId: `${c.ticker}:${q}`,
+      });
+    }
+  }
+  const svc = createAiInsightsService({ now: () => new Date('2026-11-18T12:00:00Z'), artifactLoader: () => raw });
+  const view = svc.overview({ asOf: '2026-11-18' });
+  assert.equal(view.selectedQuarter, '2026Q3');
+  assert.equal(view.series.at(-1).quarter, '2026Q3');
+});

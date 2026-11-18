@@ -174,10 +174,20 @@ export function createAiInsightsService({ factRoot = process.env.FACT_OS_ROOT ||
     const defaultQuarter = availableQuarters.find(q => {
       const big4 = artifact.companies.filter(c => c.group === 'capex' && c.capexGroup === 'big4');
       const big4Complete = big4.length && big4.every(c => finite(capexValue(index.get(c.ticker)?.get(q)).amount));
-      return big4Complete && ['hardware', 'software'].every(group => {
+      if (!big4Complete) return false;
+      const revGroups = ['hardware', 'software'].map(group => {
         const cohort = artifact.companies.filter(c => c.group === group);
-        return cohort.length && cohort.filter(c => finite(index.get(c.ticker)?.get(q)?.revenueusd)).length / cohort.length >= .6;
+        const disclosed = cohort.filter(c => finite(index.get(c.ticker)?.get(q)?.revenueusd)).length;
+        return { total: cohort.length, disclosed, ratio: cohort.length ? disclosed / cohort.length : 0 };
       });
+      const totalCohort = revGroups.reduce((s, g) => s + g.total, 0);
+      const totalDisclosed = revGroups.reduce((s, g) => s + g.disclosed, 0);
+      // Half of covered enterprise SaaS companies use Jan/Apr/Jul/Oct fiscal
+      // calendars that report 3-4 weeks after calendar-quarter Big 4 & chipmakers.
+      // Requiring >=50% in each group AND >=60% combined once Big 4 capex is
+      // 100% complete surfaces the new quarter on time without sparse distortion.
+      return revGroups.every(g => g.total > 0 && g.ratio >= .5) &&
+        totalCohort > 0 && totalDisclosed / totalCohort >= .6;
     }) || availableQuarters[0] || quarterForDate(asOf);
     const quarter = quarterOrNull(query.quarter ?? query.selectedQuarter) || pinned?.q || defaultQuarter;
     badRequest(quarterIndex(quarter) !== null && quarterIndex(quarter) >= 1900 * 4 && quarterIndex(quarter) <= quarterIndex(quarterForDate(asOf)), 'invalid_ai_insights_quarter');
