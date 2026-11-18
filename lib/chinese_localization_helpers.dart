@@ -400,6 +400,12 @@ String localizeValuationExclusionReason(String raw, AppLanguage language) {
       '当前期快照输入不满足该方法计算条件，未生成估值。',
     'Negative or unavailable input prevents a meaningful positive value.' =>
       '核心输入为负值或缺失，无法生成有经济意义的正向估值。',
+    'FCF was unavailable or negative, so earnings power carries the row.' =>
+      '当期自由现金流缺失或为负值，本行由标准化盈利能力估值承载权重。',
+    'FCF was unavailable or negative.' =>
+      '当期自由现金流缺失或为负值，未计入正向折现。',
+    'Normalized earnings were not positive, so the row relies on FCFE DCF.' =>
+      '标准化盈利未呈正值，本行由 FCFE 现金流折现承载权重。',
     _ => localizeValuationFormula(clean, language),
   };
 }
@@ -448,6 +454,7 @@ String localizeMetricEvidenceKey(String key, AppLanguage language) {
   if (language == AppLanguage.en) return clean;
   return switch (clean) {
     'revenueGrowth' => '单季营收同比',
+    'priorRevenueGrowth' => '上季单季营收同比',
     'revenueGrowthPriorQuarter' => '上季营收同比',
     'operatingMargin' => 'TTM 营业利润率',
     'operatingMarginPriorYear' => '上年同期营业利润率',
@@ -456,6 +463,10 @@ String localizeMetricEvidenceKey(String key, AppLanguage language) {
     'fcfMarginPriorYear' => '上年同期 FCF 利润率',
     'fcfMarginPriorQuarter' => '上季 TTM FCF 利润率',
     'grossMargin' => 'TTM 毛利率',
+    'grossMarginPriorQuarter' => '上季 TTM 毛利率',
+    'cfoMargin' => 'TTM 经营现金流利润率',
+    'cfoMarginPriorYear' => '上年同期经营现金流利润率',
+    'capexIntensityPriorYear' => '上年同期资本开支强度',
     'dilutedSharesGrowth' => '摊薄股本同比变化',
     'netIncomeGrowth' => '归母净利润同比',
     'perShareIncomeGrowth' => '每股收益同比',

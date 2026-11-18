@@ -23,6 +23,25 @@ List<Map<String, dynamic>> matchResearchCompanies(
   });
 }
 
+final Expando<Map<String, List<Map<String, dynamic>>>> _companySearchPoolCache =
+    Expando<Map<String, List<Map<String, dynamic>>>>();
+
+List<Map<String, dynamic>> _mergeCompanySearchRows(
+  List<Map<String, dynamic>> primary,
+  List<Map<String, dynamic>> existing,
+) {
+  final byTicker = <String, Map<String, dynamic>>{};
+  for (final row in primary) {
+    final sym = text(row['ticker']);
+    if (sym.isNotEmpty) byTicker[sym] = row;
+  }
+  for (final row in existing) {
+    final sym = text(row['ticker']);
+    if (sym.isNotEmpty) byTicker.putIfAbsent(sym, () => row);
+  }
+  return byTicker.values.toList();
+}
+
 class CompanySearchDialog extends StatefulWidget {
   const CompanySearchDialog({
     super.key,
@@ -60,6 +79,11 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
   @override
   void initState() {
     super.initState();
+    final cachedPool = _companySearchPoolCache[widget.api]?[widget.asOf];
+    if (cachedPool != null && cachedPool.isNotEmpty) {
+      companies = List<Map<String, dynamic>>.from(cachedPool);
+      loading = false;
+    }
     unawaited(load());
   }
 
@@ -101,14 +125,22 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
           throw StateError('invalid_company_index');
         }
       }
+      final poolByCutoff = _companySearchPoolCache[widget.api] ??=
+          <String, List<Map<String, dynamic>>>{};
+      final merged = _mergeCompanySearchRows(
+        rows,
+        poolByCutoff[widget.asOf] ?? companies,
+      );
+      poolByCutoff[widget.asOf] = merged;
       setState(() {
-        companies = rows;
+        companies = query.text.trim().isEmpty ? rows : merged;
         loading = false;
         active = 0;
       });
     } catch (_) {
       if (mounted && serial == request) {
         setState(() {
+          companies = [];
           loading = false;
           failed = true;
         });
@@ -290,7 +322,9 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
                   ),
                   onChanged: changeQuery,
                   onSubmitted: (_) {
-                    if (!loading && !failed && matches.isNotEmpty) {
+                    if (!failed &&
+                        matches.isNotEmpty &&
+                        (!loading || companies.isNotEmpty)) {
                       choose(text(matches[active]['ticker']));
                     }
                   },
@@ -302,14 +336,14 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
                   children: [
                     Expanded(
                       child: Text(
-                        loading
+                        loading && companies.isEmpty
                             ? w('Loading companies…', '正在加载公司…')
                             : failed
                             ? w('Search unavailable', '搜索暂不可用')
                             : hasQuery
                             ? w(
-                                '${matches.length} ${matches.length == 1 ? 'result' : 'results'}',
-                                '${matches.length} 个结果',
+                                '${matches.length} ${matches.length == 1 ? 'result' : 'results'}${loading ? ' · updating…' : ''}',
+                                '${matches.length} 个结果${loading ? ' · 正在检索全库…' : ''}',
                               )
                             : w(
                                 'Browse companies · ${companies.length}',
@@ -336,7 +370,7 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
               ),
               Divider(height: 1, color: p.border),
               Flexible(
-                child: loading
+                child: loading && companies.isEmpty
                     ? Center(
                         heightFactor: 3,
                         child: Semantics(

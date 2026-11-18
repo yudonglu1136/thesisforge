@@ -743,17 +743,14 @@ class FactRepository:
         return {'version': 'fact-fundamental-universe-v1', 'as_of': str(as_of),
                 'catalog_generation': self.generation, 'companies': companies}
 
-    def get_fundamental_company_index(self, as_of, *, search='', limit=120):
-        """Compact Fact OS company search pool; no prices, metrics or model dependency."""
-        self._require('fundamentals')
-        self._master()
-        limit = int(limit)
-        if limit < 1 or limit > 500:
-            raise ValueError('fundamental company index limit must be between 1 and 500')
-        search = str(search or '').strip().lower()
-        if len(search) > 80:
-            raise ValueError('fundamental company search too long')
-        pattern = f'%{search}%'
+    def _all_fundamental_companies_at(self, as_of):
+        cache = getattr(self, '_company_index_cache', None)
+        if cache is None:
+            cache = {}
+            self._company_index_cache = cache
+        key = (self.generation, str(as_of))
+        if key in cache:
+            return cache[key]
         rows = self._rows('''WITH latest AS (
               SELECT f.ticker,f.reportperiod,f.date,ROW_NUMBER() OVER(
                 PARTITION BY f.ticker ORDER BY f.reportperiod DESC,f.date DESC,f.lastupdated DESC
@@ -768,19 +765,55 @@ class FactRepository:
             )
             SELECT latest.ticker,master.name,latest.reportperiod,latest.date,master.permaticker
             FROM latest JOIN master USING(ticker) WHERE latest.rank=1
-              AND (?='' OR lower(latest.ticker) LIKE ? OR lower(master.name) LIKE ?)
-            ORDER BY CASE WHEN lower(latest.ticker)=? THEN 0
-              WHEN lower(latest.ticker) LIKE ? THEN 1
-              WHEN lower(master.name) LIKE ? THEN 2 ELSE 3 END,latest.ticker LIMIT ?''',
-            [as_of, as_of, search, pattern, pattern, search, f'{search}%', f'{search}%', limit])
-        return {'version': 'fact-fundamental-company-index-v1', 'as_of': str(as_of),
-                'catalog_generation': self.generation, 'companies': [{
-                    'ticker': row['ticker'], 'name': row.get('name') or row['ticker'],
-                    'period_end': row['reportperiod'],
-                    'available_at': row['date'],
-                    'security_id': f"sharadar:security:{row['permaticker']}"
-                    if row.get('permaticker') is not None else None,
-                } for row in rows]}
+            ORDER BY latest.ticker''',
+            [as_of, as_of])
+        items = []
+        for row in rows:
+            ticker = row['ticker']
+            name = row.get('name') or ticker
+            entry = {
+                'ticker': ticker,
+                'name': name,
+                'period_end': row['reportperiod'],
+                'available_at': row['date'],
+                'security_id': f"sharadar:security:{row['permaticker']}"
+                if row.get('permaticker') is not None else None,
+            }
+            items.append((ticker.lower(), name.lower(), entry))
+        if len(cache) >= 4:
+            cache.pop(next(iter(cache)))
+        cache[key] = items
+        return items
+
+    def get_fundamental_company_index(self, as_of, *, search='', limit=120):
+        """Compact Fact OS company search pool; no prices, metrics or model dependency."""
+        self._require('fundamentals')
+        self._master()
+        limit = int(limit)
+        if limit < 1 or limit > 25000:
+            raise ValueError('fundamental company index limit must be between 1 and 25000')
+        search = str(search or '').strip().lower()
+        if len(search) > 80:
+            raise ValueError('fundamental company search too long')
+        all_items = self._all_fundamental_companies_at(as_of)
+        if not search:
+            matched = [entry for _, _, entry in all_items[:limit]]
+        else:
+            words = [w for w in search.split() if w]
+            ranked = []
+            for t_low, n_low, entry in all_items:
+                hay = f'{t_low} {n_low}'
+                if all(w in hay for w in words):
+                    rank = 0 if t_low == search else (1 if t_low.startswith(search) else (2 if n_low.startswith(search) else 3))
+                    ranked.append((rank, entry['ticker'], entry))
+            ranked.sort(key=lambda item: (item[0], item[1]))
+            matched = [item[2] for item in ranked[:limit]]
+        return {
+            'version': 'fact-fundamental-company-index-v1',
+            'as_of': str(as_of),
+            'catalog_generation': self.generation,
+            'companies': matched,
+        }
 
     def get_fundamental_research(self, ticker, as_of, *, quarters=16, years=8):
         """Bounded source facts for one company; restated dimensions are never mixed into PIT."""

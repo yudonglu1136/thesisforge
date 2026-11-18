@@ -1,4 +1,5 @@
 import { queryFacts, queryFactsBatch, PRICE_TYPES, factGeneration } from './factRepository.js';
+import { publicAnalysisArtifacts } from './publicAnalysisArtifact.js';
 import { assert, finite, isoDate, signature } from './investmentMath.js';
 import { tickerKey } from './investmentSource.js';
 import { opportunityCompanySummary, opportunityValuationBreakdown } from './investmentOpportunities.js';
@@ -193,6 +194,14 @@ export async function fundamentalCompanyIndex(asOf,{search='',limit=120}={}) {
 }
 
 async function loadFundamentalUniverse(asOf) {
+  try {
+    const precomputed = publicAnalysisArtifacts.get('fundamentals', { asOf }, { clone: false });
+    if (precomputed?.exact && precomputed.value?.version === 'fact-fundamental-universe-v1') {
+      return precomputed.value;
+    }
+  } catch {
+    // Fall back to direct FactRepository query when publicAnalysis root is unconfigured.
+  }
   const now = Date.now();
   const generation=await factGeneration();
   if (universeCache?.asOf === asOf && universeCache.generation===generation && universeCache.expiresAt > now) return universeCache.raw;

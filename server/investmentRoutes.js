@@ -227,6 +227,7 @@ export function enableInvestmentPreview(app) {
         const today=service.date();
         source.discovery(today);
         source.guruCatalog();
+        researchCompanies(source,today).catch(()=>{});
       }catch{}
       try{return publicAnalysisArtifacts.warmCurrent(service.date()).catch(()=>{});}catch{}
     });
