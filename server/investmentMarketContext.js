@@ -19,15 +19,26 @@ export function canonicalComparisonQuote(point,asOf,generation=null) {
     canonical:true,status:valid?'available':'unavailable'};
 }
 
+const marketContextCache = new Map();
+const MAX_MARKET_CONTEXT_CACHE = 128;
+
 export async function withCanonicalMarket(tickers,asOf,handler,{
-  readBatch=queryFactsBatch,getGeneration=factGeneration,historyTickers=[],
+  readBatch=queryFactsBatch,getGeneration=factGeneration,historyTickers=[],historyStart='1900-01-01',
 }={}) {
   isoDate(asOf);
   const names=[...new Set(tickers.map(t=>String(t).trim().toUpperCase()).filter(validTicker))].sort();
   const histories=[...new Set(historyTickers.filter(t=>names.includes(t)))];
   const generation=await getGeneration();
+  const useCache=Boolean(generation)&&readBatch===queryFactsBatch&&getGeneration===factGeneration;
+  const cacheKey=useCache?`${generation}|${asOf}|${historyStart}|${names.join(',')}|${histories.join(',')}`:'';
+  if(useCache&&marketContextCache.has(cacheKey)){
+    const cached=marketContextCache.get(cacheKey);
+    marketContextCache.delete(cacheKey);
+    marketContextCache.set(cacheKey,cached);
+    return context.run(cached,handler);
+  }
   const requests=names.length?[{method:'get_prices',args:[names,asOf,PRICE_TYPES.RAW_CLOSE],kwargs:{dataset:'auto'}},
-    ...histories.map(ticker=>({method:'get_price_history',args:[ticker,'1900-01-01',asOf,PRICE_TYPES.RAW_CLOSE],kwargs:{dataset:'auto'}}))]:[];
+    ...histories.map(ticker=>({method:'get_price_history',args:[ticker,historyStart,asOf,PRICE_TYPES.RAW_CLOSE],kwargs:{dataset:'auto'}}))]:[];
   const results=requests.length?await readBatch(requests):[];
   if(names.length&&!results[0]?.ok)throw new FactDataError(results[0]?.error?.code??'local_data_unavailable','local_data_unavailable');
   if(generation!==await getGeneration())throw new FactDataError('local_snapshot_changed','local_snapshot_changed');
@@ -38,7 +49,14 @@ export async function withCanonicalMarket(tickers,asOf,handler,{
   // Failed/unavailable reads and corrected quotes cannot reuse a ready cache,
   // even when the model SQLite data_version has not changed.
   const version=createHash('sha256').update(JSON.stringify([generation,asOf,[...quotes],[...history]])).digest('hex');
-  return context.run({asOf,quotes,history,version,generation},handler);
+  const snapshot={asOf,quotes,history,version,generation};
+  if(useCache){
+    if(marketContextCache.size>=MAX_MARKET_CONTEXT_CACHE){
+      marketContextCache.delete(marketContextCache.keys().next().value);
+    }
+    marketContextCache.set(cacheKey,snapshot);
+  }
+  return context.run(snapshot,handler);
 }
 
 export function marketQuotes(tickers,asOf) {

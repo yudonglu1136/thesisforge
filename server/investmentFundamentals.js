@@ -2,7 +2,7 @@ import { finite, isoDate } from './investmentMath.js';
 import { sourceNode, tickerKey } from './investmentSource.js';
 import { dataReleaseId } from './dataReleaseContext.js';
 import { opportunityQuality } from './investmentQuality.js';
-import { buildOpportunities } from './investmentOpportunities.js';
+import { buildGuruHoldingsMatrix } from './investmentOpportunities.js';
 import { investmentCurrentQuotes,preferInvestmentQuote } from './investmentPrices.js';
 import { marketFactsVersion } from './investmentMarketContext.js';
 
@@ -156,7 +156,7 @@ export function buildFundamentals(source,asOf) {
 // ticker in a bounded extract is not proof that no manager owned it.
 export function fundamentalGuruQuarter(source,ticker,asOf,quarter=null) {
   ticker=tickerKey(ticker);
-  const r=buildOpportunities(source,asOf,quarter);
+  const r=buildGuruHoldingsMatrix(source,asOf,quarter);
   const stock=r.rows.find(row=>row.ticker===ticker);
   return {version:'fundamental-guru-quarter-v1',ticker,asOf,reportDate:r.reportDate,
     quarters:r.quarters,coverage:r.coverage,managers:stock?.managers??[],

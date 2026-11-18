@@ -176,22 +176,38 @@ export class InvestmentSource {
   }
   discovery(asOf) {
     isoDate(asOf);
-    const generation=this.db.prepare('PRAGMA data_version').get().data_version;
-    if(generation!==this.discoveryGeneration){this.discoveryCache.clear();this.discoveryGeneration=generation;}
+    const generation=this.db.prepare('PRAGMA data_version').get().data_version+':'+this.db.prepare('SELECT total_changes() n').get().n;
+    if(generation!==this.discoveryGeneration){
+      this.discoveryCache.clear();
+      this.discoveryModelRows=null;
+      this.discoveryGeneration=generation;
+    }
     if(this.discoveryCache.has(asOf))return structuredClone(this.discoveryCache.get(asOf));
-    // Bounded scalar SQL extraction avoids loading all transcript/snapshot blobs.
-    const rows=this.db.prepare(`WITH ranked AS (SELECT ticker,fiscal_period,as_of_date,input_json,
-      ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY as_of_date DESC,model_version DESC) n
-      FROM valuation_pit_model_runs WHERE as_of_date<=? AND financial_available_at<=as_of_date
-      AND (guidance_max_observed_at IS NULL OR guidance_max_observed_at<=as_of_date))
-      SELECT ticker, fiscal_period, as_of_date,
-      json_extract(input_json,'$.financial.revenue_growth_pct') growth,
-      json_extract(input_json,'$.valuationSemantics.scoreInputs') score
-      FROM ranked WHERE n=1 ORDER BY ticker`).all(asOf);
+    if(!this.discoveryModelRows){
+      const rawRows=this.db.prepare(`SELECT ticker,fiscal_period,as_of_date,financial_available_at,guidance_max_observed_at,
+        json_extract(input_json,'$.financial.revenue_growth_pct') growth,
+        json_extract(input_json,'$.valuationSemantics.scoreInputs') score
+        FROM valuation_pit_model_runs
+        WHERE financial_available_at<=as_of_date
+        ORDER BY ticker,as_of_date DESC,model_version DESC,rowid DESC`).all();
+      this.discoveryModelRows=rawRows.map(r=>({
+        ticker:r.ticker,
+        period:r.fiscal_period,
+        availableAt:r.as_of_date,
+        guidanceMax:r.guidance_max_observed_at,
+        growth:r.growth,
+        route:valuationModelRoute(JSON.parse(r.score??'{}')),
+      }));
+    }
     const seen=new Set(); const eligible=[];
-    for(const r of rows) {if(seen.has(r.ticker))continue;seen.add(r.ticker);
-      const route=valuationModelRoute(JSON.parse(r.score??'{}'));
-      if(['operating_company','multi_method_growth','revenue_stage'].includes(route)&&finite(r.growth)&&r.growth>=15) eligible.push({ticker:r.ticker,period:r.fiscal_period,availableAt:r.as_of_date,revenueGrowth:r.growth/100});}
+    for(const r of this.discoveryModelRows) {
+      if(seen.has(r.ticker))continue;
+      if(r.availableAt>asOf||(r.guidanceMax&&r.guidanceMax>asOf))continue;
+      seen.add(r.ticker);
+      if(['operating_company','multi_method_growth','revenue_stage'].includes(r.route)&&finite(r.growth)&&r.growth>=15){
+        eligible.push({ticker:r.ticker,period:r.period,availableAt:r.availableAt,revenueGrowth:r.growth/100});
+      }
+    }
     const result=eligible.sort((a,b)=>compare(a.ticker,b.ticker));
     if(this.discoveryCache.size>=8)this.discoveryCache.delete(this.discoveryCache.keys().next().value);
     this.discoveryCache.set(asOf,result);
@@ -235,18 +251,39 @@ export class InvestmentSource {
     return (p?.history??[]).filter(r=>r.filingDate && r.filingDate<=asOf && r.reportDate<=r.filingDate).sort((a,b)=>compare(a.filingDate,b.filingDate)||compare(a.accessionNumber,b.accessionNumber));
   }
   guruEvidence(ticker,asOf) {
-    const result=[];
-    for(const g of this.guruCatalog()) {
-      const h=this.guruHistory(g.id,asOf); const latest=h.at(-1); if(!latest)continue;
-      const holding=latest.topHoldings?.find(x=>x.ticker===ticker && String(x.id).endsWith('-COMMON'));
-      const activity=latest.largestChanges?.find(x=>x.ticker===ticker && String(x.id).endsWith('-COMMON'));
-      if(!holding&&!activity)continue;
-      result.push({guruId:g.id,name:g.name,chineseName:g.chineseName??null,reportDate:latest.reportDate,availableAt:latest.filingDate,accession:latest.accessionNumber,
-        sourceUrl:'https://www.sec.gov/edgar/search/#/q='+encodeURIComponent(latest.accessionNumber),
-        ticker,shares:holding?.shares??activity?.shares??null,previousShares:activity?.prevShares??null,
-        rawReportedChangeShares:activity?.changeShares??null,weight:holding?.pctPortfolio??null,
-        action:activity?.action??'reported_holding',comparisonStatus:'corporate_action_unverified',coverage:'top_holdings_and_reported_largest_changes_only'});
+    const generation=this.db.prepare('PRAGMA data_version').get().data_version+':'+this.db.prepare('SELECT total_changes() n').get().n;
+    if(generation!==this.guruEvidenceGeneration||!this.guruEvidenceByAsOf){
+      this.guruEvidenceByAsOf=new Map();
+      this.guruEvidenceGeneration=generation;
     }
-    return result;
+    let byTicker=this.guruEvidenceByAsOf.get(asOf);
+    if(!byTicker){
+      byTicker=new Map();
+      for(const g of this.guruCatalog()) {
+        const h=this.guruHistory(g.id,asOf); const latest=h.at(-1); if(!latest)continue;
+        const holdingMap=new Map();
+        for(const x of latest.topHoldings??[]){
+          if(x.ticker&&String(x.id).endsWith('-COMMON')&&!holdingMap.has(x.ticker))holdingMap.set(x.ticker,x);
+        }
+        const activityMap=new Map();
+        for(const x of latest.largestChanges??[]){
+          if(x.ticker&&String(x.id).endsWith('-COMMON')&&!activityMap.has(x.ticker))activityMap.set(x.ticker,x);
+        }
+        const tickers=new Set([...holdingMap.keys(),...activityMap.keys()]);
+        for(const sym of tickers){
+          const holding=holdingMap.get(sym), activity=activityMap.get(sym);
+          let list=byTicker.get(sym);
+          if(!list){list=[];byTicker.set(sym,list);}
+          list.push({guruId:g.id,name:g.name,chineseName:g.chineseName??null,reportDate:latest.reportDate,availableAt:latest.filingDate,accession:latest.accessionNumber,
+            sourceUrl:'https://www.sec.gov/edgar/search/#/q='+encodeURIComponent(latest.accessionNumber),
+            ticker:sym,shares:holding?.shares??activity?.shares??null,previousShares:activity?.prevShares??null,
+            rawReportedChangeShares:activity?.changeShares??null,weight:holding?.pctPortfolio??null,
+            action:activity?.action??'reported_holding',comparisonStatus:'corporate_action_unverified',coverage:'top_holdings_and_reported_largest_changes_only'});
+        }
+      }
+      if(this.guruEvidenceByAsOf.size>=8)this.guruEvidenceByAsOf.delete(this.guruEvidenceByAsOf.keys().next().value);
+      this.guruEvidenceByAsOf.set(asOf,byTicker);
+    }
+    return structuredClone(byTicker.get(ticker)??[]);
   }
 }

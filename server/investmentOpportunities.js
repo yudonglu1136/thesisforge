@@ -314,10 +314,12 @@ export function opportunityOwnership(books) {
 // opportunities route used to make first paint wait for every PIT valuation,
 // quality factor and price history (roughly 40x the actual ownership work on
 // the production snapshot).
+const matrixCaches = new WeakMap();
+
 export function buildGuruHoldingsMatrix(source,asOf,reportDate=null) {
-  const generation=source.db.prepare('PRAGMA data_version').get().data_version+':'+(dataReleaseId()??'legacy')+':'+(marketFactsVersion()??'stored');
-  let cache=readCaches.get(source);
-  if(!cache||cache.generation!==generation){cache={generation,rows:new Map()};readCaches.set(source,cache);}
+  const generation=`${source.db.prepare('PRAGMA data_version').get().data_version}:${source.db.prepare('SELECT total_changes() n').get().n}:${dataReleaseId()??'legacy'}`;
+  let cache=matrixCaches.get(source);
+  if(!cache||cache.generation!==generation){cache={generation,rows:new Map()};matrixCaches.set(source,cache);}
   const key=`guru-matrix:${asOf}:${reportDate??''}`;
   if(cache.rows.has(key))return structuredClone(cache.rows.get(key));
   const data=opportunityBooks(source,asOf,reportDate), byTicker=opportunityOwnership(data.books);
@@ -386,29 +388,48 @@ export function buildOpportunities(source,asOf,reportDate=null) {
   cache.rows.set(key,result);return structuredClone(result);
 }
 
+const timelineCaches = new WeakMap();
+
 export function opportunityTimeline(source,ticker,asOf) {
   ticker=tickerKey(ticker);isoDate(asOf);
-  const events=[];
-  const included=new Set(gurus.filter(g=>g.type==='manager13f').map(g=>g.id));
-  for(const g of source.guruCatalog().filter(g=>included.has(g.id)))for(const f of source.guruHistory(g.id,asOf)) {
-    const h=[...(f.topHoldings??[]),...(f.largestChanges??[])].find(h=>common(h)&&h.ticker===ticker);
-    if(!h)continue;
-    events.push({id:`${g.id}:${f.accessionNumber}`,guruId:g.id,name:g.name,date:f.filingDate,reportDate:f.reportDate,
-      accession:f.accessionNumber,shares:scalar(h.shares),weight:scalar(h.pctPortfolio),action:h.action??'reported_holding'});
+  const generation=`${source.db.prepare('PRAGMA data_version').get().data_version}:${source.db.prepare('SELECT total_changes() n').get().n}:${dataReleaseId()??'legacy'}`;
+  let cache=timelineCaches.get(source);
+  if(!cache||cache.generation!==generation){cache={generation,timelines:new Map()};timelineCaches.set(source,cache);}
+  let byTicker=cache.timelines.get(asOf);
+  if(!byTicker){
+    byTicker=new Map();
+    const included=new Set(gurus.filter(g=>g.type==='manager13f').map(g=>g.id));
+    for(const g of source.guruCatalog().filter(g=>included.has(g.id)))for(const f of source.guruHistory(g.id,asOf)) {
+      const seenInFiling=new Set();
+      for(const h of [...(f.topHoldings??[]),...(f.largestChanges??[])]) {
+        if(!common(h)||!h.ticker||seenInFiling.has(h.ticker))continue;
+        seenInFiling.add(h.ticker);
+        let list=byTicker.get(h.ticker);
+        if(!list){list=[];byTicker.set(h.ticker,list);}
+        list.push({id:`${g.id}:${f.accessionNumber}`,guruId:g.id,name:g.name,date:f.filingDate,reportDate:f.reportDate,
+          accession:f.accessionNumber,shares:scalar(h.shares),weight:scalar(h.pctPortfolio),action:h.action??'reported_holding'});
+      }
+    }
+    for(const list of byTicker.values()){
+      list.sort((a,b)=>b.date.localeCompare(a.date)||a.name.localeCompare(b.name));
+    }
+    if(cache.timelines.size>=8)cache.timelines.delete(cache.timelines.keys().next().value);
+    cache.timelines.set(asOf,byTicker);
   }
-  return events.sort((a,b)=>b.date.localeCompare(a.date)||a.name.localeCompare(b.name));
+  return structuredClone(byTicker.get(ticker)??[]);
 }
 
 export function watchBaseline(source,ticker,asOf,reportDate) {
-  const row=buildOpportunities(source,asOf,reportDate).rows.find(r=>r.ticker===ticker);
+  const row=buildGuruHoldingsMatrix(source,asOf,reportDate).rows.find(r=>r.ticker===ticker);
   let c=null,unavailable=null;
   try {c=source.company(ticker,asOf);}catch(e){
     if(e.status!==422&&e.message!=='no_pit_research_at_date')throw e;
     unavailable=e.message;
   }
+  const rowPrice=!c&&row?opportunityPrices(source,[ticker],asOf).get(ticker)??null:null;
   const factQuote=!row&&!c?investmentCurrentQuotes(source,[ticker],asOf).get(ticker)??null:null;
   assert(row||c||factQuote,'unknown_watch_company');
-  return {asOf,reportDate:reportDate??row?.managers[0]?.reportDate??null,price:c?.snapshot.price??row?.price??factQuote??null,
+  return {asOf,reportDate:reportDate??row?.managers[0]?.reportDate??null,price:c?.snapshot.price??rowPrice??factQuote??null,
     published:c?.published??null,snapshot:c?.snapshot??null,unavailable,evidence:row?.managers??[],
     // Frozen platform model is not a user-endorsed assumption set.
     baselineKind:c||row?'published_model_observation_not_personal_scenario':'fact_os_quote_observation'};

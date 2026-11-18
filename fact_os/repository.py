@@ -827,22 +827,49 @@ class FactRepository:
         key = (self.generation, str(as_of))
         if key in cache:
             return cache[key]
-        rows = self._rows('''WITH latest AS (
-              SELECT f.ticker,f.reportperiod,f.date,ROW_NUMBER() OVER(
-                PARTITION BY f.ticker ORDER BY f.reportperiod DESC,f.date DESC,f.lastupdated DESC
-              ) rank
-              FROM fundamentals f
-              WHERE f.dimension='ARQ' AND f.date<=? AND f.reportperiod<=f.date AND f.reportperiod<=?
-            ), master AS (
-              SELECT ticker,name,permaticker
-              FROM _master WHERE "table" IN ('SF1','stocks')
-              QUALIFY ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY
-                CASE WHEN "table"='SF1' THEN 0 ELSE 1 END,lastupdated DESC,permaticker DESC)=1
-            )
-            SELECT latest.ticker,master.name,latest.reportperiod,latest.date,master.permaticker
-            FROM latest JOIN master USING(ticker) WHERE latest.rank=1
-            ORDER BY latest.ticker''',
-            [as_of, as_of])
+        index_path = self._fundamental_research_index_path()
+        if index_path:
+            if not getattr(self, '_arq_index_ready', False):
+                self.db.execute(
+                    f"CREATE TEMP TABLE IF NOT EXISTS _arq_index AS "
+                    f"SELECT ticker, reportperiod, date, lastupdated FROM read_parquet({_literal(index_path)}) "
+                    "WHERE dimension='ARQ'"
+                )
+                self._arq_index_ready = True
+            rows = self._rows('''WITH latest AS (
+                  SELECT ticker,
+                    max_by(reportperiod, (reportperiod, date, lastupdated)) AS reportperiod,
+                    max_by(date, (reportperiod, date, lastupdated)) AS date
+                  FROM _arq_index
+                  WHERE date<=? AND reportperiod<=?
+                  GROUP BY ticker
+                ), master AS (
+                  SELECT ticker,name,permaticker
+                  FROM _master WHERE "table" IN ('SF1','stocks')
+                  QUALIFY ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY
+                    CASE WHEN "table"='SF1' THEN 0 ELSE 1 END,lastupdated DESC,permaticker DESC)=1
+                )
+                SELECT latest.ticker,master.name,latest.reportperiod,latest.date,master.permaticker
+                FROM latest JOIN master USING(ticker)
+                ORDER BY latest.ticker''',
+                [as_of, as_of])
+        else:
+            rows = self._rows('''WITH latest AS (
+                  SELECT f.ticker,f.reportperiod,f.date,ROW_NUMBER() OVER(
+                    PARTITION BY f.ticker ORDER BY f.reportperiod DESC,f.date DESC,f.lastupdated DESC
+                  ) rank
+                  FROM fundamentals f
+                  WHERE f.dimension='ARQ' AND f.date<=? AND f.reportperiod<=f.date AND f.reportperiod<=?
+                ), master AS (
+                  SELECT ticker,name,permaticker
+                  FROM _master WHERE "table" IN ('SF1','stocks')
+                  QUALIFY ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY
+                    CASE WHEN "table"='SF1' THEN 0 ELSE 1 END,lastupdated DESC,permaticker DESC)=1
+                )
+                SELECT latest.ticker,master.name,latest.reportperiod,latest.date,master.permaticker
+                FROM latest JOIN master USING(ticker) WHERE latest.rank=1
+                ORDER BY latest.ticker''',
+                [as_of, as_of])
         items = []
         for row in rows:
             ticker = row['ticker']

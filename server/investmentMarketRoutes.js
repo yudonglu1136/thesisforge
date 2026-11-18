@@ -23,11 +23,26 @@ export async function withInvestmentMarketFacts(service,owner,request,route,hand
     if(!await getGeneration())return handler();
   }
   const body=request.body??{},params=request.params??{};
-  let tickers=[],historyTickers=[];
+  let tickers=[],historyTickers=[],historyStart='1900-01-01';
   const asOf=service.date(request.query?.asOf??body.asOf);
   if(['/research/:ticker','/opportunities/:ticker','/fundamentals/:ticker'].includes(route)) {
     tickers=[params.ticker];
-    if(route==='/research/:ticker')historyTickers=tickers;
+    if(route==='/research/:ticker'){
+      historyTickers=tickers;
+      if(!service.marketReadOptions&&typeof service.source?.db?.prepare==='function'){
+        try{
+          const sym=String(params.ticker??'').trim().toUpperCase();
+          const hasModel=service.source.db.prepare(
+            'SELECT 1 FROM valuation_pit_model_runs WHERE ticker=? AND as_of_date<=? AND financial_available_at<=as_of_date LIMIT 1'
+          ).get(sym,asOf);
+          if(hasModel){
+            const d=new Date(`${asOf}T00:00:00Z`);
+            d.setUTCDate(d.getUTCDate()-1650);
+            historyStart=d.toISOString().slice(0,10);
+          }
+        }catch{}
+      }
+    }
   } else if(['/calculate','/valuation-drafts','/scenarios','/decisions','/watches'].includes(route)) {
     tickers=[body.ticker];
   } else if(['/reviews','/review/:id'].includes(route)) {
@@ -41,5 +56,5 @@ export async function withInvestmentMarketFacts(service,owner,request,route,hand
     tickers=opportunityBooks(service.source,asOf,request.query?.quarter??null).books
       .flatMap(b=>[...b.holdings,...b.activity].map(h=>h.ticker));
   } else return handler();
-  return withCanonicalMarket(tickers,asOf,handler,{historyTickers,...service.marketReadOptions});
+  return withCanonicalMarket(tickers,asOf,handler,{historyTickers,historyStart,...service.marketReadOptions});
 }

@@ -35,7 +35,7 @@ function entriesFor(source) {
       entries.push({g,p,trades:auditPayload(p)});
     } catch { unavailable.push({id:g.id, name:g.name, reason:'simulation_unavailable_or_unreconciled'}); }
   }
-  const result = {generation, entries, unavailable, views: new Map()};
+  const result = {generation, entries, unavailable, views: new Map(), spanViews: new Map()};
   cache.set(source,result); return result;
 }
 
@@ -61,11 +61,19 @@ export function guruStudy(source, asOf, period='common') {
     dates=dates.filter(d=>d>=target);
   }
   if(dates.length<3) return base;
-  const start=dates[0], commonDates=new Set(dates);
-  const rows=entries.map(e=>measure(e,start,end,commonDates));
-  // Every benchmark is independently rebased over exactly the same sessions.
-  assert(rows.every(r=>Math.abs(r.benchmarkCagr-rows[0].benchmarkCagr)<1e-7 && Math.abs(r.benchmarkSharpe-rows[0].benchmarkSharpe)<1e-7),'benchmark_not_comparable');
-  const result={...base,rows,range:{start,end,years:rows[0].years,observations:dates.length,availableStart},benchmark:{ticker:'SPY',cagr:rows[0].benchmarkCagr,sharpe:rows[0].benchmarkSharpe}};
+  const start=dates[0];
+  const spanKey = `${start}:${end}:${period}:${entries.map(e=>e.g.id).join(',')}`;
+  let computed = stored.spanViews.get(spanKey);
+  if (!computed) {
+    const commonDates=new Set(dates);
+    const rows=entries.map(e=>measure(e,start,end,commonDates));
+    // Every benchmark is independently rebased over exactly the same sessions.
+    assert(rows.every(r=>Math.abs(r.benchmarkCagr-rows[0].benchmarkCagr)<1e-7 && Math.abs(r.benchmarkSharpe-rows[0].benchmarkSharpe)<1e-7),'benchmark_not_comparable');
+    computed = {rows,range:{start,end,years:rows[0].years,observations:dates.length,availableStart},benchmark:{ticker:'SPY',cagr:rows[0].benchmarkCagr,sharpe:rows[0].benchmarkSharpe}};
+    if(stored.spanViews.size>=16)stored.spanViews.delete(stored.spanViews.keys().next().value);
+    stored.spanViews.set(spanKey,computed);
+  }
+  const result={...base,...computed};
   if(stored.views.size>=16)stored.views.delete(stored.views.keys().next().value);
   stored.views.set(key,result);return result;
 }

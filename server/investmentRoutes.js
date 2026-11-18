@@ -10,7 +10,7 @@ import { registerStrategyLabRoutes } from './strategyLabRoutes.js';
 import { registerHedgeRoutes } from './hedgeRoutes.js';
 import { createAiInsightsService } from './investmentAiInsights.js';
 import { fundamentalGuruQuarter } from './investmentFundamentals.js';
-import { buildGuruHoldingsMatrix, buildOpportunities, opportunityCompanySummary, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
+import { buildGuruHoldingsMatrix, buildOpportunities, opportunityCompanySummary, opportunityTimeline, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
 import { institutional13fInsights, institutional13fInsightDetail, institutional13fSectorDetail } from './institutional13fInsights.js';
 import { buildFundamentalDiscovery, analyzeFundamentalUniverse, FUNDAMENTAL_RESEARCH_VERSION, FUNDAMENTAL_METHOD_VERSION,
   buildFundamentalCompany, saveFundamentalObservation,
@@ -234,17 +234,29 @@ export function enableInvestmentPreview(app) {
     withActiveDataRelease(()=>{
       try{
         const today=service.date();
+        const prevDateObj=new Date(`${today}T00:00:00Z`);
+        prevDateObj.setUTCDate(prevDateObj.getUTCDate()-1);
+        const yesterday=prevDateObj.toISOString().slice(0,10);
         source.discovery(today);
         source.guruCatalog();
-        researchCompanies(source,today).catch(()=>{});
+        try{source.guruEvidence('NVDA',today);source.guruEvidence('NVDA',yesterday);}catch{}
+        try{buildGuruHoldingsMatrix(source,today);buildGuruHoldingsMatrix(source,yesterday);}catch{}
+        try{opportunityTimeline(source,'NVDA',today);}catch{}
+        try{guruStudy(source,today);}catch{}
+        try{loadInvestorStyleDashboard({asOf:today,summaryOnly:true});}catch{}
+        try{loadBreakoutPullbackDashboard({asOf:today,mode:'flagship'});}catch{}
+        researchCompanies(source,today).then(()=>researchCompanies(source,yesterday)).catch(()=>{});
       }catch{}
-      try{return publicAnalysisArtifacts.warmCurrent(service.date()).catch(()=>{});}catch{}
+      let warmPromise=Promise.resolve();
+      try{warmPromise=publicAnalysisArtifacts.warmCurrent(service.date()).catch(()=>{});}catch{}
+      if (source.canonicalMarket) {
+        warmPromise.finally(()=>{
+          try{
+            withResearchDataRelease(()=>buildFundamentalCompany(source,'NVDA',service.date()).catch(()=>{}));
+          }catch{}
+        });
+      }
     });
-    if (source.canonicalMarket) {
-      try{
-        withResearchDataRelease(()=>buildFundamentalCompany(source,'NVDA',service.date()).catch(()=>{}));
-      }catch{}
-    }
   });
   return service;
 }
