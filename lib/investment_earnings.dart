@@ -217,13 +217,25 @@ class _EarningsResearchPanelState extends State<EarningsResearchPanel> {
                 ? '量化证据 · ${g['targetYear'] ?? '目标年份未明确'} · 不自动作为模型输入'
                 : '仅供研究参考 · 不是已采纳的公司预测',
           ),
+        if (context.isChinese && text(g['excerptZh']).isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: caption(
+              'Original English transcript excerpt',
+              '以下为英文电话会原话摘录',
+            ),
+          ),
         SelectableText(
-          text(g['excerpt']),
+          text(
+            context.isChinese && text(g['excerptZh']).isNotEmpty
+                ? g['excerptZh']
+                : g['excerpt'],
+          ),
           style: TextStyle(color: p.text, fontSize: 14, height: 1.6),
         ),
         const SizedBox(height: 8),
         Text(
-          '${text(g['speaker'])} · ${text(g['observedAt'])}',
+          '${localizeExecutiveSpeaker(text(g['speaker']), context.language)} · ${text(g['observedAt'])}',
           style: TextStyle(color: p.muted, fontSize: 12),
         ),
         if (Uri.tryParse(text(g['url']))?.scheme == 'https')

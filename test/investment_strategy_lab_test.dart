@@ -749,8 +749,11 @@ void main() {
         expect(t.takeException(), isNull);
         final stateFinder = find.byType(StrategyLabPanel);
         // Use visible controls for interaction; no test fixture injection into state.
-        await tap(t, language == AppLanguage.en ? 'Choose Gurus' : '选择大佬');
-        await tap(t, 'Fixture Manager');
+        await tap(t, language == AppLanguage.en ? 'Choose Gurus' : '选择大师');
+        await tap(
+          t,
+          language == AppLanguage.en ? 'Fixture Manager' : '比尔·阿克曼',
+        );
         await tap(t, language == AppLanguage.en ? 'Done (1)' : '完成（1）');
         expect(
           find.descendant(of: stateFinder, matching: find.byType(GuruAvatar)),

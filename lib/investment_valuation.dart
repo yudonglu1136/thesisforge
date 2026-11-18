@@ -145,7 +145,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                                       : '${pct(m['historicalPercentile'])} (n=${m['sampleCount']})',
                                   m['historicalPercentile'] == null
                                       ? '—'
-                                      : '${pct(m['historicalPercentile'])} (n=${m['sampleCount']})',
+                                      : '${pct(m['historicalPercentile'])}（样本 ${m['sampleCount']} 期）',
                                   size: 12,
                                 ),
                                 const SizedBox(height: 8),
@@ -662,7 +662,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                     valuationSummary(
                       pct(gap),
                       'Value / price − 1',
-                      '价值 / 价格 − 1',
+                      '较现价折溢价',
                       color: gap == null
                           ? p.muted
                           : gap >= 0
@@ -1096,7 +1096,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                 for (final years in [5, 10])
                   ChoiceChip(
                     key: ValueKey('forecast-horizon-$years'),
-                    label: Text('${years}Y'),
+                    label: Text(w('${years}Y', '$years 年期')),
                     selected: forecastHorizon == years,
                     onSelected: (_) => setForecastHorizon(years),
                   ),
@@ -1708,7 +1708,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                           ? pct(values[i].$3)
                           : nullableNumber(values[i].$3) == null
                           ? '—'
-                          : '${formatNumber(number(values[i].$3))}m',
+                          : '${formatNumber(number(values[i].$3))}${w('m', ' 百万')}',
                       style: TextStyle(
                         color: p.accent,
                         fontSize: 18,
@@ -1812,7 +1812,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
                       ]
                     : [
                         ('growth', 'Solve growth', '反推增长'),
-                        ('terminal_margin', 'Solve final margin', '反推末期率'),
+                        ('terminal_margin', 'Solve final margin', '反推末期 FCFE 利润率'),
                       ])
               ChoiceChip(
                 label: Text(w(v.$2, v.$3)),
@@ -1836,7 +1836,10 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
         ),
         const SizedBox(height: 16),
         dataTable(
-          [w('Component', '组成'), '${text(company?['currency'])} m'],
+          [
+            w('Component', '组成'),
+            '${text(company?['currency'])} ${w('m', '百万')}',
+          ],
           [
             [
               personalDcfMethod == 'operating_fcff'
@@ -1897,7 +1900,7 @@ extension _PersonalValuation on _InvestmentWorkspaceState {
         dataTable(
           [
             personalDcfMethod == 'operating_fcff' ? 'WACC' : 'Ke',
-            'g',
+            w('g', '永续增速 g'),
             w('Value / share', '每股价值'),
           ],
           [

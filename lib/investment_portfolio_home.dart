@@ -32,7 +32,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                     color: p.accent,
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    letterSpacing: .6,
+                    letterSpacing: context.isChinese ? 0 : .6,
                   ),
                 ),
               ),
@@ -441,7 +441,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                                     : w('% of account NAV · ', '占账户净值 · ')
                               : '') +
                           (realized['status'] == 'ready'
-                              ? '${realized['fromDate']} → ${realized['toDate']} · FIFO'
+                              ? '${realized['fromDate']} → ${realized['toDate']} · ${w('FIFO', '先进先出 (FIFO)')}'
                               : number(g['cash']) < 0
                               ? w('Negative cash is borrowing', '负现金表示借款')
                               : w('From your broker report', '来自券商报告')),
@@ -973,7 +973,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
       builder: (dialogContext) => AlertDialog(
         backgroundColor: p.panel,
         title: Text(
-          '${position['ticker']} · ${w('Guru filing evidence', '大佬持仓证据')}',
+          '${position['ticker']} · ${w('Guru filing evidence', '投资大师持仓证据')}',
         ),
         content: SizedBox(
           width: 620,
@@ -1177,7 +1177,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                         width: 112,
                         child: Align(
                           alignment: Alignment.centerRight,
-                          child: copy('Gurus', '大佬持仓', size: 11),
+                          child: copy('Gurus', '大师持仓', size: 11),
                         ),
                       ),
                     ],
@@ -1751,11 +1751,14 @@ class _PortfolioAccountValueChartState
           ChoiceChip(
             key: ValueKey('history-range-$r'),
             label: Text(
-              r == 'All'
-                  ? w('All', '全部')
-                  : r == 'YTD'
-                  ? w('YTD', '今年至今')
-                  : r,
+              switch (r) {
+                'All' => w('All', '全部'),
+                'YTD' => w('YTD', '今年至今'),
+                '1M' => w('1M', '近 1 月'),
+                '3M' => w('3M', '近 3 月'),
+                '1Y' => w('1Y', '近 1 年'),
+                _ => r,
+              },
             ),
             selected: range == r,
             onSelected: (_) => setState(() {
@@ -1793,7 +1796,7 @@ class _PortfolioAccountValueChartState
           Text(
             w(
               'YTD ${end.year} · through ${all.last['date']}',
-              '${end.year} 年初至今 · 截至 ${all.last['date']}',
+              '${end.year} 今年至今 · 截至 ${all.last['date']}',
             ),
             style: TextStyle(color: p.muted, fontSize: 12),
           ),

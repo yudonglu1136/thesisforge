@@ -112,7 +112,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
         children: [
           for (final tab in [
             ('gurus', '13F Insights', '13F 洞察'),
-            ('managers', 'Guru', 'Guru'),
+            ('managers', 'Guru', '大师持仓'),
             ('fundamentals', 'Fundamentals', '基本面'),
             ('aiinsights', 'AI Insights', 'AI 洞察'),
           ])
@@ -148,7 +148,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
           'We could not load the disclosures. Your saved research is unchanged.',
           '暂时无法加载披露，已保存研究不受影响。',
         ),
-        button('Retry disclosures', '重试披露', () => unawaited(loadDiscovery())),
+        button('Retry disclosures', '重新加载披露数据', () => unawaited(loadDiscovery())),
       ]),
     if (discoveryTab == 'gurus' && selectedGuru == null)
       ...institutional13fInsightsPage(),
@@ -221,9 +221,9 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
         .where(
           (g) =>
               (!followedOnly || g['followed'] == true) &&
-              '${g['name']} ${g['entityName']}'.toLowerCase().contains(
-                discoveryQuery.toLowerCase(),
-              ),
+              '${g['name']} ${guruDisplayName(g, AppLanguage.zh)} ${g['entityName']}'
+                  .toLowerCase()
+                  .contains(discoveryQuery.toLowerCase()),
         )
         .toList();
     return [
@@ -299,7 +299,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              text(guru['name']),
+              guruDisplayName(guru, context.language),
               style: TextStyle(
                 color: p.text,
                 fontSize: 19,

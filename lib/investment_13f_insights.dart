@@ -219,16 +219,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     final thousands = nullableNumber(value);
     if (thousands == null) return '—';
     final shares = thousands * 1000;
-    if (shares.abs() >= 1000000000) {
-      return '${(shares / 1000000000).toStringAsFixed(2)}B';
-    }
-    if (shares.abs() >= 1000000) {
-      return '${(shares / 1000000).toStringAsFixed(1)}M';
-    }
-    if (shares.abs() >= 1000) {
-      return '${(shares / 1000).toStringAsFixed(1)}K';
-    }
-    return _integer(shares);
+    return formatCompactSharesLocalized(shares, context.language);
   }
 
   List<Map<String, dynamic>> _insightStocks() {
@@ -772,11 +763,11 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
               ),
               const SizedBox(width: 10),
               SizedBox(
-                width: 66,
+                width: 82,
                 child: Text(
                   change == null
                       ? '—'
-                      : '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)} pp',
+                      : '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)} ${w('pp', '个百分点')}',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: change == null || change >= 0
@@ -887,7 +878,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     final parsed = nullableNumber(value);
     return parsed == null
         ? '—'
-        : '${parsed >= 0 ? '+' : ''}${parsed.toStringAsFixed(2)} pp';
+        : '${parsed >= 0 ? '+' : ''}${parsed.toStringAsFixed(2)} ${w('pp', '个百分点')}';
   }
 
   Widget _activeMoveLabel(
@@ -2105,8 +2096,8 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                   color: p.text,
                 ),
                 label(
-                  '${w('Portfolio weight', '组合权重')} ${pct(change['previousWeight'])} → ${pct(change['currentWeight'])}${weightBps == null ? '' : ' (${weightBps >= 0 ? '+' : ''}${weightBps.toStringAsFixed(1)} bp)'}',
-                  '${w('Portfolio weight', '组合权重')} ${pct(change['previousWeight'])} → ${pct(change['currentWeight'])}${weightBps == null ? '' : ' (${weightBps >= 0 ? '+' : ''}${weightBps.toStringAsFixed(1)} bp)'}',
+                  '${w('Portfolio weight', '组合权重')} ${pct(change['previousWeight'])} → ${pct(change['currentWeight'])}${weightBps == null ? '' : ' (${weightBps >= 0 ? '+' : ''}${weightBps.toStringAsFixed(1)} ${w('bp', '基点')})'}',
+                  '${w('Portfolio weight', '组合权重')} ${pct(change['previousWeight'])} → ${pct(change['currentWeight'])}${weightBps == null ? '' : ' (${weightBps >= 0 ? '+' : ''}${weightBps.toStringAsFixed(1)} ${w('bp', '基点')})'}',
                   size: 10,
                   color: p.text,
                 ),

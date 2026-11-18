@@ -530,7 +530,12 @@ void main() {
           ),
           findsOneWidget,
         );
-        expect(find.text('Normalized earnings'), findsWidgets);
+        expect(
+          find.text(
+            lang == AppLanguage.en ? 'Normalized earnings' : '标准化盈利能力估值',
+          ),
+          findsWidgets,
+        );
         for (final key in ['income', 'balance', 'cash']) {
           expect(
             find.byKey(ValueKey('research-statement-$key')),
@@ -609,8 +614,14 @@ void main() {
           find.byKey(const ValueKey('research-financial-tooltip')),
           findsOneWidget,
         );
-        expect(find.text('YoY +26.7%'), findsWidgets);
-        expect(find.text('QoQ +5.6%'), findsWidgets);
+        expect(
+          find.text(lang == AppLanguage.en ? 'YoY +26.7%' : '同比 +26.7%'),
+          findsWidgets,
+        );
+        expect(
+          find.text(lang == AppLanguage.en ? 'QoQ +5.6%' : '环比 +5.6%'),
+          findsWidgets,
+        );
         expect(t.takeException(), isNull);
         await t.ensureVisible(
           find.byKey(const ValueKey('research-statement-balance')),

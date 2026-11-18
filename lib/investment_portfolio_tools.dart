@@ -227,10 +227,19 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
               DropdownButtonFormField<String>(
                 initialValue: broker,
                 decoration: InputDecoration(labelText: w('Broker', '券商')),
-                items: const [
-                  DropdownMenuItem(value: 'ibkr_flex', child: Text('Interactive Brokers')),
-                  DropdownMenuItem(value: 'questrade', child: Text('Questrade')),
-                  DropdownMenuItem(value: 'futu', child: Text('Futu / moomoo')),
+                items: [
+                  DropdownMenuItem(
+                    value: 'ibkr_flex',
+                    child: Text(w('Interactive Brokers', '盈透证券 (IBKR)')),
+                  ),
+                  const DropdownMenuItem(
+                    value: 'questrade',
+                    child: Text('Questrade'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'futu',
+                    child: Text(w('Futu / moomoo', '富途 / moomoo')),
+                  ),
                 ],
                 onChanged: saving ? null : (value) {
                   if (value == null) return;
@@ -267,8 +276,11 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
                 obscureText: true,
                 enableSuggestions: false,
                 autocorrect: false,
-                decoration: const InputDecoration(
-                  labelText: 'IBKR Flex Web Service Token',
+                decoration: InputDecoration(
+                  labelText: w(
+                    'IBKR Flex Web Service Token',
+                    'IBKR Flex 网络服务令牌 (Token)',
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -278,7 +290,7 @@ class _PortfolioIbkrSetupState extends State<PortfolioIbkrSetup> {
                 decoration: InputDecoration(
                   labelText: w(
                     'Activity Flex Query ID',
-                    'Activity Flex Query ID',
+                    '活动报表查询 ID (Activity Flex Query ID)',
                   ),
                 ),
               ),
@@ -390,7 +402,9 @@ class _PortfolioReadOnlyBrokerState extends State<PortfolioReadOnlyBroker> {
     final accounts = (snapshot['accounts'] as List? ?? []).map(asMap).toList();
     return AlertDialog(
       backgroundColor: widget.palette.panel,
-      title: Text('${q ? 'Questrade' : 'Futu / moomoo'} · ${w('Read only', '只读')}'),
+      title: Text(
+        '${q ? 'Questrade' : w('Futu / moomoo', '富途 / moomoo')} · ${w('Read only', '只读连接')}',
+      ),
       content: SizedBox(width: 720, child: SingleChildScrollView(child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min,
         children: [
@@ -443,7 +457,16 @@ class _PortfolioReadOnlyBrokerState extends State<PortfolioReadOnlyBroker> {
           if (accounts.isEmpty) Text(w('No account snapshot received yet.', '尚未收到账户快照。')),
           for (final account in accounts) ...[
             const Divider(),
-            Text('${account['name']} · ${account['id']}'),
+            Text(
+              '${switch ('${account['name'] ?? ''}') {
+                'Margin' => w('Margin', '保证金账户'),
+                'Cash' => w('Cash', '现金账户'),
+                'TFSA' => w('TFSA', '免税储蓄账户 (TFSA)'),
+                'RRSP' => w('RRSP', '注册退休储蓄账户 (RRSP)'),
+                'FHSA' => w('FHSA', '首套房储蓄账户 (FHSA)'),
+                _ => '${account['name']}',
+              }} · ${account['id']}',
+            ),
             for (final b in (account['balances'] as List? ?? []).map(asMap))
               Text('${b['currency']} · ${w('Equity', '净资产')} ${value(b['totalEquity'])} · ${w('Cash', '现金')} ${value(b['cash'])}'),
             Text(w('Position values use the broker currency; — means the source did not specify it.', '持仓金额使用券商币种；— 表示来源未提供币种。')),

@@ -184,10 +184,10 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
                   ? 'See what every covered 13F institution started, added, reduced or exited — not just the Guru shortlist.'
                   : 'See what managers changed, what the business delivered, and what the price assumes.',
               study
-                  ? '选几位经理，比较投资风格，再深入研究他们的持仓。'
+                  ? '选几位投资大师，比较投资风格，再深入研究他们的持仓。'
                   : opportunities
-                  ? '覆盖全部 13F 申报机构的新建仓、加仓、减仓和清仓，不再局限于 Guru 名单。'
-                  : '看大佬仓位怎么变、公司交出什么业绩，再检验价格隐含的预期。',
+                  ? '覆盖全部 13F 申报机构的新建仓、加仓、减仓和清仓，不再局限于精选大师名单。'
+                  : '看大师仓位怎么变、公司交出什么业绩，再检验价格隐含的预期。',
               size: compact ? 12 : 14,
             ),
           ],
@@ -1192,7 +1192,9 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
             child: Text(
               discoverCollection == 'all'
                   ? w('THE EVIDENCE', '研究证据')
-                  : discoverLensAction(discoverCollection).toUpperCase(),
+                  : (context.isEnglish
+                        ? discoverLensAction(discoverCollection).toUpperCase()
+                        : discoverLensAction(discoverCollection)),
               style: TextStyle(
                 fontSize: 11,
                 color: discoverLensColor(discoverCollection),

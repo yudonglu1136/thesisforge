@@ -50,8 +50,8 @@ class _HedgeLabPanelState extends State<HedgeLabPanel> {
   String name(String id) => switch (id) {
     'unhedged' => w('QQQ · no hedge', 'QQQ · 不对冲'),
     'protective_put' => w('Protective Put', '保护性看跌期权'),
-    'collar' => w('Collar', '领口对冲'),
-    'put_spread' => w('Long Put Spread', '看跌借记价差'),
+    'collar' => w('Collar', '领口期权对冲'),
+    'put_spread' => w('Long Put Spread', '熊市看跌价差'),
     _ => id,
   };
   Color color(String id) => switch (id) {
@@ -670,7 +670,12 @@ class _HedgeLabPanelState extends State<HedgeLabPanel> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SelectableText(text(l['ticker']), style: s(13, true)),
+                      SelectableText(
+                        context.isChinese
+                            ? '${formatOccOptionContract(text(l['ticker']), language: AppLanguage.zh)}（${text(l['ticker'])}）'
+                            : text(l['ticker']),
+                        style: s(13, true),
+                      ),
                       Text(
                         '${number(l['side']) > 0 ? w('Buy', '买入') : w('Sell', '卖出')} ${l['contracts']} × 100 · ${w('close', '收盘价')} ${money(l['mark'])} · ${w('assumed fill', '假设成交价')} ${money(l['assumedFill'])}',
                         style: s(12, false, p.muted),
@@ -787,7 +792,7 @@ class _HedgeLabPanelState extends State<HedgeLabPanel> {
           const SizedBox(height: 12),
           note(
             'Daily-close scenario · no bid/ask entitlement · not live trading. Hedge dates are independent of the stock-research cutoff.',
-            '收盘价情景实验 · 暂无 bid/ask 权限 · 非实时交易。对冲日期独立于股票研究截止日。',
+            '收盘价情景实验 · 暂无买卖盘口（Bid/Ask）行情权限 · 非实时交易。对冲日期独立于股票研究截止日。',
             color: const Color(0xFFE5B859),
           ),
         ]),

@@ -151,6 +151,8 @@ class _PortfolioAllocationChartState extends State<PortfolioAllocationChart> {
             ? incomeTypes || s['ticker'] == 'CASH'
                   ? category(s['category'])
                   : text(s['ticker'])
+            : sectors
+            ? context.ui(text(s['name']))
             : text(s['name']),
     };
     String details(Map<String, dynamic> s) => [
@@ -729,7 +731,7 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
     Divider(color: p.border),
     valueRow(
       'Borrowing / NAV',
-      '负现金 / 净资产',
+      '融资负债 / 净资产',
       percent(asMap(g['leverage'])['borrowingToNav']),
     ),
   ]);
@@ -915,7 +917,7 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
                 StockLogo(ticker: text(r['ticker']), palette: p, size: 26),
                 const SizedBox(width: 8),
                 SizedBox(
-                  width: 54,
+                  width: 68,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -957,7 +959,7 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
       const SizedBox(height: 14),
       copy(
         'Missing models are excluded, not valued at zero. Select a stock to inspect its valuation, financials and Guru activity.',
-        '缺失模型不纳入图中，不按零估值处理。点击股票查看估值、财务与大佬动向。',
+        '缺失模型不纳入图中，不按零估值处理。点击股票查看估值、财务与大师动向。',
         size: 11,
       ),
     ]);
@@ -1035,12 +1037,17 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
     if (match != null) {
       final under = match.group(1)!;
       final exp = '20${match.group(2)}-${match.group(3)}-${match.group(4)}';
-      final right = match.group(5) == 'C' ? 'Call' : 'Put';
+      final isCall = match.group(5) == 'C';
+      final right = context.isChinese
+          ? (isCall ? '看涨(Call)' : '看跌(Put)')
+          : (isCall ? 'Call' : 'Put');
       final strikeNum = (int.tryParse(match.group(6)!) ?? 0) / 1000.0;
       final strikeStr = strikeNum == strikeNum.roundToDouble()
           ? strikeNum.toInt().toString()
           : strikeNum.toStringAsFixed(2);
-      final side = number(row['quantity']) < 0 ? 'Short ' : 'Long ';
+      final side = context.isChinese
+          ? (number(row['quantity']) < 0 ? '卖出 ' : '买入 ')
+          : (number(row['quantity']) < 0 ? 'Short ' : 'Long ');
       return '$side$under · $exp · \$$strikeStr $right';
     }
     return text(row['name']);
@@ -1282,7 +1289,9 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
                 ),
                 visualDensity: VisualDensity.compact,
                 label: Text(
-                  text(acc['label'], 'Account ${acc['accountNumber']}'),
+                  context.ui(
+                    text(acc['label'], 'Account ${acc['accountNumber']}'),
+                  ),
                   style: const TextStyle(fontSize: 12),
                 ),
                 selected:
@@ -1518,7 +1527,10 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
         ),
         DataCell(
           Tooltip(
-            message: text(model['formula'], architecture),
+            message: localizeValuationFormula(
+              text(model['formula'], architecture),
+              context.language,
+            ),
             child: SizedBox(
               width: 180,
               child: _portfolioStackedValue(
@@ -1648,7 +1660,9 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
                       Text(text(row['ticker']), style: heading(15)),
                       Text(
                         [
-                          text(row['name']),
+                          _optionUnderlyingTicker(row) != null
+                              ? _formatOptionBadge(row)
+                              : text(row['name']),
                           if (!hideAmounts && number(row['accountCount']) > 1)
                             '${row['accountCount']} ${w('accounts', '个账户')}',
                         ].join(' · '),

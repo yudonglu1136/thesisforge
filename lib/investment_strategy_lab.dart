@@ -286,7 +286,7 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
     final captured = Map<String, dynamic>.from(rules);
     final controller = TextEditingController(
       text: equityMix == null
-          ? w('My Guru + CTA strategy', '我的大佬 + CTA 策略')
+          ? w('My Guru + CTA strategy', '我的大师 + CTA 策略')
           : w('My equity mix', '我的混合组合'),
     );
     final name = await showDialog<String>(
@@ -481,7 +481,7 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
                     children: [
                       Expanded(
                         child: Text(
-                          w('Choose your Gurus', '选择大佬'),
+                          w('Choose your Gurus', '选择大师'),
                           style: style(22, true),
                         ),
                       ),
@@ -501,7 +501,7 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
                     onChanged: (v) => refresh(() => query = v.toLowerCase()),
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.search),
-                      labelText: w('Search manager', '搜索经理'),
+                      labelText: w('Search manager', '搜索投资大师'),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -509,7 +509,12 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
                     child: ListView(
                       children: [
                         for (final g in asList(catalog?['managers']).where(
-                          (g) => text(g['name']).toLowerCase().contains(query),
+                          (g) =>
+                              text(g['name']).toLowerCase().contains(query) ||
+                              guruDisplayName(
+                                g,
+                                context.language,
+                              ).toLowerCase().contains(query),
                         ))
                           CheckboxListTile(
                             value: managers.contains(text(g['id'])),
@@ -519,7 +524,7 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
                               size: 40,
                             ),
                             title: Text(
-                              text(g['name']),
+                              guruDisplayName(g, context.language),
                               style: style(14, true),
                             ),
                             subtitle: Text(
@@ -600,7 +605,7 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
         step('1', 'Build your equity mix', '配置股票组合', Icons.tune),
         copy(
           'Guru strategies, quality factors or index ETFs. One source or your own mix.',
-          '大佬策略、质量四因子、指数 ETF，可单选或自由搭配。',
+          '大师策略、质量四因子、指数 ETF，可单选或自由搭配。',
         ),
         const SizedBox(height: 16),
         for (final key in strategyEquityComponents.where(
@@ -654,7 +659,10 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
                       palette: p,
                       size: 24,
                     ),
-                    label: Text(text(g['name']), style: style(11)),
+                    label: Text(
+                      guruDisplayName(g, context.language),
+                      style: style(11),
+                    ),
                   ),
               ],
             ),
@@ -664,7 +672,7 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
         if (equityMix == null)
           button(
             'Choose Gurus',
-            '选择大佬',
+            '选择大师',
             chooseManager,
             icon: Icons.people_outline,
           ),
@@ -679,8 +687,8 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
               ? 'Guru Top $topN · disclosure rebalances. Configure a mix for quarterly rebalancing.'
               : '${number(asMap(equityMix?['weights'])['guru']) > 0 ? 'Guru Top $topN per manager · ' : ''}Quarterly rebalancing · fully invested within each source.',
           equityMix == null
-              ? '大佬 Top $topN · 披露后调仓。配置混合组合后按季度统一调仓。'
-              : '${number(asMap(equityMix?['weights'])['guru']) > 0 ? '每位大佬 Top $topN · ' : ''}季度统一调仓 · 各策略内部满仓。',
+              ? '大师前 $topN 大重仓 · 披露后调仓。配置混合组合后按季度统一调仓。'
+              : '${number(asMap(equityMix?['weights'])['guru']) > 0 ? '每位大师前 $topN 大重仓 · ' : ''}季度统一调仓 · 各策略内部满仓。',
           size: 11,
         ),
       ]),
@@ -768,7 +776,7 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
     if (equityMix != null)
       copy(
         'Applies to Guru and factor stocks only. QQQ, SPY and SCHD keep their allocation; no individual-company DCF filter.',
-        '仅过滤大佬及四因子个股，QQQ、SPY、SCHD 保留既定比例，不套用个股 DCF。',
+        '仅过滤大师及四因子个股，QQQ、SPY、SCHD 保留既定比例，不套用个股 DCF。',
         size: 11,
       ),
     copy(
@@ -1526,12 +1534,12 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
         if (asMap(result?['rules'])['equityMix'] != null)
           copy(
             'Equity mix: initial allocation and calendar-quarter rebalances use the prior session’s public information. Guru Top N survivors share the Guru budget. Factor stocks pass all enabled thresholds, then valuation, then rank by the configured enabled metric to select Top N. ROIC uses the lowest observed year for ranking; when enabled it also breaks ranking ties, followed by ticker. Disabled factors do not screen or rank. Every ROIC observation year requires valid public data even when fewer years need to clear its threshold. Each source keeps its configured budget; overlaps merge. Index ETFs are not company-valued. The stored operating-company universe is not survivorship-free, and model histories are retrospective reconstructions.',
-            '混合组合：期初建仓及日历季度调仓只用前一交易日已公开信息。大佬 Top N 过滤后等分大佬份额。因子策略先过全部启用门槛，再过滤估值，按所选已启用指标排序取 Top N。ROIC 排序取观察期最低年值，启用时也用于同分排序，最后按代码排序。关闭的因子不参与筛选或排序。即使只要求部分年份过 ROIC 门槛，整个观察期仍须有已公开完整数据。各来源保留既定份额，重复持仓合并，指数 ETF 不做个股估值。当前公司范围并非无幸存者偏差，历史模型为回顾式重建。',
+            '混合组合：期初建仓及日历季度调仓只用前一交易日已公开信息。大师前 N 名过滤后等分大师份额。因子策略先过全部启用门槛，再过滤估值，按所选已启用指标排序取前 N 名。ROIC 排序取观察期最低年值，启用时也用于同分排序，最后按代码排序。关闭的因子不参与筛选或排序。即使只要求部分年份过 ROIC 门槛，整个观察期仍须有已公开完整数据。各来源保留既定份额，重复持仓合并，指数 ETF 不做个股估值。当前公司范围并非无幸存者偏差，历史模型为回顾式重建。',
           ),
         if (asMap(result?['rules'])['equityMix'] == null)
           copy(
             'Top 1–10 from original quarterly common-long disclosures. Rebalance at the following market close; later amendments and confidential supplements are not applied. Selection and valuation use prior-session information. Weights drift between quarterly disclosures.',
-            '从季度原始普通股多头披露提取 Top 1–10，在下一个交易日收盘调仓；不应用后来的修订或保密持仓补充。选股与估值采用前一交易日信息，权重在季度披露之间随市场漂移。',
+            '从季度原始普通股多头披露提取前 1–10 名，在下一个交易日收盘调仓；不应用后来的修订或保密持仓补充。选股与估值采用前一交易日信息，权重在季度披露之间随市场漂移。',
           ),
         const SizedBox(height: 10),
         if (asMap(result?['rules'])['equityMix'] == null)
@@ -1540,7 +1548,7 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
                 ? 'Eligible-subset strategy, not strict Guru replication: unavailable manager books and non-executable stocks are excluded. Missing, non-USD, stale or expensive models are excluded when the filter is on. Remaining stocks are equally weighted, with the CTA allocation unchanged. No lower-ranked or future-known replacements. Historical coverage limits can bias results.'
                 : 'Valuation uses the published fair value, which may blend methods. Missing, non-USD, incomparable or >550-day-old model inputs stay cash. Overpriced exclusions follow your cash/redistribution rule; no lower-ranked replacement stocks.',
             resultFullyInvested
-                ? '这是可买子集策略，不是严格 Guru 复制：跳过不可用的经理申报及无法执行的股票。开启估值筛选后，缺失、非美元、过旧或高估模型均剔除。剩余股票等权满仓，CTA 配比不变。不补入排名更低或未来才知道的股票。历史数据覆盖限制可能造成偏差。'
+                ? '这是可买子集策略，不是严格大师持仓复制：跳过不可用的大师申报及无法执行的股票。开启估值筛选后，缺失、非美元、过旧或高估模型均剔除。剩余股票等权满仓，CTA 配比不变。不补入排名更低或未来才知道的股票。历史数据覆盖限制可能造成偏差。'
                 : '估值使用平台公允价值，可能混合多种方法。缺失、非美元、不可比或超过 550 天的模型输入对应仓位留现金。高估剔除按你选择的现金/再分配规则执行，不补入排名更低的股票。',
           ),
         const SizedBox(height: 10),
@@ -1754,7 +1762,10 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
                   for (final b in [0.0, 5.0, 10.0, 25.0, 50.0])
                     DropdownMenuItem(
                       value: b,
-                      child: Text('${b.toInt()} bps', style: style(12)),
+                      child: Text(
+                        w('${b.toInt()} bps', '${b.toInt()} 基点'),
+                        style: style(12),
+                      ),
                     ),
                 ],
                 onChanged: (v) => setState(() => cost = v!),
@@ -1778,7 +1789,7 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
             padding: const EdgeInsets.only(top: 10),
             child: copy(
               'Configure an equity mix or choose a Guru to start. No strategy runs or saves until you ask.',
-              '先选择大佬，点击后才运行回测或保存规则。',
+              '请先配置股票组合或选择投资大师，点击后才运行回测或保存规则。',
             ),
           ),
       ],
@@ -1925,7 +1936,7 @@ class _StrategyLabPanelState extends State<StrategyLabPanel> {
               children: [
                 copy(
                   '${result!['summary']['rebalances']} ${asMap(result!['rules'])['equityMix'] != null ? 'quarterly rebalances' : 'disclosure rebalances'}',
-                  '${result!['summary']['rebalances']} 次披露调仓',
+                  '${result!['summary']['rebalances']} 次${asMap(result!['rules'])['equityMix'] != null ? '季度' : '披露'}调仓',
                 ),
                 copy(
                   'Minimum execution coverage ${pct(result!['summary']['minExecutionCoverage'])}',

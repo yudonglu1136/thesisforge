@@ -81,7 +81,7 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
   String get end => text(widget.curve[last]['date']);
   String name(String id) => id == 'quality_rank'
       ? w('Quality Rank · Top 10', '质量排名 · 前十')
-      : w('Ackman · quantitative proxy', 'Ackman · 量化代理');
+      : w('Ackman · quantitative proxy', '阿克曼 · 量化代理');
   Color color(String id) =>
       id == 'quality_rank' ? p.accent : const Color(0xff7eabfa);
   String pct(dynamic v) => nullableNumber(v) == null
@@ -217,9 +217,9 @@ class _RuleRangeAnalysisState extends State<RuleRangeAnalysisPanel> {
     final labels = [
       w('Return · after costs', '回报率 · 扣费后'),
       w('Annualized return', '年化回报'),
-      w('Sharpe · Rf = 0%', 'Sharpe · 无风险 0%'),
-      w('Vol · annualized', 'Vol · 年化波动'),
-      w('MDD', 'MDD · 最大回撤'),
+      w('Sharpe · Rf = 0%', '夏普比率 · 无风险 0%'),
+      w('Vol · annualized', '年化波动率'),
+      w('MDD', '最大回撤'),
       w('Stock win rate', '个股区间胜率'),
       w('Payoff · avg win / avg loss', '盈亏比 · 平均盈 / 平均亏'),
       w('Winning / losing / flat', '盈利 / 亏损 / 持平'),

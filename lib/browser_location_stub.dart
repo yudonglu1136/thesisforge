@@ -17,6 +17,13 @@ bool writePortfolioPrivacyPreference(bool hidden) {
   return true;
 }
 
+String? _appLanguagePreference;
+String? readAppLanguagePreference() => _appLanguagePreference;
+bool writeAppLanguagePreference(String code) {
+  _appLanguagePreference = code;
+  return true;
+}
+
 String readBrowserPath() => Uri.base.path;
 
 void replaceBrowserQuery(

@@ -41,7 +41,8 @@ export function storedStrategyCatalog(file,asOf) {
     .filter(m=>enabledManager13fGurus.some(g=>g.id===m.id));
   const freshnessRow=db.prepare("SELECT content FROM source_documents WHERE kind='market_refresh_summary' ORDER BY stored_at DESC LIMIT 1").get();
   const freshness=freshnessRow?JSON.parse(freshnessRow.content):null;
-  return {version:'strategy-lab-catalog-v1',asOf,managers:managers.map(m=>({...m,avatar:`/guru-avatars/${m.id}.png`,topNLimit:10,publicProxy:m.id==='renaissance-technologies'})),topNLimit:10,
+  const configuredZh=new Map(enabledManager13fGurus.map(g=>[g.id,g.chineseName??null]));
+  return {version:'strategy-lab-catalog-v1',asOf,managers:managers.map(m=>({...m,chineseName:configuredZh.get(m.id)??null,avatar:`/guru-avatars/${m.id}.png`,topNLimit:10,publicProxy:m.id==='renaissance-technologies'})),topNLimit:10,
    etfs:db.prepare(`SELECT e.symbol ticker,1 available,e.first_date first,e.last_date last,s.source_label source,s.return_basis returnBasis
      FROM etf_catalog e JOIN price_series s ON s.id=e.series_id ORDER BY e.symbol`).all().map(e=>({...e,available:true})),
    storage:{schemaVersion:1,generation:meta.manifest_hash,cutoff:meta.cutoff,freshness,issues:db.prepare('SELECT * FROM coverage_summary').all()}};

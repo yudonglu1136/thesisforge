@@ -313,7 +313,7 @@ void main() {
         expect(t.takeException(), isNull);
         await tap(
           t,
-          find.text(lang == AppLanguage.en ? 'Compare with Gurus' : '对比大佬'),
+          find.text(lang == AppLanguage.en ? 'Compare with Gurus' : '对比大师'),
         );
         expect(t.takeException(), isNull);
       });

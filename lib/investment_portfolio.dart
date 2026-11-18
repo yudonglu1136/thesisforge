@@ -542,7 +542,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
               icon: const Icon(Icons.settings_outlined, size: 17),
               label: Text(
                 data?['status'] == 'preview_account'
-                    ? w('Open online Portfolio', '打开线上 Portfolio')
+                    ? w('Open online Portfolio', '打开线上实盘组合')
                     : data?['source'] == 'local_owner_broker_snapshot'
                     ? w('Open live account', '打开线上账户')
                     : w('Manage IBKR', '管理 IBKR'),
@@ -577,9 +577,21 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
               icon: Icon(Icons.refresh_rounded, color: p.accent),
             ),
             for (final provider in ['questrade', 'futu'])
-              OutlinedButton(onPressed: () => showDialog<void>(context: context,
-                builder: (_) => PortfolioReadOnlyBroker(api: widget.api, palette: p, provider: provider)),
-                child: Text(provider == 'questrade' ? 'Questrade' : 'Futu / moomoo')),
+              OutlinedButton(
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => PortfolioReadOnlyBroker(
+                    api: widget.api,
+                    palette: p,
+                    provider: provider,
+                  ),
+                ),
+                child: Text(
+                  provider == 'questrade'
+                      ? 'Questrade'
+                      : w('Futu / moomoo', '富途 / moomoo'),
+                ),
+              ),
             privacyToggle(),
           ],
         ),
@@ -685,7 +697,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
                 ('holdings', 'Holdings & value', '持仓与估值'),
                 ('stress', 'Valuation & stress', '估值与压力测试'),
                 ('risk', 'Risk & SPY', '风险与 SPY'),
-                ('gurus', 'Compare with Gurus', '对比大佬'),
+                ('gurus', 'Compare with Gurus', '对比大师'),
               ])
                 ChoiceChip(
                   key: ValueKey('portfolio-tab-${t.$1}'),
@@ -706,7 +718,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
             const SizedBox(height: 8),
             copy(
               'Holdings are ready. Loading risk, Guru comparisons and trailing dividends in the background…',
-              '持仓已经载入，正在后台补充风险、大佬比较和过去12个月股息…',
+              '持仓已经载入，正在后台补充风险、投资大师对比和过去12个月股息…',
               size: 11,
             ),
             const SizedBox(height: 12),
@@ -763,7 +775,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
               const SizedBox(height: 10),
               copy(
                 'Guru comparisons use each disclosed common-stock long book. Cash, options, shorts and private investments are outside that comparison. Different report dates and partial coverage are shown.',
-                '大佬比较基于已披露普通股多头。现金、期权、空头和私募资产不在比较范围；披露日期和不完整覆盖均单独标注。',
+                '投资大师对比基于已披露普通股多头。现金、期权、空头和私募资产不在比较范围；披露日期和不完整覆盖均单独标注。',
               ),
               const SizedBox(height: 10),
               copy(
@@ -941,7 +953,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
           '总敞口 / 净资产 · 市值口径',
           '${decimal(l['grossToNav'])}×',
         ),
-        valueRow('Borrowing / NAV', '负现金 / 净资产', percent(l['borrowingToNav'])),
+        valueRow('Borrowing / NAV', '融资负债 / 净资产', percent(l['borrowingToNav'])),
         valueRow(
           'Short option positions',
           '卖出期权持仓数',
@@ -1052,7 +1064,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
                 rows: [
                   for (final x in [
                     ('beta', 'Beta', 'Beta', false),
-                    ('sharpe', 'Sharpe', 'Sharpe', false),
+                    ('sharpe', 'Sharpe', '夏普比率', false),
                     ('volatility', 'Annual volatility', '年化波动率', true),
                     ('maxDrawdown', 'Max drawdown', '最大回撤', true),
                     ('totalReturn', 'Simulated total return', '模拟累计收益', true),
@@ -1190,7 +1202,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
           '差异 · 百分点',
           nullableNumber(v['difference']) == null
               ? '—'
-              : '${(number(v['difference']) * 100).toStringAsFixed(1)} pp',
+              : '${(number(v['difference']) * 100).toStringAsFixed(1)} ${w('pp', '个百分点')}',
         ),
         copy(
           'Both price and model cutoff: ${b['priceDate']}. Your weights: reported holdings ${asListDates(g['reportDates'])}. SPY weights: ${b['weightDate']}. Positive means model value exceeds price; it is not an expected return.',
@@ -1216,7 +1228,13 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
             for (final x in asList(v['excluded']))
               copy(
                 '${x['ticker']} · ${x['reason']}',
-                '${x['ticker']} · ${x['reason'] == 'no_dated_model' ? '缺少已发布模型' : '日期价格或币种未核验'}',
+                '${x['ticker']} · ${switch (x['reason']) {
+                  'no_dated_model' => '缺少已发布估值模型',
+                  'currency_mismatch' => '计价币种与估值模型不一致',
+                  'price_unavailable' => '截止日缺少可比收盘价',
+                  'outside_model_scope' => '不属于普通股估值模型覆盖范围',
+                  _ => '日期价格或币种待核验',
+                }}',
               ),
             TextButton(
               onPressed: () => openBrowserPath(text(b['source'])),
@@ -1501,7 +1519,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
             allocationRow(
               text(r['name']) == 'Unclassified'
                   ? w('Unclassified', '未分类')
-                  : text(r['name']),
+                  : context.ui(text(r['name'])),
               number(r['weight']),
             ),
           if (asList(g['sectors']).isEmpty)
@@ -1510,7 +1528,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
       ),
       const SizedBox(height: 18),
       panel([
-        title('Your portfolio, next to the Gurus', '你的组合，与大佬放在一起看'),
+        title('Your portfolio, next to the Gurus', '你的组合，与投资大师对照看'),
         const SizedBox(height: 8),
         copy(
           'Shared positions are a starting point for research, not an endorsement.',
@@ -1530,7 +1548,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
               palette: p,
               size: 38,
             ),
-            title: Text(text(c['name']), style: heading(16)),
+            title: Text(guruDisplayName(c, context.language), style: heading(16)),
             subtitle: copy(
               '${c['sharedCount']} shared holdings · Weight overlap ${percent(c['overlap'])}',
               '${c['sharedCount']} 项共同持仓 · 权重重合 ${percent(c['overlap'])}',
@@ -1606,7 +1624,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
             ),
             const SizedBox(width: 12),
             SizedBox(
-              width: 52,
+              width: 60,
               child: Text(
                 percent(weight),
                 textAlign: TextAlign.right,
@@ -1677,7 +1695,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
               children: [
                 smallMetric(
                   'Units',
-                  '股数',
+                  '持仓数量',
                   hideAmounts
                       ? '••••'
                       : nullableNumber(r['quantity']) == null
@@ -1775,7 +1793,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
         comparisons.where((r) => r['guruId'] == manager).firstOrNull ??
         comparisons.firstOrNull;
     return panel([
-      title('How different is your portfolio?', '你的组合与大佬有何不同？'),
+      title('How different is your portfolio?', '你的组合与投资大师有何不同？'),
       const SizedBox(height: 10),
       copy(
         'Compare long-equity allocations, then investigate the differences. This is not a copy-trading signal.',
@@ -1783,7 +1801,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
       ),
       const SizedBox(height: 18),
       if (selected == null)
-        copy('No Guru filings available at this cutoff.', '截止日没有可用的大佬披露。')
+        copy('No Guru filings available at this cutoff.', '截止日没有可用的投资大师披露。')
       else ...[
         DropdownButtonFormField<String>(
           key: ValueKey(
@@ -1810,7 +1828,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          text(r['name']),
+                          guruDisplayName(r, context.language),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -1863,7 +1881,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
         const SizedBox(height: 12),
         copy(
           'Your denominator: priced long equities. Guru denominator: the complete disclosed common-long book. Missing historical holdings are not assumed absent.',
-          '你的分母：可计价股票多头。大佬分母：完整披露普通股多头。不会把历史摘录里未出现的股票视为零持仓。',
+          '你的分母：可计价股票多头。大师分母：完整披露普通股多头。不会把历史摘录里未出现的股票视为零持仓。',
           size: 12,
         ),
         const SizedBox(height: 18),
@@ -1876,10 +1894,10 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
                 const SizedBox(width: 10),
                 Expanded(child: Text(text(r['ticker']), style: heading(15))),
                 Expanded(
-                  child: smallMetric('Yours', '你', percent(r['userWeight'])),
+                  child: smallMetric('Yours', '我的权重', percent(r['userWeight'])),
                 ),
                 Expanded(
-                  child: smallMetric('Guru', '大佬', percent(r['guruWeight'])),
+                  child: smallMetric('Guru', '大师权重', percent(r['guruWeight'])),
                 ),
                 Expanded(
                   child: smallMetric(
@@ -1910,7 +1928,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
               text(selected['guruId']),
               text(selected['accession']),
             ),
-            child: Text(w('Open manager’s quarterly holdings →', '查看大佬季度持仓 →')),
+            child: Text(w('Open manager’s quarterly holdings →', '查看大师季度持仓 →')),
           ),
         ),
       ],

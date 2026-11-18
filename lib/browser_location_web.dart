@@ -45,6 +45,27 @@ bool writePortfolioPrivacyPreference(bool hidden) {
   }
 }
 
+String? readAppLanguagePreference() {
+  try {
+    return web.window.localStorage.getItem('thesisforge.language.v1');
+  } catch (_) {
+    return null;
+  }
+}
+
+bool writeAppLanguagePreference(String code) {
+  try {
+    web.window.localStorage.setItem('thesisforge.language.v1', code);
+    web.document.documentElement?.setAttribute(
+      'lang',
+      code == 'zh' ? 'zh-CN' : 'en',
+    );
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 Map<String, String> readBrowserQuery() => Uri.base.queryParameters;
 
 String readBrowserPath() => Uri.base.path;

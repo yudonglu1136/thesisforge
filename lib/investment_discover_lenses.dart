@@ -492,7 +492,7 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          text(m['name']),
+                          guruDisplayName(m, context.language),
                           style: TextStyle(
                             color: p.text,
                             fontSize: 13,
@@ -581,9 +581,9 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
         Row(
           children: [
             Expanded(child: label('Metric', '指标', size: 11)),
-            SizedBox(width: 61, child: label('Prior', '前值', size: 11)),
-            SizedBox(width: 66, child: label('Latest', '最新', size: 11)),
-            SizedBox(width: 67, child: label('Δ pp', 'Δ 百分点', size: 11)),
+            SizedBox(width: 70, child: label('Prior', '前值', size: 11)),
+            SizedBox(width: 70, child: label('Latest', '最新', size: 11)),
+            SizedBox(width: 72, child: label('Δ pp', 'Δ 百分点', size: 11)),
           ],
         ),
         for (final key in [
@@ -612,14 +612,14 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
                       ),
                     ),
                     SizedBox(
-                      width: 61,
+                      width: 70,
                       child: Text(
                         pct(prior),
                         style: TextStyle(color: p.muted, fontSize: 11),
                       ),
                     ),
                     SizedBox(
-                      width: 66,
+                      width: 70,
                       child: Text(
                         pct(now),
                         style: TextStyle(
@@ -630,7 +630,7 @@ extension _InvestmentDiscoverLenses on _InvestmentWorkspaceState {
                       ),
                     ),
                     SizedBox(
-                      width: 67,
+                      width: 72,
                       child: Text(
                         delta == null
                             ? '—'

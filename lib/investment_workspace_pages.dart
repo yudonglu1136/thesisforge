@@ -136,6 +136,12 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
         '发现 / AI 洞察 / $ticker / $asOf',
       );
     }
+    if (discoveryOrigin == '13f_insight' || discoveryOrigin == '13f_insights') {
+      source = w(
+        'Discover / 13F Insights / $ticker / $asOf',
+        '发现 / 13F 洞察 / $ticker / $asOf',
+      );
+    }
     if (opportunityReturnDate.isNotEmpty && ticker == opportunityTicker) {
       source = opportunityReturnPage == 'discover'
           ? '${w('Discover', '发现')} / ${discoverCollectionName(discoverCollection)} / $opportunityTicker / $asOf'
@@ -154,8 +160,11 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
       final g = asList(
         home?['gurus'],
       ).where((g) => g['id'] == entry['guruId']).firstOrNull;
-      final name = text(entry['name'], text(g?['name'], text(entry['guruId'])));
-      source = 'Discover / $name';
+      final name = guruDisplayName(
+        g ?? {...entry, 'id': entry['guruId']},
+        context.language,
+      );
+      source = '${w('Discover', '发现')} / $name';
       if (text(entry['reportDate']).isNotEmpty) {
         source += ' / ${entry['reportDate']}';
       }
@@ -487,7 +496,7 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
         if (asList(review?['guruChanges']).isNotEmpty)
           label(
             'The original discovery Guru reported a share-count change. Corporate-action comparability is unverified.',
-            '原始来源大佬的申报股数发生变化，公司行动可比性尚未验证。',
+            '原始来源大师的申报股数发生变化，公司行动可比性尚未验证。',
             color: p.secondary,
           ),
         ExpansionTile(
@@ -661,7 +670,7 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
           for (final t in [
             ('positions', 'Positions', '持仓'),
             ('journal', 'Decision journal', '决策记录'),
-            ('shadow', 'Guru comparison', '大佬对照'),
+            ('shadow', 'Guru comparison', '大师对照'),
           ])
             ChoiceChip(
               label: Text(w(t.$2, t.$3)),
@@ -749,7 +758,7 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
         ]),
       if (portfolioTab == 'shadow')
         card([
-          title('Your book vs Guru Shadow', '你的组合与大佬影子组合'),
+          title('Your book vs Guru Shadow', '你的组合与大师影子组合'),
           label(
             'Differences are research questions, not instructions to copy. Requires complete selected books in a common currency.',
             '差异是研究问题，不是跟单指令。需要完整且币种可比的选定组合。',
@@ -757,14 +766,14 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
           if (asList(book['overlap']).isEmpty)
             label(
               'No comparable pair of books yet. Configure your Guru selection in Strategies.',
-              '暂时没有可比较的两组持仓，请到策略中设置大佬选择。',
+              '暂时没有可比较的两组持仓，请到策略中设置大师选择。',
             ),
           if (asList(book['overlap']).isNotEmpty)
             dataTable(
               [
                 w('Stock', '股票'),
-                w('Yours', '你的权重'),
-                'Shadow',
+                w('Yours', '我的权重'),
+                w('Shadow', '影子权重'),
                 w('Difference', '偏差'),
               ],
               [
@@ -781,7 +790,7 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
             alignment: Alignment.centerLeft,
             child: button(
               'Configure Guru Shadow',
-              '配置大佬影子组合',
+              '配置大师影子组合',
               () => navigate('strategies'),
             ),
           ),
@@ -820,7 +829,7 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
       const SizedBox(height: 24),
       pageColumns(
         card([
-          title('Build a Guru Shadow selection', '建立大佬影子组合选股规则'),
+          title('Build a Guru Shadow selection', '建立大师影子组合选股规则'),
           label('1. Select up to 10 managers', '1. 选择最多 10 位经理'),
           const SizedBox(height: 12),
           Wrap(
@@ -834,7 +843,7 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
                     palette: p,
                     size: 24,
                   ),
-                  label: Text(text(g['name'])),
+                  label: Text(guruDisplayName(g, context.language)),
                   selected: strategyManagers.contains(text(g['id'])),
                   onSelected: (v) => updateUI(() {
                     if (!v) {
@@ -849,14 +858,14 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
           const SizedBox(height: 22),
           label(
             '2. Choose each manager’s top common-stock holdings',
-            '2. 选择每位经理普通股多头前几名',
+            '2. 选择每位投资大师普通股多头前几名',
           ),
           Wrap(
             spacing: 8,
             children: [
               for (final n in [1, 2, 3])
                 ChoiceChip(
-                  label: Text('Top $n'),
+                  label: Text(w('Top $n', '前 $n 大')),
                   selected: strategyTopN == n,
                   onSelected: (_) => updateUI(() => strategyTopN = n),
                 ),
@@ -922,17 +931,17 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
         title('Published-holdings preview', '已披露持仓预览'),
         label(
           'Active rule: Top ${asMap(shadow['rules'])['topN'] ?? '—'} · ${(asMap(shadow['rules'])['managers'] as List? ?? []).length} managers · $asOf',
-          '生效规则：Top ${asMap(shadow['rules'])['topN'] ?? '—'} · ${(asMap(shadow['rules'])['managers'] as List? ?? []).length} 位经理 · $asOf',
+          '生效规则：前 ${asMap(shadow['rules'])['topN'] ?? '—'} 大重仓 · ${(asMap(shadow['rules'])['managers'] as List? ?? []).length} 位投资大师 · $asOf',
         ),
         label(
           '${shadow['strategyVersionId'] == null ? 'Default preset (not your saved selection)' : 'Saved selection'}: ${(asMap(shadow['rules'])['managers'] as List? ?? []).join(', ')}',
-          '${shadow['strategyVersionId'] == null ? '默认预设（非你保存的选择）' : '已保存选择'}：${(asMap(shadow['rules'])['managers'] as List? ?? []).join(', ')}',
+          '${shadow['strategyVersionId'] == null ? '默认预设（非已保存选择）' : '已保存选择'}：${(asMap(shadow['rules'])['managers'] as List? ?? []).map((id) => guruIdToDisplayName('$id', asList(home?['gurus']), context.language)).join('、')}',
           size: 12,
         ),
         for (final i in asList(shadow['issues']))
           label(
             '${i['guruId']} · ${text(i['reason']).replaceAll('_', ' ')}',
-            '${i['guruId']} · 持仓身份或披露不完整',
+            '${guruIdToDisplayName(text(i['guruId']), asList(home?['gurus']), context.language)} · 持仓身份或披露不完整',
             color: p.secondary,
           ),
         if (asList(shadow['holdings']).isEmpty)

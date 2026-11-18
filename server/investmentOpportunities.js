@@ -296,7 +296,7 @@ export function opportunityOwnership(books) {
       const previousWeight=a?.action==='new'?0:
         finite(a?.previousValue)&&a.previousValue>=0&&finite(b.previousCommonLongValue)&&b.previousCommonLongValue>0
           ?a.previousValue/b.previousCommonLongValue:null;
-      perTicker.set(h.ticker,{guruId:b.guru.id,name:b.guru.name,avatar:b.guru.avatar,ticker:h.ticker,issuer:h.issuer,
+      perTicker.set(h.ticker,{guruId:b.guru.id,name:b.guru.name,chineseName:b.guru.chineseName??null,avatar:b.guru.avatar,ticker:h.ticker,issuer:h.issuer,
         claims:[id],shares:scalar(h.shares),value:scalar(h.value),weight:h.weight,previousWeight,
         changeShares:scalar(a?.changeShares),previousShares:scalar(a?.prevShares),action:a?.action??'reported_holding',
         comparisonStatus:a?.corporateActionAdjusted===true?'adjusted':'corporate_action_unverified',

@@ -276,18 +276,20 @@ class _GuruResearchDossierState extends State<GuruResearchDossier> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
-                      text(guru['name']),
+                      guruDisplayName(guru, context.language),
                       style: TextStyle(
                         color: p.text,
                         fontSize: 24,
                         fontWeight: FontWeight.w700,
-                        height: 1.15,
+                        height: 1.25,
                       ),
                     ),
-                    if (text(guru['chineseName']).isNotEmpty &&
-                        LanguageScope.of(context) == AppLanguage.zh)
+                    if (context.isChinese &&
+                        guruDisplayName(guru, AppLanguage.zh) !=
+                            text(guru['name']) &&
+                        text(guru['name']).isNotEmpty)
                       Text(
-                        '(${text(guru['chineseName'])})',
+                        '(${text(guru['name'])})',
                         style: TextStyle(
                           color: p.muted,
                           fontSize: 15,
@@ -302,8 +304,8 @@ class _GuruResearchDossierState extends State<GuruResearchDossier> {
                     text(guru['entityName']),
                     if (roleText.isNotEmpty &&
                         roleText != text(guru['entityName']))
-                      roleText,
-                    if (thesisTag.isNotEmpty) thesisTag,
+                      context.ui(roleText),
+                    if (thesisTag.isNotEmpty) context.ui(thesisTag),
                   ].where((s) => s.isNotEmpty).join(' · '),
                   style: TextStyle(color: p.muted, fontSize: 13),
                 ),
@@ -1632,7 +1634,7 @@ class _GuruResearchDossierState extends State<GuruResearchDossier> {
                   children: [
                     Flexible(
                       child: Text(
-                        text(sec['sector']),
+                        context.ui(text(sec['sector'])),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: p.text, fontSize: 11.5),
@@ -1873,7 +1875,8 @@ class _GuruResearchDossierState extends State<GuruResearchDossier> {
                   Text(
                     [
                       text(h['issuer']),
-                      if (text(h['sector']).isNotEmpty) text(h['sector']),
+                      if (text(h['sector']).isNotEmpty)
+                        context.ui(text(h['sector'])),
                       if (postRet != null)
                         '${w('Qtr', '披露后')} ${fmtPct(postRet, signed: true)}',
                     ].where((s) => s.isNotEmpty).join(' · '),
@@ -1980,12 +1983,12 @@ class _GuruResearchDossierState extends State<GuruResearchDossier> {
             children: [
               if (marketPrice != null)
                 Text(
-                  '${w('Price', '现价')} \$${marketPrice.toStringAsFixed(2)}',
+                  '${w('Price', '现价')} ${formatCurrencyValue(marketPrice, text(current?['currency'], 'USD'))}',
                   style: TextStyle(color: p.text, fontSize: 12),
                 ),
               if (fairValue != null)
                 Text(
-                  '${w('Model value', '模型价值')} \$${fairValue.toStringAsFixed(2)}',
+                  '${w('Model value', '模型价值')} ${formatCurrencyValue(fairValue, text(current?['currency'], 'USD'))}',
                   style: TextStyle(
                     color: p.accent,
                     fontSize: 12,

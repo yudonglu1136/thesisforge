@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -11,6 +12,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'browser_location.dart';
 
+part 'chinese_localization_helpers.dart';
 part 'stock_research.dart';
 part 'admin_login_activity.dart';
 part 'current_valuation_scenario.dart';
@@ -869,6 +871,7 @@ const _uiChinese = <String, String>{
 
 final _uiEnglish = <String, String>{
   for (final entry in _uiChinese.entries) entry.value: entry.key,
+  for (final entry in _extraUiChinese.entries) entry.value: entry.key,
 };
 
 String localizeUiText(AppLanguage language, String source) {
@@ -914,8 +917,43 @@ String localizeUiText(AppLanguage language, String source) {
     );
   }
   if (language == AppLanguage.en) return _uiEnglish[source] ?? source;
-  final exact = _uiChinese[source];
+  final exact = _uiChinese[source] ?? _extraUiChinese[source];
   if (exact != null) return exact;
+  final ibkrAccountMatch = RegExp(
+    r'^IBKR account (\d+)$',
+    caseSensitive: false,
+  ).firstMatch(source);
+  if (ibkrAccountMatch != null) return 'IBKR 账户 ${ibkrAccountMatch.group(1)}';
+  final numberedAccountMatch = RegExp(r'^Account (\S+)$').firstMatch(source);
+  if (numberedAccountMatch != null) {
+    return '账户 ${numberedAccountMatch.group(1)}';
+  }
+  final buySellMatch = RegExp(
+    r'^(\S+) buy / (\S+) sell$',
+  ).firstMatch(source);
+  if (buySellMatch != null) {
+    return '${buySellMatch.group(1)} 买入 / ${buySellMatch.group(2)} 卖出';
+  }
+  if (source.startsWith('Period end ')) {
+    return '期末 ${source.substring(11)}';
+  }
+  final quartersMatch = RegExp(r'^(\S+) quarters$').firstMatch(source);
+  if (quartersMatch != null) return '${quartersMatch.group(1)} 个季度';
+  final finRowsMatch = RegExp(r'^(\S+) financial rows$').firstMatch(source);
+  if (finRowsMatch != null) return '${finRowsMatch.group(1)} 期财报记录';
+  final transcriptMatch = RegExp(
+    r'^(\S+) transcript metrics$',
+  ).firstMatch(source);
+  if (transcriptMatch != null) return '${transcriptMatch.group(1)} 项电话会指标';
+  final guideMatch = RegExp(r'^(\S+) guide signals$').firstMatch(source);
+  if (guideMatch != null) return '${guideMatch.group(1)} 条指引信号';
+  final notesMatch = RegExp(r'^(\S+) notes$').firstMatch(source);
+  if (notesMatch != null) return '${notesMatch.group(1)} 条纪要';
+  final channelsMatch = RegExp(r'^(\S+) channels$').firstMatch(source);
+  if (channelsMatch != null) return '${channelsMatch.group(1)} 个频道';
+  final linkedMatch = RegExp(r'^(\S+) linked$').firstMatch(source);
+  if (linkedMatch != null) return '${linkedMatch.group(1)} 个已连接';
+  if (source.startsWith('latest ')) return '最新 ${source.substring(7)}';
   if (source.startsWith('No ticker matched "') && source.endsWith('".')) {
     return '没有找到匹配的股票 ${source.substring(18, source.length - 2)}。';
   }
@@ -1129,7 +1167,9 @@ class GuruTerminalApp extends StatefulWidget {
 
 class _GuruTerminalAppState extends State<GuruTerminalApp>
     with WidgetsBindingObserver {
-  AppLanguage _language = parseAppLanguage(readBrowserQuery()['lang']);
+  AppLanguage _language = parseAppLanguage(
+    readBrowserQuery()['lang'] ?? readAppLanguagePreference(),
+  );
   Uri _routeUri = Uri.base;
   int _routeRevision = 0;
 
@@ -1147,9 +1187,13 @@ class _GuruTerminalAppState extends State<GuruTerminalApp>
 
   @override
   Future<bool> didPushRouteInformation(RouteInformation routeInformation) {
+    final explicitLang = routeInformation.uri.queryParameters['lang'];
     final nextLanguage = parseAppLanguage(
-      routeInformation.uri.queryParameters['lang'],
+      explicitLang ?? readAppLanguagePreference(),
     );
+    if (explicitLang != null && explicitLang.trim().isNotEmpty) {
+      writeAppLanguagePreference(appLanguageCode(nextLanguage));
+    }
     setState(() {
       _routeUri = routeInformation.uri;
       _routeRevision++;
@@ -1161,29 +1205,46 @@ class _GuruTerminalAppState extends State<GuruTerminalApp>
   void _setLanguage(AppLanguage language) {
     if (_language == language) return;
     setState(() => _language = language);
-    replaceBrowserQuery({'lang': appLanguageCode(language)});
+    final code = appLanguageCode(language);
+    writeAppLanguagePreference(code);
+    replaceBrowserQuery({'lang': code});
   }
 
   @override
   Widget build(BuildContext context) {
+    final baseTheme = ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: Palette(false).background,
+      fontFamily: blackEditionPreview ? 'TFInter' : null,
+      fontFamilyFallback: kCjkFontFallback,
+      colorScheme: ColorScheme.fromSeed(
+        brightness: Brightness.dark,
+        seedColor: Palette(false).accent,
+        surface: Palette(false).panel,
+      ),
+    );
     return LanguageScope(
       language: _language,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
+        locale: _language == AppLanguage.zh
+            ? const Locale('zh', 'CN')
+            : const Locale('en', 'US'),
+        supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
         title: trFor(
           _language,
           'Guru Intelligence 研究终端',
           'Guru Intelligence Research Terminal',
         ),
-        theme: ThemeData(
-          useMaterial3: true,
-          brightness: Brightness.dark,
-          scaffoldBackgroundColor: Palette(false).background,
-          fontFamily: blackEditionPreview ? 'TFInter' : 'Inter',
-          colorScheme: ColorScheme.fromSeed(
-            brightness: Brightness.dark,
-            seedColor: Palette(false).accent,
-            surface: Palette(false).panel,
+        theme: baseTheme.copyWith(
+          textTheme: baseTheme.textTheme.apply(
+            fontFamilyFallback: kCjkFontFallback,
           ),
         ),
         home: AuthGate(
@@ -1515,7 +1576,7 @@ class LoginScreen extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  'GURU INTELLIGENCE',
+                                  context.tr('大师投研智库', 'GURU INTELLIGENCE'),
                                   style: TextStyle(
                                     color: palette.accent,
                                     fontSize: 10,
@@ -2765,7 +2826,7 @@ class _CompactLanguageButton extends StatelessWidget {
     final nextLanguage = language == AppLanguage.zh
         ? AppLanguage.en
         : AppLanguage.zh;
-    final label = language == AppLanguage.zh ? 'EN' : 'ZH';
+    final label = language == AppLanguage.zh ? 'EN' : '中文';
     final tooltip = language == AppLanguage.zh ? '切换至英文' : 'Switch to Chinese';
     return Tooltip(
       message: tooltip,
@@ -3177,7 +3238,7 @@ class MobileGuruPicker extends StatelessWidget {
           PanelTitle(
             icon: Icons.account_tree_rounded,
             kicker: 'GURU UNIVERSE',
-            title: context.tr('选择大佬', 'Select Guru'),
+            title: context.tr('选择大师', 'Select Guru'),
             trailing: Text(
               context.ui('${gurus.length} visible'),
               style: TextStyle(
@@ -5117,11 +5178,13 @@ class GuruProfileModule extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            text(
-              summary['message'],
-              context.tr(
-                '这个 profile 没有干净的独立 13F 或 Form 4 交易流，作为研究资料入口展示。',
-                'This profile does not have a clean standalone 13F or Form 4 trading feed, so it is shown as a research profile.',
+            context.ui(
+              text(
+                summary['message'],
+                context.tr(
+                  '该研究档案没有独立的 13F 或 Form 4 交易流，作为研究资料入口展示。',
+                  'This profile does not have a clean standalone 13F or Form 4 trading feed, so it is shown as a research profile.',
+                ),
               ),
             ),
             style: TextStyle(color: palette.muted, height: 1.35),
@@ -5138,7 +5201,7 @@ class GuruProfileModule extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        note,
+                        context.ui(note),
                         style: TextStyle(color: palette.muted, height: 1.35),
                       ),
                     ),
@@ -7902,7 +7965,7 @@ class PriceActionPainter extends CustomPainter {
       canvas,
       tooltipLeft,
       tooltipTop + 34,
-      'Close',
+      trFor(language, '收盘价', 'Close'),
       close,
       palette.text,
     );
@@ -7910,7 +7973,7 @@ class PriceActionPainter extends CustomPainter {
       canvas,
       tooltipLeft,
       tooltipTop + 55,
-      'Action',
+      trFor(language, '操作', 'Action'),
       actionLabel(text(operation['action']), language),
       tone,
     );
@@ -8515,7 +8578,7 @@ class QuickLinksPanel extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          link.$1,
+                          context.ui(link.$1),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -8648,7 +8711,7 @@ class ExecutiveStatCard extends StatelessWidget {
           Icon(data.icon, color: palette.accent, size: 20),
           const SizedBox(height: 12),
           Text(
-            data.label,
+            context.ui(data.label),
             style: TextStyle(color: palette.muted, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 8),
@@ -8661,7 +8724,10 @@ class ExecutiveStatCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          Text(data.sub, style: TextStyle(color: palette.faint, fontSize: 12)),
+          Text(
+            context.ui(data.sub),
+            style: TextStyle(color: palette.faint, fontSize: 12),
+          ),
         ],
       ),
     );
@@ -8823,7 +8889,7 @@ class OverviewMetricLine extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                data.label,
+                context.ui(data.label),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -8845,7 +8911,7 @@ class OverviewMetricLine extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                data.sub,
+                context.ui(data.sub),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: palette.faint, fontSize: 11),
@@ -9174,7 +9240,7 @@ class _CompactTickerDeckState extends State<_CompactTickerDeck> {
       _DeckPageSpec(
         icon: Icons.event_note_rounded,
         kicker: 'LATEST FILINGS',
-        title: context.tr('最近财报', 'Latest Filings'),
+        title: context.tr('最新 13F 申报', 'Latest Filings'),
         body: _RecentFilingDeckPage(
           filings: buildRecentFilingItems(
             widget.gurus,
@@ -10424,7 +10490,7 @@ class _QuarterlyMarketLensDialogState extends State<QuarterlyMarketLensDialog> {
         api: widget.researchApi!,
         palette: palette,
         sourceLabel: context.tr(
-          '季度大佬共识 · ${defaultGuruDisclosureQuarter(widget.gurus)}',
+          '季度大师共识 · ${defaultGuruDisclosureQuarter(widget.gurus)}',
           'Quarterly Guru consensus · ${defaultGuruDisclosureQuarter(widget.gurus)}',
         ),
         onClose: () => setState(() => _researchTicker = ''),
@@ -11706,6 +11772,7 @@ class _EquityChartState extends State<EquityChart> {
                   equity: widget.equity,
                   palette: widget.palette,
                   hoverIndex: _hoverIndex ?? _selectedIndex,
+                  language: context.language,
                 ),
                 size: Size.infinite,
               ),
@@ -11722,6 +11789,7 @@ class EquityPainter extends CustomPainter {
     required this.equity,
     required this.palette,
     required this.hoverIndex,
+    this.language = AppLanguage.en,
   });
 
   static const horizontalInset = 8.0;
@@ -11731,6 +11799,7 @@ class EquityPainter extends CustomPainter {
   final List<Map<String, dynamic>> equity;
   final Palette palette;
   final int? hoverIndex;
+  final AppLanguage language;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -11917,9 +11986,21 @@ class EquityPainter extends CustomPainter {
       TextAlign.left,
       maxWidth: tooltipWidth - 24,
     );
-    _drawTooltipRow(canvas, tooltipLeft, y + 24, 'Portfolio', portfolioReturn);
+    _drawTooltipRow(
+      canvas,
+      tooltipLeft,
+      y + 24,
+      trFor(language, '组合', 'Portfolio'),
+      portfolioReturn,
+    );
     _drawTooltipRow(canvas, tooltipLeft, y + 46, 'SPY', benchmarkReturn);
-    _drawTooltipRow(canvas, tooltipLeft, y + 68, 'Excess', excessReturn);
+    _drawTooltipRow(
+      canvas,
+      tooltipLeft,
+      y + 68,
+      trFor(language, '超额收益', 'Excess'),
+      excessReturn,
+    );
   }
 
   void _drawTooltipRow(
@@ -13675,70 +13756,87 @@ class PortfolioDashboard extends StatelessWidget {
           icon: Icons.account_balance_wallet_rounded,
           kicker: 'PORTFOLIO MANAGEMENT',
           title: sampleMode
-              ? 'Sample portfolio — not an account'
+              ? context.tr('示例组合（非实盘账户）', 'Sample portfolio — not an account')
               : savedReport
-              ? 'Saved portfolio report'
-              : 'Portfolio cockpit',
+              ? context.tr('已保存的组合报告', 'Saved portfolio report')
+              : context.tr('实盘组合总览', 'Portfolio cockpit'),
           subtitle: sampleMode
-              ? 'Illustrative local data only. It is not connected to your brokerage account.'
+              ? context.tr(
+                  '仅为本地演示数据，未连接您的真实券商账户。',
+                  'Illustrative local data only. It is not connected to your brokerage account.',
+                )
               : savedReport
               ? context.tr(
                   '券商同步暂不可用，下方数据来自上次保存的报告。',
                   'Broker sync is unavailable. Values below are from the last saved report.',
                 )
               : configured
-              ? text(
-                  connection['message'],
-                  'IBKR holdings synced through Yodlee.',
+              ? localizeBrokerError(
+                  text(
+                    connection['message'],
+                    'IBKR holdings synced through Yodlee.',
+                  ),
+                  context.language,
                 )
-              : 'Yodlee / IBKR connector is ready; credentials are not configured yet.',
+              : context.tr(
+                  '盈透（IBKR）/ Yodlee 连接器已就绪，尚未配置账户凭证。',
+                  'Yodlee / IBKR connector is ready; credentials are not configured yet.',
+                ),
           chips: [
             if (sampleMode)
-              'SAMPLE DATA · NOT AN ACCOUNT'
+              context.tr('示例数据 · 非实盘账户', 'SAMPLE DATA · NOT AN ACCOUNT')
             else ...[
               text(connection['provider'], 'Yodlee'),
-              text(connection['institution'], 'Interactive Brokers'),
-              text(
-                connection['status'],
-                configured ? 'linked' : 'not configured',
+              context.ui(text(connection['institution'], 'Interactive Brokers')),
+              context.ui(
+                text(
+                  connection['status'],
+                  configured ? 'linked' : 'not_configured',
+                ),
               ),
             ],
           ],
           metrics: [
             _GuruHeaderMetric(
-              label: sampleMode ? 'Sample total' : 'Net liquidation',
+              label: sampleMode
+                  ? context.tr('示例净值', 'Sample total')
+                  : context.tr('净清算价值', 'Net liquidation'),
               value: formatMoney(number(summary['totalValue'])),
               sub: '${formatNumber(number(summary['accounts']))} accounts',
               palette: palette,
             ),
             _GuruHeaderMetric(
               label: sampleMode
-                  ? 'Sample day P/L'
+                  ? context.tr('示例当日盈亏', 'Sample day P/L')
                   : savedReport
-                  ? 'Report day P/L'
-                  : 'Day P/L',
+                  ? context.tr('报告当日盈亏', 'Report day P/L')
+                  : context.tr('当日盈亏', 'Day P/L'),
               value: formatMoney(dayPnl),
               sub: formatReturn(number(summary['dayPnlPct'])),
               palette: palette,
             ),
             _GuruHeaderMetric(
-              label: sampleMode ? 'Sample unrealized' : 'Unrealized',
+              label: sampleMode
+                  ? context.tr('示例浮动盈亏', 'Sample unrealized')
+                  : context.tr('浮动盈亏', 'Unrealized'),
               value: formatMoney(unrealizedPnl),
               sub: formatReturn(number(summary['unrealizedPnlPct'])),
               palette: palette,
             ),
             _GuruHeaderMetric(
-              label: sampleMode ? 'Sample cash' : 'Cash',
+              label: sampleMode
+                  ? context.tr('示例现金', 'Sample cash')
+                  : context.tr('现金余额', 'Cash'),
               value: formatMoney(number(summary['cash'])),
               sub: '${formatNumber(number(summary['holdings']))} holdings',
               palette: palette,
             ),
             _GuruHeaderMetric(
-              label: 'Top weight',
+              label: context.tr('最大重仓占比', 'Top weight'),
               value: formatReturn(
                 number(summary['topWeight']),
               ).replaceFirst('+', ''),
-              sub: 'concentration',
+              sub: context.tr('集中度', 'concentration'),
               palette: palette,
             ),
           ],
@@ -14337,9 +14435,12 @@ class _PortfolioConnectionStatusPanelState
             const SizedBox(height: 10),
             PortfolioDataNotice(
               icon: Icons.error_outline_rounded,
-              text: text(
-                connection['lastError'],
-                text(connection['message'], 'Latest sync failed.'),
+              text: localizeBrokerError(
+                text(
+                  connection['lastError'],
+                  text(connection['message'], 'Latest sync failed.'),
+                ),
+                context.language,
               ),
               palette: palette,
             ),
@@ -14356,7 +14457,7 @@ class _PortfolioConnectionStatusPanelState
             const SizedBox(height: 10),
             PortfolioDataNotice(
               icon: Icons.error_outline_rounded,
-              text: _error!,
+              text: localizeBrokerError(_error!, context.language),
               palette: palette,
             ),
           ],
@@ -14531,7 +14632,7 @@ class _PortfolioConnectionStatusPanelState
                     ),
                     const SizedBox(height: 5),
                     Text(
-                      '${context.tr('Activity Flex Query ID', 'Activity Flex Query ID')} $queryId · $tokenPreview',
+                      '${context.tr('活动 Flex 查询 ID', 'Activity Flex Query ID')} $queryId · $tokenPreview',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -14745,7 +14846,7 @@ class _PortfolioAddAccountDialogState extends State<PortfolioAddAccountDialog> {
                 controller: _labelController,
                 label: 'Account label',
                 hint: context.tr(
-                  '例如 IBKR main / Roth / Margin',
+                  '例如：盈透主账户 / 美股保证金 / 退休账户',
                   'Example: IBKR main / Roth / Margin',
                 ),
                 icon: Icons.badge_rounded,
@@ -19529,25 +19630,34 @@ class PortfolioHoldingsTable extends StatelessWidget {
   final List<Map<String, dynamic>> holdings;
   final Palette palette;
 
-  String _modelArchitecture(Map<String, dynamic> valuation) {
+  String _modelArchitecture(BuildContext context, Map<String, dynamic> valuation) {
     final model = asMap(valuation['model']);
     return switch (text(model['route'])) {
-      'operating_company' => 'Operating-company blend',
-      'multi_method_growth' => 'Growth-stage blend',
-      'financial_institution' || 'bank' => 'Financial institution',
-      'customer_cash_earnings' => 'Customer cash earnings',
-      'revenue_stage' => 'Revenue-stage model',
-      'bitcoin_treasury' => 'Treasury + operating value',
+      'operating_company' => context.tr('经营型企业综合模型', 'Operating-company blend'),
+      'multi_method_growth' => context.tr('成长阶段综合模型', 'Growth-stage blend'),
+      'financial_institution' || 'bank' => context.tr(
+        '金融机构模型',
+        'Financial institution',
+      ),
+      'customer_cash_earnings' => context.tr(
+        '客户现金盈利模型',
+        'Customer cash earnings',
+      ),
+      'revenue_stage' => context.tr('营收阶段模型', 'Revenue-stage model'),
+      'bitcoin_treasury' => context.tr('财库+经营价值模型', 'Treasury + operating value'),
       _ =>
-        truthy(valuation['covered']) ? 'Published model' : 'No published model',
+        truthy(valuation['covered'])
+            ? context.tr('已发布模型', 'Published model')
+            : context.tr('暂无已发布模型', 'No published model'),
     };
   }
 
-  String _pointDifference(dynamic value) {
+  String _pointDifference(BuildContext context, dynamic value) {
     final parsed = nullableNumber(value);
     if (parsed == null) return '—';
     final points = parsed * 100;
-    return '${points >= 0 ? '+' : ''}${points.toStringAsFixed(1)} pp';
+    final unit = context.tr('个百分点', 'pp');
+    return '${points >= 0 ? '+' : ''}${points.toStringAsFixed(1)} $unit';
   }
 
   List<Map<String, dynamic>> _modelRows() {
@@ -19778,7 +19888,10 @@ class PortfolioHoldingsTable extends StatelessWidget {
     final structureGap = nullableNumber(row['_structureGap']);
     final pnl = number(row['unrealizedPnl']);
     final pnlTone = pnl >= 0 ? palette.positive : palette.negative;
-    final formula = text(model['formula'], _modelArchitecture(valuation));
+    final formula = localizeValuationFormula(
+      text(model['formula'], _modelArchitecture(context, valuation)),
+      context.language,
+    );
     return DataRow(
       cells: [
         DataCell(
@@ -19837,11 +19950,11 @@ class PortfolioHoldingsTable extends StatelessWidget {
         ),
         DataCell(
           Tooltip(
-            message: formula,
+            message: localizeValuationFormula(formula, context.language),
             child: SizedBox(
               width: 180,
               child: _stackedValue(
-                _modelArchitecture(valuation),
+                _modelArchitecture(context, valuation),
                 covered
                     ? text(
                         model['asOfDate'],
@@ -19878,7 +19991,7 @@ class PortfolioHoldingsTable extends StatelessWidget {
               covered
                   ? '${formatReturn(number(row['_currentCoveredWeight'])).replaceFirst('+', '')} → ${formatReturn(number(row['_modelCoveredWeight'])).replaceFirst('+', '')}'
                   : '—',
-              _pointDifference(structureGap),
+              _pointDifference(context, structureGap),
               color: structureGap == null
                   ? null
                   : structureGap >= 0
@@ -23864,7 +23977,7 @@ class _ValuationQuarterResearchPanelState
                 ),
               ),
               Text(
-                quarterCountLabel,
+                context.ui(quarterCountLabel),
                 style: TextStyle(
                   color: widget.palette.faint,
                   fontWeight: FontWeight.w800,
@@ -24430,7 +24543,10 @@ class ValuationOutputResearchCard extends StatelessWidget {
           if (weightNotes.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
-              text(weightNotes.first['description']),
+              localizeValuationDescription(
+                text(weightNotes.first['description']),
+                context.language,
+              ),
               style: TextStyle(
                 color: palette.faint,
                 fontSize: 12,
@@ -24449,7 +24565,10 @@ class ValuationOutputResearchCard extends StatelessWidget {
                 border: Border.all(color: palette.border),
               ),
               child: Text(
-                text(semantics['fairValueFormula']),
+                localizeValuationFormula(
+                  text(semantics['fairValueFormula']),
+                  context.language,
+                ),
                 style: TextStyle(
                   color: palette.muted,
                   fontSize: 12,
@@ -24804,7 +24923,7 @@ class _ValuationPodcastInsightsSectionState
           if (insights.isEmpty)
             EmptyState(
               text: context.tr(
-                '还没有为 ${widget.ticker} 生成 podcast 前瞻看点。',
+                '尚未为 ${widget.ticker} 生成播客前瞻看点。',
                 'No podcast forward views have been generated for ${widget.ticker} yet.',
               ),
               palette: widget.palette,
@@ -24869,12 +24988,14 @@ class ValuationPodcastInsightCard extends StatelessWidget {
     final tone = stanceTone(stance, palette);
     final confidence = number(insight['confidence']).clamp(0, 1).toDouble();
     final summary = context.isChinese
-        ? text(
-            insight['summaryZh'],
-            text(insight['summary'], 'No summary available.'),
+        ? context.ui(
+            text(
+              insight['summaryZh'],
+              text(insight['summary'], 'No summary available.'),
+            ),
           )
         : text(insight['summary'], 'No summary available.');
-    final theme = text(insight['theme'], 'Forward-looking debate');
+    final theme = context.ui(text(insight['theme'], 'Forward-looking debate'));
     final channel = text(insight['channel'], 'Podcast');
     final speaker = text(insight['speaker'], channel);
     final observedAt = formatDate(text(insight['observedAt']));
@@ -24932,7 +25053,7 @@ class ValuationPodcastInsightCard extends StatelessWidget {
             ),
             const SizedBox(height: 9),
             Text(
-              context.tr('谁说：$speaker', 'Said by: $speaker'),
+              context.tr('观点来源：$speaker', 'Said by: $speaker'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -26398,9 +26519,7 @@ class ValuationRow {
 
   String get coverageLabel {
     if (coverageKind.isEmpty) return 'model';
-    return coverageKind.length <= 9
-        ? coverageKind
-        : coverageKind.substring(0, 9);
+    return coverageKind;
   }
 
   String get auditStatus => lineageStatus;
@@ -27192,9 +27311,14 @@ String guruDisplayName(
   AppLanguage language = AppLanguage.en,
 ]) {
   final englishName = text(guru['name'], text(guru['id'], '?'));
-  return language == AppLanguage.zh
-      ? text(guru['chineseName'], englishName)
-      : englishName;
+  if (language != AppLanguage.zh) return englishName;
+  final explicitZh = text(guru['chineseName']);
+  if (explicitZh.isNotEmpty) return explicitZh;
+  final fallbackZh = guruChineseNameFallback(
+    id: text(guru['id'], text(guru['guruId'])),
+    englishName: text(guru['name']),
+  );
+  return fallbackZh ?? englishName;
 }
 
 int portfolioRecoveryMinutesRemaining(String undoUntil, {DateTime? now}) {

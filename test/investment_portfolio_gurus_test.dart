@@ -106,7 +106,7 @@ void main() {
       await fixtures.tap(
         t,
         find.text(
-          lang == AppLanguage.en ? 'Guru activity · 2026 Q2' : '大佬动向 · 2026 Q2',
+          lang == AppLanguage.en ? 'Guru activity · 2026 Q2' : '大师动向 · 2026 Q2',
         ),
       );
       expect(
@@ -138,7 +138,7 @@ void main() {
       await fixtures.tap(
         t,
         find.text(
-          lang == AppLanguage.en ? 'Guru activity · 2026 Q2' : '大佬动向 · 2026 Q2',
+          lang == AppLanguage.en ? 'Guru activity · 2026 Q2' : '大师动向 · 2026 Q2',
         ),
       );
       expect(

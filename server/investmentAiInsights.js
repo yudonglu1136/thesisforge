@@ -115,7 +115,7 @@ function publicEvidence(row) {
 export function aiInsightsMethodology() {
   return {
     methodologyVersion: AI_INSIGHTS_METHOD_VERSION, percentageScale: 'fraction', currency: 'USD',
-    title: { en: 'AI Insights methodology', zh: 'AI Insights 计算口径' },
+    title: { en: 'AI Insights methodology', zh: 'AI 洞察计算口径' },
     periodMapping: 'provider_calendardate_fiscal_alignment', revisionPolicy: 'latest_available_arq_as_of_date',
     pitMode: 'public_date_proxy_reconstruction', universeMode: 'fixed_current_basket',
     capexBasis: 'net_cash_proxy', capexFormula: '-signed_provider_capex',

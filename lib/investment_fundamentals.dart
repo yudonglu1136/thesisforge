@@ -900,7 +900,7 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
                 )
               : w(
                   'The financial data service could not complete this request. Your filters are preserved; retry or open a company in Research.',
-                  '财务数据服务未能完成请求。筛选条件已保留，可以重试或前往 Research 查看公司。',
+                  '财务数据服务未能完成请求。筛选条件已保留，可以重试或前往「个股研究」查看公司。',
                 ),
           style: st(12, false, p.muted),
         ),
@@ -987,8 +987,8 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
               ),
             ),
             Text(
-              '${asMap(data?['coverage'])['factCompanies'] ?? '—'} ${w('fact companies', '家事实公司')}',
-              style: st(10, true, p.accent),
+              '${asMap(data?['coverage'])['factCompanies'] ?? '—'} ${w('fact companies', '家覆盖公司')}',
+              style: st(11, true, p.accent),
             ),
           ],
         ),
@@ -1451,14 +1451,12 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
     };
   }
 
-  String _componentLabel(Map<String, dynamic> component) => switch (text(
-    component['key'],
-  )) {
-    'ev-sales-equity-value' => w('EV / sales equity value', 'EV / 销售额估值'),
-    'normalized-earnings-power' => w('Normalized earnings power', '标准化盈利能力估值'),
-    'fcfe-dcf' => w('Five-year FCFE DCF', '五年期 FCFE DCF'),
-    _ => text(component['label']),
-  };
+  String _componentLabel(Map<String, dynamic> component) =>
+      localizeValuationMethodLabel(
+        text(component['key']),
+        context.language,
+        fallbackLabel: text(component['label']),
+      );
 
   Widget _valuationBreakdown() {
     final valuation = asMap(detail?['valuation']);
@@ -1554,8 +1552,11 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
-              text(breakdown['formula'], text(breakdown['method'])),
-              style: st(10, false, p.muted),
+              localizeValuationFormula(
+                text(breakdown['formula'], text(breakdown['method'])),
+                context.language,
+              ),
+              style: st(11, false, p.muted),
             ),
           ),
           const SizedBox(height: 10),
@@ -1650,7 +1651,13 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
         ),
         if (text(component['description']).isNotEmpty) ...[
           const SizedBox(height: 5),
-          Text(text(component['description']), style: st(9, false, p.muted)),
+          Text(
+            localizeValuationDescription(
+              text(component['description']),
+              context.language,
+            ),
+            style: st(11, false, p.muted),
+          ),
         ],
         const SizedBox(height: 9),
         Wrap(
@@ -1674,11 +1681,11 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
                         text(parameter['key']),
                         text(parameter['label']),
                       ),
-                      style: st(8, false, p.muted),
+                      style: st(10.5, false, p.muted),
                     ),
                     Text(
                       _parameterValue(parameter, currency),
-                      style: st(10, true),
+                      style: st(11.5, true),
                     ),
                   ],
                 ),
@@ -1910,16 +1917,28 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
         '本季增减机构数接近，但申报持股净减少。应继续追查哪些重要机构主导了下降。',
       );
     }
-    if (key.startsWith('positive')) {
+    if (key.startsWith('positive') && key.endsWith('increase')) {
       return w(
         'More institutions added. Check whether aggregate shares and portfolio weights confirm the breadth.',
         '更多机构选择增持；还需核对汇总股数与组合权重是否支持这一广度。',
       );
     }
-    if (key.startsWith('negative')) {
+    if (key.startsWith('negative') && key.endsWith('decrease')) {
       return w(
         'More institutions reduced. Check whether the largest moves came from core positions.',
         '更多机构选择减持；还需核对主要变化是否来自核心仓位。',
+      );
+    }
+    if (key == 'positive_breadth_net_decrease') {
+      return w(
+        'More institutions added by count, yet total reported shares fell — large holders trimmed while smaller filers initiated or added.',
+        '增持机构数量占优，但汇总申报股数净减少——反映大机构减仓而中小机构增持，需重点排查头部动向。',
+      );
+    }
+    if (key == 'negative_breadth_net_increase') {
+      return w(
+        'More institutions reduced by count, yet total reported shares rose — concentrated buying outweighed dispersed trimming.',
+        '减持机构数量较多，但汇总申报股数净增加——反映大资金集中增持盖过了分散减仓。',
       );
     }
     return w(
@@ -2057,20 +2076,20 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
             runSpacing: 5,
             children: [
               Text(
-                '${w('Share change', '股数变化')} ${_sharesK(change['unitsChangeK'])}',
-                style: st(9, false, p.text),
+                '${w('Share change', '股数变化')} ${formatCompactSharesLocalized((nullableNumber(change['unitsChangeK']) ?? 0) * 1000, context.language)}',
+                style: st(11, false, p.text),
               ),
               Text(
                 '${w('Weight', '组合权重')} ${previousWeight == null ? '—' : pct(previousWeight)} → ${currentWeight == null ? '—' : pct(currentWeight)}',
-                style: st(9, false, p.text),
+                style: st(11, false, p.text),
               ),
               Text(
                 '${w('Reported value change', '申报市值变化')} ${_usdM(change['reportedValueChangeM'])}',
-                style: st(9, false, p.text),
+                style: st(11, false, p.text),
               ),
               Text(
-                text(change['continuity']).replaceAll('_', ' '),
-                style: st(9, false, p.muted),
+                localizeInstitutionContinuity(change, context.language),
+                style: st(11, false, p.muted),
               ),
             ],
           ),
@@ -2470,8 +2489,15 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(bi(row['label']), style: st(11, true)),
-                Text(text(row['formula']), style: st(9, false, p.muted)),
+                Text(bi(row['label']), style: st(11.5, true)),
+                Text(
+                  localizeDiagnosticFormula(
+                    id,
+                    text(row['formula']),
+                    context.language,
+                  ),
+                  style: st(11, false, p.muted),
+                ),
               ],
             ),
           ),
@@ -2485,10 +2511,13 @@ class _FundamentalsPanelState extends State<FundamentalsPanel> {
           Expanded(
             child: Text(
               comparison == null
-                  ? text(row['status'])
+                  ? localizeDiagnosticStatus(
+                      text(row['status']),
+                      context.language,
+                    )
                   : pct(comparison, sign: false),
               textAlign: TextAlign.right,
-              style: st(10, false, p.muted),
+              style: st(11, false, p.muted),
             ),
           ),
         ],
@@ -2596,10 +2625,12 @@ class _FundamentalTrendChartState extends State<_FundamentalTrendChart> {
                         border: Border.all(color: widget.palette.border),
                       ),
                       child: Text(
-                        '${text(activeRow['periodEnd'])} · Rev ${_fmtPct(activeRow['revenueGrowth'])} · OpM ${_fmtPct(activeRow['operatingMargin'])}',
+                        widget.language == AppLanguage.zh
+                            ? '${text(activeRow['periodEnd'])} · 营收同比 ${_fmtPct(activeRow['revenueGrowth'])} · 营业利润率 ${_fmtPct(activeRow['operatingMargin'])}'
+                            : '${text(activeRow['periodEnd'])} · Rev ${_fmtPct(activeRow['revenueGrowth'])} · OpM ${_fmtPct(activeRow['operatingMargin'])}',
                         style: TextStyle(
                           color: widget.palette.text,
-                          fontSize: 10.5,
+                          fontSize: 11,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -2730,19 +2761,25 @@ class _FundamentalTrendPainter extends CustomPainter {
           ..strokeWidth = 1,
       );
     }
+    final firstLegend = language == AppLanguage.zh ? '收入同比' : 'Revenue YoY';
+    final firstTp = TextPainter(
+      text: TextSpan(
+        text: firstLegend,
+        style: TextStyle(
+          color: p.accent,
+          fontSize: 10.5,
+          fontFamilyFallback: kCjkFontFallback,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    firstTp.paint(canvas, Offset(plot.left, 0));
     _label(
       canvas,
-      language == AppLanguage.zh ? '收入同比' : 'Revenue YoY',
-      Offset(plot.left, 0),
-      p.accent,
-      9,
-    );
-    _label(
-      canvas,
-      language == AppLanguage.zh ? '经营利润率' : 'Operating margin',
-      Offset(plot.left + 78, 0),
+      language == AppLanguage.zh ? '营业利润率' : 'Operating margin',
+      Offset(plot.left + firstTp.width + 14, 0),
       p.secondary,
-      9,
+      10.5,
     );
   }
 
@@ -2756,7 +2793,11 @@ class _FundamentalTrendPainter extends CustomPainter {
     final painter = TextPainter(
       text: TextSpan(
         text: value,
-        style: TextStyle(color: color, fontSize: size),
+        style: TextStyle(
+          color: color,
+          fontSize: size,
+          fontFamilyFallback: kCjkFontFallback,
+        ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();

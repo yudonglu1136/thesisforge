@@ -424,11 +424,11 @@ class _GuruStudyPanelState extends State<GuruStudyPanel> {
                   },
                   width: 172,
                 ),
-                chip('1Y', period == '1Y', () {
+                chip(w('1Y', '近 1 年'), period == '1Y', () {
                   change(() => period = period == '1Y' ? 'common' : '1Y');
                   unawaited(load());
                 }),
-                chip('3Y', period == '3Y', () {
+                chip(w('3Y', '近 3 年'), period == '3Y', () {
                   change(() => period = period == '3Y' ? 'common' : '3Y');
                   unawaited(load());
                 }),
@@ -607,7 +607,10 @@ class _GuruStudyPanelState extends State<GuruStudyPanel> {
                         palette: p,
                         size: 22,
                       ),
-                      label: Text(text(g['name']), style: s(12)),
+                      label: Text(
+                        guruDisplayName(g, context.language),
+                        style: s(12),
+                      ),
                       onPressed: () =>
                           select(text(g['id']), revealInList: true),
                     ),
@@ -890,7 +893,10 @@ class _GuruStudyPanelState extends State<GuruStudyPanel> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(text(g['name']), style: s(16, true)),
+                    Text(
+                      guruDisplayName(g, context.language),
+                      style: s(16, true),
+                    ),
                     Text(
                       text(g['entityName']),
                       maxLines: 2,
@@ -1183,7 +1189,10 @@ class _GuruStudyPanelState extends State<GuruStudyPanel> {
                       alignment: Alignment.centerLeft,
                       minimumSize: const Size(0, 28),
                     ),
-                    child: Text(text(g['name']), style: s(20, true)),
+                    child: Text(
+                      guruDisplayName(g, context.language),
+                      style: s(20, true),
+                    ),
                   ),
                   Text(
                     text(g['entityName']),
@@ -1223,8 +1232,8 @@ class _GuruStudyPanelState extends State<GuruStudyPanel> {
           children: [
             for (final stat in [
               ('annualTurnover', w('Annual turnover', '年化换手率')),
-              ('cagr', 'CAGR'),
-              ('sharpe', 'Sharpe'),
+              ('cagr', w('CAGR', '年化收益率')),
+              ('sharpe', w('Sharpe', '夏普比率')),
             ])
               Expanded(
                 child: Column(
@@ -1304,7 +1313,7 @@ class _GuruStudyPanelState extends State<GuruStudyPanel> {
                                   palette: p,
                                   size: 42,
                                 ),
-                                title: Text(text(g['name'])),
+                                title: Text(guruDisplayName(g, context.language)),
                                 subtitle: Text(
                                   m.isEmpty
                                       ? w(
@@ -1313,7 +1322,7 @@ class _GuruStudyPanelState extends State<GuruStudyPanel> {
                                         )
                                       : w(
                                           '${pct(m['annualTurnover'])} turnover · ${pct(m['cagr'])} CAGR · ${ratio(m['sharpe'])} Sharpe',
-                                          '换手率 ${pct(m['annualTurnover'])} · CAGR ${pct(m['cagr'])} · 夏普 ${ratio(m['sharpe'])}',
+                                          '换手率 ${pct(m['annualTurnover'])} · 年化收益 ${pct(m['cagr'])} · 夏普 ${ratio(m['sharpe'])}',
                                         ),
                                   style: s(12, false, p.muted),
                                 ),
@@ -1404,7 +1413,7 @@ class _GuruStudyPanelState extends State<GuruStudyPanel> {
                     Text(
                       w(
                         "Study ${g['name']}'s decisions",
-                        '研究 ${g['name']} 的决策',
+                        '研究 ${guruDisplayName(g, AppLanguage.zh)} 的决策',
                       ),
                       style: s(20, true),
                     ),

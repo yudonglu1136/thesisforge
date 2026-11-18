@@ -485,7 +485,7 @@ void main() {
       initialSelection: const {},
       lang: AppLanguage.zh,
     );
-    expect(find.text('大佬集中持仓与净调仓排行'), findsOneWidget);
+    expect(find.text('投资大师集中持仓与净调仓排行'), findsOneWidget);
     expect(find.text('集中仓位排行'), findsWidgets);
     expect(find.text('加仓排行（净加）'), findsWidgets);
     expect(find.text('净减仓排行'), findsWidgets);

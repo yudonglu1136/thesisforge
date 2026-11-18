@@ -214,46 +214,46 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
 
     final flagPills = flagMetrics.isNotEmpty
         ? [
-            '10Y ${_fmtMult(flagMetrics['endingValue'])}',
-            'CAGR ${_fmtPct(flagMetrics['cagr'])}',
-            'Sharpe ${_fmtDec(flagMetrics['sharpeZeroRf'])}',
-            'MDD ${_fmtPct(flagMetrics['maxDrawdown'])}',
-            '10 bps',
+            '${w('10Y', '10年')} ${_fmtMult(flagMetrics['endingValue'])}',
+            '${w('CAGR', '年化')} ${_fmtPct(flagMetrics['cagr'])}',
+            '${w('Sharpe', '夏普')} ${_fmtDec(flagMetrics['sharpeZeroRf'])}',
+            '${w('MDD', '最大回撤')} ${_fmtPct(flagMetrics['maxDrawdown'])}',
+            w('10 bps', '10 基点'),
           ]
         : [
-            '10Y 8.91x',
-            'CAGR 24.4%',
-            'Sharpe 1.03',
-            'MDD -29.9%',
-            '10 bps',
+            w('10Y 8.91x', '10年 8.91x'),
+            w('CAGR 24.4%', '年化 24.4%'),
+            w('Sharpe 1.03', '夏普 1.03'),
+            w('MDD -29.9%', '最大回撤 -29.9%'),
+            w('10 bps', '10 基点'),
           ];
 
     final qualityPills = qMetrics.isNotEmpty
         ? [
             '${w('Nav', '净值')} ${_fmtMult(nullableNumber(qMetrics['totalReturn']) == null ? null : number(qMetrics['totalReturn']) + 1)}',
-            'CAGR ${_fmtPct(qMetrics['cagr'])}',
-            'Sharpe ${_fmtDec(qMetrics['sharpeZeroRf'])}',
-            'MDD ${_fmtPct(qMetrics['maxDrawdown'])}',
-            '25 bps',
+            '${w('CAGR', '年化')} ${_fmtPct(qMetrics['cagr'])}',
+            '${w('Sharpe', '夏普')} ${_fmtDec(qMetrics['sharpeZeroRf'])}',
+            '${w('MDD', '最大回撤')} ${_fmtPct(qMetrics['maxDrawdown'])}',
+            w('25 bps', '25 基点'),
           ]
         : [
             w('All / S&P 500 / NDX', '全市场 / 标普 / 纳指'),
             w('Top 10 Sqrt Weight', '前 10 信念配权'),
-            '25 bps',
+            w('25 bps', '25 基点'),
           ];
 
     final ackmanPills = aMetrics.isNotEmpty
         ? [
             '${w('Nav', '净值')} ${_fmtMult(nullableNumber(aMetrics['totalReturn']) == null ? null : number(aMetrics['totalReturn']) + 1)}',
-            'CAGR ${_fmtPct(aMetrics['cagr'])}',
-            'Sharpe ${_fmtDec(aMetrics['sharpeZeroRf'])}',
-            'MDD ${_fmtPct(aMetrics['maxDrawdown'])}',
-            '25 bps',
+            '${w('CAGR', '年化')} ${_fmtPct(aMetrics['cagr'])}',
+            '${w('Sharpe', '夏普')} ${_fmtDec(aMetrics['sharpeZeroRf'])}',
+            '${w('MDD', '最大回撤')} ${_fmtPct(aMetrics['maxDrawdown'])}',
+            w('25 bps', '25 基点'),
           ]
         : [
             w('All / S&P 500 / NDX', '全市场 / 标普 / 纳指'),
             w('Top 20 Equal 5%', '前 20 等权 5%'),
-            '25 bps',
+            w('25 bps', '25 基点'),
           ];
 
     final m6LiveMetrics = asMap(
@@ -268,19 +268,19 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
     );
     final rotationPills = m6LiveMetrics.isNotEmpty
         ? [
-            'Live ${_fmtMult(m6LiveMetrics['endingMultiple'])}',
-            'CAGR ${_fmtPct(m6LiveMetrics['cagr'])}',
-            'Sharpe ${_fmtDec(m6LiveMetrics['sharpe'])}',
+            '${w('Live', '实盘')} ${_fmtMult(m6LiveMetrics['endingMultiple'])}',
+            '${w('CAGR', '年化')} ${_fmtPct(m6LiveMetrics['cagr'])}',
+            '${w('Sharpe', '夏普')} ${_fmtDec(m6LiveMetrics['sharpe'])}',
             if (m6FullMetrics.isNotEmpty)
-              '27Y ${_fmtMult(m6FullMetrics['endingMultiple'])}',
-            '5 bps',
+              '${w('27Y', '27年')} ${_fmtMult(m6FullMetrics['endingMultiple'])}',
+            w('5 bps', '5 基点'),
           ]
         : [
-            'Live 16.74x',
-            'CAGR 20.6%',
-            'Sharpe 1.02',
-            '27Y 39.17x',
-            '5 bps',
+            w('Live 16.74x', '实盘 16.74x'),
+            w('CAGR 20.6%', '年化 20.6%'),
+            w('Sharpe 1.02', '夏普 1.02'),
+            w('27Y 39.17x', '27年 39.17x'),
+            w('5 bps', '5 基点'),
           ];
 
     final cards = [
@@ -288,7 +288,7 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
         id: 'breakout_pullback',
         categoryLabel: w(
           'DAILY TACTICAL · PRICE & VOLUME',
-          'DAILY TACTICAL · 日频量价趋势',
+          '日频量价趋势',
         ),
         accentColor: p.positive,
         title: w('Hot Breakout Pullback', '美股热门股突破浅回撤'),
@@ -302,7 +302,7 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
         id: 'quality_rank',
         categoryLabel: w(
           'QUARTERLY FUNDAMENTAL · 4-FACTOR',
-          'QUARTERLY FUNDAMENTAL · 季度基本面',
+          '季度基本面 · 四因子',
         ),
         accentColor: p.accent,
         title: w('Four-Factor Quality · Top 10', '四因子质量排名 · 前十'),
@@ -316,10 +316,10 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
         id: 'ackman',
         categoryLabel: w(
           'QUARTERLY FUNDAMENTAL · QUALITY-VALUE',
-          'QUARTERLY FUNDAMENTAL · 季度基本面',
+          '季度基本面 · 质量价值',
         ),
         accentColor: const Color(0xff7eabfa),
-        title: w('Ackman Quality-Value · Top 20', 'Ackman 质量价值代理 · 前二十'),
+        title: w('Ackman Quality-Value · Top 20', '阿克曼质量价值代理 · 前二十'),
         subtitle: w(
           '40% Quality + 30% Valuation + 30% Margin & Net Payout Improvement · Top 20 at 5% each',
           '40% 质量 + 30% 估值 + 30% 利润率与净回购改善 · 前 20 名各占 5%',
@@ -336,7 +336,7 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
         title: w('QQQ ⇄ SCHD Rotation (M6)', 'QQQ ⇄ SCHD 估值恐慌轮动 (M6)'),
         subtitle: w(
           'Dual-Anchor Valuation + Slow-Sell (70%->45%->0%) / VIX & RSI Panic All-In Buy · M6 / M4 / M7',
-          '双锚估值护栏 + 慢卖分批止盈 (70%→45%→0%) + VIX/RSI 恐慌一把满仓抄底 · 含 M6/M4/M7',
+          '双锚估值护栏 + 慢卖分批止盈 (70%→45%→0%) + VIX/RSI 恐慌全仓切回抄底 · 含 M6/M4/M7',
         ),
         statPills: rotationPills,
       ),
@@ -362,7 +362,7 @@ class _StrategyPortfolioPanelState extends State<StrategyPortfolioPanel> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Text(
-                    w('Strategy Portfolio', 'Strategy Portfolio · 策略组合'),
+                    w('Strategy Portfolio', '量化策略组合'),
                     key: const ValueKey('strategy-portfolio-heading'),
                     style: s(23, true),
                   ),
@@ -873,9 +873,9 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
       ),
       tags: [
         '${w('Multiple', '累计净值')} $flagMult',
-        'CAGR ${fMetrics.isNotEmpty ? _pctUnsigned(fMetrics['cagr'], 1) : '24.4%'}',
-        'Sharpe ${fMetrics.isNotEmpty ? _dec(fMetrics['sharpeZeroRf']) : '1.03'}',
-        'MDD ${fMetrics.isNotEmpty ? _pctUnsigned(fMetrics['maxDrawdown'], 1) : '-29.9%'}',
+        '${w('CAGR', '年化')} ${fMetrics.isNotEmpty ? _pctUnsigned(fMetrics['cagr'], 1) : '24.4%'}',
+        '${w('Sharpe', '夏普')} ${fMetrics.isNotEmpty ? _dec(fMetrics['sharpeZeroRf']) : '1.03'}',
+        '${w('MDD', '最大回撤')} ${fMetrics.isNotEmpty ? _pctUnsigned(fMetrics['maxDrawdown'], 1) : '-29.9%'}',
       ],
     );
 
@@ -888,12 +888,12 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
       ),
       desc: w(
         'Top 100 Dollar Volume & Close > MA50 > MA200 + 63d Breakout + -5% Pullback Limit (15d) + 3.5x ATR14 Stop + +25% Target (180d)',
-        'Top 100 成交额且 Close > MA50 > MA200 + 63 日新高 + 回撤 5% 挂单 + 3.5x ATR14 止损 + +25% 目标止盈(180日兜底)',
+        'Top 100 成交额且收盘价 > MA50 > MA200 + 63 日新高 + 回撤 5% 挂单 + 3.5x ATR14 止损 + +25% 目标止盈(180日兜底)',
       ),
       tags: [
         '${w('Multiple', '累计净值')} $balMult',
-        'Sharpe ${bMetrics.isNotEmpty ? _dec(bMetrics['sharpeZeroRf']) : '1.12'}',
-        'MDD ${bMetrics.isNotEmpty ? _pctUnsigned(bMetrics['maxDrawdown'], 1) : '-22.3%'}',
+        '${w('Sharpe', '夏普')} ${bMetrics.isNotEmpty ? _dec(bMetrics['sharpeZeroRf']) : '1.12'}',
+        '${w('MDD', '最大回撤')} ${bMetrics.isNotEmpty ? _pctUnsigned(bMetrics['maxDrawdown'], 1) : '-22.3%'}',
         w('2022 Bear: -3.6%', '2022 熊市仅 -3.6%'),
       ],
     );
@@ -999,8 +999,8 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'STEP ${step['step']}',
-                            style: s(10, true, _curveColor(mode)),
+                            w('STEP ${step['step']}', '步骤 ${step['step']}'),
+                            style: s(11, true, _curveColor(mode)),
                           ),
                           const SizedBox(height: 4),
                           Text(_bilingual(step['title']), style: s(14, true)),
@@ -1231,7 +1231,7 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
                       curve,
                     );
                   },
-                  child: Text('${years}Y'),
+                  child: Text(w('${years}Y', '近$years年')),
                 ),
               for (final yr in [2020, 2022, 2024])
                 if (curve.any((r) => text(r['date']).startsWith('$yr-')))
@@ -1282,10 +1282,10 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
                 (
                   w('Annualized CAGR', '年化复合收益'),
                   _pctUnsigned(activeStats['cagr']),
-                  w('Net of 10 bps', '已扣 10 bps 成本'),
+                  w('Net of 10 bps', '已扣 10 基点成本'),
                 ),
                 (
-                  w('Sharpe · Rf=0%', '夏普比率 · 0% Rf'),
+                  w('Sharpe · Rf=0%', '夏普比率 · 无风险 0%'),
                   _dec(activeStats['sharpeZeroRf']),
                   w('252 sessions/yr', '252 交易日年化'),
                 ),
@@ -1320,7 +1320,7 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
                       const SizedBox(height: 3),
                       Text(kpi.$2, style: s(20, true)),
                       const SizedBox(height: 2),
-                      Text(kpi.$3, style: s(10.5, false, p.secondary)),
+                      Text(kpi.$3, style: s(11, false, p.secondary)),
                     ],
                   ),
                 ),
@@ -2214,8 +2214,11 @@ class _BreakoutPullbackDashboardState extends State<BreakoutPullbackDashboard> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            text(f['metric']),
-                            style: s(11, true, _curveColor(mode)),
+                            localizeStrategyMetricText(
+                              text(f['metric']),
+                              context.language,
+                            ),
+                            style: s(11.5, true, _curveColor(mode)),
                           ),
                           const SizedBox(height: 5),
                           Text(_bilingual(f['title']), style: s(14, true)),
@@ -2600,6 +2603,16 @@ class _BreakoutRangeAnalysisPanelState
     '≥ +10',
   ][i];
 
+  String _lotReasonLabel(String reason) => switch (reason) {
+    'Trailing_TakeProfit' => w('Chandelier 4x ATR Profit', '4.0x ATR 吊灯止盈'),
+    'Target_TakeProfit' => w('+25% Target Profit', '+25% 目标止盈'),
+    'Hard_StopLoss' => w('ATR Hard Stop-Loss', 'ATR 硬止损'),
+    'Time_Backstop_180d' => w('180d Time Backstop', '180 日时间兜底'),
+    'Delist_Liquidation' => w('Delisting Liquidation', '退市末日清算'),
+    'Open_Position' => w('Open Position', '当前持仓中'),
+    _ => reason,
+  };
+
   Future<void> _showStockLotsDialog(Map<String, dynamic> holding) =>
       showDialog<void>(
         context: context,
@@ -2677,7 +2690,7 @@ class _BreakoutRangeAnalysisPanelState
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              '${w('Breakout', '突破日')} ${lot['breakoutDate']} (${_price(lot['breakoutClose'])}) · ${lot['holdDays']}d · ${lot['exitReason']}',
+                              '${w('Breakout', '突破日')} ${lot['breakoutDate']} (${_price(lot['breakoutClose'])}) · ${lot['holdDays']}${w('d', '天')} · ${_lotReasonLabel(text(lot['exitReason']))}',
                               style: s(11.5, false, p.muted),
                             ),
                           ],
@@ -2959,7 +2972,7 @@ class _BreakoutRangeAnalysisPanelState
         w('Avg Holding Period', '平均持仓交易日'),
         nullableNumber(tStats['avgHoldingDays']) == null
             ? '—'
-            : '${number(tStats['avgHoldingDays']).toStringAsFixed(1)}d',
+            : '${number(tStats['avgHoldingDays']).toStringAsFixed(1)}${w('d', '天')}',
       ),
       (
         w('Profit Exit / Stop Share', '止盈占比 / 止损占比'),

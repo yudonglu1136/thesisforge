@@ -647,8 +647,9 @@ Future<void> mountDiscovery(
     ),
   );
   await tester.pumpAndSettle();
-  await tester.ensureVisible(find.text('Guru'));
-  await tester.tap(find.text('Guru'));
+  final guruTabLabel = language == AppLanguage.en ? 'Guru' : '大师持仓';
+  await tester.ensureVisible(find.text(guruTabLabel));
+  await tester.tap(find.text(guruTabLabel));
   await tester.pumpAndSettle();
 }
 
@@ -894,7 +895,11 @@ void main() {
           await tester.tap(valuation);
           await tester.pumpAndSettle();
           expect(
-            find.text('Discover / Test manager / 2026-03-31'),
+            find.text(
+              language == AppLanguage.en
+                  ? 'Discover / Test manager / 2026-03-31'
+                  : '发现 / Test manager / 2026-03-31',
+            ),
             findsOneWidget,
           );
           expect(
@@ -1119,7 +1124,11 @@ void main() {
         await tester.tap(research);
         await tester.pumpAndSettle();
         expect(
-          find.text('Discover / Test manager / 2026-03-31'),
+          find.text(
+            language == AppLanguage.en
+                ? 'Discover / Test manager / 2026-03-31'
+                : '发现 / Test manager / 2026-03-31',
+          ),
           findsOneWidget,
         );
         expect(

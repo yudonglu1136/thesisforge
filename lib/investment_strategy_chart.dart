@@ -74,7 +74,7 @@ class _StrategyLabChartState extends State<StrategyLabChart> {
           ? w('Equity mix · unfiltered', '股票组合 · 未做估值过滤')
           : widget.data['selectionBasis'] == 'eligible_subset_full_investment'
           ? w('Eligible stocks · unfiltered', '可买股票 · 未做估值过滤')
-          : w('Guru · unfiltered', '大佬 · 未过滤'),
+          : w('Guru · unfiltered', '大师 · 未过滤'),
     'filtered' =>
       asMap(widget.data['rules'])['equityMix'] != null
           ? w('Equity mix · filtered', '股票组合 · 估值过滤')
@@ -227,7 +227,7 @@ class _StrategyLabChartState extends State<StrategyLabChart> {
           Text(
             w(
               'Same dates · fractional holdings · ${currentRules['costBps']} bps on buys + sells · SPY before trading costs',
-              '同一区间 · 可持有零碎股 · 买卖金额收取 ${currentRules['costBps']} bps · SPY 未扣交易费用',
+              '同一区间 · 可持有零碎股 · 买卖金额收取 ${currentRules['costBps']} 基点 · SPY 未扣交易费用',
             ),
             style: style(11, false, p.muted),
           ),

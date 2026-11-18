@@ -35,8 +35,13 @@ class StrategySnapshotInspector extends StatelessWidget {
           fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
           height: 1.4,
         );
-    String managerName(dynamic id) =>
-        text(managers.where((m) => m['id'] == id).firstOrNull?['name'] ?? id);
+    String managerName(dynamic id) {
+      final matched = managers.where((m) => m['id'] == id).firstOrNull;
+      return guruDisplayName(
+        matched ?? {'id': id, 'name': id},
+        context.language,
+      );
+    }
     Widget note(String en, String zh, {Color? color}) =>
         Text(w(en, zh), style: style(12, false, color ?? p.muted));
     final positions = asList(event['positions']);
@@ -296,7 +301,7 @@ class StrategySnapshotInspector extends StatelessWidget {
           Text(
             w(
               'Unavailable Guru books · ${skipped.length}',
-              '未纳入的 Guru 申报 · ${skipped.length}',
+              '未纳入的大师申报 · ${skipped.length}',
             ),
             style: style(15, true),
           ),

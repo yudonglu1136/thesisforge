@@ -689,7 +689,7 @@ class _PortfolioPassiveIncomeCardState
                 : (isYearScope && years.length > 1
                       ? w(
                           'Calls ${fmtShare(windowCalls, windowTotal)} · Divs ${fmtShare(windowDivs, windowTotal)} · All-time ${fmtMoney(allTimeTotal)}',
-                          'Call ${fmtShare(windowCalls, windowTotal)} · 股息 ${fmtShare(windowDivs, windowTotal)} · 跨年累计 ${fmtMoney(allTimeTotal)}',
+                          '卖 Call ${fmtShare(windowCalls, windowTotal)} · 股息 ${fmtShare(windowDivs, windowTotal)} · 跨年累计 ${fmtMoney(allTimeTotal)}',
                         )
                       : w(
                           'Calls ${fmtShare(windowCalls, windowTotal)} · Dividends ${fmtShare(windowDivs, windowTotal)}',
@@ -836,7 +836,7 @@ class _PortfolioPassiveIncomeCardState
                 )
               : w(
                   '$priorYear ($windowSpan): ${fmtMoney(priorTotal)} · Call ${fmtMoney(deltaCalls, signed: true)} · Div ${fmtMoney(deltaDivs, signed: true)}',
-                  '$priorYear 同期 ${fmtMoney(priorTotal)} · Call ${fmtMoney(deltaCalls, signed: true)} · 股息 ${fmtMoney(deltaDivs, signed: true)}',
+                  '$priorYear 同期 ${fmtMoney(priorTotal)} · 卖 Call ${fmtMoney(deltaCalls, signed: true)} · 股息 ${fmtMoney(deltaDivs, signed: true)}',
                 ),
         ),
       );
@@ -1236,7 +1236,7 @@ class _PortfolioPassiveIncomeCardState
                                 callColor,
                                 widget.hideAmounts
                                     ? w('Call', '卖 Call')
-                                    : '${w('Call', 'Call')} ${fmtMoney(r['expiredCalls'])}',
+                                    : '${w('Call', '卖 Call')} ${fmtMoney(r['expiredCalls'])}',
                               ),
                             if (number(r['dividends']) > 0)
                               _miniTag(
@@ -1341,7 +1341,7 @@ class _PortfolioPassiveIncomeCardState
       label,
       style: TextStyle(
         color: tint.withValues(alpha: .92),
-        fontSize: 10,
+        fontSize: 11,
         fontWeight: FontWeight.w600,
       ),
     ),
@@ -1424,8 +1424,10 @@ class _PortfolioPassiveIncomeCardState
                 child: Text(
                   widget.hideAmounts
                       ? '${text(r['ticker'])} · ${text(r['expiry'], '—')}'
+                      : context.isChinese
+                      ? '${text(r['ticker'])} ${nullableNumber(r['strike']) != null ? '\$${formatNumber(number(r['strike']))} ' : ''}看涨(Call) · ${text(r['expiry'], '—')} · ${number(r['contracts']).round()}张'
                       : '${text(r['ticker'])} ${nullableNumber(r['strike']) != null ? formatNumber(number(r['strike'])) : ''}C · ${text(r['expiry'], '—')} ×${number(r['contracts']).round()}',
-                  style: TextStyle(color: p.muted, fontSize: 11),
+                  style: TextStyle(color: p.muted, fontSize: 11.5),
                 ),
               ),
           ],
@@ -1519,8 +1521,10 @@ class _PortfolioPassiveIncomeCardState
                   child: Text(
                     widget.hideAmounts
                         ? '${text(r['ticker'])} · ${text(r['expiry'], '—')}'
+                        : context.isChinese
+                        ? '${text(r['ticker'])} ${nullableNumber(r['strike']) != null ? '\$${formatNumber(number(r['strike']))} ' : ''}看跌(Put) · ${text(r['expiry'], '—')} · ${number(r['contracts']).round()}张'
                         : '${text(r['ticker'])} ${nullableNumber(r['strike']) != null ? formatNumber(number(r['strike'])) : ''}P · ${text(r['expiry'], '—')} ×${number(r['contracts']).round()}',
-                    style: TextStyle(color: p.muted, fontSize: 11),
+                    style: TextStyle(color: p.muted, fontSize: 11.5),
                   ),
                 ),
             ],
@@ -1572,7 +1576,7 @@ class _PortfolioPassiveIncomeCardState
                       color: events[i]['kind'] == 'expired_call'
                           ? callColor
                           : divColor,
-                      fontSize: 10.5,
+                      fontSize: 11,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -1588,7 +1592,10 @@ class _PortfolioPassiveIncomeCardState
                 Expanded(
                   child: Text(
                     events[i]['kind'] == 'expired_call'
-                        ? '${text(events[i]['ticker'])} · ${w('Expired Short Call', '卖 Call 到期作废')}${!widget.hideAmounts && nullableNumber(events[i]['strike']) != null ? ' (${formatNumber(number(events[i]['strike']))}C)' : ''}'
+                        ? '${text(events[i]['ticker'])} · ${w('Expired Short Call', '卖 Call 虚值到期归零')}${!widget.hideAmounts && nullableNumber(events[i]['strike']) != null ? ' (${formatNumber(number(events[i]['strike']))}C)' : ''}'
+                        : events[i]['category'] == 'substitute_dividends' ||
+                              events[i]['pil'] == true
+                        ? '${text(events[i]['ticker'])} · ${w('PIL dividend', '代付股息 (PIL)')}'
                         : '${text(events[i]['ticker'])} · ${w('Cash Dividend', '现金股息')}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

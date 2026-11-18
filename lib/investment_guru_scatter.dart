@@ -172,8 +172,8 @@ class GuruStudyScatter extends StatelessWidget {
                           benchmark: nullableNumber(benchmark[field]),
                           field: field,
                           yTitle: field == 'cagr'
-                              ? 'CAGR (%)'
-                              : w('Sharpe (Rf=0%)', '夏普（Rf=0%）'),
+                              ? w('CAGR (%)', '年化收益率 (%)')
+                              : w('Sharpe (Rf=0%)', '夏普比率（Rf=0%）'),
                           xTitle: w(
                             'Less trading ←  Annual one-way turnover (%)  → More trading',
                             '低换手 ←  年化单边换手率（%）  → 高换手',
@@ -204,12 +204,12 @@ class GuruStudyScatter extends StatelessWidget {
                               borderRadius: BorderRadius.circular(8),
                             ),
                             message:
-                                '${r['name']}\n${w('Annual turnover', '年化换手率')}: ${(number(r['annualTurnover']) * 100).toStringAsFixed(2)}%\n${field == 'cagr' ? 'CAGR' : 'Sharpe'}: ${value(r[field])}\n${r['basis'] == 'strict' ? w('Cash-preserving', '未覆盖留现金') : w('Subset proxy', '可定价子集代理')}\n${range['start']} — ${range['end']}',
+                                '${guruDisplayName(r, context.language)}\n${w('Annual turnover', '年化换手率')}: ${(number(r['annualTurnover']) * 100).toStringAsFixed(2)}%\n${field == 'cagr' ? w('CAGR', '年化收益') : w('Sharpe', '夏普比率')}: ${value(r[field])}\n${r['basis'] == 'strict' ? w('Cash-preserving', '未覆盖留现金') : w('Subset proxy', '可定价子集代理')}\n${range['start']} — ${range['end']}',
                             child: Semantics(
                               button: true,
                               selected: r['id'] == inspecting,
                               label:
-                                  '${r['name']} · ${field == 'cagr' ? 'CAGR' : 'Sharpe'} ${value(r[field])}',
+                                  '${guruDisplayName(r, context.language)} · ${field == 'cagr' ? w('CAGR', '年化收益') : w('Sharpe', '夏普比率')} ${value(r[field])}',
                               child: InkResponse(
                                 key: ValueKey('study-point-$field-${r['id']}'),
                                 onTap: () => onSelect(text(r['id'])),

@@ -55,9 +55,12 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
 
   String loc(dynamic v) {
     if (v is Map) {
-      return w(text(v['en']), text(v['zh']));
+      return polishStrategyProseZh(
+        w(text(v['en']), text(v['zh'])),
+        context.language,
+      );
     }
-    return text(v);
+    return polishStrategyProseZh(text(v), context.language);
   }
 
   TextStyle s([double size = 13, bool bold = false, Color? color]) => TextStyle(
@@ -110,9 +113,18 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
     'm6' => w('M6 Flagship (Slow-Sell / Fast-Buy)', 'M6 慢卖快买旗舰'),
     'm4' => w('M4 Left-Side All-In', 'M4 双锚左侧全仓'),
     'm7' => w('M7 50/50 Core-Satellite', 'M7 50%底仓应税版'),
-    'qqq' => w('100% QQQ Buy & Hold', '100% QQQ 死拿'),
+    'qqq' => w('100% QQQ Buy & Hold', '100% QQQ 买入持有'),
     'schd' => w('100% SCHD Dividend', '100% SCHD 红利'),
     _ => w('70/30 Static Q-Rebal', '70/30 静态再平衡'),
+  };
+
+  String _shortCurveLabel(String id) => switch (id) {
+    'm6' => w('M6', 'M6 旗舰'),
+    'm4' => w('M4', 'M4 左侧'),
+    'm7' => w('M7', 'M7 底仓'),
+    'qqq' => 'QQQ',
+    'schd' => 'SCHD',
+    _ => w('70/30 Static', '70/30 静态'),
   };
 
   String _pct(dynamic v, [int digits = 2]) => nullableNumber(v) == null
@@ -464,10 +476,10 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                   spacing: 6,
                   runSpacing: 5,
                   children: [
-                    _miniTag('CAGR ${_pctPlain(mStat['cagr'])}', c, selected),
+                    _miniTag('${w('CAGR', '年化')} ${_pctPlain(mStat['cagr'])}', c, selected),
                     _miniTag(_mult(mStat['endingMultiple']), c, selected),
-                    _miniTag('Sharpe ${_dec(mStat['sharpe'], 3)}', c, selected),
-                    _miniTag('MDD ${_pctPlain(mStat['maxDrawdown'], 1)}', c, selected),
+                    _miniTag('${w('Sharpe', '夏普')} ${_dec(mStat['sharpe'], 3)}', c, selected),
+                    _miniTag('${w('MDD', '回撤')} ${_pctPlain(mStat['maxDrawdown'], 1)}', c, selected),
                     _miniTag(
                       '${mStat['switchCount'] ?? 0} ${w('switches', '次切换')}',
                       c,
@@ -524,7 +536,7 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
           Text(
             w(
               'Replaces naive valuation moving averages with Dual-Anchor Valuation Guardrails + Asymmetric Slow-Sell (100% -> 70% -> 45% -> 0%) and Instant 100% Panic Sniping when drawdown <= -18% resonates with VIX >= 32 or Daily RSI <= 28.',
-              '摒弃必踩坑的单一估值均线，采用「绝对现金流/盈利锚 + 3年估值均线锚」双护栏：泡沫超买分两档慢卖（100%→70%→45%）并在跌破 MA150 时清仓换入 SCHD 防守；一旦回撤 ≤ -18% 共振 VIX ≥ 32 或日 RSI ≤ 28，一次性全卖 SCHD 100% 满仓杀回 QQQ！',
+              '摒弃单一估值均线陷阱，采用「绝对现金流/盈利锚 + 3年估值均线锚」双护栏：泡沫超买分两档慢卖（100%→70%→45%）并在跌破 MA150 时清仓换入 SCHD 防守；一旦回撤 ≤ -18% 共振 VIX ≥ 32 或日 RSI ≤ 28，一次性全额卖出 SCHD 100% 切回 QQQ。',
             ),
             style: s(12.5, false, p.muted),
           ),
@@ -840,8 +852,8 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                   if (enabledCurves.contains(cid))
                     Text(
                       showDrawdown
-                          ? '${cid.toUpperCase()}: ${_pctPlain(inspectedRow['${cid}Dd'], 1)}'
-                          : '${cid.toUpperCase()}: ${rebasedVal(inspectedRow, cid).toStringAsFixed(2)}x',
+                          ? '${_shortCurveLabel(cid)}: ${_pctPlain(inspectedRow['${cid}Dd'], 1)}'
+                          : '${_shortCurveLabel(cid)}: ${rebasedVal(inspectedRow, cid).toStringAsFixed(2)}x',
                       style: s(11.8, true, _modeColor(cid)),
                     ),
                 Text(
@@ -1014,7 +1026,7 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                       DataColumn(label: Text('M7', style: s(11.5, true, _sky))),
                       DataColumn(label: Text('100% QQQ', style: s(11.5, true, _violet))),
                       DataColumn(label: Text('100% SCHD', style: s(11.5, true, _amber))),
-                      DataColumn(label: Text('70/30 Static', style: s(11.5, true, p.muted))),
+                      DataColumn(label: Text(w('70/30 Static', '70/30 静态'), style: s(11.5, true, p.muted))),
                     ],
                     rows: [
                       for (final yr in yearlyReturns.reversed)
@@ -1118,16 +1130,19 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                                   borderRadius: BorderRadius.circular(5),
                                 ),
                                 child: Text(
-                                  'STEP ${st['step']}',
-                                  style: s(10.5, true, _modeColor(mode)),
+                                  w('STEP ${st['step']}', '第 ${st['step']} 步'),
+                                  style: s(11, true, _modeColor(mode)),
                                 ),
                               ),
                               const SizedBox(width: 6),
                               Flexible(
                                 child: Text(
-                                  text(st['metricBadge']),
+                                  localizeStrategyMetricText(
+                                    loc(st['metricBadge']),
+                                    context.language,
+                                  ),
                                   overflow: TextOverflow.ellipsis,
-                                  style: s(10.5, true, p.muted),
+                                  style: s(11, true, p.muted),
                                 ),
                               ),
                             ],
@@ -1236,9 +1251,9 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                   DataColumn(label: Text(w('Code & Strategy', '代码与策略机制'), style: s(11.5, true))),
                   DataColumn(label: Text(w('Live CAGR\n(2011–26)', '实盘年化\n(2011–26)'), style: s(11.5, true))),
                   DataColumn(label: Text(w('Live Mult', '实盘倍数'), style: s(11.5, true))),
-                  DataColumn(label: Text('Sharpe', style: s(11.5, true))),
-                  DataColumn(label: Text('MDD', style: s(11.5, true))),
-                  DataColumn(label: Text('Ulcer', style: s(11.5, true))),
+                  DataColumn(label: Text(w('Sharpe', '夏普'), style: s(11.5, true))),
+                  DataColumn(label: Text(w('MDD', '最大回撤'), style: s(11.5, true))),
+                  DataColumn(label: Text(w('Ulcer', '溃疡指数'), style: s(11.5, true))),
                   DataColumn(label: Text(w('5Y Win', '5年胜率'), style: s(11.5, true))),
                   DataColumn(label: Text(w('27Y CAGR\n(2000–26)', '27年年化\n(2000–26)'), style: s(11.5, true))),
                   DataColumn(label: Text(w('27Y Mult (MDD)', '27年倍数 (回撤)'), style: s(11.5, true))),
@@ -1344,13 +1359,13 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                         ),
                       ),
                       for (final dd in ddAxis)
-                        DataColumn(label: Text('DD ≤ ${dd.toStringAsFixed(0)}%', style: s(11.5, true))),
+                        DataColumn(label: Text(w('DD ≤ ${dd.toStringAsFixed(0)}%', '回撤 ≤ ${dd.toStringAsFixed(0)}%'), style: s(11.5, true))),
                     ],
                     rows: [
                       for (final sp in peAxis)
                         DataRow(
                           cells: [
-                            DataCell(Text('Peak PE ≥ ${sp.toStringAsFixed(1)}x', style: s(12, true))),
+                            DataCell(Text(w('Peak PE ≥ ${sp.toStringAsFixed(1)}x', '峰值 PE ≥ ${sp.toStringAsFixed(1)}x'), style: s(12, true))),
                             for (final dd in ddAxis)
                               () {
                                 final cell = gridCells.firstWhere(
@@ -1369,7 +1384,7 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                                       borderRadius: BorderRadius.circular(5),
                                     ),
                                     child: Text(
-                                      '${_dec(cell['cagrPct'], 2)}% · Sh ${_dec(sh, 3)}',
+                                      '${_dec(cell['cagrPct'], 2)}% · ${w('Sh', '夏普')} ${_dec(sh, 3)}',
                                       style: s(11.5, true, beat ? p.positive : _amber),
                                     ),
                                   ),
@@ -1408,7 +1423,7 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
       ),
       (
         w('Trend vs MA150 / MA200', '均线偏离度 MA150 / MA200'),
-        '${_pctDirect(radar['ma150DistPct'], 2)} vs MA150',
+        '${_pctDirect(radar['ma150DistPct'], 2)} ${w('vs MA150', '对比 MA150')}',
         'MA150 \$${_dec(radar['qqqMa150'], 2)} · MA200 \$${_dec(radar['qqqMa200'], 2)} (${_pctDirect(radar['ma200DistPct'], 2)})',
       ),
       (
@@ -1476,7 +1491,7 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                     const SizedBox(width: 7),
                     Expanded(
                       child: Text(
-                        '${text(c['metric'])} · ${w('Now', '当前')} ${text(c['current'])} → ${w('Target', '目标')} ${text(c['target'])}',
+                        '${localizeStrategyMetricText(loc(c['metric']), context.language)} · ${w('Now', '当前')} ${localizeStrategyMetricText(loc(c['current']), context.language)} → ${w('Target', '目标')} ${localizeStrategyMetricText(loc(c['target']), context.language)}',
                         style: s(11.8, c['met'] == true),
                       ),
                     ),
@@ -1685,10 +1700,10 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                 columns: [
                   DataColumn(label: Text(w('Strategy', '策略方案'), style: s(11.5, true))),
                   DataColumn(label: Text(w('0% Tax CAGR\n(IRA / Roth / HK / SG)', '0% 免税年化\n(IRA/香港/新加坡/中东)'), style: s(11.5, true))),
-                  DataColumn(label: Text('15% CGT CAGR', style: s(11.5, true))),
-                  DataColumn(label: Text('20% CGT CAGR', style: s(11.5, true))),
+                  DataColumn(label: Text(w('15% CGT CAGR', '15% 税率年化'), style: s(11.5, true))),
+                  DataColumn(label: Text(w('20% CGT CAGR', '20% 税率年化'), style: s(11.5, true))),
                   DataColumn(label: Text(w('20% Tax Drag', '20% 税损拖累'), style: s(11.5, true))),
-                  DataColumn(label: Text('Sharpe / MDD', style: s(11.5, true))),
+                  DataColumn(label: Text(w('Sharpe / MDD', '夏普 / 最大回撤'), style: s(11.5, true))),
                 ],
                 rows: [
                   for (final tr in taxRows)
@@ -1701,7 +1716,7 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                         DataCell(Text('${_dec(tr['taxFreeCagrPct'], 2)}%', style: s(12, true, p.positive))),
                         DataCell(Text('${_dec(tr['tax15CagrPct'], 2)}%', style: s(12, true))),
                         DataCell(Text('${_dec(tr['tax20CagrPct'], 2)}%', style: s(12, true))),
-                        DataCell(Text('${_dec(tr['tax20DragPct'], 2)}%/yr', style: s(12, false, p.muted))),
+                        DataCell(Text('${_dec(tr['tax20DragPct'], 2)}%${w('/yr', '/年')}', style: s(12, false, p.muted))),
                         DataCell(
                           Text(
                             '${_dec(tr['sharpe'], 3)} / ${_dec(tr['maxDrawdownPct'], 2)}%',
@@ -1749,13 +1764,13 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                 DataColumn(label: Text(w('Regime & Window', '历史行情阶段与起止区间'), style: s(11.5, true))),
                 DataColumn(label: Text('100% QQQ', style: s(11.5, true, _violet))),
                 DataColumn(label: Text('100% SCHD', style: s(11.5, true, _amber))),
-                DataColumn(label: Text('70/30 Static', style: s(11.5, true, p.muted))),
-                DataColumn(label: Text('M6 Flagship', style: s(11.5, true, _teal))),
-                DataColumn(label: Text('M4 Left', style: s(11.5, true, p.positive))),
-                DataColumn(label: Text('M7 Core', style: s(11.5, true, _sky))),
+                DataColumn(label: Text(w('70/30 Static', '70/30 静态'), style: s(11.5, true, p.muted))),
+                DataColumn(label: Text(w('M6 Flagship', 'M6 旗舰'), style: s(11.5, true, _teal))),
+                DataColumn(label: Text(w('M4 Left', 'M4 纯左侧'), style: s(11.5, true, p.positive))),
+                DataColumn(label: Text(w('M7 Core', 'M7 底仓'), style: s(11.5, true, _sky))),
                 DataColumn(
                   label: Text(
-                    '${mode.toUpperCase()} vs QQQ',
+                    '${mode.toUpperCase()} ${w('vs QQQ', '对比 QQQ')}',
                     style: s(11.5, true, _modeColor(mode)),
                   ),
                 ),
@@ -1784,7 +1799,7 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                                       ),
                                       child: Text(
                                         isBear ? w('BEAR', '熊市/冲击') : w('BULL', '主升牛市'),
-                                        style: s(9.5, true, isBear ? p.negative : p.positive),
+                                        style: s(11, true, isBear ? p.negative : p.positive),
                                       ),
                                     ),
                                     const SizedBox(width: 6),
@@ -1902,8 +1917,8 @@ class _QqqSchdRotationDashboardState extends State<QqqSchdRotationDashboard> {
                 DataColumn(label: Text(w('Trigger Signal', '触发信号类型'), style: s(11.5, true))),
                 DataColumn(label: Text(w('QQQ Adj', 'QQQ复权价'), style: s(11.5, true))),
                 DataColumn(label: Text(w('Pos-PE (90d)', 'PE (90日峰)'), style: s(11.5, true))),
-                DataColumn(label: Text('FCF%', style: s(11.5, true))),
-                DataColumn(label: Text('DD / RSI / VIX', style: s(11.5, true))),
+                DataColumn(label: Text(w('FCF%', 'FCF率'), style: s(11.5, true))),
+                DataColumn(label: Text(w('DD / RSI / VIX', '回撤 / RSI / VIX'), style: s(11.5, true))),
                 DataColumn(label: Text(w('Interval Strat vs QQQ', '持仓期收益 vs QQQ'), style: s(11.5, true))),
               ],
               rows: [

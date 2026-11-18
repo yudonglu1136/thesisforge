@@ -57,7 +57,7 @@ extension _InvestmentHome on _InvestmentWorkspaceState {
             onPressed: () => navigate('discover'),
             icon: const Icon(Icons.explore_outlined, size: 18),
             label: Text(
-              w('Find your next idea in Discover', '去 Discover 寻找下一个机会'),
+              w('Find your next idea in Discover', '前往「发现」寻找下一个投资机会'),
             ),
           ),
           TextButton(
@@ -303,7 +303,7 @@ extension _InvestmentHome on _InvestmentWorkspaceState {
                         ).where((t) => t['status'] == 'review_required'))
                           '${metricName(text(asMap(t['rule'])['metric']))} ${asMap(t['rule'])['operator'] == 'lt' ? '<' : '>'} ${pct(asMap(t['rule'])['threshold'])}',
                         if (asList(r['guruChanges']).isNotEmpty)
-                          w('Source Guru reported a change', '来源大佬披露变化'),
+                          w('Source Guru reported a change', '来源大师披露变化'),
                       ].join(' · '),
               ),
               trailing: const Icon(Icons.chevron_right),
@@ -385,7 +385,7 @@ extension _InvestmentHome on _InvestmentWorkspaceState {
                   all.isEmpty
                       ? 'Browse all Gurus'
                       : 'Browse ${all.length} Gurus',
-                  all.isEmpty ? '浏览全部大佬' : '浏览 ${all.length} 位大佬',
+                  all.isEmpty ? '浏览全部大师' : '浏览 ${all.length} 位大师',
                 ),
               ),
             );

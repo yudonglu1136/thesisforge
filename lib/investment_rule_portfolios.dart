@@ -60,7 +60,7 @@ class _StrategyWorkspacePanelState extends State<StrategyWorkspacePanel> {
             key: const ValueKey('strategy-styles-tab'),
             selected: activeTab == 'portfolio',
             label: Text(
-              context.tr('Strategy Portfolio · 策略组合', 'Strategy Portfolio'),
+              context.tr('量化策略组合', 'Strategy Portfolio'),
             ),
             onSelected: (_) => selectTab('portfolio'),
           ),
@@ -159,7 +159,7 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
   );
   String name(String id) => switch (id) {
     'quality_rank' => w('Quality Rank · Top 10', '质量排名 · 前十'),
-    'ackman' => w('Ackman · quantitative proxy', 'Ackman · 量化代理'),
+    'ackman' => w('Ackman · quantitative proxy', '阿克曼 · 量化代理'),
     'qqq' => 'QQQ',
     _ => 'SPY',
   };
@@ -579,8 +579,8 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'STEP ${step.$1}',
-                            style: s(10, true, color(active)),
+                            w('STEP ${step.$1}', '步骤 ${step.$1}'),
+                            style: s(11, true, color(active)),
                           ),
                           const SizedBox(height: 4),
                           Text(step.$2, style: s(14, true)),
@@ -1052,7 +1052,7 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
                       curve,
                     );
                   },
-                  child: Text('${years}Y'),
+                  child: Text(w('${years}Y', '近$years年')),
                 ),
               for (final year in [2013, 2014])
                 if (curve.any((r) => text(r['date']).startsWith('$year-')))
@@ -1242,7 +1242,7 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
         Text(
           q['mature'] == true
               ? w('COMPLETED RETURN WINDOW', '已完成收益期')
-              : w('LATEST · RETURN NOT MATURE', '最新 · 收益尚未成熟'),
+              : w('LATEST · RETURN NOT MATURE', '最新一期 · 持有期尚未走完'),
           style: s(11, true, p.secondary),
         ),
         const SizedBox(height: 12),
@@ -1353,7 +1353,7 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
     'opmargin_change_yoy' => w('Quarterly margin YoY change', '季度利润率同比变化'),
     'net_equity_cash_payout_yield' => w(
       'Net equity cash payout / market cap',
-      '股票净融资流出 / 市值',
+      '股东净现金回报率（回购与分红净额 / 市值）',
     ),
     _ => id,
   };
@@ -1439,18 +1439,34 @@ class _RulePortfolioState extends State<InvestorStylesDashboard> {
     ),
   );
 
-  String sourceLabel(String key) => switch (key) {
-    'ttm_reportperiod' => w('TTM period end', 'TTM 期末'),
-    'q0_reportperiod' => w('Quarter period end', '季度期末'),
-    'y0_reportperiod' => w('Annual period end', '年度期末'),
-    'ttm_date' => w('TTM available', 'TTM 披露日'),
-    'q0_date' => w('Quarter available', '本季度披露日'),
-    'q4_date' => w('Year-ago quarter available', '去年同期披露日'),
-    _ => w(
-      'Annual observation ${key.substring(1, 2)} available',
-      '年度观测 ${key.substring(1, 2)} 披露日',
-    ),
-  };
+  String sourceLabel(String key) {
+    switch (key) {
+      case 'ttm_reportperiod':
+        return w('TTM period end', 'TTM 报告期末');
+      case 'q0_reportperiod':
+        return w('Quarter period end', '本季报告期末');
+      case 'y0_reportperiod':
+        return w('Annual period end', '最近财年期末');
+      case 'ttm_date':
+        return w('TTM available', 'TTM 财报披露日');
+      case 'q0_date':
+        return w('Quarter available', '本季财报披露日');
+      case 'q4_date':
+        return w('Year-ago quarter available', '去年同期披露日');
+    }
+    final yrIdx = key.length >= 2 ? int.tryParse(key.substring(1, 2)) : null;
+    if (yrIdx != null) {
+      if (key.endsWith('_reportperiod')) {
+        return yrIdx == 0
+            ? w('Latest fiscal year end', '最近财年期末')
+            : w('Prior fiscal year -$yrIdx end', '前第 $yrIdx 财年期末');
+      }
+      return yrIdx == 0
+          ? w('Latest annual filing available', '最近财年年报披露日')
+          : w('Prior fiscal year -$yrIdx available', '前第 $yrIdx 财年年报披露日');
+    }
+    return w('Observation $key available', '观测项 $key 披露日');
+  }
 
   Widget method() => panel(
     Column(

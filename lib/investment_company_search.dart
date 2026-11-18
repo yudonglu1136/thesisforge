@@ -361,7 +361,7 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
                         w('No matching companies', '没有匹配的公司'),
                         w(
                           'Try a company name or ticker. Fact OS companies remain available even without a platform valuation.',
-                          '请尝试公司名或股票代码。即使暂无平台估值，Fact OS 公司仍可研究。',
+                          '请尝试其他公司名称或股票代码；即使暂无平台估值模型，财报覆盖公司仍可查看研究。',
                         ),
                         hasQuery ? w('Clear search', '清空搜索') : null,
                         () {

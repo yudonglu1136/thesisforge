@@ -324,7 +324,7 @@ function compareManagers(positions, equityValue, books, asOf) {
         shared: !!u && !!g && identity !== 'claim_mismatch', identity};
     }).sort((a,b) => Math.abs(b.difference ?? b.userWeight) - Math.abs(a.difference ?? a.userWeight));
     const shared = differences.filter(d => d.shared);
-    return {guruId: b.guru.id, name: b.guru.name, avatar: b.guru.avatar,
+    return {guruId: b.guru.id, name: b.guru.name, chineseName: b.guru.chineseName ?? null, avatar: b.guru.avatar,
       reportDate: b.filing.reportDate, availableAt: b.filing.filingDate, accession: b.filing.accessionNumber,
       complete, sharedCount: shared.length, sharedUserWeight: equityValue ? sum(shared.map(d => d.userWeight)) : null,
       overlap: complete && equityValue && differences.every(d=>d.identity!=='claim_mismatch')

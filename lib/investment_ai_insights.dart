@@ -148,6 +148,8 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
       'datacenter_hosting' => w('Data center hosting', '数据中心托管'),
       'data_center_hosting' => w('Data center hosting', '数据中心托管'),
       'mining_to_ai_transition' => w('Mining / AI transition', '矿业 / AI 转型'),
+      'hyperscaler' => w('Hyperscaler', '超大规模云厂'),
+      'neocloud' => w('Neocloud', '新兴算力云'),
       _ => label,
     };
   }
@@ -162,7 +164,9 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
         fontFeatures: blackEditionPreview
             ? const [ui.FontFeature.tabularFigures()]
             : null,
-        letterSpacing: blackEditionPreview && size >= 20 ? -.5 : null,
+        letterSpacing: context.isChinese
+            ? 0
+            : (blackEditionPreview && size >= 20 ? -.5 : null),
         color: color ?? p.text,
       );
 
@@ -552,7 +556,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('AI Insights', style: style(28, true)),
+                Text(w('AI Insights', 'AI 洞察'), style: style(28, true)),
                 const SizedBox(height: 4),
                 caption(
                   'Follow capital investment, revenue and earnings quality.',
@@ -573,13 +577,20 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                   PopupMenuButton<String>(
                     tooltip: w('Export analysis', '导出分析'),
                     onSelected: (value) {
-                      if (value == 'png') {
-                        showExport();
+                      if (value == 'png_zh') {
+                        showExport(reportLang: AppLanguage.zh);
+                      } else if (value == 'png') {
+                        showExport(reportLang: AppLanguage.en);
                       } else {
                         unawaited(exportCsv());
                       }
                     },
                     itemBuilder: (_) => [
+                      if (context.isChinese)
+                        PopupMenuItem(
+                          value: 'png_zh',
+                          child: Text(w('Chinese report · PNG', '中文长图 · PNG')),
+                        ),
                       PopupMenuItem(
                         value: 'png',
                         child: Text(w('English report · PNG', '英文长图 · PNG')),
@@ -719,7 +730,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
             ])
           else if (failed)
             panel([
-              title('AI Insights is unavailable', 'AI Insights 暂不可用'),
+              title('AI Insights is unavailable', 'AI 洞察暂不可用'),
               caption(
                 'The current snapshot could not be loaded. Retry after the data sync finishes.',
                 '无法载入当前快照，请在数据同步完成后重试。',
@@ -835,11 +846,11 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
             '资本投入有多大？',
             hintEn:
                 'Big four + covered neocloud · click a bar to inspect that quarter',
-            hintZh: '四大科技 + 已覆盖 neocloud · 点击柱状图研究该季',
+            hintZh: '四大科技 + 已覆盖新兴算力云（Neocloud）· 点击柱状图研究该季',
           ),
           legend([
             ('Big four', '四大科技', p.accent),
-            ('Neocloud', 'Neocloud', const Color(0xFF648F96)),
+            ('Neocloud', '新兴算力云', const Color(0xFF648F96)),
           ]),
           const SizedBox(height: 8),
           _AiInsightsChart(
@@ -852,12 +863,16 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                     asMap(asMap(row['capex'])['breakdown'])['big4'],
                   ),
               ]),
-              _AiChartSeries('Neocloud', const Color(0xFF648F96), [
-                for (final row in series)
-                  nullableNumber(
-                    asMap(asMap(row['capex'])['breakdown'])['neocloud'],
-                  ),
-              ]),
+              _AiChartSeries(
+                w('Neocloud', '新兴算力云'),
+                const Color(0xFF648F96),
+                [
+                  for (final row in series)
+                    nullableNumber(
+                      asMap(asMap(row['capex'])['breakdown'])['neocloud'],
+                    ),
+                ],
+              ),
             ],
             stacked: true,
             percent: false,
@@ -1014,7 +1029,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                 DataColumn(label: Text(w('Quarter', '季度'))),
                 if (kind == 'capex') ...[
                   DataColumn(label: Text(w('Big four', '四大科技')), numeric: true),
-                  const DataColumn(label: Text('Neocloud'), numeric: true),
+                  DataColumn(label: Text(w('Neocloud', '新兴算力云')), numeric: true),
                   DataColumn(label: Text(w('Total', '合计')), numeric: true),
                 ] else ...[
                   DataColumn(
@@ -1198,7 +1213,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
               InkWell(
                 onTap: () => setMetric('yoy'),
                 child: Text(
-                  w('Switch to YoY →', '切到 YoY →'),
+                  w('Switch to YoY →', '切到同比 (YoY) →'),
                   style: style(12, true, p.accent),
                 ),
               ),
@@ -1812,9 +1827,9 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
               'growth': w('Growth score', '增长分'),
               'quality': w('Quality score', '质量分'),
               'composite': w('Composite score', '综合分'),
-              'revenueYoY': w('Revenue YoY', '收入 YoY'),
-              'revenueQoQ': w('Revenue QoQ', '收入 QoQ'),
-              'yoyAcceleration': w('YoY acceleration', 'YoY 增速变化'),
+              'revenueYoY': w('Revenue YoY', '收入同比'),
+              'revenueQoQ': w('Revenue QoQ', '收入环比'),
+              'yoyAcceleration': w('YoY acceleration', '同比增速变化'),
               'revenue': w('Revenue size', '收入规模'),
             },
             (value) {
@@ -1869,9 +1884,13 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
       nullableNumber(value)?.toStringAsFixed(1) ?? '—';
   String pp(dynamic value) => nullableNumber(value) == null
       ? '—'
-      : '${number(value) > 0 ? '+' : ''}${(number(value) * 100).toStringAsFixed(1)} pp';
-  String peerLabel(Map<String, dynamic> row) =>
-      row['group'] == 'software' ? w('Software', '软件') : w('Hardware', '硬件');
+      : '${number(value) > 0 ? '+' : ''}${(number(value) * 100).toStringAsFixed(1)} ${w('pp', '个百分点')}';
+  String peerLabel(Map<String, dynamic> row) => switch (row['group']) {
+    'software' => w('Software', '软件'),
+    'hyperscaler' => w('Hyperscaler', '超大规模云厂'),
+    'neocloud' => w('Neocloud', '新兴算力云'),
+    _ => w('Hardware', '硬件'),
+  };
 
   Widget rankingHeading(String value) =>
       blackEditionPreview ? Flexible(child: Text(value)) : Text(value);
@@ -1899,15 +1918,15 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
         DataColumn(label: rankingHeading('QoQ'), numeric: true),
         if (!compact)
           DataColumn(
-            label: rankingHeading(w('Δ YoY', 'YoY 变化')),
+            label: rankingHeading(w('Δ YoY', '同比变化')),
             numeric: true,
           ),
         DataColumn(
-          label: rankingHeading(w('Op. margin · TTM', '经营利润率 · TTM')),
+          label: rankingHeading(w('Op. margin · TTM', '营业利润率 · TTM')),
           numeric: true,
         ),
         DataColumn(
-          label: rankingHeading(w('FCF margin · TTM', 'FCF 率 · TTM')),
+          label: rankingHeading(w('FCF margin · TTM', 'FCF 利润率 · TTM')),
           numeric: true,
         ),
         if (!compact)
@@ -2381,7 +2400,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                         widget.onCompany(text(row['ticker']), 'evidence');
                       },
                       icon: const Icon(Icons.north_east, size: 16),
-                      label: Text(w('Open Research', '打开 Research')),
+                      label: Text(w('Open Research', '打开公司研究')),
                     ),
                   ],
                 ),
@@ -2544,12 +2563,12 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
         };
 
   String metricLabel(String metric) => switch (metric) {
-    'revenueYoY' => w('Revenue YoY', '收入 YoY'),
-    'revenueQoQ' => w('Revenue QoQ', '收入 QoQ'),
-    'yoyAcceleration' => w('YoY acceleration', 'YoY 增速变化'),
-    'ttmGrossProfitYoY' => w('Gross profit YoY · TTM', '毛利额 YoY · TTM'),
-    'ttmOperatingMargin' => w('Operating margin · TTM', '经营利润率 · TTM'),
-    'ttmFcfMargin' => w('FCF margin · TTM', 'FCF 率 · TTM'),
+    'revenueYoY' => w('Revenue YoY', '收入同比'),
+    'revenueQoQ' => w('Revenue QoQ', '收入环比'),
+    'yoyAcceleration' => w('YoY acceleration', '同比增速变化'),
+    'ttmGrossProfitYoY' => w('Gross profit YoY · TTM', '毛利额同比 · TTM'),
+    'ttmOperatingMargin' => w('Operating margin · TTM', '营业利润率 · TTM'),
+    'ttmFcfMargin' => w('FCF margin · TTM', 'FCF 利润率 · TTM'),
     'accrualRatio' => w('Accrual ratio', '应计比率'),
     'sbcRatio' => w('SBC / revenue', 'SBC / 收入'),
     'ttmGrossMarginChange' => w('Gross margin change · TTM', '毛利率变化 · TTM'),
@@ -2558,7 +2577,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
     'revenueusd' => w('Revenue · USD', '收入 · 美元'),
     'capex' => w('Net capital cash flow · source sign', '净资本现金流 · 来源符号'),
     'gp' => w('Gross profit', '毛利'),
-    'opinc' => w('Operating income', '经营利润'),
+    'opinc' => w('Operating income', '营业利润'),
     'netinc' => w('Net income', '净利润'),
     'ncfo' => w('Operating cash flow', '经营现金流'),
     'sbcomp' => w('Share-based compensation', '股份支付'),
@@ -2603,7 +2622,12 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                             ? aiInsightsPercent(row['value'])
                             : text(row['unit']) == 'USD'
                             ? aiInsightsAmount(row['value'])
-                            : '${nullableNumber(row['value'])?.toStringAsFixed(2) ?? '—'} ${text(row['unit'])}',
+                            : nullableNumber(row['value']) == null
+                            ? '—'
+                            : text(row['unit']) == 'unknown' ||
+                                  text(row['unit']).isEmpty
+                            ? '${nullableNumber(row['value'])!.toStringAsFixed(2)} ${w('M (reporting currency)', '百万（原币种）')}'
+                            : '${nullableNumber(row['value'])!.toStringAsFixed(2)} ${text(row['unit'])}',
                       ),
                     ),
                     DataCell(Text(text(row['reportperiod'], '—'))),
@@ -2658,15 +2682,42 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
       'sourceRevisionId',
     ];
     String cell(dynamic value) => '"${text(value).replaceAll('"', '""')}"';
-    final csv = [
-      ['asOf', 'snapshotId', ...fields].map(cell).join(','),
+    final zhHeaders = <String, String>{
+      'asOf': '信息截止日',
+      'snapshotId': '快照ID',
+      'ticker': '股票代码',
+      'name': '公司名称',
+      'group': '分组',
+      'sector': '细分环节',
+      'quarter': '财报季度',
+      'reportperiod': '报告期末',
+      'datekey': '披露可得日',
+      'revenue': '营业收入(美元)',
+      'revenueYoY': '收入同比',
+      'revenueQoQ': '收入环比(未季调)',
+      'yoyAcceleration': '同比增速变化',
+      'ttmOperatingMargin': '营业利润率(TTM)',
+      'ttmFcfMargin': '自由现金流利润率(TTM)',
+      'sbcRatio': '股份支付占比',
+      'growthScore': '增长评分',
+      'qualityScore': '质量评分',
+      'compositeScore': '综合评分',
+      'status': '状态',
+      'sourceRevisionId': '数据源版本ID',
+    };
+    final headerKeys = ['asOf', 'snapshotId', ...fields];
+    final headerRow = context.isChinese
+        ? headerKeys.map((k) => cell(zhHeaders[k] ?? k)).join(',')
+        : headerKeys.map(cell).join(',');
+    final csv = '\uFEFF${[
+      headerRow,
       for (final row in companies)
         [
           widget.asOf,
           snapshotId,
           ...fields.map((f) => row[f]),
         ].map(cell).join(','),
-    ].join('\r\n');
+    ].join('\r\n')}';
     try {
       await downloadAiInsightsBytes(
         Uint8List.fromList(utf8.encode(csv)),
@@ -2689,12 +2740,13 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
     }
   }
 
-  void showExport() {
+  void showExport({AppLanguage reportLang = AppLanguage.en}) {
     final reportData = data;
     if (reportData == null) return;
     final captureKey = GlobalKey();
     var saving = false;
     final fileQuarter = quarter, fileAsOf = widget.asOf;
+    final isZhReport = reportLang == AppLanguage.zh;
     showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -2711,7 +2763,9 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                     children: [
                       Expanded(
                         child: Text(
-                          w('English report · PNG', '英文长图 · PNG'),
+                          isZhReport
+                              ? w('Chinese report · PNG', '中文长图 · PNG')
+                              : w('English report · PNG', '英文长图 · PNG'),
                           style: style(18, true),
                         ),
                       ),
@@ -2738,13 +2792,14 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                           child: RepaintBoundary(
                             key: captureKey,
                             child: LanguageScope(
-                              language: AppLanguage.en,
+                              language: reportLang,
                               child: _AiInsightsExportReport(
                                 data: reportData,
                                 asOf: fileAsOf,
                                 quarter: fileQuarter,
                                 metric: metric,
                                 palette: p,
+                                language: reportLang,
                               ),
                             ),
                           ),
@@ -2783,7 +2838,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                                   }
                                   await downloadAiInsightsBytes(
                                     bytes.buffer.asUint8List(),
-                                    'ai-insights-$fileQuarter-$fileAsOf-en.png',
+                                    'ai-insights-$fileQuarter-$fileAsOf-${isZhReport ? 'zh' : 'en'}.png',
                                     'image/png',
                                   );
                                 } finally {
@@ -3062,6 +3117,7 @@ class _AiInsightsChartState extends State<_AiInsightsChart> {
                           percent: widget.percent,
                           hovered: hovered,
                           selectedQuarter: widget.selectedQuarter,
+                          emptyLabel: widget.emptyLabel,
                         ),
                       ),
                     ),
@@ -3105,6 +3161,7 @@ class _AiInsightsChartPainter extends CustomPainter {
     required this.percent,
     required this.hovered,
     required this.selectedQuarter,
+    this.emptyLabel = 'No comparable observations',
   });
   final Palette palette;
   final List<String> labels;
@@ -3112,14 +3169,19 @@ class _AiInsightsChartPainter extends CustomPainter {
   final bool stacked, percent;
   final int? hovered;
   final String? selectedQuarter;
+  final String emptyLabel;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (labels.isEmpty || !series.any((s) => s.values.any((v) => v != null))) {
       final empty = TextPainter(
         text: TextSpan(
-          text: 'No comparable observations',
-          style: TextStyle(color: palette.muted, fontSize: 13),
+          text: emptyLabel,
+          style: TextStyle(
+            color: palette.muted,
+            fontSize: 13,
+            fontFamilyFallback: kCjkFontFallback,
+          ),
         ),
         textDirection: TextDirection.ltr,
       )..layout();

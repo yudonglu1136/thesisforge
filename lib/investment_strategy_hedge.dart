@@ -35,9 +35,9 @@ class _StrategyHedgeCardState extends State<StrategyHedgeCard> {
   bool get enabled => widget.config['type'] != 'none';
   String label(String t) => switch (t) {
     'none' => w('No hedge', '不对冲'),
-    'put_spread' => w('Put Spread', '看跌价差'),
-    'protective_put' => w('Protective Put', '保护性 Put'),
-    _ => 'Collar',
+    'put_spread' => w('Put Spread', '熊市看跌价差'),
+    'protective_put' => w('Protective Put', '保护性看跌期权'),
+    _ => w('Collar', '领口期权对冲'),
   };
   @override
   void initState() {
@@ -392,7 +392,7 @@ class StrategyHedgeResult extends StatelessWidget {
           if (!ready)
             line(
               'This hedge could not be calculated with the available contracts. No hedged curve was invented. ${data['reason']}',
-              '现有合约无法计算此对冲；未生成虚假的对冲曲线。${data['reason']}',
+              '现有合约无法计算此对冲，未编造对冲曲线。${localizeHedgeReason(text(data['reason']), AppLanguage.zh)}',
             ),
           if (ready) ...[
             line(
@@ -522,13 +522,13 @@ class StrategyHedgeResult extends StatelessWidget {
             for (final leg in asList(data['legs']).map(asMap))
               line(
                 '${leg['ticker']} · ${number(leg['side']) > 0 ? 'Buy' : 'Sell'} ${leg['contracts']} · mark ${money(leg['mark'])}',
-                '${leg['ticker']} · ${number(leg['side']) > 0 ? '买入' : '卖出'} ${leg['contracts']} 张 · 收盘价 ${money(leg['mark'])}',
+                '${formatOccOptionContract(text(leg['ticker']), contracts: number(leg['contracts']).toInt(), side: number(leg['side']) > 0 ? 'long' : 'short', language: AppLanguage.zh)} · 收盘价 ${money(leg['mark'])}',
               ),
             const SizedBox(height: 8),
             if (rules['type'] == 'collar')
               line(
                 'Short QQQ calls are not covered by Guru stocks. Proxy mismatch can create unlimited losses; this is not a covered collar on the actual portfolio.',
-                'Guru 股票不能覆盖 QQQ 空头 Call。代理错配可能造成无限亏损；这不是实际组合上的备兑领口。',
+                '大师持仓个股不能直接覆盖 QQQ 空头看涨期权（Call）。代理错配可能产生敞口风险，这并非实际股票组合上的备兑领口。',
               ),
             if (rules['type'] == 'put_spread')
               line(

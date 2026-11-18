@@ -9,14 +9,14 @@ extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
       key: ValueKey(
         'portfolio-guru-open-${position['id'] ?? position['ticker']}',
       ),
-      tooltip: w('Guru filing evidence', '大佬持仓证据'),
+      tooltip: w('Guru filing evidence', '投资大师持仓证据'),
       icon: Icon(Icons.groups_outlined, color: p.accent, size: 20),
       onPressed: () => showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           backgroundColor: p.panel,
           title: Text(
-            '${position['ticker']} · ${w('Guru filing evidence', '大佬持仓证据')}',
+            '${position['ticker']} · ${w('Guru filing evidence', '投资大师持仓证据')}',
           ),
           content: SizedBox(
             width: 620,
@@ -90,7 +90,7 @@ extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
     };
     final coverage = w(
       '${activity['reportedManagers'] ?? 0} / ${activity['eligibleManagers'] ?? 0} covered Gurus filed · ${activity['extractedBooks'] ?? 0} partial books. Exact share class only.',
-      '覆盖范围内 ${activity['reportedManagers'] ?? 0} / ${activity['eligibleManagers'] ?? 0} 位大佬已披露 · ${activity['extractedBooks'] ?? 0} 份为部分持仓。仅匹配同一股票类别。',
+      '覆盖范围内 ${activity['reportedManagers'] ?? 0} / ${activity['eligibleManagers'] ?? 0} 位投资大师已披露 · ${activity['extractedBooks'] ?? 0} 份为部分持仓。仅匹配同一股票类别。',
     );
     if (rows.isEmpty) {
       return Padding(
@@ -105,10 +105,10 @@ extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
                   ? 'Guru activity · Security identity needs review; no ownership inferred.'
                   : 'Guru activity unavailable for this cutoff.',
               activity['status'] == 'no_matches'
-                  ? '大佬动向 · $quarter · 覆盖的披露中未匹配到持仓或清仓记录。'
+                  ? '大师动向 · $quarter · 覆盖的披露中未匹配到持仓或清仓记录。'
                   : activity['status'] == 'identity_unresolved'
-                  ? '大佬动向 · 证券身份待核对，未推断持有人。'
-                  : '该截止日暂无大佬动向数据。',
+                  ? '大师动向 · 证券身份待核对，未推断持有人。'
+                  : '该截止日暂无大师动向数据。',
               size: 12,
             ),
             if (activity['reportDate'] != null)
@@ -125,7 +125,7 @@ extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
       iconColor: p.accent,
       collapsedIconColor: p.accent,
       title: Text(
-        w('Guru activity · $quarter', '大佬动向 · $quarter'),
+        w('Guru activity · $quarter', '大师动向 · $quarter'),
         style: heading(14),
       ),
       subtitle: Padding(
@@ -185,7 +185,7 @@ extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
                       ),
                       const SizedBox(width: 5),
                       Text(
-                        text(m['name']),
+                        guruDisplayName(m, context.language),
                         style: TextStyle(color: p.muted, fontSize: 11),
                       ),
                     ],
@@ -323,12 +323,12 @@ extension _PortfolioGuruEvidence on _PortfolioResearchPanelState {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        text(m['name']),
+                        guruDisplayName(m, context.language),
                         style: TextStyle(color: p.text, fontSize: 13),
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${guruAction(text(m['action']))} · ${w('Guru weight', '大佬持仓权重')} ${guruWeight(m['weight'])}',
+                        '${guruAction(text(m['action']))} · ${w('Guru weight', '大师持仓权重')} ${guruWeight(m['weight'])}',
                         style: TextStyle(color: color, fontSize: 11),
                       ),
                       if (m['shareChange'] != null)

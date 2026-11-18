@@ -320,7 +320,7 @@ class _ActiveSectorDialogState extends State<ActiveSectorDialog> {
             note(
               w(
                 'Method active-sector-v1 · Complete comparable filings only. Conservative manager classification is not a verified fund mandate. Current sector taxonomy is applied to both periods. Quarter-end +45 days is a visibility proxy, not an actual filing date.',
-                '方法 active-sector-v1 · 仅纳入前后两期完整可比申报。保守主动机构分类并非已核实基金策略。两期使用当前行业分类。季末 +45 天为可见日期代理，不是真实申报时间。',
+                '主动机构行业口径 · 仅纳入前后两期完整可比申报。保守主动机构分类并非已核实基金策略。两期统一使用当前行业分类。季末 +45 天为公开可见日期代理，并非真实申报日。',
               ),
             ),
           ],

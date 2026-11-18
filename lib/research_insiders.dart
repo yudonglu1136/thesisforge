@@ -36,6 +36,17 @@ class _ResearchInsidersState extends State<ResearchInsidersPanel> {
   String amount(dynamic x, {bool money = false}) {
     if (x is! num || !x.isFinite) return '—';
     final a = x.abs();
+    if (context.isChinese) {
+      final sign = x < 0 ? '−' : '';
+      final sym = money ? '\$' : '';
+      if (a >= 1e8) {
+        return '$sign$sym${(a / 1e8).toStringAsFixed(2)}亿';
+      }
+      if (a >= 1e4) {
+        return '$sign$sym${(a / 1e4).toStringAsFixed(a >= 1e6 ? 1 : 2)}万';
+      }
+      return '$sign$sym${a.toStringAsFixed(money ? 2 : 0)}';
+    }
     final suffix = a >= 1e9
         ? 'B'
         : a >= 1e6
@@ -109,26 +120,18 @@ class _ResearchInsidersState extends State<ResearchInsidersPanel> {
     }
   }
 
-  String action(Map<String, dynamic> r) => switch (r['kind']) {
-    'purchase' => w('Purchase · P', '买入 · P'),
-    'sale' => w('Sale · S', '卖出 · S'),
-    'A' => w('Award / grant · A', '奖励 / 授予 · A'),
-    'M' => w('Exercise / conversion · M', '行权 / 转换 · M'),
-    'C' => w('Conversion · C', '转换 · C'),
-    'F' => w('Tax / exercise payment · F', '税款 / 行权支付 · F'),
-    'G' => w('Gift · G', '赠与 · G'),
-    'holding' => w('Ownership report', '持有申报'),
-    _ => w(
-      'Other · ${r['transactioncode'] ?? '—'}',
-      '其他 · ${r['transactioncode'] ?? '—'}',
-    ),
-  };
+  String action(Map<String, dynamic> r) => localizeInsiderTxCode(
+    '${r['transactioncode'] ?? ''}',
+    '${r['kind'] ?? ''}',
+    context.language,
+  );
   String role(Map<String, dynamic> r) => [
-    if ('${r['officertitle'] ?? ''}'.trim().isNotEmpty) '${r['officertitle']}',
+    if ('${r['officertitle'] ?? ''}'.trim().isNotEmpty)
+      localizeInsiderOfficerTitle('${r['officertitle']}', context.language),
     if (r['isdirector'] == 'Y') w('Director', '董事'),
     if (r['isofficer'] == 'Y' && '${r['officertitle'] ?? ''}'.trim().isEmpty)
       w('Officer', '高管'),
-    if (r['istenpercentowner'] == 'Y') w('10% owner', '10% 股东'),
+    if (r['istenpercentowner'] == 'Y') w('10% owner', '持股 10% 以上股东'),
   ].join(' · ');
   String exclusion(dynamic x) => switch (x) {
     'amendment_unresolved' => w('Amendment not reconciled', '修订尚未对账'),
@@ -296,11 +299,11 @@ class _ResearchInsidersState extends State<ResearchInsidersPanel> {
                   (w('Transaction date', '交易日'), r['transactiondate']),
                   (
                     w('Filing date / form', '申报日 / 表格'),
-                    '${r['date']} · ${r['formtype']}',
+                    '${r['date']} · ${localizeInsiderFormType('${r['formtype'] ?? ''}', context.language)}',
                   ),
                   (
-                    w('Security / type code', '证券 / 类型代码'),
-                    '${r['securitytitle'] ?? '—'} · ${r['securityadcode'] ?? '—'}',
+                    w('Security / type code', '证券类别 / 变动性质'),
+                    '${localizeInsiderSecurityTitle('${r['securitytitle'] ?? '—'}', context.language)} · ${localizeInsiderAdCode('${r['securityadcode'] ?? '—'}', context.language)}',
                   ),
                   (w('Reported shares · signed', '申报股数 · 带方向'), r['shares']),
                   (
@@ -312,7 +315,14 @@ class _ResearchInsidersState extends State<ResearchInsidersPanel> {
                     w('Holdings after this line', '该明细后的持有量'),
                     r['holdingsAfter'],
                   ),
-                  (w('Direct / indirect', '直接 / 间接持有'), r['directorindirect']),
+                  (
+                    w('Direct / indirect', '直接 / 间接持有'),
+                    switch ('${r['directorindirect'] ?? ''}'.trim().toUpperCase()) {
+                      'D' => w('Direct (D)', '直接持有 (D)'),
+                      'I' => w('Indirect (I)', '间接持有 (I)'),
+                      _ => r['directorindirect'],
+                    },
+                  ),
                 ])
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
@@ -434,7 +444,7 @@ class _ResearchInsidersState extends State<ResearchInsidersPanel> {
                   style: s(11, false, p.muted),
                 ),
                 Text(
-                  '${amount(r['shares'])} ${w('shares', '股')} · ${r['securitytitle'] ?? '—'}',
+                  '${amount(r['shares'])}${context.isChinese ? '股' : ' shares'} · ${localizeInsiderSecurityTitle('${r['securitytitle'] ?? '—'}', context.language)}',
                   style: s(11, false, p.muted),
                 ),
                 if (r['exclusion'] != null &&
@@ -496,7 +506,11 @@ class _ResearchInsidersState extends State<ResearchInsidersPanel> {
                       ChoiceChip(
                         key: ValueKey('insider-window-$n'),
                         selected: months == n,
-                        label: Text(n == 12 ? '1Y' : '${n}M'),
+                        label: Text(
+                          n == 12
+                              ? w('1Y', '近 1 年')
+                              : w('${n}M', '近 $n 个月'),
+                        ),
                         onSelected: (_) {
                           months = n;
                           unawaited(load(reset: true));

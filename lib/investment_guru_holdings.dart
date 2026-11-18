@@ -1011,7 +1011,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                           child: Text(
                             w(
                               'Guru conviction & net flow rankings',
-                              '大佬集中持仓与净调仓排行',
+                              '投资大师集中持仓与净调仓排行',
                             ),
                             style: s(16, true),
                           ),
@@ -1020,7 +1020,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                           triggerMode: TooltipTriggerMode.tap,
                           message: w(
                             'Percentages are weights in each Guru’s reported 13F common-long book, not total fund assets. Net buying = (New + Added) minus (Reduced + Exited) across active Gurus. Reported share changes are delayed 13F disclosures, not live trade signals. Missing entries do not establish a zero position.',
-                            '百分比为各位大佬已披露 13F 普通股多头持仓权重，非基金全部资产。净加仓 =（新建 + 加仓人数）−（减仓 + 清仓人数）。所有变动均为 13F 延迟披露股数变化，非实时交易信号；缺失记录不代表零持仓。',
+                            '百分比为各位投资大师已披露 13F 普通股多头持仓权重，非基金全部资产。净加仓 =（新建 + 加仓人数）−（减仓 + 清仓人数）。所有变动均为 13F 延迟披露股数变化，非实时交易信号；缺失记录不代表零持仓。',
                           ),
                           child: Semantics(
                             label: w(
@@ -1109,7 +1109,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                   Text(
                     w(
                       '${qLabel(quarter)} filing season in progress: $reported / $eligible Gurus reported as of ${widget.asOf}.',
-                      '${qLabel(quarter)} 披露进行中：截至 ${widget.asOf} 已收录 $reported / $eligible 位大佬持仓，其余机构待后续快照更新。',
+                      '${qLabel(quarter)} 披露进行中：截至 ${widget.asOf} 已收录 $reported / $eligible 位大师持仓，其余机构待后续快照更新。',
                     ),
                     style: s(12, false, p.text),
                   ),
@@ -1478,11 +1478,11 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
               allGurusScope && capitalFilter == 'all'
                   ? w(
                       'All Gurus ($reportedSelectedCount/$totalCount filed)',
-                      '全部大佬（本季已披露 $reportedSelectedCount/$totalCount）',
+                      '全部大师（本季已披露 $reportedSelectedCount/$totalCount）',
                     )
                   : w(
                       'Gurus: $chosenCount selected',
-                      '已筛选 $chosenCount 位大佬',
+                      '已筛选 $chosenCount 位大师',
                     ),
               style: s(12, !allGurusScope || capitalFilter != 'all'),
             ),
@@ -1547,9 +1547,9 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
     final reportedSet = reportedGuruSet;
     final catalog = availableGurus.where((g) {
       return matchesCapital(g) &&
-          '${g['name']} ${g['entityName']}'.toLowerCase().contains(
-            managerSearch.text.trim().toLowerCase(),
-          );
+          '${g['name']} ${guruDisplayName(g, AppLanguage.zh)} ${g['entityName']}'
+              .toLowerCase()
+              .contains(managerSearch.text.trim().toLowerCase());
     }).toList();
     catalog.sort((a, b) {
       final aRep = reportedSet.contains(text(a['id'])) ? 1 : 0;
@@ -1574,7 +1574,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                 child: search(
                   managerSearch,
                   'Search Guru name',
-                  '搜索大佬姓名或机构',
+                  '搜索大师姓名或机构',
                   () => setState(() {}),
                 ),
               ),
@@ -1630,7 +1630,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Text(
-                w('No Gurus match.', '没有匹配的 Guru。'),
+                w('No Gurus match.', '没有匹配的投资大师。'),
                 style: s(12, false, p.muted),
               ),
             )
@@ -1714,7 +1714,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          text(g['name']),
+                          guruDisplayName(g, context.language),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: s(11.5, true),
@@ -1756,11 +1756,11 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
         children: [
           Text(
             chosen.isEmpty
-                ? w('Choose Gurus to compare', '请选择至少一位大佬')
+                ? w('Choose Gurus to compare', '请选择至少一位投资大师')
                 : noneReportedAmongChosen
                 ? w(
                     'Selected Gurus have not filed ${qLabel(quarter)} in this snapshot yet.',
-                    '当前勾选的大佬尚未包含在 ${qLabel(quarter)} 已披露名单中。',
+                    '当前勾选的投资大师尚未包含在 ${qLabel(quarter)} 已披露名单中。',
                   )
                 : w('No disclosed holdings match.', '没有匹配的已披露持仓。'),
             style: s(16, true),
@@ -1769,7 +1769,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
           Text(
             w(
               'Change your selection or filters. An unavailable book is not a zero holding.',
-              '请调整筛选条件或查看全部已披露大佬；未披露不代表零持仓。',
+              '请调整筛选条件或查看全部已披露大师；未披露不代表零持仓。',
             ),
             style: s(12, false, p.muted),
           ),
@@ -1788,7 +1788,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                         .toList();
                   }, reset: true),
                   child: Text(
-                    w('Show all reporting Gurus', '显示全部已披露大佬'),
+                    w('Show all reporting Gurus', '显示全部已披露大师'),
                   ),
                 ),
               if (stockSearch.text.isNotEmpty ||
@@ -1863,9 +1863,9 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
       _ => w('Remaining book', '剩余持仓状态'),
     };
     final col4 = switch (board) {
-      'conviction' => w('Top holding Gurus (book %)', '重仓大佬与仓位占比'),
-      'net_adds' => w('Who added / initiated', '新建与加仓大佬明细'),
-      _ => w('Who reduced / exited', '减仓与清仓大佬明细'),
+      'conviction' => w('Top holding Gurus (book %)', '重仓大师与仓位占比'),
+      'net_adds' => w('Who added / initiated', '新建与加仓大师明细'),
+      _ => w('Who reduced / exited', '减仓与清仓大师明细'),
     };
 
     return Container(
@@ -2347,7 +2347,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 105),
               child: Text(
-                text(g['name']),
+                guruDisplayName(g, context.language),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: s(11, false),
@@ -2380,7 +2380,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
           child: Text(
             w(
               '${page * pageSize + 1}–${math.min((page + 1) * pageSize, total)} / $total stocks · ${effectiveSelected.length} Gurus in scope',
-              '${page * pageSize + 1}–${math.min((page + 1) * pageSize, total)} / $total 只股票 · 当前纳入 ${effectiveSelected.length} 位大佬',
+              '${page * pageSize + 1}–${math.min((page + 1) * pageSize, total)} / $total 只股票 · 当前纳入 ${effectiveSelected.length} 位大师',
             ),
             style: s(11, false, p.muted),
           ),
@@ -2487,7 +2487,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                                         avatar(g, 42),
                                         const SizedBox(height: 4),
                                         Text(
-                                          text(g['name']),
+                                          guruDisplayName(g, context.language),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                           style: s(12.5, true),
@@ -2779,7 +2779,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
           Text(
             w(
               'Historical extracts are partial. View the filing for complete holdings.',
-              '历史季度摘录可能仅含主要持仓与变动，点击大佬可查看完整原始披露。',
+              '历史季度摘录可能仅含主要持仓与变动，点击大师可查看完整原始披露。',
             ),
             style: s(11, false, p.secondary),
           ),
@@ -3038,7 +3038,7 @@ class _GuruHoldingsMatrixState extends State<GuruHoldingsMatrix> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    text(m['name']),
+                    guruDisplayName(m, context.language),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: s(12, true),

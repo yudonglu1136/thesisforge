@@ -30,10 +30,12 @@ class CurrentValuationScenarioCard extends StatelessWidget {
       return value == null ? '—' : '${(value * 100).toStringAsFixed(2)}%';
     }
 
-    String scenarioLabel(String id) => switch (id) {
+    String scenarioLabel(String id) => switch (id.toLowerCase()) {
       'base' => context.tr('基准', 'Base'),
       'upside' => context.tr('上行', 'Upside'),
       'downside' => context.tr('下行', 'Downside'),
+      'bull' => context.tr('乐观情景', 'Bull'),
+      'bear' => context.tr('悲观情景', 'Bear'),
       _ => context.tr('情景', 'Scenario'),
     };
     return Container(
@@ -103,24 +105,31 @@ class CurrentValuationScenarioCard extends StatelessWidget {
             const SizedBox(height: 10),
           ],
           Divider(color: palette.border),
-          Text(
-            '${context.tr('股权资本成本（MXN）', 'Cost of equity (MXN)')}: ${percent(assumptions['keMxn'])}',
-            style: TextStyle(color: palette.text, fontSize: 12),
-          ),
-          const SizedBox(height: 6),
+          if (nullableNumber(assumptions['keMxn']) != null) ...[
+            Text(
+              '${context.tr('股权资本成本（MXN）', 'Cost of equity (MXN)')}: ${percent(assumptions['keMxn'])}',
+              style: TextStyle(color: palette.text, fontSize: 12),
+            ),
+            const SizedBox(height: 6),
+          ],
           Text(
             '${context.tr('每份股权终值增长率', 'Terminal growth per claim')}: ${percent(assumptions['terminalPerCurrentClaimGrowth'])}',
             style: TextStyle(color: palette.text, fontSize: 12),
           ),
-          const SizedBox(height: 6),
-          Text(
-            '${context.tr('汇率 MXN/USD', 'FX MXN/USD')}: ${nullableNumber(fx['mxnPerUsd'])?.toStringAsFixed(4) ?? '—'}',
-            style: TextStyle(color: palette.text, fontSize: 12),
-          ),
+          if (nullableNumber(fx['mxnPerUsd']) != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              '${context.tr('汇率 MXN/USD', 'FX MXN/USD')}: ${nullableNumber(fx['mxnPerUsd'])!.toStringAsFixed(4)}',
+              style: TextStyle(color: palette.text, fontSize: 12),
+            ),
+          ],
           for (final warning in asList(detail['warningTranslations'])) ...[
             const SizedBox(height: 10),
             Text(
-              context.tr(text(warning['zh']), text(warning['en'])),
+              context.tr(
+                text(warning['zh'], text(warning['en'])),
+                text(warning['en'], text(warning['zh'])),
+              ),
               style: TextStyle(color: palette.muted, fontSize: 11, height: 1.4),
             ),
           ],

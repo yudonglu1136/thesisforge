@@ -241,7 +241,7 @@ extension _InvestmentOpportunities on _InvestmentWorkspaceState {
                   compact
                       ? 'Holdings. Fundamentals. Valuation.'
                       : 'Guru ownership, business changes and valuation — in one research desk.',
-                  compact ? '集合持仓 · 基本面 · 估值' : '在同一研究台查看大佬持仓、经营变化与估值。',
+                  compact ? '集合持仓 · 基本面 · 估值' : '在同一研究台查看投资大师持仓、经营变化与估值。',
                   size: 14,
                 ),
               ],
@@ -894,7 +894,7 @@ extension _InvestmentOpportunities on _InvestmentWorkspaceState {
         children: [
           label(
             text(published['formula']),
-            text(published['formula']),
+            localizeValuationFormula(text(published['formula']), AppLanguage.zh),
             size: 12,
           ),
           const SizedBox(height: 10),

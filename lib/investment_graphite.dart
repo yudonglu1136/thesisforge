@@ -1080,13 +1080,41 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
               ),
               if (company != null) ...[
                 const SizedBox(height: 16),
-                label('Snapshot / source lineage', '快照 / 来源链'),
-                SelectableText(
-                  const JsonEncoder.withIndent(
-                    '  ',
-                  ).convert(company?['snapshot']),
-                  style: TextStyle(color: p.muted, fontSize: 12),
-                ),
+                label('Snapshot / source lineage', '快照与数据来源链'),
+                const SizedBox(height: 6),
+                for (final entry in <(String, String)>[
+                  (
+                    w('Dataset', '数据集'),
+                    context.ui(
+                      text(
+                        asMap(asMap(company?['snapshot'])['source'])['dataset'],
+                        '—',
+                      ),
+                    ),
+                  ),
+                  (
+                    w('Period end', '报告期末'),
+                    text(asMap(company?['snapshot'])['periodEnd'], '—'),
+                  ),
+                  (
+                    w('Disclosed / available', '公开可见日'),
+                    text(asMap(company?['snapshot'])['availableAt'], '—'),
+                  ),
+                  (
+                    w('Model version', '模型版本'),
+                    text(
+                      asMap(asMap(company?['snapshot'])['source'])['modelVersion'],
+                      '—',
+                    ),
+                  ),
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      '${entry.$1}：${entry.$2}',
+                      style: TextStyle(color: p.muted, fontSize: 12.5),
+                    ),
+                  ),
               ],
             ],
           ),
@@ -1119,7 +1147,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
           height: 1.2,
           color: p.text,
           fontWeight: FontWeight.w700,
-          letterSpacing: -.8,
+          letterSpacing: context.isChinese ? 0 : -.8,
         ),
       ),
       const SizedBox(height: 6),
@@ -1238,7 +1266,15 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                         calculationSerial++;
                         updateUI(() {
                           template = name;
-                          scenarioName.text = name;
+                          scenarioName.text = w(
+                            name,
+                            {
+                                  'Bear': '悲观情景',
+                                  'Base': '基准情景',
+                                  'Bull': '乐观情景',
+                                }[name] ??
+                                name,
+                          );
                           assumptions = asMap(
                             asMap(company?['templates'])[name],
                           );

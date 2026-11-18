@@ -1185,8 +1185,9 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       w(en, zh),
       style: TextStyle(
         fontSize: 22,
+        height: context.isChinese ? 1.3 : null,
         fontWeight: blackEditionPreview ? FontWeight.w600 : FontWeight.w800,
-        letterSpacing: blackEditionPreview ? -.6 : null,
+        letterSpacing: blackEditionPreview && !context.isChinese ? -.6 : null,
         color: p.text,
       ),
     ),
@@ -1309,7 +1310,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
                   : 'A saved rule or original Guru disclosure changed.',
               r['status'] == 'data_unavailable'
                   ? '数据不可用，无法计算规则结论。'
-                  : '保存的规则或原始大佬披露发生变化。',
+                  : '保存的规则或原始大师披露发生变化。',
             ),
           ),
           trailing: button(
@@ -1327,7 +1328,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         ListTile(
           title: Text('${d['ticker']} · ${d['decisionDate']}'),
           subtitle: Text(
-            '${context.ui(text(d['action']))} · ${w('Scenario', '情景')} v${asMap(d['scenario'])['version']}',
+            '${localizeDecisionAction(text(d['action']), context.language)} · ${w('Scenario', '情景')} v${asMap(d['scenario'])['version']}',
           ),
           trailing: button(
             'Then vs Now',
@@ -1400,7 +1401,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       ),
       for (final g in asList(home?['gurus']))
         SwitchListTile(
-          title: Text(text(g['name'])),
+          title: Text(guruDisplayName(g, context.language)),
           value: g['followed'] == true,
           onChanged: busy
               ? null
@@ -1690,7 +1691,12 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           title: Text(w('Show the math', '展开计算')),
           children: [
             dataTable(
-              [w('Year', '年'), w('Revenue M', '收入 百万'), 'FCFE M', 'PV M'],
+              [
+                w('Year', '年份'),
+                w('Revenue M', '收入（百万）'),
+                w('FCFE M', 'FCFE（百万）'),
+                w('PV M', '现值（百万）'),
+              ],
               [
                 for (final r in asList(result['forecast']))
                   [
@@ -1829,7 +1835,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       title('Your decision. Your record.', '你的决策，你的记录。'),
       label(
         'Select a saved scenario before recording a decision. An Invest record creates a research position, not a broker trade.',
-        '记录决策前请保存情景。Invest 创建研究仓位，不发送券商订单。',
+        '记录决策前请先保存情景。选择「投资」仅创建研究仓位，不发送券商订单。',
       ),
       if (scenarioId == null)
         button(
@@ -1994,7 +2000,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         if (asList(review?['guruChanges']).isNotEmpty)
           label(
             'An original discovery Guru reported fewer shares. Corporate-action comparability still needs review; no inferred intent.',
-            '原始发现来源的大佬申报股数减少，仍需检查公司行动可比性，不推断动机。',
+            '原始发现来源的大师申报股数减少，仍需检查公司行动可比性，不推断动机。',
             color: p.secondary,
           ),
         ExpansionTile(
@@ -2016,7 +2022,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
             for (final r in asList(review?['reviewHistory']))
               ExpansionTile(
                 title: Text(
-                  '${r['asOf']} · ${context.ui(text(r['action']))} · v${asMap(r['scenario'])['version']}',
+                  '${r['asOf']} · ${localizeDecisionAction(text(r['action']), context.language)} · v${asMap(r['scenario'])['version']}',
                 ),
                 subtitle: Text(text(r['notes'])),
                 children: [
@@ -2106,7 +2112,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         if (asList(book['positions']).isEmpty)
           label(
             'No research positions yet. Start with a company and save an Invest decision.',
-            '暂无研究仓位，打开公司并保存 Invest 决策开始。',
+            '暂无研究仓位，可打开任意公司并保存「投资」决策开始。',
           ),
         for (final r in asList(book['positions']))
           ListTile(
@@ -2128,7 +2134,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           ListTile(
             title: Text('${r['ticker']} · ${r['decisionDate']}'),
             subtitle: Text(
-              '${r['action']} · ${w('Scenario', '情景')} v${asMap(r['scenario'])['version']}',
+              '${localizeDecisionAction(text(r['action']), context.language)} · ${w('Scenario', '情景')} v${asMap(r['scenario'])['version']}',
             ),
             trailing: button(
               'Then vs Now',
@@ -2138,7 +2144,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           ),
       ]),
       card([
-        title('Fundamental vs Guru Shadow', '基本面组合与大佬影子组合'),
+        title('Fundamental vs Guru Shadow', '基本面组合与大师影子组合'),
         label(
           'Overlap is a comparison, not a recommendation to eliminate differences. Incomplete selected books do not generate substitute weights.',
           '重合用于对照，不建议消除差异。选股集合不完整时不会生成替代权重。',
@@ -2151,8 +2157,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         dataTable(
           [
             w('Ticker', '代码'),
-            w('Yours', '你的权重'),
-            'Shadow',
+            w('Yours', '我的权重'),
+            w('Shadow', '影子权重'),
             w('Difference', '偏差'),
           ],
           [
@@ -2181,7 +2187,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     return [
       title('Rules before results.', '规则先于结果。'),
       card([
-        title('Guru Top 3 · disclosure preview', '大佬 Top 3 · 披露预览'),
+        title('Guru Top 3 · disclosure preview', '大师前 3 大持仓 · 披露预览'),
         label(
           'Each manager’s common-long Top 3, duplicate securities combined, equal weights. No DCF filter. New rule versions never rewrite the original audited strategy.',
           '每位经理普通股多头前 3 名，合并重复证券后等权，不设 DCF 过滤。新规则版本不会改写原已审计策略。',

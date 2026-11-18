@@ -392,6 +392,7 @@ class _ResearchFinancialBarChartState
                         muted: widget.muted,
                         grid: widget.grid,
                         hovered: hovered,
+                        language: context.language,
                       ),
                     ),
                     if (hovered case final index?)
@@ -464,17 +465,17 @@ class _ResearchFinancialBarChartState
                                           runSpacing: 2,
                                           children: [
                                             Text(
-                                              'YoY ${growthText(context, series.yoy[index])}',
+                                              '${context.tr('同比', 'YoY')} ${growthText(context, series.yoy[index])}',
                                               style: TextStyle(
                                                 color: widget.textColor,
-                                                fontSize: 10,
+                                                fontSize: 11,
                                               ),
                                             ),
                                             Text(
-                                              'QoQ ${growthText(context, series.qoq[index])}',
+                                              '${context.tr('环比', 'QoQ')} ${growthText(context, series.qoq[index])}',
                                               style: TextStyle(
                                                 color: widget.textColor,
-                                                fontSize: 10,
+                                                fontSize: 11,
                                               ),
                                             ),
                                           ],
@@ -505,14 +506,28 @@ class _ResearchFinancialBarPainter extends CustomPainter {
     required this.muted,
     required this.grid,
     required this.hovered,
+    this.language = AppLanguage.en,
   });
   final List<String> periods;
   final List<_ResearchFinancialSeries> series;
   final Color muted, grid;
   final int? hovered;
+  final AppLanguage language;
 
   String axis(double value) {
     final magnitude = value.abs();
+    if (language == AppLanguage.zh) {
+      final sign = value < 0 ? '-' : '';
+      if (magnitude >= 1e12) {
+        return '$sign${(magnitude / 1e12).toStringAsFixed(1)}万亿';
+      }
+      if (magnitude >= 1e8) {
+        return '$sign${(magnitude / 1e8).toStringAsFixed(magnitude >= 1e10 ? 0 : 1)}亿';
+      }
+      if (magnitude >= 1e4) {
+        return '$sign${(magnitude / 1e4).toStringAsFixed(0)}万';
+      }
+    }
     if (magnitude >= 1e12) return '${(value / 1e12).toStringAsFixed(1)}T';
     if (magnitude >= 1e9) return '${(value / 1e9).toStringAsFixed(1)}B';
     if (magnitude >= 1e6) return '${(value / 1e6).toStringAsFixed(0)}M';
@@ -557,7 +572,11 @@ class _ResearchFinancialBarPainter extends CustomPainter {
       final painter = TextPainter(
         text: TextSpan(
           text: label,
-          style: TextStyle(color: muted, fontSize: 9.5),
+          style: TextStyle(
+            color: muted,
+            fontSize: 10.5,
+            fontFamilyFallback: kCjkFontFallback,
+          ),
         ),
         textDirection: TextDirection.ltr,
       )..layout(maxWidth: left - 8);
@@ -596,7 +615,11 @@ class _ResearchFinancialBarPainter extends CustomPainter {
       final labelPainter = TextPainter(
         text: TextSpan(
           text: periods[period],
-          style: TextStyle(color: muted, fontSize: 9.5),
+          style: TextStyle(
+            color: muted,
+            fontSize: 10.5,
+            fontFamilyFallback: kCjkFontFallback,
+          ),
         ),
         textDirection: TextDirection.ltr,
       )..layout(maxWidth: groupWidth);
@@ -616,7 +639,8 @@ class _ResearchFinancialBarPainter extends CustomPainter {
       oldDelegate.series != series ||
       oldDelegate.hovered != hovered ||
       oldDelegate.grid != grid ||
-      oldDelegate.muted != muted;
+      oldDelegate.muted != muted ||
+      oldDelegate.language != language;
 }
 
 extension _InvestmentResearch on _InvestmentWorkspaceState {
@@ -642,16 +666,8 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         asMap(facts['transportCoverage'])['fullFacts'] == 'on_demand';
   }
 
-  String _fmtMillions(dynamic rawM, String currency) {
-    final v = nullableNumber(rawM);
-    if (v == null || !v.isFinite) return '—';
-    final sym = currencySymbol(currency);
-    final abs = v.abs();
-    final sign = v < 0 ? '-' : '';
-    if (abs >= 1e6) return '$sign$sym${(abs / 1e6).toStringAsFixed(2)}T';
-    if (abs >= 1e3) return '$sign$sym${(abs / 1e3).toStringAsFixed(1)}B';
-    return '$sign$sym${abs.toStringAsFixed(0)}M';
-  }
+  String _fmtMillions(dynamic rawM, String currency) =>
+      formatCompactMoneyMillionsLocalized(rawM, currency, context.language);
 
   // ---------------------------------------------------------------------------
   // MAIN RESEARCH SHELL & EXECUTIVE COMPANY COCKPIT
@@ -752,7 +768,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     final mcapM = nullableNumber(meta['marketCapM']);
     final modelBadge = asMap(company?['coverage'])['platformModel'] != 'available' &&
             !researchHasPlatformModel
-        ? (w('Fact OS · no platform model', 'Fact OS · 暂无平台模型'), p.muted)
+        ? (w('Fact OS · no platform model', '财报事实库 · 暂无平台估值'), p.muted)
         : assumptions.isEmpty
         ? (w('Published model · read-only', '平台模型 · 只读'), p.accent)
         : (w('Scenario modelling available', '支持情景建模'), _emerald);
@@ -872,14 +888,14 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                       children: [
                         researchTag(modelBadge.$1, modelBadge.$2),
                         if (!isCompactScreen && sectorText.isNotEmpty)
-                          researchTag(sectorText, p.accent),
+                          researchTag(context.ui(sectorText), p.accent),
                         researchTag(
                           '${text(snap['period'], '—')} · ${w('Filed', '披露')} ${text(snap['availableAt'], '—')} · $currency',
                           p.muted,
                         ),
                         if (isCompactScreen && showScoreboard && marketPrice != null)
                           researchTag(
-                            '${money(marketPrice)}${researchHasPlatformModel && fairValue != null ? ' · FV ${money(fairValue)}' : ''}${gap != null ? ' (${gap >= 0 ? '+' : ''}${pct(gap)})' : ''}',
+                            '${money(marketPrice)}${researchHasPlatformModel && fairValue != null ? ' · ${w('FV', '估值')} ${money(fairValue)}' : ''}${gap != null ? ' (${gap >= 0 ? '+' : ''}${pct(gap)})' : ''}',
                             gapColor == p.muted ? p.accent : gapColor,
                           ),
                       ],
@@ -1140,7 +1156,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                     style: TextStyle(color: p.muted, fontSize: 14),
                   ),
                 ),
-                researchTag('⌘K / Search', p.accent),
+                researchTag(w('⌘K / Search', '⌘K / 搜索'), p.accent),
               ],
             ),
           ),
@@ -1163,7 +1179,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         const SizedBox(height: 12),
         label(
           'Use a ticker directly, search by company name above, or pick from Discover to retain Guru & filing provenance.',
-          '可直接输入股票代码、点击上方搜索框按公司名检索，或从发现页进入以保留机构大咖与申报上下文。',
+          '可直接输入股票代码、点击上方搜索框按公司名检索，或从发现页进入以保留投资大师与申报上下文。',
           size: 12,
         ),
       ]),
@@ -1754,8 +1770,16 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                       child: Text(
                         [
                           trMap(chg['summary']),
-                          if (asList(chg['evidence']).isNotEmpty)
-                            asList(chg['evidence']).map(text).join(' · '),
+                          if ((chg['evidence'] is List) &&
+                              (chg['evidence'] as List).isNotEmpty)
+                            (chg['evidence'] as List)
+                                .map(
+                                  (e) => localizeMetricEvidenceKey(
+                                    text(e),
+                                    context.language,
+                                  ),
+                                )
+                                .join(' · '),
                         ].where((s) => s.isNotEmpty).join(' — '),
                         style: TextStyle(
                           color: p.muted,
@@ -1845,7 +1869,11 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
             (fairValue == null ||
                 (number(method['output']) - fairValue).abs() > 0.01))
           _ResearchValueBar(
-            label: text(method['label']),
+            label: localizeValuationMethodLabel(
+              text(method['key']),
+              context.language,
+              fallbackLabel: text(method['label']),
+            ),
             sublabel: '${w('Weight', '权重')} ${pct(method['weight'])}',
             value: number(method['output']),
             color: _emerald,
@@ -1992,7 +2020,14 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(text(method['label']), style: deskHeading(15)),
+                child: Text(
+                  localizeValuationMethodLabel(
+                    text(method['key']),
+                    context.language,
+                    fallbackLabel: text(method['label']),
+                  ),
+                  style: deskHeading(15),
+                ),
               ),
               researchTag(
                 included ? w('Active weight', '已采用') : w('Excluded', '未计入权重'),
@@ -2032,7 +2067,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
               ),
               child: Text(
                 reason.isNotEmpty
-                    ? reason
+                    ? localizeValuationExclusionReason(reason, context.language)
                     : w(
                         'Not weighted in this snapshot (0% weight).',
                         '该子模型在当前快照中未分配权重（0%）。',
@@ -2049,7 +2084,10 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                   children: [
                     Expanded(
                       child: Text(
-                        text(step['label'], text(step['formula'])),
+                        localizeValuationStepLabel(
+                          text(step['label'], text(step['formula'])),
+                          context.language,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: p.muted, fontSize: 11.5),
@@ -2087,7 +2125,11 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                       children: [
                         Expanded(
                           child: Text(
-                            text(input['label'], text(input['key'])),
+                            localizeValuationParamLabel(
+                              text(input['key']),
+                              text(input['label']),
+                              context.language,
+                            ),
                             style: TextStyle(color: p.muted, fontSize: 11),
                           ),
                         ),
@@ -2147,7 +2189,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
               child: Text(
                 w(
                   'Tracked Superinvestor Holders (${holders.length})',
-                  '跟踪大咖持仓动向（${holders.length} 家）',
+                  '跟踪投资大师持仓动向（${holders.length} 家）',
                 ),
                 style: deskHeading(15.5),
               ),
@@ -2726,7 +2768,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
       ('earnings', 'Quarterly Calls & Q&A', '财报会与问答'),
       ('filings', 'Filings & Financial Ratios', '披露目录与财务诊断'),
       ('insiders', 'Insider Activity', '内部人交易'),
-      ('holders', 'Guru 13F Claims', '大咖 13F 申报'),
+      ('holders', 'Guru 13F Claims', '大师 13F 申报'),
     ];
     final activeFocus = focusOptions.any((o) => o.$1 == researchFinancialsFocus)
         ? researchFinancialsFocus
@@ -2875,14 +2917,23 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        researchTag(text(documents[i]['form'], '10-Q/K'), p.accent),
+                        researchTag(
+                          localizeFilingFormLabel(
+                            text(documents[i]['form'], '10-Q/K'),
+                            context.language,
+                          ),
+                          p.accent,
+                        ),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                text(documents[i]['title']),
+                                localizeFilingTitle(
+                                  text(documents[i]['title']),
+                                  context.language,
+                                ),
                                 style: TextStyle(
                                   color: p.text,
                                   fontSize: 13.5,
@@ -2966,10 +3017,14 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                                       ),
                                       if (text(row['formula']).isNotEmpty)
                                         Text(
-                                          text(row['formula']),
+                                          localizeDiagnosticFormula(
+                                            text(row['id']),
+                                            text(row['formula']),
+                                            context.language,
+                                          ),
                                           style: TextStyle(
                                             color: p.muted,
-                                            fontSize: 10.5,
+                                            fontSize: 11,
                                           ),
                                         ),
                                     ],
@@ -2977,9 +3032,11 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                                 ),
                                 const SizedBox(width: 12),
                                 Text(
-                                  nullableNumber(row['value']) == null
-                                      ? '—'
-                                      : formatNumber(number(row['value'])),
+                                  formatDiagnosticRatioValue(
+                                    row,
+                                    text(company?['currency'], 'USD'),
+                                    context.language,
+                                  ),
                                   style: TextStyle(
                                     color: p.text,
                                     fontSize: 13,
@@ -3058,7 +3115,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         title('Institutional Ownership & 13F Flow', '机构持仓全景与 13F 动向'),
         label(
           'Split-normalized 13F institutional holdings and tracked Superinvestors. Form 13F is a delayed U.S. long-equity snapshot, not live fund flow.',
-          '按拆合股校准的全市场 13F 机构持仓与大咖重仓追踪（13F 为滞后披露的美股多头快照，不代表实时资金流）。',
+          '按拆合股校准的全市场 13F 机构持仓与投资大师重仓追踪（13F 为滞后披露的美股多头快照，不代表实时资金流）。',
         ),
         const SizedBox(height: 16),
         if (data != null) ...[
@@ -3166,7 +3223,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                         child: Text(
                           w(
                             'Tracked ThesisForge Gurus (${trackedGurus.length})',
-                            '平台重点追踪大咖持仓（${trackedGurus.length} 位）',
+                            '平台重点追踪投资大师持仓（${trackedGurus.length} 位）',
                           ),
                           style: deskHeading(17),
                         ),
@@ -3720,13 +3777,25 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                   : 'Status: ${text(reverse['status'], 'not_calculated')}',
               solved
                   ? '正向回代已通过；表格与“我的 DCF”使用同一计算引擎。'
-                  : '状态：${text(reverse['status'], '尚未计算')}',
+                  : '状态：${localizeReverseDcfStatus(text(reverse['status'], 'not_calculated'), AppLanguage.zh)}',
               color: solved ? _emerald : p.secondary,
               size: 11,
             ),
             if (text(reverse['fixed']).isNotEmpty) ...[
               const SizedBox(height: 10),
-              label(text(reverse['fixed']), text(reverse['fixed']), size: 11),
+              label(
+                text(reverse['fixed']),
+                localizeReverseDcfFixed(
+                  text(reverse['fixed']),
+                  personalDcfMethod,
+                  reverseVariable,
+                  asList(scenario['forecast']).isEmpty
+                      ? 5
+                      : asList(scenario['forecast']).length,
+                  AppLanguage.zh,
+                ),
+                size: 11,
+              ),
             ],
           ]),
           sideWidth: 320,
@@ -3791,22 +3860,28 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     final md = StringBuffer()
       ..writeln('## $ticker — ${text(row['question'])}')
       ..writeln(
-        '- **Status**: ${_recordStatusLabel(text(row['status'], 'open'))} | **As of**: ${text(row['asOf'])} | **Review**: ${text(row['reviewDate'], '—')}',
+        context.isChinese
+            ? '- **状态**：${_recordStatusLabel(text(row['status'], 'open'))} | **基准日**：${text(row['asOf'])} | **复核日**：${text(row['reviewDate'], '—')}'
+            : '- **Status**: ${_recordStatusLabel(text(row['status'], 'open'))} | **As of**: ${text(row['asOf'])} | **Review**: ${text(row['reviewDate'], '—')}',
       );
     if (row['tags'] is List && (row['tags'] as List).isNotEmpty) {
       md.writeln(
-        '- **Tags**: ${(row['tags'] as List).map((t) => '`$t`').join(' ')}',
+        '- **${w('Tags', '标签')}**: ${(row['tags'] as List).map((t) => '`$t`').join(' ')}',
       );
     }
     if (text(row['supportingEvidence']).isNotEmpty) {
-      md.writeln('- **Supporting Evidence**: ${text(row['supportingEvidence'])}');
+      md.writeln(
+        '- **${w('Supporting Evidence', '支持证据')}**: ${text(row['supportingEvidence'])}',
+      );
     }
     if (text(row['opposingEvidence']).isNotEmpty) {
-      md.writeln('- **Counter / Gap**: ${text(row['opposingEvidence'])}');
+      md.writeln(
+        '- **${w('Counter / Gap', '反对证据与缺口')}**: ${text(row['opposingEvidence'])}',
+      );
     }
     if (text(row['invalidationCondition']).isNotEmpty) {
       md.writeln(
-        '- **Invalidation Trigger**: ${text(row['invalidationCondition'])}',
+        '- **${w('Invalidation Trigger', '证伪失效条件')}**: ${text(row['invalidationCondition'])}',
       );
     }
     await Clipboard.setData(ClipboardData(text: md.toString()));
@@ -3842,7 +3917,9 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
 
   Widget researchRecordsPanel() {
     final rows = asList(researchRecordsData?['rows'] ?? company?['researchRecords']);
-    const quickTags = ['Earnings', 'Valuation', 'Moat', 'Risk', 'Catalyst'];
+    final quickTags = context.isChinese
+        ? const ['财报业绩', '估值定价', '护城河', '风险点', '催化剂']
+        : const ['Earnings', 'Valuation', 'Moat', 'Risk', 'Catalyst'];
 
     Widget journalField(
       TextEditingController ctrl,
@@ -4002,6 +4079,9 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                           initialDate: initial,
                           firstDate: DateTime(2020, 1, 1),
                           lastDate: DateTime(now.year + 5, 12, 31),
+                          helpText: w('Select review date', '选择下次复核日期'),
+                          cancelText: w('Cancel', '取消'),
+                          confirmText: w('OK', '确定'),
                         );
                         if (picked != null && mounted) {
                           updateUI(

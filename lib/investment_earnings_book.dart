@@ -505,7 +505,7 @@ extension _EarningsQuarterBook on _EarningsResearchPanelState {
                 metricCell(w('Metric', '指标'), header: true),
                 metricCell(w('Prior', '上期'), header: true, end: true),
                 metricCell(w('This quarter', '本季'), header: true, end: true),
-                metricCell(w('Δ pp', '变化 / pp'), header: true, end: true),
+                metricCell(w('Δ pp', '变动 (百分点)'), header: true, end: true),
               ],
             ),
             for (final m in metrics)
@@ -611,11 +611,11 @@ extension _EarningsQuarterBook on _EarningsResearchPanelState {
     return delta < 0
         ? caption(
             'FCF margin fell. Does management explain the working-capital or investment spending behind it?',
-            '现金流率下降。管理层是否解释了营运资本或投资支出的影响？',
+            '自由现金流率下降。管理层是否解释了营运资本或投资支出的影响？',
           )
         : caption(
             'FCF margin held up or improved. Is that repeatable, or did timing help this period?',
-            '现金流率持平或改善。这能否持续，还是受本期收付款时点影响？',
+            '自由现金流率持平或改善。这能否持续，还是受本期收付款时点影响？',
           );
   }
 

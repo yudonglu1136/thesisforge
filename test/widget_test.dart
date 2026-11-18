@@ -3548,8 +3548,8 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('ZH'), findsOneWidget);
-    await tester.tap(find.text('ZH'));
+    expect(find.text('中文'), findsOneWidget);
+    await tester.tap(find.text('中文'));
     await tester.pumpAndSettle();
     expect(language, AppLanguage.zh);
     expect(find.text('EN'), findsWidgets);
@@ -3595,7 +3595,7 @@ void main() {
       await tester.pump();
       expect(tester.takeException(), isNull, reason: 'width $width');
       expect(tester.getSize(find.byTooltip('Refresh')).height, 44);
-      expect(find.text('ZH'), findsOneWidget);
+      expect(find.text('中文'), findsOneWidget);
     }
   });
 }

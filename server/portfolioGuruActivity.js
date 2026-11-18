@@ -109,7 +109,7 @@ export function portfolioGuruActivity(position, context) {
       m.action==='unchanged' && m.shares>0 && m.changeShares===0
     )?m.action:'reported_holding';
     // Do not send monetary Guru values to the private holding's renderer.
-    return {guruId:m.guruId,name:m.name,avatar:m.avatar,accession:m.accession,
+    return {guruId:m.guruId,name:m.name,chineseName:m.chineseName??null,avatar:m.avatar,accession:m.accession,
       reportDate:m.reportDate,availableAt:m.availableAt,sourceUrl:m.sourceUrl,
       weight:m.weight,held:m.shares>0,action,
       shareChange:reconciled&&m.previousShares>0?m.changeShares/m.previousShares:null,

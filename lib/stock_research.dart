@@ -495,7 +495,7 @@ class _StockValuationPanelState extends State<StockValuationPanel> {
                 ),
               Text(
                 context.tr(
-                  '大佬披露 ≠ 买入建议。以下是当前估值，不代表大佬买入时的价格或估值。',
+                  '知名机构持仓披露 ≠ 买入建议。以下是当前估值，不代表机构买入时的价格或估值。',
                   'A Guru filing is not a buy signal. This is the latest model, not the Guru’s entry price or entry-date valuation.',
                 ),
                 style: TextStyle(color: p.muted, fontSize: 11, height: 1.5),
@@ -572,7 +572,7 @@ class _StockValuationPanelState extends State<StockValuationPanel> {
                       p.accent,
                     ),
                     _metric(
-                      context.tr('模型差距', 'Model gap'),
+                      context.tr('估值空间', 'Model gap'),
                       gap == null ? '—' : formatReturn(gap),
                       gap == null
                           ? p.muted
@@ -584,7 +584,7 @@ class _StockValuationPanelState extends State<StockValuationPanel> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '${context.tr('股价', 'Price')} · ${date(latest['latestPriceDate'])}   |   ${context.tr('模型节点', 'Model node')} · ${date(last['asOfDate'])}',
+                  '${context.tr('股价', 'Price')} · ${date(latest['latestPriceDate'])}   |   ${context.tr('模型基准日', 'Model node')} · ${date(last['asOfDate'])}',
                   style: TextStyle(color: p.faint, fontSize: 11),
                 ),
                 const SizedBox(height: 22),
@@ -757,7 +757,7 @@ class _StockValuationPanelState extends State<StockValuationPanel> {
       children: [
         Text(
           label,
-          style: TextStyle(color: widget.palette.muted, fontSize: 10),
+          style: TextStyle(color: widget.palette.muted, fontSize: 11),
         ),
         const SizedBox(height: 6),
         Text(

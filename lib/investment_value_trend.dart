@@ -49,7 +49,7 @@ class _SteadyValueChartState extends State<SteadyValueChart> {
       110.0,
       (indices.reduce(math.max) / 5).ceilToDouble() * 5 + 5,
     );
-    final axisStyle = TextStyle(color: p.muted, fontSize: 10);
+    final axisStyle = TextStyle(color: p.muted, fontSize: 10.5);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -140,7 +140,7 @@ class _SteadyValueChartState extends State<SteadyValueChart> {
         ),
         const SizedBox(height: 8),
         Text(
-          '${selectedPoint['period']} · ${amount(selectedPoint)} · ${w('Available', '可见于')} ${selectedPoint['date']}',
+          '${selectedPoint['period']} · ${amount(selectedPoint)} · ${w('Available', '披露可见日')} ${selectedPoint['date']}',
           key: const ValueKey('value-quarter-detail'),
           style: TextStyle(color: p.text, fontSize: 12, height: 1.5),
         ),
@@ -173,7 +173,7 @@ class _SteadyValueChartState extends State<SteadyValueChart> {
                     ),
                     const SizedBox(width: 12),
                     SizedBox(
-                      width: 55,
+                      width: 68,
                       child: Text(
                         i == 0
                             ? '—'

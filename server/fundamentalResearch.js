@@ -158,7 +158,7 @@ export function analyzeFundamentalUniverse(raw, { lens = 'all', search = '', lim
     sort, offset, limit, hasMore: offset + limit < rows.length,
     coverage: { factCompanies: companies.length, withSignals: companies.filter(company => company.signals.length).length,
       latestAvailableAt: companies.map(company => company.available_at).filter(Boolean).sort().at(-1) ?? null },
-    rankingBasis: sort === 'recent' ? text('Comparable operating histories first, then latest disclosure. All fact companies remain searchable.', '优先可比经营历史，再按最新披露排序；全部事实公司均可搜索。')
+    rankingBasis: sort === 'recent' ? text('Comparable operating histories first, then latest disclosure. All fact companies remain searchable.', '优先可比经营历史，再按最新披露排序；全部覆盖公司均可搜索。')
       : sort === 'change' ? text('Signal magnitude first, then disclosure date.', '按变化幅度，再按披露日期排序。')
       : text('Selected reported metric, highest first; missing values last. Not a stock rating.', '按所选财务指标从高到低排序；缺失值置后，不是股票评分。'),
     definitions: { reported: 'ARQ latest revision visible by as-of date', ttm: 'sum of four complete reported quarters',
@@ -434,13 +434,13 @@ function counterEvidence(metrics, bundle) {
     statement: text(`TTM common net income declined ${signedPct(metrics.netIncomeGrowth)} despite the operating signal.`, `尽管存在经营改善信号，TTM 普通股净利润仍下降 ${signedPct(metrics.netIncomeGrowth)}。`), sourceMetric: 'netIncomeGrowth' };
   if (finite(metrics.sbcMargin) && metrics.sbcMargin > .10) return { severity: 'warning',
     statement: text(`Stock-based compensation equals ${signedPct(metrics.sbcMargin)} of TTM revenue.`, `股权激励相当于 TTM 收入的 ${signedPct(metrics.sbcMargin)}。`), sourceMetric: 'sbcMargin' };
-  return { severity: 'gap', statement: text('Fact OS does not cover company-specific operating KPIs or explain causality; the filing must be checked before attributing the change.', 'Fact OS 不覆盖公司专用经营 KPI，也不能解释因果；归因前必须核对财报原文。'), sourceMetric: null,
+  return { severity: 'gap', statement: text('Fact OS does not cover company-specific operating KPIs or explain causality; the filing must be checked before attributing the change.', '标准化财报事实库不覆盖公司特定经营 KPI，也不能替代因果归因；下结论前需核对财报原文。'), sourceMetric: null,
     sourceAvailableAt: bundle.quarterly?.[0]?.date ?? null };
 }
 
 function researchGaps(company, bundle) {
   const gaps = [];
-  if (company.ticker === 'UBER') gaps.push(text('Gross Bookings, Trips and take rate are not in the current Fact OS schema.', '当前 Fact OS 不包含 Gross Bookings、Trips 和 take rate。'));
+  if (company.ticker === 'UBER') gaps.push(text('Gross Bookings, Trips and take rate are not in the current Fact OS schema.', '当前标准化财报库暂不包含总订单额（Gross Bookings）、出行次数（Trips）与抽成率（Take Rate）。'));
   if (economicTemplate(company) !== 'operating_company') gaps.push(text('Specialist balance-sheet and regulatory KPIs are required for this economic model.', '该经济模式需要专用资产负债表和监管指标。'));
   if ((bundle.quarterly ?? []).length < 8) gaps.push(text('Fewer than eight comparable reported quarters are available.', '可比的已报告季度少于八个。'));
   return gaps;

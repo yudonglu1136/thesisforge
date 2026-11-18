@@ -39,7 +39,7 @@ Map<String, dynamic> strategyMixForRequest(Map<String, dynamic> mix) {
 }
 
 String strategyComponentName(BuildContext context, String key) => switch (key) {
-  'guru' => context.tr('大佬策略', 'Guru strategy'),
+  'guru' => context.tr('大师策略', 'Guru strategy'),
   'factors' => context.tr('四因子策略', 'Four-factor strategy'),
   _ => key,
 };
@@ -58,7 +58,7 @@ String strategyFactorSummary(BuildContext context, Map<String, dynamic> mix) {
         return '${strategyFactorName(context, key)} ≥ $threshold$years';
       })
       .join(' · ');
-  return '${context.tr('同时满足', 'Match all')}: $conditions · Top ${f['topN']} · ${context.tr('排序', 'Rank')}: ${strategyFactorName(context, text(f['rankBy']))} ↓';
+  return '${context.tr('同时满足', 'Match all')}: $conditions · ${context.tr('前 ${f['topN']} 名', 'Top ${f['topN']}')} · ${context.tr('排序', 'Rank')}: ${strategyFactorName(context, text(f['rankBy']))} ↓';
 }
 
 /// Transactional editor: nothing in the parent changes until Apply is pressed.
@@ -392,7 +392,7 @@ class _StrategyMixDialogState extends State<StrategyMixDialog> {
                       runSpacing: 6,
                       children: [
                         for (final entry in <String, Map<String, double>>{
-                          w('Guru only', '仅大佬'): {'guru': 100},
+                          w('Guru only', '仅大师'): {'guru': 100},
                           w('Four-factor only', '仅四因子'): {'factors': 100},
                           w('Index only', '仅指数'): {'QQQ': 100},
                           w('Mix strategies', '混合策略'): {
@@ -544,17 +544,17 @@ class _StrategyMixDialogState extends State<StrategyMixDialog> {
                       ],
                     ),
                     if ((weights['guru'] ?? 0) > 0)
-                      section('Guru rules', '大佬策略规则', [
+                      section('Guru rules', '大师策略规则', [
                         caption(
                           'Select up to 10 managers. Their Top N common stocks are merged and equally weighted.',
-                          '最多选择 10 位大佬，各自前 N 大普通股合并去重后等权。',
+                          '最多选择 10 位投资大师，各自前 N 大普通股合并去重后等权。',
                         ),
                         Wrap(
                           spacing: 6,
                           children: [
                             for (final n in [1, 3, 5, 10])
                               ChoiceChip(
-                                label: Text('Top $n'),
+                                label: Text(w('Top $n', '前 $n 名')),
                                 selected: topN == n,
                                 onSelected: (_) => setState(() => topN = n),
                               ),
@@ -563,7 +563,7 @@ class _StrategyMixDialogState extends State<StrategyMixDialog> {
                         const SizedBox(height: 12),
                         TextField(
                           decoration: InputDecoration(
-                            labelText: w('Search Gurus', '搜索大佬'),
+                            labelText: w('Search Gurus', '搜索投资大师'),
                             prefixIcon: const Icon(Icons.search),
                           ),
                           onChanged: (v) =>
@@ -574,9 +574,14 @@ class _StrategyMixDialogState extends State<StrategyMixDialog> {
                           child: ListView(
                             children: [
                               for (final g in widget.catalog.where(
-                                (g) => text(
-                                  g['name'],
-                                ).toLowerCase().contains(query),
+                                (g) =>
+                                    text(g['name']).toLowerCase().contains(
+                                      query,
+                                    ) ||
+                                    guruDisplayName(
+                                      g,
+                                      context.language,
+                                    ).toLowerCase().contains(query),
                               ))
                                 CheckboxListTile(
                                   contentPadding: EdgeInsets.zero,
@@ -586,7 +591,9 @@ class _StrategyMixDialogState extends State<StrategyMixDialog> {
                                     palette: p,
                                     size: 34,
                                   ),
-                                  title: Text(text(g['name'])),
+                                  title: Text(
+                                    guruDisplayName(g, context.language),
+                                  ),
                                   onChanged:
                                       managers.length < 10 ||
                                           managers.contains(text(g['id']))
@@ -704,7 +711,7 @@ class _StrategyMixDialogState extends State<StrategyMixDialog> {
                                   for (var n = 1; n <= 10; n++)
                                     DropdownMenuItem(
                                       value: n,
-                                      child: Text('Top $n'),
+                                      child: Text(w('Top $n', '前 $n 名')),
                                     ),
                                 ],
                                 onChanged: (v) =>

@@ -201,11 +201,11 @@ export class InvestmentSource {
     const result=this.db.prepare('SELECT guru_id FROM guru_exposure_snapshots ORDER BY guru_id').all()
       .filter(r=>!configured.has(r.guru_id)||guruIsVisible(r.guru_id)).map(r=>{
       const g=configured.get(r.guru_id);
-      if(g)return {id:g.id,name:g.name,entityName:g.entityName??'',avatar:`/guru-avatars/${g.id}.png`,capitalStructure:guruCapitalStructure(g)};
+      if(g)return {id:g.id,name:g.name,chineseName:g.chineseName??null,entityName:g.entityName??'',avatar:`/guru-avatars/${g.id}.png`,capitalStructure:guruCapitalStructure(g)};
       // Test fixtures and future staged managers can exist before the catalog
       // lands. Parse only that exceptional row, never all large histories.
       const p=this.guruExposure(r.guru_id);
-      return {id:r.guru_id,name:p?.guru?.name??r.guru_id,entityName:p?.guru?.entityName??'',avatar:p?.guru?.avatarUrl??`/guru-avatars/${r.guru_id}.png`,capitalStructure:guruCapitalStructure(r.guru_id)};
+      return {id:r.guru_id,name:p?.guru?.name??r.guru_id,chineseName:p?.guru?.chineseName??null,entityName:p?.guru?.entityName??'',avatar:p?.guru?.avatarUrl??`/guru-avatars/${r.guru_id}.png`,capitalStructure:guruCapitalStructure(r.guru_id)};
     });
     this.guruCatalogGeneration=generation;
     this.guruCatalogCache=result;
@@ -238,7 +238,7 @@ export class InvestmentSource {
       const holding=latest.topHoldings?.find(x=>x.ticker===ticker && String(x.id).endsWith('-COMMON'));
       const activity=latest.largestChanges?.find(x=>x.ticker===ticker && String(x.id).endsWith('-COMMON'));
       if(!holding&&!activity)continue;
-      result.push({guruId:g.id,name:g.name,reportDate:latest.reportDate,availableAt:latest.filingDate,accession:latest.accessionNumber,
+      result.push({guruId:g.id,name:g.name,chineseName:g.chineseName??null,reportDate:latest.reportDate,availableAt:latest.filingDate,accession:latest.accessionNumber,
         sourceUrl:'https://www.sec.gov/edgar/search/#/q='+encodeURIComponent(latest.accessionNumber),
         ticker,shares:holding?.shares??activity?.shares??null,previousShares:activity?.prevShares??null,
         rawReportedChangeShares:activity?.changeShares??null,weight:holding?.pctPortfolio??null,

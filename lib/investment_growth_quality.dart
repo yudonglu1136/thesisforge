@@ -262,7 +262,7 @@ extension _InvestmentGrowthQuality on _InvestmentWorkspaceState {
     double maxValue,
     ValueChanged<double> onChanged,
   ) => SizedBox(
-    width: 155,
+    width: 176,
     child: _QualityNumberField(
       key: ValueKey(id),
       title: title,
@@ -581,7 +581,7 @@ extension _InvestmentGrowthQuality on _InvestmentWorkspaceState {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'FY ${y['year']}',
+                              w('FY ${y['year']}', '${y['year']} 财年'),
                               style: TextStyle(color: p.text, fontSize: 12),
                             ),
                             Text(
@@ -617,7 +617,7 @@ extension _InvestmentGrowthQuality on _InvestmentWorkspaceState {
           ),
         lensNote(
           'Source: ${q['source'] ?? 'unavailable'} · ART at fiscal Q4, one observation per year. Availability dates obey your workspace cutoff.',
-          '来源：${q['source'] ?? '暂无数据'} · 每个财年 Q4 的 ART（全年），每年一条，披露时间不晚于工作区截止日。',
+          '来源：${q['source'] == null || q['source'] == 'unavailable' ? '暂无数据' : q['source']} · 每个财年 Q4 的滚动四季口径（ART），每年一条，披露时间不晚于工作区截止日。',
         ),
         ExpansionTile(
           tilePadding: EdgeInsets.zero,

@@ -95,7 +95,7 @@ extension _ResearchHolderDesk on _InvestmentWorkspaceState {
                       ),
                     ),
                     researchTag(
-                      w('${all.length} disclosed', '${all.length} 位披露'),
+                      w('${all.length} disclosed', '${all.length} 家披露机构'),
                       p.muted,
                     ),
                   ],
@@ -115,7 +115,7 @@ extension _ResearchHolderDesk on _InvestmentWorkspaceState {
               padding: const EdgeInsets.all(24),
               child: label(
                 'No matching holding in the available bounded Guru evidence. This does not prove no Guru owns it.',
-                '可用的大佬有限披露记录中没有匹配，不代表没有大佬持有。',
+                '可用的投资大师有限披露记录中没有匹配，不代表没有大师持有。',
                 size: 13,
               ),
             )
@@ -333,7 +333,7 @@ extension _ResearchHolderDesk on _InvestmentWorkspaceState {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        text(g['name']),
+                        guruDisplayName(g, context.language),
                         style: TextStyle(
                           color: p.text,
                           fontWeight: FontWeight.w600,
@@ -355,7 +355,7 @@ extension _ResearchHolderDesk on _InvestmentWorkspaceState {
                       if (!wide) ...[
                         const SizedBox(height: 5),
                         Text(
-                          '${disclosedShareCount(g['shares'])} ${w('shares', '股')} · ${pct(g['weight'])} ${w('of book', '组合权重')}',
+                          '${context.isChinese ? formatCompactSharesLocalized(g['shares'], AppLanguage.zh) : '${disclosedShareCount(g['shares'])} shares'} · ${pct(g['weight'])} ${w('of book', '组合权重')}',
                           style: TextStyle(color: p.muted, fontSize: 11),
                         ),
                       ],
@@ -370,7 +370,14 @@ extension _ResearchHolderDesk on _InvestmentWorkspaceState {
                           ? w('Not available', '暂无数据')
                           : '${formatNumber(shares)} ${w('reported shares', '申报股数')}',
                       child: Text(
-                        disclosedShareCount(shares),
+                        context.isChinese
+                            ? (shares == null
+                                  ? '—'
+                                  : formatCompactSharesLocalized(
+                                      shares,
+                                      AppLanguage.zh,
+                                    ))
+                            : disclosedShareCount(shares),
                         textAlign: TextAlign.right,
                         style: TextStyle(
                           color: p.text,
@@ -437,7 +444,10 @@ extension _ResearchHolderDesk on _InvestmentWorkspaceState {
                       color: p.accent,
                     ),
                     const SizedBox(height: 5),
-                    Text(text(g['name']), style: deskHeading(20)),
+                    Text(
+                      guruDisplayName(g, context.language),
+                      style: deskHeading(20),
+                    ),
                   ],
                 ),
               ),
@@ -544,7 +554,7 @@ extension _ResearchHolderDesk on _InvestmentWorkspaceState {
           const SizedBox(height: 8),
           button(
             'Explore Guru history',
-            '查看大佬持仓历史',
+            '查看投资大师持仓历史',
             () => unawaited(openHolderGuru(g)),
             icon: Icons.arrow_forward,
           ),

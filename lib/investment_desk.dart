@@ -185,7 +185,7 @@ extension _InvestmentDesk on _InvestmentWorkspaceState {
                     subtitle: Text(
                       w(
                         'Direct search, independent of a Guru.',
-                        '直接搜索，不归属于某位大佬。',
+                        '直接搜索，不归属于特定投资大师。',
                       ),
                     ),
                     onTap: () {
@@ -277,9 +277,9 @@ extension _InvestmentDesk on _InvestmentWorkspaceState {
   TextStyle deskHeading(double size) => TextStyle(
     color: p.text,
     fontSize: size,
-    height: 1.15,
+    height: context.isChinese ? 1.28 : 1.15,
     fontWeight: FontWeight.w600,
-    letterSpacing: -.5,
+    letterSpacing: context.isChinese ? 0 : -.5,
   );
 
   List<Widget> deskPage() => [
@@ -333,7 +333,7 @@ extension _InvestmentDesk on _InvestmentWorkspaceState {
               label: Text(w('As of ', '截至 ') + asOf),
             ),
             const SizedBox(height: 5),
-            label('Historical PIT', '历史 PIT', size: 11),
+            label('Historical PIT', '历史时点（PIT）', size: 11),
           ],
         );
         if (c.maxWidth < 950) {
@@ -484,7 +484,7 @@ extension _InvestmentDesk on _InvestmentWorkspaceState {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          text(g['name']),
+                          guruDisplayName(g, context.language),
                           style: TextStyle(
                             color: p.text,
                             fontSize: 14,
@@ -536,7 +536,10 @@ extension _InvestmentDesk on _InvestmentWorkspaceState {
           },
           itemBuilder: (_) => [
             for (final g in all)
-              PopupMenuItem(value: text(g['id']), child: Text(text(g['name']))),
+              PopupMenuItem(
+                value: text(g['id']),
+                child: Text(guruDisplayName(g, context.language)),
+              ),
           ],
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 14),
@@ -546,7 +549,7 @@ extension _InvestmentDesk on _InvestmentWorkspaceState {
                   child: Text(
                     w('Browse ', '浏览 ') +
                         all.length.toString() +
-                        w(' Gurus', ' 位大佬'),
+                        w(' Gurus', ' 位投资大师'),
                     style: TextStyle(color: p.accent, fontSize: 14),
                   ),
                 ),
@@ -564,7 +567,7 @@ extension _InvestmentDesk on _InvestmentWorkspaceState {
           ),
           button(
             'Retry disclosures',
-            '重试披露',
+            '重新加载披露数据',
             () => unawaited(
               discoveryError != null ? loadDiscovery() : loadHomeBrief(),
             ),
@@ -765,7 +768,7 @@ extension _InvestmentDesk on _InvestmentWorkspaceState {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          '${text(homeManager?['name'])}  /  ${text(deskFiling['quarterLabel'])}  /  ${text(h['ticker'])}',
+          '${homeManager == null ? '' : guruDisplayName(homeManager!, context.language)}  /  ${text(deskFiling['quarterLabel'])}  /  ${text(h['ticker'])}',
           style: TextStyle(color: p.muted, fontSize: 12),
         ),
         const SizedBox(height: 12),
@@ -842,13 +845,13 @@ extension _InvestmentDesk on _InvestmentWorkspaceState {
           const SizedBox(height: 18),
           label(
             'Loading ${text(h['ticker'])} research at $asOf…',
-            '正在加载 $asOf 截止的 ${text(h['ticker'])} 研究…',
+            '正在加载截至 $asOf 的 ${text(h['ticker'])} 研究…',
           ),
         ] else if (c == null || homeExampleError != null) ...[
           if (homeExampleError == 'not_covered')
             label(
               'No PIT research is available for ${text(h['ticker'])} at $asOf. You can still inspect its filing and position history.',
-              '$asOf 截止暂无 ${text(h['ticker'])} 的 PIT 研究模型，仍可查看原始申报和仓位历史。',
+              '截至 $asOf 暂无 ${text(h['ticker'])} 的历史时点（PIT）研究模型，仍可查看原始申报和仓位历史。',
             )
           else
             label(
