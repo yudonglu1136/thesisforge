@@ -311,6 +311,13 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
         }
         loading = false;
       });
+      if (window > 8) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && sectorScroll.hasClients) {
+            sectorScroll.jumpTo(sectorScroll.position.maxScrollExtent);
+          }
+        });
+      }
       remember();
       if (tab == 'compare') unawaited(loadComparison());
     } catch (_) {
@@ -1177,7 +1184,13 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
                                             text(
                                               period['quarter'],
                                             ).replaceFirst('20', ''),
-                                            style: style(12, true, p.muted),
+                                            style: style(
+                                              12,
+                                              true,
+                                              text(period['quarter']) == quarter
+                                                  ? p.accent
+                                                  : p.muted,
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -2762,9 +2775,12 @@ class _AiInsightsChartState extends State<_AiInsightsChart> {
         ),
       );
     }
+    final selectedIndex = widget.selectedQuarter != null
+        ? widget.labels.indexOf(widget.selectedQuarter!)
+        : -1;
     final selected = hovered != null && hovered! < widget.labels.length
         ? hovered!
-        : widget.labels.length - 1;
+        : (selectedIndex >= 0 ? selectedIndex : widget.labels.length - 1);
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = math.max(520.0, constraints.maxWidth);
@@ -2780,7 +2796,7 @@ class _AiInsightsChartState extends State<_AiInsightsChart> {
                 ),
                 onExit: (_) => setState(() => hovered = null),
                 child: GestureDetector(
-                  onTapDown: (event) {
+                  onTapUp: (event) {
                     final index = nearest(event.localPosition.dx, width);
                     setState(() => hovered = index);
                     widget.onQuarter?.call(widget.labels[index]);

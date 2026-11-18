@@ -197,4 +197,9 @@ test('defaultQuarter advances to 2026Q3 once Big 4 capex is 100% complete, hardw
   const view = svc.overview({ asOf: '2026-11-18' });
   assert.equal(view.selectedQuarter, '2026Q3');
   assert.equal(view.series.at(-1).quarter, '2026Q3');
+
+  const inspectedOlder = svc.overview({ asOf: '2026-11-18', quarter: '2025Q3', window: 8 });
+  assert.equal(inspectedOlder.selectedQuarter, '2025Q3');
+  assert.equal(inspectedOlder.series.at(-1).quarter, '2026Q3', 'inspecting an in-window bar must keep 2026Q1-2026Q3 visible');
+  assert.equal(inspectedOlder.sectors[0].series.at(-1).quarter, '2026Q3');
 });

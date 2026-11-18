@@ -207,8 +207,12 @@ export function createAiInsightsService({ factRoot = process.env.FACT_OS_ROOT ||
     const byGroup = Object.fromEntries(['capex', 'hardware', 'software'].map(group => [group, artifact.companies.filter(c => c.group === group)]));
     const metricFor = q => ({ quarter: q, capex: aggregateQuarter(byGroup.capex, index, q, 'capex', { asOf }),
       hardware: aggregateQuarter(byGroup.hardware, index, q, 'revenue', { asOf }), software: aggregateQuarter(byGroup.software, index, q, 'revenue', { asOf }) });
-    const quarters = Array.from({ length: window }, (_, i) => quarterAt(quarterIndex(quarter) - window + i + 1));
-    const points = quarters.map(metricFor), current = points.at(-1);
+    const timelineEnd = quarterIndex(defaultQuarter) >= quarterIndex(quarter) &&
+      quarterIndex(defaultQuarter) - quarterIndex(quarter) < window
+      ? defaultQuarter
+      : quarter;
+    const quarters = Array.from({ length: window }, (_, i) => quarterAt(quarterIndex(timelineEnd) - window + i + 1));
+    const points = quarters.map(metricFor), current = points.find(p => p.quarter === quarter) || metricFor(quarter);
     const summary = { capex: current.capex, hardware: current.hardware, software: current.software };
     const companies = scoreCompanies(artifact.companies.filter(c => c.group !== 'capex').map(c => companyQuarter(c, index.get(c.ticker), quarter, asOf)));
     const capexComposition = byGroup.capex.map(company => {
