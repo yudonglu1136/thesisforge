@@ -14880,14 +14880,20 @@ class _PortfolioConnectionStatusPanelState
                         ),
                   icon: const Icon(Icons.vpn_key_outlined, size: 15),
                   label: Text(
-                    context.tr('更新 Token', 'Update token'),
+                    context.tr('更新凭证', 'Update credentials'),
                     style: const TextStyle(fontSize: 12),
                   ),
                 ),
-                IconButton(
+                TextButton.icon(
                   key: ValueKey('account-remove-$queryId'),
-                  visualDensity: VisualDensity.compact,
-                  tooltip: context.tr('移除此账户', 'Remove account'),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    foregroundColor: palette.negative,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                  ),
                   onPressed: _updating
                       ? null
                       : () async {
@@ -14905,10 +14911,10 @@ class _PortfolioConnectionStatusPanelState
                             if (mounted) setState(() => _updating = false);
                           }
                         },
-                  icon: Icon(
-                    Icons.delete_outline_rounded,
-                    size: 18,
-                    color: palette.negative,
+                  icon: const Icon(Icons.delete_outline_rounded, size: 15),
+                  label: Text(
+                    context.tr('移除账户', 'Remove'),
+                    style: const TextStyle(fontSize: 12),
                   ),
                 ),
                 if (isFailedAccount)

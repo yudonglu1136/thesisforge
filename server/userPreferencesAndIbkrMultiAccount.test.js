@@ -114,6 +114,27 @@ test('addPortfolioAccount deduplicates same Query ID on token rotation and clean
   });
   assert.equal(rotated.accountCount, 1);
   assert.equal(rotated.accounts[0].label, 'Yodlee Renewed');
+
+  // 4. Adding a second account ('Zimeng', 1708499) that later expires, then renewing 'Zimeng' with a brand-new IBKR Query ID (1712999) replaces the failed 'Zimeng' card instead of creating 3 accounts!
+  store.addPortfolioAccount(user, {
+    label: 'Zimeng',
+    ibkrFlexToken: 'SYNTHETIC_OLD_ZIMENG_TOKEN',
+    ibkrFlexQueryId: '1708499',
+  });
+  store.writePortfolioAccountSyncStatuses(user, [
+    { accountId: store.readPortfolioConnectionStatus(user).accounts.find(a => a.queryId === '1712970').id, queryId: '1712970', ok: true, holdingsCount: 5 },
+    { accountId: store.readPortfolioConnectionStatus(user).accounts.find(a => a.queryId === '1708499').id, queryId: '1708499', ok: false, error: 'Error 1025 expired' },
+  ]);
+  const renewedNewQueryId = store.addPortfolioAccount(user, {
+    label: 'Zimeng',
+    ibkrFlexToken: 'SYNTHETIC_NEW_ZIMENG_TOKEN',
+    ibkrFlexQueryId: '1712999',
+  });
+  assert.equal(renewedNewQueryId.accountCount, 2);
+  assert.deepEqual(
+    renewedNewQueryId.accounts.map(a => a.queryId),
+    ['1712970', '1712999'],
+  );
 });
 
 test('loadIbkrFlexXml retries Error 1019 statement generation in progress', async () => {

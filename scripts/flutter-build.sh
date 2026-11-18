@@ -83,5 +83,5 @@ if [ -n "${FLUTTER_BUILD_OUTPUT:-}" ]; then
 else
   rm -rf dist
 fi
-flutter build web --release --base-href / --output "$build_output" --no-wasm-dry-run "${defines[@]}"
+flutter build web --release --pwa-strategy=none --base-href / --output "$build_output" --no-wasm-dry-run "${defines[@]}"
 node scripts/verify-workflow-artifact.mjs "$build_output" "$resolved_investment_workflow"

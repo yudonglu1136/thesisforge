@@ -910,19 +910,24 @@ export function addPortfolioAccount(user, input = {}) {
   const replaceTarget = cleanString(input.replaceAccountId || "");
   const replaceFailed = input.replaceFailedAccounts === true || input.replaceFailedAccounts === "true";
   const failedIds = new Set();
-  if (replaceFailed) {
-    const rows = db.prepare(
-      "SELECT account_id, query_id FROM portfolio_account_sync_status WHERE status = 'failed'"
-    ).all();
-    for (const row of rows) {
-      if (row.account_id) failedIds.add(String(row.account_id));
-      if (row.query_id) failedIds.add(String(row.query_id));
-    }
+  const syncFailedRows = db.prepare(
+    "SELECT account_id, query_id FROM portfolio_account_sync_status WHERE status = 'failed'"
+  ).all();
+  for (const row of syncFailedRows) {
+    if (row.account_id) failedIds.add(String(row.account_id));
+    if (row.query_id) failedIds.add(String(row.query_id));
   }
+  const incomingQueryId = cleanQueryId(input.ibkrFlexQueryId || input.queryId || input.portfolioQueryId);
+  const incomingLabelKey = cleanString(input.label || input.accountLabel || input.name).toLowerCase();
+  const isSameLabelFailedRenewal = (account) =>
+    Boolean(incomingLabelKey) &&
+    cleanString(account.label).toLowerCase() === incomingLabelKey &&
+    (failedIds.has(account.id) || failedIds.has(account.ibkrFlexQueryId));
   const matchingIndex = accounts.findIndex(
     (account) =>
       (replaceTarget && (account.id === replaceTarget || account.ibkrFlexQueryId === replaceTarget)) ||
-      account.ibkrFlexQueryId === cleanQueryId(input.ibkrFlexQueryId || input.queryId || input.portfolioQueryId)
+      account.ibkrFlexQueryId === incomingQueryId ||
+      isSameLabelFailedRenewal(account)
   );
   const nextAccount = normalizePortfolioAccountInput(
     {
@@ -935,6 +940,9 @@ export function addPortfolioAccount(user, input = {}) {
     if (account.id === nextAccount.id) return false;
     if (account.ibkrFlexQueryId === nextAccount.ibkrFlexQueryId) return false;
     if (replaceTarget && (account.id === replaceTarget || account.ibkrFlexQueryId === replaceTarget)) {
+      return false;
+    }
+    if (isSameLabelFailedRenewal(account)) {
       return false;
     }
     if (replaceFailed && (failedIds.has(account.id) || failedIds.has(account.ibkrFlexQueryId))) {
