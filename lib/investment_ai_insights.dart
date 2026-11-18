@@ -88,7 +88,8 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
   bool loading = true,
       failed = false,
       comparing = false,
-      comparisonFailed = false;
+      comparisonFailed = false,
+      quarterPinned = false;
   List<String> tickers = ['CRDO', 'ALAB'];
   final search = TextEditingController();
   final sectorScroll = ScrollController();
@@ -97,6 +98,14 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
   Map<String, dynamic> get snapshot => asMap(data?['context']);
   String get snapshotId =>
       text(snapshot['snapshotId'], text(data?['snapshotId']));
+  List<String> get availableQuarterList {
+    final rawQuarters =
+        snapshot['availableQuarters'] ?? data?['availableQuarters'];
+    return <String>{
+      if (quarter.isNotEmpty) quarter,
+      if (rawQuarters is List) ...rawQuarters.map((v) => text(v)),
+    }.where((v) => v.isNotEmpty).toList()..sort((a, b) => b.compareTo(a));
+  }
   List<Map<String, dynamic>> get companies => asList(data?['companies']);
   List<Map<String, dynamic>> get series => asList(data?['series']);
   List<Map<String, dynamic>> get matches => filterAiInsightsCompanies(
@@ -162,6 +171,8 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
     super.initState();
     final initial = widget.initialSelection;
     quarter = text(initial['quarter']);
+    quarterPinned = initial['quarterPinned'] == true ||
+        (quarter.isNotEmpty && text(initial['snapshotId']).isEmpty);
     tab = const {'overview', 'companies', 'compare'}.contains(initial['tab'])
         ? text(initial['tab'])
         : 'overview';
@@ -204,6 +215,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
         // when the user moves the global cutoff into an earlier year.
         if (quarter.replaceAll('-', '').compareTo(latestQuarter) > 0) {
           quarter = '';
+          quarterPinned = false;
         }
       }
       unawaited(load());
@@ -221,6 +233,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
 
   void remember() => widget.onSelection?.call({
     'quarter': quarter,
+    'quarterPinned': quarterPinned,
     'window': window,
     'tab': tab,
     'metric': metric,
@@ -380,7 +393,9 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
 
   void setQuarter(String next) {
     if (next == quarter) return;
+    final latest = availableQuarterList.firstOrNull ?? '';
     quarter = next;
+    quarterPinned = next.isNotEmpty && next != latest;
     unawaited(load());
   }
 
@@ -488,12 +503,7 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
   );
 
   Widget toolbar() {
-    final rawQuarters =
-        snapshot['availableQuarters'] ?? data?['availableQuarters'];
-    final quarters = <String>{
-      if (quarter.isNotEmpty) quarter,
-      if (rawQuarters is List) ...rawQuarters.map((v) => text(v)),
-    }.where((v) => v.isNotEmpty).toList()..sort((a, b) => b.compareTo(a));
+    final quarters = availableQuarterList;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -580,9 +590,28 @@ class _AiInsightsPanelState extends State<AiInsightsPanel> {
               dropdown(
                 w('Research quarter', '研究季度'),
                 quarter,
-                {for (final q in quarters) q: q.replaceAll('-', ' ')},
+                {
+                  for (final q in quarters)
+                    q: q == quarters.first
+                        ? '${q.replaceAll('-', ' ')} · ${w('Latest', '最新')}'
+                        : q.replaceAll('-', ' '),
+                },
                 setQuarter,
-                width: 175,
+                width: 195,
+              ),
+            if (quarters.length > 1 &&
+                quarter.isNotEmpty &&
+                quarter != quarters.first)
+              ActionChip(
+                key: const ValueKey('ai-jump-latest-quarter'),
+                avatar: Icon(Icons.bolt, size: 15, color: p.accent),
+                label: Text(
+                  w('Latest: ${quarters.first}', '最新 ${quarters.first}'),
+                  style: style(12, true, p.accent),
+                ),
+                backgroundColor: p.accent.withValues(alpha: .10),
+                side: BorderSide(color: p.accent.withValues(alpha: .35)),
+                onPressed: () => setQuarter(quarters.first),
               ),
             dropdown(
               w('History', '历史区间'),

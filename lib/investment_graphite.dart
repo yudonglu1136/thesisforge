@@ -854,6 +854,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
       if (selectedAiQuarter.replaceAll('-', '').compareTo(latestAiQuarter) >
           0) {
         aiInsightsSelection.remove('quarter');
+        aiInsightsSelection.remove('quarterPinned');
       }
       if (page == 'discover' && discoveryTab == 'aiinsights') {
         home = null;

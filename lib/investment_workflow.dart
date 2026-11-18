@@ -329,6 +329,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         : query['discoverTab'] == 'valueflow'
         ? 'aiinsights'
         : 'gurus';
+    final legacyAutoPinnedAi =
+        query['ai_snapshotId'] != null && query['ai_quarter_pinned'] != '1';
     aiInsightsSelection = {
       for (final key in [
         'quarter',
@@ -341,7 +343,11 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         'selected',
         'snapshotId',
       ])
-        if (query['ai_$key'] != null) key: query['ai_$key'],
+        if (query['ai_$key'] != null &&
+            !(legacyAutoPinnedAi &&
+                (key == 'quarter' || key == 'snapshotId')))
+          key: query['ai_$key'],
+      if (query['ai_quarter_pinned'] == '1') 'quarterPinned': true,
       if (query['ai_window'] != null)
         'window': int.tryParse(query['ai_window']!) ?? 8,
       if (query['ai_tickers'] != null)
@@ -1123,6 +1129,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           aiInsightsSelection = {
             ...asMap(savedContext['filters']),
             'quarter': savedContext['selectedQuarter'],
+            'quarterPinned': true,
             'window': savedContext['window'] ?? 8,
             'snapshotId': savedContext['snapshotId'],
             'selected':

@@ -195,32 +195,38 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
       );
     },
   );
-  void persistDiscover() => replaceBrowserQuery({
-    ...growthQuality.query,
-    'discoverTab': discoveryTab,
-    for (final key in [
-      'quarter',
-      'window',
-      'tab',
-      'metric',
-      'group',
-      'sector',
-      'sort',
-      'query',
-      'selected',
-      'snapshotId',
-    ])
-      'ai_$key': aiInsightsSelection[key]?.toString(),
-    'ai_tickers': (aiInsightsSelection['tickers'] as List?)?.join(','),
-    'guru': selectedGuru == null
-        ? null
-        : text(asMap(selectedGuru?['guru'])['id']),
-    'collection': discoverCollection == 'all' ? null : discoverCollection,
-    'managerFilter': discoverManager.isEmpty ? null : discoverManager,
-    'coverage': discoverCoverage == 'all' ? null : discoverCoverage,
-    'sort': discoverSort == 'managers' ? null : discoverSort,
-    'discoverSearch': discoverSearch.isEmpty ? null : discoverSearch,
-  }, replaceCurrent: true);
+  void persistDiscover() {
+    final aiQuarterPinned = aiInsightsSelection['quarterPinned'] == true;
+    replaceBrowserQuery({
+      ...growthQuality.query,
+      'discoverTab': discoveryTab,
+      'ai_quarter': aiQuarterPinned
+          ? aiInsightsSelection['quarter']?.toString()
+          : null,
+      'ai_quarter_pinned': aiQuarterPinned ? '1' : null,
+      'ai_snapshotId': null,
+      for (final key in [
+        'window',
+        'tab',
+        'metric',
+        'group',
+        'sector',
+        'sort',
+        'query',
+        'selected',
+      ])
+        'ai_$key': aiInsightsSelection[key]?.toString(),
+      'ai_tickers': (aiInsightsSelection['tickers'] as List?)?.join(','),
+      'guru': selectedGuru == null
+          ? null
+          : text(asMap(selectedGuru?['guru'])['id']),
+      'collection': discoverCollection == 'all' ? null : discoverCollection,
+      'managerFilter': discoverManager.isEmpty ? null : discoverManager,
+      'coverage': discoverCoverage == 'all' ? null : discoverCoverage,
+      'sort': discoverSort == 'managers' ? null : discoverSort,
+      'discoverSearch': discoverSearch.isEmpty ? null : discoverSearch,
+    }, replaceCurrent: true);
+  }
 
   List<Map<String, dynamic>> get discoverMatches => filterDiscoverCandidates(
     asList(opportunities?['rows']),
