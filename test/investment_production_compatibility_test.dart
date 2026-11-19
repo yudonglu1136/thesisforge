@@ -80,14 +80,31 @@ void main() {
         expect(find.text('本地预览 · 历史 PIT'), findsNothing);
         expect(find.text('Ontology'), findsNothing);
         expect(find.text('图谱'), findsNothing);
-        final admin = language == AppLanguage.en ? 'Admin' : '管理';
-        await tester.tap(find.text(admin));
-        await tester.pumpAndSettle();
-        expect(destination, 'admin');
-        final signOut = language == AppLanguage.en ? 'Sign out' : '退出登录';
-        await tester.tap(find.byTooltip(signOut));
-        await tester.pumpAndSettle();
-        expect(signedOut, isTrue);
+        if (width < 1100) {
+          await tester.tap(
+            find.byKey(const ValueKey('mobile-account-sheet-button')),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey('sheet-open-admin')));
+          await tester.pumpAndSettle();
+          expect(destination, 'admin');
+          await tester.tap(
+            find.byKey(const ValueKey('mobile-account-sheet-button')),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey('sheet-logout')));
+          await tester.pumpAndSettle();
+          expect(signedOut, isTrue);
+        } else {
+          final admin = language == AppLanguage.en ? 'Admin' : '管理';
+          await tester.tap(find.text(admin));
+          await tester.pumpAndSettle();
+          expect(destination, 'admin');
+          final signOut = language == AppLanguage.en ? 'Sign out' : '退出登录';
+          await tester.tap(find.byTooltip(signOut));
+          await tester.pumpAndSettle();
+          expect(signedOut, isTrue);
+        }
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
       });

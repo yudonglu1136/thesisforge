@@ -45,6 +45,9 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
   String assetKindFilter = 'all';
   double riskFreeRate = .04;
   String homePnlMode = 'auto';
+  String mobileHoldingsKind = 'equity';
+  String? mobileRequestedChartMetric;
+  int mobileRequestedChartNonce = 0;
   bool get hideAmounts => portfolioPrivacyMode.value;
   void privacyChanged() => setState(() {});
   void homeUpdate(VoidCallback action) => setState(action);
@@ -415,21 +418,27 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
     w(en, zh),
     style: TextStyle(color: color ?? p.muted, fontSize: size, height: 1.5),
   );
-  Widget panel(List<Widget> children) => Container(
-    padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 640 ? 14 : 20),
-    decoration: BoxDecoration(
-      color: p.panel,
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: p.border),
-    ),
-    child: Material(
-      type: MaterialType.transparency,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: children,
+  Widget panel(List<Widget> children) {
+    final screenW = MediaQuery.sizeOf(context).width;
+    final isMobile = screenW > 0 && screenW < 640;
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 16 : 20),
+      decoration: BoxDecoration(
+        color: isMobile ? const Color(0xFF161B24) : p.panel,
+        borderRadius: BorderRadius.circular(isMobile ? 20 : 14),
+        border: Border.all(
+          color: isMobile ? Colors.white.withValues(alpha: .05) : p.border,
+        ),
       ),
-    ),
-  );
+      child: Material(
+        type: MaterialType.transparency,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: children,
+        ),
+      ),
+    );
+  }
   Widget title(String en, String zh, [double size = 20]) =>
       Text(w(en, zh), style: heading(size));
   Widget pair(Widget left, Widget right) => LayoutBuilder(

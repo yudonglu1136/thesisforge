@@ -377,6 +377,146 @@ void main() {
   );
 
   testWidgets(
+    'iOS v4 Interactive Bento sheets, Hero pills, chart range/metric InkWells, and option detail sheets work end-to-end',
+    (tester) async {
+      debugStandaloneDisplayModeOverride = true;
+      tester.view.physicalSize = const Size(393, 852);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final openedCompanies = <(String, String)>[];
+      final api = home_fixtures.HomeApi()
+        ..history = true
+        ..pnlHistory = true;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LanguageScope(
+            language: AppLanguage.zh,
+            child: Scaffold(
+              body: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 18),
+                child: PortfolioResearchPanel(
+                  api: api,
+                  palette: Palette(false),
+                  asOf: '2026-09-09',
+                  homeMode: true,
+                  onDetails: () {},
+                  onCompany: (sym, sec) => openedCompanies.add((sym, sec)),
+                  onGuru: (_, _) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      // 1. Tap Bento Tile 2 (Realized P&L FIFO) -> opens 3-tab Realized P&L & Cash Income sheet
+      await tester.tap(find.byKey(const ValueKey('mobile-bento-realized')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('mobile-realized-pnl-sheet')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('realized-inst-AAA')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('realized-inst-AAA CALL')),
+        findsOneWidget,
+      );
+
+      // Switch across all 3 segmented tabs inside Realized sheet
+      await tester.tap(find.byKey(const ValueKey('realized-sheet-tab-daily')));
+      await tester.pumpAndSettle();
+      expect(find.text('2026-08-20'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('realized-sheet-tab-income')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('已确认现金收入合计'), findsOneWidget);
+
+      // Tap CTA inside Realized sheet -> closes sheet & plots Realized curve on main chart!
+      await tester.tap(
+        find.byKey(const ValueKey('sheet-switch-chart-realized')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('mobile-realized-pnl-sheet')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('realized-pnl-chart')), findsOneWidget);
+
+      // 2. Tap Bento Tile 1 (Session / Latest P&L Est.) -> opens Estimate sheet & switches chart
+      await tester.tap(find.byKey(const ValueKey('mobile-bento-session')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('mobile-daily-pnl-sheet')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('sheet-switch-chart-estimate')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('cashAdjusted-pnl-chart')),
+        findsOneWidget,
+      );
+
+      // 3. Tap chart metric back to NAV and cycle range pills (1M -> YTD -> All)
+      await tester.tap(find.byKey(const ValueKey('history-metric-nav')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('actual-nav-chart')), findsOneWidget);
+      for (final r in ['1M', 'YTD', 'All']) {
+        await tester.tap(find.byKey(ValueKey('history-range-$r')));
+        await tester.pumpAndSettle();
+      }
+
+      // 4. Tap Hero Accounts Eyebrow & Bento Tile 3 (Cash / Margin) -> opens Cash & Multi-Account sheet
+      await tester.tap(find.byKey(const ValueKey('mobile-hero-accounts-pill')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('mobile-cash-accounts-sheet')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byTooltip('关闭'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('mobile-bento-cash')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('mobile-cash-accounts-sheet')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byTooltip('关闭'));
+      await tester.pumpAndSettle();
+
+      // 5. Tap Snowball Passive Income Banner -> opens Realized/Income sheet directly on Income tab!
+      await tester.tap(
+        find.byKey(const ValueKey('mobile-bento-income-banner')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('已确认现金收入合计'), findsOneWidget);
+      await tester.tap(find.byTooltip('关闭'));
+      await tester.pumpAndSettle();
+
+      // 6. Tap Bento Tile 4 (Holdings) -> opens All Positions sheet & jumps to equity research
+      await tester.tap(find.byKey(const ValueKey('mobile-bento-positions')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('mobile-positions-sheet')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('positions-sheet-tab-equity')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sheet-position-AAA')));
+      await tester.pumpAndSettle();
+      expect(openedCompanies, contains(('AAA', 'evidence')));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'iPhone SE 375x667 at 150% accessibility text scale has zero overflow',
     (tester) async {
       debugStandaloneDisplayModeOverride = false;

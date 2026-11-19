@@ -288,11 +288,36 @@ void main() {
           );
           await tester.pumpAndSettle();
           final label = language == AppLanguage.en ? 'Admin' : '管理';
-          expect(find.text(label), showAdmin ? findsOneWidget : findsNothing);
-          if (showAdmin) {
-            await tester.tap(find.text(label));
+          if (width < 1100) {
+            await tester.tap(
+              find.byKey(const ValueKey('mobile-account-sheet-button')),
+            );
             await tester.pumpAndSettle();
-            expect(target, 'admin');
+            expect(
+              find.byKey(const ValueKey('sheet-open-admin')),
+              showAdmin ? findsOneWidget : findsNothing,
+            );
+            if (showAdmin) {
+              await tester.tap(
+                find.byKey(const ValueKey('sheet-open-admin')),
+              );
+              await tester.pumpAndSettle();
+              expect(target, 'admin');
+            } else {
+              Navigator.of(
+                tester.element(
+                  find.byKey(const ValueKey('mobile-account-bottom-sheet')),
+                ),
+              ).pop();
+              await tester.pumpAndSettle();
+            }
+          } else {
+            expect(find.text(label), showAdmin ? findsOneWidget : findsNothing);
+            if (showAdmin) {
+              await tester.tap(find.text(label));
+              await tester.pumpAndSettle();
+              expect(target, 'admin');
+            }
           }
           expect(tester.takeException(), isNull);
           await tester.pumpWidget(const SizedBox());

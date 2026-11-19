@@ -673,7 +673,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         runSpacing: 8,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          dateControl(),
+          if (desktop) dateControl(),
           OutlinedButton.icon(
             onPressed: () => changeResearchCompany(),
             icon: const Icon(Icons.search, size: 16),
@@ -960,48 +960,75 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         ),
       ),
       padding: EdgeInsets.symmetric(horizontal: pad),
-      child: Wrap(
-        spacing: compact ? 2 : 4,
-        runSpacing: 0,
-        children: [
-          for (final tab in tabs)
-            Semantics(
-              selected: section == tab.$1,
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: section == tab.$1 ? p.accent : Colors.transparent,
-                      width: 2.5,
+      child: compact
+          ? Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final tab in tabs)
+                    Semantics(
+                      selected: section == tab.$1,
+                      child: Material(
+                        color: section == tab.$1
+                            ? const Color(0xFF252D3D)
+                            : const Color(0xFF141923),
+                        borderRadius: BorderRadius.circular(999),
+                        child: InkWell(
+                          key: ValueKey('research-tab-${tab.$1}'),
+                          borderRadius: BorderRadius.circular(999),
+                          onTap: () => selectResearchSection(tab.$1),
+                          child: Container(
+                            constraints: const BoxConstraints(minHeight: 36),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 7,
+                            ),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: section == tab.$1
+                                    ? p.accent.withValues(alpha: .45)
+                                    : Colors.white.withValues(alpha: .05),
+                              ),
+                            ),
+                            child: Text(
+                              w(tab.$2, tab.$3),
+                              style: TextStyle(
+                                color: section == tab.$1 ? p.text : p.muted,
+                                fontSize: 12,
+                                fontWeight: section == tab.$1
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                child: compact
-                    ? TextButton(
-                        key: ValueKey('research-tab-${tab.$1}'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: section == tab.$1 ? p.text : p.muted,
-                          shape: const RoundedRectangleBorder(),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          minimumSize: const Size(0, 32),
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 5,
+                ],
+              ),
+            )
+          : Wrap(
+              spacing: 4,
+              runSpacing: 0,
+              children: [
+                for (final tab in tabs)
+                  Semantics(
+                    selected: section == tab.$1,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: section == tab.$1
+                                ? p.accent
+                                : Colors.transparent,
+                            width: 2.5,
                           ),
                         ),
-                        onPressed: () => selectResearchSection(tab.$1),
-                        child: Text(
-                          w(tab.$2, tab.$3),
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: section == tab.$1
-                                ? FontWeight.w700
-                                : FontWeight.w500,
-                          ),
-                        ),
-                      )
-                    : TextButton.icon(
+                      ),
+                      child: TextButton.icon(
                         key: ValueKey('research-tab-${tab.$1}'),
                         style: TextButton.styleFrom(
                           foregroundColor: section == tab.$1 ? p.text : p.muted,
@@ -1027,10 +1054,10 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                           ),
                         ),
                       ),
-              ),
+                    ),
+                  ),
+              ],
             ),
-        ],
-      ),
     );
   }
 

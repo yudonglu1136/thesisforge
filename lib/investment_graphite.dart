@@ -149,7 +149,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
         child: Focus(
           autofocus: true,
           child: Scaffold(
-            backgroundColor: p.background,
+            backgroundColor: desktop ? p.background : const Color(0xFF0D0F14),
             body: SafeArea(
               bottom: desktop,
               child: Row(
@@ -694,22 +694,25 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
     return Container(
       key: const ValueKey('ios-mobile-top-header'),
       decoration: BoxDecoration(
-        color: p.background,
-        border: const Border(
-          bottom: BorderSide(color: Color(0xFF1A222E), width: 0.7),
+        color: const Color(0xFF0D0F14),
+        border: Border(
+          bottom: BorderSide(
+            color: Colors.white.withValues(alpha: .045),
+            width: 0.6,
+          ),
         ),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
       child: SizedBox(
         height: 46,
         child: Row(
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(8),
               child: Image.asset(
                 thesisForgeMarkAsset,
-                width: 26,
-                height: 26,
+                width: 27,
+                height: 27,
               ),
             ),
             const SizedBox(width: 8),
@@ -723,7 +726,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                     color: p.text,
                     fontSize: 16.5,
                     fontWeight: FontWeight.w700,
-                    letterSpacing: -0.45,
+                    letterSpacing: -0.4,
                   ),
                 ),
               ),
@@ -741,23 +744,19 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                     widthFactor: 1,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3.5,
+                        horizontal: 9,
+                        vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: statusTint.withValues(alpha: .11),
+                        color: statusTint.withValues(alpha: .12),
                         borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: statusTint.withValues(alpha: .32),
-                          width: 0.8,
-                        ),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Container(
-                            width: 5.5,
-                            height: 5.5,
+                            width: 6,
+                            height: 6,
                             decoration: BoxDecoration(
                               color: statusTint,
                               shape: BoxShape.circle,
@@ -792,14 +791,13 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
               ),
               onPressed: () => unawaited(openGlobalCompanySearch()),
               icon: Container(
-                width: 34,
-                height: 34,
+                width: 35,
+                height: 35,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF131922),
+                  color: const Color(0xFF171C26),
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: const Color(0xFF222C3A),
-                    width: 0.8,
+                    color: Colors.white.withValues(alpha: .06),
                   ),
                 ),
                 child: Icon(Icons.search_rounded, color: p.text, size: 18),
@@ -816,14 +814,13 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
               ),
               onPressed: showMobileAccountSheet,
               icon: Container(
-                width: 34,
-                height: 34,
+                width: 35,
+                height: 35,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF131922),
+                  color: const Color(0xFF171C26),
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: const Color(0xFF222C3A),
-                    width: 0.8,
+                    color: Colors.white.withValues(alpha: .06),
                   ),
                 ),
                 child: Icon(Icons.tune_rounded, color: p.text, size: 17),
@@ -1135,10 +1132,13 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
 
   Widget graphiteMobileBottomNavBar() => Container(
     key: const ValueKey('ios-bottom-nav-bar'),
-    decoration: const BoxDecoration(
-      color: Color(0xFF0A0D12),
+    decoration: BoxDecoration(
+      color: const Color(0xFF11151E),
       border: Border(
-        top: BorderSide(color: Color(0xFF1B2330), width: 0.7),
+        top: BorderSide(
+          color: Colors.white.withValues(alpha: .055),
+          width: 0.6,
+        ),
       ),
     ),
     child: SafeArea(

@@ -586,55 +586,1745 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
     );
   }
 
+  String? _extractUnderlyingTicker(Map<String, dynamic> r) {
+    final direct = text(r['underlyingSymbol'] ?? r['underlying'] ?? '', '').trim();
+    if (RegExp(r'^[A-Z]{1,5}(\.[A-Z])?$').hasMatch(direct)) return direct;
+    final raw = text(r['ticker'], '').trim().toUpperCase();
+    if (raw.isEmpty) return null;
+    final token = raw.split(RegExp(r'\s+')).first;
+    if (RegExp(r'^[A-Z]{1,5}(\.[A-Z])?$').hasMatch(token)) return token;
+    final prefix = RegExp(r'^([A-Z]{1,5})\d{6}[CP]').firstMatch(raw);
+    return prefix?.group(1);
+  }
+
+  void _requestMobileMainChartMetric(String nextMetric) {
+    homeUpdate(() {
+      mobileRequestedChartMetric = nextMetric;
+      mobileRequestedChartNonce++;
+    });
+  }
+
+  void _notifyMobileActionStatus(String en, String zh) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF151D29),
+        duration: const Duration(seconds: 3),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: BorderSide(color: p.border),
+        ),
+        content: Text(
+          w(en, zh),
+          style: TextStyle(color: p.text, fontSize: 12.5),
+        ),
+      ),
+    );
+  }
+
+  Widget _mobileSheetFrame({
+    required BuildContext sheetContext,
+    required Key sheetKey,
+    required String titleEn,
+    required String titleZh,
+    String? subtitleEn,
+    String? subtitleZh,
+    required List<Widget> children,
+  }) => ConstrainedBox(
+    key: sheetKey,
+    constraints: BoxConstraints(
+      maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.82,
+    ),
+    child: SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2E3A4B),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        w(titleEn, titleZh),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: heading(16),
+                      ),
+                      if (subtitleEn != null && subtitleZh != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          w(subtitleEn, subtitleZh),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: p.muted, fontSize: 11.5),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: w('Close', '关闭'),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => Navigator.of(sheetContext).pop(),
+                  icon: Icon(Icons.close_rounded, size: 19, color: p.muted),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: children,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Widget _mobileSheetMetricRow(
+    String labelEn,
+    String labelZh,
+    String valueText, {
+    Color? valueColor,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 7),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            w(labelEn, labelZh),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: p.muted, fontSize: 12.5),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          valueText,
+          style: TextStyle(
+            color: valueColor ?? p.text,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  void _showMobileRealizedPnlSheet({
+    required Map<String, dynamic> g,
+    required Map<String, dynamic> h,
+    required Map<String, dynamic> realized,
+    required double? realizedBasis,
+    String initialTab = 'bySymbol',
+  }) {
+    final realizedReady = realized['status'] == 'ready';
+    if (!realizedReady && initialTab != 'income') {
+      _showMobileCashAndAccountsSheet(g, h);
+      return;
+    }
+    final byInst = asList(realized['byInstrument']);
+    final rawRows = asList(realized['rows']);
+    final activeDailyRows = rawRows
+        .where((r) => number(r['pnl']).abs() > 0.005)
+        .toList()
+        .reversed
+        .toList();
+    final dailyList = activeDailyRows.isNotEmpty
+        ? activeDailyRows
+        : rawRows.reversed.take(30).toList();
+    final passive = asMap(h['passiveIncome']);
+    final dividends = asMap(passive['dividends']);
+    final expiredCalls = asMap(passive['expiredCalls']);
+    final passiveByTicker = asList(passive['byTicker']);
+    final pendingShortCalls = asList(asMap(passive['pendingShortCalls'])['rows']);
+    final trailing = asMap(h['trailingDividends']);
+    final totalNum = nullableNumber(realized['total']) ?? 0;
+    final totalColor = totalNum < 0 ? p.negative : p.accent;
+    final totalDisplay = hideAmounts
+        ? portfolioRateLabel(portfolioRatio(realized['total'], realizedBasis))
+        : '${totalNum > 0 ? '+' : ''}${amount(realized['total'])}';
+    final maxInstAbs = byInst.fold<double>(
+      0,
+      (prev, r) => math.max(prev, number(r['pnl']).abs()),
+    );
+    var activeTab = initialTab;
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF131720),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheetState) => _mobileSheetFrame(
+          sheetContext: sheetCtx,
+          sheetKey: const ValueKey('mobile-realized-pnl-sheet'),
+          titleEn: 'Realized P&L & Cash Income',
+          titleZh: '已实现盈亏与现金收入明细',
+          subtitleEn:
+              '${text(realized['fromDate'], '—')} → ${text(realized['toDate'], '—')} · FIFO broker ledger',
+          subtitleZh:
+              '${text(realized['fromDate'], '—')} → ${text(realized['toDate'], '—')} · 券商 FIFO 平仓台账',
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF131A24),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF222E3F)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    w('CUMULATIVE REALIZED P&L (FIFO)', '累计已实现盈亏 (FIFO)'),
+                    style: TextStyle(
+                      color: p.muted,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      totalDisplay,
+                      style: TextStyle(
+                        color: totalColor,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w800,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      if (nullableNumber(realized['tradeCount']) != null)
+                        tag(
+                          '${number(realized['tradeCount']).round()} closed trades',
+                          '${number(realized['tradeCount']).round()} 笔平仓交割',
+                        ),
+                      tag(
+                        '${byInst.length} instruments',
+                        '${byInst.length} 个归因标的',
+                      ),
+                      if (passive['status'] == 'ready')
+                        tag(
+                          'Cash income ${hideAmounts ? '••••' : amount(passive['totalConfirmed'])}',
+                          '股息与权利金 ${hideAmounts ? '••••' : amount(passive['totalConfirmed'])}',
+                        ),
+                    ],
+                  ),
+                  if (rawRows.length >= 2) ...[
+                    const SizedBox(height: 12),
+                    Material(
+                      color: p.accent.withValues(alpha: .14),
+                      borderRadius: BorderRadius.circular(9),
+                      child: InkWell(
+                        key: const ValueKey('sheet-switch-chart-realized'),
+                        borderRadius: BorderRadius.circular(9),
+                        onTap: () {
+                          Navigator.of(sheetCtx).pop();
+                          _requestMobileMainChartMetric('realized');
+                        },
+                        child: Container(
+                          height: 38,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(9),
+                            border: Border.all(
+                              color: p.accent.withValues(alpha: .35),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.show_chart_rounded,
+                                size: 16,
+                                color: p.accent,
+                              ),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  w(
+                                    'Show Realized Curve on Main Chart',
+                                    '在主图查看已实现盈亏曲线',
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: p.accent,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Material(
+              color: const Color(0xFF0A0D12),
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: p.border),
+                ),
+                child: Row(
+                  children: [
+                    for (final tab in [
+                      ('bySymbol', 'By Symbol', '标的归因'),
+                      ('daily', 'Daily Log', '按日流水'),
+                      ('income', 'Income & Divs', '股息与权利金'),
+                    ])
+                      Expanded(
+                        child: InkWell(
+                          key: ValueKey('realized-sheet-tab-${tab.$1}'),
+                          borderRadius: BorderRadius.circular(7),
+                          onTap: () => setSheetState(() => activeTab = tab.$1),
+                          child: Container(
+                            height: 36,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: activeTab == tab.$1
+                                  ? const Color(0xFF17202D)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(7),
+                            ),
+                            child: Text(
+                              w(tab.$2, tab.$3),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: activeTab == tab.$1 ? p.text : p.muted,
+                                fontSize: 12,
+                                fontWeight: activeTab == tab.$1
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (activeTab == 'bySymbol') ...[
+              if (byInst.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: copy(
+                    'No symbol-level closed trade attribution in this report.',
+                    '当前报告暂无按标的拆分的平仓归因记录。',
+                  ),
+                )
+              else
+                for (final item in byInst)
+                  Builder(
+                    builder: (_) {
+                      final pnlVal = number(item['pnl']);
+                      final isEquity = [
+                        'STK',
+                        'STOCK',
+                        'EQUITY',
+                        'COMMON STOCK',
+                      ].contains(text(item['assetCategory']).toUpperCase());
+                      final underlying = _extractUnderlyingTicker(item);
+                      final barRatio = maxInstAbs > 0
+                          ? (pnlVal.abs() / maxInstAbs).clamp(0.04, 1.0)
+                          : 0.0;
+                      final rowColor = pnlVal < 0 ? p.negative : p.accent;
+                      return Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          key: ValueKey(
+                            'realized-inst-${text(item['ticker'])}',
+                          ),
+                          borderRadius: BorderRadius.circular(9),
+                          onTap: underlying == null
+                              ? null
+                              : () {
+                                  Navigator.of(sheetCtx).pop();
+                                  widget.onCompany(underlying, 'evidence');
+                                },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(color: p.border),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(
+                                  children: [
+                                    if (isEquity)
+                                      StockLogo(
+                                        ticker: text(item['ticker']),
+                                        palette: p,
+                                        size: 28,
+                                      )
+                                    else
+                                      Icon(
+                                        Icons.layers_outlined,
+                                        size: 24,
+                                        color: p.secondary,
+                                      ),
+                                    const SizedBox(width: 9),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Flexible(
+                                                child: Text(
+                                                  text(item['ticker']),
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: heading(13.5),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 5,
+                                                      vertical: 1.5,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: p.card,
+                                                  borderRadius:
+                                                      BorderRadius.circular(4),
+                                                ),
+                                                child: Text(
+                                                  isEquity
+                                                      ? w('STK', '股票')
+                                                      : w('OPT', '期权'),
+                                                  style: TextStyle(
+                                                    color: p.muted,
+                                                    fontSize: 9.5,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          if (text(item['name'], '').isNotEmpty)
+                                            Text(
+                                              text(item['name']),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: p.muted,
+                                                fontSize: 11,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      hideAmounts
+                                          ? portfolioRateLabel(
+                                              portfolioRatio(
+                                                pnlVal,
+                                                realizedBasis,
+                                              ),
+                                            )
+                                          : '${pnlVal > 0 ? '+' : ''}${amount(pnlVal)}',
+                                      style: TextStyle(
+                                        color: rowColor,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                    ),
+                                    if (underlying != null) ...[
+                                      const SizedBox(width: 3),
+                                      Icon(
+                                        Icons.chevron_right_rounded,
+                                        size: 15,
+                                        color: p.muted,
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(999),
+                                  child: Container(
+                                    height: 4,
+                                    color: const Color(0xFF18212E),
+                                    alignment: Alignment.centerLeft,
+                                    child: FractionallySizedBox(
+                                      widthFactor: barRatio,
+                                      child: Container(color: rowColor),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+            ] else if (activeTab == 'daily') ...[
+              for (final row in dailyList.take(60))
+                Builder(
+                  builder: (_) {
+                    final dPnl = number(row['pnl']);
+                    final cumPnl = number(row['cumulativePnl']);
+                    final dColor = dPnl < 0
+                        ? p.negative
+                        : dPnl > 0
+                        ? p.accent
+                        : p.muted;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 9,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border(bottom: BorderSide(color: p.border)),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  text(row['date']),
+                                  style: TextStyle(
+                                    color: p.text,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                  ),
+                                ),
+                                Text(
+                                  hideAmounts
+                                      ? w(
+                                          'Cumulative tracked',
+                                          '已计入累计平仓曲线',
+                                        )
+                                      : '${w('Cumulative', '累计')} ${cumPnl > 0 ? '+' : ''}${amount(cumPnl)}',
+                                  style: TextStyle(
+                                    color: p.muted,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Text(
+                            hideAmounts
+                                ? portfolioRateLabel(
+                                    portfolioRatio(dPnl, realizedBasis),
+                                  )
+                                : '${dPnl > 0 ? '+' : ''}${amount(dPnl)}',
+                            style: TextStyle(
+                              color: dColor,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+            ] else ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF131A24),
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(color: const Color(0xFF222E3F)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _mobileSheetMetricRow(
+                      'Confirmed Passive Cash Income',
+                      '已确认现金收入合计',
+                      hideAmounts
+                          ? '••••'
+                          : amount(passive['totalConfirmed'] ?? 0),
+                      valueColor: p.accent,
+                    ),
+                    Divider(height: 1, color: p.border),
+                    _mobileSheetMetricRow(
+                      'Net Cash Dividends (${number(dividends['eventCount']).round()})',
+                      '税后现金股息 (${number(dividends['eventCount']).round()} 笔)',
+                      hideAmounts ? '••••' : amount(dividends['netAmount'] ?? 0),
+                    ),
+                    Divider(height: 1, color: p.border),
+                    _mobileSheetMetricRow(
+                      'Expired OTM Short Calls (${number(expiredCalls['contractCount']).round()})',
+                      '到期落袋权利金 (${number(expiredCalls['contractCount']).round()} 张)',
+                      hideAmounts
+                          ? '••••'
+                          : amount(expiredCalls['amount'] ?? 0),
+                    ),
+                    if (trailing['status'] == 'ready') ...[
+                      Divider(height: 1, color: p.border),
+                      _mobileSheetMetricRow(
+                        'Trailing 12M Est. Dividends',
+                        '持仓近12月预计年化股息',
+                        hideAmounts
+                            ? portfolioRateLabel(
+                                nullableNumber(trailing['estimatedYield']),
+                              )
+                            : amount(trailing['annualAmount']),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (passiveByTicker.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  w('Confirmed Income by Ticker', '按标的已实现股息与权利金'),
+                  style: heading(13.5),
+                ),
+                const SizedBox(height: 6),
+                for (final row in passiveByTicker.take(25))
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () {
+                        final sym = _extractUnderlyingTicker(row);
+                        if (sym != null) {
+                          Navigator.of(sheetCtx).pop();
+                          widget.onCompany(sym, 'evidence');
+                        }
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                text(row['ticker']),
+                                style: heading(13),
+                              ),
+                            ),
+                            Text(
+                              hideAmounts
+                                  ? '••••'
+                                  : '+${amount(row['total'] ?? row['amount'] ?? 0)}',
+                              style: TextStyle(
+                                color: p.accent,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.chevron_right_rounded,
+                              size: 15,
+                              color: p.muted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+              if (pendingShortCalls.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  w('Open Short Calls Pending Expiry', '待到期卖出看涨期权'),
+                  style: heading(13.5),
+                ),
+                const SizedBox(height: 6),
+                for (final sc in pendingShortCalls.take(15))
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            text(sc['ticker'] ?? sc['symbol']),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: p.text, fontSize: 12.5),
+                          ),
+                        ),
+                        Text(
+                          hideAmounts
+                              ? '••••'
+                              : amount(sc['premiumBasis'] ?? sc['costBasis'] ?? 0),
+                          style: TextStyle(color: p.muted, fontSize: 12.5),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+              if (passiveByTicker.isEmpty && pendingShortCalls.isEmpty) ...[
+                const SizedBox(height: 10),
+                copy(
+                  'Include Cash Transactions / Dividends in your IBKR Activity Flex Query to track settled dividend & option premium cash flows.',
+                  '在 IBKR Activity Flex Query 中勾选现金交易与股息明细后，将在此自动汇总每笔税后股息与期权权利金落袋流水。',
+                  size: 12,
+                ),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showMobileDailyAndEstimatePnlSheet({
+    required Map<String, dynamic> g,
+    required Map<String, dynamic> h,
+    required Map<String, dynamic> daily,
+    required Map<String, dynamic> history,
+    required Map<String, dynamic>? latestEstimate,
+    required double? sessionBasis,
+  }) {
+    final dailyReady = daily['status'] == 'ready';
+    final sessionRaw = dailyReady ? daily['pnl'] : latestEstimate?['pnl'];
+    final sessionNum = nullableNumber(sessionRaw);
+    final sessionColor = sessionNum == null
+        ? p.muted
+        : sessionNum < 0
+        ? p.negative
+        : p.accent;
+    final sessionDisplay = hideAmounts
+        ? portfolioRateLabel(portfolioRatio(sessionRaw, sessionBasis))
+        : sessionNum == null
+        ? '—'
+        : '${sessionNum > 0 ? '+' : ''}${amount(sessionRaw)}';
+    final cashAdj = asMap(history['cashAdjusted']);
+    final cashAdjRows = asList(cashAdj['rows']);
+    final attributionRows = dailyReady
+        ? asList(daily['rows'])
+        : asList(asMap(h['unrealized'])['rows']);
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0E131B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => _mobileSheetFrame(
+        sheetContext: sheetCtx,
+        sheetKey: const ValueKey('mobile-daily-pnl-sheet'),
+        titleEn: dailyReady
+            ? 'Session Mark-to-Market P&L'
+            : 'Latest P&L Estimate & Attribution',
+        titleZh: dailyReady ? '当日持仓盯市盈亏归因' : '最近盈亏估算与持仓归因',
+        subtitleEn: dailyReady
+            ? 'Report date ${text(daily['date'], '—')}'
+            : latestEstimate != null
+            ? '${text(latestEstimate['previousDate'])} → ${text(latestEstimate['date'])} · Cash-adjusted NAV bridge'
+            : 'Broker report snapshot',
+        subtitleZh: dailyReady
+            ? '报告日期 ${text(daily['date'], '—')}'
+            : latestEstimate != null
+            ? '${text(latestEstimate['previousDate'])} → ${text(latestEstimate['date'])} · 扣除出入金净值桥'
+            : '券商报告快照',
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF131A24),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF222E3F)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  dailyReady
+                      ? w('SESSION P&L', '当日盯市盈亏')
+                      : w('LATEST PERIOD P&L ESTIMATE', '最近报告期盈亏估算'),
+                  style: TextStyle(
+                    color: p.muted,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  sessionDisplay,
+                  style: TextStyle(
+                    color: sessionColor,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                if (latestEstimate != null && !hideAmounts) ...[
+                  const SizedBox(height: 8),
+                  Divider(height: 1, color: p.border),
+                  _mobileSheetMetricRow(
+                    'Reported NAV Delta',
+                    '区间账面净值变动',
+                    '${number(latestEstimate['navChange']) > 0 ? '+' : ''}${amount(latestEstimate['navChange'])}',
+                  ),
+                  _mobileSheetMetricRow(
+                    'Cash Deposits / Withdrawals',
+                    '扣除现金转入转出',
+                    amount(latestEstimate['netFlow'] ?? 0),
+                  ),
+                ],
+                if (cashAdj['status'] == 'ready' && !hideAmounts) ...[
+                  _mobileSheetMetricRow(
+                    'Cumulative Cash-Adjusted P&L',
+                    '历史累计估算总盈亏',
+                    '${number(cashAdj['total']) > 0 ? '+' : ''}${amount(cashAdj['total'])}',
+                    valueColor: number(cashAdj['total']) < 0
+                        ? p.negative
+                        : p.accent,
+                  ),
+                ],
+                if (cashAdjRows.length >= 2) ...[
+                  const SizedBox(height: 10),
+                  Material(
+                    color: p.accent.withValues(alpha: .14),
+                    borderRadius: BorderRadius.circular(9),
+                    child: InkWell(
+                      key: const ValueKey('sheet-switch-chart-estimate'),
+                      borderRadius: BorderRadius.circular(9),
+                      onTap: () {
+                        Navigator.of(sheetCtx).pop();
+                        _requestMobileMainChartMetric('cashAdjusted');
+                      },
+                      child: Container(
+                        height: 38,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(9),
+                          border: Border.all(
+                            color: p.accent.withValues(alpha: .35),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.insights_rounded,
+                              size: 16,
+                              color: p.accent,
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                w(
+                                  'Show Estimated P&L Curve on Main Chart',
+                                  '在主图查看估算盈亏曲线',
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: p.accent,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            dailyReady
+                ? w('Top Session Contributors', '当日持仓盈亏贡献榜')
+                : w('Open Position Unrealized P&L', '当前持仓累计浮盈亏归因'),
+            style: heading(14),
+          ),
+          const SizedBox(height: 6),
+          if (attributionRows.isEmpty)
+            copy(
+              'No position-level P&L rows available in this snapshot.',
+              '当前快照暂无逐笔持仓盈亏明细。',
+            )
+          else
+            for (final r in attributionRows.take(16))
+              Builder(
+                builder: (_) {
+                  final rowPnl = number(r['pnl']);
+                  final isEq = [
+                    'STK',
+                    'STOCK',
+                    'EQUITY',
+                    'COMMON STOCK',
+                  ].contains(text(r['assetCategory']).toUpperCase());
+                  return Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () {
+                        Navigator.of(sheetCtx).pop();
+                        if (isEq) {
+                          widget.onCompany(text(r['ticker']), 'evidence');
+                        } else {
+                          _showMobilePositionDetailSheet(r);
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 9,
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border(bottom: BorderSide(color: p.border)),
+                        ),
+                        child: Row(
+                          children: [
+                            if (isEq)
+                              StockLogo(
+                                ticker: text(r['ticker']),
+                                palette: p,
+                                size: 28,
+                              )
+                            else
+                              Icon(
+                                Icons.layers_outlined,
+                                size: 24,
+                                color: p.secondary,
+                              ),
+                            const SizedBox(width: 9),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    text(r['ticker']),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: heading(13.5),
+                                  ),
+                                  Text(
+                                    text(r['name']),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: p.muted,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              hideAmounts
+                                  ? portfolioRateLabel(
+                                      portfolioRatio(rowPnl, sessionBasis),
+                                    )
+                                  : '${rowPnl > 0 ? '+' : ''}${amount(rowPnl)}',
+                              style: TextStyle(
+                                color: rowPnl < 0 ? p.negative : p.accent,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 3),
+                            Icon(
+                              Icons.chevron_right_rounded,
+                              size: 15,
+                              color: p.muted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+        ],
+      ),
+    );
+  }
+
+  void _showMobileCashAndAccountsSheet(
+    Map<String, dynamic> g,
+    Map<String, dynamic> h,
+  ) {
+    final accounts = asList(g['accountMeta']);
+    final navVal = number(h['accountValue'] ?? g['reportedNav'] ?? g['netValue']);
+    final cashVal = number(g['cash']);
+    final grossVal = number(g['grossExposure']);
+    final leverage = navVal.abs() > 0 ? grossVal / navVal.abs() : 0.0;
+    final isSnapshotOnly =
+        data?['status'] == 'preview_account' ||
+        data?['source'] == 'local_owner_broker_snapshot';
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0E131B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => _mobileSheetFrame(
+        sheetContext: sheetCtx,
+        sheetKey: const ValueKey('mobile-cash-accounts-sheet'),
+        titleEn: 'Cash, Margin & Connected Accounts',
+        titleZh: '现金、融资负债与合并账户明细',
+        subtitleEn:
+            '${g['accountCount']} connected IBKR account(s) · ${selectedCurrency.isEmpty ? text(g['currency']) : selectedCurrency}',
+        subtitleZh:
+            '已合并 ${g['accountCount']} 个 IBKR 账户 · 结算币种 ${selectedCurrency.isEmpty ? text(g['currency']) : selectedCurrency}',
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF131A24),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF222E3F)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _mobileSheetMetricRow(
+                  'Combined Net Asset Value',
+                  '合并总资产净值 (NAV)',
+                  hideAmounts ? '••••' : amount(navVal),
+                  valueColor: p.accent,
+                ),
+                Divider(height: 1, color: p.border),
+                _mobileSheetMetricRow(
+                  'Long Equities & ETFs',
+                  '股票与 ETF 多头市值',
+                  hideAmounts ? '••••' : amount(g['equityValue'] ?? 0),
+                ),
+                Divider(height: 1, color: p.border),
+                _mobileSheetMetricRow(
+                  'Options & Other Derivatives',
+                  '期权与衍生品净市值',
+                  hideAmounts ? '••••' : amount(g['otherValue'] ?? 0),
+                ),
+                if (number(g['shortValue']).abs() > 0.01) ...[
+                  Divider(height: 1, color: p.border),
+                  _mobileSheetMetricRow(
+                    'Short Positions Exposure',
+                    '空头持仓市值',
+                    hideAmounts ? '••••' : amount(g['shortValue']),
+                    valueColor: p.negative,
+                  ),
+                ],
+                Divider(height: 1, color: p.border),
+                _mobileSheetMetricRow(
+                  cashVal < 0
+                      ? 'Margin Loan / Cash Debit'
+                      : 'Settled Cash Balance',
+                  cashVal < 0 ? '证券融资负债余额' : '可用清算正现金',
+                  hideAmounts ? '••••' : amount(cashVal),
+                  valueColor: cashVal < 0 ? p.negative : p.accent,
+                ),
+                Divider(height: 1, color: p.border),
+                _mobileSheetMetricRow(
+                  'Gross Exposure & Leverage',
+                  '总敞口与总杠杆倍数',
+                  hideAmounts
+                      ? '${leverage.toStringAsFixed(2)}x'
+                      : '${amount(grossVal)} (${leverage.toStringAsFixed(2)}x)',
+                ),
+              ],
+            ),
+          ),
+          if (accounts.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              w('Sub-Account Breakdown', '各子账户净值占比'),
+              style: heading(14),
+            ),
+            const SizedBox(height: 8),
+            for (final acc in accounts)
+              Builder(
+                builder: (_) {
+                  final accNav = nullableNumber(acc['reportedNav']);
+                  final share = (accNav != null && navVal > 0)
+                      ? (accNav / navVal)
+                      : null;
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF111720),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: p.border),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.account_balance_wallet_outlined,
+                          size: 18,
+                          color: p.accent,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                text(
+                                  acc['label'],
+                                  text(acc['accountNumber'], 'IBKR'),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: heading(13),
+                              ),
+                              Text(
+                                '${text(acc['accountNumber'], '—')} · ${text(acc['reportDate'], '—')}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: p.muted, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              hideAmounts || accNav == null
+                                  ? '••••'
+                                  : amount(accNav),
+                              style: TextStyle(
+                                color: p.text,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                            if (share != null)
+                              Text(
+                                percent(share),
+                                style: TextStyle(color: p.muted, fontSize: 11),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+          ],
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(sheetCtx).pop();
+                    if (isSnapshotOnly) {
+                      _notifyMobileActionStatus(
+                        'Sign in to manage live IBKR Flex credentials.',
+                        '请先登录账户以管理或修改实时 IBKR Flex 连接凭证。',
+                      );
+                    } else {
+                      managePortfolioConnection();
+                    }
+                  },
+                  icon: const Icon(Icons.link_rounded, size: 16),
+                  label: Text(w('Manage IBKR', '管理连接')),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: p.accent,
+                    foregroundColor: const Color(0xFF06110D),
+                  ),
+                  onPressed: () {
+                    Navigator.of(sheetCtx).pop();
+                    if (isSnapshotOnly) {
+                      _notifyMobileActionStatus(
+                        'Viewing verified broker snapshot. Sign in to trigger live sync.',
+                        '当前为已核验券商快照视图；登录后可触发实时云端同步。',
+                      );
+                    } else if (!portfolioSyncing) {
+                      syncConnectedPortfolio();
+                    }
+                  },
+                  icon: const Icon(Icons.cloud_sync_outlined, size: 16),
+                  label: Text(w('Sync Now', '立即同步')),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMobileAllPositionsSheet(
+    Map<String, dynamic> g, {
+    String initialFilter = 'all',
+  }) {
+    final allNonCash =
+        asList(
+          g['positions'],
+        ).where((r) => !['cash', 'accrual'].contains(r['kind'])).toList()..sort(
+          (a, b) =>
+              number(b['value']).abs().compareTo(number(a['value']).abs()),
+        );
+    final equities = allNonCash.where((r) => r['kind'] == 'equity').toList();
+    final others = allNonCash.where((r) => r['kind'] != 'equity').toList();
+    var activeFilter = initialFilter;
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0E131B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheetState) {
+          final visible = activeFilter == 'equity'
+              ? equities
+              : activeFilter == 'other'
+              ? others
+              : allNonCash;
+          return _mobileSheetFrame(
+            sheetContext: sheetCtx,
+            sheetKey: const ValueKey('mobile-positions-sheet'),
+            titleEn: 'Active Portfolio Positions',
+            titleZh: '全部持仓标的明细',
+            subtitleEn:
+                '${equities.length} equities · ${others.length} options / derivatives',
+            subtitleZh:
+                '${equities.length} 只股票/ETF · ${others.length} 项期权与衍生品',
+            children: [
+              Material(
+                color: const Color(0xFF0A0D12),
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: p.border),
+                  ),
+                  child: Row(
+                    children: [
+                      for (final tab in [
+                        ('all', 'All (${allNonCash.length})', '全部 (${allNonCash.length})'),
+                        ('equity', 'Equities (${equities.length})', '股票 (${equities.length})'),
+                        ('other', 'Options (${others.length})', '期权 (${others.length})'),
+                      ])
+                        Expanded(
+                          child: InkWell(
+                            key: ValueKey('positions-sheet-tab-${tab.$1}'),
+                            borderRadius: BorderRadius.circular(7),
+                            onTap: () =>
+                                setSheetState(() => activeFilter = tab.$1),
+                            child: Container(
+                              height: 36,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: activeFilter == tab.$1
+                                    ? const Color(0xFF17202D)
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(7),
+                              ),
+                              child: Text(
+                                w(tab.$2, tab.$3),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: activeFilter == tab.$1
+                                      ? p.text
+                                      : p.muted,
+                                  fontSize: 11.5,
+                                  fontWeight: activeFilter == tab.$1
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              if (visible.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: copy(
+                    'No positions in this category.',
+                    '该分类下暂无持仓标的。',
+                  ),
+                )
+              else
+                for (final r in visible)
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      key: ValueKey(
+                        'sheet-position-${r['id'] ?? r['ticker']}',
+                      ),
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () {
+                        Navigator.of(sheetCtx).pop();
+                        if (r['kind'] == 'equity') {
+                          widget.onCompany(text(r['ticker']), 'evidence');
+                        } else {
+                          _showMobilePositionDetailSheet(r);
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border(bottom: BorderSide(color: p.border)),
+                        ),
+                        child: Row(
+                          children: [
+                            if (r['kind'] == 'equity')
+                              StockLogo(
+                                ticker: text(r['ticker']),
+                                palette: p,
+                                size: 28,
+                              )
+                            else
+                              Icon(
+                                Icons.layers_outlined,
+                                size: 24,
+                                color: p.secondary,
+                              ),
+                            const SizedBox(width: 9),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    text(r['ticker']),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: heading(13.5),
+                                  ),
+                                  Text(
+                                    text(r['name']),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: p.muted,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  hideAmounts ? '••••' : amount(r['value']),
+                                  style: TextStyle(
+                                    color: p.text,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                  ),
+                                ),
+                                Text(
+                                  percent(r['netWeight']),
+                                  style: TextStyle(
+                                    color: p.muted,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(width: 3),
+                            Icon(
+                              Icons.chevron_right_rounded,
+                              size: 15,
+                              color: p.muted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              if (widget.onDetails != null) ...[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(sheetCtx).pop();
+                    widget.onDetails?.call();
+                  },
+                  icon: const Icon(Icons.analytics_outlined, size: 16),
+                  label: Text(
+                    w('Open Full Portfolio Analysis', '进入完整组合深度分析'),
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showMobilePositionDetailSheet(Map<String, dynamic> r) {
+    final underlying = _extractUnderlyingTicker(r);
+    final openPnl = nullableNumber(r['unrealizedPnl'] ?? r['pnl']);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0E131B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => _mobileSheetFrame(
+        sheetContext: sheetCtx,
+        sheetKey: const ValueKey('mobile-position-detail-sheet'),
+        titleEn: text(r['ticker']),
+        titleZh: text(r['ticker']),
+        subtitleEn: text(r['name'], 'Derivative / Non-equity contract'),
+        subtitleZh: text(r['name'], '期权与衍生品合约明细'),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF131A24),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF222E3F)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _mobileSheetMetricRow(
+                  'Asset Category',
+                  '资产类别',
+                  text(r['assetCategory'], 'OPT'),
+                ),
+                Divider(height: 1, color: p.border),
+                _mobileSheetMetricRow(
+                  'Position Quantity',
+                  '持仓数量',
+                  hideAmounts ? '••••' : formatNumber(number(r['quantity'])),
+                ),
+                Divider(height: 1, color: p.border),
+                _mobileSheetMetricRow(
+                  'Market Value',
+                  '当前市值',
+                  hideAmounts ? '••••' : amount(r['value']),
+                ),
+                if (nullableNumber(r['costBasis']) != null) ...[
+                  Divider(height: 1, color: p.border),
+                  _mobileSheetMetricRow(
+                    'Cost Basis',
+                    '持仓成本基准',
+                    hideAmounts ? '••••' : amount(r['costBasis']),
+                  ),
+                ],
+                if (openPnl != null) ...[
+                  Divider(height: 1, color: p.border),
+                  _mobileSheetMetricRow(
+                    'Unrealized P&L',
+                    '浮动盈亏',
+                    hideAmounts
+                        ? '••••'
+                        : '${openPnl > 0 ? '+' : ''}${amount(openPnl)}',
+                    valueColor: openPnl < 0 ? p.negative : p.accent,
+                  ),
+                ],
+                if (nullableNumber(r['netWeight']) != null) ...[
+                  Divider(height: 1, color: p.border),
+                  _mobileSheetMetricRow(
+                    'Portfolio NAV Weight',
+                    '占组合净值比例',
+                    percent(r['netWeight']),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (underlying != null) ...[
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              key: const ValueKey('position-sheet-open-underlying'),
+              style: FilledButton.styleFrom(
+                backgroundColor: p.accent,
+                foregroundColor: const Color(0xFF06110D),
+                minimumSize: const Size.fromHeight(42),
+              ),
+              onPressed: () {
+                Navigator.of(sheetCtx).pop();
+                widget.onCompany(underlying, 'evidence');
+              },
+              icon: const Icon(Icons.open_in_new_rounded, size: 16),
+              label: Text(
+                w(
+                  'Open $underlying Underlying Research',
+                  '查看标的 $underlying 正股深度研究',
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _snowballMoneyCompact(Map<String, dynamic> g, dynamic rawVal, {bool signed = false}) {
+    final v = nullableNumber(rawVal);
+    if (v == null || !v.isFinite) return '—';
+    final cur = selectedCurrency.isEmpty ? text(g['currency'], 'USD') : selectedCurrency;
+    final sym = cur == 'USD'
+        ? r'$'
+        : cur == 'EUR'
+        ? '€'
+        : cur == 'GBP'
+        ? '£'
+        : '$cur ';
+    final sign = v < 0 ? '-' : (signed && v > 0 ? '+' : '');
+    return '$sign$sym${formatNumber(v.abs())}';
+  }
+
+  Widget _buildSnowballHeroValue(
+    Map<String, dynamic> g,
+    Map<String, dynamic> h,
+    double? navRatio,
+  ) {
+    if (hideAmounts) {
+      return FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Text(
+          portfolioRateLabel(navRatio == null ? null : navRatio - 1),
+          style: const TextStyle(
+            color: Color(0xFFF8FAFC),
+            fontSize: 34,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.9,
+            height: 1.12,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+      );
+    }
+    final val = nullableNumber(h['accountValue']);
+    if (val == null || !val.isFinite) {
+      return Text('—', style: heading(32));
+    }
+    final cur = selectedCurrency.isEmpty ? text(g['currency'], 'USD') : selectedCurrency;
+    final sym = cur == 'USD'
+        ? r'$'
+        : cur == 'EUR'
+        ? '€'
+        : cur == 'GBP'
+        ? '£'
+        : '$cur ';
+    final neg = val < 0 ? '-' : '';
+    final fixed = val.abs().toStringAsFixed(2);
+    final dotIdx = fixed.indexOf('.');
+    final wholeRaw = fixed.substring(0, dotIdx);
+    final fracPart = fixed.substring(dotIdx);
+    final wholeWithCommas = wholeRaw.replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]},',
+    );
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$neg$sym$wholeWithCommas',
+              style: const TextStyle(
+                color: Color(0xFFF8FAFC),
+                fontSize: 34,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -1.0,
+                height: 1.12,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+            TextSpan(
+              text: fracPart,
+              style: const TextStyle(
+                color: Color(0xFF64748B),
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.4,
+                height: 1.12,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _mobileBentoTile({
+    Key? tileKey,
+    required IconData icon,
+    required Color iconColor,
     required String labelText,
     required String valueText,
     required String subText,
     Color? valueColor,
-  }) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    decoration: BoxDecoration(
-      color: const Color(0xFF0E131B),
-      borderRadius: BorderRadius.circular(11),
-      border: Border.all(color: const Color(0xFF1E2735), width: 0.8),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          labelText,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: p.muted,
-            fontSize: 11,
-            fontWeight: FontWeight.w500,
+    VoidCallback? onTap,
+  }) => Material(
+    color: const Color(0xFF161B24),
+    borderRadius: BorderRadius.circular(20),
+    child: InkWell(
+      key: tileKey,
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: .05),
           ),
         ),
-        const SizedBox(height: 4),
-        Text(
-          valueText,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: valueColor ?? p.text,
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.3,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 26,
+                  height: 26,
+                  decoration: BoxDecoration(
+                    color: iconColor.withValues(alpha: .14),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(icon, size: 14, color: iconColor),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    labelText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (onTap != null)
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 15,
+                    color: p.muted.withValues(alpha: .72),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              valueText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: valueColor ?? const Color(0xFFF8FAFC),
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.35,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              subText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF64748B),
+                fontSize: 10.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 2),
-        Text(
-          subText,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: p.muted.withValues(alpha: .82),
-            fontSize: 10.5,
-          ),
-        ),
-      ],
+      ),
     ),
   );
 
@@ -656,19 +2346,29 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
         ? daily['pnl']
         : latestEstimate?['pnl'];
     final sessionNum = nullableNumber(sessionRaw);
+    final sessionRate = portfolioRatio(sessionRaw, sessionBasis);
     final sessionColor = sessionNum == null
         ? p.muted
         : sessionNum < 0
-        ? p.negative
-        : p.accent;
+        ? const Color(0xFFFB7185)
+        : const Color(0xFF34D399);
     final sessionDisplay = hideAmounts
-        ? portfolioRateLabel(portfolioRatio(sessionRaw, sessionBasis))
+        ? portfolioRateLabel(sessionRate)
         : sessionNum == null
         ? '—'
-        : '${sessionNum > 0 ? '+' : ''}${amount(sessionRaw)}';
+        : _snowballMoneyCompact(g, sessionRaw, signed: true);
+    final sessionPillText = hideAmounts
+        ? '${daily['status'] == 'ready' ? w('Day', '日变动') : w('Latest', '最近')} ${portfolioRateLabel(sessionRate)}'
+        : sessionNum == null
+        ? '${daily['status'] == 'ready' ? w('Day', '日变动') : w('Latest', '最近')} —'
+        : '${daily['status'] == 'ready' ? w('Day', '日变动') : w('Latest', '最近')} ${_snowballMoneyCompact(g, sessionRaw, signed: true)}${sessionRate != null ? ' (${portfolioRateLabel(sessionRate)})' : ''}';
 
     final realizedReady = realized['status'] == 'ready';
     final realizedNum = nullableNumber(realized['total']);
+    final realizedRate = portfolioRatio(realized['total'], realizedBasis);
+    final realizedColor = (realizedNum ?? 0) < 0
+        ? const Color(0xFFFB7185)
+        : const Color(0xFF34D399);
     final realizedDisplay = hideAmounts
         ? portfolioRateLabel(
             portfolioRatio(
@@ -677,8 +2377,16 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
             ),
           )
         : realizedReady && realizedNum != null
-        ? '${realizedNum > 0 ? '+' : ''}${amount(realized['total'])}'
-        : amount(g['cash']);
+        ? _snowballMoneyCompact(g, realized['total'], signed: true)
+        : _snowballMoneyCompact(g, g['cash']);
+    final realizedPillText = hideAmounts
+        ? '${w('Realized', '已实现')} ${portfolioRateLabel(realizedRate)}'
+        : '${w('Realized', '已实现')} ${_snowballMoneyCompact(g, realized['total'], signed: true)}${realizedRate != null ? ' (${portfolioRateLabel(realizedRate)})' : ''}';
+
+    final passive = asMap(h['passiveIncome']);
+    final trailingDivs = asMap(h['trailingDividends']);
+    final hasIncomeSummary =
+        passive['status'] == 'ready' || trailingDivs['status'] == 'ready';
 
     final totalHoldingsCount = asList(
       g['positions'],
@@ -687,12 +2395,33 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
       g['positions'],
     ).where((r) => r['kind'] == 'other').length;
 
+    final isSnapshotOnly =
+        data?['status'] == 'preview_account' ||
+        data?['source'] == 'local_owner_broker_snapshot';
     final syncDisabled =
         loading ||
         portfolioSyncing ||
         (groups.isEmpty && asMap(data?['connection'])['configured'] != true) ||
-        data?['status'] == 'preview_account' ||
-        data?['source'] == 'local_owner_broker_snapshot';
+        isSnapshotOnly;
+
+    void openSessionSheet() => _showMobileDailyAndEstimatePnlSheet(
+      g: g,
+      h: h,
+      daily: daily,
+      history: history,
+      latestEstimate: latestEstimate,
+      sessionBasis: sessionBasis,
+    );
+    void openRealizedSheet([String tab = 'bySymbol']) =>
+        _showMobileRealizedPnlSheet(
+          g: g,
+          h: h,
+          realized: realized,
+          realizedBasis: realizedBasis,
+          initialTab: tab,
+        );
+    void openAccountsSheet() => _showMobileCashAndAccountsSheet(g, h);
+    void openPositionsSheet() => _showMobileAllPositionsSheet(g);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -725,97 +2454,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
           ],
           emptyState(),
         ] else ...[
-          // 1. Frameless iOS Portfolio Hero (Apple Stocks / Robinhood Gold grade)
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${w('NET LIQ · ${g['accountCount']} ACCTS', '总资产净值 · ${g['accountCount']} 账户')} · ${text(h['reportDate'], '').length >= 10 ? text(h['reportDate']).substring(5) : text(h['reportDate'])}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: p.muted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: context.isChinese ? 0.2 : 0.4,
-                  ),
-                ),
-              ),
-              IconButton(
-                key: const ValueKey('mobile-privacy-toggle'),
-                tooltip: hideAmounts
-                    ? w('Show amounts', '显示金额')
-                    : w('Hide amounts', '隐藏金额'),
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                onPressed: () =>
-                    portfolioPrivacyMode.value = !portfolioPrivacyMode.value,
-                icon: Icon(
-                  hideAmounts
-                      ? Icons.visibility_off_outlined
-                      : Icons.visibility_outlined,
-                  size: 17,
-                  color: p.muted,
-                ),
-              ),
-              IconButton(
-                key: const ValueKey('home-sync-now'),
-                tooltip: w('Sync IBKR now', '立即同步 IBKR'),
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                onPressed: syncDisabled ? null : syncConnectedPortfolio,
-                icon: portfolioSyncing
-                    ? const SizedBox(
-                        width: 15,
-                        height: 15,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(Icons.cloud_sync_outlined, size: 18, color: p.accent),
-              ),
-              IconButton(
-                key: const ValueKey('home-manage-ibkr'),
-                tooltip: w('Manage IBKR', '管理 IBKR 连接'),
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                onPressed:
-                    data?['status'] == 'preview_account' ||
-                        data?['source'] == 'local_owner_broker_snapshot'
-                    ? null
-                    : managePortfolioConnection,
-                icon: Icon(Icons.link_rounded, size: 18, color: p.muted),
-              ),
-              InkWell(
-                key: const ValueKey('home-full-analysis'),
-                borderRadius: BorderRadius.circular(999),
-                onTap: widget.onDetails,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 5,
-                    vertical: 6,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        w('Analyze', '深度分析'),
-                        style: TextStyle(
-                          color: p.accent,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      Icon(
-                        Icons.chevron_right_rounded,
-                        size: 15,
-                        color: p.accent,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 2),
+          // 1. Snowball Analytics Signature Portfolio Switcher Pill + Soft Action Bar
           if (groups.length > 1) ...[
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -837,85 +2476,298 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
               ),
             ),
           ],
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              hideAmounts
-                  ? portfolioRateLabel(navRatio == null ? null : navRatio - 1)
-                  : amount(h['accountValue']),
-              style: TextStyle(
-                color: p.text,
-                fontSize: 32,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.9,
-                height: 1.12,
-                fontFeatures: const [FontFeature.tabularFigures()],
+          Row(
+            children: [
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Material(
+                    color: const Color(0xFF171D28),
+                    borderRadius: BorderRadius.circular(999),
+                    child: InkWell(
+                      key: const ValueKey('mobile-hero-accounts-pill'),
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: openAccountsSheet,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: .07),
+                          ),
+                        ),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 6.5,
+                                height: 6.5,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF34D399),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                w(
+                                  'All (${g['accountCount']})',
+                                  '全部组合 · ${g['accountCount']} 账户',
+                                ),
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  color: Color(0xFFE2E8F0),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(width: 2),
+                              const Icon(
+                                Icons.keyboard_arrow_down_rounded,
+                                size: 15,
+                                color: Color(0xFF94A3B8),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(width: 4),
+              IconButton(
+                key: const ValueKey('mobile-privacy-toggle'),
+                tooltip: hideAmounts
+                    ? w('Show amounts', '显示金额')
+                    : w('Hide amounts', '隐藏金额'),
+                padding: const EdgeInsets.all(4),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 36),
+                onPressed: () =>
+                    portfolioPrivacyMode.value = !portfolioPrivacyMode.value,
+                icon: Icon(
+                  hideAmounts
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                  size: 17,
+                  color: const Color(0xFF94A3B8),
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('home-sync-now'),
+                tooltip: w('Sync IBKR now', '立即同步 IBKR'),
+                padding: const EdgeInsets.all(4),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 36),
+                onPressed: syncDisabled
+                    ? () {
+                        if (portfolioSyncing) {
+                          _notifyMobileActionStatus(
+                            'IBKR cloud sync is currently in progress…',
+                            '正在同步 IBKR 最新报告数据，请稍候…',
+                          );
+                        } else if (isSnapshotOnly) {
+                          openAccountsSheet();
+                        } else {
+                          managePortfolioConnection();
+                        }
+                      }
+                    : syncConnectedPortfolio,
+                icon: portfolioSyncing
+                    ? const SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(Icons.cloud_sync_outlined, size: 18, color: p.accent),
+              ),
+              IconButton(
+                key: const ValueKey('home-manage-ibkr'),
+                tooltip: w('Manage IBKR', '管理 IBKR 连接'),
+                padding: const EdgeInsets.all(4),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 36),
+                onPressed: isSnapshotOnly
+                    ? openAccountsSheet
+                    : managePortfolioConnection,
+                icon: const Icon(
+                  Icons.link_rounded,
+                  size: 18,
+                  color: Color(0xFF94A3B8),
+                ),
+              ),
+              Flexible(
+                flex: 0,
+                child: Material(
+                  color: const Color(0xFF171D28),
+                  borderRadius: BorderRadius.circular(999),
+                  child: InkWell(
+                    key: const ValueKey('home-full-analysis'),
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: widget.onDetails ?? openPositionsSheet,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 6,
+                      ),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              w('Detail', '深度分析'),
+                              style: const TextStyle(
+                                color: Color(0xFF34D399),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const Icon(
+                              Icons.chevron_right_rounded,
+                              size: 14,
+                              color: Color(0xFF34D399),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 3),
+
+          // 2. Snowball Signature Split-Decimal Hero Value + Dual 999px Plush Return Pills
+          _buildSnowballHeroValue(g, h, navRatio),
+          const SizedBox(height: 4),
           Wrap(
-            spacing: 8,
+            spacing: 6,
             runSpacing: 4,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 3,
+              if (realizedReady)
+                Material(
+                  color: (realizedNum ?? 0) < 0
+                      ? const Color(0xFF2D161C)
+                      : const Color(0xFF112D25),
+                  borderRadius: BorderRadius.circular(999),
+                  child: InkWell(
+                    key: const ValueKey('mobile-hero-realized-pill'),
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => openRealizedSheet('bySymbol'),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 4,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              realizedPillText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: realizedColor,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            size: 14,
+                            color: realizedColor,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-                decoration: BoxDecoration(
-                  color: sessionColor.withValues(alpha: .13),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  '${daily['status'] == 'ready' ? w('Day', '当日') : w('Latest', '最近')} $sessionDisplay',
-                  style: TextStyle(
-                    color: sessionColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: const [FontFeature.tabularFigures()],
+              Material(
+                color: (sessionNum ?? 0) < 0
+                    ? const Color(0xFF2D161C)
+                    : const Color(0xFF112D25),
+                borderRadius: BorderRadius.circular(999),
+                child: InkWell(
+                  key: const ValueKey('mobile-hero-session-pill'),
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: openSessionSheet,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 4,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            sessionPillText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: sessionColor,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          size: 14,
+                          color: sessionColor,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-              if (realizedReady)
-                Text(
-                  '${w('Realized', '已实现')} $realizedDisplay',
-                  style: TextStyle(
-                    color: (realizedNum ?? 0) >= 0 ? p.accent : p.negative,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
               if (latestEstimate != null)
                 InkWell(
                   key: const ValueKey('mobile-pnl-footnote-info'),
                   borderRadius: BorderRadius.circular(999),
                   onTap: () => _showMobilePnlFootnoteSheet(g),
-                  child: Padding(
-                    padding: const EdgeInsets.all(3),
+                  child: const Padding(
+                    padding: EdgeInsets.all(5),
                     child: Icon(
                       Icons.info_outline_rounded,
                       size: 15,
-                      color: p.muted,
+                      color: Color(0xFF64748B),
                     ),
                   ),
                 ),
-              if (daily['status'] != 'ready' || navRows.length < 2)
+              if (navRows.length < 2 ||
+                  (!realizedReady && daily['status'] != 'ready'))
                 InkWell(
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: BorderRadius.circular(8),
                   onTap: homeHistoryHelp,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 4,
-                      vertical: 2,
+                      vertical: 4,
                     ),
                     child: Text(
                       w('Set up account history', '设置账户历史数据'),
-                      style: TextStyle(
-                        color: p.accent,
+                      style: const TextStyle(
+                        color: Color(0xFF34D399),
                         fontSize: 11.5,
                         fontWeight: FontWeight.w600,
                       ),
@@ -924,15 +2776,17 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                 ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 6),
 
-          // 2. Above-the-Fold 264-Day Interactive NAV Curve
+          // 3. Snowball Smooth Glowing Curve inside Plush 20px Slate Card
           Container(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+            padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
             decoration: BoxDecoration(
-              color: const Color(0xFF0D1117),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFF1D2633), width: 0.8),
+              color: const Color(0xFF161B24),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: .05),
+              ),
             ),
             child: PortfolioAccountValueChart(
               key: ValueKey('account-nav-$selectedCurrency'),
@@ -941,84 +2795,219 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
               currency: selectedCurrency,
               palette: p,
               hideAmounts: hideAmounts,
-              chartHeight: 166,
+              chartHeight: 148,
               compactMobile: true,
+              requestedMetric: mobileRequestedChartMetric,
+              requestedMetricNonce: mobileRequestedChartNonce,
+              onInsufficientHistory: homeHistoryHelp,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
 
-          // 3. Sleek 2x2 Compact Bento Grid
+          // 4. Snowball 2x2 Plush 20px Icon-Badged Summary Grid
           LayoutBuilder(
             key: const ValueKey('mobile-portfolio-bento-grid'),
             builder: (_, bc) {
-              final tileWidth = (bc.maxWidth - 8) / 2;
+              final tileWidth = (bc.maxWidth - 10) / 2;
               return Wrap(
-                spacing: 8,
-                runSpacing: 8,
+                spacing: 10,
+                runSpacing: 10,
                 children: [
                   SizedBox(
                     width: tileWidth,
                     child: _mobileBentoTile(
+                      tileKey: const ValueKey('mobile-bento-realized'),
+                      icon: Icons.workspace_premium_rounded,
+                      iconColor: realizedColor,
+                      onTap: () => openRealizedSheet('bySymbol'),
+                      labelText: realizedReady
+                          ? w('Realized FIFO', '已实现盈亏')
+                          : w('Cash Balance', '现金余额'),
+                      valueText: realizedDisplay,
+                      subText: realizedReady
+                          ? '${w('Closed', '平仓归因')} · ${asList(realized['byInstrument']).length} ${w('tickers', '标的')}'
+                          : w('Tap for breakdown', '点击查看明细'),
+                      valueColor: realizedReady && realizedNum != null
+                          ? realizedColor
+                          : const Color(0xFFF8FAFC),
+                    ),
+                  ),
+                  SizedBox(
+                    width: tileWidth,
+                    child: _mobileBentoTile(
+                      tileKey: const ValueKey('mobile-bento-session'),
+                      icon: Icons.insights_rounded,
+                      iconColor: sessionColor,
+                      onTap: openSessionSheet,
                       labelText: daily['status'] == 'ready'
-                          ? w('Session P&L', '当日持仓盈亏')
-                          : w('Latest P&L Est.', '最近盈亏估算'),
+                          ? w('Session P&L', '当日盈亏')
+                          : w('Net P&L Est.', '净收益估算'),
                       valueText: sessionDisplay,
                       subText: daily['status'] == 'ready'
                           ? text(daily['date'], '—')
                           : latestEstimate != null
                           ? '${text(latestEstimate['previousDate']).length >= 10 ? text(latestEstimate['previousDate']).substring(5) : text(latestEstimate['previousDate'])} → ${text(latestEstimate['date']).length >= 10 ? text(latestEstimate['date']).substring(5) : text(latestEstimate['date'])}'
-                          : w('No daily MTM', '待报告更新'),
+                          : w('Tap for attribution', '点击查看归因'),
                       valueColor: sessionColor,
                     ),
                   ),
                   SizedBox(
                     width: tileWidth,
                     child: _mobileBentoTile(
-                      labelText: realizedReady
-                          ? w('Realized P&L (FIFO)', '已实现盈亏 (FIFO)')
-                          : w('Cash Balance', '现金余额'),
-                      valueText: realizedDisplay,
-                      subText: realizedReady
-                          ? '${text(realized['fromDate']).length >= 10 ? text(realized['fromDate']).substring(2) : text(realized['fromDate'])} → ${text(realized['toDate']).length >= 10 ? text(realized['toDate']).substring(2) : text(realized['toDate'])}'
-                          : w('Broker report', '券商报告'),
-                      valueColor: realizedReady && realizedNum != null
-                          ? (realizedNum < 0 ? p.negative : p.accent)
-                          : p.text,
-                    ),
-                  ),
-                  SizedBox(
-                    width: tileWidth,
-                    child: _mobileBentoTile(
+                      tileKey: const ValueKey('mobile-bento-cash'),
+                      icon: Icons.account_balance_wallet_rounded,
+                      iconColor: const Color(0xFF60A5FA),
+                      onTap: openAccountsSheet,
                       labelText: number(g['cash']) < 0
-                          ? w('Cash / Margin', '现金与融资')
-                          : w('Settled Cash', '账户现金'),
-                      valueText: hideAmounts ? '••••' : amount(g['cash']),
+                          ? w('Cash & Margin', '现金与净杠杆')
+                          : w('Settled Cash', '可用现金'),
+                      valueText: hideAmounts
+                          ? '••••'
+                          : _snowballMoneyCompact(g, g['cash']),
                       subText: number(g['cash']) < 0
-                          ? w('Margin debit active', '含证券融资负债')
-                          : w('Base currency', '清算本币余额'),
+                          ? w('Margin & sub-accts', '融资负债与子账户')
+                          : w('Cash & sub-accts', '现金与子账户占比'),
                     ),
                   ),
                   SizedBox(
                     width: tileWidth,
                     child: _mobileBentoTile(
-                      labelText: w('Active Positions', '持仓标的'),
+                      tileKey: const ValueKey('mobile-bento-positions'),
+                      icon: Icons.pie_chart_rounded,
+                      iconColor: const Color(0xFFA78BFA),
+                      onTap: openPositionsSheet,
+                      labelText: w('Holdings', '持仓构成'),
                       valueText: '$totalHoldingsCount',
                       subText:
-                          '${stocks.length} ${w('equities', '股票')} · $otherHoldingsCount ${w('other', '其他')}',
+                          '${stocks.length} ${w('equities', '股票')} · $otherHoldingsCount ${w('options', '期权')}',
                     ),
                   ),
                 ],
               );
             },
           ),
-          const SizedBox(height: 12),
+          if (realizedReady || hasIncomeSummary) ...[
+            const SizedBox(height: 10),
+            Material(
+              color: const Color(0xFF161B24),
+              borderRadius: BorderRadius.circular(18),
+              child: InkWell(
+                key: const ValueKey('mobile-bento-income-banner'),
+                borderRadius: BorderRadius.circular(18),
+                onTap: () => openRealizedSheet('income'),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: .05),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF38BDF8).withValues(alpha: .14),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.payments_rounded,
+                          size: 15,
+                          color: Color(0xFF38BDF8),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              w(
+                                'Dividends & Option Premium Income',
+                                '股息分红与期权权利金收入',
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFFF8FAFC),
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              passive['status'] == 'ready'
+                                  ? w(
+                                      'Confirmed cash dividends + expired short calls',
+                                      '已确认税后股息 + 到期落袋权利金明细',
+                                    )
+                                  : w(
+                                      'Tap to inspect dividend yield & option cash flow',
+                                      '点击查看预计年化股息与权利金流水',
+                                    ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF64748B),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        hideAmounts
+                            ? (trailingDivs['status'] == 'ready'
+                                  ? portfolioRateLabel(
+                                      nullableNumber(
+                                        trailingDivs['estimatedYield'],
+                                      ),
+                                    )
+                                  : '••••')
+                            : passive['status'] == 'ready'
+                            ? _snowballMoneyCompact(
+                                g,
+                                passive['totalConfirmed'],
+                                signed: true,
+                              )
+                            : trailingDivs['status'] == 'ready'
+                            ? _snowballMoneyCompact(
+                                g,
+                                trailingDivs['annualAmount'],
+                              )
+                            : w('View', '查看'),
+                        style: const TextStyle(
+                          color: Color(0xFF38BDF8),
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w800,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        size: 16,
+                        color: Color(0xFF64748B),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
 
-          // 4. High-Density Apple-Stocks Style Holdings List (Right Below Bento!)
-          homeHoldings(g),
-          const SizedBox(height: 12),
+          // 5. Snowball Signature Donut Ring Allocation Card + Holdings Card
           homeAllocationOverview(g),
+          const SizedBox(height: 14),
+          homeHoldings(g),
           if (_hasPassiveIncomeContent(h)) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             PortfolioPassiveIncomeCard(
               passiveIncome: asMap(h['passiveIncome']),
               currency: selectedCurrency,
@@ -1027,7 +3016,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
               onCompany: widget.onCompany,
             ),
           ],
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           homeMovers(h, asList(g['positions'])),
         ],
       ],
@@ -1153,6 +3142,9 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
     final rows = asList(
       g['positions'],
     ).where((r) => !['cash', 'accrual'].contains(r['kind'])).toList();
+    final isMobile =
+        MediaQuery.sizeOf(context).width > 0 &&
+        MediaQuery.sizeOf(context).width < 640;
     return panel([
       Wrap(
         alignment: WrapAlignment.spaceBetween,
@@ -1160,12 +3152,48 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
         spacing: 12,
         runSpacing: 8,
         children: [
-          title('Portfolio allocation', '资产配置'),
-          copy(
-            '${rows.length} ${w('positions', '项持仓')} · ${percent(asMap(g['coverage'])['weight'])} ${w('covered', '估值覆盖')}',
-            '${rows.length} 项持仓 · 覆盖 ${percent(asMap(g['coverage'])['weight'])}',
-            size: 11,
-          ),
+          title('Portfolio allocation', '资产分布'),
+          if (isMobile)
+            Material(
+              color: const Color(0xFF1E2533),
+              borderRadius: BorderRadius.circular(999),
+              child: InkWell(
+                key: const ValueKey('allocation-open-all-sheet'),
+                borderRadius: BorderRadius.circular(999),
+                onTap: () => _showMobileAllPositionsSheet(g),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        w('${rows.length} holdings', '${rows.length} 项分布明细'),
+                        style: const TextStyle(
+                          color: Color(0xFFCBD5E1),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        size: 14,
+                        color: Color(0xFF94A3B8),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          else
+            copy(
+              '${rows.length} ${w('positions', '项持仓')} · ${percent(asMap(g['coverage'])['weight'])} ${w('covered', '估值覆盖')}',
+              '${rows.length} 项持仓 · 覆盖 ${percent(asMap(g['coverage'])['weight'])}',
+              size: 11,
+            ),
         ],
       ),
       const SizedBox(height: 14),
@@ -1466,7 +3494,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                   'COMMON STOCK',
                 ].contains(r['assetCategory'])
                 ? () => widget.onCompany(text(r['ticker']), 'evidence')
-                : null,
+                : () => _showMobilePositionDetailSheet(r),
           ),
           if (extent != null)
             Padding(
@@ -1595,7 +3623,13 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
         );
     final equities = allNonCash.where((r) => r['kind'] == 'equity').toList();
     final otherRows = allNonCash.where((r) => r['kind'] != 'equity').toList();
-    final rows = equities.isNotEmpty ? equities : allNonCash;
+    final showOtherTab =
+        equities.isNotEmpty &&
+        otherRows.isNotEmpty &&
+        mobileHoldingsKind == 'other';
+    final rows = showOtherTab
+        ? otherRows
+        : (equities.isNotEmpty ? equities : allNonCash);
 
     double? openPnlRateFor(Map<String, dynamic> r) {
       final val = nullableNumber(r['value']);
@@ -1619,19 +3653,97 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
         runSpacing: 6,
         children: [
           Wrap(
-            spacing: 10,
+            spacing: 8,
             runSpacing: 6,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               title('My holdings', '我的持仓'),
-              tag(
-                '${equities.length} ${w('equities', '只股票/ETF')}',
-                '${equities.length} 只股票/ETF',
-              ),
+              if (equities.isNotEmpty && otherRows.isNotEmpty) ...[
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key: const ValueKey('home-holdings-kind-equity'),
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => homeUpdate(() => mobileHoldingsKind = 'equity'),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: !showOtherTab
+                            ? p.accent.withValues(alpha: .15)
+                            : p.card,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: !showOtherTab
+                              ? p.accent.withValues(alpha: .4)
+                              : p.border,
+                        ),
+                      ),
+                      child: Text(
+                        w(
+                          '${equities.length} equities',
+                          '${equities.length} 只股票/ETF',
+                        ),
+                        style: TextStyle(
+                          color: !showOtherTab ? p.accent : p.muted,
+                          fontSize: 11.5,
+                          fontWeight: !showOtherTab
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key: const ValueKey('home-holdings-kind-other'),
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => homeUpdate(() => mobileHoldingsKind = 'other'),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: showOtherTab
+                            ? p.accent.withValues(alpha: .15)
+                            : p.card,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: showOtherTab
+                              ? p.accent.withValues(alpha: .4)
+                              : p.border,
+                        ),
+                      ),
+                      child: Text(
+                        w(
+                          '${otherRows.length} options',
+                          '${otherRows.length} 项期权',
+                        ),
+                        style: TextStyle(
+                          color: showOtherTab ? p.accent : p.muted,
+                          fontSize: 11.5,
+                          fontWeight: showOtherTab
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ] else
+                tag(
+                  '${equities.length} ${w('equities', '只股票/ETF')}',
+                  '${equities.length} 只股票/ETF',
+                ),
             ],
           ),
           TextButton(
-            onPressed: widget.onDetails,
+            onPressed: widget.onDetails ?? () => _showMobileAllPositionsSheet(g),
             child: Text(w('All positions & analysis →', '全部持仓与分析 →')),
           ),
         ],
@@ -1703,7 +3815,7 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                   key: ValueKey('home-position-${r['id'] ?? r['ticker']}'),
                   onTap: r['kind'] == 'equity'
                       ? () => widget.onCompany(text(r['ticker']), 'evidence')
-                      : null,
+                      : () => _showMobilePositionDetailSheet(r),
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
@@ -1908,134 +4020,199 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                               ),
                             ],
                           )
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Row(
+                        : Builder(
+                            builder: (_) {
+                              final weightVal =
+                                  (nullableNumber(r['netWeight']) ?? 0)
+                                      .abs()
+                                      .clamp(0.0, 1.0);
+                              final pnl = nullableNumber(r['unrealizedPnl']);
+                              final rate = openPnlRateFor(r);
+                              final pnlPositive = (pnl ?? 0) >= 0;
+                              final pnlColor = pnl == null
+                                  ? const Color(0xFF94A3B8)
+                                  : pnlPositive
+                                  ? const Color(0xFF34D399)
+                                  : const Color(0xFFFB7185);
+                              final pnlText = pnl == null
+                                  ? percent(r['netWeight'])
+                                  : hideAmounts
+                                  ? (rate == null
+                                        ? percent(r['netWeight'])
+                                        : '${rate > 0 ? '+' : ''}${percent(rate)}')
+                                  : '${_snowballMoneyCompact(g, pnl, signed: true)}${rate != null ? ' · ${rate > 0 ? '+' : ''}${percent(rate)}' : ''}';
+                              final barTint = r['kind'] == 'equity'
+                                  ? const Color(0xFF34D399)
+                                  : const Color(0xFFA78BFA);
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
-                                  if (r['kind'] == 'equity')
-                                    StockLogo(
-                                      ticker: text(r['ticker']),
-                                      palette: p,
-                                      size: 30,
-                                    )
-                                  else
-                                    Icon(
-                                      Icons.layers_outlined,
-                                      color: p.secondary,
-                                      size: 28,
-                                    ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          text(r['ticker']),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: heading(14),
-                                        ),
-                                        Text(
-                                          text(r['name']),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: p.muted,
-                                            fontSize: 11,
+                                  Row(
+                                    children: [
+                                      if (r['kind'] == 'equity')
+                                        StockLogo(
+                                          ticker: text(r['ticker']),
+                                          palette: p,
+                                          size: 38,
+                                        )
+                                      else
+                                        Container(
+                                          width: 38,
+                                          height: 38,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF1F2737),
+                                            borderRadius:
+                                                BorderRadius.circular(11),
+                                          ),
+                                          child: const Icon(
+                                            Icons.layers_rounded,
+                                            color: Color(0xFFA78BFA),
+                                            size: 19,
                                           ),
                                         ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        amount(r['value']),
-                                        style: heading(13),
-                                      ),
-                                      Text(
-                                        percent(r['netWeight']),
-                                        style: TextStyle(
-                                          color: p.muted,
-                                          fontSize: 11,
+                                      const SizedBox(width: 11),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              text(r['ticker']),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                color: Color(0xFFF8FAFC),
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w700,
+                                                letterSpacing: -0.2,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 1),
+                                            Text(
+                                              text(r['name']),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                color: Color(0xFF64748B),
+                                                fontSize: 11.5,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 5),
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: ClipRRect(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          999,
+                                                        ),
+                                                    child: Container(
+                                                      height: 4,
+                                                      color: const Color(
+                                                        0xFF222A3A,
+                                                      ),
+                                                      alignment:
+                                                          Alignment.centerLeft,
+                                                      child:
+                                                          FractionallySizedBox(
+                                                            widthFactor:
+                                                                weightVal
+                                                                    .clamp(
+                                                                      0.04,
+                                                                      1.0,
+                                                                    ),
+                                                            child: Container(
+                                                              color: barTint,
+                                                            ),
+                                                          ),
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 7),
+                                                Text(
+                                                  percent(r['netWeight']),
+                                                  style: const TextStyle(
+                                                    color: Color(0xFF94A3B8),
+                                                    fontSize: 10.5,
+                                                    fontWeight: FontWeight.w600,
+                                                    fontFeatures: [
+                                                      FontFeature
+                                                          .tabularFigures(),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                                if (r['kind'] == 'equity' &&
-                                    (nullableNumber(r['unrealizedPnl']) !=
-                                            null ||
-                                        nullableNumber(r['modelGap']) != null ||
-                                        asList(
-                                          asMap(r['guruActivity'])['rows'],
-                                        ).isNotEmpty)) ...[
-                                  const SizedBox(height: 8),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 6,
-                                    crossAxisAlignment:
-                                        WrapCrossAlignment.center,
-                                    children: [
-                                      Builder(
-                                        builder: (_) {
-                                          final pnl = nullableNumber(
-                                            r['unrealizedPnl'],
-                                          );
-                                          final rate = openPnlRateFor(r);
-                                          if (pnl == null ||
-                                              (hideAmounts && rate == null)) {
-                                            return const SizedBox.shrink();
-                                          }
-                                          final tint = pnl < 0
-                                              ? p.negative
-                                              : p.accent;
-                                          final labelText = hideAmounts
-                                              ? '${w('P&L', '浮盈亏')} ${rate! > 0 ? '+' : ''}${percent(rate)}'
-                                              : '${w('P&L', '浮盈亏')} ${pnl > 0 ? '+' : ''}${amount(pnl)}';
-                                          return Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 4,
+                                      const SizedBox(width: 10),
+                                      Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          Text(
+                                            hideAmounts
+                                                ? '••••'
+                                                : _snowballMoneyCompact(
+                                                    g,
+                                                    r['value'],
+                                                  ),
+                                            style: const TextStyle(
+                                              color: Color(0xFFF8FAFC),
+                                              fontSize: 14.5,
+                                              fontWeight: FontWeight.w700,
+                                              fontFeatures: [
+                                                FontFeature.tabularFigures(),
+                                              ],
                                             ),
-                                            decoration: BoxDecoration(
-                                              color: tint.withValues(
-                                                alpha: .08,
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(6),
-                                              border: Border.all(
-                                                color: tint.withValues(
-                                                  alpha: .22,
-                                                ),
-                                              ),
+                                          ),
+                                          const SizedBox(height: 3),
+                                          Text(
+                                            pnlText,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: pnlColor,
+                                              fontSize: 11.5,
+                                              fontWeight: FontWeight.w600,
+                                              fontFeatures: const [
+                                                FontFeature.tabularFigures(),
+                                              ],
                                             ),
-                                            child: Text(
-                                              labelText,
-                                              style: TextStyle(
-                                                color: tint,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          );
-                                        },
+                                          ),
+                                        ],
                                       ),
-                                      if (nullableNumber(r['modelGap']) != null)
-                                        _homeValuationPill(r),
-                                      if (asList(
-                                        asMap(r['guruActivity'])['rows'],
-                                      ).isNotEmpty)
-                                        _homeGuruPill(r),
                                     ],
                                   ),
+                                  if (r['kind'] == 'equity' &&
+                                      (nullableNumber(r['modelGap']) != null ||
+                                          asList(
+                                            asMap(r['guruActivity'])['rows'],
+                                          ).isNotEmpty)) ...[
+                                    const SizedBox(height: 8),
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 49),
+                                      child: Wrap(
+                                        spacing: 8,
+                                        runSpacing: 6,
+                                        crossAxisAlignment:
+                                            WrapCrossAlignment.center,
+                                        children: [
+                                          if (nullableNumber(r['modelGap']) !=
+                                              null)
+                                            _homeValuationPill(r),
+                                          if (asList(
+                                            asMap(r['guruActivity'])['rows'],
+                                          ).isNotEmpty)
+                                            _homeGuruPill(r),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
                                 ],
-                            ],
+                              );
+                            },
                           ),
                   ),
                 ),
@@ -2136,6 +4313,9 @@ class PortfolioAccountValueChart extends StatefulWidget {
     this.hideAmounts = false,
     this.chartHeight = 280,
     this.compactMobile = false,
+    this.requestedMetric,
+    this.requestedMetricNonce = 0,
+    this.onInsufficientHistory,
   });
   final List<Map<String, dynamic>> rows;
   final String currency;
@@ -2144,6 +4324,9 @@ class PortfolioAccountValueChart extends StatefulWidget {
   final bool hideAmounts;
   final double chartHeight;
   final bool compactMobile;
+  final String? requestedMetric;
+  final int requestedMetricNonce;
+  final VoidCallback? onInsufficientHistory;
   @override
   State<PortfolioAccountValueChart> createState() =>
       _PortfolioAccountValueChartState();
@@ -2155,6 +4338,22 @@ class _PortfolioAccountValueChartState
   String metric = 'nav';
   int? hover;
   String w(String en, String zh) => context.tr(zh, en);
+
+  @override
+  void didUpdateWidget(covariant PortfolioAccountValueChart oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.requestedMetricNonce != oldWidget.requestedMetricNonce &&
+        widget.requestedMetric != null) {
+      final target = widget.requestedMetric!;
+      final canSwitch =
+          target == 'nav' ||
+          asList(asMap(widget.history[target])['rows']).length >= 2;
+      if (canSwitch && metric != target) {
+        metric = target;
+        hover = null;
+      }
+    }
+  }
   @override
   Widget build(BuildContext context) {
     final p = widget.palette;
@@ -2293,87 +4492,121 @@ class _PortfolioAccountValueChartState
             runSpacing: 6,
             children: [
               if (widget.history.isNotEmpty)
-                Container(
-                  padding: const EdgeInsets.all(2),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0A0D12),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: p.border),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.sizeOf(context).width > 0
+                        ? MediaQuery.sizeOf(context).width - 64
+                        : 320,
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (final mode in ['nav', 'realized', 'cashAdjusted'])
-                        Builder(
-                          builder: (_) {
-                            final disabled =
-                                mode != 'nav' &&
-                                asList(
-                                      asMap(widget.history[mode])['rows'],
-                                    ).length <
-                                    2;
-                            final active = metric == mode;
-                            return GestureDetector(
-                              key: ValueKey('history-metric-$mode'),
-                              behavior: HitTestBehavior.opaque,
-                              onTap: disabled
-                                  ? null
-                                  : () => setState(() {
-                                      metric = mode;
-                                      hover = null;
-                                    }),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 7,
-                                  vertical: 5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: active
-                                      ? p.card
-                                      : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text(
-                                  mode == 'nav'
-                                      ? w('NAV', '净值')
-                                      : mode == 'realized'
-                                      ? w('Realized', '已实现')
-                                      : w('Est.', '估算'),
-                                  style: TextStyle(
-                                    color: disabled
-                                        ? p.muted.withValues(alpha: .42)
-                                        : active
-                                        ? p.text
-                                        : p.muted,
-                                    fontSize: 11,
-                                    fontWeight: active
-                                        ? FontWeight.w700
-                                        : FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Material(
+                      color: const Color(0xFF0E1219),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: .045),
+                          ),
                         ),
-                    ],
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (final mode in [
+                              'nav',
+                              'realized',
+                              'cashAdjusted',
+                            ])
+                              Builder(
+                                builder: (_) {
+                                  final disabled =
+                                      mode != 'nav' &&
+                                      asList(
+                                            asMap(widget.history[mode])['rows'],
+                                          ).length <
+                                          2;
+                                  final active = metric == mode;
+                                  return InkWell(
+                                    key: ValueKey('history-metric-$mode'),
+                                    borderRadius: BorderRadius.circular(9),
+                                    onTap: disabled
+                                        ? widget.onInsufficientHistory
+                                        : () => setState(() {
+                                            metric = mode;
+                                            hover = null;
+                                          }),
+                                    child: Container(
+                                      constraints: const BoxConstraints(
+                                        minHeight: 28,
+                                      ),
+                                      alignment: Alignment.center,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: active
+                                            ? const Color(0xFF252D3D)
+                                            : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(9),
+                                      ),
+                                      child: Text(
+                                        mode == 'nav'
+                                            ? w('NAV', '净值')
+                                            : mode == 'realized'
+                                            ? w('Realized', '已实现')
+                                            : w('Est.', '净收益'),
+                                        style: TextStyle(
+                                          color: disabled
+                                              ? p.muted.withValues(alpha: .42)
+                                              : active
+                                              ? const Color(0xFFF8FAFC)
+                                              : const Color(0xFF94A3B8),
+                                          fontSize: 11.5,
+                                          fontWeight: active
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              Text(
-                '${rows[cursor]['date']} · $cursorValue',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: number(displayRows[cursor]['nav']) < 0
-                      ? p.negative
-                      : p.accent,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  fontFeatures: const [FontFeature.tabularFigures()],
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E2534),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '${rows[cursor]['date']} · $cursorValue',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: number(displayRows[cursor]['nav']) < 0
+                        ? const Color(0xFFFB7185)
+                        : const Color(0xFF34D399),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 5),
           if (!rateAvailable)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 20),
@@ -2456,47 +4689,54 @@ class _PortfolioAccountValueChartState
               ),
             ),
           const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(2.5),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0A0D12),
-              borderRadius: BorderRadius.circular(9),
-              border: Border.all(color: p.border),
-            ),
-            child: Row(
-              children: [
-                for (final r in ['1M', '3M', 'YTD', '1Y', 'All'])
-                  Expanded(
-                    child: GestureDetector(
-                      key: ValueKey('history-range-$r'),
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => setState(() {
-                        range = r;
-                        hover = null;
-                      }),
-                      child: Container(
-                        height: 28,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: range == r
-                              ? p.accent.withValues(alpha: .16)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(7),
-                        ),
-                        child: Text(
-                          r == 'All' ? w('All', '全部') : r,
-                          style: TextStyle(
-                            color: range == r ? p.accent : p.muted,
-                            fontSize: 11.5,
-                            fontWeight: range == r
-                                ? FontWeight.w700
-                                : FontWeight.w500,
+          Material(
+            color: const Color(0xFF0E1219),
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: .045),
+                ),
+              ),
+              child: Row(
+                children: [
+                  for (final r in ['1M', '3M', 'YTD', '1Y', 'All'])
+                    Expanded(
+                      child: InkWell(
+                        key: ValueKey('history-range-$r'),
+                        borderRadius: BorderRadius.circular(9),
+                        onTap: () => setState(() {
+                          range = r;
+                          hover = null;
+                        }),
+                        child: Container(
+                          height: 32,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: range == r
+                                ? const Color(0xFF252D3D)
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          child: Text(
+                            r == 'All' ? w('All', '全部') : r,
+                            style: TextStyle(
+                              color: range == r
+                                  ? const Color(0xFFF8FAFC)
+                                  : const Color(0xFF94A3B8),
+                              fontSize: 11.5,
+                              fontWeight: range == r
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 6),
@@ -2869,16 +5109,35 @@ class _AccountNavPainter extends CustomPainter {
         rect.left +
         (times[i] - times.first) / (times.last - times.first) * rect.width;
     double y(double v) => rect.bottom - (v - min) / (max - min) * rect.height;
+    final lineTint = compactMobile && values.last < 0 && includeZero
+        ? const Color(0xFFFB7185)
+        : compactMobile
+        ? const Color(0xFF34D399)
+        : p.accent;
     final gridCount = compactMobile ? 3 : 4;
     for (var i = 0; i < gridCount; i++) {
       final value = min + (max - min) * i / (gridCount - 1);
-      canvas.drawLine(
-        Offset(rect.left, y(value)),
-        Offset(rect.right, y(value)),
-        Paint()
-          ..color = p.border.withValues(alpha: .6)
-          ..strokeWidth = 1,
-      );
+      final gy = y(value);
+      if (compactMobile) {
+        final gridPaint = Paint()
+          ..color = Colors.white.withValues(alpha: .06)
+          ..strokeWidth = 1;
+        for (double dx = rect.left; dx < rect.right; dx += 8) {
+          canvas.drawLine(
+            Offset(dx, gy),
+            Offset(math.min(dx + 4, rect.right), gy),
+            gridPaint,
+          );
+        }
+      } else {
+        canvas.drawLine(
+          Offset(rect.left, gy),
+          Offset(rect.right, gy),
+          Paint()
+            ..color = p.border.withValues(alpha: .6)
+            ..strokeWidth = 1,
+        );
+      }
       final label = TextPainter(
         text: TextSpan(
           text: percentage
@@ -2888,11 +5147,14 @@ class _AccountNavPainter extends CustomPainter {
               : value.abs() >= 1000
               ? '${(value / 1000).toStringAsFixed(compactMobile ? 0 : 1)}K'
               : value.toStringAsFixed(0),
-          style: TextStyle(color: p.muted, fontSize: compactMobile ? 10 : 11),
+          style: TextStyle(
+            color: compactMobile ? const Color(0xFF64748B) : p.muted,
+            fontSize: compactMobile ? 10 : 11,
+          ),
         ),
         textDirection: TextDirection.ltr,
       )..layout(maxWidth: leftGutter - 4);
-      label.paint(canvas, Offset(0, y(value) - 6));
+      label.paint(canvas, Offset(0, gy - 6));
     }
     final path = Path()..moveTo(x(0), y(values[0]));
     for (var i = 1; i < values.length; i++) {
@@ -2908,10 +5170,16 @@ class _AccountNavPainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            p.accent.withValues(alpha: compactMobile ? .18 : .08),
-            p.accent.withValues(alpha: 0),
-          ],
+          colors: compactMobile
+              ? [
+                  lineTint.withValues(alpha: .26),
+                  lineTint.withValues(alpha: .05),
+                  lineTint.withValues(alpha: 0),
+                ]
+              : [
+                  lineTint.withValues(alpha: .08),
+                  lineTint.withValues(alpha: 0),
+                ],
         ).createShader(rect),
     );
     final tickSteps = compactMobile ? 3 : 4;
@@ -2926,7 +5194,10 @@ class _AccountNavPainter extends CustomPainter {
                   const Duration(days: 120).inMilliseconds
               ? '${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}'
               : '${date.year}-${date.month.toString().padLeft(2, '0')}',
-          style: TextStyle(color: p.muted, fontSize: compactMobile ? 9.5 : 10),
+          style: TextStyle(
+            color: compactMobile ? const Color(0xFF64748B) : p.muted,
+            fontSize: compactMobile ? 9.5 : 10,
+          ),
         ),
         textDirection: TextDirection.ltr,
       )..layout();
@@ -2944,15 +5215,16 @@ class _AccountNavPainter extends CustomPainter {
         Offset(rect.left, y(0)),
         Offset(rect.right, y(0)),
         Paint()
-          ..color = p.muted.withValues(alpha: .7)
+          ..color = p.muted.withValues(alpha: compactMobile ? .38 : .7)
           ..strokeWidth = 1,
       );
     }
     canvas.drawPath(
       path,
       Paint()
-        ..color = p.accent
-        ..strokeWidth = 2
+        ..color = lineTint
+        ..strokeWidth = compactMobile ? 2.4 : 2
+        ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
         ..style = PaintingStyle.stroke,
     );
@@ -2960,23 +5232,25 @@ class _AccountNavPainter extends CustomPainter {
       Offset(x(cursor), rect.top),
       Offset(x(cursor), rect.bottom),
       Paint()
-        ..color = p.muted.withValues(alpha: .4)
+        ..color = (compactMobile ? Colors.white : p.muted).withValues(
+          alpha: compactMobile ? .18 : .4,
+        )
         ..strokeWidth = 1,
     );
     canvas.drawCircle(
       Offset(x(cursor), y(values[cursor])),
-      8,
-      Paint()..color = p.accent.withValues(alpha: .18),
+      compactMobile ? 9.5 : 8,
+      Paint()..color = lineTint.withValues(alpha: compactMobile ? .24 : .18),
     );
     canvas.drawCircle(
       Offset(x(cursor), y(values[cursor])),
-      4,
-      Paint()..color = p.accent,
+      compactMobile ? 4.6 : 4,
+      Paint()..color = lineTint,
     );
     canvas.drawCircle(
       Offset(x(cursor), y(values[cursor])),
-      1.8,
-      Paint()..color = p.text,
+      compactMobile ? 2.1 : 1.8,
+      Paint()..color = const Color(0xFFF8FAFC),
     );
   }
 

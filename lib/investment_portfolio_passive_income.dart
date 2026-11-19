@@ -347,13 +347,17 @@ class _PortfolioPassiveIncomeCardState
           );
     final activeMonth = activeIdx != null ? displayMonths[activeIdx] : null;
 
+    final screenW = MediaQuery.sizeOf(context).width;
+    final isMobile = screenW > 0 && screenW < 640;
     return Container(
       key: const ValueKey('portfolio-passive-income-card'),
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(isMobile ? 16 : 20),
       decoration: BoxDecoration(
-        color: p.panel,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: p.border),
+        color: isMobile ? const Color(0xFF161B24) : p.panel,
+        borderRadius: BorderRadius.circular(isMobile ? 20 : 14),
+        border: Border.all(
+          color: isMobile ? Colors.white.withValues(alpha: .05) : p.border,
+        ),
       ),
       child: Material(
         type: MaterialType.transparency,

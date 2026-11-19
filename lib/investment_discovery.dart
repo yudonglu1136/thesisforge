@@ -125,42 +125,49 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
               children: [
                 for (final tab in tabs)
                   Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () {
-                        updateUI(() {
-                          discoveryTab = tab.$1;
-                          if (tab.$1 == 'gurus') selectedGuru = null;
-                        });
-                        persistDiscover();
-                        if (tab.$1 == 'gurus' && institutional13f == null) {
-                          unawaited(load13FInsights());
-                        }
-                        if (tab.$1 == 'fundamentals' && opportunities == null) {
-                          unawaited(loadOpportunities());
-                        }
-                      },
-                      child: Container(
-                        height: 32,
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: discoveryTab == tab.$1
-                              ? p.card
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(7),
-                        ),
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            w(tab.$2, tab.$3),
-                            maxLines: 1,
-                            style: TextStyle(
-                              color: discoveryTab == tab.$1 ? p.text : p.muted,
-                              fontSize: 11.5,
-                              fontWeight: discoveryTab == tab.$1
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        key: ValueKey('discover-mobile-tab-${tab.$1}'),
+                        borderRadius: BorderRadius.circular(7),
+                        onTap: () {
+                          updateUI(() {
+                            discoveryTab = tab.$1;
+                            if (tab.$1 == 'gurus') selectedGuru = null;
+                          });
+                          persistDiscover();
+                          if (tab.$1 == 'gurus' && institutional13f == null) {
+                            unawaited(load13FInsights());
+                          }
+                          if (tab.$1 == 'fundamentals' &&
+                              opportunities == null) {
+                            unawaited(loadOpportunities());
+                          }
+                        },
+                        child: Container(
+                          height: 38,
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: discoveryTab == tab.$1
+                                ? p.card
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              w(tab.$2, tab.$3),
+                              maxLines: 1,
+                              style: TextStyle(
+                                color: discoveryTab == tab.$1
+                                    ? p.text
+                                    : p.muted,
+                                fontSize: 12,
+                                fontWeight: discoveryTab == tab.$1
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
                             ),
                           ),
                         ),
