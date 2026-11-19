@@ -64,7 +64,11 @@ void main() {
             find.byKey(const ValueKey('ios-install-guide-dialog')),
             findsOneWidget,
           );
-          expect(find.textContaining('.dmg'), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('ios-install-download-profile')),
+            findsOneWidget,
+          );
+          expect(find.textContaining('.dmg'), findsWidgets);
 
           if (language == AppLanguage.en) {
             final dialogTexts = tester

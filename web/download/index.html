@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#080b0f">
+  <title>ThesisForge · 客户端文件直装中心（免 App Store）</title>
+  <link rel="icon" type="image/png" sizes="64x64" href="/brand/thesisforge-black-mark-64.png?v=20261119">
+  <link rel="apple-touch-icon" sizes="180x180" href="/brand/thesisforge-apple-touch-icon-180.png?v=20261119">
+  <style>
+    :root {
+      --bg: #080b0f;
+      --panel: #0e131a;
+      --card: #121821;
+      --border: #243040;
+      --text: #eef3f8;
+      --muted: #93a4b7;
+      --accent: #38e5b1;
+      --accent-bg: #0d2a22;
+      --amber: #f5a623;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.58;
+    }
+    .wrap {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: calc(20px + env(safe-area-inset-top, 0px)) 18px calc(36px + env(safe-area-inset-bottom, 0px));
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 22px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--text);
+    }
+    .brand img {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .brand-title { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; }
+    .brand-sub { font-size: 11.5px; color: var(--accent); font-weight: 700; }
+    .open-web {
+      padding: 9px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .badge {
+      display: inline-block;
+      background: var(--accent-bg);
+      color: var(--accent);
+      border: 1px solid #20c997;
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    h1 {
+      margin: 0 0 8px 0;
+      font-size: 24px;
+      line-height: 1.3;
+    }
+    .lead {
+      margin: 0 0 22px 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .card.primary {
+      border: 1.5px solid #20c997;
+      background: linear-gradient(180deg, #0e1819 0%, #0d1218 100%);
+    }
+    .card-tag {
+      display: inline-block;
+      font-size: 11.5px;
+      font-weight: 700;
+      padding: 2px 9px;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      background: rgba(56, 229, 177, 0.12);
+      color: var(--accent);
+      border: 1px solid rgba(56, 229, 177, 0.3);
+    }
+    .card h2 {
+      margin: 0 0 6px 0;
+      font-size: 18px;
+    }
+    .card p {
+      margin: 0 0 14px 0;
+      color: var(--muted);
+      font-size: 13.5px;
+    }
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      min-height: 50px;
+      padding: 12px 18px;
+      border-radius: 10px;
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 700;
+      transition: opacity 0.15s ease;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #04120d;
+    }
+    .btn-secondary {
+      background: #f2f6fa;
+      color: #080b0f;
+    }
+    .steps {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+      color: #d6e0ec;
+    }
+    .steps ol {
+      margin: 8px 0 0 0;
+      padding-left: 20px;
+    }
+    .steps li { margin-bottom: 6px; }
+    .meta {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    code {
+      background: #080b0f;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 1px 6px;
+      font-size: 12px;
+      color: #dce6f2;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <a class="brand" href="/">
+        <img src="/brand/thesisforge-apple-touch-icon-180.png?v=20261119" alt="ThesisForge">
+        <div>
+          <div class="brand-title">ThesisForge</div>
+          <div class="brand-sub">DIRECT INSTALL CENTER</div>
+        </div>
+      </a>
+      <a class="open-web" href="/">进入投研工作台 →</a>
+    </div>
+
+    <div class="badge">免 App Store · 官方直装文件包 v1.0</div>
+    <h1>下载安装包文件，直接在手机或电脑打开使用</h1>
+    <p class="lead">无需上架或登录 Apple App Store。请根据您当前手头的设备选择对应的安装文件：</p>
+
+    <div class="card primary">
+      <div class="card-tag">苹果手机 iPhone / iPad 首选 · 免电脑直装</div>
+      <h2>1. iPhone 独立全屏客户端安装文件 (.mobileconfig)</h2>
+      <p>在 iPhone 自带 <b>Safari</b> 浏览器点击下方按钮下载苹果官方描述文件，安装后手机桌面立即生成纯黑 <b>TF</b> 图标的 <b>ThesisForge 全屏独立 App</b>（无浏览器地址栏与底栏）。</p>
+      <a class="btn btn-primary" href="/download/ThesisForge_iPhone_App.mobileconfig">
+        📲 一键下载安装 iPhone 客户端文件 (.mobileconfig)
+      </a>
+      <div class="steps">
+        <b>iPhone 下载后 15 秒激活步骤（苹果系统标准流程）：</b>
+        <ol>
+          <li>用 iPhone <b>Safari</b> 点击上方绿色按钮，弹窗提示「此网站正尝试下载一个配置描述文件」时点<b>「允许」</b>。</li>
+          <li>打开 iPhone 系统<b>「设置 (Settings)」</b>，点击顶部出现的<b>「已下载描述文件 (Profile Downloaded)」</b>。</li>
+          <li>点击右上角<b>「安装 (Install)」</b>输入手机锁屏密码确认，返回桌面即可看到黑色 <b>ThesisForge</b> App 图标！</li>
+        </ol>
+      </div>
+      <div class="meta">文件名：<code>ThesisForge_iPhone_App.mobileconfig</code> · 大小：8 KB · 随时可在设置或长按图标移除</div>
+    </div>
+
+    <div class="card">
+      <div class="card-tag">苹果电脑 macOS 原生客户端 · Apple Silicon &amp; Intel 通用</div>
+      <h2>2. macOS 桌面独立客户端磁盘镜像 (.dmg)</h2>
+      <p>原生 Swift + WebKit 架构打包的双架构（M1/M2/M3/M4 与 Intel 通用）苹果电脑安装包，纯黑 <b>TF</b> 程序坞图标与独立深色窗口。</p>
+      <a class="btn btn-secondary" href="/download/ThesisForge_macOS_v1.0.dmg" download="ThesisForge_macOS_v1.0.dmg">
+        💻 下载 macOS 客户端镜像 (ThesisForge_macOS_v1.0.dmg)
+      </a>
+      <div class="steps">
+        <b>Mac 打开说明：</b>下载后双击 <code>ThesisForge_macOS_v1.0.dmg</code>，将 <b>ThesisForge.app</b> 拖入 <code>Applications</code> 即可双击启动（若首次打开提示未公证开发者，在「系统设置 → 隐私与安全性」点「仍要打开」即可）。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-tag">开发者 / 侧载工具专用 · Xcode 26.3 Release 编译</div>
+      <h2>3. iOS 原生二进制安装包 (.ipa)</h2>
+      <p>由 Flutter iOS 工程通过 Xcode 26.3 编译生成的原生 Release 包（<code>ThesisForge_iOS_v1.0.ipa</code>，已随邮件附件同步提供）。因苹果系统限制未走 App Store 的裸 <code>.ipa</code> 无法在手机文件里直接双击安装，如需侧载原生包，可在电脑上用 <b>Apple Configurator / Xcode / Sideloadly / 爱思助手</b> 导入手机；日常在手机上直接使用请优先选择上方<b>第 1 项 (.mobileconfig)</b>。</p>
+    </div>
+  </div>
+</body>
+</html>

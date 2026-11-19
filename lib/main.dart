@@ -1700,12 +1700,37 @@ Future<void> showIosInstallGuideDialog(
                   borderRadius: BorderRadius.circular(9),
                   border: Border.all(color: p.border),
                 ),
-                child: Text(
-                  dialogCtx.tr(
-                    '说明：.dmg 是苹果电脑（macOS）专属镜像格式，iPhone（iOS）无法直接打开 .dmg 文件。通过 iPhone Safari 添加到主屏幕后，桌面即刻生成独立黑标 ThesisForge 全屏 App，无浏览器地址栏，体验与原生 App 一致。',
-                    'Note: .dmg files are macOS disk images and cannot be opened on iPhone (iOS). Adding ThesisForge from Safari creates a full-screen standalone Home Screen App with no browser chrome.',
-                  ),
-                  style: TextStyle(color: p.muted, fontSize: 12, height: 1.45),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      dialogCtx.tr(
+                        '免 App Store 文件直装：点击下方按钮可直接下载苹果官方描述文件 (.mobileconfig) 安装至 iPhone 桌面，或获取 macOS 电脑端 .dmg 客户端镜像。',
+                        'No App Store needed: download the Apple Configuration Profile (.mobileconfig) to install directly onto your iPhone Home Screen, or get the macOS .dmg desktop image.',
+                      ),
+                      style: TextStyle(color: p.muted, fontSize: 12, height: 1.45),
+                    ),
+                    const SizedBox(height: 10),
+                    FilledButton.tonalIcon(
+                      key: const ValueKey('ios-install-download-profile'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 44),
+                        backgroundColor: p.accent.withValues(alpha: .16),
+                        foregroundColor: p.accent,
+                      ),
+                      onPressed: () {
+                        Navigator.of(dialogCtx).pop();
+                        openBrowserPath('/download/');
+                      },
+                      icon: const Icon(Icons.download_rounded, size: 18),
+                      label: Text(
+                        dialogCtx.tr(
+                          '打开安装包下载中心 (.mobileconfig / .dmg)',
+                          'Open Direct File Download Center (.mobileconfig / .dmg)',
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 12),

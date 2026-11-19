@@ -5,6 +5,39 @@
   "outputDirectory": "dist",
   "routes": [
     {
+      "src": "^/download$",
+      "status": 308,
+      "headers": { "Location": "/download/" }
+    },
+    {
+      "src": "^/download/ThesisForge_iPhone_App\\.mobileconfig$",
+      "headers": {
+        "Content-Type": "application/x-apple-aspen-config",
+        "Content-Disposition": "inline; filename=\"ThesisForge_iPhone_App.mobileconfig\"",
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        "X-Content-Type-Options": "nosniff"
+      },
+      "continue": true
+    },
+    {
+      "src": "^/download/ThesisForge_macOS_v1\\.0\\.dmg$",
+      "headers": {
+        "Content-Type": "application/x-apple-diskimage",
+        "Content-Disposition": "attachment; filename=\"ThesisForge_macOS_v1.0.dmg\"",
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        "X-Content-Type-Options": "nosniff"
+      },
+      "continue": true
+    },
+    {
+      "src": "^/download/$",
+      "headers": {
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        "X-Content-Type-Options": "nosniff"
+      },
+      "dest": "/download/index.html"
+    },
+    {
       "src": "^/research/isrg$",
       "status": 308,
       "headers": { "Location": "/research/isrg/" }

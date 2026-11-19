@@ -78,6 +78,12 @@ deployment split unless the user explicitly changes the architecture.
 - Add Sign in with Apple, in-app account deletion, privacy disclosures, and a reviewer demo path before App Store submission.
 - Bundle ID is `tech.thesisforge.guru`; display name is `ThesisForge` (all browser tab favicons, PWA/iOS icons, loading marks, and visible product titles must use the official black ThesisForge mark and `ThesisForge` brand name; never reintroduce retired legacy brand labels or green app logos).
 - App Store packaging script is `scripts/build-ios-appstore.sh`.
+- Non-App-Store direct file download center lives at `web/download/index.html`
+  (`/download/`), serving `web/download/ThesisForge_iPhone_App.mobileconfig`
+  (`Content-Type: application/x-apple-aspen-config` for 1-tap iPhone Safari
+  Configuration Profile full-screen installation) and
+  `web/download/ThesisForge_macOS_v1.0.dmg` (`Content-Type: application/x-apple-diskimage`
+  universal macOS desktop wrapper).
 - App Store submission requires a paid Apple Developer Program Team. A Personal
   Team can create development certificates, but cannot upload to TestFlight or
   the App Store.
