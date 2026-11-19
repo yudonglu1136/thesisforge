@@ -3094,9 +3094,9 @@ class _InsightHistoryInteractiveChartState
 
   void _selectAt(double dx, double width) {
     if (widget.points.isEmpty || width <= 10) return;
-    const leftAxis = 42.0;
+    const leftAxis = 44.0;
     final rightAxis = widget.series == _InsightHistorySeries.shares
-        ? 40.0
+        ? 44.0
         : 8.0;
     final plotWidth = math.max(1.0, width - leftAxis - rightAxis);
     final ratio = ((dx - leftAxis) / plotWidth).clamp(0.0, 1.0);
@@ -3232,8 +3232,8 @@ class _InsightHistoryPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const leftAxis = 40.0;
-    final rightAxis = series == _InsightHistorySeries.shares ? 40.0 : 8.0;
+    const leftAxis = 44.0;
+    final rightAxis = series == _InsightHistorySeries.shares ? 44.0 : 8.0;
     final showBottomTicks = size.height >= 96 && points.length >= 2;
     final bottomReserve = showBottomTicks ? 22.0 : 12.0;
     final chart = Rect.fromLTWH(
@@ -3246,7 +3246,16 @@ class _InsightHistoryPainter extends CustomPainter {
         series == _InsightHistorySeries.holders
         ? (point) => point.holders
         : (point) => point.sharesK;
-    final primaryBounds = _bounds(primaryRead, primaryScale);
+    final primaryBounds = _bounds(
+      primaryRead,
+      primaryScale,
+      isBarSeries: series == _InsightHistorySeries.shares,
+    );
+    final secondaryBounds = series == _InsightHistorySeries.shares
+        ? _bounds((point) => point.ownershipPct, _InsightAxisScale.percent)
+        : (min: 0.0, max: 100.0);
+    final primarySpan = primaryBounds.max - primaryBounds.min;
+    final secondarySpan = secondaryBounds.max - secondaryBounds.min;
     final gridPaint = Paint()
       ..color = grid.withValues(alpha: .72)
       ..strokeWidth = 1;
@@ -3257,8 +3266,9 @@ class _InsightHistoryPainter extends CustomPainter {
       _drawAxisLabel(
         canvas,
         _formatAxis(
-          primaryBounds.min + (primaryBounds.max - primaryBounds.min) * ratio,
+          primaryBounds.min + primarySpan * ratio,
           primaryScale,
+          span: primarySpan,
         ),
         Offset(chart.left - 5, y),
         alignRight: true,
@@ -3266,7 +3276,11 @@ class _InsightHistoryPainter extends CustomPainter {
       if (series == _InsightHistorySeries.shares) {
         _drawAxisLabel(
           canvas,
-          '${(ratio * 100).round()}%',
+          _formatAxis(
+            secondaryBounds.min + secondarySpan * ratio,
+            _InsightAxisScale.percent,
+            span: secondarySpan,
+          ),
           Offset(chart.right + 5, y),
         );
       }
@@ -3304,12 +3318,15 @@ class _InsightHistoryPainter extends CustomPainter {
       );
     } else {
       _drawBars(canvas, chart, (point) => point.sharesK, primaryBounds, accent);
-      _drawSeries(canvas, chart, (point) => point.ownershipPct, (
-        min: 0,
-        max: 100,
-      ), secondary);
+      _drawSeries(
+        canvas,
+        chart,
+        (point) => point.ownershipPct,
+        secondaryBounds,
+        secondary,
+      );
     }
-    _drawHover(canvas, chart, primaryBounds);
+    _drawHover(canvas, chart, primaryBounds, secondaryBounds);
   }
 
   String _shortQuarter(String iso) {
@@ -3346,8 +3363,9 @@ class _InsightHistoryPainter extends CustomPainter {
 
   ({double min, double max}) _bounds(
     double? Function(_InsightHistoryPoint) read,
-    _InsightAxisScale scale,
-  ) {
+    _InsightAxisScale scale, {
+    bool isBarSeries = false,
+  }) {
     final values = points
         .map(read)
         .whereType<double>()
@@ -3357,71 +3375,141 @@ class _InsightHistoryPainter extends CustomPainter {
       if (values.isEmpty) return (min: 0, max: 100);
       final rawMin = values.reduce(math.min);
       final rawMax = values.reduce(math.max);
-      final span = rawMax - rawMin;
-      if (span <= 36) {
-        final step = span <= 6 ? 2.0 : span <= 14 ? 4.0 : 5.0;
-        final niceMin = math.max(
-          0.0,
-          ((rawMin - step * .65) / step).floor() * step,
-        );
-        var niceMax = math.min(
-          100.0,
-          ((rawMax + step * .65) / step).ceil() * step,
-        );
-        if (niceMax - niceMin < 4) {
-          niceMax = math.min(100.0, niceMin + 8);
+      final rawSpan = rawMax - rawMin;
+      if (rawSpan <= 65) {
+        final pad = math.max(0.25, rawSpan * 0.14);
+        final loTarget = math.max(0.0, rawMin - pad);
+        final hiTarget = math.min(100.0, rawMax + pad);
+        const steps = <double>[
+          0.2,
+          0.5,
+          1.0,
+          1.2,
+          1.5,
+          2.0,
+          2.5,
+          3.0,
+          4.0,
+          5.0,
+          8.0,
+          10.0,
+          15.0,
+          20.0,
+          25.0,
+        ];
+        for (final step in steps) {
+          final snapUnit = step < 1.0 ? 0.2 : (step < 2.0 ? 0.5 : 1.0);
+          var niceMin = math.max(
+            0.0,
+            (loTarget / snapUnit).floor() * snapUnit,
+          );
+          var niceMax = niceMin + step * 4;
+          if (niceMax > 100.0) {
+            niceMax = 100.0;
+            niceMin = math.max(0.0, niceMax - step * 4);
+          }
+          if (niceMin <= loTarget + 1e-6 &&
+              niceMax >= hiTarget - 1e-6 &&
+              niceMax > niceMin) {
+            return (
+              min: double.parse(niceMin.toStringAsFixed(2)),
+              max: double.parse(niceMax.toStringAsFixed(2)),
+            );
+          }
         }
-        if (niceMax > niceMin) return (min: niceMin, max: niceMax);
       }
       return (min: 0, max: 100);
     }
     if (values.isEmpty) return (min: 0, max: 1);
-    return (min: 0, max: _niceCeiling(values.reduce(math.max) * 1.06));
+    final rawMin = values.reduce(math.min);
+    final rawMax = values.reduce(math.max);
+    if (rawMax <= 0) return (min: 0, max: 1);
+    final rawSpan = rawMax - rawMin;
+    if (rawMin > rawMax * 0.25) {
+      final effectiveSpan = rawSpan > 0 ? rawSpan : rawMax * 0.08;
+      final bottomPad = isBarSeries
+          ? math.max(effectiveSpan * 0.28, rawMax * 0.015)
+          : math.max(effectiveSpan * 0.16, rawMax * 0.01);
+      final topPad = math.max(effectiveSpan * 0.16, rawMax * 0.01);
+      final loTarget = math.max(0.0, rawMin - bottomPad);
+      final hiTarget = rawMax + topPad;
+      final step = _niceStep((hiTarget - loTarget) / 4);
+      final niceMin = math.max(0.0, (loTarget / step).floor() * step);
+      var niceMax = niceMin + step * 4;
+      while (niceMax < hiTarget) {
+        niceMax += step;
+      }
+      if (niceMax > niceMin) {
+        return (min: niceMin, max: niceMax);
+      }
+    }
+    return (min: 0, max: _niceCeiling(rawMax * 1.06));
   }
 
-  double _niceCeiling(double value) {
-    if (!value.isFinite || value <= 0) return 1;
-    final roughStep = value / 4;
+  double _niceStep(double roughStep) {
+    if (!roughStep.isFinite || roughStep <= 0) return 1;
     final magnitude = math
         .pow(10, (math.log(roughStep) / math.ln10).floor())
         .toDouble();
     final normalized = roughStep / magnitude;
-    final niceStep = normalized <= 1
-        ? 1
+    final mult = normalized <= 1
+        ? 1.0
         : normalized <= 2
-        ? 2
+        ? 2.0
         : normalized <= 2.5
         ? 2.5
         : normalized <= 5
-        ? 5
-        : 10;
-    return niceStep * magnitude * 4;
+        ? 5.0
+        : 10.0;
+    return mult * magnitude;
   }
 
-  String _formatAxis(double value, _InsightAxisScale scale) {
-    if (scale == _InsightAxisScale.percent) return '${value.round()}%';
+  double _niceCeiling(double value) {
+    if (!value.isFinite || value <= 0) return 1;
+    return _niceStep(value / 4) * 4;
+  }
+
+  String _formatAxis(
+    double value,
+    _InsightAxisScale scale, {
+    double span = 100,
+  }) {
+    if (scale == _InsightAxisScale.percent) {
+      final rounded1 = (value * 10).round() / 10;
+      if (span < 10 || (rounded1 - rounded1.round()).abs() > 0.04) {
+        return '${rounded1.toStringAsFixed(1)}%';
+      }
+      return '${rounded1.round()}%';
+    }
     if (scale == _InsightAxisScale.sharesThousands) {
       final shares = value * 1000;
+      final sharesSpan = span * 1000;
       if (shares.abs() >= 1000000000) {
-        return '${(shares / 1000000000).toStringAsFixed(1)}B';
+        final digits = sharesSpan < 800000000 ? 2 : 1;
+        return '${(shares / 1000000000).toStringAsFixed(digits)}B';
       }
       if (shares.abs() >= 1000000) {
-        return '${(shares / 1000000).toStringAsFixed(1)}M';
+        final digits = sharesSpan < 800000 ? 2 : 1;
+        return '${(shares / 1000000).toStringAsFixed(digits)}M';
       }
       if (shares.abs() >= 1000) {
-        return '${(shares / 1000).toStringAsFixed(1)}K';
+        final digits = sharesSpan < 800 ? 2 : 1;
+        return '${(shares / 1000).toStringAsFixed(digits)}K';
       }
       return shares.round().toString();
     }
     final display = value;
     if (display.abs() >= 1000000000) {
-      return '${(display / 1000000000).toStringAsFixed(display % 1000000000 == 0 ? 0 : 1)}B';
+      final digits = span < 800000000 ? 2 : 1;
+      return '${(display / 1000000000).toStringAsFixed(digits)}B';
     }
     if (display.abs() >= 1000000) {
-      return '${(display / 1000000).toStringAsFixed(display % 1000000 == 0 ? 0 : 1)}M';
+      final digits = span < 800000 ? 2 : 1;
+      return '${(display / 1000000).toStringAsFixed(digits)}M';
     }
     if (display.abs() >= 1000) {
-      return '${(display / 1000).toStringAsFixed(display % 1000 == 0 ? 0 : 1)}K';
+      final digits = span < 800 ? 2 : (display % 1000 == 0 && span >= 4000 ? 0 : 1);
+      return '${(display / 1000).toStringAsFixed(digits)}K';
     }
     return display.round().toString();
   }
@@ -3457,6 +3545,7 @@ class _InsightHistoryPainter extends CustomPainter {
     Canvas canvas,
     Rect chart,
     ({double min, double max}) primaryBounds,
+    ({double min, double max}) secondaryBounds,
   ) {
     final index = hoverIndex;
     if (index == null || index < 0 || index >= points.length) return;
@@ -3486,7 +3575,7 @@ class _InsightHistoryPainter extends CustomPainter {
             )
           >[
             ((point) => point.sharesK, primaryBounds, accent),
-            ((point) => point.ownershipPct, (min: 0, max: 100), secondary),
+            ((point) => point.ownershipPct, secondaryBounds, secondary),
           ];
     for (final entry in reads) {
       final offset = _seriesOffset(chart, index, entry.$1, entry.$2);

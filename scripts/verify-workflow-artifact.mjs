@@ -20,12 +20,24 @@ export function verifyWorkflowArtifact(output, expected) {
       || source.includes(enabled ? disabledMarker : enabledMarker)) {
     throw new Error(`Compiled workflow branch does not match expected ${expected}; refusing the artifact.`);
   }
+  const sha256 = createHash('sha256').update(entry).digest('hex');
   const metadata = {
     schemaVersion: 1,
     investmentWorkflowEnabled: enabled,
-    mainDartJsSha256: createHash('sha256').update(entry).digest('hex'),
+    mainDartJsSha256: sha256,
   };
   fs.writeFileSync(path.join(output, 'thesisforge-build.json'), `${JSON.stringify(metadata, null, 2)}\n`);
+  const bootstrapPath = path.join(output, 'flutter_bootstrap.js');
+  if (fs.existsSync(bootstrapPath)) {
+    const rawBootstrap = fs.readFileSync(bootstrapPath, 'utf8');
+    const stampedBootstrap = rawBootstrap.replace(
+      /"main\.dart\.js"/g,
+      `"main.dart.js?v=${sha256.slice(0, 12)}"`,
+    );
+    if (stampedBootstrap !== rawBootstrap) {
+      fs.writeFileSync(bootstrapPath, stampedBootstrap);
+    }
+  }
   return metadata;
 }
 
