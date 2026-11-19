@@ -7,6 +7,8 @@
 		<dict>
 			<key>FullScreen</key>
 			<true/>
+			<key>IgnoreManifestScope</key>
+			<true/>
 			<key>Icon</key>
 			<data>
 				iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAAShElEQVR42u1dPa8kxRW9
@@ -110,11 +112,11 @@
 			<key>Label</key>
 			<string>ThesisForge</string>
 			<key>PayloadDescription</key>
-			<string>在 iPhone 主屏幕生成纯黑标全屏 ThesisForge 独立应用（无需 App Store）</string>
+			<string>在 iPhone 主屏幕生成纯黑标全屏 ThesisForge 独立应用（v3 防弹框纯净全屏版）</string>
 			<key>PayloadDisplayName</key>
-			<string>ThesisForge 桌面全屏应用</string>
+			<string>ThesisForge 桌面全屏应用 v3</string>
 			<key>PayloadIdentifier</key>
-			<string>tech.thesisforge.ios.webclip.v2</string>
+			<string>tech.thesisforge.ios.webclip.v3</string>
 			<key>PayloadOrganization</key>
 			<string>ThesisForge</string>
 			<key>PayloadType</key>
@@ -126,15 +128,15 @@
 			<key>Precomposed</key>
 			<true/>
 			<key>URL</key>
-			<string>https://www.thesisforge.tech/?launch=ios_webclip</string>
+			<string>https://thesisforge.tech/?launch=ios_webclip</string>
 		</dict>
 	</array>
 	<key>PayloadDescription</key>
-	<string>无需上架 App Store，直接在 iPhone 桌面安装纯黑标全屏 ThesisForge 投研终端（v2 修复版）。</string>
+	<string>无需上架 App Store，直接在 iPhone 桌面安装纯黑标全屏 ThesisForge 投研终端（v3 纯净全屏免跳出版）。</string>
 	<key>PayloadDisplayName</key>
-	<string>ThesisForge iPhone 独立客户端 v2</string>
+	<string>ThesisForge iPhone 独立客户端 v3</string>
 	<key>PayloadIdentifier</key>
-	<string>tech.thesisforge.ios.profile.v2</string>
+	<string>tech.thesisforge.ios.profile.v3</string>
 	<key>PayloadOrganization</key>
 	<string>ThesisForge</string>
 	<key>PayloadRemovalDisallowed</key>

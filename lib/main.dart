@@ -1511,6 +1511,8 @@ class _AuthGateState extends State<AuthGate> {
     }
     final base = Uri.base;
     final nextQuery = Map<String, String>.from(base.queryParameters);
+    nextQuery.remove('launch');
+    nextQuery.remove('cache-migration');
     nextQuery['lang'] = appLanguageCode(widget.language);
     final redirectTo = base
         .replace(queryParameters: nextQuery, fragment: '')
@@ -1519,6 +1521,73 @@ class _AuthGateState extends State<AuthGate> {
       OAuthProvider.google,
       redirectTo: redirectTo,
     );
+  }
+
+  Future<String?> _sendEmailOtp(String rawEmail) async {
+    final email = rawEmail.trim();
+    if (email.isEmpty || !email.contains('@')) {
+      return trFor(
+        widget.language,
+        '请输入有效的邮箱地址（如您的 Gmail 邮箱）。',
+        'Please enter a valid email address.',
+      );
+    }
+    if (!await _ensureSupabaseReady()) {
+      return trFor(
+        widget.language,
+        '暂时无法连接身份验证服务，请稍后重试。',
+        'Auth service is temporarily unreachable. Please retry.',
+      );
+    }
+    try {
+      await Supabase.instance.client.auth.signInWithOtp(
+        email: email,
+        shouldCreateUser: true,
+      );
+      return null;
+    } catch (e) {
+      return trFor(
+        widget.language,
+        '发送验证码失败，请确认邮箱拼写或稍后再试。',
+        'Could not send verification code. Check your email or retry shortly.',
+      );
+    }
+  }
+
+  Future<String?> _verifyEmailOtp(String rawEmail, String rawCode) async {
+    final email = rawEmail.trim();
+    final code = rawCode.replaceAll(RegExp(r'\s+'), '');
+    if (code.length < 6) {
+      return trFor(
+        widget.language,
+        '请输入邮件中的 6 位数字验证码。',
+        'Enter the 6-digit verification code from your email.',
+      );
+    }
+    if (!await _ensureSupabaseReady()) {
+      return trFor(
+        widget.language,
+        '暂时无法连接身份验证服务，请稍后重试。',
+        'Auth service is temporarily unreachable. Please retry.',
+      );
+    }
+    try {
+      final res = await Supabase.instance.client.auth.verifyOTP(
+        email: email,
+        token: code,
+        type: OtpType.email,
+      );
+      if (res.session != null && mounted) {
+        setState(() => _session = res.session);
+      }
+      return null;
+    } catch (_) {
+      return trFor(
+        widget.language,
+        '验证码无效或已过期，请重新获取 6 位验证码。',
+        'Invalid or expired code. Request a new 6-digit code.',
+      );
+    }
   }
 
   Future<void> _logout() async {
@@ -1573,6 +1642,8 @@ class _AuthGateState extends State<AuthGate> {
         language: widget.language,
         onLanguage: widget.onLanguage,
         onGoogle: _signInWithGoogle,
+        onSendOtp: _sendEmailOtp,
+        onVerifyOtp: _verifyEmailOtp,
         onLocal: _enterLocalWorkspace,
         onRetry: _retryBootstrap,
       );
@@ -1808,7 +1879,7 @@ Future<void> showIosInstallGuideDialog(
   );
 }
 
-class LoginScreen extends StatelessWidget {
+class LoginScreen extends StatefulWidget {
   const LoginScreen({
     super.key,
     required this.authConfigured,
@@ -1817,6 +1888,8 @@ class LoginScreen extends StatelessWidget {
     required this.language,
     required this.onLanguage,
     required this.onGoogle,
+    this.onSendOtp,
+    this.onVerifyOtp,
     required this.onLocal,
     required this.onRetry,
   });
@@ -1827,14 +1900,74 @@ class LoginScreen extends StatelessWidget {
   final AppLanguage language;
   final ValueChanged<AppLanguage> onLanguage;
   final VoidCallback onGoogle;
+  final Future<String?> Function(String email)? onSendOtp;
+  final Future<String?> Function(String email, String code)? onVerifyOtp;
   final VoidCallback onLocal;
   final VoidCallback onRetry;
 
   @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController _emailCtrl = TextEditingController();
+  final TextEditingController _otpCtrl = TextEditingController();
+  bool _otpSent = false;
+  bool _busy = false;
+  String? _otpError;
+  String? _otpNotice;
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _otpCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleSendOtp() async {
+    if (widget.onSendOtp == null || _busy) return;
+    setState(() {
+      _busy = true;
+      _otpError = null;
+      _otpNotice = null;
+    });
+    final err = await widget.onSendOtp!(_emailCtrl.text);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      if (err != null) {
+        _otpError = err;
+      } else {
+        _otpSent = true;
+        _otpNotice = context.tr(
+          '验证码已发送至邮箱，输入 6 位数字即可免跳出直接进入全屏工作台。',
+          'Code sent. Enter the 6-digit code to sign in directly without leaving fullscreen.',
+        );
+      }
+    });
+  }
+
+  Future<void> _handleVerifyOtp() async {
+    if (widget.onVerifyOtp == null || _busy) return;
+    setState(() {
+      _busy = true;
+      _otpError = null;
+    });
+    final err = await widget.onVerifyOtp!(_emailCtrl.text, _otpCtrl.text);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _otpError = err;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final palette = Palette(false);
-    final compact = MediaQuery.sizeOf(context).width < 440;
-    final showInstallGuide = !isStandaloneDisplayMode();
+    final compact = MediaQuery.sizeOf(context).width < 480;
+    final standalone = isStandaloneDisplayMode();
+    final showInstallGuide = !standalone;
+    final otpSupported = widget.onSendOtp != null && widget.onVerifyOtp != null;
     return Scaffold(
       body: Container(
         key: const ValueKey('login-background'),
@@ -1850,45 +1983,33 @@ class LoginScreen extends StatelessWidget {
         ),
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 14 : 16,
+              vertical: compact ? 10 : 16,
+            ),
             child: Center(
               child: SingleChildScrollView(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 520),
+                  constraints: const BoxConstraints(maxWidth: 480),
                   child: Container(
                     key: const ValueKey('login-panel'),
                     width: double.infinity,
-                    padding: EdgeInsets.all(compact ? 24 : 32),
+                    padding: EdgeInsets.all(compact ? 20 : 32),
                     decoration: panelDecoration(palette),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: LanguageSegment(
-                            language: language,
-                            onLanguage: onLanguage,
-                            palette: palette,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
                         Row(
                           children: [
                             Container(
-                              width: 52,
-                              height: 52,
-                              padding: const EdgeInsets.all(7),
+                              width: compact ? 42 : 50,
+                              height: compact ? 42 : 50,
+                              padding: const EdgeInsets.all(6),
                               decoration: BoxDecoration(
-                                color: blackEditionPreview
-                                    ? palette.background
-                                    : palette.accent.withValues(alpha: .12),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: blackEditionPreview
-                                      ? palette.border
-                                      : palette.accent.withValues(alpha: .32),
-                                ),
+                                color: palette.background,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: palette.border),
                               ),
                               child: Image.asset(
                                 thesisForgeMarkAsset,
@@ -1899,59 +2020,298 @@ class LoginScreen extends StatelessWidget {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 14),
+                            const SizedBox(width: 12),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    context.tr('ThesisForge', 'ThesisForge'),
+                                    'ThesisForge',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       color: palette.text,
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w900,
+                                      fontSize: compact ? 17 : 18,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: -0.3,
                                     ),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    context.tr('实证投研平台', 'THESISFORGE'),
+                                    context.tr('实证投研终端', 'RESEARCH TERMINAL'),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       color: palette.accent,
                                       fontSize: 10,
-                                      fontWeight: FontWeight.w900,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.4,
                                     ),
                                   ),
                                 ],
                               ),
                             ),
+                            LanguageSegment(
+                              language: widget.language,
+                              onLanguage: widget.onLanguage,
+                              palette: palette,
+                            ),
                           ],
                         ),
-                        const SizedBox(height: 18),
+                        SizedBox(height: compact ? 16 : 20),
                         Text(
-                          context.tr('研究终端', 'Research Terminal'),
-                          style: Theme.of(context).textTheme.displaySmall
-                              ?.copyWith(
-                                fontSize: compact ? 30 : null,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 0,
-                              ),
+                          context.tr('登录投研工作台', 'Sign in to Terminal'),
+                          style: TextStyle(
+                            color: palette.text,
+                            fontSize: compact ? 24 : 28,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.5,
+                          ),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 6),
                         Text(
                           context.tr(
-                            '面向买方研究的终端，整合 13F 资金流、内部人交易、组合模拟与估值分析。',
-                            'A buy-side terminal for 13F flows, insider activity, copy simulation, and valuation context.',
+                            '整合真实组合净值、13F 机构流向、量化策略与公司估值。',
+                            'Connected portfolio NAV, 13F institutional flows, audited strategies, and company valuation.',
                           ),
-                          style: TextStyle(color: palette.muted, height: 1.35),
+                          style: TextStyle(
+                            color: palette.muted,
+                            fontSize: compact ? 12.5 : 13.5,
+                            height: 1.4,
+                          ),
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 18),
+                        if (otpSupported) ...[
+                          Container(
+                            key: const ValueKey('login-email-otp-card'),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0A0E14),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: standalone
+                                    ? palette.accent.withValues(alpha: .42)
+                                    : palette.border,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.verified_user_outlined,
+                                      size: 15,
+                                      color: palette.accent,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        context.tr(
+                                          '邮箱验证码免跳转直登（iPhone 全屏首选 · 零浏览器框）',
+                                          'Email 6-Digit Code · Zero-Redirect Fullscreen Sign-In',
+                                        ),
+                                        style: TextStyle(
+                                          color: palette.accent,
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                TextField(
+                                  key: const ValueKey('login-email-input'),
+                                  controller: _emailCtrl,
+                                  keyboardType: TextInputType.emailAddress,
+                                  autocorrect: false,
+                                  style: TextStyle(
+                                    color: palette.text,
+                                    fontSize: 14,
+                                  ),
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    filled: true,
+                                    fillColor: const Color(0xFF11161F),
+                                    prefixIcon: Icon(
+                                      Icons.alternate_email_rounded,
+                                      size: 17,
+                                      color: palette.muted,
+                                    ),
+                                    hintText: context.tr(
+                                      '输入您的 Gmail / 登录邮箱',
+                                      'Enter your Gmail or account email',
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 12,
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(9),
+                                      borderSide: BorderSide(
+                                        color: palette.border,
+                                      ),
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(9),
+                                      borderSide: BorderSide(
+                                        color: palette.border,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (_otpSent) ...[
+                                  const SizedBox(height: 10),
+                                  TextField(
+                                    key: const ValueKey('login-otp-code-input'),
+                                    controller: _otpCtrl,
+                                    keyboardType: TextInputType.number,
+                                    style: TextStyle(
+                                      color: palette.text,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 3,
+                                    ),
+                                    decoration: InputDecoration(
+                                      isDense: true,
+                                      filled: true,
+                                      fillColor: const Color(0xFF11161F),
+                                      prefixIcon: Icon(
+                                        Icons.pin_outlined,
+                                        size: 18,
+                                        color: palette.accent,
+                                      ),
+                                      hintText: context.tr(
+                                        '输入邮件 6 位验证码',
+                                        '6-digit verification code',
+                                      ),
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 12,
+                                          ),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(9),
+                                        borderSide: BorderSide(
+                                          color: palette.accent,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                if (_otpError != null) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    _otpError!,
+                                    style: TextStyle(
+                                      color: palette.negative,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                                if (_otpNotice != null) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    _otpNotice!,
+                                    style: TextStyle(
+                                      color: palette.accent,
+                                      fontSize: 11.5,
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 10),
+                                if (!_otpSent)
+                                  FilledButton.icon(
+                                    key: const ValueKey('login-send-otp-btn'),
+                                    style: FilledButton.styleFrom(
+                                      minimumSize: const Size(
+                                        double.infinity,
+                                        45,
+                                      ),
+                                      backgroundColor: palette.accent,
+                                      foregroundColor: const Color(0xFF04120D),
+                                    ),
+                                    onPressed: widget.authConfigured && !_busy
+                                        ? _handleSendOtp
+                                        : null,
+                                    icon: const Icon(
+                                      Icons.mark_email_read_outlined,
+                                      size: 18,
+                                    ),
+                                    label: Text(
+                                      _busy
+                                          ? context.tr('发送中…', 'Sending…')
+                                          : context.tr(
+                                              '发送 6 位登录验证码',
+                                              'Send 6-Digit Login Code',
+                                            ),
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: FilledButton.icon(
+                                          key: const ValueKey(
+                                            'login-verify-otp-btn',
+                                          ),
+                                          style: FilledButton.styleFrom(
+                                            minimumSize: const Size(0, 45),
+                                            backgroundColor: palette.accent,
+                                            foregroundColor: const Color(
+                                              0xFF04120D,
+                                            ),
+                                          ),
+                                          onPressed: !_busy
+                                              ? _handleVerifyOtp
+                                              : null,
+                                          icon: const Icon(
+                                            Icons.check_circle_outline,
+                                            size: 18,
+                                          ),
+                                          label: Text(
+                                            _busy
+                                                ? context.tr(
+                                                    '验证中…',
+                                                    'Verifying…',
+                                                  )
+                                                : context.tr(
+                                                    '验证并进入全屏终端',
+                                                    'Verify & Enter',
+                                                  ),
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      TextButton(
+                                        onPressed: !_busy
+                                            ? _handleSendOtp
+                                            : null,
+                                        child: Text(
+                                          context.tr('重发', 'Resend'),
+                                          style: TextStyle(
+                                            color: palette.muted,
+                                            fontSize: 12.5,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                        ],
                         FilledButton.icon(
                           style: FilledButton.styleFrom(
-                            minimumSize: const Size(double.infinity, 48),
+                            minimumSize: const Size(double.infinity, 46),
                             backgroundColor: blackEditionPreview
                                 ? palette.text
                                 : null,
@@ -1959,31 +2319,33 @@ class LoginScreen extends StatelessWidget {
                                 ? palette.background
                                 : null,
                           ),
-                          onPressed: authConfigured ? onGoogle : null,
-                          icon: const Icon(Icons.login_rounded),
+                          onPressed: widget.authConfigured
+                              ? widget.onGoogle
+                              : null,
+                          icon: const Icon(Icons.login_rounded, size: 18),
                           label: Text(
-                            context.tr('使用 Google 继续', 'Continue with Google'),
+                            context.tr('使用 Google 账号继续', 'Continue with Google'),
                           ),
                         ),
-                        if (localBypassEnabled) ...[
-                          const SizedBox(height: 12),
+                        if (widget.localBypassEnabled) ...[
+                          const SizedBox(height: 10),
                           OutlinedButton.icon(
                             style: OutlinedButton.styleFrom(
-                              minimumSize: const Size(double.infinity, 46),
+                              minimumSize: const Size(double.infinity, 44),
                             ),
-                            onPressed: onLocal,
-                            icon: const Icon(Icons.terminal_rounded),
+                            onPressed: widget.onLocal,
+                            icon: const Icon(Icons.terminal_rounded, size: 18),
                             label: Text(
                               context.tr('进入本地工作区', 'Enter Local Workspace'),
                             ),
                           ),
                         ],
                         if (showInstallGuide) ...[
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 10),
                           OutlinedButton.icon(
                             key: const ValueKey('login-install-ios-app'),
                             style: OutlinedButton.styleFrom(
-                              minimumSize: const Size(double.infinity, 46),
+                              minimumSize: const Size(double.infinity, 44),
                               side: BorderSide(color: palette.border),
                             ),
                             onPressed: () => unawaited(
@@ -2009,12 +2371,12 @@ class LoginScreen extends StatelessWidget {
                             ),
                           ),
                         ],
-                        if (!authConfigured ||
-                            (authMessage?.isNotEmpty ?? false)) ...[
-                          const SizedBox(height: 18),
+                        if (!widget.authConfigured ||
+                            (widget.authMessage?.isNotEmpty ?? false)) ...[
+                          const SizedBox(height: 14),
                           Text(
-                            (authMessage?.isNotEmpty ?? false)
-                                ? authMessage!
+                            (widget.authMessage?.isNotEmpty ?? false)
+                                ? widget.authMessage!
                                 : context.tr(
                                     'Supabase 密钥未配置或身份验证暂不可用；开发环境可进入本地工作区。',
                                     'Supabase keys are not configured or auth is not reachable; local workspace mode is available for development.',
@@ -2025,14 +2387,14 @@ class LoginScreen extends StatelessWidget {
                             ),
                           ),
                         ],
-                        if ((authMessage?.isNotEmpty ?? false)) ...[
-                          const SizedBox(height: 12),
+                        if ((widget.authMessage?.isNotEmpty ?? false)) ...[
+                          const SizedBox(height: 10),
                           OutlinedButton.icon(
                             style: OutlinedButton.styleFrom(
-                              minimumSize: const Size(double.infinity, 46),
+                              minimumSize: const Size(double.infinity, 44),
                             ),
-                            onPressed: onRetry,
-                            icon: const Icon(Icons.refresh_rounded),
+                            onPressed: widget.onRetry,
+                            icon: const Icon(Icons.refresh_rounded, size: 18),
                             label: Text(
                               context.tr(
                                 '重试身份验证初始化',

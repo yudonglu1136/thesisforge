@@ -632,79 +632,74 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
               ),
             ),
             const SizedBox(width: 8),
-            Text(
-              'ThesisForge',
-              style: TextStyle(
-                color: p.text,
-                fontSize: 16.5,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.45,
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'ThesisForge',
+                  style: TextStyle(
+                    color: p.text,
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.45,
+                  ),
+                ),
               ),
             ),
             const SizedBox(width: 6),
-            Flexible(
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    key: const ValueKey('mobile-date-control'),
-                    borderRadius: BorderRadius.circular(999),
-                    onTap: showDateDialog,
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        minWidth: 44,
-                        minHeight: 44,
+            ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  key: const ValueKey('mobile-date-control'),
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: showDateDialog,
+                  child: Center(
+                    widthFactor: 1,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3.5,
                       ),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        widthFactor: 1,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3.5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusTint.withValues(alpha: .11),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(
-                              color: statusTint.withValues(alpha: .32),
-                              width: 0.8,
+                      decoration: BoxDecoration(
+                        color: statusTint.withValues(alpha: .11),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: statusTint.withValues(alpha: .32),
+                          width: 0.8,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 5.5,
+                            height: 5.5,
+                            decoration: BoxDecoration(
+                              color: statusTint,
+                              shape: BoxShape.circle,
                             ),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 5.5,
-                                height: 5.5,
-                                decoration: BoxDecoration(
-                                  color: statusTint,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: 4.5),
-                              Flexible(
-                                child: Text(
-                                  replay ? asOf.substring(5) : w('Live', '实时'),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: statusTint,
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                            ],
+                          const SizedBox(width: 4.5),
+                          Text(
+                            replay ? asOf.substring(5) : w('Live', '实时'),
+                            maxLines: 1,
+                            style: TextStyle(
+                              color: statusTint,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                        ),
+                        ],
                       ),
                     ),
                   ),
                 ),
               ),
             ),
+            const Spacer(),
             IconButton(
               key: const ValueKey('mobile-search-trigger'),
               tooltip: w('Search ticker', '搜索公司'),

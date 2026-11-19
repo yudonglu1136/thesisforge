@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:guru_analysis_terminal/browser_location.dart';
 import 'package:guru_analysis_terminal/main.dart';
 
+import 'investment_portfolio_home_test.dart' as home_fixtures;
 import 'investment_workflow_test.dart' as wf;
 
 void main() {
@@ -19,7 +20,7 @@ void main() {
   for (final device in iphoneDevices) {
     for (final language in AppLanguage.values) {
       testWidgets(
-        'LoginScreen + iOS install guide adapt cleanly on ${device.$1} ($language)',
+        'LoginScreen Zero-Redirect Email OTP + iOS install guide adapt cleanly on ${device.$1} ($language)',
         (tester) async {
           debugStandaloneDisplayModeOverride = false;
           tester.view.physicalSize = device.$2;
@@ -27,6 +28,8 @@ void main() {
           addTearDown(tester.view.resetPhysicalSize);
           addTearDown(tester.view.resetDevicePixelRatio);
 
+          String? sentOtpEmail;
+          String? verifiedCode;
           await tester.pumpWidget(
             MaterialApp(
               builder: (context, child) => MediaQuery(
@@ -41,6 +44,15 @@ void main() {
                   language: language,
                   onLanguage: (_) {},
                   onGoogle: () {},
+                  onSendOtp: (email) async {
+                    sentOtpEmail = email;
+                    return null;
+                  },
+                  onVerifyOtp: (email, code) async {
+                    sentOtpEmail = email;
+                    verifiedCode = code;
+                    return null;
+                  },
                   onLocal: () {},
                   onRetry: () {},
                 ),
@@ -49,6 +61,31 @@ void main() {
           );
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
+
+          // Verify Zero-Redirect Email OTP flow works completely in-app
+          expect(
+            find.byKey(const ValueKey('login-email-otp-card')),
+            findsOneWidget,
+          );
+          await tester.enterText(
+            find.byKey(const ValueKey('login-email-input')),
+            'trader@thesisforge.tech',
+          );
+          await tester.tap(find.byKey(const ValueKey('login-send-otp-btn')));
+          await tester.pumpAndSettle();
+          expect(sentOtpEmail, 'trader@thesisforge.tech');
+
+          expect(
+            find.byKey(const ValueKey('login-otp-code-input')),
+            findsOneWidget,
+          );
+          await tester.enterText(
+            find.byKey(const ValueKey('login-otp-code-input')),
+            '654321',
+          );
+          await tester.tap(find.byKey(const ValueKey('login-verify-otp-btn')));
+          await tester.pumpAndSettle();
+          expect(verifiedCode, '654321');
 
           final installBtn = find.byKey(
             const ValueKey('login-install-ios-app'),
@@ -97,7 +134,7 @@ void main() {
   }
 
   testWidgets(
-    'Standalone mode hides redundant browser install buttons automatically',
+    'Standalone mode hides redundant browser install action inside Account sheet',
     (tester) async {
       debugStandaloneDisplayModeOverride = true;
       tester.view.physicalSize = const Size(393, 852);
@@ -122,8 +159,16 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('mobile-account-sheet-button')),
+      );
+      await tester.pumpAndSettle();
       expect(
-        find.byKey(const ValueKey('mobile-install-app-button')),
+        find.byKey(const ValueKey('mobile-account-bottom-sheet')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('sheet-install-ios-app')),
         findsNothing,
       );
       expect(tester.takeException(), isNull);
@@ -133,7 +178,7 @@ void main() {
   for (final device in iphoneDevices) {
     for (final language in AppLanguage.values) {
       testWidgets(
-        'Workspace mobile header, >=44pt touch targets, Dynamic Island & Home Indicator SafeArea, and all tabs work on ${device.$1} ($language)',
+        'Calm 46px mobile header, Account bottom sheet, strict 5-tab bottom bar, and SafeAreas work on ${device.$1} ($language)',
         (tester) async {
           debugStandaloneDisplayModeOverride = false;
           tester.view.physicalSize = device.$2;
@@ -155,6 +200,7 @@ void main() {
                   initialPage: 'home',
                   initialTicker: '',
                   initialAsOf: '2026-06-01',
+                  userEmail: 'owner@thesisforge.tech',
                   onLanguage: (_) {},
                   onLegacy: () {},
                   onLegacyView: (_) {},
@@ -173,23 +219,25 @@ void main() {
           );
           expect(topHeaderRect.top, closeTo(device.$3.top, 0.5));
 
-          // Every top header interactive button meets >= 44x44pt Apple HIG target
+          // Calm mobile header has compact date pill + 2 circular icon buttons >= 44pt
           for (final keyName in [
-            'mobile-search-trigger',
             'mobile-date-control',
-            'mobile-install-app-button',
-            'mobile-preferences-button',
-            'mobile-language-toggle',
+            'mobile-search-trigger',
+            'mobile-account-sheet-button',
           ]) {
             final size = tester.getSize(find.byKey(ValueKey(keyName)));
             expect(size.width, greaterThanOrEqualTo(44), reason: keyName);
             expect(size.height, greaterThanOrEqualTo(44), reason: keyName);
           }
 
-          // Bottom nav bar exists, meets >= 44pt tap target, and respects bottom Home Indicator SafeArea
+          // Strictly 5 tabs in bottom nav bar (Admin moved to Account bottom sheet)
           expect(
             find.byKey(const ValueKey('ios-bottom-nav-bar')),
             findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('mobile-nav-admin')),
+            findsNothing,
           );
           for (final tabId in [
             'home',
@@ -197,7 +245,6 @@ void main() {
             'research',
             'book',
             'strategies',
-            'admin',
           ]) {
             final tabFinder = find.byKey(ValueKey('mobile-nav-$tabId'));
             expect(tabFinder, findsOneWidget);
@@ -218,10 +265,35 @@ void main() {
             expect(tester.takeException(), isNull, reason: 'tab $tabId');
           }
 
-          // Open iOS Install Guide from mobile header
+          // Open Account bottom sheet and verify Admin + Install Guide + Language + Logout live cleanly inside
           await tester.tap(
-            find.byKey(const ValueKey('mobile-install-app-button')),
+            find.byKey(const ValueKey('mobile-account-sheet-button')),
           );
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const ValueKey('mobile-account-bottom-sheet')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('sheet-language-toggle')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('sheet-date-picker')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('sheet-open-admin')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('sheet-install-ios-app')),
+            findsOneWidget,
+          );
+          expect(find.byKey(const ValueKey('sheet-logout')), findsOneWidget);
+
+          // Open iOS Install Guide from Account sheet
+          await tester.tap(find.byKey(const ValueKey('sheet-install-ios-app')));
           await tester.pumpAndSettle();
           expect(
             find.byKey(const ValueKey('ios-install-guide-dialog')),
@@ -236,6 +308,73 @@ void main() {
       );
     }
   }
+
+  testWidgets(
+    'Mobile Home on iPhone 16 Pro (393x852) places NAV Curve + 2x2 Bento Grid above the fold with thumb scrubbing',
+    (tester) async {
+      tester.view.physicalSize = const Size(393, 852);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final api = home_fixtures.HomeApi()
+        ..history = true
+        ..pnlHistory = true;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LanguageScope(
+            language: AppLanguage.zh,
+            child: Scaffold(
+              body: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 18),
+                child: PortfolioResearchPanel(
+                  api: api,
+                  palette: Palette(false),
+                  asOf: '2026-09-09',
+                  homeMode: true,
+                  onDetails: () {},
+                  onCompany: (_, _) {},
+                  onGuru: (_, _) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      final chartFinder = find.byKey(const ValueKey('actual-nav-chart'));
+      final bentoFinder = find.byKey(
+        const ValueKey('mobile-portfolio-bento-grid'),
+      );
+      expect(chartFinder, findsOneWidget);
+      expect(bentoFinder, findsOneWidget);
+
+      // Verify BOTH the interactive NAV curve AND 2x2 Bento grid sit above the 852px fold!
+      final chartRect = tester.getRect(chartFinder);
+      final bentoRect = tester.getRect(bentoFinder);
+      expect(chartRect.top, lessThan(300));
+      expect(chartRect.bottom, lessThan(470));
+      expect(bentoRect.bottom, lessThan(760));
+
+      // Verify horizontal thumb-scrubbing on mobile NAV chart works without Slider
+      expect(find.byType(Slider), findsNothing);
+      await tester.drag(chartFinder, const Offset(-140, 0));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      // Verify switching metric capsule to Realized works cleanly on mobile
+      await tester.tap(find.byKey(const ValueKey('history-metric-realized')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('realized-pnl-chart')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'iPhone SE 375x667 at 150% accessibility text scale has zero overflow',

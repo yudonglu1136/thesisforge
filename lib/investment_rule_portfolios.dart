@@ -49,38 +49,57 @@ class _StrategyWorkspacePanelState extends State<StrategyWorkspacePanel> {
   }
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          ChoiceChip(
-            key: const ValueKey('strategy-styles-tab'),
-            selected: activeTab == 'portfolio',
-            label: Text(
-              context.tr('量化策略组合', 'Strategy Portfolio'),
-            ),
-            onSelected: (_) => selectTab('portfolio'),
-          ),
-          ChoiceChip(
-            key: const ValueKey('strategy-builder-tab'),
-            selected: activeTab == 'builder',
-            label: Text(context.tr('策略构建器', 'Strategy builder')),
-            onSelected: (_) => selectTab('builder'),
-          ),
-          ChoiceChip(
-            key: const ValueKey('strategy-hedge-tab'),
-            selected: activeTab == 'hedge',
-            label: Text(
-              context.tr('QQQ 期权保护实验室', 'Options Hedge Lab'),
-            ),
-            onSelected: (_) => selectTab('hedge'),
-          ),
-        ],
+  Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < 640;
+    final tabChips = [
+      ChoiceChip(
+        key: const ValueKey('strategy-styles-tab'),
+        selected: activeTab == 'portfolio',
+        visualDensity: isMobile ? VisualDensity.compact : null,
+        label: Text(
+          context.tr('量化策略组合', 'Strategy Portfolio'),
+        ),
+        onSelected: (_) => selectTab('portfolio'),
       ),
-      const SizedBox(height: 16),
+      ChoiceChip(
+        key: const ValueKey('strategy-builder-tab'),
+        selected: activeTab == 'builder',
+        visualDensity: isMobile ? VisualDensity.compact : null,
+        label: Text(context.tr('策略构建器', 'Strategy builder')),
+        onSelected: (_) => selectTab('builder'),
+      ),
+      ChoiceChip(
+        key: const ValueKey('strategy-hedge-tab'),
+        selected: activeTab == 'hedge',
+        visualDensity: isMobile ? VisualDensity.compact : null,
+        label: Text(
+          context.tr('QQQ 期权保护实验室', 'Options Hedge Lab'),
+        ),
+        onSelected: (_) => selectTab('hedge'),
+      ),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (isMobile)
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (var i = 0; i < tabChips.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 6),
+                  tabChips[i],
+                ],
+              ],
+            ),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: tabChips,
+          ),
+        SizedBox(height: isMobile ? 12 : 16),
       // Lazy-mount secondary tabs only when selected so opening Strategy Portfolio never triggers unnecessary API calls.
       if (builderOpened)
         Offstage(
@@ -110,8 +129,9 @@ class _StrategyWorkspacePanelState extends State<StrategyWorkspacePanel> {
             onCompany: widget.onCompany,
           ),
         ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 class InvestorStylesDashboard extends StatefulWidget {

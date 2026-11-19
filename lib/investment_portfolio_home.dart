@@ -138,9 +138,27 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
     final stocks = asList(
       g['positions'],
     ).where((r) => r['kind'] == 'equity').toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+    return LayoutBuilder(
+      builder: (_, outerConstraints) {
+        if (outerConstraints.maxWidth > 0 && outerConstraints.maxWidth < 600) {
+          return _mobilePersonalHome(
+            groups: groups,
+            g: g,
+            h: h,
+            daily: daily,
+            history: history,
+            realized: realized,
+            latestEstimate: latestEstimate,
+            navRows: navRows,
+            navRatio: navRatio,
+            sessionBasis: sessionBasis,
+            realizedBasis: realizedBasis,
+            stocks: stocks,
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
         LayoutBuilder(
           builder: (_, c) {
             final heading = Column(
@@ -513,12 +531,507 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
         ],
       ],
     );
+      },
+    );
   }
 
   bool _hasPassiveIncomeContent(Map<String, dynamic> h) {
     final passive = asMap(h['passiveIncome']);
     if (passive['status'] == 'ready') return true;
     return asList(asMap(passive['pendingShortCalls'])['rows']).isNotEmpty;
+  }
+
+  void _showMobilePnlFootnoteSheet(Map<String, dynamic> g) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0E131B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2E3A4B),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                w('P&L Accounting & Cash Note', '盈亏口径与资金流说明'),
+                style: heading(16),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                w(
+                  'Estimated P&L adjusts reported NAV changes for cash deposits and withdrawals. Security transfers are not reconciled. Cash / borrowing balance: ${amount(g['cash'])}.',
+                  '盈亏估算已从净值变化中扣除券商报告的现金转入转出；跨券商证券转仓尚未核对。当前现金 / 融资余额：${amount(g['cash'])}。',
+                ),
+                style: TextStyle(color: p.muted, fontSize: 13, height: 1.5),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _mobileBentoTile({
+    required String labelText,
+    required String valueText,
+    required String subText,
+    Color? valueColor,
+  }) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    decoration: BoxDecoration(
+      color: const Color(0xFF0E131B),
+      borderRadius: BorderRadius.circular(11),
+      border: Border.all(color: const Color(0xFF1E2735), width: 0.8),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          labelText,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: p.muted,
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          valueText,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: valueColor ?? p.text,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.3,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          subText,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: p.muted.withValues(alpha: .82),
+            fontSize: 10.5,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _mobilePersonalHome({
+    required List<Map<String, dynamic>> groups,
+    required Map<String, dynamic> g,
+    required Map<String, dynamic> h,
+    required Map<String, dynamic> daily,
+    required Map<String, dynamic> history,
+    required Map<String, dynamic> realized,
+    required Map<String, dynamic>? latestEstimate,
+    required List<Map<String, dynamic>> navRows,
+    required double? navRatio,
+    required double? sessionBasis,
+    required double? realizedBasis,
+    required List<Map<String, dynamic>> stocks,
+  }) {
+    final sessionRaw = daily['status'] == 'ready'
+        ? daily['pnl']
+        : latestEstimate?['pnl'];
+    final sessionNum = nullableNumber(sessionRaw);
+    final sessionColor = sessionNum == null
+        ? p.muted
+        : sessionNum < 0
+        ? p.negative
+        : p.accent;
+    final sessionDisplay = hideAmounts
+        ? portfolioRateLabel(portfolioRatio(sessionRaw, sessionBasis))
+        : sessionNum == null
+        ? '—'
+        : '${sessionNum > 0 ? '+' : ''}${amount(sessionRaw)}';
+
+    final realizedReady = realized['status'] == 'ready';
+    final realizedNum = nullableNumber(realized['total']);
+    final realizedDisplay = hideAmounts
+        ? portfolioRateLabel(
+            portfolioRatio(
+              realizedReady ? realized['total'] : g['cash'],
+              realizedReady ? realizedBasis : h['accountValue'],
+            ),
+          )
+        : realizedReady && realizedNum != null
+        ? '${realizedNum > 0 ? '+' : ''}${amount(realized['total'])}'
+        : amount(g['cash']);
+
+    final totalHoldingsCount = asList(
+      g['positions'],
+    ).where((r) => !['cash', 'accrual'].contains(r['kind'])).length;
+    final otherHoldingsCount = asList(
+      g['positions'],
+    ).where((r) => r['kind'] == 'other').length;
+
+    final syncDisabled =
+        loading ||
+        portfolioSyncing ||
+        (groups.isEmpty && asMap(data?['connection'])['configured'] != true) ||
+        data?['status'] == 'preview_account' ||
+        data?['source'] == 'local_owner_broker_snapshot';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (portfolioActionError != null || portfolioActionMessage != null) ...[
+          portfolioSyncNotice(),
+          const SizedBox(height: 10),
+        ],
+        if (loading)
+          panel([
+            const LinearProgressIndicator(minHeight: 2),
+            const SizedBox(height: 12),
+            copy('Reading your connected portfolio…', '正在读取你的真实组合…'),
+          ])
+        else if (failed)
+          panel([
+            title('Could not read your portfolio', '暂时无法读取你的组合', 17),
+            const SizedBox(height: 8),
+            copy(
+              'Your holdings are unchanged. No sample portfolio has been substituted.',
+              '原始持仓没有改变，也没有使用示例数据替代。',
+            ),
+            TextButton(onPressed: load, child: Text(w('Try again', '重试'))),
+          ])
+        else if (groups.isEmpty) ...[
+          if (widget.homeMode &&
+              asMap(data?['connection'])['configured'] != true) ...[
+            homeQuickstartLaunchpad(),
+            const SizedBox(height: 14),
+          ],
+          emptyState(),
+        ] else ...[
+          // 1. Frameless iOS Portfolio Hero (Apple Stocks / Robinhood Gold grade)
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${w('NET LIQ · ${g['accountCount']} ACCTS', '总资产净值 · ${g['accountCount']} 账户')} · ${text(h['reportDate'], '').length >= 10 ? text(h['reportDate']).substring(5) : text(h['reportDate'])}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: p.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: context.isChinese ? 0.2 : 0.4,
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('mobile-privacy-toggle'),
+                tooltip: hideAmounts
+                    ? w('Show amounts', '显示金额')
+                    : w('Hide amounts', '隐藏金额'),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                onPressed: () =>
+                    portfolioPrivacyMode.value = !portfolioPrivacyMode.value,
+                icon: Icon(
+                  hideAmounts
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                  size: 17,
+                  color: p.muted,
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('home-sync-now'),
+                tooltip: w('Sync IBKR now', '立即同步 IBKR'),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                onPressed: syncDisabled ? null : syncConnectedPortfolio,
+                icon: portfolioSyncing
+                    ? const SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(Icons.cloud_sync_outlined, size: 18, color: p.accent),
+              ),
+              IconButton(
+                key: const ValueKey('home-manage-ibkr'),
+                tooltip: w('Manage IBKR', '管理 IBKR 连接'),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                onPressed:
+                    data?['status'] == 'preview_account' ||
+                        data?['source'] == 'local_owner_broker_snapshot'
+                    ? null
+                    : managePortfolioConnection,
+                icon: Icon(Icons.link_rounded, size: 18, color: p.muted),
+              ),
+              InkWell(
+                key: const ValueKey('home-full-analysis'),
+                borderRadius: BorderRadius.circular(999),
+                onTap: widget.onDetails,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 6,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        w('Analyze', '深度分析'),
+                        style: TextStyle(
+                          color: p.accent,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        size: 15,
+                        color: p.accent,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          if (groups.length > 1) ...[
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final currency in groups)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6, bottom: 6),
+                      child: ChoiceChip(
+                        visualDensity: VisualDensity.compact,
+                        label: Text(text(currency['currency'], '—')),
+                        selected: identical(currency, g),
+                        onSelected: (_) => homeUpdate(
+                          () => selectedCurrency = text(currency['currency']),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              hideAmounts
+                  ? portfolioRateLabel(navRatio == null ? null : navRatio - 1)
+                  : amount(h['accountValue']),
+              style: TextStyle(
+                color: p.text,
+                fontSize: 32,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.9,
+                height: 1.12,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
+                  color: sessionColor.withValues(alpha: .13),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '${daily['status'] == 'ready' ? w('Day', '当日') : w('Latest', '最近')} $sessionDisplay',
+                  style: TextStyle(
+                    color: sessionColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+              if (realizedReady)
+                Text(
+                  '${w('Realized', '已实现')} $realizedDisplay',
+                  style: TextStyle(
+                    color: (realizedNum ?? 0) >= 0 ? p.accent : p.negative,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              if (latestEstimate != null)
+                InkWell(
+                  key: const ValueKey('mobile-pnl-footnote-info'),
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: () => _showMobilePnlFootnoteSheet(g),
+                  child: Padding(
+                    padding: const EdgeInsets.all(3),
+                    child: Icon(
+                      Icons.info_outline_rounded,
+                      size: 15,
+                      color: p.muted,
+                    ),
+                  ),
+                ),
+              if (daily['status'] != 'ready' || navRows.length < 2)
+                InkWell(
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: homeHistoryHelp,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 2,
+                    ),
+                    child: Text(
+                      w('Set up account history', '设置账户历史数据'),
+                      style: TextStyle(
+                        color: p.accent,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // 2. Above-the-Fold 264-Day Interactive NAV Curve
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0D1117),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFF1D2633), width: 0.8),
+            ),
+            child: PortfolioAccountValueChart(
+              key: ValueKey('account-nav-$selectedCurrency'),
+              rows: asList(asMap(h['nav'])['rows']),
+              history: history,
+              currency: selectedCurrency,
+              palette: p,
+              hideAmounts: hideAmounts,
+              chartHeight: 166,
+              compactMobile: true,
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // 3. Sleek 2x2 Compact Bento Grid
+          LayoutBuilder(
+            key: const ValueKey('mobile-portfolio-bento-grid'),
+            builder: (_, bc) {
+              final tileWidth = (bc.maxWidth - 8) / 2;
+              return Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  SizedBox(
+                    width: tileWidth,
+                    child: _mobileBentoTile(
+                      labelText: daily['status'] == 'ready'
+                          ? w('Session P&L', '当日持仓盈亏')
+                          : w('Latest P&L Est.', '最近盈亏估算'),
+                      valueText: sessionDisplay,
+                      subText: daily['status'] == 'ready'
+                          ? text(daily['date'], '—')
+                          : latestEstimate != null
+                          ? '${text(latestEstimate['previousDate']).length >= 10 ? text(latestEstimate['previousDate']).substring(5) : text(latestEstimate['previousDate'])} → ${text(latestEstimate['date']).length >= 10 ? text(latestEstimate['date']).substring(5) : text(latestEstimate['date'])}'
+                          : w('No daily MTM', '待报告更新'),
+                      valueColor: sessionColor,
+                    ),
+                  ),
+                  SizedBox(
+                    width: tileWidth,
+                    child: _mobileBentoTile(
+                      labelText: realizedReady
+                          ? w('Realized P&L (FIFO)', '已实现盈亏 (FIFO)')
+                          : w('Cash Balance', '现金余额'),
+                      valueText: realizedDisplay,
+                      subText: realizedReady
+                          ? '${text(realized['fromDate']).length >= 10 ? text(realized['fromDate']).substring(2) : text(realized['fromDate'])} → ${text(realized['toDate']).length >= 10 ? text(realized['toDate']).substring(2) : text(realized['toDate'])}'
+                          : w('Broker report', '券商报告'),
+                      valueColor: realizedReady && realizedNum != null
+                          ? (realizedNum < 0 ? p.negative : p.accent)
+                          : p.text,
+                    ),
+                  ),
+                  SizedBox(
+                    width: tileWidth,
+                    child: _mobileBentoTile(
+                      labelText: number(g['cash']) < 0
+                          ? w('Cash / Margin', '现金与融资')
+                          : w('Settled Cash', '账户现金'),
+                      valueText: hideAmounts ? '••••' : amount(g['cash']),
+                      subText: number(g['cash']) < 0
+                          ? w('Margin debit active', '含证券融资负债')
+                          : w('Base currency', '清算本币余额'),
+                    ),
+                  ),
+                  SizedBox(
+                    width: tileWidth,
+                    child: _mobileBentoTile(
+                      labelText: w('Active Positions', '持仓标的'),
+                      valueText: '$totalHoldingsCount',
+                      subText:
+                          '${stocks.length} ${w('equities', '股票')} · $otherHoldingsCount ${w('other', '其他')}',
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+
+          // 4. High-Density Apple-Stocks Style Holdings List (Right Below Bento!)
+          homeHoldings(g),
+          const SizedBox(height: 12),
+          homeAllocationOverview(g),
+          if (_hasPassiveIncomeContent(h)) ...[
+            const SizedBox(height: 12),
+            PortfolioPassiveIncomeCard(
+              passiveIncome: asMap(h['passiveIncome']),
+              currency: selectedCurrency,
+              palette: p,
+              hideAmounts: hideAmounts,
+              onCompany: widget.onCompany,
+            ),
+          ],
+          const SizedBox(height: 12),
+          homeMovers(h, asList(g['positions'])),
+        ],
+      ],
+    );
   }
 
   Widget homeHeroOverview(
@@ -1622,6 +2135,7 @@ class PortfolioAccountValueChart extends StatefulWidget {
     this.history = const {},
     this.hideAmounts = false,
     this.chartHeight = 280,
+    this.compactMobile = false,
   });
   final List<Map<String, dynamic>> rows;
   final String currency;
@@ -1629,6 +2143,7 @@ class PortfolioAccountValueChart extends StatefulWidget {
   final Map<String, dynamic> history;
   final bool hideAmounts;
   final double chartHeight;
+  final bool compactMobile;
   @override
   State<PortfolioAccountValueChart> createState() =>
       _PortfolioAccountValueChartState();
@@ -1764,6 +2279,259 @@ class _PortfolioAccountValueChartState
       (r) => nullableNumber(r['nav']) != null,
     );
     final cursor = (hover ?? rows.length - 1).clamp(0, rows.length - 1);
+    if (widget.compactMobile) {
+      final cursorValue = widget.hideAmounts
+          ? portfolioRateLabel(displayRows[cursor]['nav'])
+          : '${widget.currency} ${formatNumber(number(rows[cursor]['nav']))}';
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              if (widget.history.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0A0D12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: p.border),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final mode in ['nav', 'realized', 'cashAdjusted'])
+                        Builder(
+                          builder: (_) {
+                            final disabled =
+                                mode != 'nav' &&
+                                asList(
+                                      asMap(widget.history[mode])['rows'],
+                                    ).length <
+                                    2;
+                            final active = metric == mode;
+                            return GestureDetector(
+                              key: ValueKey('history-metric-$mode'),
+                              behavior: HitTestBehavior.opaque,
+                              onTap: disabled
+                                  ? null
+                                  : () => setState(() {
+                                      metric = mode;
+                                      hover = null;
+                                    }),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: active
+                                      ? p.card
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  mode == 'nav'
+                                      ? w('NAV', '净值')
+                                      : mode == 'realized'
+                                      ? w('Realized', '已实现')
+                                      : w('Est.', '估算'),
+                                  style: TextStyle(
+                                    color: disabled
+                                        ? p.muted.withValues(alpha: .42)
+                                        : active
+                                        ? p.text
+                                        : p.muted,
+                                    fontSize: 11,
+                                    fontWeight: active
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+              Text(
+                '${rows[cursor]['date']} · $cursorValue',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: number(displayRows[cursor]['nav']) < 0
+                      ? p.negative
+                      : p.accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (!rateAvailable)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Text(
+                w(
+                  'Rate unavailable — a positive starting account value is required.',
+                  '变化率暂不可用：需要正数的起始账户净值。',
+                ),
+                style: TextStyle(color: p.secondary, fontSize: 12),
+              ),
+            )
+          else if (rows.length > 1)
+            SizedBox(
+              key: ValueKey(
+                metric == 'nav' ? 'actual-nav-chart' : '$metric-pnl-chart',
+              ),
+              height: widget.chartHeight,
+              child: LayoutBuilder(
+                builder: (_, constraints) {
+                  void inspect(double dx) {
+                    const leftGutter = 46.0;
+                    final fraction =
+                        ((dx - leftGutter) /
+                                (constraints.maxWidth - leftGutter - 8))
+                            .clamp(0.0, 1.0);
+                    final startMs = DateTime.parse(
+                      text(rows.first['date']),
+                    ).millisecondsSinceEpoch;
+                    final endMs = DateTime.parse(
+                      text(rows.last['date']),
+                    ).millisecondsSinceEpoch;
+                    final target = startMs + fraction * (endMs - startMs);
+                    var nearest = 0;
+                    for (var i = 1; i < rows.length; i++) {
+                      if ((DateTime.parse(
+                                    text(rows[i]['date']),
+                                  ).millisecondsSinceEpoch -
+                                  target)
+                              .abs() <
+                          (DateTime.parse(
+                                    text(rows[nearest]['date']),
+                                  ).millisecondsSinceEpoch -
+                                  target)
+                              .abs()) {
+                        nearest = i;
+                      }
+                    }
+                    if (hover != nearest) setState(() => hover = nearest);
+                  }
+
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (e) => inspect(e.localPosition.dx),
+                    onHorizontalDragStart: (e) => inspect(e.localPosition.dx),
+                    onHorizontalDragUpdate: (e) => inspect(e.localPosition.dx),
+                    child: CustomPaint(
+                      painter: _AccountNavPainter(
+                        displayRows,
+                        p,
+                        cursor,
+                        includeZero: widget.hideAmounts || metric != 'nav',
+                        percentage: widget.hideAmounts,
+                        compactMobile: true,
+                      ),
+                      size: Size.infinite,
+                    ),
+                  );
+                },
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Text(
+                w(
+                  'Only one observation in this range. Select a longer period.',
+                  '此区间只有一条记录，请选择更长区间。',
+                ),
+                style: TextStyle(color: p.muted, fontSize: 12),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(2.5),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0A0D12),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: p.border),
+            ),
+            child: Row(
+              children: [
+                for (final r in ['1M', '3M', 'YTD', '1Y', 'All'])
+                  Expanded(
+                    child: GestureDetector(
+                      key: ValueKey('history-range-$r'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => setState(() {
+                        range = r;
+                        hover = null;
+                      }),
+                      child: Container(
+                        height: 28,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: range == r
+                              ? p.accent.withValues(alpha: .16)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Text(
+                          r == 'All' ? w('All', '全部') : r,
+                          style: TextStyle(
+                            color: range == r ? p.accent : p.muted,
+                            fontSize: 11.5,
+                            fontWeight: range == r
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            spacing: 8,
+            runSpacing: 2,
+            children: [
+              Text(
+                '${rows.first['date']} → ${rows.last['date']}',
+                style: TextStyle(
+                  color: p.muted,
+                  fontSize: 10.5,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+              Text(
+                '${rows.length} ${metric == 'nav' ? w('pts · drag chart', '日净值 · 滑动查日') : w('obs · drag chart', '条记录 · 滑动查日')}',
+                style: TextStyle(color: p.muted, fontSize: 10.5),
+              ),
+            ],
+          ),
+          if (metric == 'cashAdjusted') ...[
+            const SizedBox(height: 4),
+            Text(
+              w(
+                'Estimate · Security transfers are not reconciled.',
+                '估算 · 证券转仓未核对。',
+              ),
+              style: TextStyle(color: p.secondary, fontSize: 10.5),
+            ),
+          ],
+        ],
+      );
+    }
     final measures = Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -2061,12 +2829,14 @@ class _AccountNavPainter extends CustomPainter {
     this.cursor, {
     this.includeZero = false,
     this.percentage = false,
+    this.compactMobile = false,
   });
   final List<Map<String, dynamic>> rows;
   final Palette p;
   final int cursor;
   final bool includeZero;
   final bool percentage;
+  final bool compactMobile;
   @override
   void paint(Canvas canvas, Size size) {
     final values = rows.map((r) => number(r['nav'])).toList();
@@ -2087,13 +2857,21 @@ class _AccountNavPainter extends CustomPainter {
               DateTime.parse(text(r['date'])).millisecondsSinceEpoch.toDouble(),
         )
         .toList();
-    final rect = Rect.fromLTRB(64, 16, size.width - 12, size.height - 30);
+    final leftGutter = compactMobile ? 46.0 : 64.0;
+    final bottomGutter = compactMobile ? 22.0 : 30.0;
+    final rect = Rect.fromLTRB(
+      leftGutter,
+      compactMobile ? 10 : 16,
+      size.width - (compactMobile ? 8 : 12),
+      size.height - bottomGutter,
+    );
     double x(int i) =>
         rect.left +
         (times[i] - times.first) / (times.last - times.first) * rect.width;
     double y(double v) => rect.bottom - (v - min) / (max - min) * rect.height;
-    for (var i = 0; i < 4; i++) {
-      final value = min + (max - min) * i / 3;
+    final gridCount = compactMobile ? 3 : 4;
+    for (var i = 0; i < gridCount; i++) {
+      final value = min + (max - min) * i / (gridCount - 1);
       canvas.drawLine(
         Offset(rect.left, y(value)),
         Offset(rect.right, y(value)),
@@ -2106,14 +2884,14 @@ class _AccountNavPainter extends CustomPainter {
           text: percentage
               ? '${(value * 100).toStringAsFixed(1)}%'
               : value.abs() >= 1000000
-              ? '${(value / 1000000).toStringAsFixed(2)}M'
+              ? '${(value / 1000000).toStringAsFixed(compactMobile ? 1 : 2)}M'
               : value.abs() >= 1000
-              ? '${(value / 1000).toStringAsFixed(1)}K'
+              ? '${(value / 1000).toStringAsFixed(compactMobile ? 0 : 1)}K'
               : value.toStringAsFixed(0),
-          style: TextStyle(color: p.muted, fontSize: 11),
+          style: TextStyle(color: p.muted, fontSize: compactMobile ? 10 : 11),
         ),
         textDirection: TextDirection.ltr,
-      )..layout(maxWidth: 60);
+      )..layout(maxWidth: leftGutter - 4);
       label.paint(canvas, Offset(0, y(value) - 6));
     }
     final path = Path()..moveTo(x(0), y(values[0]));
@@ -2124,9 +2902,22 @@ class _AccountNavPainter extends CustomPainter {
       ..lineTo(x(values.length - 1), rect.bottom)
       ..lineTo(x(0), rect.bottom)
       ..close();
-    canvas.drawPath(fill, Paint()..color = p.accent.withValues(alpha: .055));
-    for (var step = 0; step < 4; step++) {
-      final time = times.first + (times.last - times.first) * step / 3;
+    canvas.drawPath(
+      fill,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            p.accent.withValues(alpha: compactMobile ? .18 : .08),
+            p.accent.withValues(alpha: 0),
+          ],
+        ).createShader(rect),
+    );
+    final tickSteps = compactMobile ? 3 : 4;
+    for (var step = 0; step < tickSteps; step++) {
+      final time =
+          times.first + (times.last - times.first) * step / (tickSteps - 1);
       final date = DateTime.fromMillisecondsSinceEpoch(time.round());
       final tick = TextPainter(
         text: TextSpan(
@@ -2135,16 +2926,16 @@ class _AccountNavPainter extends CustomPainter {
                   const Duration(days: 120).inMilliseconds
               ? '${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}'
               : '${date.year}-${date.month.toString().padLeft(2, '0')}',
-          style: TextStyle(color: p.muted, fontSize: 10),
+          style: TextStyle(color: p.muted, fontSize: compactMobile ? 9.5 : 10),
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      final dx = rect.left + rect.width * step / 3;
+      final dx = rect.left + rect.width * step / (tickSteps - 1);
       tick.paint(
         canvas,
         Offset(
           (dx - tick.width / 2).clamp(rect.left, rect.right - tick.width),
-          rect.bottom + 12,
+          rect.bottom + (compactMobile ? 6 : 12),
         ),
       );
     }

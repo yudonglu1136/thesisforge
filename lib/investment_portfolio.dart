@@ -416,7 +416,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
     style: TextStyle(color: color ?? p.muted, fontSize: size, height: 1.5),
   );
   Widget panel(List<Widget> children) => Container(
-    padding: const EdgeInsets.all(20),
+    padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 640 ? 14 : 20),
     decoration: BoxDecoration(
       color: p.panel,
       borderRadius: BorderRadius.circular(14),
@@ -466,6 +466,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
             .firstOrNull ??
         {};
     if (widget.homeMode) return personalHome(groups, group);
+    final isMobile = MediaQuery.sizeOf(context).width < 640;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -478,17 +479,17 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
                   'PORTFOLIO / YOUR INVESTMENT DESK',
                   '组合 / 你的投资工作台',
                   color: p.accent,
-                  size: 12,
+                  size: isMobile ? 10.5 : 12,
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: isMobile ? 4 : 8),
                 title(
                   'Your portfolio. The whole picture.',
                   '从单只股票，看到整个组合。',
-                  30,
+                  isMobile ? 22 : 30,
                 ),
               ],
             );
-            if (widget.cutoffControl == null) return heading;
+            if (widget.cutoffControl == null || isMobile) return heading;
             if (constraints.maxWidth >= 780 &&
                 MediaQuery.textScalerOf(context).scale(1) <= 1.2) {
               return Row(
@@ -513,24 +514,25 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
             );
           },
         ),
-        const SizedBox(height: 14),
+        SizedBox(height: isMobile ? 10 : 14),
         Wrap(
-          spacing: 10,
+          spacing: isMobile ? 8 : 10,
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            tag(
-              data?['source'] == 'local_owner_broker_snapshot'
-                  ? 'Your IBKR report · local read-only copy'
-                  : groups.isEmpty
-                  ? 'Account data · read only'
-                  : 'Broker reports · read only',
-              data?['source'] == 'local_owner_broker_snapshot'
-                  ? '你的 IBKR 报告 · 本地只读副本'
-                  : groups.isEmpty
-                  ? '账户数据 · 只读'
-                  : '券商报告 · 只读',
-            ),
+            if (!isMobile)
+              tag(
+                data?['source'] == 'local_owner_broker_snapshot'
+                    ? 'Your IBKR report · local read-only copy'
+                    : groups.isEmpty
+                    ? 'Account data · read only'
+                    : 'Broker reports · read only',
+                data?['source'] == 'local_owner_broker_snapshot'
+                    ? '你的 IBKR 报告 · 本地只读副本'
+                    : groups.isEmpty
+                    ? '账户数据 · 只读'
+                    : '券商报告 · 只读',
+              ),
             OutlinedButton.icon(
               onPressed:
                   data?['status'] == 'preview_account' ||
@@ -576,22 +578,23 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
               onPressed: loading ? null : load,
               icon: Icon(Icons.refresh_rounded, color: p.accent),
             ),
-            for (final provider in ['questrade', 'futu'])
-              OutlinedButton(
-                onPressed: () => showDialog<void>(
-                  context: context,
-                  builder: (_) => PortfolioReadOnlyBroker(
-                    api: widget.api,
-                    palette: p,
-                    provider: provider,
+            if (!isMobile)
+              for (final provider in ['questrade', 'futu'])
+                OutlinedButton(
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => PortfolioReadOnlyBroker(
+                      api: widget.api,
+                      palette: p,
+                      provider: provider,
+                    ),
+                  ),
+                  child: Text(
+                    provider == 'questrade'
+                        ? 'Questrade'
+                        : w('Futu / moomoo', '富途 / moomoo'),
                   ),
                 ),
-                child: Text(
-                  provider == 'questrade'
-                      ? 'Questrade'
-                      : w('Futu / moomoo', '富途 / moomoo'),
-                ),
-              ),
             privacyToggle(),
           ],
         ),
@@ -688,25 +691,50 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
             ),
           ),
           const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final t in [
-                ('overview', 'Overview', '组合总览'),
-                ('holdings', 'Holdings & value', '持仓与估值'),
-                ('stress', 'Valuation & stress', '估值与压力测试'),
-                ('risk', 'Risk & SPY', '风险与 SPY'),
-                ('gurus', 'Compare with Gurus', '对比大师'),
-              ])
-                ChoiceChip(
-                  key: ValueKey('portfolio-tab-${t.$1}'),
-                  label: Text(w(t.$2, t.$3)),
-                  selected: tab == t.$1,
-                  onSelected: (_) => setState(() => tab = t.$1),
-                ),
-            ],
-          ),
+          if (isMobile)
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final t in [
+                    ('overview', 'Overview', '组合总览'),
+                    ('holdings', 'Holdings & value', '持仓与估值'),
+                    ('stress', 'Valuation & stress', '估值与压测'),
+                    ('risk', 'Risk & SPY', '风险与 SPY'),
+                    ('gurus', 'Compare with Gurus', '对比大师'),
+                  ]) ...[
+                    ChoiceChip(
+                      key: ValueKey('portfolio-tab-${t.$1}'),
+                      label: Text(w(t.$2, t.$3)),
+                      selected: tab == t.$1,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) => setState(() => tab = t.$1),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                ],
+              ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final t in [
+                  ('overview', 'Overview', '组合总览'),
+                  ('holdings', 'Holdings & value', '持仓与估值'),
+                  ('stress', 'Valuation & stress', '估值与压力测试'),
+                  ('risk', 'Risk & SPY', '风险与 SPY'),
+                  ('gurus', 'Compare with Gurus', '对比大师'),
+                ])
+                  ChoiceChip(
+                    key: ValueKey('portfolio-tab-${t.$1}'),
+                    label: Text(w(t.$2, t.$3)),
+                    selected: tab == t.$1,
+                    onSelected: (_) => setState(() => tab = t.$1),
+                  ),
+              ],
+            ),
           const SizedBox(height: 16),
           if (detailsLoading) ...[
             LinearProgressIndicator(

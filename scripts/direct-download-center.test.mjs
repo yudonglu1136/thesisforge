@@ -21,9 +21,10 @@ test('iPhone .mobileconfig file passes Apple plutil validation and launches Thes
   assert.match(xml, /<string>com\.apple\.webClip\.managed<\/string>/);
   assert.doesNotMatch(xml, /com\.apple\.webclip\.managed/);
   assert.match(xml, /<key>FullScreen<\/key>\s*<true\/>/);
+  assert.match(xml, /<key>IgnoreManifestScope<\/key>\s*<true\/>/);
   assert.match(xml, /<key>Precomposed<\/key>\s*<true\/>/);
   assert.match(xml, /<key>IsRemovable<\/key>\s*<true\/>/);
-  assert.match(xml, /https:\/\/www\.thesisforge\.tech\/\?launch=ios_webclip/);
+  assert.match(xml, /https:\/\/(?:www\.)?thesisforge\.tech\/\?launch=ios_webclip/);
   assert.match(xml, /<string>ThesisForge<\/string>/);
   assert.doesNotMatch(xml, /guru\s*intel+igence/i);
 });
