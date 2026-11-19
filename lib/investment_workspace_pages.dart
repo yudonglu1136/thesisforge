@@ -103,6 +103,16 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
     if (mounted) widget.onLogout?.call();
   }
 
+  Future<void> requestSwitchAccount() async {
+    if (page == 'research' && !await allowLeaveDraft()) return;
+    if (!mounted) return;
+    if (widget.onSwitchAccount != null) {
+      widget.onSwitchAccount!();
+    } else {
+      widget.onLogout?.call();
+    }
+  }
+
   void selectSection(String next) {
     final target = next == 'value' ? 'evidence' : next;
     updateUI(() => section = target);

@@ -1311,13 +1311,14 @@ class AuthGate extends StatefulWidget {
   State<AuthGate> createState() => _AuthGateState();
 }
 
-class _AuthGateState extends State<AuthGate> {
+class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   bool _loading = true;
   bool _localWorkspace = !_authConfigured && _authDevBypass == 'true';
   String? _authMessageZh;
   String? _authMessageEn;
   Session? _session;
   StreamSubscription<AuthState>? _authSub;
+  StreamSubscription<dynamic>? _storageSub;
   String? _syncedPreferenceOwner;
   late final String? _returnTo = retiredModuleReturnPath(
     readBrowserQuery()['returnTo'],
@@ -1327,7 +1328,11 @@ class _AuthGateState extends State<AuthGate> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.onRegisterLanguageSaver?.call(_persistAccountLanguage);
+    _storageSub = listenBrowserAuthStorageChanges(
+      _syncSessionFromBrowserStorage,
+    );
     _bootstrap();
     if (_localWorkspace) {
       unawaited(
@@ -1337,6 +1342,53 @@ class _AuthGateState extends State<AuthGate> {
         ),
       );
     }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _syncSessionFromBrowserStorage();
+    }
+  }
+
+  void _syncSessionFromBrowserStorage() {
+    if (!mounted || !_authConfigured || !_supabaseReady) return;
+    final latest = Supabase.instance.client.auth.currentSession;
+    final prevUserId = _session?.user.id;
+    final nextUserId = latest?.user.id;
+    final prevEmail = _session?.user.email?.trim().toLowerCase();
+    final nextEmail = latest?.user.email?.trim().toLowerCase();
+    if (prevUserId == nextUserId &&
+        prevEmail == nextEmail &&
+        (_session == null) == (latest == null)) {
+      return;
+    }
+    setState(() {
+      _session = latest;
+      if (latest == null) {
+        _syncedPreferenceOwner = null;
+      }
+    });
+    if (latest != null) {
+      final api = ApiClient(() => latest.accessToken);
+      unawaited(recordAuthenticatedVisit(api));
+      unawaited(
+        _syncUserLanguagePreferences(
+          api,
+          ownerKey: latest.user.id,
+          userMetadata: latest.user.userMetadata,
+        ),
+      );
+    }
+  }
+
+  Future<void> _clearClientSessionAndStorage() async {
+    if (_authConfigured && _supabaseReady) {
+      try {
+        await Supabase.instance.client.auth.signOut(scope: SignOutScope.local);
+      } catch (_) {}
+    }
+    purgeBrowserAuthPersistence();
   }
 
   String? _activeAccessToken() =>
@@ -1414,9 +1466,16 @@ class _AuthGateState extends State<AuthGate> {
       _authSub = client.auth.onAuthStateChange.listen(
         (event) {
           if (!mounted) return;
-          setState(() => _session = event.session);
+          setState(() {
+            _session = event.session;
+            if (event.session != null) {
+              _authMessageZh = null;
+              _authMessageEn = null;
+            }
+          });
           if (event.event == AuthChangeEvent.signedIn &&
               event.session != null) {
+            stripBrowserAuthCallbackParams();
             final api = ApiClient(() => event.session!.accessToken);
             unawaited(recordAuthenticatedVisit(api));
             unawaited(
@@ -1462,6 +1521,7 @@ class _AuthGateState extends State<AuthGate> {
       }
       final session = _session;
       if (session != null) {
+        stripBrowserAuthCallbackParams();
         final api = ApiClient(() => session.accessToken);
         unawaited(recordAuthenticatedVisit(api));
         unawaited(
@@ -1493,7 +1553,9 @@ class _AuthGateState extends State<AuthGate> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.onRegisterLanguageSaver?.call(null);
+    _storageSub?.cancel();
     _authSub?.cancel();
     super.dispose();
   }
@@ -1509,10 +1571,25 @@ class _AuthGateState extends State<AuthGate> {
       });
       return;
     }
+    // Always wipe any cached local session before starting a Google OAuth flow
+    // and force Google's account chooser (`prompt=select_account`) so Chrome /
+    // Safari never silently bounces back into the previous Google account.
+    await _clearClientSessionAndStorage();
+    if (mounted) {
+      setState(() {
+        _session = null;
+        _localWorkspace = false;
+        _syncedPreferenceOwner = null;
+      });
+    }
     final base = Uri.base;
     final nextQuery = Map<String, String>.from(base.queryParameters);
     nextQuery.remove('launch');
     nextQuery.remove('cache-migration');
+    nextQuery.remove('code');
+    nextQuery.remove('error');
+    nextQuery.remove('error_description');
+    nextQuery.remove('state');
     nextQuery['lang'] = appLanguageCode(widget.language);
     final redirectTo = base
         .replace(queryParameters: nextQuery, fragment: '')
@@ -1520,6 +1597,7 @@ class _AuthGateState extends State<AuthGate> {
     await Supabase.instance.client.auth.signInWithOAuth(
       OAuthProvider.google,
       redirectTo: redirectTo,
+      queryParams: const {'prompt': 'select_account'},
     );
   }
 
@@ -1572,13 +1650,22 @@ class _AuthGateState extends State<AuthGate> {
       );
     }
     try {
+      final currentEmail = _session?.user.email?.trim().toLowerCase();
+      if (currentEmail != null && currentEmail != email.toLowerCase()) {
+        await _clearClientSessionAndStorage();
+      }
       final res = await Supabase.instance.client.auth.verifyOTP(
         email: email,
         token: code,
         type: OtpType.email,
       );
+      stripBrowserAuthCallbackParams();
       if (res.session != null && mounted) {
-        setState(() => _session = res.session);
+        setState(() {
+          _session = res.session;
+          _authMessageZh = null;
+          _authMessageEn = null;
+        });
       }
       return null;
     } catch (_) {
@@ -1591,15 +1678,26 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   Future<void> _logout() async {
-    if (_authConfigured) {
-      await Supabase.instance.client.auth.signOut();
-    }
+    final previousEmail = _session?.user.email?.trim() ?? '';
+    await _clearClientSessionAndStorage();
     if (!mounted) return;
     setState(() {
       _localWorkspace = false;
       _session = null;
       _syncedPreferenceOwner = null;
+      if (previousEmail.isNotEmpty) {
+        _setAuthMessage(
+          '已退出 $previousEmail（本地会话已彻底清除），请选择其他 Google 账号或输入新邮箱登录。',
+          'Signed out of $previousEmail (local session cleared). Choose another Google account or sign in via email.',
+        );
+      }
     });
+  }
+
+  Future<void> _switchGoogleAccount() async {
+    await _logout();
+    if (!mounted) return;
+    await _signInWithGoogle();
   }
 
   void _enterLocalWorkspace() {
@@ -1667,6 +1765,7 @@ class _AuthGateState extends State<AuthGate> {
         routeRevision: widget.routeRevision,
         onLanguage: widget.onLanguage,
         onLogout: _logout,
+        onSwitchAccount: _authConfigured ? _switchGoogleAccount : null,
       );
     }
 
@@ -2327,6 +2426,18 @@ class _LoginScreenState extends State<LoginScreen> {
                             context.tr('使用 Google 账号继续', 'Continue with Google'),
                           ),
                         ),
+                        const SizedBox(height: 6),
+                        Text(
+                          context.tr(
+                            '每次均会弹出 Google 账号选择，不会自动沿用上一次账号',
+                            'Always prompts to choose your Google account',
+                          ),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: palette.muted,
+                            fontSize: 11.5,
+                          ),
+                        ),
                         if (widget.localBypassEnabled) ...[
                           const SizedBox(height: 10),
                           OutlinedButton.icon(
@@ -2429,6 +2540,7 @@ class TerminalHome extends StatefulWidget {
     this.routeRevision = 0,
     required this.onLanguage,
     required this.onLogout,
+    this.onSwitchAccount,
   });
 
   final String accessToken;
@@ -2441,6 +2553,7 @@ class TerminalHome extends StatefulWidget {
   final int routeRevision;
   final ValueChanged<AppLanguage> onLanguage;
   final VoidCallback onLogout;
+  final VoidCallback? onSwitchAccount;
 
   @override
   State<TerminalHome> createState() => _TerminalHomeState();
@@ -2884,6 +2997,7 @@ class _TerminalHomeState extends State<TerminalHome>
           onLegacyView: _changeMode,
           showAdmin: _adminEnabled,
           onLogout: widget.onLogout,
+          onSwitchAccount: widget.onSwitchAccount,
           localPreview: widget.accessToken == _localDevToken,
           userEmail: widget.userEmail,
           colorBlind: _colorBlind,

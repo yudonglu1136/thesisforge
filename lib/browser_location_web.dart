@@ -178,3 +178,83 @@ bool isAppleMobileBrowser() {
   } catch (_) {}
   return false;
 }
+
+bool _isSupabaseAuthStorageKey(String key) {
+  final lower = key.toLowerCase();
+  return (lower.startsWith('sb-') &&
+          (lower.contains('auth-token') || lower.contains('code-verifier'))) ||
+      lower.startsWith('supabase.auth.');
+}
+
+void _purgeStorageObject(web.Storage storage) {
+  try {
+    final keysToRemove = <String>[];
+    for (var i = 0; i < storage.length; i++) {
+      final key = storage.key(i);
+      if (key != null && _isSupabaseAuthStorageKey(key)) {
+        keysToRemove.add(key);
+      }
+    }
+    for (final key in keysToRemove) {
+      storage.removeItem(key);
+    }
+  } catch (_) {}
+}
+
+void stripBrowserAuthCallbackParams() {
+  try {
+    final current = Uri.base;
+    const callbackKeys = {
+      'code',
+      'error',
+      'error_code',
+      'error_description',
+      'state',
+      'provider_token',
+      'provider_refresh_token',
+    };
+    final nextParams = Map<String, String>.from(current.queryParameters);
+    var changed = false;
+    for (final key in callbackKeys) {
+      if (nextParams.remove(key) != null) changed = true;
+    }
+    var nextFragment = current.fragment;
+    if (nextFragment.contains('access_token=') ||
+        nextFragment.contains('refresh_token=') ||
+        nextFragment.contains('error_description=')) {
+      nextFragment = '';
+      changed = true;
+    }
+    if (!changed) return;
+    final path = current.path.isEmpty ? '/' : current.path;
+    final next = Uri(
+      path: path,
+      queryParameters: nextParams.isEmpty ? null : nextParams,
+      fragment: nextFragment.isEmpty ? null : nextFragment,
+    ).toString();
+    web.window.history.replaceState(null, web.document.title, next);
+  } catch (_) {}
+}
+
+void purgeBrowserAuthPersistence() {
+  _purgeStorageObject(web.window.localStorage);
+  _purgeStorageObject(web.window.sessionStorage);
+  stripBrowserAuthCallbackParams();
+}
+
+StreamSubscription<dynamic>? listenBrowserAuthStorageChanges(
+  void Function() onChanged,
+) {
+  try {
+    return web.EventStreamProviders.storageEvent
+        .forTarget(web.window)
+        .listen((web.StorageEvent event) {
+          final key = event.key;
+          if (key == null || _isSupabaseAuthStorageKey(key)) {
+            onChanged();
+          }
+        });
+  } catch (_) {
+    return null;
+  }
+}

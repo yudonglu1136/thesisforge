@@ -170,11 +170,63 @@ void main() {
 
       expect(find.text('NVIDIA Corporation'), findsWidgets);
 
+      // Active email is always visible in the desktop sidebar AND inside preferences modal
+      expect(find.byKey(const ValueKey('rail-active-account-card')), findsOneWidget);
+      expect(find.text('investor@thesisforge.tech'), findsOneWidget);
+
       // Open preferences modal and verify signed-in email & color-blind switch
       await tester.tap(find.byKey(const ValueKey('workspace-preferences-button')));
       await tester.pumpAndSettle();
-      expect(find.text('investor@thesisforge.tech'), findsOneWidget);
+      expect(find.text('investor@thesisforge.tech'), findsNWidgets(2));
       expect(find.byKey(const ValueKey('toggle-color-blind-mode')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Desktop sidebar active-account card exposes current email and triggers 1-click Google account switch',
+    (tester) async {
+      tester.view.physicalSize = const Size(1440, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      var switchCalls = 0;
+      var logoutCalls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LanguageScope(
+            language: AppLanguage.zh,
+            child: InvestmentWorkspace(
+              api: _ShellUxApi(),
+              palette: Palette(false),
+              initialPage: 'home',
+              initialTicker: '',
+              initialAsOf: '2026-11-18',
+              userEmail: 'thesisforger@gmail.com',
+              showAdmin: false,
+              onLogout: () => logoutCalls++,
+              onSwitchAccount: () => switchCalls++,
+              onLanguage: (_) {},
+              onLegacy: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('thesisforger@gmail.com'), findsOneWidget);
+      expect(find.text('管理'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('rail-active-account-card')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('prefs-switch-account')), findsOneWidget);
+      expect(find.byKey(const ValueKey('prefs-logout')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('prefs-switch-account')));
+      await tester.pumpAndSettle();
+      expect(switchCalls, 1);
+      expect(logoutCalls, 0);
     },
   );
 }

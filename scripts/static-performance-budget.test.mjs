@@ -18,7 +18,7 @@ const browserLocationPath = path.join(rootDir, 'lib', 'browser_location_web.dart
 function inlineBootScript() {
   const html = fs.readFileSync(indexPath, 'utf8');
   const match = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)]
-    .find((entry) => entry[1].includes('flutter-cache-migration-v5'));
+    .find((entry) => entry[1].includes('flutter-cache-migration-v6'));
   assert.ok(match, 'web/index.html must contain the inline Flutter bootstrap');
   return match[1];
 }
@@ -124,7 +124,7 @@ test('legacy cache migration runs once and repeat visits keep the Flutter cache'
   assert.equal(first.counters.cacheDeletes, 1);
   assert.equal(first.counters.flutterLoads, 0);
   assert.equal(first.counters.redirects.length, 1);
-  assert.match(first.counters.redirects[0], /cache-migration=flutter-cache-migration-v5/);
+  assert.match(first.counters.redirects[0], /cache-migration=flutter-cache-migration-v6/);
 
   const repeat = createBrowserHarness('https://www.thesisforge.tech/', storage);
   await runBoot(repeat);
@@ -171,7 +171,7 @@ test('retired webpage bookmarks return to Discover and retain only explicit lang
 });
 
 test('current Discover, research and DBMF CTA selection do not trigger retirement redirects', async () => {
-  const storage = new Map([['guru-cache-migration:flutter-cache-migration-v5', 'complete']]);
+  const storage = new Map([['guru-cache-migration:flutter-cache-migration-v6', 'complete']]);
   for (const route of ['/?view=discover', '/?view=research&valuation=PLTR', '/?view=strategies&cta=DBMF', '/ontology-business']) {
     const current = createBrowserHarness(`https://www.thesisforge.tech${route}`, storage);
     await runBoot(current);

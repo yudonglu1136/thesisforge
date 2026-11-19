@@ -543,10 +543,91 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
           decoration: BoxDecoration(
             border: Border(top: BorderSide(color: p.border.withValues(alpha: .6))),
           ),
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 14),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Tooltip(
+                message: widget.localPreview
+                    ? w('Local preview mode', '本地开发预览')
+                    : (widget.userEmail.trim().isNotEmpty
+                          ? '${w('Signed in as', '当前登录')} ${widget.userEmail.trim()} · ${w('Click to switch account', '点击切换或退出账号')}'
+                          : w('Click to view account & switch', '点击查看或切换账号')),
+                child: Material(
+                  color: p.card,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    side: BorderSide(color: p.border),
+                  ),
+                  child: InkWell(
+                    key: const ValueKey('rail-active-account-card'),
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: showWorkspacePreferences,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 24,
+                            height: 24,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: p.accent.withValues(alpha: .16),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Text(
+                              (widget.userEmail.trim().isNotEmpty
+                                      ? widget.userEmail.trim().substring(0, 1)
+                                      : 'U')
+                                  .toUpperCase(),
+                              style: TextStyle(
+                                color: p.accent,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.localPreview
+                                      ? w('Local Workspace', '本地工作区')
+                                      : (widget.userEmail.trim().isNotEmpty
+                                            ? widget.userEmail.trim()
+                                            : w('Signed in', '已登录账户')),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: p.text,
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                Text(
+                                  widget.showAdmin
+                                      ? w('Admin · Switch account', '管理员 · 切换账号')
+                                      : w('Switch / Sign out', '切换账号 / 偏好'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: p.muted, fontSize: 10),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(Icons.swap_horiz_rounded, size: 15, color: p.muted),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
               Row(
                 children: [
                   TextButton(
@@ -995,6 +1076,32 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                 ),
                 if (widget.onLogout != null) ...[
                   const Divider(height: 14),
+                  if (widget.onSwitchAccount != null)
+                    ListTile(
+                      key: const ValueKey('sheet-switch-account'),
+                      dense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                      leading: Icon(
+                        Icons.swap_horiz_rounded,
+                        color: p.accent,
+                        size: 20,
+                      ),
+                      title: Text(
+                        w(
+                          'Switch Google account',
+                          '切换其他 Google 账号登录',
+                        ),
+                        style: TextStyle(
+                          color: p.text,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      onTap: () {
+                        Navigator.pop(sheetCtx);
+                        unawaited(requestSwitchAccount());
+                      },
+                    ),
                   ListTile(
                     key: const ValueKey('sheet-logout'),
                     dense: true,
@@ -1005,7 +1112,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                       size: 20,
                     ),
                     title: Text(
-                      w('Sign out', '退出登录'),
+                      w('Sign out of current account', '退出当前账号（彻底清除会话）'),
                       style: TextStyle(
                         color: p.negative,
                         fontSize: 13.5,
@@ -1500,6 +1607,61 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                     ],
                   ),
                 ),
+                if (widget.onLogout != null) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      if (widget.onSwitchAccount != null) ...[
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            key: const ValueKey('prefs-switch-account'),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(0, 38),
+                              padding: const EdgeInsets.symmetric(horizontal: 10),
+                            ),
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              unawaited(requestSwitchAccount());
+                            },
+                            icon: Icon(
+                              Icons.swap_horiz_rounded,
+                              size: 16,
+                              color: p.accent,
+                            ),
+                            label: Text(
+                              w('Switch Google account', '切换 Google 账号'),
+                              style: TextStyle(color: p.text, fontSize: 12.5),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          key: const ValueKey('prefs-logout'),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 38),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            side: BorderSide(color: p.negative.withValues(alpha: .45)),
+                          ),
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            unawaited(requestLogout());
+                          },
+                          icon: Icon(
+                            Icons.logout_rounded,
+                            size: 16,
+                            color: p.negative,
+                          ),
+                          label: Text(
+                            w('Sign out', '退出当前账号'),
+                            style: TextStyle(color: p.negative, fontSize: 12.5),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 12),
                 if (widget.onToggleColorBlind != null)
                   SwitchListTile.adaptive(

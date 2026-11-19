@@ -16,6 +16,7 @@ class InvestmentWorkspace extends StatefulWidget {
     this.onLegacyView,
     this.showAdmin = false,
     this.onLogout,
+    this.onSwitchAccount,
     this.localPreview = false,
     this.userEmail = '',
     this.colorBlind = false,
@@ -34,6 +35,7 @@ class InvestmentWorkspace extends StatefulWidget {
   final ValueChanged<String>? onLegacyView;
   final bool showAdmin;
   final VoidCallback? onLogout;
+  final VoidCallback? onSwitchAccount;
   final bool localPreview;
   final String userEmail;
   final bool colorBlind;

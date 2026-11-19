@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:typed_data';
 
@@ -49,3 +50,11 @@ bool isStandaloneDisplayMode() {
 }
 
 bool isAppleMobileBrowser() => false;
+
+void stripBrowserAuthCallbackParams() {}
+
+void purgeBrowserAuthPersistence() {}
+
+StreamSubscription<dynamic>? listenBrowserAuthStorageChanges(
+  void Function() onChanged,
+) => null;
