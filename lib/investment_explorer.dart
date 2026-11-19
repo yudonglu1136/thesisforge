@@ -109,87 +109,80 @@ List<Map<String, dynamic>> filterDiscoverCandidates(
 extension _InvestmentExplorer on _InvestmentWorkspaceState {
   Widget discoverIntro() => LayoutBuilder(
     builder: (_, c) {
-      final compact = c.maxWidth < 620;
+      final compact = c.maxWidth < 680;
       final study = discoveryTab == 'managers' && selectedGuru == null;
       final opportunities = discoveryTab == 'gurus' && selectedGuru == null;
       final showTitle =
           !{'aiinsights', 'fundamentals'}.contains(discoveryTab) &&
           (selectedGuru == null ||
               !{'gurus', 'managers'}.contains(discoveryTab));
+      final headingText = study
+          ? w('Guru holdings & consensus', 'Guru 共识持仓与加减仓')
+          : opportunities
+          ? w('13F Insights', '13F 洞察')
+          : compact
+          ? w('Discover', '发现')
+          : w('Find the signal. Build your case.', '发现线索，形成判断。');
+      final subtitleText = study
+          ? w(
+              'Find stocks Gurus hold in common, then see who added or reduced.',
+              '发现多位 Guru 共同持有的股票，再看谁在加仓、谁在减仓。',
+            )
+          : opportunities
+          ? w(
+              'Every covered 13F institution’s new, increased, reduced, and exited positions.',
+              '覆盖全部 13F 申报机构的新建仓、加仓、减仓与清仓动向。',
+            )
+          : w(
+              'See what managers changed, what the business delivered, and what the price assumes.',
+              '看大师仓位怎么变、公司交出什么业绩，再检验价格隐含的预期。',
+            );
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (!compact && !study)
-                      label(
-                        'DISCOVER / RESEARCH STARTS HERE',
-                        '发现 / 从这里开始研究',
-                        size: 11,
-                        color: p.accent,
-                      ),
-                    if (!compact && !study) const SizedBox(height: 10),
                     if (showTitle)
                       Text(
-                        study
-                            ? w('Guru holdings & consensus', 'Guru 共识持仓与加减仓')
-                            : opportunities
-                            ? w('13F Insights', '13F 洞察')
-                            : compact
-                            ? w('Discover', '发现')
-                            : w(
-                                'Find the signal. Build your case.',
-                                '发现线索，形成判断。',
-                              ),
-                        style: deskHeading(
-                          compact
-                              ? 28
-                              : study
-                              ? 34
-                              : 30,
+                        headingText,
+                        style: TextStyle(
+                          color: p.text,
+                          fontSize: compact ? 22 : 23,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -.45,
+                          height: 1.2,
                         ),
                       ),
-                    if (study) ...[
-                      const SizedBox(height: 4),
-                      label(
-                        'Find stocks Gurus hold in common, then see who added or reduced.',
-                        '发现多位 Guru 共同持有的股票，再看谁在加仓、谁在减仓。',
-                        size: compact ? 13 : 17,
+                    if (showTitle && !(compact && opportunityMobileDetail)) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitleText,
+                        maxLines: compact ? 2 : 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: p.muted,
+                          fontSize: 12.5,
+                          height: 1.35,
+                        ),
                       ),
                     ],
                   ],
                 ),
               ),
               if (!compact) ...[
-                const SizedBox(width: 12),
+                const SizedBox(width: 14),
                 dateControl(),
               ],
             ],
           ),
-          if (compact) ...[
-            const SizedBox(height: 10),
+          if (compact && MediaQuery.sizeOf(context).width >= 1100) ...[
+            const SizedBox(height: 8),
             Align(alignment: Alignment.centerRight, child: dateControl()),
-          ],
-          if (showTitle && !study && !(compact && opportunityMobileDetail)) ...[
-            const SizedBox(height: 10),
-            label(
-              study
-                  ? 'Shortlist a few managers. Compare their style, then study their holdings.'
-                  : opportunities
-                  ? 'See what every covered 13F institution started, added, reduced or exited — not just the Guru shortlist.'
-                  : 'See what managers changed, what the business delivered, and what the price assumes.',
-              study
-                  ? '选几位投资大师，比较投资风格，再深入研究他们的持仓。'
-                  : opportunities
-                  ? '覆盖全部 13F 申报机构的新建仓、加仓、减仓和清仓，不再局限于精选大师名单。'
-                  : '看大师仓位怎么变、公司交出什么业绩，再检验价格隐含的预期。',
-              size: compact ? 12 : 14,
-            ),
           ],
         ],
       );

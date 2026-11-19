@@ -210,9 +210,11 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
   String _usdMillions(dynamic value) {
     final n = nullableNumber(value);
     if (n == null) return '—';
-    if (n.abs() >= 1000000) return '\$${(n / 1000000).toStringAsFixed(1)}T';
-    if (n.abs() >= 1000) return '\$${(n / 1000).toStringAsFixed(1)}B';
-    return '\$${n.toStringAsFixed(1)}M';
+    final sign = n < 0 ? '-' : '';
+    final abs = n.abs();
+    if (abs >= 1000000) return '$sign\$${(abs / 1000000).toStringAsFixed(1)}T';
+    if (abs >= 1000) return '$sign\$${(abs / 1000).toStringAsFixed(1)}B';
+    return '$sign\$${abs.toStringAsFixed(1)}M';
   }
 
   String _sharesFromThousands(dynamic value) {
@@ -263,99 +265,144 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     final active = insightUniverse == 'active';
     return [
       Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: p.accent.withValues(alpha: .07),
+          color: p.panel,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: p.accent.withValues(alpha: .35)),
+          border: Border.all(color: p.border),
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            Icon(Icons.account_balance_outlined, color: p.accent, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: label(
+            Container(
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                color: p.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: p.border),
+              ),
+              child: Wrap(
+                spacing: 2,
+                runSpacing: 2,
+                children: [
+                  _scopeSegmentButton(
+                    key: const ValueKey('13f-scope-all'),
+                    labelText: w('All institutions', '全部机构'),
+                    selected: !active,
+                    onTap: () => _select13FUniverse('all'),
+                  ),
+                  _scopeSegmentButton(
+                    key: const ValueKey('13f-scope-active'),
+                    labelText: w('Active funds', '主动基金'),
+                    selected: active,
+                    onTap: () => _select13FUniverse('active'),
+                  ),
+                ],
+              ),
+            ),
+            if (insightQuarter.isNotEmpty)
+              Container(
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: p.card,
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(color: p.border),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    key: const ValueKey('13f-quarter'),
+                    value: insightQuarter,
+                    isDense: true,
+                    dropdownColor: p.card,
+                    icon: Icon(Icons.keyboard_arrow_down, size: 16, color: p.muted),
+                    items: [
+                      for (final q in (data?['quarters'] as List? ?? []))
+                        DropdownMenuItem(
+                          value: '$q',
+                          child: Text(
+                            reportQuarterLabel('$q'),
+                            style: TextStyle(
+                              color: p.text,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              fontFeatures: const [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) unawaited(load13FInsights(quarter: value));
+                    },
+                  ),
+                ),
+              ),
+            label(
+              active
+                  ? '${_integer(coverage['includedManagers'])} active managers · ${_integer(coverage['securities'])} securities · ${_integer(coverage['comparablePositions'])} positions'
+                  : '${_integer(coverage['currentFilers'])} filers · ${_integer(coverage['securities'])} securities · ${_integer(coverage['comparablePositions'])} positions',
+              active
+                  ? '${_integer(coverage['includedManagers'])} 家主动机构 · ${_integer(coverage['securities'])} 只证券 · ${_integer(coverage['comparablePositions'])} 个仓位'
+                  : '${_integer(coverage['currentFilers'])} 家申报机构 · ${_integer(coverage['securities'])} 只证券 · ${_integer(coverage['comparablePositions'])} 个仓位',
+              size: 12,
+            ),
+            if (text(data?['availableAt']).isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: p.accent.withValues(alpha: .09),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: p.accent.withValues(alpha: .28)),
+                ),
+                child: Text(
+                  w(
+                    'Disclosed ${text(data?['availableAt'])}',
+                    '披露截止 ${text(data?['availableAt'])}',
+                  ),
+                  style: TextStyle(
+                    color: p.accent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            Tooltip(
+              message: w(
                 active
-                    ? 'Active-manager lens · Banks, custodians, explicit index complexes, asset owners and uncertain mixed filers are excluded by default.'
-                    : 'Full 13F universe · Rankings use every covered institutional filer. Guru selections do not change this page.',
+                    ? 'Active-manager lens: excludes banks, custodians, explicit index complexes, asset owners, and uncertain mixed filers.'
+                    : 'Full 13F universe: rankings use every covered institutional filer. Guru shortlist selections do not change this page.',
                 active
-                    ? '主动基金视角 · 默认排除银行、托管机构、明确的指数机构、资产所有者及无法确认的混合机构。'
-                    : '全量 13F 机构口径 · 排名使用全部已覆盖申报机构，Guru 的选择不会影响本页。',
-                size: 13,
-                color: p.text,
+                    ? '主动基金视角：默认排除银行、托管机构、指数机构、资产所有者及混合机构。'
+                    : '全量 13F 机构口径：排名使用全部已覆盖申报机构，不受大师筛选影响。',
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.info_outline, size: 14, color: p.muted),
+                  const SizedBox(width: 4),
+                  Text(
+                    active
+                        ? w('Active lens', '主动口径')
+                        : w('Full 13F universe', '全量 13F 口径'),
+                    style: TextStyle(color: p.muted, fontSize: 11.5),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
-      const SizedBox(height: 16),
-      Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          ChoiceChip(
-            key: const ValueKey('13f-scope-all'),
-            label: Text(w('All institutions', '全部机构')),
-            selected: !active,
-            onSelected: (_) => _select13FUniverse('all'),
-          ),
-          ChoiceChip(
-            key: const ValueKey('13f-scope-active'),
-            label: Text(w('Active funds', '主动基金')),
-            selected: active,
-            onSelected: (_) => _select13FUniverse('active'),
-          ),
-          const SizedBox(width: 4),
-          if (insightQuarter.isNotEmpty)
-            DropdownButton<String>(
-              key: const ValueKey('13f-quarter'),
-              value: insightQuarter,
-              dropdownColor: p.card,
-              underline: const SizedBox.shrink(),
-              items: [
-                for (final q in (data?['quarters'] as List? ?? []))
-                  DropdownMenuItem(
-                    value: '$q',
-                    child: Text(
-                      reportQuarterLabel('$q'),
-                      style: TextStyle(
-                        color: p.text,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-              ],
-              onChanged: (value) {
-                if (value != null) unawaited(load13FInsights(quarter: value));
-              },
-            ),
-          label(
-            active
-                ? '${_integer(coverage['includedManagers'])} active managers · ${_integer(coverage['securities'])} securities · ${_integer(coverage['comparablePositions'])} comparable positions'
-                : '${_integer(coverage['currentFilers'])} filers · ${_integer(coverage['securities'])} securities · ${_integer(coverage['comparablePositions'])} comparable positions',
-            active
-                ? '${_integer(coverage['includedManagers'])} 家主动管理机构 · ${_integer(coverage['securities'])} 只证券 · ${_integer(coverage['comparablePositions'])} 个可比仓位'
-                : '${_integer(coverage['currentFilers'])} 家申报机构 · ${_integer(coverage['securities'])} 只证券 · ${_integer(coverage['comparablePositions'])} 个可比仓位',
-            size: 12,
-          ),
-          label(
-            'Available after ${text(data?['availableAt'])}',
-            '统一可用日 ${text(data?['availableAt'])}',
-            size: 12,
-            color: p.accent,
-          ),
-        ],
-      ),
       if (insightLoading)
         const Padding(
-          padding: EdgeInsets.only(top: 8),
+          padding: EdgeInsets.only(top: 6),
           child: LinearProgressIndicator(minHeight: 2),
         ),
       if (insightError.isNotEmpty)
         Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          padding: const EdgeInsets.symmetric(vertical: 12),
           child: Row(
             children: [
               Expanded(
@@ -369,18 +416,18 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           ),
         ),
       if (data != null) ...[
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         if (active) _activeFundDashboard() else _insightMarketPulse(),
-        const SizedBox(height: 22),
+        const SizedBox(height: 14),
         _insightActionCards(),
-        const SizedBox(height: 22),
+        const SizedBox(height: 16),
         _insightWorkbench(),
-        const SizedBox(height: 18),
+        const SizedBox(height: 14),
         ExpansionTile(
           tilePadding: EdgeInsets.zero,
           title: Text(
             w('Methodology & limits', '方法与数据边界'),
-            style: TextStyle(color: p.muted, fontSize: 13),
+            style: TextStyle(color: p.muted, fontSize: 12.5),
           ),
           children: [
             Padding(
@@ -401,16 +448,42 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     ];
   }
 
+  Widget _scopeSegmentButton({
+    required Key key,
+    required String labelText,
+    required bool selected,
+    required VoidCallback onTap,
+  }) => Material(
+    color: selected ? p.accent.withValues(alpha: .16) : Colors.transparent,
+    borderRadius: BorderRadius.circular(6),
+    child: InkWell(
+      key: key,
+      borderRadius: BorderRadius.circular(6),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Text(
+          labelText,
+          style: TextStyle(
+            color: selected ? p.text : p.muted,
+            fontSize: 12.5,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+      ),
+    ),
+  );
+
   String _percentagePoints(dynamic value, {int digits = 2}) {
     final parsed = nullableNumber(value);
     return parsed == null ? '—' : '${parsed.toStringAsFixed(digits)}%';
   }
 
   String _insightSegmentName(String id) => switch (id) {
-    'sp500' => w('S&P 500 · SPY universe', '标普 500 · SPY 范围'),
-    'nasdaq100Proxy' => w('Nasdaq-100 proxy', '纳斯达克 100 代理篮子'),
+    'sp500' => w('S&P 500', '标普 500'),
+    'nasdaq100Proxy' => w('Nasdaq-100', '纳斯达克 100'),
     'smallCap' => w('US small cap', '美国小盘股'),
-    _ => w('All covered equities', '全市场覆盖股票'),
+    _ => w('All equities', '全市场股票'),
   };
 
   String _activeRatio(dynamic value, {int digits = 1}) {
@@ -1033,8 +1106,9 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
         : null;
     final latest = nullableNumber(overview['institutionalOwnershipPct']);
     final change = latest == null || prior == null ? null : latest - prior;
+    final netChangeVal = number(overview['netChangeValueM']);
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
       decoration: BoxDecoration(
         color: p.panel,
         borderRadius: BorderRadius.circular(12),
@@ -1043,85 +1117,173 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
+          LayoutBuilder(
+            builder: (_, headConstraints) {
+              final narrowHead = headConstraints.maxWidth < 920;
+              final segmentBar = Container(
+                padding: const EdgeInsets.all(2),
                 decoration: BoxDecoration(
-                  color: p.accent.withValues(alpha: .1),
+                  color: p.card,
                   borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: p.border),
                 ),
-                child: Icon(Icons.public, color: p.accent, size: 20),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Wrap(
+                  spacing: 2,
+                  runSpacing: 2,
                   children: [
-                    Text(
-                      w('Institutional ownership pulse', '机构持股宏观脉搏'),
-                      style: TextStyle(
-                        color: p.text,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
+                    for (final segment in const [
+                      'all',
+                      'sp500',
+                      'nasdaq100Proxy',
+                      'smallCap',
+                    ])
+                      Material(
+                        color: insightMarketSegment == segment
+                            ? p.accent.withValues(alpha: .16)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(6),
+                        child: InkWell(
+                          key: ValueKey('13f-segment-$segment'),
+                          borderRadius: BorderRadius.circular(6),
+                          onTap: () => _select13FMarketSegment(segment),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            child: Text(
+                              _insightSegmentName(segment),
+                              style: TextStyle(
+                                color: insightMarketSegment == segment
+                                    ? p.text
+                                    : p.muted,
+                                fontSize: 11.5,
+                                fontWeight: insightMarketSegment == segment
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                    label(
-                      'Aggregate reported common-stock value as a share of covered market capitalization',
-                      '机构申报普通股总市值占覆盖股票总市值的比例',
-                      size: 11,
-                    ),
                   ],
                 ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              );
+              final headlineNumber = Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
                     _percentagePoints(latest),
                     style: TextStyle(
                       color: p.accent,
-                      fontSize: 25,
+                      fontSize: 22,
                       fontWeight: FontWeight.w800,
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
-                  if (change != null)
-                    Text(
-                      '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)} ${w('pp QoQ', '个百分点 环比')}',
-                      style: TextStyle(
-                        color: change >= 0 ? p.accent : p.secondary,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
+                  if (change != null) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: (change >= 0 ? p.accent : p.secondary)
+                            .withValues(alpha: .12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)} ${w('pp QoQ', 'pp 环比')}',
+                        style: TextStyle(
+                          color: change >= 0 ? p.accent : p.secondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
                       ),
                     ),
+                  ],
                 ],
-              ),
-            ],
+              );
+              final titleBlock = Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: p.accent.withValues(alpha: .1),
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                    child: Icon(Icons.public, color: p.accent, size: 17),
+                  ),
+                  const SizedBox(width: 9),
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          w('Institutional ownership pulse', '机构持股宏观脉搏'),
+                          style: TextStyle(
+                            color: p.text,
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          w(
+                            'Reported common-stock value / covered market cap',
+                            '机构申报普通股总市值占覆盖股票总市值比例',
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: p.muted, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+              if (narrowHead) {
+                final ultraNarrow = headConstraints.maxWidth < 500;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (ultraNarrow) ...[
+                      titleBlock,
+                      const SizedBox(height: 8),
+                      headlineNumber,
+                    ] else
+                      Row(
+                        children: [
+                          Expanded(child: titleBlock),
+                          const SizedBox(width: 8),
+                          headlineNumber,
+                        ],
+                      ),
+                    const SizedBox(height: 10),
+                    Align(alignment: Alignment.centerLeft, child: segmentBar),
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: titleBlock),
+                  const SizedBox(width: 12),
+                  segmentBar,
+                  const SizedBox(width: 16),
+                  headlineNumber,
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final segment in const [
-                'all',
-                'sp500',
-                'nasdaq100Proxy',
-                'smallCap',
-              ])
-                ChoiceChip(
-                  key: ValueKey('13f-segment-$segment'),
-                  label: Text(_insightSegmentName(segment)),
-                  selected: insightMarketSegment == segment,
-                  onSelected: (_) => _select13FMarketSegment(segment),
-                ),
-            ],
-          ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           LayoutBuilder(
             builder: (_, constraints) {
+              const pulseHeight = 152.0;
               final chart = SizedBox(
-                height: 190,
+                height: pulseHeight,
                 child: _InsightHistoryInteractiveChart(
                   points: history,
                   series: _InsightHistorySeries.holders,
@@ -1139,83 +1301,115 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
                   ],
                 ),
               );
-              final facts = Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _insightPulseFact(
-                    w('Reported institutional value', '机构申报持股市值'),
-                    _usdMillions(overview['institutionalValueM']),
-                  ),
-                  _insightPulseFact(
-                    w('Covered market cap', '覆盖股票总市值'),
-                    _usdMillions(overview['marketCapM']),
-                  ),
-                  _insightPulseFact(
-                    w('Quarterly net change', '本季净增减'),
-                    _usdMillions(overview['netChangeValueM']),
-                    color: number(overview['netChangeValueM']) >= 0
-                        ? p.accent
-                        : p.secondary,
-                  ),
-                  _insightPulseFact(
-                    w('Coverage', '覆盖范围'),
-                    '${_integer(overview['coveredSecurities'])} / ${_integer(overview['securities'])}',
-                  ),
-                ],
+              final factsGrid = SizedBox(
+                height: constraints.maxWidth < 820 ? null : pulseHeight,
+                child: Column(
+                  children: [
+                    Expanded(
+                      flex: constraints.maxWidth < 820 ? 0 : 1,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _insightPulseTile(
+                              w('Institutional value', '机构持股市值'),
+                              _usdMillions(overview['institutionalValueM']),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _insightPulseTile(
+                              w('Covered market cap', '覆盖股票总市值'),
+                              _usdMillions(overview['marketCapM']),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      flex: constraints.maxWidth < 820 ? 0 : 1,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _insightPulseTile(
+                              w('QoQ net change', '本季净增减'),
+                              _usdMillions(overview['netChangeValueM']),
+                              color: netChangeVal >= 0 ? p.accent : p.secondary,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _insightPulseTile(
+                              w('Covered securities', '覆盖证券数'),
+                              '${_integer(overview['coveredSecurities'])} / ${_integer(overview['securities'])}',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               );
-              if (constraints.maxWidth < 760) {
+              if (constraints.maxWidth < 820) {
                 return Column(
-                  children: [chart, const SizedBox(height: 12), facts],
+                  children: [chart, const SizedBox(height: 10), factsGrid],
                 );
               }
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(flex: 7, child: chart),
-                  const SizedBox(width: 20),
-                  Expanded(flex: 3, child: facts),
+                  Expanded(flex: 13, child: chart),
+                  const SizedBox(width: 16),
+                  Expanded(flex: 7, child: factsGrid),
                 ],
               );
             },
           ),
-          const SizedBox(height: 9),
+          const SizedBox(height: 6),
           label(
             insightMarketSegment == 'nasdaq100Proxy'
-                ? 'Proxy basket: the 100 largest non-financial Nasdaq listings by quarter-end market cap; not official QQQ holdings.'
-                : 'Uses quarter-end Sharadar market capitalization. Ratios use shares outstanding, not free float.',
+                ? 'Proxy basket: 100 largest non-financial Nasdaq listings by quarter-end market cap; not official QQQ holdings.'
+                : 'Quarter-end Sharadar market capitalization; denominator uses total shares outstanding rather than free float.',
             insightMarketSegment == 'nasdaq100Proxy'
                 ? '代理篮子：按季末市值选取纳斯达克最大的 100 家非金融公司，并非 QQQ 官方成分。'
-                : '使用 Sharadar 季末市值；比例分母为总股本，不是自由流通股。',
-            size: 10,
+                : '使用 Sharadar 季末市值；比例分母为总股本而非自由流通股。',
+            size: 10.5,
           ),
         ],
       ),
     );
   }
 
-  Widget _insightPulseFact(String title, String value, {Color? color}) =>
+  Widget _insightPulseTile(String title, String value, {Color? color}) =>
       Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         decoration: BoxDecoration(
-          color: p.card.withValues(alpha: .7),
+          color: p.card.withValues(alpha: .72),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: p.border),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(color: p.muted, fontSize: 10),
-              ),
-            ),
             Text(
-              value,
-              style: TextStyle(
-                color: color ?? p.text,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: p.muted, fontSize: 10.5),
+            ),
+            const SizedBox(height: 4),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                value,
+                style: TextStyle(
+                  color: color ?? p.text,
+                  fontSize: 15.5,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
               ),
             ),
           ],
@@ -1227,19 +1421,19 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
       const actions = ['new', 'increased', 'reduced', 'exited'];
       if (constraints.maxWidth < 700) {
         return SizedBox(
-          height: 196,
+          height: 152,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: actions.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 12),
+            separatorBuilder: (_, _) => const SizedBox(width: 10),
             itemBuilder: (_, index) => SizedBox(
-              width: math.min(286, constraints.maxWidth - 24),
+              width: math.min(264, constraints.maxWidth - 24),
               child: _insightActionCard(actions[index]),
             ),
           ),
         );
       }
-      final columns = constraints.maxWidth >= 1120 ? 4 : 2;
+      final columns = constraints.maxWidth >= 1040 ? 4 : 2;
       return Wrap(
         spacing: 12,
         runSpacing: 12,
@@ -1247,7 +1441,7 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
           for (final action in actions)
             SizedBox(
               width: (constraints.maxWidth - (columns - 1) * 12) / columns,
-              height: 202,
+              height: 152,
               child: _insightActionCard(action),
             ),
         ],
@@ -1260,88 +1454,128 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
     final rows = asList(asMap(institutional13f?['actionLeaders'])[action]);
     final total = asMap(institutional13f?['activity'])[key];
     final selected = insightAction == action;
+    final topTwo = rows.where((r) => number(r[key]) > 0).take(2).toList();
     return Material(
-      color: selected ? color.withValues(alpha: .12) : p.panel,
+      color: selected ? color.withValues(alpha: .10) : p.panel,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: selected ? color : p.border),
+        side: BorderSide(
+          color: selected ? color.withValues(alpha: .85) : p.border,
+          width: selected ? 1.2 : 1,
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         key: ValueKey('13f-action-$action'),
         onTap: () => _select13FInsightAction(action),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 11),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Icon(
-                    switch (action) {
-                      'new' => Icons.add_circle_outline,
-                      'reduced' => Icons.trending_down,
-                      'exited' => Icons.exit_to_app,
-                      _ => Icons.trending_up,
-                    },
-                    color: color,
-                    size: 19,
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(5),
+                    ),
+                    child: Icon(
+                      switch (action) {
+                        'new' => Icons.add_circle_outline,
+                        'reduced' => Icons.trending_down,
+                        'exited' => Icons.exit_to_app,
+                        _ => Icons.trending_up,
+                      },
+                      color: color,
+                      size: 14,
+                    ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 7),
                   Expanded(
                     child: Text(
                       _insightName(action),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: p.text,
+                        color: selected ? p.text : p.muted,
+                        fontSize: 12.5,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
+                  if (selected)
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
                   Text(
                     _integer(total),
                     style: TextStyle(
-                      color: color,
+                      color: p.text,
                       fontSize: 21,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -.4,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      switch (action) {
+                        'new' => w('first-time filings', '首次建仓申报'),
+                        'exited' => w('full position exits', '全额清仓退出'),
+                        'reduced' => w('QoQ share trims', '环比减持股数'),
+                        _ => w('QoQ share adds', '环比增持股数'),
+                      },
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: p.muted, fontSize: 10.5),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 7),
-              label(
-                action == 'new'
-                    ? 'First reported position vs prior quarter.'
-                    : action == 'exited'
-                    ? 'Position no longer reported this quarter.'
-                    : 'Split-adjusted reported shares moved quarter over quarter.',
-                action == 'new'
-                    ? '相对上季度首次申报持仓。'
-                    : action == 'exited'
-                    ? '本季度不再申报该持仓。'
-                    : '经拆股调整后的申报股数环比变化。',
-                size: 11,
-              ),
               const Spacer(),
-              for (final row in rows.where((r) => number(r[key]) > 0).take(2))
+              Divider(height: 12, thickness: .6, color: p.border),
+              for (var idx = 0; idx < topTwo.length; idx++)
                 Padding(
-                  padding: const EdgeInsets.only(top: 7),
+                  padding: EdgeInsets.only(top: idx == 0 ? 0 : 5),
                   child: Row(
                     children: [
-                      homeStockLogo(text(row['ticker']), 22),
-                      const SizedBox(width: 7),
+                      homeStockLogo(text(topTwo[idx]['ticker']), 18),
+                      const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          text(row['ticker']),
+                          text(topTwo[idx]['ticker']),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: p.text,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 11.5,
                           ),
                         ),
                       ),
                       Text(
-                        '${_integer(row[key])} ${w('filers', '家')}',
-                        style: TextStyle(color: color, fontSize: 11),
+                        '${_integer(topTwo[idx][key])} ${w('filers', '家')}',
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
                       ),
                     ],
                   ),
@@ -1356,109 +1590,126 @@ extension _Institutional13FInsights on _InvestmentWorkspaceState {
   Widget _insightWorkbench() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          ChoiceChip(
-            key: const ValueKey('13f-rank-amount'),
-            avatar: const Icon(Icons.attach_money, size: 16),
-            label: Text(w('By amount', '按变动金额')),
-            selected: insightStockRanking == 'amount',
-            onSelected: (_) {
-              updateUI(() => insightStockRanking = 'amount');
-              _persist13FInsights();
-              unawaited(load13FInsights());
-            },
-          ),
-          ChoiceChip(
-            key: const ValueKey('13f-rank-share-change'),
-            avatar: const Icon(Icons.swap_vert, size: 16),
-            label: Text(w('By share change', '按市值占比变化')),
-            selected: insightStockRanking == 'shareChange',
-            onSelected: (_) {
-              updateUI(() => insightStockRanking = 'shareChange');
-              _persist13FInsights();
-              unawaited(load13FInsights());
-            },
-          ),
-          ChoiceChip(
-            key: const ValueKey('13f-rank-institutions'),
-            avatar: const Icon(Icons.account_balance_outlined, size: 16),
-            label: Text(w('By institutions', '按机构数量')),
-            selected: insightStockRanking == 'institutions',
-            onSelected: (_) {
-              updateUI(() => insightStockRanking = 'institutions');
-              _persist13FInsights();
-              unawaited(load13FInsights());
-            },
-          ),
-          ChoiceChip(
-            key: const ValueKey('13f-rank-shares-held-pct'),
-            avatar: const Icon(Icons.percent, size: 16),
-            label: Text(w('By shares held %', '按机构持股占比')),
-            selected: insightStockRanking == 'sharesHeldPct',
-            onSelected: (_) {
-              updateUI(() => insightStockRanking = 'sharesHeldPct');
-              _persist13FInsights();
-              unawaited(load13FInsights());
-            },
-          ),
-          SizedBox(
-            width: 330,
-            child: TextField(
-              key: const ValueKey('13f-search'),
-              controller: insightSearchInput,
-              decoration: InputDecoration(
-                isDense: true,
-                prefixIcon: const Icon(Icons.search, size: 19),
-                hintText: w('Search company or ticker', '搜索公司或代码'),
-                border: const OutlineInputBorder(),
-              ),
-              onChanged: (value) {
-                updateUI(() => insightSearch = value);
-                insightSearchTimer?.cancel();
-                insightSearchTimer = Timer(
-                  const Duration(milliseconds: 250),
-                  () {
-                    _persist13FInsights();
-                    unawaited(load13FInsights());
-                  },
-                );
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: p.panel,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: p.border),
+        ),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            ChoiceChip(
+              key: const ValueKey('13f-rank-amount'),
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.attach_money, size: 15),
+              label: Text(w('By amount', '按变动金额'), style: const TextStyle(fontSize: 12)),
+              selected: insightStockRanking == 'amount',
+              onSelected: (_) {
+                updateUI(() => insightStockRanking = 'amount');
+                _persist13FInsights();
+                unawaited(load13FInsights());
               },
             ),
-          ),
-          label(
-            switch (insightStockRanking) {
-              'shareChange' => w(
-                'Ranked by net reported value change as % of company market cap',
-                '按机构申报净变化市值占公司总市值比例排名',
+            ChoiceChip(
+              key: const ValueKey('13f-rank-share-change'),
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.swap_vert, size: 15),
+              label: Text(w('By share change', '按市值占比变化'), style: const TextStyle(fontSize: 12)),
+              selected: insightStockRanking == 'shareChange',
+              onSelected: (_) {
+                updateUI(() => insightStockRanking = 'shareChange');
+                _persist13FInsights();
+                unawaited(load13FInsights());
+              },
+            ),
+            ChoiceChip(
+              key: const ValueKey('13f-rank-institutions'),
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.account_balance_outlined, size: 15),
+              label: Text(w('By institutions', '按机构数量'), style: const TextStyle(fontSize: 12)),
+              selected: insightStockRanking == 'institutions',
+              onSelected: (_) {
+                updateUI(() => insightStockRanking = 'institutions');
+                _persist13FInsights();
+                unawaited(load13FInsights());
+              },
+            ),
+            ChoiceChip(
+              key: const ValueKey('13f-rank-shares-held-pct'),
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.percent, size: 15),
+              label: Text(w('By shares held %', '按机构持股占比'), style: const TextStyle(fontSize: 12)),
+              selected: insightStockRanking == 'sharesHeldPct',
+              onSelected: (_) {
+                updateUI(() => insightStockRanking = 'sharesHeldPct');
+                _persist13FInsights();
+                unawaited(load13FInsights());
+              },
+            ),
+            SizedBox(
+              width: 248,
+              height: 34,
+              child: TextField(
+                key: const ValueKey('13f-search'),
+                controller: insightSearchInput,
+                style: TextStyle(color: p.text, fontSize: 12.5),
+                decoration: InputDecoration(
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  prefixIcon: Icon(Icons.search, size: 16, color: p.muted),
+                  prefixIconConstraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  hintText: w('Search company or ticker', '搜索公司或代码'),
+                  hintStyle: TextStyle(color: p.muted, fontSize: 12),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(7)),
+                ),
+                onChanged: (value) {
+                  updateUI(() => insightSearch = value);
+                  insightSearchTimer?.cancel();
+                  insightSearchTimer = Timer(
+                    const Duration(milliseconds: 250),
+                    () {
+                      _persist13FInsights();
+                      unawaited(load13FInsights());
+                    },
+                  );
+                },
               ),
-              'institutions' => w(
-                'Ranked by reporting institution count',
-                '按持有机构数量排名',
-              ),
-              'sharesHeldPct' => w(
-                'Ranked by reported institutional value as % of company market cap',
-                '按 13F 机构持股市值占公司总市值比例排名',
-              ),
-              _ => w(
-                'Ranked by absolute quarterly net reported value change',
-                '按季度机构申报净变化市值绝对额排名',
-              ),
-            },
-            switch (insightStockRanking) {
-              'shareChange' => '按机构申报净变化市值占公司总市值比例排名',
-              'institutions' => '按持有机构数量排名',
-              'sharesHeldPct' => '按 13F 机构持股市值占公司总市值比例排名',
-              _ => '按季度机构申报净变化市值绝对额排名',
-            },
-            size: 11,
-          ),
-        ],
+            ),
+            label(
+              switch (insightStockRanking) {
+                'shareChange' => w(
+                  'Ranked by net reported value change as % of company market cap',
+                  '按机构申报净变化市值占公司总市值比例排名',
+                ),
+                'institutions' => w(
+                  'Ranked by reporting institution count',
+                  '按持有机构数量排名',
+                ),
+                'sharesHeldPct' => w(
+                  'Ranked by reported institutional value as % of company market cap',
+                  '按 13F 机构持股市值占公司总市值比例排名',
+                ),
+                _ => w(
+                  'Ranked by absolute quarterly net reported value change',
+                  '按季度机构申报净变化市值绝对额排名',
+                ),
+              },
+              switch (insightStockRanking) {
+                'shareChange' => '按机构申报净变化市值占公司总市值比例排名',
+                'institutions' => '按持有机构数量排名',
+                'sharesHeldPct' => '按 13F 机构持股市值占公司总市值比例排名',
+                _ => '按季度机构申报净变化市值绝对额排名',
+              },
+              size: 11,
+            ),
+          ],
+        ),
       ),
-      const SizedBox(height: 13),
+      const SizedBox(height: 12),
       LayoutBuilder(
         builder: (_, constraints) {
           final wide = constraints.maxWidth >= 1040;
@@ -2981,13 +3232,15 @@ class _InsightHistoryPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const leftAxis = 42.0;
+    const leftAxis = 40.0;
     final rightAxis = series == _InsightHistorySeries.shares ? 40.0 : 8.0;
+    final showBottomTicks = size.height >= 96 && points.length >= 2;
+    final bottomReserve = showBottomTicks ? 22.0 : 12.0;
     final chart = Rect.fromLTWH(
       leftAxis,
-      7,
+      6,
       math.max(1.0, size.width - leftAxis - rightAxis),
-      math.max(1.0, size.height - 14),
+      math.max(1.0, size.height - bottomReserve),
     );
     final double? Function(_InsightHistoryPoint) primaryRead =
         series == _InsightHistorySeries.holders
@@ -3018,6 +3271,28 @@ class _InsightHistoryPainter extends CustomPainter {
         );
       }
     }
+    if (showBottomTicks) {
+      final tickCount = math.min(5, points.length);
+      for (var t = 0; t < tickCount; t++) {
+        final idx = tickCount == 1
+            ? 0
+            : ((points.length - 1) * t / (tickCount - 1)).round();
+        final rawDate = points[idx].reportDate;
+        final shortText = rawDate.length >= 7
+            ? (points.length > 10 && t > 0 && t < tickCount - 1
+                ? rawDate.substring(0, 4)
+                : '${rawDate.substring(0, 4)}/${_shortQuarter(rawDate)}')
+            : rawDate;
+        final x = chart.left + chart.width * idx / (points.length - 1);
+        _drawBottomTick(
+          canvas,
+          shortText,
+          Offset(x, chart.bottom + 9),
+          alignLeft: t == 0,
+          alignRight: t == tickCount - 1,
+        );
+      }
+    }
     if (series == _InsightHistorySeries.holders) {
       _drawSeries(
         canvas,
@@ -3037,16 +3312,69 @@ class _InsightHistoryPainter extends CustomPainter {
     _drawHover(canvas, chart, primaryBounds);
   }
 
+  String _shortQuarter(String iso) {
+    final month = int.tryParse(iso.length >= 7 ? iso.substring(5, 7) : '') ?? 3;
+    return 'Q${((month - 1) / 3).floor() + 1}';
+  }
+
+  void _drawBottomTick(
+    Canvas canvas,
+    String value,
+    Offset anchor, {
+    bool alignLeft = false,
+    bool alignRight = false,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: value,
+        style: TextStyle(
+          color: muted,
+          fontSize: 8.5,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    final dx = alignLeft
+        ? anchor.dx
+        : alignRight
+        ? anchor.dx - painter.width
+        : anchor.dx - painter.width / 2;
+    painter.paint(canvas, Offset(dx, anchor.dy - painter.height / 2));
+  }
+
   ({double min, double max}) _bounds(
     double? Function(_InsightHistoryPoint) read,
     _InsightAxisScale scale,
   ) {
-    if (scale == _InsightAxisScale.percent) return (min: 0, max: 100);
     final values = points
         .map(read)
         .whereType<double>()
         .where((value) => value.isFinite && value >= 0)
         .toList();
+    if (scale == _InsightAxisScale.percent) {
+      if (values.isEmpty) return (min: 0, max: 100);
+      final rawMin = values.reduce(math.min);
+      final rawMax = values.reduce(math.max);
+      final span = rawMax - rawMin;
+      if (span <= 36) {
+        final step = span <= 6 ? 2.0 : span <= 14 ? 4.0 : 5.0;
+        final niceMin = math.max(
+          0.0,
+          ((rawMin - step * .65) / step).floor() * step,
+        );
+        var niceMax = math.min(
+          100.0,
+          ((rawMax + step * .65) / step).ceil() * step,
+        );
+        if (niceMax - niceMin < 4) {
+          niceMax = math.min(100.0, niceMin + 8);
+        }
+        if (niceMax > niceMin) return (min: niceMin, max: niceMax);
+      }
+      return (min: 0, max: 100);
+    }
     if (values.isEmpty) return (min: 0, max: 1);
     return (min: 0, max: _niceCeiling(values.reduce(math.max) * 1.06));
   }

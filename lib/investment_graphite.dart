@@ -234,40 +234,50 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                                   if (page == 'research' && company != null)
                                     ...researchView()
                                   else
-                                    Padding(
-                                      padding:
-                                          desktop &&
-                                              page == 'discover' &&
-                                              discoveryTab == 'managers'
-                                          ? const EdgeInsets.fromLTRB(
-                                              24,
-                                              16,
-                                              24,
-                                              24,
-                                            )
-                                          : page == 'book'
-                                          ? EdgeInsets.fromLTRB(
-                                              desktop ? 34 : 18,
-                                              20,
-                                              desktop ? 34 : 18,
-                                              24,
-                                            )
-                                          : EdgeInsets.all(desktop ? 34 : 18),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.stretch,
-                                        children: [
-                                          if (page == 'home')
-                                            ...personalHomePage(),
-                                          if (page == 'discover')
-                                            ...discoveryPage(),
-                                          if (page == 'research')
-                                            ...researchView(),
-                                          if (page == 'book')
-                                            ...researchPortfolioPage(),
-                                          if (page == 'strategies')
-                                            ...strategyPage(),
-                                        ],
+                                    Align(
+                                      alignment: Alignment.topCenter,
+                                      child: ConstrainedBox(
+                                        constraints: const BoxConstraints(
+                                          maxWidth: 1620,
+                                        ),
+                                        child: Padding(
+                                          padding: !desktop
+                                              ? const EdgeInsets.fromLTRB(
+                                                  14,
+                                                  10,
+                                                  14,
+                                                  18,
+                                                )
+                                              : page == 'discover'
+                                              ? const EdgeInsets.fromLTRB(
+                                                  26,
+                                                  16,
+                                                  26,
+                                                  26,
+                                                )
+                                              : const EdgeInsets.fromLTRB(
+                                                  28,
+                                                  18,
+                                                  28,
+                                                  28,
+                                                ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              if (page == 'home')
+                                                ...personalHomePage(),
+                                              if (page == 'discover')
+                                                ...discoveryPage(),
+                                              if (page == 'research')
+                                                ...researchView(),
+                                              if (page == 'book')
+                                                ...researchPortfolioPage(),
+                                              if (page == 'strategies')
+                                                ...strategyPage(),
+                                            ],
+                                          ),
+                                        ),
                                       ),
                                     ),
                                 ],
@@ -339,14 +349,50 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
       ('admin', 'Admin', '管理', Icons.admin_panel_settings_outlined),
   ];
 
-  Widget brand({double size = 23, bool compact = false}) => Row(
+  List<(String, String, String, IconData, IconData)> get mobileGraphitePages =>
+      const [
+        ('home', 'Home', '首页', Icons.home_outlined, Icons.home_rounded),
+        (
+          'discover',
+          'Discover',
+          '发现',
+          Icons.explore_outlined,
+          Icons.explore_rounded,
+        ),
+        (
+          'research',
+          'Research',
+          '研究',
+          Icons.search_rounded,
+          Icons.manage_search_rounded,
+        ),
+        (
+          'book',
+          'Portfolio',
+          '组合',
+          Icons.pie_chart_outline_rounded,
+          Icons.pie_chart_rounded,
+        ),
+        (
+          'strategies',
+          'Strategies',
+          '策略',
+          Icons.layers_outlined,
+          Icons.layers_rounded,
+        ),
+      ];
+
+  Widget brand({double size = 20, bool compact = false}) => Row(
     children: [
-      Image.asset(
-        thesisForgeMarkAsset,
-        width: compact ? 28 : (blackEditionPreview ? 40 : 32),
-        height: compact ? 28 : (blackEditionPreview ? 40 : 36),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(compact ? 6 : 7),
+        child: Image.asset(
+          thesisForgeMarkAsset,
+          width: compact ? 26 : 28,
+          height: compact ? 26 : 28,
+        ),
       ),
-      SizedBox(width: compact ? 7 : 12),
+      SizedBox(width: compact ? 7 : 10),
       Expanded(
         child: FittedBox(
           fit: BoxFit.scaleDown,
@@ -356,10 +402,8 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
             style: TextStyle(
               color: p.text,
               fontSize: blackEditionPreview ? size - 2 : size,
-              fontWeight: blackEditionPreview
-                  ? FontWeight.w600
-                  : FontWeight.w700,
-              letterSpacing: blackEditionPreview ? -.9 : -.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -.55,
             ),
           ),
         ),
@@ -368,38 +412,39 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
   );
 
   Widget graphiteRail() => Container(
-    width: 216,
+    width: 204,
     decoration: BoxDecoration(
+      color: p.background,
       border: Border(right: BorderSide(color: p.border)),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 26, 16, 16),
+          padding: const EdgeInsets.fromLTRB(18, 20, 16, 14),
           child: brand(),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
           child: Material(
             color: p.card,
-            borderRadius: BorderRadius.circular(7),
+            borderRadius: BorderRadius.circular(8),
             child: InkWell(
               key: const ValueKey('global-search-trigger'),
               onTap: () => unawaited(openGlobalCompanySearch()),
-              borderRadius: BorderRadius.circular(7),
+              borderRadius: BorderRadius.circular(8),
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 9,
+                  horizontal: 11,
+                  vertical: 8,
                 ),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(7),
+                  borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: p.border),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.search_rounded, color: p.muted, size: 16),
+                    Icon(Icons.search_rounded, color: p.muted, size: 15),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -410,8 +455,8 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                     ),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                        horizontal: 5,
+                        vertical: 1.5,
                       ),
                       decoration: BoxDecoration(
                         color: p.panel,
@@ -422,7 +467,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                         '⌘K',
                         style: TextStyle(
                           color: p.muted,
-                          fontSize: 10.5,
+                          fontSize: 10,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -439,21 +484,26 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
               children: [
                 for (final item in graphitePages)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
                     child: Material(
                       color: page == item.$1
                           ? blackEditionPreview
-                                ? const Color(0xFF1C1C1C)
+                                ? const Color(0xFF171717)
                                 : p.accent.withValues(alpha: .17)
                           : Colors.transparent,
-                      borderRadius: BorderRadius.circular(5),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(7),
+                        side: page == item.$1 && blackEditionPreview
+                            ? BorderSide(color: p.border)
+                            : BorderSide.none,
+                      ),
                       child: InkWell(
                         onTap: () => unawaited(requestNavigate(item.$1)),
-                        borderRadius: BorderRadius.circular(5),
+                        borderRadius: BorderRadius.circular(7),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
+                            horizontal: 12,
+                            vertical: 9.5,
                           ),
                           child: Row(
                             children: [
@@ -461,21 +511,21 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                                 item.$4,
                                 color: page == item.$1
                                     ? blackEditionPreview
-                                          ? p.text
+                                          ? p.accent
                                           : p.accent
                                     : p.muted,
-                                size: blackEditionPreview ? 21 : 25,
+                                size: 18,
                               ),
-                              const SizedBox(width: 20),
+                              const SizedBox(width: 12),
                               Expanded(
                                 child: Text(
                                   w(item.$2, item.$3),
                                   style: TextStyle(
                                     color: page == item.$1 ? p.text : p.muted,
-                                    fontSize: blackEditionPreview ? 14 : 17,
+                                    fontSize: 13.5,
                                     fontWeight: page == item.$1
                                         ? FontWeight.w600
-                                        : FontWeight.w400,
+                                        : FontWeight.w500,
                                   ),
                                 ),
                               ),
@@ -489,181 +539,513 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
             ),
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
+        Container(
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: p.border.withValues(alpha: .6))),
+          ),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              TextButton(
-                onPressed: () => widget.onLanguage(
-                  context.language == AppLanguage.en
-                      ? AppLanguage.zh
-                      : AppLanguage.en,
-                ),
-                child: Text(context.language == AppLanguage.en ? '中文' : 'EN'),
+              Row(
+                children: [
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: () => widget.onLanguage(
+                      context.language == AppLanguage.en
+                          ? AppLanguage.zh
+                          : AppLanguage.en,
+                    ),
+                    child: Text(
+                      context.language == AppLanguage.en ? '中文' : 'EN',
+                      style: TextStyle(color: p.muted, fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    key: const ValueKey('workspace-preferences-button'),
+                    visualDensity: VisualDensity.compact,
+                    tooltip: w('Preferences & account', '偏好与账户'),
+                    onPressed: showWorkspacePreferences,
+                    icon: Icon(Icons.tune_outlined, color: p.muted, size: 17),
+                  ),
+                  if (widget.onLogout != null)
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: w('Sign out', '退出登录'),
+                      onPressed: () => unawaited(requestLogout()),
+                      icon: Icon(Icons.logout, color: p.muted, size: 17),
+                    ),
+                ],
               ),
-              const Spacer(),
-              IconButton(
-                key: const ValueKey('workspace-preferences-button'),
-                tooltip: w('Preferences & account', '偏好与账户'),
-                onPressed: showWorkspacePreferences,
-                icon: Icon(Icons.tune_outlined, color: p.muted, size: 19),
-              ),
-              if (widget.onLogout != null)
-                IconButton(
-                  tooltip: w('Sign out', '退出登录'),
-                  onPressed: () => unawaited(requestLogout()),
-                  icon: Icon(Icons.logout, color: p.muted, size: 20),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    minimumSize: const Size(0, 28),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  onPressed: showMethodology,
+                  icon: Icon(Icons.description_outlined, color: p.muted, size: 15),
+                  label: Text(
+                    w('Sources & methodology', '来源与方法'),
+                    style: TextStyle(color: p.muted, fontSize: 11.5),
+                  ),
                 ),
+              ),
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
-          child: TextButton.icon(
-            onPressed: showMethodology,
-            icon: Icon(Icons.description_outlined, color: p.muted, size: 20),
-            label: Text(
-              w('Sources & methodology', '来源与方法'),
-              style: TextStyle(color: p.muted, fontSize: 12),
-            ),
-          ),
-        ),
       ],
     ),
   );
 
-  Widget graphiteMobileHeader() => Container(
-    key: const ValueKey('ios-mobile-top-header'),
-    decoration: BoxDecoration(
-      color: p.background,
-      border: Border(bottom: BorderSide(color: p.border)),
-    ),
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-    child: Row(
-      children: [
-        Expanded(child: brand(size: 18, compact: true)),
-        IconButton(
-          key: const ValueKey('mobile-search-trigger'),
-          tooltip: w('Search ticker (⌘K)', '搜索公司'),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-          style: IconButton.styleFrom(
-            minimumSize: const Size(44, 44),
-            tapTargetSize: MaterialTapTargetSize.padded,
-          ),
-          onPressed: () => unawaited(openGlobalCompanySearch()),
-          icon: Icon(Icons.search_rounded, color: p.muted, size: 20),
+  Widget graphiteMobileHeader() {
+    final replay = isHistoricalReplay;
+    final statusTint = replay
+        ? const Color(0xFFF5A623)
+        : const Color(0xFF20C997);
+    return Container(
+      key: const ValueKey('ios-mobile-top-header'),
+      decoration: BoxDecoration(
+        color: p.background,
+        border: const Border(
+          bottom: BorderSide(color: Color(0xFF1A222E), width: 0.7),
         ),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 62),
-          child: OutlinedButton(
-            key: const ValueKey('mobile-date-control'),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              minimumSize: const Size(44, 44),
-              tapTargetSize: MaterialTapTargetSize.padded,
-              side: BorderSide(
-                color: isHistoricalReplay
-                    ? const Color(0xFFF5A623).withValues(alpha: .6)
-                    : p.border,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      child: SizedBox(
+        height: 46,
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.asset(
+                thesisForgeMarkAsset,
+                width: 26,
+                height: 26,
               ),
             ),
-            onPressed: showDateDialog,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                isHistoricalReplay ? asOf : w('Live', '最新'),
-                style: TextStyle(
-                  color: isHistoricalReplay
-                      ? const Color(0xFFF5A623)
-                      : p.muted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
+            const SizedBox(width: 8),
+            Text(
+              'ThesisForge',
+              style: TextStyle(
+                color: p.text,
+                fontSize: 16.5,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.45,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key: const ValueKey('mobile-date-control'),
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: showDateDialog,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        minWidth: 44,
+                        minHeight: 44,
+                      ),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        widthFactor: 1,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3.5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: statusTint.withValues(alpha: .11),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: statusTint.withValues(alpha: .32),
+                              width: 0.8,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 5.5,
+                                height: 5.5,
+                                decoration: BoxDecoration(
+                                  color: statusTint,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 4.5),
+                              Flexible(
+                                child: Text(
+                                  replay ? asOf.substring(5) : w('Live', '实时'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: statusTint,
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
-        if (!isStandaloneDisplayMode())
-          IconButton(
-            key: const ValueKey('mobile-install-app-button'),
-            tooltip: w('Install iPhone App', '安装到 iPhone 主屏幕'),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-            style: IconButton.styleFrom(
-              minimumSize: const Size(44, 44),
-              tapTargetSize: MaterialTapTargetSize.padded,
-            ),
-            onPressed: () =>
-                unawaited(showIosInstallGuideDialog(context, palette: p)),
-            icon: Icon(Icons.phone_iphone_rounded, color: p.accent, size: 19),
-          ),
-        IconButton(
-          key: const ValueKey('mobile-preferences-button'),
-          tooltip: w('Preferences & account', '偏好与账户'),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-          style: IconButton.styleFrom(
-            minimumSize: const Size(44, 44),
-            tapTargetSize: MaterialTapTargetSize.padded,
-          ),
-          onPressed: showWorkspacePreferences,
-          icon: Icon(Icons.tune_outlined, color: p.muted, size: 19),
-        ),
-        OutlinedButton(
-          key: const ValueKey('mobile-language-toggle'),
-          style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            minimumSize: const Size(44, 44),
-            tapTargetSize: MaterialTapTargetSize.padded,
-            side: BorderSide(color: p.border),
-          ),
-          onPressed: () => widget.onLanguage(
-            context.language == AppLanguage.en
-                ? AppLanguage.zh
-                : AppLanguage.en,
-          ),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              context.language == AppLanguage.en ? '中文' : 'EN',
-              style: TextStyle(
-                color: p.text,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
+            IconButton(
+              key: const ValueKey('mobile-search-trigger'),
+              tooltip: w('Search ticker', '搜索公司'),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              style: IconButton.styleFrom(
+                minimumSize: const Size(44, 44),
+                tapTargetSize: MaterialTapTargetSize.padded,
+              ),
+              onPressed: () => unawaited(openGlobalCompanySearch()),
+              icon: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF131922),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFF222C3A),
+                    width: 0.8,
+                  ),
+                ),
+                child: Icon(Icons.search_rounded, color: p.text, size: 18),
               ),
             ),
+            IconButton(
+              key: const ValueKey('mobile-account-sheet-button'),
+              tooltip: w('Account & settings', '账户与设置'),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              style: IconButton.styleFrom(
+                minimumSize: const Size(44, 44),
+                tapTargetSize: MaterialTapTargetSize.padded,
+              ),
+              onPressed: showMobileAccountSheet,
+              icon: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF131922),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFF222C3A),
+                    width: 0.8,
+                  ),
+                ),
+                child: Icon(Icons.tune_rounded, color: p.text, size: 17),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void showMobileAccountSheet() {
+    var cb = widget.colorBlind;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0E131B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheetState) => SafeArea(
+          top: false,
+          child: Padding(
+            key: const ValueKey('mobile-account-bottom-sheet'),
+            padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2E3A4B),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF080B0F),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: p.border),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: p.accent.withValues(alpha: .14),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.verified_user_outlined,
+                          color: p.accent,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              w('Signed-in session', '当前登录账户'),
+                              style: TextStyle(color: p.muted, fontSize: 11),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              widget.localPreview
+                                  ? w('Local preview mode', '本地开发预览')
+                                  : (widget.userEmail.trim().isNotEmpty
+                                        ? widget.userEmail.trim()
+                                        : w(
+                                            'Authenticated investor',
+                                            '已认证账户',
+                                          )),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: p.text,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SegmentedButton<AppLanguage>(
+                        key: const ValueKey('sheet-language-toggle'),
+                        style: const ButtonStyle(
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        segments: const [
+                          ButtonSegment(
+                            value: AppLanguage.zh,
+                            label: Text('中文'),
+                          ),
+                          ButtonSegment(
+                            value: AppLanguage.en,
+                            label: Text('EN'),
+                          ),
+                        ],
+                        selected: {context.language},
+                        onSelectionChanged: (s) {
+                          if (s.isNotEmpty) {
+                            widget.onLanguage(s.first);
+                            Navigator.pop(sheetCtx);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ListTile(
+                  key: const ValueKey('sheet-date-picker'),
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                  leading: Icon(
+                    Icons.history_toggle_off_rounded,
+                    color: isHistoricalReplay
+                        ? const Color(0xFFF5A623)
+                        : p.accent,
+                    size: 20,
+                  ),
+                  title: Text(
+                    w('Information cutoff / PIT replay', '信息截止日与历史时点回放'),
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  subtitle: Text(
+                    isHistoricalReplay
+                        ? '${w('Replaying', '历史回放')} $asOf'
+                        : '${w('Live', '实时最新数据')} ($asOf)',
+                    style: TextStyle(color: p.muted, fontSize: 11.5),
+                  ),
+                  trailing: Icon(
+                    Icons.chevron_right_rounded,
+                    color: p.muted,
+                    size: 20,
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    unawaited(showDateDialog());
+                  },
+                ),
+                if (widget.onToggleColorBlind != null)
+                  SwitchListTile.adaptive(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    activeThumbColor: p.accent,
+                    title: Text(
+                      w('Color-blind safe palette', '色盲友好高对比配色'),
+                      style: TextStyle(
+                        color: p.text,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    value: cb,
+                    onChanged: (next) {
+                      setSheetState(() => cb = next);
+                      widget.onToggleColorBlind!(next);
+                    },
+                  ),
+                if (widget.showAdmin && widget.onLegacyView != null)
+                  ListTile(
+                    key: const ValueKey('sheet-open-admin'),
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    leading: Icon(
+                      Icons.admin_panel_settings_outlined,
+                      color: p.muted,
+                      size: 20,
+                    ),
+                    title: Text(
+                      w('Admin console', '系统管理后台'),
+                      style: TextStyle(
+                        color: p.text,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    trailing: Icon(
+                      Icons.chevron_right_rounded,
+                      color: p.muted,
+                      size: 20,
+                    ),
+                    onTap: () {
+                      Navigator.pop(sheetCtx);
+                      unawaited(requestNavigate('admin'));
+                    },
+                  ),
+                if (!isStandaloneDisplayMode())
+                  ListTile(
+                    key: const ValueKey('sheet-install-ios-app'),
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    leading: Icon(
+                      Icons.phone_iphone_rounded,
+                      color: p.accent,
+                      size: 20,
+                    ),
+                    title: Text(
+                      w(
+                        'Install Fullscreen App (.mobileconfig)',
+                        '安装 iPhone 纯净全屏客户端 (.mobileconfig)',
+                      ),
+                      style: TextStyle(
+                        color: p.text,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    trailing: Icon(
+                      Icons.chevron_right_rounded,
+                      color: p.muted,
+                      size: 20,
+                    ),
+                    onTap: () {
+                      Navigator.pop(sheetCtx);
+                      unawaited(showIosInstallGuideDialog(context, palette: p));
+                    },
+                  ),
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                  leading: Icon(
+                    Icons.description_outlined,
+                    color: p.muted,
+                    size: 20,
+                  ),
+                  title: Text(
+                    w('Sources & methodology', '数据来源与方法论'),
+                    style: TextStyle(color: p.text, fontSize: 13.5),
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    showMethodology();
+                  },
+                ),
+                if (widget.onLogout != null) ...[
+                  const Divider(height: 14),
+                  ListTile(
+                    key: const ValueKey('sheet-logout'),
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    leading: Icon(
+                      Icons.logout_rounded,
+                      color: p.negative,
+                      size: 20,
+                    ),
+                    title: Text(
+                      w('Sign out', '退出登录'),
+                      style: TextStyle(
+                        color: p.negative,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.pop(sheetCtx);
+                      unawaited(requestLogout());
+                    },
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
-        if (widget.onLogout != null)
-          IconButton(
-            tooltip: w('Sign out', '退出登录'),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-            style: IconButton.styleFrom(
-              minimumSize: const Size(44, 44),
-              tapTargetSize: MaterialTapTargetSize.padded,
-            ),
-            onPressed: () => unawaited(requestLogout()),
-            icon: Icon(Icons.logout, color: p.muted, size: 19),
-          ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 
   Widget graphiteMobileBottomNavBar() => Container(
     key: const ValueKey('ios-bottom-nav-bar'),
-    decoration: BoxDecoration(
-      color: p.panel,
-      border: Border(top: BorderSide(color: p.border)),
+    decoration: const BoxDecoration(
+      color: Color(0xFF0A0D12),
+      border: Border(
+        top: BorderSide(color: Color(0xFF1B2330), width: 0.7),
+      ),
     ),
     child: SafeArea(
       top: false,
       child: SizedBox(
-        height: 56,
+        height: 54,
         child: Row(
           children: [
-            for (final item in graphitePages)
+            for (final item in mobileGraphitePages)
               Expanded(
                 child: Material(
                   color: Colors.transparent,
@@ -673,41 +1055,35 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                     child: SizedBox.expand(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 3,
-                          vertical: 4,
+                          horizontal: 2,
+                          vertical: 5,
                         ),
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Container(
-                                width: 22,
-                                height: 2.5,
-                                decoration: BoxDecoration(
-                                  color: page == item.$1
-                                      ? p.accent
-                                      : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                              const SizedBox(height: 4),
                               Icon(
-                                item.$4,
-                                size: 19,
-                                color: page == item.$1 ? p.accent : p.muted,
+                                page == item.$1 ? item.$5 : item.$4,
+                                size: 21,
+                                color: page == item.$1
+                                    ? p.accent
+                                    : const Color(0xFF7D8B9D),
                               ),
-                              const SizedBox(height: 2),
+                              const SizedBox(height: 3),
                               Text(
                                 w(item.$2, item.$3),
                                 maxLines: 1,
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   fontSize: 10.5,
+                                  letterSpacing: -0.1,
                                   fontWeight: page == item.$1
                                       ? FontWeight.w700
                                       : FontWeight.w500,
-                                  color: page == item.$1 ? p.accent : p.muted,
+                                  color: page == item.$1
+                                      ? p.accent
+                                      : const Color(0xFF7D8B9D),
                                 ),
                               ),
                             ],

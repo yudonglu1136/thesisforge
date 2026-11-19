@@ -104,42 +104,133 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
 
   List<Widget> discoveryPage() => [
     discoverIntro(),
-    const SizedBox(height: 20),
+    const SizedBox(height: 12),
     LayoutBuilder(
-      builder: (_, c) => Wrap(
-        spacing: 10,
-        runSpacing: 8,
-        children: [
-          for (final tab in [
-            ('gurus', '13F Insights', '13F 洞察'),
-            ('managers', 'Guru', '大师持仓'),
-            ('fundamentals', 'Fundamentals', '基本面'),
-            ('aiinsights', 'AI Insights', 'AI 洞察'),
-          ])
-            SizedBox(
-              width: c.maxWidth < 650 ? math.max(0, c.maxWidth - 10) / 2 : null,
-              child: ChoiceChip(
-                label: Text(w(tab.$2, tab.$3)),
-                selected: discoveryTab == tab.$1,
-                onSelected: (_) {
-                  updateUI(() {
-                    discoveryTab = tab.$1;
-                    if (tab.$1 == 'gurus') selectedGuru = null;
-                  });
-                  persistDiscover();
-                  if (tab.$1 == 'gurus' && institutional13f == null) {
-                    unawaited(load13FInsights());
-                  }
-                  if (tab.$1 == 'fundamentals' && opportunities == null) {
-                    unawaited(loadOpportunities());
-                  }
-                },
-              ),
+      builder: (_, c) {
+        final tabs = const [
+          ('gurus', '13F Insights', '13F 洞察'),
+          ('managers', 'Guru', '大师持仓'),
+          ('fundamentals', 'Fundamentals', '基本面'),
+          ('aiinsights', 'AI Insights', 'AI 洞察'),
+        ];
+        if (c.maxWidth < 650) {
+          return Container(
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0D1117),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: p.border),
             ),
-        ],
-      ),
+            child: Row(
+              children: [
+                for (final tab in tabs)
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        updateUI(() {
+                          discoveryTab = tab.$1;
+                          if (tab.$1 == 'gurus') selectedGuru = null;
+                        });
+                        persistDiscover();
+                        if (tab.$1 == 'gurus' && institutional13f == null) {
+                          unawaited(load13FInsights());
+                        }
+                        if (tab.$1 == 'fundamentals' && opportunities == null) {
+                          unawaited(loadOpportunities());
+                        }
+                      },
+                      child: Container(
+                        height: 32,
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: discoveryTab == tab.$1
+                              ? p.card
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            w(tab.$2, tab.$3),
+                            maxLines: 1,
+                            style: TextStyle(
+                              color: discoveryTab == tab.$1 ? p.text : p.muted,
+                              fontSize: 11.5,
+                              fontWeight: discoveryTab == tab.$1
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        }
+        return Container(
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: p.border)),
+          ),
+          child: Row(
+            children: [
+              for (final tab in tabs)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: InkWell(
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(6),
+                    ),
+                    onTap: () {
+                      updateUI(() {
+                        discoveryTab = tab.$1;
+                        if (tab.$1 == 'gurus') selectedGuru = null;
+                      });
+                      persistDiscover();
+                      if (tab.$1 == 'gurus' && institutional13f == null) {
+                        unawaited(load13FInsights());
+                      }
+                      if (tab.$1 == 'fundamentals' && opportunities == null) {
+                        unawaited(loadOpportunities());
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 9,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: discoveryTab == tab.$1
+                                ? p.accent
+                                : Colors.transparent,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      child: Text(
+                        w(tab.$2, tab.$3),
+                        style: TextStyle(
+                          color: discoveryTab == tab.$1 ? p.text : p.muted,
+                          fontSize: 13.5,
+                          fontWeight: discoveryTab == tab.$1
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     ),
-    const SizedBox(height: 16),
+    const SizedBox(height: 14),
     if ((discoveryLoading && discoveryTab == 'gurus') || guruLoading)
       const LinearProgressIndicator(minHeight: 2),
     if (discoveryError != null && {'gurus', 'managers'}.contains(discoveryTab))
