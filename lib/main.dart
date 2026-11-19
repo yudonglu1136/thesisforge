@@ -1153,6 +1153,14 @@ Future<bool> _ensureSupabaseReady({bool retry = false}) {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarBrightness: Brightness.dark,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarColor: Colors.black,
+      systemNavigationBarIconBrightness: Brightness.light,
+    ),
+  );
   runApp(const GuruTerminalApp());
 }
 
@@ -1594,6 +1602,186 @@ class _AuthGateState extends State<AuthGate> {
   }
 }
 
+Future<void> showIosInstallGuideDialog(
+  BuildContext context, {
+  Palette? palette,
+}) async {
+  final p = palette ?? Palette(false);
+  final compact = MediaQuery.sizeOf(context).width < 600;
+  Widget stepRow(IconData icon, String titleText, String subText) => Container(
+    margin: const EdgeInsets.only(bottom: 10),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFF0E1218),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: p.border),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color: p.accent.withValues(alpha: .12),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: p.accent.withValues(alpha: .28)),
+          ),
+          child: Icon(icon, size: 18, color: p.accent),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                titleText,
+                style: TextStyle(
+                  color: p.text,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                subText,
+                style: TextStyle(color: p.muted, fontSize: 12, height: 1.4),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  await showDialog<void>(
+    context: context,
+    builder: (dialogCtx) => AlertDialog(
+      key: const ValueKey('ios-install-guide-dialog'),
+      backgroundColor: p.panel,
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: compact ? 14 : 40,
+        vertical: 20,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: p.border),
+      ),
+      title: Row(
+        children: [
+          Icon(Icons.phone_iphone_rounded, color: p.accent, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              dialogCtx.tr(
+                '安装 ThesisForge 到 iPhone 主屏幕',
+                'Install ThesisForge on iPhone',
+              ),
+              style: TextStyle(
+                color: p.text,
+                fontSize: 16.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF080B0F),
+                  borderRadius: BorderRadius.circular(9),
+                  border: Border.all(color: p.border),
+                ),
+                child: Text(
+                  dialogCtx.tr(
+                    '说明：.dmg 是苹果电脑（macOS）专属镜像格式，iPhone（iOS）无法直接打开 .dmg 文件。通过 iPhone Safari 添加到主屏幕后，桌面即刻生成独立黑标 ThesisForge 全屏 App，无浏览器地址栏，体验与原生 App 一致。',
+                    'Note: .dmg files are macOS disk images and cannot be opened on iPhone (iOS). Adding ThesisForge from Safari creates a full-screen standalone Home Screen App with no browser chrome.',
+                  ),
+                  style: TextStyle(color: p.muted, fontSize: 12, height: 1.45),
+                ),
+              ),
+              const SizedBox(height: 12),
+              stepRow(
+                Icons.language_rounded,
+                dialogCtx.tr(
+                  '第 1 步 · 用 iPhone Safari 打开本站',
+                  'Step 1 · Open in iPhone Safari',
+                ),
+                dialogCtx.tr(
+                  '在苹果手机自带 Safari 浏览器访问 https://www.thesisforge.tech',
+                  'Visit https://www.thesisforge.tech in Safari on your iPhone.',
+                ),
+              ),
+              stepRow(
+                Icons.ios_share_rounded,
+                dialogCtx.tr(
+                  '第 2 步 · 点击底部「分享」按钮',
+                  'Step 2 · Tap the Safari Share icon',
+                ),
+                dialogCtx.tr(
+                  '轻触 Safari 底部工具栏正中的「方框向上箭头」分享图标。',
+                  'Tap the square-with-up-arrow Share icon in Safari’s toolbar.',
+                ),
+              ),
+              stepRow(
+                Icons.add_box_outlined,
+                dialogCtx.tr(
+                  '第 3 步 · 选择「添加到主屏幕」',
+                  'Step 3 · Tap "Add to Home Screen"',
+                ),
+                dialogCtx.tr(
+                  '点击右上角「添加」，随后从 iPhone 桌面黑色 TF 图标启动并登录一次即可持久保持登录态。',
+                  'Tap "Add", then launch from the black TF Home Screen icon and sign in once.',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton.icon(
+          key: const ValueKey('ios-install-copy-link'),
+          style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+          onPressed: () {
+            unawaited(
+              Clipboard.setData(
+                const ClipboardData(text: 'https://www.thesisforge.tech'),
+              ),
+            );
+            Navigator.of(dialogCtx).pop();
+            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+              SnackBar(
+                content: Text(
+                  context.tr(
+                    '已复制网址 https://www.thesisforge.tech，可在 iPhone Safari 粘贴打开',
+                    'Copied https://www.thesisforge.tech for iPhone Safari',
+                  ),
+                ),
+              ),
+            );
+          },
+          icon: const Icon(Icons.copy_rounded, size: 16),
+          label: Text(dialogCtx.tr('复制网址', 'Copy URL')),
+        ),
+        FilledButton(
+          key: const ValueKey('ios-install-guide-close'),
+          style: FilledButton.styleFrom(minimumSize: const Size(64, 44)),
+          onPressed: () => Navigator.of(dialogCtx).pop(),
+          child: Text(dialogCtx.tr('知道了', 'Got it')),
+        ),
+      ],
+    ),
+  );
+}
+
 class LoginScreen extends StatelessWidget {
   const LoginScreen({
     super.key,
@@ -1619,6 +1807,8 @@ class LoginScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = Palette(false);
+    final compact = MediaQuery.sizeOf(context).width < 440;
+    final showInstallGuide = !isStandaloneDisplayMode();
     return Scaffold(
       body: Container(
         key: const ValueKey('login-background'),
@@ -1642,11 +1832,11 @@ class LoginScreen extends StatelessWidget {
                   child: Container(
                     key: const ValueKey('login-panel'),
                     width: double.infinity,
-                    padding: const EdgeInsets.all(32),
+                    padding: EdgeInsets.all(compact ? 24 : 32),
                     decoration: panelDecoration(palette),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Align(
                           alignment: Alignment.centerRight,
@@ -1719,6 +1909,7 @@ class LoginScreen extends StatelessWidget {
                           context.tr('研究终端', 'Research Terminal'),
                           style: Theme.of(context).textTheme.displaySmall
                               ?.copyWith(
+                                fontSize: compact ? 30 : null,
                                 fontWeight: FontWeight.w900,
                                 letterSpacing: 0,
                               ),
@@ -1731,14 +1922,17 @@ class LoginScreen extends StatelessWidget {
                           ),
                           style: TextStyle(color: palette.muted, height: 1.35),
                         ),
-                        const SizedBox(height: 28),
+                        const SizedBox(height: 24),
                         FilledButton.icon(
-                          style: blackEditionPreview
-                              ? FilledButton.styleFrom(
-                                  backgroundColor: palette.text,
-                                  foregroundColor: palette.background,
-                                )
-                              : null,
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(double.infinity, 48),
+                            backgroundColor: blackEditionPreview
+                                ? palette.text
+                                : null,
+                            foregroundColor: blackEditionPreview
+                                ? palette.background
+                                : null,
+                          ),
                           onPressed: authConfigured ? onGoogle : null,
                           icon: const Icon(Icons.login_rounded),
                           label: Text(
@@ -1748,10 +1942,44 @@ class LoginScreen extends StatelessWidget {
                         if (localBypassEnabled) ...[
                           const SizedBox(height: 12),
                           OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 46),
+                            ),
                             onPressed: onLocal,
                             icon: const Icon(Icons.terminal_rounded),
                             label: Text(
                               context.tr('进入本地工作区', 'Enter Local Workspace'),
+                            ),
+                          ),
+                        ],
+                        if (showInstallGuide) ...[
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            key: const ValueKey('login-install-ios-app'),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 46),
+                              side: BorderSide(color: palette.border),
+                            ),
+                            onPressed: () => unawaited(
+                              showIosInstallGuideDialog(
+                                context,
+                                palette: palette,
+                              ),
+                            ),
+                            icon: Icon(
+                              Icons.phone_iphone_rounded,
+                              size: 18,
+                              color: palette.accent,
+                            ),
+                            label: Text(
+                              context.tr(
+                                '安装到 iPhone 主屏幕（全屏 App）',
+                                'Install on iPhone Home Screen',
+                              ),
+                              style: TextStyle(
+                                color: palette.text,
+                                fontSize: 13,
+                              ),
                             ),
                           ),
                         ],
@@ -1774,6 +2002,9 @@ class LoginScreen extends StatelessWidget {
                         if ((authMessage?.isNotEmpty ?? false)) ...[
                           const SizedBox(height: 12),
                           OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 46),
+                            ),
                             onPressed: onRetry,
                             icon: const Icon(Icons.refresh_rounded),
                             label: Text(

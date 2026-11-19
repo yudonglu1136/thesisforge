@@ -42,10 +42,29 @@ class _GraphitePalette extends Palette {
 
 extension _GraphiteWorkspace on _InvestmentWorkspaceState {
   Widget graphiteBuild(BuildContext context) {
-    final desktop = MediaQuery.sizeOf(context).width >= 1100;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final desktop = screenWidth >= 1100;
+    final compactDialog = screenWidth < 600;
     final base = Theme.of(context);
     final theme = base.copyWith(
       scaffoldBackgroundColor: p.background,
+      dialogTheme: DialogThemeData(
+        backgroundColor: p.panel,
+        insetPadding: EdgeInsets.symmetric(
+          horizontal: compactDialog ? 14 : 40,
+          vertical: 20,
+        ),
+        actionsPadding: EdgeInsets.fromLTRB(
+          compactDialog ? 12 : 20,
+          0,
+          compactDialog ? 12 : 20,
+          14,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: p.border),
+        ),
+      ),
       colorScheme: ColorScheme.dark(
         primary: p.accent,
         onPrimary: blackEditionPreview ? Colors.black : p.background,
@@ -132,6 +151,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
           child: Scaffold(
             backgroundColor: p.background,
             body: SafeArea(
+              bottom: desktop,
               child: Row(
                 children: [
                   if (desktop) graphiteRail(),
@@ -142,10 +162,10 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                         if (widget.sessionExpired) sessionExpiredBanner(),
                         if (busy)
                           LinearProgressIndicator(minHeight: 2, color: p.accent),
-                    Expanded(
-                      child: page == 'admin' && widget.adminContent != null
-                          ? widget.adminContent!
-                          : SingleChildScrollView(
+                        Expanded(
+                          child: page == 'admin' && widget.adminContent != null
+                              ? widget.adminContent!
+                              : SingleChildScrollView(
                               key: ValueKey(
                                 'workflow-$page-${page == 'research' ? '$ticker-$section' : '$discoveryTab-${text(asMap(selectedGuru?['guru'])['id'])}'}-$asOf-${page == 'discover' && MediaQuery.sizeOf(context).width < 1380 ? opportunityMobileDetail : false}',
                               ),
@@ -253,7 +273,8 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                                 ],
                               ),
                             ),
-                    ),
+                        ),
+                        if (!desktop) graphiteMobileBottomNavBar(),
                       ],
                     ),
                   ),
@@ -318,14 +339,14 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
       ('admin', 'Admin', '管理', Icons.admin_panel_settings_outlined),
   ];
 
-  Widget brand({double size = 23}) => Row(
+  Widget brand({double size = 23, bool compact = false}) => Row(
     children: [
       Image.asset(
         thesisForgeMarkAsset,
-        width: blackEditionPreview ? 40 : 32,
-        height: blackEditionPreview ? 40 : 36,
+        width: compact ? 28 : (blackEditionPreview ? 40 : 32),
+        height: compact ? 28 : (blackEditionPreview ? 40 : 36),
       ),
-      const SizedBox(width: 12),
+      SizedBox(width: compact ? 7 : 12),
       Expanded(
         child: FittedBox(
           fit: BoxFit.scaleDown,
@@ -512,111 +533,186 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
   );
 
   Widget graphiteMobileHeader() => Container(
+    key: const ValueKey('ios-mobile-top-header'),
     decoration: BoxDecoration(
+      color: p.background,
       border: Border(bottom: BorderSide(color: p.border)),
     ),
-    child: Column(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    child: Row(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 8, 4),
-          child: Row(
-            children: [
-              Expanded(child: brand(size: 19)),
-              IconButton(
-                key: const ValueKey('mobile-search-trigger'),
-                tooltip: w('Search ticker (⌘K)', '搜索公司'),
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.all(6),
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                onPressed: () => unawaited(openGlobalCompanySearch()),
-                icon: Icon(Icons.search_rounded, color: p.muted, size: 19),
+        Expanded(child: brand(size: 18, compact: true)),
+        IconButton(
+          key: const ValueKey('mobile-search-trigger'),
+          tooltip: w('Search ticker (⌘K)', '搜索公司'),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+          style: IconButton.styleFrom(
+            minimumSize: const Size(44, 44),
+            tapTargetSize: MaterialTapTargetSize.padded,
+          ),
+          onPressed: () => unawaited(openGlobalCompanySearch()),
+          icon: Icon(Icons.search_rounded, color: p.muted, size: 20),
+        ),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 62),
+          child: OutlinedButton(
+            key: const ValueKey('mobile-date-control'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              minimumSize: const Size(44, 44),
+              tapTargetSize: MaterialTapTargetSize.padded,
+              side: BorderSide(
+                color: isHistoricalReplay
+                    ? const Color(0xFFF5A623).withValues(alpha: .6)
+                    : p.border,
               ),
-              OutlinedButton(
-                key: const ValueKey('mobile-date-control'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-                  minimumSize: const Size(0, 28),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  side: BorderSide(
-                    color: isHistoricalReplay
-                        ? const Color(0xFFF5A623).withValues(alpha: .6)
-                        : p.border,
-                  ),
-                ),
-                onPressed: showDateDialog,
-                child: Text(
-                  isHistoricalReplay ? asOf : w('Live', '最新'),
-                  style: TextStyle(
-                    color: isHistoricalReplay ? const Color(0xFFF5A623) : p.muted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                tooltip: w('Preferences & account', '偏好与账户'),
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.all(6),
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                onPressed: showWorkspacePreferences,
-                icon: Icon(Icons.tune_outlined, color: p.muted, size: 18),
-              ),
-              OutlinedButton(
-                key: const ValueKey('mobile-language-toggle'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  minimumSize: const Size(0, 28),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  side: BorderSide(color: p.border),
-                ),
-                onPressed: () => widget.onLanguage(
-                  context.language == AppLanguage.en
-                      ? AppLanguage.zh
-                      : AppLanguage.en,
-                ),
-                child: Text(
-                  context.language == AppLanguage.en ? '中文' : 'EN',
-                  style: TextStyle(
-                    color: p.text,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                  ),
+            ),
+            onPressed: showDateDialog,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                isHistoricalReplay ? asOf : w('Live', '最新'),
+                style: TextStyle(
+                  color: isHistoricalReplay
+                      ? const Color(0xFFF5A623)
+                      : p.muted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-              if (widget.onLogout != null)
-                IconButton(
-                  tooltip: w('Sign out', '退出登录'),
-                  onPressed: () => unawaited(requestLogout()),
-                  icon: Icon(Icons.logout, color: p.muted, size: 20),
-                ),
-            ],
+            ),
           ),
         ),
-        Row(
+        if (!isStandaloneDisplayMode())
+          IconButton(
+            key: const ValueKey('mobile-install-app-button'),
+            tooltip: w('Install iPhone App', '安装到 iPhone 主屏幕'),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+            style: IconButton.styleFrom(
+              minimumSize: const Size(44, 44),
+              tapTargetSize: MaterialTapTargetSize.padded,
+            ),
+            onPressed: () =>
+                unawaited(showIosInstallGuideDialog(context, palette: p)),
+            icon: Icon(Icons.phone_iphone_rounded, color: p.accent, size: 19),
+          ),
+        IconButton(
+          key: const ValueKey('mobile-preferences-button'),
+          tooltip: w('Preferences & account', '偏好与账户'),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+          style: IconButton.styleFrom(
+            minimumSize: const Size(44, 44),
+            tapTargetSize: MaterialTapTargetSize.padded,
+          ),
+          onPressed: showWorkspacePreferences,
+          icon: Icon(Icons.tune_outlined, color: p.muted, size: 19),
+        ),
+        OutlinedButton(
+          key: const ValueKey('mobile-language-toggle'),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            minimumSize: const Size(44, 44),
+            tapTargetSize: MaterialTapTargetSize.padded,
+            side: BorderSide(color: p.border),
+          ),
+          onPressed: () => widget.onLanguage(
+            context.language == AppLanguage.en
+                ? AppLanguage.zh
+                : AppLanguage.en,
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              context.language == AppLanguage.en ? '中文' : 'EN',
+              style: TextStyle(
+                color: p.text,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+        if (widget.onLogout != null)
+          IconButton(
+            tooltip: w('Sign out', '退出登录'),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+            style: IconButton.styleFrom(
+              minimumSize: const Size(44, 44),
+              tapTargetSize: MaterialTapTargetSize.padded,
+            ),
+            onPressed: () => unawaited(requestLogout()),
+            icon: Icon(Icons.logout, color: p.muted, size: 19),
+          ),
+      ],
+    ),
+  );
+
+  Widget graphiteMobileBottomNavBar() => Container(
+    key: const ValueKey('ios-bottom-nav-bar'),
+    decoration: BoxDecoration(
+      color: p.panel,
+      border: Border(top: BorderSide(color: p.border)),
+    ),
+    child: SafeArea(
+      top: false,
+      child: SizedBox(
+        height: 56,
+        child: Row(
           children: [
             for (final item in graphitePages)
               Expanded(
-                child: InkWell(
-                  onTap: () => unawaited(requestNavigate(item.$1)),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    decoration: BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: page == item.$1
-                              ? p.accent
-                              : Colors.transparent,
-                          width: 2,
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key: ValueKey('mobile-nav-${item.$1}'),
+                    onTap: () => unawaited(requestNavigate(item.$1)),
+                    child: SizedBox.expand(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 3,
+                          vertical: 4,
                         ),
-                      ),
-                    ),
-                    child: Text(
-                      w(item.$2, item.$3),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: page == item.$1 ? p.accent : p.muted,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 22,
+                                height: 2.5,
+                                decoration: BoxDecoration(
+                                  color: page == item.$1
+                                      ? p.accent
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Icon(
+                                item.$4,
+                                size: 19,
+                                color: page == item.$1 ? p.accent : p.muted,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                w(item.$2, item.$3),
+                                maxLines: 1,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: page == item.$1
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  color: page == item.$1 ? p.accent : p.muted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -624,7 +720,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
               ),
           ],
         ),
-      ],
+      ),
     ),
   );
 
@@ -1079,6 +1175,26 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                       },
                     ),
                   ],
+                ),
+                const Divider(height: 20),
+                OutlinedButton.icon(
+                  key: const ValueKey('prefs-install-ios-app'),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    unawaited(showIosInstallGuideDialog(context, palette: p));
+                  },
+                  icon: Icon(
+                    Icons.phone_iphone_rounded,
+                    size: 17,
+                    color: p.accent,
+                  ),
+                  label: Text(
+                    w(
+                      'Install on iPhone Home Screen',
+                      '安装到 iPhone 主屏幕（全屏 App）',
+                    ),
+                    style: TextStyle(color: p.text, fontSize: 13),
+                  ),
                 ),
               ],
             ),
@@ -1582,11 +1698,12 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
             w('Save a scenario version', '保存情景版本'),
             style: TextStyle(color: p.text),
           ),
-          content: SizedBox(
-            width: 460,
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   input(
                     scenarioName,

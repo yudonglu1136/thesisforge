@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
 
 import 'package:web/web.dart' as web;
@@ -139,4 +140,41 @@ void openExternalUrl(String url) {
   } catch (_) {
     web.window.location.href = url;
   }
+}
+
+bool? debugStandaloneDisplayModeOverride;
+
+bool isStandaloneDisplayMode() {
+  if (debugStandaloneDisplayModeOverride != null) {
+    return debugStandaloneDisplayModeOverride!;
+  }
+  try {
+    if (web.window.matchMedia('(display-mode: standalone)').matches) {
+      return true;
+    }
+  } catch (_) {}
+  try {
+    final nav = web.window.navigator as JSObject;
+    final standalone = nav.getProperty<JSAny?>('standalone'.toJS);
+    if (standalone != null &&
+        standalone.isA<JSBoolean>() &&
+        (standalone as JSBoolean).toDart) {
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+bool isAppleMobileBrowser() {
+  try {
+    final ua = web.window.navigator.userAgent;
+    if (RegExp(r'iPhone|iPad|iPod', caseSensitive: false).hasMatch(ua)) {
+      return true;
+    }
+    final platform = web.window.navigator.platform;
+    if (platform == 'MacIntel' && web.window.navigator.maxTouchPoints > 1) {
+      return true;
+    }
+  } catch (_) {}
+  return false;
 }

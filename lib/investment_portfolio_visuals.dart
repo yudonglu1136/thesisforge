@@ -1636,6 +1636,8 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
     final covered = row['modelStatus'] == 'covered';
     final model = asMap(row['model']);
     final structureGap = nullableNumber(row['_structureGap']);
+    final unrPnl = nullableNumber(row['unrealizedPnl']);
+    final unrPct = nullableNumber(row['unrealizedPct']);
     return InkWell(
       key: ValueKey('portfolio-mobile-${row['id'] ?? row['ticker']}'),
       onTap: row['kind'] == 'equity'
@@ -1687,6 +1689,18 @@ extension _PortfolioVisualDashboard on _PortfolioResearchPanelState {
               spacing: 20,
               runSpacing: 10,
               children: [
+                if (unrPnl != null || unrPct != null)
+                  smallMetric(
+                    'Open P&L',
+                    '累计浮盈亏',
+                    hideAmounts
+                        ? (unrPct != null
+                              ? '${unrPct >= 0 ? '+' : ''}${percent(unrPct)}'
+                              : '••••')
+                        : (unrPnl != null
+                              ? '${unrPnl >= 0 ? '+' : ''}${amount(unrPnl)}'
+                              : percent(unrPct)),
+                  ),
                 smallMetric(
                   'Model architecture',
                   '模型架构',

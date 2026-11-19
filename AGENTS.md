@@ -967,9 +967,12 @@ Whenever UI modules are redesigned OR a major quarterly earnings / 13F data refr
 - **Verified Pre-Inception `$0` Sub-Account Continuity (`server/portfolioReport.js`, `server/portfolioHome.js`, `server/portfolioHistory.js`)**:
   - Adding a newly opened or newly funded sub-account (`inferAccountInceptionDate`) must never chop off or cliff older accounts' pre-inception NAV, realized P&L, or cash-adjusted P&L history (`Account 1 + $0` strictly prior to verified `inceptionDate`), while still failing closed on missing interior dates or unverified partial windows.
 
+### 8. Full iOS / iPhone Standalone WebApp & Native Release Adaptation (2026-11-19)
 
-
-
-
+- **Full-Screen iOS Standalone WebApp Shell (`web/index.html`, `web/brand/ios-splash/*.png`, `web/brand/thesisforge-apple-touch-icon-180.png`, `vercel.json`, `scripts/ios-webapp-shell.test.mjs`)**:
+  - `web/index.html` must declare `viewport-fit=cover`, `apple-mobile-web-app-capable="yes"`, `apple-mobile-web-app-status-bar-style="black-translucent"`, `format-detection="telephone=no"`, `height: 100dvh`, `overscroll-behavior: none`, `180x180` + `192x192` black `TF` touch icons, and all 5 iPhone portrait `apple-touch-startup-image` splash PNGs (`750x1334`, `1170x2532`, `1179x2556`, `1290x2796`, `1320x2868`).
+- **Apple HIG Mobile Shell, Bottom Tab Bar & In-App Install Guide (`lib/investment_graphite.dart`, `lib/main.dart`, `lib/browser_location_*.dart`, `lib/investment_portfolio_home.dart`, `lib/investment_portfolio_visuals.dart`, `test/ios_responsive_adaptation_test.dart`)**:
+  - Mobile viewports (`< 1100px`) render a compact single-row top header (`>= 44x44pt` hit targets, Dynamic Island top `SafeArea`) and a thumb-friendly bottom navigation bar (`ios-bottom-nav-bar`, respecting the `34pt` iPhone Home Indicator bottom `SafeArea`), keeping desktop `graphiteRail()` (`>= 1100px`) 100% untouched.
+  - `showIosInstallGuideDialog` provides a bilingual 3-step Safari `Share -> Add to Home Screen` guide (explaining why `.dmg` is macOS-only while delivering instant full-screen iPhone Home Screen installation) from `LoginScreen`, the mobile header (`mobile-install-app-button`, auto-hidden in `standalone` mode), and Workspace Preferences (`prefs-install-ios-app`).
 
 

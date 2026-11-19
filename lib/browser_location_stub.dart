@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 Future<void> downloadAiInsightsBytes(
@@ -34,3 +35,17 @@ void replaceBrowserQuery(
 void openBrowserPath(String path) {}
 
 void openExternalUrl(String url) {}
+
+bool? debugStandaloneDisplayModeOverride;
+
+bool isStandaloneDisplayMode() {
+  if (debugStandaloneDisplayModeOverride != null) {
+    return debugStandaloneDisplayModeOverride!;
+  }
+  try {
+    if (Platform.isIOS || Platform.isAndroid) return true;
+  } catch (_) {}
+  return false;
+}
+
+bool isAppleMobileBrowser() => false;

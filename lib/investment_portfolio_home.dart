@@ -1455,26 +1455,73 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                                   ),
                                 ],
                               ),
-                              if (r['kind'] == 'equity' &&
-                                  (nullableNumber(r['modelGap']) != null ||
-                                      asList(
+                                if (r['kind'] == 'equity' &&
+                                    (nullableNumber(r['unrealizedPnl']) !=
+                                            null ||
+                                        nullableNumber(r['modelGap']) != null ||
+                                        asList(
+                                          asMap(r['guruActivity'])['rows'],
+                                        ).isNotEmpty)) ...[
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 6,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      Builder(
+                                        builder: (_) {
+                                          final pnl = nullableNumber(
+                                            r['unrealizedPnl'],
+                                          );
+                                          final rate = openPnlRateFor(r);
+                                          if (pnl == null ||
+                                              (hideAmounts && rate == null)) {
+                                            return const SizedBox.shrink();
+                                          }
+                                          final tint = pnl < 0
+                                              ? p.negative
+                                              : p.accent;
+                                          final labelText = hideAmounts
+                                              ? '${w('P&L', '浮盈亏')} ${rate! > 0 ? '+' : ''}${percent(rate)}'
+                                              : '${w('P&L', '浮盈亏')} ${pnl > 0 ? '+' : ''}${amount(pnl)}';
+                                          return Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: tint.withValues(
+                                                alpha: .08,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                              border: Border.all(
+                                                color: tint.withValues(
+                                                  alpha: .22,
+                                                ),
+                                              ),
+                                            ),
+                                            child: Text(
+                                              labelText,
+                                              style: TextStyle(
+                                                color: tint,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                      if (nullableNumber(r['modelGap']) != null)
+                                        _homeValuationPill(r),
+                                      if (asList(
                                         asMap(r['guruActivity'])['rows'],
-                                      ).isNotEmpty)) ...[
-                                const SizedBox(height: 8),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 6,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: [
-                                    if (nullableNumber(r['modelGap']) != null)
-                                      _homeValuationPill(r),
-                                    if (asList(
-                                      asMap(r['guruActivity'])['rows'],
-                                    ).isNotEmpty)
-                                      _homeGuruPill(r),
-                                  ],
-                                ),
-                              ],
+                                      ).isNotEmpty)
+                                        _homeGuruPill(r),
+                                    ],
+                                  ),
+                                ],
                             ],
                           ),
                   ),

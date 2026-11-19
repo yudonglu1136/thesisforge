@@ -45,7 +45,7 @@
       "continue": true
     },
     {
-      "src": "^/(favicon\\.(?:png|ico)|manifest\\.json|icons/[^/]+\\.png|brand/[^/]+\\.png)$",
+      "src": "^/(favicon\\.(?:png|ico)|manifest\\.json|icons/[^/]+\\.png|brand/(?:ios-splash/)?[^/]+\\.png)$",
       "headers": {
         "Cache-Control": "public, max-age=0, must-revalidate",
         "X-Content-Type-Options": "nosniff"

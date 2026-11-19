@@ -18,13 +18,22 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="format-detection" content="telephone=no">
   <meta name="description" content="ThesisForge: evidence-first public-equity research, valuation, 13F intelligence, and portfolio analysis.">
 
-  <!-- iOS meta tags & icons -->
+  <!-- iOS meta tags, icons & full-screen standalone startup splash screens -->
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="ThesisForge">
+  <link rel="apple-touch-icon" sizes="180x180" href="brand/thesisforge-apple-touch-icon-180.png?v=20261119">
   <link rel="apple-touch-icon" sizes="192x192" href="brand/thesisforge-black-mark-192.png?v=20261119">
+  <link rel="apple-touch-startup-image" media="screen and (device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="brand/ios-splash/splash-750x1334.png?v=20261119">
+  <link rel="apple-touch-startup-image" media="screen and (device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="brand/ios-splash/splash-1170x2532.png?v=20261119">
+  <link rel="apple-touch-startup-image" media="screen and (device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="brand/ios-splash/splash-1179x2556.png?v=20261119">
+  <link rel="apple-touch-startup-image" media="screen and (device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="brand/ios-splash/splash-1290x2796.png?v=20261119">
+  <link rel="apple-touch-startup-image" media="screen and (device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="brand/ios-splash/splash-1320x2868.png?v=20261119">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" sizes="64x64" href="brand/thesisforge-black-mark-64.png?v=20261119"/>
@@ -38,8 +47,12 @@
     body {
       width: 100%;
       height: 100%;
+      height: 100dvh;
       margin: 0;
       background: #000000;
+      overscroll-behavior: none;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-text-size-adjust: 100%;
     }
 
     #app-loading-shell {
@@ -48,6 +61,8 @@
       z-index: 2147483647;
       display: grid;
       place-items: center;
+      padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+      box-sizing: border-box;
       color: #e8f0f5;
       background: #000000;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", sans-serif;
