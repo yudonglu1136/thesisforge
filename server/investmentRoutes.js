@@ -10,12 +10,12 @@ import { registerStrategyLabRoutes } from './strategyLabRoutes.js';
 import { registerHedgeRoutes } from './hedgeRoutes.js';
 import { createAiInsightsService } from './investmentAiInsights.js';
 import { fundamentalGuruQuarter } from './investmentFundamentals.js';
-import { buildGuruHoldingsMatrix, buildOpportunities, opportunityCompanySummary, opportunityTimeline, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
+import { buildGuruHoldingsMatrix, buildOpportunities, opportunityCompanySummary, opportunityTimeline, opportunityValuations, saveWatch, reviewWatch, saveWatchReview } from './investmentOpportunities.js';
 import { institutional13fInsights, institutional13fInsightDetail, institutional13fSectorDetail } from './institutional13fInsights.js';
 import { buildFundamentalDiscovery, analyzeFundamentalUniverse, FUNDAMENTAL_RESEARCH_VERSION, FUNDAMENTAL_METHOD_VERSION,
   buildFundamentalCompany, saveFundamentalObservation,
   listFundamentalObservations, reviewFundamentalObservation } from './fundamentalResearch.js';
-import { researchDocuments, researchFundamentals, researchInstitutions, researchPublishedModel,
+import { researchDocuments, researchFundamentals, researchDividends, researchInstitutions, researchPublishedModel,
   saveResearchRecord, listResearchRecords } from './researchWorkbench.js';
 import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
 import { createRuleAnalysisService,analyzeRuleRange,hydrateRuleLedger } from './rulePortfolioAnalysis.js';
@@ -175,8 +175,8 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/research/:ticker',(owner,r)=>{
     if (!service.marketReadOptions && service.source?.canonicalMarket && typeof service.source?.db?.prepare === 'function') {
       const releasePin = dataReleaseId() ? retainDataRelease() : () => {};
-      Promise.resolve()
-        .then(() => researchFundamentals(service, r.params.ticker, r.query.asOf))
+      researchFundamentals(service, r.params.ticker, r.query.asOf)
+        .then(() => researchDividends(service, r.params.ticker, r.query.asOf))
         .catch(() => {})
         .finally(releasePin);
     }
@@ -185,6 +185,7 @@ export function registerInvestmentRoutes(app,service) {
   route('get','/research/:ticker/documents',(_,r)=>researchDocuments(service.source,r.params.ticker,service.date(r.query.asOf)));
   route('get','/research/:ticker/insiders',(_,r)=>(service.researchInsiders??researchInsiders)(r.params.ticker,service.date(r.query.asOf),r.query));
   route('get','/research/:ticker/fundamentals',(_,r)=>researchFundamentals(service,r.params.ticker,r.query.asOf));
+  route('get','/research/:ticker/dividends',(_,r)=>(service.researchDividends??researchDividends)(service,r.params.ticker,r.query.asOf));
   route('get','/research/:ticker/institutions',(_,r)=>researchInstitutions(service,r.params.ticker,r.query.asOf,r.query.quarter??null));
   route('get','/research/:ticker/published-model',(_,r)=>researchPublishedModel(service,r.params.ticker,r.query.asOf));
   route('get','/research/:ticker/records',(owner,r)=>listResearchRecords(service,owner,r.params.ticker,{asOf:r.query.asOf,includeArchived:r.query.includeArchived==='true'}));
@@ -234,28 +235,40 @@ export function enableInvestmentPreview(app) {
     withActiveDataRelease(()=>{
       try{
         const today=service.date();
-        const prevDateObj=new Date(`${today}T00:00:00Z`);
-        prevDateObj.setUTCDate(prevDateObj.getUTCDate()-1);
-        const yesterday=prevDateObj.toISOString().slice(0,10);
-        source.discovery(today);
+        const shiftDate=(base,days)=>{
+          const dt=new Date(`${base}T00:00:00Z`);
+          dt.setUTCDate(dt.getUTCDate()+days);
+          return dt.toISOString().slice(0,10);
+        };
+        const yesterday=shiftDate(today,-1);
+        const twoDaysAgo=shiftDate(today,-2);
+        const warmDates=[today,yesterday,twoDaysAgo];
         source.guruCatalog();
-        try{source.guruEvidence('NVDA',today);source.guruEvidence('NVDA',yesterday);}catch{}
-        try{buildGuruHoldingsMatrix(source,today);buildGuruHoldingsMatrix(source,yesterday);}catch{}
-        try{opportunityTimeline(source,'NVDA',today);}catch{}
+        for(const d of warmDates){
+          try{source.discovery(d);}catch{}
+          try{source.guruEvidence('NVDA',d);}catch{}
+          try{buildGuruHoldingsMatrix(source,d);}catch{}
+          try{opportunityTimeline(source,'NVDA',d);}catch{}
+          try{opportunityValuations(source,d);}catch{}
+        }
         try{guruStudy(source,today);}catch{}
         try{loadInvestorStyleDashboard({asOf:today,summaryOnly:true});}catch{}
         try{loadBreakoutPullbackDashboard({asOf:today,mode:'flagship'});}catch{}
-        researchCompanies(source,today).then(()=>researchCompanies(source,yesterday)).catch(()=>{});
+        (async()=>{
+          for(const d of warmDates){
+            await researchCompanies(source,d).catch(()=>{});
+          }
+          try{await publicAnalysisArtifacts.warmCurrent(today);}catch{}
+          if (source.canonicalMarket) {
+            try{
+              await withResearchDataRelease(async()=>{
+                await buildFundamentalCompany(source,'NVDA',today);
+                await researchDividends(service,'NVDA',today);
+              });
+            }catch{}
+          }
+        })();
       }catch{}
-      let warmPromise=Promise.resolve();
-      try{warmPromise=publicAnalysisArtifacts.warmCurrent(service.date()).catch(()=>{});}catch{}
-      if (source.canonicalMarket) {
-        warmPromise.finally(()=>{
-          try{
-            withResearchDataRelease(()=>buildFundamentalCompany(source,'NVDA',service.date()).catch(()=>{}));
-          }catch{}
-        });
-      }
     });
   });
   return service;

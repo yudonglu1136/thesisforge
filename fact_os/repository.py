@@ -639,13 +639,20 @@ class FactRepository:
         'ncfdiv', 'depamor', 'ncf', 'roic', 'currency',
     )
 
+    _COMPANY_STATEMENT_FIELDS = (
+        *_FUNDAMENTAL_RESEARCH_FIELDS,
+        'ebitda', 'ebitdamargin', 'grossmargin', 'netmargin', 'eps', 'epsdil',
+        'fcfps', 'bvps', 'roe', 'roa', 'de', 'currentratio', 'divyield',
+        'payoutratio', 'price',
+    )
+
     @staticmethod
     def _finite_number(value):
         return value if isinstance(value, (int, float)) and math.isfinite(value) else None
 
     @classmethod
     def _research_point(cls, row, lineage):
-        point = {field: row.get(field) for field in cls._FUNDAMENTAL_RESEARCH_FIELDS if field in row}
+        point = {field: row.get(field) for field in cls._COMPANY_STATEMENT_FIELDS if field in row}
         point.update({'period_end': row['reportperiod'], 'available_at': row['date'],
                       'pit_basis': 'as_reported_filing_date_day_precision',
                       'provenance': lineage})
@@ -927,12 +934,12 @@ class FactRepository:
             self._fund_research_index = None
             return None
         root_tag = hashlib.sha256(str(self.root).encode()).hexdigest()[:8]
-        target = self._lease_dir / f'fund-ar-research-{root_tag}-{self.generation[:24]}.parquet'
+        target = self._lease_dir / f'fund-ar-research-v2-{root_tag}-{self.generation[:24]}.parquet'
         try:
             if target.is_file() and target.stat().st_size > 0:
                 self._fund_research_index = str(target)
                 return self._fund_research_index
-            for old in self._lease_dir.glob(f'fund-ar-research-{root_tag}-*.parquet'):
+            for old in self._lease_dir.glob(f'fund-ar-research-*{root_tag}-*.parquet'):
                 if old != target:
                     old.unlink(missing_ok=True)
             avail = {c[0] for c in self._contracts['fundamentals'].columns} | {
@@ -940,14 +947,14 @@ class FactRepository:
             }
             cols = [
                 c for c in dict.fromkeys([
-                    *self._FUNDAMENTAL_RESEARCH_FIELDS,
+                    *self._COMPANY_STATEMENT_FIELDS,
                     *self._contracts['fundamentals'].keys,
                     '_ingestion_run', '_observed_at', '_quality_issues',
                 ])
                 if c in avail
             ]
             col_sql = ', '.join(ident(c) for c in cols)
-            tmp = self._lease_dir / f'.fund-ar-research-{root_tag}-{self.generation[:24]}-{os.getpid()}.tmp.parquet'
+            tmp = self._lease_dir / f'.fund-ar-research-v2-{root_tag}-{self.generation[:24]}-{os.getpid()}.tmp.parquet'
             try:
                 self.db.execute(
                     f"COPY (SELECT {col_sql} FROM read_parquet(?, union_by_name=true) "
@@ -994,7 +1001,10 @@ class FactRepository:
                            key=lambda row: (row['reportperiod'], row['date']), reverse=True)[:quarters]
         annual = sorted((row for (dimension, _), row in latest.items() if dimension == 'ARY'),
                         key=lambda row: (row['reportperiod'], row['date']), reverse=True)[:years]
-        masters = self._rows("SELECT * FROM _master WHERE permaticker=? AND \"table\"='SF1' ORDER BY lastupdated DESC", [identity['permaticker']])
+        masters = self._rows(
+            "SELECT * FROM _master WHERE permaticker=? ORDER BY CASE WHEN \"table\"='SF1' THEN 0 ELSE 1 END, lastupdated DESC",
+            [identity['permaticker']],
+        )
         master = masters[0] if masters else {}
         metrics = self._quarter_metrics(quarterly)
         trend = []

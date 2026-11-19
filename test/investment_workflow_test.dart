@@ -275,6 +275,120 @@ class WorkflowTestApi extends ApiClient {
         ],
       };
     }
+    if (Uri.parse(path).path.endsWith('/dividends')) {
+      return {
+        'version': 'dividend-research-v1',
+        'ticker': 'TEST',
+        'asOf': '2026-06-01',
+        'currency': 'USD',
+        'status': 'paying',
+        'hasCorporateFacts': true,
+        'isReit': false,
+        'summary': {
+          'currentYield': .024,
+          'forwardYield': .025,
+          'ttmDps': 1.20,
+          'annualizedDps': 1.24,
+          'latestPrice': 50.0,
+          'splitAdjustedPrice': 50.0,
+          'frequency': 'quarterly',
+          'frequencyPerYear': 4,
+          'avgYield5y': .021,
+          'highYield5y': .031,
+          'lowYield5y': .016,
+          'yieldVs5yAvgPct': .1428,
+          'cagr3y': .082,
+          'cagr5y': .075,
+          'cagr10y': .091,
+          'consecutiveYearsPaid': 10,
+          'consecutiveYearsGrown': 9,
+          'epsPayoutRatio': .32,
+          'fcfPayoutRatio': .28,
+          'safetyLevel': 'very_safe',
+          'safetyBasis': 'fcf_payout',
+          'latestExDate': '2026-05-10',
+          'latestAmount': .31,
+          'estimatedNextExDate': '2026-08-10',
+        },
+        'yieldHistory': [
+          {'date': '2022-06-01', 'price': 36.0, 'ttmDps': .92, 'yield': .0255},
+          {'date': '2023-06-01', 'price': 40.0, 'ttmDps': 1.00, 'yield': .0250},
+          {'date': '2024-06-01', 'price': 45.0, 'ttmDps': 1.08, 'yield': .0240},
+          {'date': '2025-06-01', 'price': 48.0, 'ttmDps': 1.14, 'yield': .0237},
+          {'date': '2026-06-01', 'price': 50.0, 'ttmDps': 1.20, 'yield': .0240},
+        ],
+        'annualPayouts': [
+          {
+            'year': 2023,
+            'label': '2023',
+            'isPartialYear': false,
+            'dps': 1.00,
+            'payoutCount': 4,
+            'yoyGrowth': .087,
+            'eps': 3.10,
+            'fcfPerShare': 3.60,
+            'epsPayoutRatio': .32,
+            'fcfPayoutRatio': .28,
+          },
+          {
+            'year': 2024,
+            'label': '2024',
+            'isPartialYear': false,
+            'dps': 1.08,
+            'payoutCount': 4,
+            'yoyGrowth': .080,
+            'eps': 3.45,
+            'fcfPerShare': 3.95,
+            'epsPayoutRatio': .31,
+            'fcfPayoutRatio': .27,
+          },
+          {
+            'year': 2025,
+            'label': '2025',
+            'isPartialYear': false,
+            'dps': 1.16,
+            'payoutCount': 4,
+            'yoyGrowth': .074,
+            'eps': 3.80,
+            'fcfPerShare': 4.30,
+            'epsPayoutRatio': .30,
+            'fcfPayoutRatio': .27,
+          },
+        ],
+        'events': [
+          {
+            'exDate': '2026-05-10',
+            'year': 2026,
+            'month': 5,
+            'amount': .31,
+            'prevAmount': .29,
+            'changePct': .069,
+            'priceOnExDate': 49.5,
+            'annualizedYieldOnExDate': .0251,
+          },
+          {
+            'exDate': '2026-02-10',
+            'year': 2026,
+            'month': 2,
+            'amount': .29,
+            'prevAmount': .29,
+            'changePct': 0.0,
+            'priceOnExDate': 47.0,
+            'annualizedYieldOnExDate': .0247,
+          },
+        ],
+        'seasonality': [
+          for (var m = 1; m <= 12; m++)
+            {
+              'month': m,
+              'count3y': const {2, 5, 8, 11}.contains(m) ? 3 : 0,
+              'active': const {2, 5, 8, 11}.contains(m),
+              'latestExDate': const {2, 5, 8, 11}.contains(m) ? '2026-05-10' : null,
+              'latestAmount': const {2, 5, 8, 11}.contains(m) ? .31 : null,
+            },
+        ],
+      };
+    }
     if (path.contains('/research/')) {
       return {
         'ticker': 'TEST',
@@ -457,7 +571,121 @@ class HomeFixtureApi extends DiscoveryFixtureApi {
         {'ticker': 'ALERT2', 'decisionId': 'two', 'status': 'data_unavailable'},
       ];
     }
-    if (path.contains('/research/')) {
+    if (Uri.parse(path).path.endsWith('/dividends')) {
+      return {
+        'version': 'dividend-research-v1',
+        'ticker': 'TEST',
+        'asOf': '2026-06-01',
+        'currency': 'USD',
+        'status': 'paying',
+        'hasCorporateFacts': true,
+        'isReit': false,
+        'summary': {
+          'currentYield': .024,
+          'forwardYield': .025,
+          'ttmDps': 1.20,
+          'annualizedDps': 1.24,
+          'latestPrice': 50.0,
+          'splitAdjustedPrice': 50.0,
+          'frequency': 'quarterly',
+          'frequencyPerYear': 4,
+          'avgYield5y': .021,
+          'highYield5y': .031,
+          'lowYield5y': .016,
+          'yieldVs5yAvgPct': .1428,
+          'cagr3y': .082,
+          'cagr5y': .075,
+          'cagr10y': .091,
+          'consecutiveYearsPaid': 10,
+          'consecutiveYearsGrown': 9,
+          'epsPayoutRatio': .32,
+          'fcfPayoutRatio': .28,
+          'safetyLevel': 'very_safe',
+          'safetyBasis': 'fcf_payout',
+          'latestExDate': '2026-05-10',
+          'latestAmount': .31,
+          'estimatedNextExDate': '2026-08-10',
+        },
+        'yieldHistory': [
+          {'date': '2022-06-01', 'price': 36.0, 'ttmDps': .92, 'yield': .0255},
+          {'date': '2023-06-01', 'price': 40.0, 'ttmDps': 1.00, 'yield': .0250},
+          {'date': '2024-06-01', 'price': 45.0, 'ttmDps': 1.08, 'yield': .0240},
+          {'date': '2025-06-01', 'price': 48.0, 'ttmDps': 1.14, 'yield': .0237},
+          {'date': '2026-06-01', 'price': 50.0, 'ttmDps': 1.20, 'yield': .0240},
+        ],
+        'annualPayouts': [
+          {
+            'year': 2023,
+            'label': '2023',
+            'isPartialYear': false,
+            'dps': 1.00,
+            'payoutCount': 4,
+            'yoyGrowth': .087,
+            'eps': 3.10,
+            'fcfPerShare': 3.60,
+            'epsPayoutRatio': .32,
+            'fcfPayoutRatio': .28,
+          },
+          {
+            'year': 2024,
+            'label': '2024',
+            'isPartialYear': false,
+            'dps': 1.08,
+            'payoutCount': 4,
+            'yoyGrowth': .080,
+            'eps': 3.45,
+            'fcfPerShare': 3.95,
+            'epsPayoutRatio': .31,
+            'fcfPayoutRatio': .27,
+          },
+          {
+            'year': 2025,
+            'label': '2025',
+            'isPartialYear': false,
+            'dps': 1.16,
+            'payoutCount': 4,
+            'yoyGrowth': .074,
+            'eps': 3.80,
+            'fcfPerShare': 4.30,
+            'epsPayoutRatio': .30,
+            'fcfPayoutRatio': .27,
+          },
+        ],
+        'events': [
+          {
+            'exDate': '2026-05-10',
+            'year': 2026,
+            'month': 5,
+            'amount': .31,
+            'prevAmount': .29,
+            'changePct': .069,
+            'priceOnExDate': 49.5,
+            'annualizedYieldOnExDate': .0251,
+          },
+          {
+            'exDate': '2026-02-10',
+            'year': 2026,
+            'month': 2,
+            'amount': .29,
+            'prevAmount': .29,
+            'changePct': 0.0,
+            'priceOnExDate': 47.0,
+            'annualizedYieldOnExDate': .0247,
+          },
+        ],
+        'seasonality': [
+          for (var m = 1; m <= 12; m++)
+            {
+              'month': m,
+              'count3y': const {2, 5, 8, 11}.contains(m) ? 3 : 0,
+              'active': const {2, 5, 8, 11}.contains(m),
+              'latestExDate': const {2, 5, 8, 11}.contains(m) ? '2026-05-10' : null,
+              'latestAmount': const {2, 5, 8, 11}.contains(m) ? .31 : null,
+            },
+        ],
+      };
+    }
+    if (path.contains('/research/') && !Uri.parse(path).path.endsWith('/dividends')) {
       data['ticker'] = Uri.parse(path).pathSegments.last;
       data['name'] = 'Synthetic home example';
       data['published'] = {'fairValue': 30};
@@ -595,19 +823,13 @@ Future<void> mountHome(
           initialPage: 'home',
           initialTicker: '',
           initialAsOf: '2026-06-01',
+          initialQuery: const {'workspace': 'research'},
           onLanguage: (_) {},
           onLegacy: () {},
         ),
       ),
     ),
   );
-  await tester.pumpAndSettle();
-  // Home is now account-first; the existing research desk remains an explicit
-  // secondary entry, and all its original interaction coverage stays intact.
-  await tester.ensureVisible(
-    find.byKey(const ValueKey('open-home-research-desk')),
-  );
-  await tester.tap(find.byKey(const ValueKey('open-home-research-desk')));
   await tester.pumpAndSettle();
   if (managers) {
     await tester.ensureVisible(
@@ -675,11 +897,6 @@ Future<WorkflowTestApi> mountResearch(WidgetTester tester) async {
       ),
     ),
   );
-  await tester.pumpAndSettle();
-  await tester.tap(find.byKey(const ValueKey('research-tab-value')));
-  await tester.pumpAndSettle();
-  await tester.ensureVisible(find.text('My DCF'));
-  await tester.tap(find.text('My DCF'));
   await tester.pumpAndSettle();
   return api;
 }
@@ -903,12 +1120,23 @@ void main() {
             findsOneWidget,
           );
           expect(
-            api.reads.where((p) => p.contains('/research/TEST')).length,
+            api.reads
+                .where(
+                  (p) =>
+                      p.contains('/research/TEST') &&
+                      !p.contains('/fundamentals') &&
+                      !p.contains('/dividends'),
+                )
+                .length,
             2,
           );
           expect(
+            find.byKey(const ValueKey('research-tab-value')),
+            findsNothing,
+          );
+          expect(
             find.text(
-              language == AppLanguage.en ? 'Valuation workspace' : '估值工作台',
+              language == AppLanguage.en ? 'Financial statements' : '财务报表',
             ),
             findsOneWidget,
           );
@@ -1145,7 +1373,7 @@ void main() {
     'research records do not imply a trade, position or monitoring rule',
     (tester) async {
       await mountResearch(tester);
-      await tester.tap(find.text('Research records'));
+      await tester.tap(find.byKey(const ValueKey('research-tab-records')));
       await tester.pumpAndSettle();
       for (final a in ['Watch', 'Pass', 'Invest']) {
         expect(find.widgetWithText(ChoiceChip, a), findsNothing);
@@ -1170,30 +1398,24 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
-  testWidgets('unsaved assumptions require explicit leave and can be kept', (
+  testWidgets('unsaved research note requires explicit leave and can be kept', (
     tester,
   ) async {
     await mountResearch(tester);
-    await tester.enterText(
-      find.byKey(const ValueKey('compact-Cost of equity (Ke)')),
-      '11',
-    );
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.byKey(const ValueKey('research-tab-records')));
+    await tester.pumpAndSettle();
+    final qField = find.widgetWithText(TextField, 'Research question');
+    await tester.ensureVisible(qField);
+    await tester.enterText(qField, 'Is dividend FCF coverage expanding?');
     await tester.pumpAndSettle();
     await tester.tap(find.text('Home'));
     await tester.pumpAndSettle();
-    expect(find.text('Leave this unsaved scenario?'), findsOneWidget);
+    expect(find.text('Leave unsaved research note?'), findsOneWidget);
     await tester.tap(find.text('Keep editing'));
     await tester.pumpAndSettle();
-    expect(find.text('Your scenario'), findsOneWidget);
     expect(
-      tester
-          .widget<TextField>(
-            find.byKey(const ValueKey('compact-Cost of equity (Ke)')),
-          )
-          .controller!
-          .text,
-      '11',
+      tester.widget<TextField>(qField).controller!.text,
+      'Is dividend FCF coverage expanding?',
     );
     expect(tester.takeException(), isNull);
   });
@@ -1235,16 +1457,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
   testWidgets(
-    'changing cutoff from the Home research desk invalidates cached research',
+    'changing cutoff from Research updates active cutoff cleanly',
     (tester) async {
       await mountResearch(tester);
-      await tester.tap(find.text('Home'));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('open-home-research-desk')),
-      );
-      await tester.tap(find.byKey(const ValueKey('open-home-research-desk')));
-      await tester.pumpAndSettle();
       await tester.tap(find.text('As of 2026-06-01'));
       await tester.pumpAndSettle();
       await tester.enterText(
@@ -1253,11 +1468,8 @@ void main() {
       );
       await tester.tap(find.text('Apply date'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Research'));
-      await tester.pumpAndSettle();
       expect(find.text('As of 2026-08-28'), findsOneWidget);
-      expect(find.text('Research a company'), findsOneWidget);
-      expect(find.text('Your scenario'), findsNothing);
+      expect(find.byKey(const ValueKey('research-tab-value')), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
@@ -1302,22 +1514,21 @@ void main() {
             expect(tester.takeException(), isNull);
             expect(find.text('ThesisForge'), findsOneWidget);
             if (page == 'research') {
-              await tester.tap(
+              expect(
                 find.byKey(const ValueKey('research-tab-value')),
-              );
-              await tester.pumpAndSettle();
-              await tester.ensureVisible(
-                find.text(language == AppLanguage.en ? 'My DCF' : '我的 DCF'),
+                findsNothing,
               );
               await tester.tap(
-                find.text(language == AppLanguage.en ? 'My DCF' : '我的 DCF'),
+                find.byKey(const ValueKey('research-tab-dividends')),
               );
               await tester.pumpAndSettle();
               expect(tester.takeException(), isNull);
               expect(
-                find.text(
-                  language == AppLanguage.en ? 'Your scenario' : '你的情景',
-                ),
+                find.byKey(const ValueKey('research-dividend-scorecard')),
+                findsOneWidget,
+              );
+              expect(
+                find.byKey(const ValueKey('research-dividend-yield-chart')),
                 findsOneWidget,
               );
             }
@@ -1329,85 +1540,7 @@ void main() {
       }
     }
   }
-  testWidgets('compact percentages preserve exact untouched assumptions', (
-    tester,
-  ) async {
-    final api = await mountResearch(tester);
-    expect(
-      tester
-          .widget<TextField>(
-            find.byKey(const ValueKey('compact-Terminal growth (g)')),
-          )
-          .controller!
-          .text,
-      '2.47',
-    );
-    expect(
-      tester
-          .widget<TextField>(
-            find.byKey(const ValueKey('forecast-Year 1 FCFE margin %')),
-          )
-          .controller!
-          .text,
-      '22.91',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('compact-Cost of equity (Ke)')),
-      '11',
-    );
-    await tester.pump(const Duration(milliseconds: 450));
-    await tester.pumpAndSettle();
-    final a = api.calls.last.$2['assumptions'] as Map;
-    expect(a['ke'], .11);
-    expect(a['g'], .024698294551041777);
-    expect(a['margin'][0], .2290987654321);
-    expect(a['margin'][1], .2);
-    expect(tester.takeException(), isNull);
-  });
-  testWidgets(
-    'detailed forecast stays accessible and only edited year changes',
-    (tester) async {
-      final api = await mountResearch(tester);
-      await tester.ensureVisible(find.text('Inspect inputs'));
-      await tester.tap(find.text('Inspect inputs'));
-      await tester.pumpAndSettle();
-      final year3 = find.byKey(const ValueKey('forecast-Year 3 growth %'));
-      await tester.ensureVisible(year3);
-      await tester.enterText(year3, '12.5');
-      await tester.pump(const Duration(milliseconds: 450));
-      await tester.pumpAndSettle();
-      expect(api.calls.last.$2['assumptions']['growth'], [
-        .1,
-        .1,
-        .125,
-        .1,
-        .1,
-      ]);
-      expect(api.calls.last.$2['assumptions']['g'], .024698294551041777);
-      expect(tester.takeException(), isNull);
-    },
-  );
-  testWidgets('save requires ownership confirmation and cancel never writes', (
-    tester,
-  ) async {
-    final api = await mountResearch(tester);
-    await tester.ensureVisible(find.text('Save scenario'));
-    await tester.tap(find.text('Save scenario'));
-    await tester.pumpAndSettle();
-    expect(
-      tester
-          .widget<FilledButton>(
-            find.widgetWithText(FilledButton, 'Save version'),
-          )
-          .onPressed,
-      isNull,
-    );
-    await tester.tap(find.text('Cancel'));
-    await tester.pumpAndSettle();
-    expect(api.calls.where((c) => c.$1.contains('/scenarios')), isEmpty);
-    expect(tester.takeException(), isNull);
-  });
-  testWidgets('date edit is explicit and navigation preserves workspace', (
+  testWidgets('date edit cancel is explicit and navigation preserves Research statements', (
     tester,
   ) async {
     await mountResearch(tester);
@@ -1424,7 +1557,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Research'));
     await tester.pumpAndSettle();
-    expect(find.text('Your scenario'), findsOneWidget);
+    expect(find.text('TEST'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 }

@@ -93,9 +93,27 @@ export function opportunityBooks(source, asOf, reportDate = null) {
   return {asOf,reportDate:selected,quarters,quarterCounts,eligibleManagers:eligible.length,books};
 }
 
+const valuationMapCaches = new WeakMap();
+
 export function opportunityValuations(source,asOf,tickers=null) {
   const selected=tickers?.map(tickerKey)??null;
   if(selected?.length===0)return new Map();
+  let vCache=null;
+  if(typeof source?.db?.prepare==='function'){
+    const generation=`${source.db.prepare('PRAGMA data_version').get()?.data_version??0}:${source.db.prepare('SELECT total_changes() n').get?.()?.n??0}:${dataReleaseId()??'legacy'}`;
+    vCache=valuationMapCaches.get(source);
+    if(!vCache||vCache.generation!==generation){vCache={generation,fullByAsOf:new Map()};valuationMapCaches.set(source,vCache);}
+    const cachedFull=vCache.fullByAsOf.get(asOf);
+    if(cachedFull){
+      if(!selected)return structuredClone(cachedFull);
+      const sub=new Map();
+      for(const sym of selected){
+        const entry=cachedFull.get(sym);
+        if(entry)sub.set(sym,structuredClone(entry));
+      }
+      return sub;
+    }
+  }
   const tickerClause=selected?` AND ticker IN (${selected.map(()=>'?').join(',')})`:'';
   // Bounded scalar extraction: no per-stock company()/transcript blob loading.
   const rows=source.db.prepare(`WITH visible AS (
@@ -137,6 +155,10 @@ export function opportunityValuations(source,asOf,tickers=null) {
     }
   }
   for(const [ticker,v] of result)v.trend=valueTrend((histories.get(ticker)??[]).reverse(),asOf);
+  if(!selected&&vCache){
+    if(vCache.fullByAsOf.size>=8)vCache.fullByAsOf.delete(vCache.fullByAsOf.keys().next().value);
+    vCache.fullByAsOf.set(asOf,structuredClone(result));
+  }
   return result;
 }
 

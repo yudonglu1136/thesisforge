@@ -386,6 +386,22 @@ function getCompanyFundamentalStore(source) {
   return store;
 }
 
+export async function peekCachedFundamentalCompany(source, ticker, asOf) {
+  ticker = tickerKey(ticker);
+  const store = getCompanyFundamentalStore(source);
+  for (const [k, entry] of store.entries.entries()) {
+    if (k.startsWith(`${ticker}|${asOf}|`) && entry.expiresAt > Date.now()) {
+      return entry.value;
+    }
+  }
+  for (const [k, flight] of store.inFlight.entries()) {
+    if (k.startsWith(`${ticker}|${asOf}|`)) {
+      try { return await flight; } catch { return null; }
+    }
+  }
+  return null;
+}
+
 export async function buildFundamentalCompany(source, ticker, asOf, options = {}) {
   ticker = tickerKey(ticker); isoDate(asOf);
   const store = getCompanyFundamentalStore(source);
@@ -432,7 +448,7 @@ export async function buildFundamentalCompany(source, ticker, asOf, options = {}
 
 async function buildFundamentalCompanyUncached(source, ticker, asOf, options = {}) {
   const requests = [
-    { method: 'get_fundamental_research', args: [ticker, asOf], kwargs: { quarters: 16, years: 8 } },
+    { method: 'get_fundamental_research', args: [ticker, asOf], kwargs: { quarters: 20, years: 10 } },
     { method: 'get_price_history', args: [ticker, startDate(asOf, 400), asOf, PRICE_TYPES.SPLIT_ADJUSTED_CLOSE] },
     { method: 'get_price', args: [ticker, asOf, PRICE_TYPES.RAW_CLOSE] },
     { method: 'get_dividends', args: [ticker, startDate(asOf, 3650), asOf] },
@@ -476,8 +492,8 @@ async function buildFundamentalCompanyUncached(source, ticker, asOf, options = {
     trend: series, sections: detailSections(rawCompany, rawCompany.metrics, bundle, valuation, peerContext),
     peerContext,
     valuation, price: bundle.price, priceHistory: bundle.priceHistory,
-    dividends: bundle.dividends, quarterly: bundle.quarterly.slice(0, 8), annual: bundle.annual,
-    sources: bundle.quarterly.slice(0, 8).map(row => ({ periodEnd: row.reportperiod, availableAt: row.date,
+    dividends: bundle.dividends, quarterly: bundle.quarterly.slice(0, 16), annual: bundle.annual,
+    sources: bundle.quarterly.slice(0, 16).map(row => ({ periodEnd: row.reportperiod, availableAt: row.date,
       fiscalPeriod: row.fiscalperiod, provenance: row.provenance })),
     researchGaps: researchGaps(rawCompany, bundle), catalogGeneration: bundle.catalog_generation };
 }

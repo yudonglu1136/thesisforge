@@ -214,7 +214,7 @@ class ResearchApi extends fixtures.HomeFixtureApi {
             ]
           : [];
     }
-    if (!path.contains('/research/')) return d;
+    if (!path.contains('/research/') || uri.path.endsWith('/dividends')) return d;
     if (wrongIdentity) d['ticker'] = 'WRONG';
     if (readOnly) d['templates'] = null;
     d['published'] = {
@@ -508,7 +508,7 @@ void main() {
       const Size(1024, 768),
       const Size(390, 844),
     ]) {
-      testWidgets('research overview/model/financials/decision $lang $size', (
+      testWidgets('research dynamic statements & dividends first without valuation clutter $lang $size', (
         t,
       ) async {
         await mount(t, ResearchApi(), size: size, lang: lang);
@@ -519,34 +519,24 @@ void main() {
           findsOneWidget,
         );
         expect(
-          find.text(lang == AppLanguage.en ? 'What changed?' : '什么变了？'),
-          findsNothing,
-        );
-        expect(
           find.text(
             lang == AppLanguage.en
                 ? 'What the model is worth — and why'
                 : '模型值多少，以及怎么算出来',
           ),
-          findsOneWidget,
+          findsNothing,
         );
         expect(
-          find.text(
-            lang == AppLanguage.en ? 'Normalized earnings' : '标准化盈利能力估值',
-          ),
-          findsWidgets,
+          find.byKey(const ValueKey('research-tab-value')),
+          findsNothing,
         );
-        for (final key in ['income', 'balance', 'cash']) {
+        for (final key in ['income', 'balance', 'cash', 'ratios']) {
           expect(
             find.byKey(ValueKey('research-statement-$key')),
             findsOneWidget,
           );
         }
-        expect(
-          find.text(lang == AppLanguage.en ? 'Set my assumptions' : '设定我的假设'),
-          findsNothing,
-        );
-        for (final tab in ['value', 'financials', 'records']) {
+        for (final tab in ['dividends', 'financials', 'records']) {
           await t.tap(find.byKey(ValueKey('research-tab-$tab')));
           await t.pumpAndSettle();
           expect(t.takeException(), isNull);
@@ -663,7 +653,10 @@ void main() {
     await t.pumpAndSettle();
     expect(
       api.reads.lastWhere(
-        (p) => p.contains('/research/') && !p.contains('/fundamentals'),
+        (p) =>
+            p.contains('/research/') &&
+            !p.contains('/fundamentals') &&
+            !p.contains('/dividends'),
       ),
       '/api/investment/research/ISRG?asOf=2026-06-01',
     );
@@ -706,17 +699,67 @@ void main() {
     },
   );
   testWidgets(
-    'editable scenario still uses existing audited controls and unsaved-change guard',
+    'Snowball dividend tab renders historical yield channel, annual & per-payout bars, coverage, and seasonality',
     (t) async {
-      final api = ResearchApi()..readOnly = false;
+      final api = ResearchApi();
+      await mount(t, api, lang: AppLanguage.zh);
+      await t.tap(find.byKey(const ValueKey('research-tab-dividends')));
+      await t.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('research-dividend-scorecard')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('research-dividend-yield-chart')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('research-dividend-payout-chart')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('research-dividend-coverage-chart')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('research-dividend-seasonality')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('research-dividend-events-table')),
+        findsOneWidget,
+      );
+
+      // Toggle yield window & price overlay
+      await t.ensureVisible(
+        find.byKey(const ValueKey('dividend-yield-window-10y')),
+      );
+      await t.tap(find.byKey(const ValueKey('dividend-yield-window-10y')));
+      await t.pumpAndSettle();
+      await t.tap(find.byKey(const ValueKey('dividend-yield-price-overlay')));
+      await t.pumpAndSettle();
+
+      // Toggle Annual Total vs Every Payout bars
+      await t.ensureVisible(
+        find.byKey(const ValueKey('dividend-bar-mode-events')),
+      );
+      await t.tap(find.byKey(const ValueKey('dividend-bar-mode-events')));
+      await t.pumpAndSettle();
+      expect(t.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'unsaved research note guard protects switching companies while Valuation workspace stays retired',
+    (t) async {
+      final api = ResearchApi();
       await mount(t, api);
-      await t.tap(find.byKey(const ValueKey('research-tab-value')));
+      expect(find.byKey(const ValueKey('research-tab-value')), findsNothing);
+      await t.tap(find.byKey(const ValueKey('research-tab-records')));
       await t.pumpAndSettle();
-      await t.ensureVisible(find.text('My DCF'));
-      await t.tap(find.text('My DCF'));
-      await t.pumpAndSettle();
-      await t.ensureVisible(find.widgetWithText(TextButton, 'Bear'));
-      await t.tap(find.widgetWithText(TextButton, 'Bear'));
+      final qField = find.widgetWithText(TextField, 'Research question');
+      await t.ensureVisible(qField);
+      await t.enterText(qField, 'Does margin expansion fund buybacks?');
       await t.pumpAndSettle();
       await t.ensureVisible(find.text('Switch company'));
       await t.tap(find.text('Switch company'));
@@ -728,53 +771,10 @@ void main() {
       await t.pumpAndSettle();
       await t.tap(find.text('Intuitive Surgical'));
       await t.pumpAndSettle();
-      expect(find.text('Leave this unsaved scenario?'), findsOneWidget);
+      expect(find.text('Leave unsaved research note?'), findsOneWidget);
       await t.tap(find.text('Keep editing'));
       await t.pumpAndSettle();
-      expect(find.text('Your scenario'), findsOneWidget);
       expect(api.reads.where((p) => p.contains('/research/ISRG')), isEmpty);
-      final before = api.reads.where((p) => p.contains('/research/')).length;
-      await t.ensureVisible(find.text('Switch company'));
-      await t.tap(find.text('Switch company'));
-      await t.pumpAndSettle();
-      await t.tap(find.text('Test fixture'));
-      await t.pumpAndSettle();
-      expect(find.text('Leave this unsaved scenario?'), findsNothing);
-      expect(find.text('Your scenario'), findsOneWidget);
-      expect(api.reads.where((p) => p.contains('/research/')).length, before);
-      expect(t.takeException(), isNull);
-    },
-  );
-  testWidgets(
-    'reverse DCF reuses the full forecast grid and highlights one solved path',
-    (t) async {
-      await mount(t, ReverseResearchApi());
-      await t.tap(find.byKey(const ValueKey('research-tab-value')));
-      await t.pumpAndSettle();
-      await t.ensureVisible(find.text('Reverse DCF'));
-      await t.tap(find.text('Reverse DCF'));
-      await t.pumpAndSettle();
-
-      expect(
-        find.byKey(const ValueKey('reverse-forecast-grid')),
-        findsOneWidget,
-      );
-      expect(find.text('5-year price-implied path'), findsOneWidget);
-      expect(find.text('Actual TTM'), findsOneWidget);
-      expect(find.text('Model year 5'), findsOneWidget);
-      expect(find.textContaining('12'), findsWidgets);
-      expect(
-        find.byKey(const ValueKey('reverse-solved-value')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('reverse-same-engine-notice')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('forecast-Year 1 growth %')),
-        findsNothing,
-      );
       expect(t.takeException(), isNull);
     },
   );

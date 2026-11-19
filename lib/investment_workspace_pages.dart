@@ -104,14 +104,17 @@ extension _InvestmentWorkspacePages on _InvestmentWorkspaceState {
   }
 
   void selectSection(String next) {
-    updateUI(() => section = next);
+    final target = next == 'value' ? 'evidence' : next;
+    updateUI(() => section = target);
     navigate('research');
-    if (next == 'financials' &&
+    if (target == 'dividends' && researchDividendData == null) {
+      unawaited(loadResearchDividends());
+    } else if (target == 'financials' &&
         (researchDocumentsData == null || researchFundamental == null)) {
       unawaited(loadResearchPanel('financials'));
-    } else if (next == 'institutions' && researchInstitution == null) {
+    } else if (target == 'institutions' && researchInstitution == null) {
       unawaited(loadResearchPanel('institutions'));
-    } else if (next == 'records' && researchRecordsData == null) {
+    } else if (target == 'records' && researchRecordsData == null) {
       unawaited(loadResearchPanel('records'));
     }
   }

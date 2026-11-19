@@ -1,6 +1,7 @@
 import { assert, finite, isoDate, signature } from './investmentMath.js';
 import { tickerKey } from './investmentSource.js';
 import { buildFundamentalCompany } from './fundamentalResearch.js';
+import { buildDividendResearch } from './dividendResearch.js';
 import { opportunityValuationBreakdown } from './investmentOpportunities.js';
 import { institutional13fInsightDetail } from './institutional13fInsights.js';
 import { worksheetState } from './investmentDrafts.js';
@@ -202,6 +203,10 @@ export function buildResearchWorkbench(service,owner,ticker,date) {
 
 export async function researchFundamentals(service,ticker,date) {
   return buildFundamentalCompany(service.source,ticker,service.date(date));
+}
+
+export async function researchDividends(service,ticker,date) {
+  return buildDividendResearch(service.source,ticker,service.date(date));
 }
 
 export function researchInstitutions(service,ticker,date,quarter=null) {

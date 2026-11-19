@@ -48,121 +48,6 @@ double? researchValueChange(
   return a != null && b != null && b > 0 ? a / b - 1 : null;
 }
 
-class _ResearchValueBar {
-  const _ResearchValueBar({
-    required this.label,
-    required this.sublabel,
-    required this.value,
-    required this.color,
-  });
-  final String label;
-  final String sublabel;
-  final double value;
-  final Color color;
-}
-
-class _ResearchValueComparison extends StatelessWidget {
-  const _ResearchValueComparison({
-    required this.items,
-    required this.currency,
-    required this.textColor,
-    required this.muted,
-    required this.border,
-  });
-  final List<_ResearchValueBar> items;
-  final String currency;
-  final Color textColor, muted, border;
-
-  @override
-  Widget build(BuildContext context) {
-    final maxValue = items.fold<double>(
-      0,
-      (largest, item) => math.max(largest, item.value.abs()),
-    );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final item in items)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              item.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: textColor,
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          if (item.sublabel.isNotEmpty) ...[
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                item.sublabel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: muted, fontSize: 11),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      '${currencySymbol(currency)}${item.value.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        color: item.color,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                LayoutBuilder(
-                  builder: (_, bounds) => Stack(
-                    children: [
-                      Container(
-                        height: 9,
-                        decoration: BoxDecoration(
-                          color: border.withValues(alpha: .65),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        height: 9,
-                        width: maxValue <= 0
-                            ? 0
-                            : bounds.maxWidth * item.value.abs() / maxValue,
-                        decoration: BoxDecoration(
-                          color: item.color,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-}
-
 int? researchFinancialQuarter(Map<String, dynamic> row) {
   final fiscal = RegExp(
     r'^(\d{4})-?Q([1-4])$',
@@ -201,11 +86,48 @@ Map<String, dynamic>? researchFinancialPrior(
   return matches.length == 1 ? matches.single : null;
 }
 
+String formatResearchStatementUnitValue(double value, String unit) =>
+    switch (unit) {
+      'percent' => '${(value * 100).toStringAsFixed(1)}%',
+      'multiple' => '${value.toStringAsFixed(2)}x',
+      'per_share' => '\$${value.toStringAsFixed(value.abs() < 1 ? 3 : 2)}',
+      _ => formatNumber(value),
+    };
+
 double? researchFinancialReportedValue(
   Map<String, dynamic> period,
   String key,
 ) {
+  double? ratioFrom(String numKey, String denKey) {
+    final numVal = researchFinancialReportedValue(period, numKey);
+    final denVal = researchFinancialReportedValue(period, denKey);
+    if (numVal == null || denVal == null || !numVal.isFinite || !denVal.isFinite || denVal == 0) {
+      return null;
+    }
+    return numVal / denVal;
+  }
+
+  switch (key) {
+    case 'grossmargin_calc':
+      return ratioFrom('gp', 'revenue');
+    case 'opmargin_calc':
+      return ratioFrom('opinc', 'revenue');
+    case 'ebitdamargin_calc':
+      return ratioFrom('ebitda', 'revenue');
+    case 'netmargin_calc':
+      return ratioFrom('netinccmn', 'revenue');
+    case 'fcfmargin_calc':
+      return ratioFrom('fcf', 'revenue');
+    case 'de_calc':
+      return ratioFrom('debt', 'equity');
+    case 'currentratio_calc':
+      return ratioFrom('assetsc', 'liabilitiesc');
+  }
+
   if (period['kind'] != 'ttm') return nullableNumber(asMap(period['row'])[key]);
+  if (const {'roe', 'roa', 'roic'}.contains(key)) {
+    return nullableNumber(asMap(period['row'])[key]);
+  }
   final rows = asList(period['rows']);
   if (rows.length != 4) return null;
   final indices = rows.map(researchFinancialQuarter).toList();
@@ -225,16 +147,17 @@ double? researchFinancialReportedValue(
   if (values.any((v) => v == null || !v.isFinite)) return null;
   final total = values.fold<double>(0, (sum, value) => sum + value!);
   // A TTM weighted-average share count needs period-day weights, absent here.
-  return const {'sharesbas', 'shareswa', 'shareswadil'}.contains(key)
-      ? null
+  return const {'sharesbas', 'shareswa', 'shareswadil', 'bvps'}.contains(key)
+      ? nullableNumber(asMap(period['row'])[key])
       : total;
 }
 
 ({double? value, String reason}) researchFinancialGrowth(
   Map<String, dynamic> period,
   String key,
-  String comparison,
-) {
+  String comparison, {
+  String unit = 'currency',
+}) {
   if (comparison == 'qoq' && const {'annual', 'ttm'}.contains(period['kind'])) {
     return (value: null, reason: 'quarterly_only');
   }
@@ -253,6 +176,9 @@ double? researchFinancialReportedValue(
       currency != baseCurrency) {
     return (value: null, reason: 'currency_changed');
   }
+  if (unit == 'percent') {
+    return (value: value - base, reason: 'pp_delta');
+  }
   if (base <= 0) return (value: null, reason: 'non_positive_base');
   return (value: value / base - 1, reason: 'available');
 }
@@ -265,8 +191,9 @@ class _ResearchFinancialSeries {
     required this.values,
     required this.yoy,
     required this.qoq,
+    this.unit = 'currency',
   });
-  final String keyName, label;
+  final String keyName, label, unit;
   final Color color;
   final List<double?> values;
   final List<({double? value, String reason})> yoy, qoq;
@@ -306,6 +233,9 @@ class _ResearchFinancialBarChartState
     ({double? value, String reason}) growth,
   ) {
     if (growth.value case final value?) {
+      if (growth.reason == 'pp_delta') {
+        return '${value >= 0 ? '+' : ''}${(value * 100).toStringAsFixed(1)} pp';
+      }
       return '${value >= 0 ? '+' : ''}${(value * 100).toStringAsFixed(1)}%';
     }
     return switch (growth.reason) {
@@ -455,7 +385,7 @@ class _ResearchFinancialBarChartState
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          '${series.label}: ${series.values[index] == null ? '—' : formatNumber(series.values[index]!)}',
+                                          '${series.label}: ${series.values[index] == null ? '—' : formatResearchStatementUnitValue(series.values[index]!, series.unit)}',
                                           style: TextStyle(
                                             color: series.color,
                                             fontSize: 10.5,
@@ -518,6 +448,16 @@ class _ResearchFinancialBarPainter extends CustomPainter {
   final AppLanguage language;
 
   String axis(double value) {
+    final unit = series.isNotEmpty ? series.first.unit : 'currency';
+    if (unit == 'percent') {
+      return '${(value * 100).toStringAsFixed(value.abs() < 0.1 ? 1 : 0)}%';
+    }
+    if (unit == 'multiple') {
+      return '${value.toStringAsFixed(1)}x';
+    }
+    if (unit == 'per_share') {
+      return '\$${value.toStringAsFixed(value.abs() < 5 ? 2 : 1)}';
+    }
     final magnitude = value.abs();
     if (language == AppLanguage.zh) {
       final sign = value < 0 ? '-' : '';
@@ -703,16 +643,16 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (section == 'evidence') ...researchOverview(),
+            if (section == 'dividends') ...buildResearchDividendsHub(),
             if (section == 'financials') ..._buildFinancialsAndFilingsHub(snap),
             if (section == 'institutions') researchInstitutionPanel(),
-            if (section == 'value') ...researchValuationWorkspace(),
             if (section == 'records') researchRecordsPanel(),
             if (section == 'decision') ...decisionPage(),
             if (section == 'review') ...comparisonPage(),
             const SizedBox(height: 14),
             label(
-              'Research only · Model estimates are not expected returns · No orders are placed.',
-              '仅供研究 · 模型估计不等于预期收益 · 不执行交易',
+              'Research only · Historical financial facts & corporate actions · No orders are placed.',
+              '仅供投研参考 · 基于已披露历史财报与除息公告 · 不执行交易',
               size: 11,
             ),
           ],
@@ -747,49 +687,23 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
 
   Widget _buildExecutiveCompanyHero(Map<String, dynamic> snap) {
     final price = asMap(snap['price']);
-    final breakdown = asMap(company?['publishedBreakdown']);
     final meta = asMap(company?['companyMeta']);
     final factCompany = asMap(researchFundamental?['company']);
+    final base = asMap(company?['base']);
+    final divSum = asMap(researchDividendData?['summary']);
+    final divPaying = researchDividendData?['status'] == 'paying';
     final currency = text(company?['currency'], 'USD');
 
     final marketPrice = nullableNumber(price['value']);
-    final fairValue = nullableNumber(
-      breakdown['fairValue'] ?? asMap(company?['published'])['fairValue'],
-    );
-    final comparable =
-        researchHasPlatformModel &&
-        marketPrice != null &&
-        marketPrice > 0 &&
-        fairValue != null &&
-        text(price['currency'], currency) == currency;
-    final gap = comparable ? fairValue / marketPrice - 1 : null;
-
     final sectorText = text(
       meta['sector'],
       text(factCompany['sector'], text(factCompany['industry'])),
     );
     final mcapM = nullableNumber(meta['marketCapM']);
-    final modelBadge = asMap(company?['coverage'])['platformModel'] != 'available' &&
-            !researchHasPlatformModel
-        ? (w('Fact OS · no platform model', '财报事实库 · 暂无平台估值'), p.muted)
-        : assumptions.isEmpty
-        ? (w('Published model · read-only', '平台模型 · 只读'), p.accent)
-        : (w('Scenario modelling available', '支持情景建模'), _emerald);
-
-    Color gapColor = p.muted;
-    String gapVerdict = w('Comparison unavailable', '暂不可比');
-    if (gap != null) {
-      if (gap >= 0.08) {
-        gapColor = _emerald;
-        gapVerdict = w('Safety Margin vs Model', '具备模型安全边际');
-      } else if (gap <= -0.08) {
-        gapColor = _amber;
-        gapVerdict = w('Trades Above Model', '高于平台模型估值');
-      } else {
-        gapColor = p.accent;
-        gapVerdict = w('Near Model Fair Value', '接近模型公允价值');
-      }
-    }
+    final ttmRevM = nullableNumber(base['revenueM']);
+    final ttmFcfM = nullableNumber(base['fcfM']);
+    final divYield = nullableNumber(divSum['currentYield']);
+    final annDps = nullableNumber(divSum['annualizedDps']);
 
     Widget heroMetric({
       required String titleEn,
@@ -798,51 +712,59 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
       required String subText,
       Color? valueColor,
       Color? subColor,
-    }) => Container(
-      constraints: const BoxConstraints(minWidth: 142),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: p.card.withValues(alpha: .55),
+      VoidCallback? onTap,
+    }) {
+      final box = Container(
+        constraints: const BoxConstraints(minWidth: 142),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: p.card.withValues(alpha: .55),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: p.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              w(titleEn, titleZh),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: p.muted, fontSize: 11),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              mainValue,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: valueColor ?? p.text,
+                fontSize: 21,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -.4,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              subText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: subColor ?? p.muted,
+                fontSize: 10.5,
+                fontWeight: subColor != null ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      );
+      if (onTap == null) return box;
+      return InkWell(
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: p.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            w(titleEn, titleZh),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: p.muted, fontSize: 11),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            mainValue,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: valueColor ?? p.text,
-              fontSize: 21,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -.4,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            subText,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: subColor ?? p.muted,
-              fontSize: 10.5,
-              fontWeight: subColor != null ? FontWeight.w600 : FontWeight.w400,
-            ),
-          ),
-        ],
-      ),
-    );
+        onTap: onTap,
+        child: box,
+      );
+    }
 
-    final showScoreboard = section != 'value';
     final isCompactScreen = MediaQuery.sizeOf(context).width < 720;
 
     return Container(
@@ -889,17 +811,16 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                       runSpacing: 4,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        researchTag(modelBadge.$1, modelBadge.$2),
                         if (!isCompactScreen && sectorText.isNotEmpty)
                           researchTag(context.ui(sectorText), p.accent),
                         researchTag(
                           '${text(snap['period'], '—')} · ${w('Filed', '披露')} ${text(snap['availableAt'], '—')} · $currency',
                           p.muted,
                         ),
-                        if (isCompactScreen && showScoreboard && marketPrice != null)
+                        if (isCompactScreen && marketPrice != null)
                           researchTag(
-                            '${money(marketPrice)}${researchHasPlatformModel && fairValue != null ? ' · ${w('FV', '估值')} ${money(fairValue)}' : ''}${gap != null ? ' (${gap >= 0 ? '+' : ''}${pct(gap)})' : ''}',
-                            gapColor == p.muted ? p.accent : gapColor,
+                            '${money(marketPrice)}${divPaying && divYield != null && divYield > 0 ? ' · ${w('Yield', '股息率')} ${(divYield * 100).toStringAsFixed(2)}%' : ''}',
+                            p.accent,
                           ),
                       ],
                     ),
@@ -909,7 +830,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
             ],
           );
 
-          if (!showScoreboard || isCompactScreen) return identity;
+          if (isCompactScreen) return identity;
 
           if (c.maxWidth < 920) {
             return Column(
@@ -930,21 +851,12 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    if (researchHasPlatformModel && fairValue != null)
+                    if (divPaying && divYield != null && divYield > 0)
                       Text(
-                        '${w('Fair value', '公允估值')} ${money(fairValue)}',
-                        style: TextStyle(
-                          color: p.accent,
+                        '${w('Dividend Yield', '股息率')} ${(divYield * 100).toStringAsFixed(2)}%',
+                        style: const TextStyle(
+                          color: _emerald,
                           fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    if (researchHasPlatformModel && gap != null)
-                      Text(
-                        '${gap >= 0 ? '+' : ''}${pct(gap)} ($gapVerdict)',
-                        style: TextStyle(
-                          color: gapColor,
-                          fontSize: 12.5,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -968,28 +880,30 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                     '${w('Mkt cap', '市值')} ${_fmtMillions(mcapM, currency)}',
                 ].join(' · '),
               ),
-              heroMetric(
-                titleEn: 'Model fair value',
-                titleZh: '平台公允估值',
-                mainValue: researchHasPlatformModel && fairValue != null
-                    ? money(fairValue)
-                    : w('Unmodeled', '未建模'),
-                subText: researchHasPlatformModel
-                    ? '${w('Snapshot', '模型期')} ${text(snap['period'], text(breakdown['period'], '—'))}'
-                    : w('Facts & filings active', '财务与公告可查'),
-                valueColor: researchHasPlatformModel ? p.accent : p.muted,
-              ),
-              if (researchHasPlatformModel)
+              if (ttmRevM != null || ttmFcfM != null)
                 heroMetric(
-                  titleEn: 'Valuation gap',
-                  titleZh: '模型估值空间',
-                  mainValue: gap == null
-                      ? '—'
-                      : '${gap >= 0 ? '+' : ''}${pct(gap)}',
-                  subText: gapVerdict,
-                  valueColor: gapColor,
-                  subColor: gapColor,
+                  titleEn: 'TTM Revenue',
+                  titleZh: 'TTM 营业收入',
+                  mainValue: ttmRevM != null
+                      ? _fmtMillions(ttmRevM, currency)
+                      : '—',
+                  subText: ttmFcfM != null
+                      ? 'TTM FCF ${_fmtMillions(ttmFcfM, currency)}'
+                      : '${w('Period', '报告期')} ${text(snap['period'], '—')}',
+                  valueColor: p.text,
                 ),
+              heroMetric(
+                titleEn: 'Dividend yield (TTM)',
+                titleZh: '股息率 (TTM)',
+                mainValue: divPaying && divYield != null && divYield > 0
+                    ? '${(divYield * 100).toStringAsFixed(2)}%'
+                    : (researchDividendData == null ? '…' : '0.00%'),
+                subText: divPaying && annDps != null && annDps > 0
+                    ? '${w('Annual', '年派息')} \$${annDps.toStringAsFixed(annDps < 1 ? 3 : 2)}/${w('sh', '股')}'
+                    : w('Click for payout history', '点击查看历史股息与派放'),
+                valueColor: divPaying && (divYield ?? 0) > 0 ? _emerald : p.muted,
+                onTap: () => selectResearchSection('dividends'),
+              ),
             ],
           );
 
@@ -1009,21 +923,31 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   Widget _buildPrimaryResearchTabs(double pad) {
     final compact = MediaQuery.sizeOf(context).width < 720;
     final tabs = [
-      ('evidence', 'Research overview', '研究总览', Icons.dashboard_outlined),
+      (
+        'evidence',
+        'Financial statements',
+        '财务报表',
+        Icons.stacked_bar_chart_rounded,
+      ),
+      (
+        'dividends',
+        'Dividends & yield',
+        '股息与派息',
+        Icons.payments_outlined,
+      ),
       (
         'financials',
-        'Announcements & financials',
-        '公告与财务',
+        'Filings & calls',
+        '财报与电话会',
         Icons.article_outlined,
       ),
       (
         'institutions',
-        'Institutional holdings',
+        'Institutional 13F',
         '机构持仓',
         Icons.groups_2_outlined,
       ),
-      ('value', 'Valuation workspace', '估值工作台', Icons.tune_rounded),
-      ('records', 'Research records', '研究记录', Icons.fact_check_outlined),
+      ('records', 'Research notes', '研究笔记', Icons.fact_check_outlined),
     ];
 
     return Container(
@@ -1120,10 +1044,10 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     final notebook = asList(home?['researchNotebook']);
 
     return [
-      title('Research a company', '研究一家公司'),
+      title('Financial statements & dividends', '财务报表与股息研究'),
       label(
-        'Start with a question. Follow the evidence. Put a value on your assumptions.',
-        '带着问题出发，核实证据，为你的假设定价。',
+        'Explore dynamic multi-year financial statements, historical dividend yield channels, payout records, and 13F holdings.',
+        '动态透视三大财务报表、历年股息率通道、除息派放记录与大师 13F 持仓。',
       ),
       const SizedBox(height: 20),
       card([
@@ -1186,40 +1110,52 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
           size: 12,
         ),
       ]),
-      if (watches.isNotEmpty || researchRecentTickers.isNotEmpty)
-        card([
-          Row(
-            children: [
-              Icon(Icons.bookmarks_outlined, size: 18, color: p.accent),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  w('Watchlist & Recent Companies', '观察列表与最近浏览'),
-                  style: deskHeading(17),
-                ),
+      card([
+        Row(
+          children: [
+            Icon(Icons.bookmarks_outlined, size: 18, color: p.accent),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                watches.isNotEmpty || researchRecentTickers.isNotEmpty
+                    ? w('Watchlist & Quick Launch', '观察列表与快捷直达')
+                    : w(
+                        'Quick Launch: Statements & Dividend Leaders',
+                        '快捷直达：代表性公司与高息股',
+                      ),
+                style: deskHeading(17),
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (final sym in {
-                ...watches.map((wRow) => text(wRow['ticker'])),
-                ...researchRecentTickers,
-              }.where((s) => s.isNotEmpty).take(12))
-                ActionChip(
-                  avatar: StockLogo(ticker: sym, palette: p, size: 20),
-                  label: Text(
-                    sym,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  onPressed: () => loadCompany(sym),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final sym in {
+              ...watches.map((wRow) => text(wRow['ticker'])),
+              ...researchRecentTickers,
+              'AAPL',
+              'MSFT',
+              'NVDA',
+              'AVGO',
+              'JNJ',
+              'KO',
+              'O',
+              'AMZN',
+            }.where((s) => s.isNotEmpty).take(12))
+              ActionChip(
+                avatar: StockLogo(ticker: sym, palette: p, size: 20),
+                label: Text(
+                  sym,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
-            ],
-          ),
-        ]),
+                onPressed: () => loadCompany(sym),
+              ),
+          ],
+        ),
+      ]),
       if (decisions.isNotEmpty)
         card([
           title('Continue your research', '继续你的研究'),
@@ -1330,15 +1266,18 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   }
 
   void selectResearchSection(String next) {
-    selectSection(next);
-    if (next == 'evidence' && researchNeedsFullFinancials) {
+    final target = next == 'value' ? 'evidence' : next;
+    selectSection(target);
+    if (target == 'evidence' && researchNeedsFullFinancials) {
       unawaited(loadResearchOverviewFinancials());
-    } else if (next == 'financials' &&
+    } else if (target == 'dividends' && researchDividendData == null) {
+      unawaited(loadResearchDividends());
+    } else if (target == 'financials' &&
         (researchDocumentsData == null || researchFundamental == null)) {
       unawaited(loadResearchPanel('financials'));
-    } else if (next == 'institutions' && researchInstitution == null) {
+    } else if (target == 'institutions' && researchInstitution == null) {
       unawaited(loadResearchPanel('institutions'));
-    } else if (next == 'records' && researchRecordsData == null) {
+    } else if (target == 'records' && researchRecordsData == null) {
       unawaited(loadResearchPanel('records'));
     }
   }
@@ -1449,7 +1388,6 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
 
   Widget researchEvidenceSidebar() {
     final dates = asMap(company?['researchDates']);
-    final coverage = asMap(company?['coverage']);
     return card([
       Row(
         children: [
@@ -1466,7 +1404,6 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         ('Financial period', '财报所属期', dates['financialPeriod']),
         ('Disclosure date', '公开披露日', dates['disclosureDate']),
         ('Price date', '市价日期', dates['priceDate']),
-        ('Model date', '模型计算日', dates['modelDate']),
       ])
         Padding(
           padding: const EdgeInsets.only(bottom: 9),
@@ -1486,12 +1423,8 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         ),
       Divider(color: p.border),
       label(
-        coverage['platformModel'] == 'available'
-            ? 'Platform model available; personal DCF scenarios stay isolated.'
-            : 'Unmodeled company; financial statements, filings, 13F holdings and notes remain active.',
-        coverage['platformModel'] == 'available'
-            ? '已覆盖平台估值模型；个人 DCF 试算与平台模型完全隔离保存。'
-            : '暂无平台估值模型；财务报表、公告、机构持仓与研究笔记均可完整使用。',
+        'As-reported financial statements, dividend corporate actions, 13F filings, and personal notes aligned to $asOf.',
+        '原始披露财务报表、历年股息除息公告、13F 机构持仓与个人研究笔记均严格对齐至 $asOf。',
         size: 11,
       ),
     ]);
@@ -1504,14 +1437,17 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
   List<Widget> researchOverview() {
     final pulse = _buildGuruAndGuidancePulse();
     final insights = _buildSynthesizedFactInsights();
+    final divBanner = buildCompactDividendPulseBanner();
+    final kpis = _buildCoreOperatingKpiStrip();
     return [
-      _buildCoreOperatingKpiStrip(),
-      if (insights != null) ...[const SizedBox(height: 16), insights],
-      const SizedBox(height: 16),
-      researchOverviewValuation(),
-      if (pulse != null) ...[const SizedBox(height: 16), pulse],
-      const SizedBox(height: 16),
       researchFinancialStatements(),
+      if (divBanner != null) ...[const SizedBox(height: 16), divBanner],
+      if (asList(company?['metrics']).isNotEmpty) ...[
+        const SizedBox(height: 16),
+        kpis,
+      ],
+      if (insights != null) ...[const SizedBox(height: 16), insights],
+      if (pulse != null) ...[const SizedBox(height: 16), pulse],
     ];
   }
 
@@ -1848,347 +1784,6 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     );
   }
 
-  Widget researchOverviewValuation() {
-    final price = asMap(asMap(company?['snapshot'])['price']);
-    final breakdown = asMap(company?['publishedBreakdown']);
-    final methods = asList(breakdown['components']);
-    final currency = text(company?['currency'], 'USD');
-    final fairValue = nullableNumber(
-      breakdown['fairValue'] ?? asMap(company?['published'])['fairValue'],
-    );
-    final marketPrice = nullableNumber(price['value']);
-    final comparable =
-        marketPrice != null &&
-        marketPrice > 0 &&
-        fairValue != null &&
-        text(price['currency'], currency) == currency;
-    final gap = comparable ? fairValue / marketPrice - 1 : null;
-
-    final comparison = <_ResearchValueBar>[
-      if (marketPrice != null)
-        _ResearchValueBar(
-          label: w('Market price', '当前市场股价'),
-          sublabel: text(price['date']),
-          value: marketPrice,
-          color: p.text,
-        ),
-      if (fairValue != null)
-        _ResearchValueBar(
-          label: w('Published fair value', '平台综合公允估值'),
-          sublabel: text(breakdown['period'], text(asMap(company?['snapshot'])['period'])),
-          value: fairValue,
-          color: p.accent,
-        ),
-      for (final method in methods)
-        if (method['status'] == 'included' &&
-            nullableNumber(method['output']) != null &&
-            (fairValue == null ||
-                (number(method['output']) - fairValue).abs() > 0.01))
-          _ResearchValueBar(
-            label: localizeValuationMethodLabel(
-              text(method['key']),
-              context.language,
-              fallbackLabel: text(method['label']),
-            ),
-            sublabel: '${w('Weight', '权重')} ${pct(method['weight'])}',
-            value: number(method['output']),
-            color: _emerald,
-          ),
-    ];
-
-    return card([
-      Wrap(
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 12,
-        runSpacing: 8,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              label(
-                'VALUATION ARCHITECTURE',
-                '估值定价拆解',
-                size: 10,
-                color: p.accent,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                w('What the model is worth — and why', '模型值多少，以及怎么算出来'),
-                style: deskHeading(20),
-              ),
-            ],
-          ),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              if (gap != null)
-                researchTag(
-                  '${gap >= 0 ? '+' : ''}${pct(gap)} ${w('vs price', '对比现价')}',
-                  gap >= 0 ? _emerald : _amber,
-                ),
-              if (assumptions.isNotEmpty)
-                OutlinedButton.icon(
-                  onPressed: () {
-                    updateUI(() => valuationSection = 'personal');
-                    selectSection('value');
-                  },
-                  icon: Icon(Icons.tune_rounded, size: 15, color: p.accent),
-                  label: Text(
-                    w('Interactive DCF', '进入 DCF 试算'),
-                    style: TextStyle(color: p.accent, fontSize: 12.5),
-                  ),
-                ),
-              TextButton.icon(
-                onPressed: () {
-                  updateUI(() => valuationSection = 'published');
-                  selectSection('value');
-                },
-                icon: const Icon(Icons.arrow_forward, size: 15),
-                label: Text(w('Open full reconciliation', '查看完整模型对账')),
-              ),
-            ],
-          ),
-        ],
-      ),
-      const SizedBox(height: 16),
-      if (!researchHasPlatformModel)
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: p.card,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: p.border),
-          ),
-          child: label(
-            'No platform valuation model is stored at this cutoff. Financial statements, filings, institutional holdings, and research notes remain available below.',
-            '当前研究截止日暂无已发布估值模型；下方财务报表、公告、机构持仓与研究笔记均可正常使用。',
-            color: p.secondary,
-          ),
-        )
-      else ...[
-        if (comparison.isNotEmpty) ...[
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-            decoration: BoxDecoration(
-              color: p.card.withValues(alpha: .45),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: p.border),
-            ),
-            child: _ResearchValueComparison(
-              items: comparison,
-              currency: currency,
-              textColor: p.text,
-              muted: p.muted,
-              border: p.border,
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
-        if (methods.isNotEmpty)
-          LayoutBuilder(
-            builder: (_, bounds) => Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                for (final method in methods)
-                  SizedBox(
-                    width: bounds.maxWidth >= 880 && methods.length > 1
-                        ? (bounds.maxWidth - 12) / 2
-                        : bounds.maxWidth,
-                    child: _researchOverviewMethod(method),
-                  ),
-              ],
-            ),
-          ),
-      ],
-    ]);
-  }
-
-  Widget _researchOverviewMethod(Map<String, dynamic> method) {
-    final included = method['status'] == 'included';
-    final steps = asList(method['steps']);
-    final parameters = asList(method['parameters']);
-    final reason = text(method['exclusionReason']);
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: p.card.withValues(alpha: included ? .65 : .32),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: included ? p.accent.withValues(alpha: .42) : p.border,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Icon(
-                included
-                    ? Icons.check_circle_outline
-                    : Icons.remove_circle_outline,
-                size: 16,
-                color: included ? _emerald : p.muted,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  localizeValuationMethodLabel(
-                    text(method['key']),
-                    context.language,
-                    fallbackLabel: text(method['label']),
-                  ),
-                  style: deskHeading(15),
-                ),
-              ),
-              researchTag(
-                included ? w('Active weight', '已采用') : w('Excluded', '未计入权重'),
-                included ? _emerald : p.muted,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (included)
-            Wrap(
-              spacing: 22,
-              runSpacing: 10,
-              children: [
-                _compactMethodMetric(
-                  w('Standalone value', '子模型每股估值'),
-                  method['output'] == null ? '—' : money(method['output']),
-                  valueColor: p.text,
-                ),
-                _compactMethodMetric(
-                  w('Model weight', '采用权重'),
-                  method['weight'] == null ? '—' : pct(method['weight']),
-                ),
-                _compactMethodMetric(
-                  w('Contribution', '加权贡献'),
-                  money(method['contribution']),
-                  valueColor: p.accent,
-                ),
-              ],
-            )
-          else
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: p.panel.withValues(alpha: .6),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: p.border),
-              ),
-              child: Text(
-                reason.isNotEmpty
-                    ? localizeValuationExclusionReason(reason, context.language)
-                    : w(
-                        'Not weighted in this snapshot (0% weight).',
-                        '该子模型在当前快照中未分配权重（0%）。',
-                      ),
-                style: TextStyle(color: p.muted, fontSize: 12, height: 1.4),
-              ),
-            ),
-          if (included && steps.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            for (final step in steps)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        localizeValuationStepLabel(
-                          text(step['label'], text(step['formula'])),
-                          context.language,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: p.muted, fontSize: 11.5),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      nullableNumber(step['output']) == null
-                          ? '—'
-                          : formatNumber(number(step['output'])),
-                      style: TextStyle(
-                        color: p.text,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-          if (parameters.isNotEmpty || (steps.isNotEmpty && !included))
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              childrenPadding: const EdgeInsets.only(bottom: 4),
-              visualDensity: VisualDensity.compact,
-              title: Text(
-                w('Snapshot inputs & formula details', '查看快照输入参数与公式明细'),
-                style: TextStyle(color: p.muted, fontSize: 11.5),
-              ),
-              children: [
-                for (final input in parameters)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            localizeValuationParamLabel(
-                              text(input['key']),
-                              text(input['label']),
-                              context.language,
-                            ),
-                            style: TextStyle(color: p.muted, fontSize: 11),
-                          ),
-                        ),
-                        Text(
-                          nullableNumber(input['value']) == null
-                              ? '—'
-                              : formatNumber(number(input['value'])),
-                          style: TextStyle(
-                            color: p.text,
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _compactMethodMetric(
-    String labelText,
-    String valueText, {
-    Color? valueColor,
-  }) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(labelText, style: TextStyle(color: p.muted, fontSize: 11)),
-      const SizedBox(height: 3),
-      Text(
-        valueText,
-        style: TextStyle(
-          color: valueColor ?? p.text,
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    ],
-  );
-
   Widget? _buildGuruAndGuidancePulse() {
     final holders = orderedDisclosedHolders(asList(company?['provenance']), '');
     final guidance = asList(asMap(company?['guidance'])['evidence']);
@@ -2424,6 +2019,43 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
       ),
       (key: 'ncf', en: 'Net change in cash', zh: '现金净变动', unit: 'currency'),
     ],
+    'ratios' => [
+      (
+        key: 'grossmargin_calc',
+        en: 'Gross margin',
+        zh: '毛利率',
+        unit: 'percent',
+      ),
+      (
+        key: 'opmargin_calc',
+        en: 'Operating margin',
+        zh: '营业利润率',
+        unit: 'percent',
+      ),
+      (
+        key: 'ebitdamargin_calc',
+        en: 'EBITDA margin',
+        zh: 'EBITDA 利润率',
+        unit: 'percent',
+      ),
+      (
+        key: 'netmargin_calc',
+        en: 'Net profit margin',
+        zh: '净利率',
+        unit: 'percent',
+      ),
+      (
+        key: 'fcfmargin_calc',
+        en: 'Free cash flow margin',
+        zh: '自由现金流利润率',
+        unit: 'percent',
+      ),
+      (key: 'roe', en: 'Return on equity (ROE)', zh: '净资产收益率 (ROE)', unit: 'percent'),
+      (key: 'roa', en: 'Return on assets (ROA)', zh: '总资产回报率 (ROA)', unit: 'percent'),
+      (key: 'roic', en: 'Return on invested capital (ROIC)', zh: '投入资本回报率 (ROIC)', unit: 'percent'),
+      (key: 'de_calc', en: 'Debt / Equity', zh: '资产负债比 (Debt/Equity)', unit: 'multiple'),
+      (key: 'currentratio_calc', en: 'Current ratio', zh: '流动比率', unit: 'multiple'),
+    ],
     _ => [
       (key: 'revenue', en: 'Revenue', zh: '营业收入', unit: 'currency'),
       (key: 'cor', en: 'Cost of revenue', zh: '营业成本', unit: 'currency'),
@@ -2437,6 +2069,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
       ),
       (key: 'opex', en: 'Operating expenses', zh: '经营费用', unit: 'currency'),
       (key: 'opinc', en: 'Operating income', zh: '营业利润', unit: 'currency'),
+      (key: 'ebitda', en: 'EBITDA', zh: 'EBITDA', unit: 'currency'),
       (key: 'ebit', en: 'EBIT', zh: '息税前利润', unit: 'currency'),
       (key: 'intexp', en: 'Interest expense', zh: '利息费用', unit: 'currency'),
       (key: 'taxexp', en: 'Income tax expense', zh: '所得税费用', unit: 'currency'),
@@ -2447,6 +2080,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         zh: '归属普通股净利润',
         unit: 'currency',
       ),
+      (key: 'epsdil', en: 'Diluted EPS', zh: '稀释每股收益 (EPS)', unit: 'per_share'),
       (
         key: 'shareswadil',
         en: 'Diluted weighted-average shares',
@@ -2469,9 +2103,12 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
       return found == null ? null : {'row': found};
     }
 
+    final qCap = researchFinancialMaxPeriods <= 5 ? 8 : 16;
+    final aCap = researchFinancialMaxPeriods <= 5 ? 5 : 10;
+
     if (researchFinancialFrequency == 'quarterly') {
       return [
-        for (final row in quarters.take(8).toList().reversed)
+        for (final row in quarters.take(qCap).toList().reversed)
           {
             'label': researchFinancialQuarterLabel(row),
             'kind': 'quarterly',
@@ -2482,7 +2119,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
       ];
     }
     final periods = <Map<String, dynamic>>[
-      for (final row in annual.take(8).toList().reversed)
+      for (final row in annual.take(aCap).toList().reversed)
         {
           'label': text(
             row['reportperiod'],
@@ -2496,23 +2133,23 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     if (quarters.isNotEmpty) {
       final latest = quarters.first;
       final previousYear = researchFinancialPrior(latest, quarters, 4);
-      final isBalance = researchStatement == 'balance';
+      final isPointInTime = researchStatement == 'balance';
       periods.add({
-        'label': isBalance ? w('Latest', '最新') : 'TTM',
-        'kind': isBalance ? 'latest' : 'ttm',
+        'label': isPointInTime ? w('Latest', '最新') : 'TTM',
+        'kind': isPointInTime ? 'latest' : 'ttm',
         'row': latest,
         'rows': quarters.take(4).toList(),
         'yoy': previousYear == null
             ? null
             : {
-                'kind': isBalance ? 'latest' : 'ttm',
+                'kind': isPointInTime ? 'latest' : 'ttm',
                 'row': previousYear,
                 'rows': quarters
                     .skip(quarters.indexOf(previousYear))
                     .take(4)
                     .toList(),
               },
-        'qoq': isBalance ? prior(latest, quarters, 1) : null,
+        'qoq': isPointInTime ? prior(latest, quarters, 1) : null,
       });
     }
     return periods;
@@ -2526,6 +2163,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
     final defaults = switch (statement) {
       'balance' => ['cashneq', 'debt', 'equity'],
       'cash' => ['ncfo', 'capex', 'fcf'],
+      'ratios' => ['grossmargin_calc', 'opmargin_calc', 'fcfmargin_calc'],
       _ => ['revenue', 'opinc', 'netinccmn'],
     };
     updateUI(() {
@@ -2565,6 +2203,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
           _ResearchFinancialSeries(
             keyName: row.key,
             label: w(row.en, row.zh),
+            unit: row.unit,
             color: colors[index % colors.length],
             values: [
               for (final period in periods)
@@ -2572,11 +2211,11 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
             ],
             yoy: [
               for (final period in periods)
-                researchFinancialGrowth(period, row.key, 'yoy'),
+                researchFinancialGrowth(period, row.key, 'yoy', unit: row.unit),
             ],
             qoq: [
               for (final period in periods)
-                researchFinancialGrowth(period, row.key, 'qoq'),
+                researchFinancialGrowth(period, row.key, 'qoq', unit: row.unit),
             ],
           ),
     ];
@@ -2591,20 +2230,20 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               label(
-                'FINANCIAL STATEMENTS',
-                '三大财务报表透视',
+                'DYNAMIC FINANCIAL STATEMENTS',
+                '三大财务报表与核心比率动态透视',
                 size: 10,
                 color: p.accent,
               ),
               const SizedBox(height: 4),
               Text(
-                w('Three statements. One comparison chart.', '三张报表，一张可交互比较图'),
+                w('Interactive Multi-Period Statements & Ratios', '动态财务报表：图表联动与多期对比'),
                 style: deskHeading(20),
               ),
               const SizedBox(height: 3),
               label(
-                'Click up to 3 table rows below to compare trends. Hover or tap bars for exact YoY & QoQ.',
-                '点击下方表格任意项目（最多 3 项）联动绘图；悬停或点击柱状图查看同比 YoY 与环比 QoQ。',
+                'Click up to 3 table rows below to compare trends dynamically. Hover or tap bars for exact YoY & QoQ.',
+                '点击下方表格任意项目（最多叠加 3 项）实时联动绘图；悬停或点击柱体查看精确同比 YoY 与环比 QoQ。',
                 size: 11.5,
               ),
             ],
@@ -2619,11 +2258,13 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
       Wrap(
         spacing: 8,
         runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           for (final statement in [
             ('income', 'Income statement', '利润表'),
             ('balance', 'Balance sheet', '资产负债表'),
             ('cash', 'Cash flow', '现金流量表'),
+            ('ratios', 'Margins & returns', '利润率与回报'),
           ])
             ChoiceChip(
               key: ValueKey('research-statement-${statement.$1}'),
@@ -2631,9 +2272,9 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
               selected: researchStatement == statement.$1,
               onSelected: (_) => _selectResearchStatement(statement.$1),
             ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           for (final frequency in [
-            ('annual', 'Annual', '年度'),
+            ('annual', 'Annual · TTM', '年度 · TTM'),
             ('quarterly', 'Quarterly · Q', '季度 · Q'),
           ])
             ChoiceChip(
@@ -2643,6 +2284,36 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
               onSelected: (_) =>
                   updateUI(() => researchFinancialFrequency = frequency.$1),
             ),
+          ChoiceChip(
+            key: const ValueKey('research-depth-compact'),
+            label: Text(
+              researchFinancialFrequency == 'quarterly'
+                  ? w('8Q', '近8季')
+                  : w('5Y', '近5年'),
+            ),
+            selected: researchFinancialMaxPeriods <= 5,
+            visualDensity: VisualDensity.compact,
+            onSelected: (_) => updateUI(() => researchFinancialMaxPeriods = 5),
+          ),
+          ChoiceChip(
+            key: const ValueKey('research-depth-full'),
+            label: Text(
+              researchFinancialFrequency == 'quarterly'
+                  ? w('16Q', '近16季')
+                  : w('10Y', '近10年'),
+            ),
+            selected: researchFinancialMaxPeriods > 5,
+            visualDensity: VisualDensity.compact,
+            onSelected: (_) => updateUI(() => researchFinancialMaxPeriods = 10),
+          ),
+          FilterChip(
+            key: const ValueKey('research-table-yoy-toggle'),
+            label: Text(w('Show YoY %', '显示同比')),
+            selected: researchFinancialShowGrowthInTable,
+            visualDensity: VisualDensity.compact,
+            onSelected: (v) =>
+                updateUI(() => researchFinancialShowGrowthInTable = v),
+          ),
         ],
       ),
       const SizedBox(height: 14),
@@ -2668,8 +2339,8 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 32),
           child: label(
-            'No statement history is available for this frequency at this cutoff.',
-            '该截止日没有此频率的财务报表历史。',
+            'No corporate statement history is filed for this security (e.g. ETF/Fund). Check the Dividends & Yield tab for distribution analytics.',
+            '该标的暂无企业三张财务报表（例如 ETF/基金）；可切换至「股息与派息」查看完整历史股息率与派息记录。',
           ),
         )
       else ...[
@@ -2698,7 +2369,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         Text(
           w(
             'Tap any line item below to plot or remove it from the chart above.',
-            '点击下方任意报表项目，即可在上方柱状图中叠加或移除对比。',
+            '点击下方任意报表项目，即可在上方图表中叠加或移除对比。',
           ),
           style: TextStyle(color: p.muted, fontSize: 11.5),
         ),
@@ -2709,8 +2380,8 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
             key: ValueKey('research-financial-table-$researchStatement'),
             showCheckboxColumn: false,
             headingRowHeight: 40,
-            dataRowMinHeight: 44,
-            dataRowMaxHeight: 48,
+            dataRowMinHeight: researchFinancialShowGrowthInTable ? 50 : 44,
+            dataRowMaxHeight: researchFinancialShowGrowthInTable ? 56 : 48,
             columns: [
               DataColumn(label: Text(w('Reported line item', '报表项目'))),
               for (final period in periods)
@@ -2771,15 +2442,7 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
                       ),
                     ),
                     for (final period in periods)
-                      DataCell(
-                        Text(
-                          _researchFinancialValue(period, row.key) == null
-                              ? '—'
-                              : formatNumber(
-                                  _researchFinancialValue(period, row.key)!,
-                                ),
-                        ),
-                      ),
+                      _buildStatementDataCell(period, row),
                   ],
                 ),
             ],
@@ -2793,6 +2456,38 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
         ),
       ],
     ]);
+  }
+
+  DataCell _buildStatementDataCell(
+    Map<String, dynamic> period,
+    ({String key, String en, String zh, String unit}) row,
+  ) {
+    final val = _researchFinancialValue(period, row.key);
+    final yoy = researchFinancialShowGrowthInTable
+        ? researchFinancialGrowth(period, row.key, 'yoy', unit: row.unit)
+        : (value: null, reason: 'hidden');
+    return DataCell(
+      Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            val == null ? '—' : formatResearchStatementUnitValue(val, row.unit),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          if (yoy.value != null)
+            Text(
+              yoy.reason == 'pp_delta'
+                  ? '${yoy.value! >= 0 ? '+' : ''}${(yoy.value! * 100).toStringAsFixed(1)}pp'
+                  : '${yoy.value! >= 0 ? '+' : ''}${(yoy.value! * 100).toStringAsFixed(1)}%',
+              style: TextStyle(
+                fontSize: 10.5,
+                color: yoy.value! >= 0 ? _emerald : _amber,
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -2855,7 +2550,6 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
           asOf: asOf,
           palette: p,
           history: researchHistory,
-          onOpenValuation: () => selectSection('value'),
         ),
         const SizedBox(height: 18),
       ],
@@ -3526,315 +3220,6 @@ extension _InvestmentResearch on _InvestmentWorkspaceState {
             ],
           ),
           researchEvidenceSidebar(),
-          sideWidth: 320,
-        ),
-      ],
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // TAB 4: VALUATION WORKSPACE (PUBLISHED MODEL, MY DCF, REVERSE DCF)
-  // ---------------------------------------------------------------------------
-
-  List<Widget> researchValuationWorkspace() {
-    final breakdown = asMap(company?['publishedBreakdown']);
-    return [
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: p.panel,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: p.border),
-        ),
-        child: Wrap(
-          alignment: WrapAlignment.spaceBetween,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 12,
-          runSpacing: 8,
-          children: [
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final tab in [
-                  ('published', 'Published model', '已发布模型'),
-                  ('personal', 'My DCF', '我的 DCF'),
-                  ('reverse', 'Reverse DCF', '反向 DCF'),
-                ])
-                  ChoiceChip(
-                    label: Text(w(tab.$2, tab.$3)),
-                    selected: valuationSection == tab.$1,
-                    onSelected: (_) => updateUI(() => valuationSection = tab.$1),
-                  ),
-              ],
-            ),
-            Text(
-              valuationSection == 'personal'
-                  ? w(
-                      'Interactive sandbox · isolated from platform fair value',
-                      '交互式个人现金流沙盒 · 与平台估值独立隔离',
-                    )
-                  : valuationSection == 'reverse'
-                  ? w(
-                      'Solve what market price implies for growth or margins',
-                      '反推当前市价隐含的增长率或稳态利润率预期',
-                    )
-                  : w(
-                      'Audited point-in-time platform valuation breakdown',
-                      '历史时点平台模型子项权重与对账明细',
-                    ),
-              style: TextStyle(color: p.muted, fontSize: 12),
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 18),
-      if (valuationSection == 'published') researchPublishedLedger(breakdown),
-      if (valuationSection == 'personal' && assumptions.isEmpty)
-        card([
-          title('No personal DCF starting point', '暂无个人 DCF 起点'),
-          label(
-            'The company remains fully researchable. This snapshot does not support the generic parent-FCFE worksheet.',
-            '该公司仍可完整研究，但此快照不适用通用母公司 FCFE 表。',
-          ),
-        ]),
-      if (valuationSection == 'personal' && assumptions.isNotEmpty)
-        ...personalValueWorkspace(),
-      if (valuationSection == 'reverse' && assumptions.isEmpty)
-        card([
-          label(
-            'Reverse DCF requires a supported personal cash-flow model and a comparable price.',
-            '反向 DCF 需要受支持的个人现金流模型及可比价格。',
-          ),
-        ]),
-      if (valuationSection == 'reverse' && assumptions.isNotEmpty)
-        researchReversePanel(),
-    ];
-  }
-
-  Widget researchPublishedLedger(Map<String, dynamic> breakdown) {
-    final components = asList(breakdown['components']);
-    return pageColumns(
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          title('Published-model reconciliation', '已发布模型逐项对账'),
-          label(
-            'Every stored valuation method is shown transparently. Excluded methods are never treated as a zero valuation.',
-            '透明展示平台模型各子方法输出、权重与后置调整；未启用方法绝不作零值拉低均值。',
-          ),
-          const SizedBox(height: 16),
-          if (breakdown.isEmpty)
-            card([
-              label(
-                'No published valuation exists for this company at the research cutoff.',
-                '该公司在研究截止日没有已发布估值。',
-              ),
-            ]),
-          if (breakdown.isNotEmpty) ...[
-            card([
-              dataTable(
-                [w('Reconciliation Summary', '对账汇总'), w('Per share', '每股价值')],
-                [
-                  [
-                    w('Weighted method value', '子模型加权值'),
-                    money(breakdown['weightedValue']),
-                  ],
-                  [
-                    w('Stored post-method adjustments', '已存后置调整'),
-                    money(
-                      asList(breakdown['postModelAdjustments']).fold<double>(
-                        0,
-                        (sum, row) => sum + number(row['amount']),
-                      ),
-                    ),
-                  ],
-                  [
-                    w('Final published value', '最终已发布价值'),
-                    money(breakdown['fairValue']),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 8),
-              label(
-                '${w('Period', '报告期')} ${text(breakdown['period'], '—')} · ${w('Published', '模型日')} ${text(breakdown['availableAt'], '—')}',
-                '${w('Period', '报告期')} ${text(breakdown['period'], '—')} · ${w('Published', '模型日')} ${text(breakdown['availableAt'], '—')}',
-                size: 11,
-              ),
-            ]),
-            const SizedBox(height: 12),
-          ],
-          for (final method in components)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _researchOverviewMethod(method),
-            ),
-        ],
-      ),
-      researchEvidenceSidebar(),
-      sideWidth: 320,
-    );
-  }
-
-  Widget researchReversePanel() {
-    final reverse = asMap(calculation?['reverse']);
-    final scenario = asMap(reverse['scenario']);
-    final diagnostics = asMap(reverse['diagnostics']);
-    final solved = reverse['status'] == 'solved' && scenario.isNotEmpty;
-    final solvedLabel = switch (text(reverse['variable'])) {
-      'growth' => w('Revenue growth', '收入增长率'),
-      'mature_ebit_margin' => w('Mature EBIT margin', '成熟 EBIT 利润率'),
-      'reinvestment' => w('ΔNWC / revenue', 'ΔNWC / 收入'),
-      'terminal_margin' => w('Final FCFE margin', '末期 FCFE 率'),
-      _ => w('Solved variable', '待求变量'),
-    };
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        title('What operating path explains the price?', '什么经营路径能够解释当前价格？'),
-        label(
-          'One variable is solved at a time while keeping all other assumptions fixed. This is a mathematical price-implied check, not analyst consensus.',
-          '每次固定其余参数、反推单一经营变量，用于检验当前市价隐含的市场门槛，而非卖方一致预期。',
-        ),
-        const SizedBox(height: 16),
-        valuationCalculationState(),
-        pageColumns(
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (solved) ...[
-                valuationForecastGrid(scenario, reverseDetails: reverse),
-                const SizedBox(height: 18),
-                valuationTerminalSummary(scenario),
-              ] else
-                card([
-                  Icon(Icons.travel_explore, color: p.secondary, size: 24),
-                  const SizedBox(height: 12),
-                  title('No valid path in the search range', '搜索范围内没有有效路径'),
-                  label(
-                    reverse.isEmpty
-                        ? 'Enter a comparable price and required return to calculate the implied path.'
-                        : 'The selected variable cannot reproduce this price inside the supported bounds. Change one control; no arbitrary root is shown.',
-                    reverse.isEmpty
-                        ? '输入可比价格与要求回报后计算价格隐含路径。'
-                        : '所选变量在支持边界内无法复现该价格。请修改一个控制项；系统不会展示任意根。',
-                  ),
-                ]),
-            ],
-          ),
-          card([
-            label('PRICE-IMPLIED SOLVER', '价格隐含反推器', size: 10, color: p.accent),
-            const SizedBox(height: 8),
-            title('Solve one variable', '每次反推一个变量'),
-            const SizedBox(height: 10),
-            input(
-              reversePrice,
-              'Price to explain',
-              '待解释价格',
-              width: double.infinity,
-              numeric: true,
-              changed: (_) => scheduleCalculation(),
-            ),
-            const SizedBox(height: 12),
-            input(
-              targetReturn,
-              'Required return %',
-              '要求回报 %',
-              width: double.infinity,
-              numeric: true,
-              changed: (_) => scheduleCalculation(),
-            ),
-            const SizedBox(height: 14),
-            for (final variable
-                in personalDcfMethod == 'operating_fcff'
-                    ? [
-                        ('growth', 'Revenue growth', '收入增长率'),
-                        (
-                          'mature_ebit_margin',
-                          'Mature EBIT margin',
-                          '成熟 EBIT 利润率',
-                        ),
-                        ('reinvestment', 'ΔNWC / revenue', 'ΔNWC / 收入'),
-                      ]
-                    : [
-                        ('growth', 'Revenue growth', '收入增长率'),
-                        ('terminal_margin', 'Final FCFE margin', '末期 FCFE 率'),
-                      ])
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: ChoiceChip(
-                  key: ValueKey('reverse-variable-${variable.$1}'),
-                  label: SizedBox(
-                    width: double.infinity,
-                    child: Text(w(variable.$2, variable.$3)),
-                  ),
-                  selected: reverseVariable == variable.$1,
-                  onSelected: (_) {
-                    updateUI(() => reverseVariable = variable.$1);
-                    scheduleCalculation();
-                  },
-                ),
-              ),
-            Divider(height: 28, color: p.border),
-            Text(
-              solved ? pct(reverse['value']) : '—',
-              key: const ValueKey('reverse-solved-value'),
-              style: TextStyle(
-                color: solved ? _amber : p.muted,
-                fontSize: 30,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            label(solvedLabel, solvedLabel, color: p.text, size: 12),
-            const SizedBox(height: 14),
-            dataTable(
-              [w('Forward check', '回代检查'), w('Result', '结果')],
-              [
-                [w('Target price', '目标价格'), money(reverse['price'])],
-                [
-                  w('Recalculated value', '回代每股价值'),
-                  money(diagnostics['verifiedForwardValue']),
-                ],
-                [
-                  w('Price residual', '价格残差'),
-                  nullableNumber(reverse['residual']) == null
-                      ? '—'
-                      : money(reverse['residual']),
-                ],
-                [
-                  w('Solutions in bounds', '边界内解数量'),
-                  text(diagnostics['rootCount'], '0'),
-                ],
-              ],
-            ),
-            const SizedBox(height: 10),
-            label(
-              solved
-                  ? 'Forward check passed. The table uses the same engine as My DCF.'
-                  : 'Status: ${text(reverse['status'], 'not_calculated')}',
-              solved
-                  ? '正向回代已通过；表格与“我的 DCF”使用同一计算引擎。'
-                  : '状态：${localizeReverseDcfStatus(text(reverse['status'], 'not_calculated'), AppLanguage.zh)}',
-              color: solved ? _emerald : p.secondary,
-              size: 11,
-            ),
-            if (text(reverse['fixed']).isNotEmpty) ...[
-              const SizedBox(height: 10),
-              label(
-                text(reverse['fixed']),
-                localizeReverseDcfFixed(
-                  text(reverse['fixed']),
-                  personalDcfMethod,
-                  reverseVariable,
-                  asList(scenario['forecast']).isEmpty
-                      ? 5
-                      : asList(scenario['forecast']).length,
-                  AppLanguage.zh,
-                ),
-                size: 11,
-              ),
-            ],
-          ]),
           sideWidth: 320,
         ),
       ],

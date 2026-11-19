@@ -138,6 +138,7 @@ class ChecklistResearchApi extends ResearchApi {
     final base = await super.getJson(path);
     if (uri.path.startsWith('/api/investment/research/') &&
         !uri.path.endsWith('/fundamentals') &&
+        !uri.path.endsWith('/dividends') &&
         !uri.path.endsWith('/documents') &&
         !uri.path.endsWith('/institutions') &&
         !uri.path.endsWith('/records')) {
@@ -306,11 +307,12 @@ void main() {
         1,
       );
 
-      // Exercise lazy tabs via ValueKey: financials, institutions, value, records
+      // Valuation workspace tab is permanently removed; exercise active tabs cleanly.
+      expect(find.byKey(const ValueKey('research-tab-value')), findsNothing);
       for (final tabKey in const [
+        'research-tab-dividends',
         'research-tab-financials',
         'research-tab-institutions',
-        'research-tab-value',
         'research-tab-records',
       ]) {
         await tester.ensureVisible(find.byKey(ValueKey(tabKey)));

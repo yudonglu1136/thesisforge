@@ -251,8 +251,8 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
                           const SizedBox(height: 5),
                           Text(
                             w(
-                              'Go straight to its research and valuation.',
-                              '直接查看公司的研究与估值。',
+                              'Inspect dynamic financial statements, dividends, and 13F holdings.',
+                              '直接查看公司的动态财务报表、历史股息与机构持仓。',
                             ),
                             style: style(13, color: p.muted),
                           ),
@@ -394,8 +394,8 @@ class _CompanySearchDialogState extends State<CompanySearchDialog> {
                         Icons.search_off,
                         w('No matching companies', '没有匹配的公司'),
                         w(
-                          'Try a company name or ticker. Fact OS companies remain available even without a platform valuation.',
-                          '请尝试其他公司名称或股票代码；即使暂无平台估值模型，财报覆盖公司仍可查看研究。',
+                          'Try another company name or ticker symbol.',
+                          '请尝试其他公司名称或股票代码。',
                         ),
                         hasQuery ? w('Clear search', '清空搜索') : null,
                         () {

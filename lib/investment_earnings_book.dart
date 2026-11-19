@@ -429,46 +429,48 @@ extension _EarningsQuarterBook on _EarningsResearchPanelState {
                 '已存摘录，并非完整逐字稿。问答不会自动进入你的 DCF。',
               ),
           ],
-          const SizedBox(height: 18),
-          Divider(height: 1, color: p.border),
-          const SizedBox(height: 14),
-          LayoutBuilder(
-            builder: (_, b) {
-              final heading = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  bookTitle(
-                    '3  Put the evidence into your assumptions',
-                    '3  用证据检验自己的假设',
-                    size: 14,
-                  ),
-                  const SizedBox(height: 4),
-                  caption(
-                    'Opens your ${widget.asOf} valuation. Browsing quarters changes nothing in it.',
-                    '进入截止 ${widget.asOf} 的估值。浏览历史季度不会修改其中的假设。',
-                  ),
-                ],
-              );
-              final action = FilledButton.icon(
-                key: const ValueKey('earnings-open-valuation'),
-                onPressed: widget.onOpenValuation,
-                icon: const Icon(Icons.arrow_forward, size: 16),
-                label: Text(w('Open valuation', '打开估值')),
-              );
-              return b.maxWidth > 700
-                  ? Row(
-                      children: [
-                        Expanded(child: heading),
-                        const SizedBox(width: 16),
-                        action,
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [heading, const SizedBox(height: 10), action],
-                    );
-            },
-          ),
+          if (widget.onOpenValuation != null) ...[
+            const SizedBox(height: 18),
+            Divider(height: 1, color: p.border),
+            const SizedBox(height: 14),
+            LayoutBuilder(
+              builder: (_, b) {
+                final heading = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    bookTitle(
+                      '3  Put the evidence into your assumptions',
+                      '3  用证据检验自己的假设',
+                      size: 14,
+                    ),
+                    const SizedBox(height: 4),
+                    caption(
+                      'Opens your ${widget.asOf} valuation. Browsing quarters changes nothing in it.',
+                      '进入截止 ${widget.asOf} 的估值。浏览历史季度不会修改其中的假设。',
+                    ),
+                  ],
+                );
+                final action = FilledButton.icon(
+                  key: const ValueKey('earnings-open-valuation'),
+                  onPressed: widget.onOpenValuation,
+                  icon: const Icon(Icons.arrow_forward, size: 16),
+                  label: Text(w('Open valuation', '打开估值')),
+                );
+                return b.maxWidth > 700
+                    ? Row(
+                        children: [
+                          Expanded(child: heading),
+                          const SizedBox(width: 16),
+                          action,
+                        ],
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [heading, const SizedBox(height: 10), action],
+                      );
+              },
+            ),
+          ],
         ],
       ),
     );

@@ -297,32 +297,54 @@ function loadGuruBacktestBundle(source, guruId, configured, asOf) {
   };
 }
 
-function loadTickerMetadata(source, tickers, asOf) {
+function loadTickerMetadata(source, tickers, asOf, snapshotCache = null) {
   const clean = [...new Set(tickers.map(validTicker).filter(Boolean))];
   if (!clean.length) return {};
   const meta = {};
   if (hasTable(source.db, 'valuation_ticker_snapshots')) {
-    const rows = source.db.prepare(`SELECT ticker,
-      json_extract(payload_json,'$.sector') sector,
-      json_extract(payload_json,'$.industry') industry,
-      json_extract(payload_json,'$.currency') currency,
-      json_extract(payload_json,'$.priceHistory') history
-      FROM valuation_ticker_snapshots WHERE ticker IN (${clean.map(() => '?').join(',')})`).all(...clean);
-    for (const r of rows) {
-      let close = null, closeDate = null;
-      try {
-        const pts = JSON.parse(r.history ?? '[]').filter(p => p.date <= asOf && finite(p.close) && p.close > 0);
-        pts.sort((a, b) => a.date.localeCompare(b.date));
-        const last = pts.at(-1);
-        close = last?.close ?? null;
-        closeDate = last?.date ?? null;
-      } catch {
-        // ignore malformed history
+    const missing = snapshotCache ? clean.filter(t => !snapshotCache.has(t)) : clean;
+    if (missing.length) {
+      const rows = source.db.prepare(
+        `SELECT ticker, payload_json FROM valuation_ticker_snapshots WHERE ticker IN (${missing.map(() => '?').join(',')})`,
+      ).all(...missing);
+      const found = new Set();
+      for (const r of rows) {
+        found.add(r.ticker);
+        let parsed = null;
+        try { parsed = JSON.parse(r.payload_json); } catch { parsed = null; }
+        const entry = {
+          sector: parsed?.sector || null,
+          industry: parsed?.industry || null,
+          currency: parsed?.currency || null,
+          prices: Array.isArray(parsed?.priceHistory) ? parsed.priceHistory : [],
+        };
+        if (snapshotCache) snapshotCache.set(r.ticker, entry);
+        else missing._inline = (missing._inline ?? new Map()).set(r.ticker, entry);
       }
-      meta[r.ticker] = {
-        sector: r.sector || null,
-        industry: r.industry || null,
-        currency: r.currency || null,
+      if (snapshotCache) {
+        for (const t of missing) if (!found.has(t)) snapshotCache.set(t, null);
+      }
+    }
+    for (const ticker of clean) {
+      const entry = snapshotCache ? snapshotCache.get(ticker) : missing._inline?.get(ticker);
+      if (!entry) continue;
+      let close = null, closeDate = null;
+      const pts = entry.prices;
+      for (let i = pts.length - 1; i >= 0; i -= 1) {
+        const p = pts[i];
+        if (p?.date && p.date <= asOf && finite(p.close) && p.close > 0) {
+          if (closeDate === null || p.date > closeDate) {
+            closeDate = p.date;
+            close = p.close;
+          }
+          // Fast-exit when array is ascending and we found the tail <= asOf
+          if (i === pts.length - 1 || (pts[0]?.date ?? '') <= p.date) break;
+        }
+      }
+      meta[ticker] = {
+        sector: entry.sector,
+        industry: entry.industry,
+        currency: entry.currency,
         price: close,
         priceDate: closeDate,
       };
@@ -394,7 +416,7 @@ export function enrichGuruDetail(source, base) {
   const generation = `${source.db.prepare('PRAGMA data_version').get().data_version}:${dataReleaseId() ?? 'legacy'}`;
   let cache = profileCaches.get(source);
   if (!cache || cache.generation !== generation) {
-    cache = { generation, items: new Map() };
+    cache = { generation, items: new Map(), snapshots: new Map() };
     profileCaches.set(source, cache);
   }
   const cacheKey = `${guruId}:${asOf}:${marketFactsVersion() ?? 'stored'}`;
@@ -425,7 +447,7 @@ export function enrichGuruDetail(source, base) {
     for (const h of snap.holdings ?? []) if (h?.ticker) candidateTickers.add(h.ticker);
     for (const a of snap.activity ?? []) if (a?.ticker) candidateTickers.add(a.ticker);
   }
-  const tickerMeta = loadTickerMetadata(source, [...candidateTickers], asOf);
+  const tickerMeta = loadTickerMetadata(source, [...candidateTickers], asOf, cache.snapshots);
 
   const enrichedHistory = (base.history ?? []).map(f => {
     if (f?.status === 'source_error') return f;

@@ -295,7 +295,7 @@ void main() {
       );
       expect(
         find.byKey(const ValueKey('open-home-research-desk')),
-        findsOneWidget,
+        findsNothing,
       );
       expect(t.takeException(), isNull);
     },

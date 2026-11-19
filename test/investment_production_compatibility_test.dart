@@ -1,10 +1,7 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guru_analysis_terminal/main.dart';
 import 'investment_valuation_memory_test.dart' show MemoryApi;
-import 'investment_valuation_test.dart' as worksheet;
 
 class _CompatibilityApi extends ApiClient {
   _CompatibilityApi() : super(() => 'synthetic-session');
@@ -170,7 +167,7 @@ void main() {
       }
     });
 
-    testWidgets('browser Back waits for the current account worksheet save', (
+    testWidgets('legacy section=value URL opens Financial statements cleanly and browser Back returns to Home', (
       tester,
     ) async {
       tester.view.physicalSize = const Size(1280, 720);
@@ -197,28 +194,10 @@ void main() {
       );
       await tester.pumpWidget(terminal('research', 0));
       await tester.pumpAndSettle();
-      final input = worksheet.cell('growth %', 1);
-      await tester.ensureVisible(input);
-      final gate = Completer<void>();
-      api.delayDraft = gate;
-      await tester.enterText(input, '21');
-      // Navigate before the 650 ms debounce has fired.
+      expect(find.byKey(const ValueKey('research-tab-value')), findsNothing);
+      expect(find.text('Financial statements'), findsOneWidget);
       await tester.pumpWidget(terminal('home', 1));
-      await tester.pump();
-      expect(
-        api.calls.where((call) => call.$1.endsWith('/valuation-drafts')).length,
-        1,
-      );
-      expect(api.drafts, isEmpty);
-      expect(
-        tester
-            .widget<InvestmentWorkspace>(find.byType(InvestmentWorkspace))
-            .initialPage,
-        'research',
-      );
-      gate.complete();
       await tester.pumpAndSettle();
-      expect(api.drafts.single['assumptions']['growth'][0], .21);
       expect(
         tester
             .widget<InvestmentWorkspace>(find.byType(InvestmentWorkspace))

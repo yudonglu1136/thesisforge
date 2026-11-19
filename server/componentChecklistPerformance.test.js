@@ -37,6 +37,7 @@ test(
       process.env.FACT_OS_ROOT = path.join(projectRoot, 'data/fact_os');
 
       const { enableInvestmentPreview } = await import('./investmentRoutes.js');
+      const { publicAnalysisArtifacts } = await import('./publicAnalysisArtifact.js');
       const app = express();
       app.use(express.json());
       app.use((req, _res, next) => {
@@ -49,10 +50,11 @@ test(
         const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
       });
       const base = `http://127.0.0.1:${server.address().port}/api/investment`;
-      const asOf = '2026-11-17';
+      const asOf = service.date();
 
-      // Allow server startup setImmediate warm-up to finish as before AWS EB health check Ready.
-      await new Promise(resolve => setTimeout(resolve, 1200));
+      // Allow server startup setImmediate warm-up & public artifacts to settle as before AWS EB health check Ready.
+      await publicAnalysisArtifacts.warmCurrent(asOf).catch(() => {});
+      await new Promise(resolve => setTimeout(resolve, 2500));
 
       const specs = [
         // Group A: Company Search
@@ -91,6 +93,8 @@ test(
         { id: 'C25_Research_Overview_MSFT', method: 'GET', path: `/research/MSFT?asOf=${asOf}`, maxColdMs: 550, maxWarmMs: 30, check: j => j.ticker === 'MSFT' && Array.isArray(j.priceHistory) },
         { id: 'C26_Research_3Statements_MSFT', method: 'GET', path: `/research/MSFT/fundamentals?asOf=${asOf}`, maxColdMs: 450, maxWarmMs: 25, check: j => j.ticker === 'MSFT' && j.quarterly?.length > 0 && j.annual?.length > 0 },
         { id: 'C27_Research_3Statements_AAPL', method: 'GET', path: `/research/AAPL/fundamentals?asOf=${asOf}`, maxColdMs: 450, maxWarmMs: 25, check: j => j.ticker === 'AAPL' && j.quarterly?.length > 0 && j.annual?.length > 0 },
+        { id: 'C27b_Research_Dividends_AAPL', method: 'GET', path: `/research/AAPL/dividends?asOf=${asOf}`, maxColdMs: 550, maxWarmMs: 25, check: j => j.ticker === 'AAPL' && j.status === 'paying' && j.yieldHistory?.length > 100 && j.events?.length > 20 },
+        { id: 'C27c_Research_Dividends_SCHD', method: 'GET', path: `/research/SCHD/dividends?asOf=${asOf}`, maxColdMs: 550, maxWarmMs: 25, check: j => j.ticker === 'SCHD' && j.status === 'paying' && j.summary?.safetyLevel === 'fund_distribution' },
         { id: 'C28_Research_Documents_NVDA', method: 'GET', path: `/research/NVDA/documents?asOf=${asOf}`, maxColdMs: 60, maxWarmMs: 20, check: j => j.ticker === 'NVDA' && Array.isArray(j.rows) },
         { id: 'C29_Research_EarningsQA_NVDA', method: 'GET', path: `/research/NVDA/earnings?asOf=${asOf}`, maxColdMs: 120, maxWarmMs: 40, check: j => j.ticker === 'NVDA' && Array.isArray(j.periods) },
         { id: 'C30_Research_Insiders_NVDA', method: 'GET', path: `/research/NVDA/insiders?asOf=${asOf}`, maxColdMs: 180, maxWarmMs: 20, check: j => j.ticker === 'NVDA' && Array.isArray(j.rows) },

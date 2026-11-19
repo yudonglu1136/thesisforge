@@ -60,15 +60,6 @@ extension _InvestmentHome on _InvestmentWorkspaceState {
               w('Find your next idea in Discover', '前往「发现」寻找下一个投资机会'),
             ),
           ),
-          TextButton(
-            key: const ValueKey('open-home-research-desk'),
-            onPressed: () {
-              updateUI(() => homeResearchDesk = true);
-              replaceBrowserQuery({'workspace': 'research'});
-              navigate('home');
-            },
-            child: Text(w('Open research desk', '打开研究工作台')),
-          ),
         ],
       ),
     ],

@@ -59,6 +59,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   final researchRecentTickers = <String>[];
   Map<String, dynamic>? home, company, calculation, review;
   Map<String, dynamic>? researchFundamental,
+      researchDividendData,
       researchInstitution,
       researchDocumentsData,
       researchRecordsData;
@@ -66,10 +67,17 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   String? researchPanelError;
   bool researchFinancialsLoading = false;
   String? researchFinancialsError;
+  bool researchDividendsLoading = false;
+  String? researchDividendsError;
+  String researchDividendYieldWindow = '5y';
+  bool researchDividendShowPrice = false;
+  String researchDividendBarMode = 'annual';
   String researchStatement = 'income';
   String researchFinancialFrequency = 'annual';
+  int researchFinancialMaxPeriods = 10;
+  bool researchFinancialShowGrowthInTable = true;
   String researchFinancialsFocus = 'all';
-  List<String> researchFinancialMetrics = ['revenue', 'netinccmn'];
+  List<String> researchFinancialMetrics = ['revenue', 'opinc', 'netinccmn'];
   Map<String, dynamic> assumptions = {};
   bool busy = false, ownership = false, priority = false;
   bool ruleEnabled = false, draftDirty = false, reviewOriginal = false;
@@ -576,6 +584,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       error = null;
       company = null;
       researchFundamental = null;
+      researchDividendData = null;
       researchInstitution = null;
       researchDocumentsData = null;
       researchRecordsData = null;
@@ -583,9 +592,11 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
       researchPanelError = null;
       researchFinancialsLoading = false;
       researchFinancialsError = null;
+      researchDividendsLoading = false;
+      researchDividendsError = null;
       researchStatement = 'income';
       researchFinancialsFocus = 'all';
-      researchFinancialMetrics = ['revenue', 'netinccmn'];
+      researchFinancialMetrics = ['revenue', 'opinc', 'netinccmn'];
       review = null;
       scenarioId = null;
       scenarioParentId = null;
@@ -685,9 +696,9 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         section =
             [
               'evidence',
+              'dividends',
               'financials',
               'institutions',
-              'value',
               'records',
             ].contains(initialSection)
             ? initialSection!
@@ -703,6 +714,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
             (asMap(data['fundamental']).isEmpty
                 ? null
                 : asMap(data['fundamental']));
+        researchDividendData =
+            _researchDividendsCache[widget.api]?['$ticker|$asOf'];
         researchRecordsData = {'rows': asList(data['researchRecords'])};
         worksheetHead = data['worksheetHead'] as String?;
         final saved = asList(data['scenarios']);
@@ -755,12 +768,16 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         unawaited(loadResearchPanel('financials'));
       } else if (section == 'evidence' && researchNeedsFullFinancials) {
         unawaited(loadResearchOverviewFinancials());
+      } else if (section == 'dividends' && researchDividendData == null) {
+        unawaited(loadResearchDividends());
       } else if (section == 'institutions' && researchInstitution == null) {
         unawaited(loadResearchPanel('institutions'));
       } else if (section == 'records' && researchRecordsData == null) {
         unawaited(loadResearchPanel('records'));
       }
-      if (assumptions.isNotEmpty) await recalculate();
+      if (researchDividendData == null) {
+        unawaited(loadResearchDividends());
+      }
     } catch (e) {
       if (mounted && serial == requestSerial) {
         setState(() => error = e.toString());
