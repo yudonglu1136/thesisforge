@@ -287,7 +287,7 @@ await writeFile(
   `${JSON.stringify(
     {
       brand: 'ThesisForge',
-      product: 'Guru Intelligence',
+      product: 'ThesisForge',
       generatedAt: '2026-08-30',
       source: path.relative(root, source),
       palette: colors,

@@ -3030,7 +3030,10 @@ void main() {
       await tester.pump();
 
       expect(find.text('Research Terminal'), findsOneWidget);
-      expect(find.text('GURU INTELLIGENCE'), findsOneWidget);
+      expect(find.text('ThesisForge'), findsOneWidget);
+      expect(find.text('THESISFORGE'), findsOneWidget);
+      expect(find.textContaining('Guru Intelligence'), findsNothing);
+      expect(find.text('GURU INTELLIGENCE'), findsNothing);
       expect(find.text('Continue with Google'), findsOneWidget);
       expect(find.text('Chinese'), findsOneWidget);
       expect(find.text('English'), findsOneWidget);

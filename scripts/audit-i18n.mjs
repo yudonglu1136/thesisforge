@@ -42,7 +42,6 @@ function checkAllDartFiles() {
 
   const allowedPropTokens = /^(NVDA|AAPL|MSFT|GOOGL|QQQ|SPY|SCHD|USD|IBKR|SEC|URL|ID)$/i;
   const allowedMultiWordText = new Set([
-    'Guru Intelligence',
     'ThesisForge',
     'S&P 500',
     '100% QQQ',
@@ -100,8 +99,8 @@ function checkAllDartFiles() {
 
 function checkSharedCoreDirectTextGuards() {
   const permittedDirectText = [
-    /'GI'/,
-    /'Guru Intelligence'/,
+    /'TF'/,
+    /'ThesisForge'/,
     /disclosureLabel\(/,
     /\$selectedStart - \$selectedEnd/,
     /context\.ui\(/,

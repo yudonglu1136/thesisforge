@@ -72,9 +72,7 @@ const blackEditionPreview = bool.fromEnvironment(
   'BLACK_EDITION_PREVIEW',
   defaultValue: true,
 );
-const thesisForgeMarkAsset = blackEditionPreview
-    ? 'assets/branding/thesisforge-black-mark.png'
-    : 'assets/branding/thesisforge-mark.png';
+const thesisForgeMarkAsset = 'assets/branding/thesisforge-black-mark.png';
 // A nonvisual identity marker lets the release wrapper verify the compiled
 // branch, rather than trusting the environment that was meant to reach Flutter.
 const investmentWorkflowBuildMarker = investmentWorkflowEnabled
@@ -212,8 +210,8 @@ const _uiChinese = <String, String>{
       '租赁现金成本已包含在经营现金流中；经营租赁负债不再作为融资债务重复扣除。',
   'Economic cash flow is an analyst adjustment, not reported FCF. Amounts are in the selected security currency.':
       '经济现金流为分析师调整口径，并非公司报告自由现金流；金额使用该证券对应币种。',
-  'Guru Intelligence Executive Summary': 'Guru Intelligence 研究终端',
-  'GURU INTELLIGENCE': 'GURU INTELLIGENCE',
+  'ThesisForge Executive Summary': 'ThesisForge 研究终端',
+  'THESISFORGE': 'THESISFORGE',
   '13F copy simulation': '13F 复制模拟',
   'STOCK Act copy simulation': 'STOCK Act 复制模拟',
   'Not eligible for 13F copy': '不进行 13F 复制',
@@ -1259,8 +1257,8 @@ class _GuruTerminalAppState extends State<GuruTerminalApp>
         ],
         title: trFor(
           _language,
-          'Guru Intelligence 研究终端',
-          'Guru Intelligence Research Terminal',
+          'ThesisForge · 投研工作台',
+          'ThesisForge',
         ),
         theme: baseTheme.copyWith(
           textTheme: baseTheme.textTheme.apply(
@@ -1686,27 +1684,33 @@ class LoginScreen extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(width: 14),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  context.tr('ThesisForge', 'ThesisForge'),
-                                  style: TextStyle(
-                                    color: palette.text,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w900,
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    context.tr('ThesisForge', 'ThesisForge'),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: palette.text,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  context.tr('大师投研智库', 'GURU INTELLIGENCE'),
-                                  style: TextStyle(
-                                    color: palette.accent,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w900,
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    context.tr('实证投研平台', 'THESISFORGE'),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: palette.accent,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w900,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ],
                         ),
@@ -2672,9 +2676,9 @@ class TerminalHeader extends StatelessWidget {
       height: 36,
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: palette.accent.withValues(alpha: .24),
+        color: Colors.black,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: palette.accent.withValues(alpha: .32)),
+        border: Border.all(color: palette.border),
       ),
       child: Image.asset(
         thesisForgeMarkAsset,
@@ -2745,7 +2749,7 @@ class TerminalHeader extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Guru Intelligence',
+              'ThesisForge',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(

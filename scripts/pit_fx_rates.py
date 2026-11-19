@@ -25,7 +25,7 @@ DEFAULT_CACHE_PATH = Path(
         Path.home() / ".cache/guru-intelligence/ecb-reference-fx.json",
     )
 )
-USER_AGENT = "Guru Intelligence data engineering luyudong1136@gmail.com"
+USER_AGENT = "ThesisForge data engineering luyudong1136@gmail.com"
 
 
 def iso_date(value) -> str:

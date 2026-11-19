@@ -23,7 +23,7 @@ import time
 import requests
 
 VERSION = "sec-dated-reporting-currency-evidence-v2-2026-09-05"
-SEC_USER_AGENT = "Guru Intelligence data engineering luyudong1136@gmail.com"
+SEC_USER_AGENT = "ThesisForge data engineering luyudong1136@gmail.com"
 FORMS = {"10-K", "10-Q", "20-F", "40-F", "6-K", "10-K/A", "10-Q/A", "20-F/A", "40-F/A", "6-K/A"}
 # No segment/product-only revenue, net EPS, share counts, cash-per-share or custom tags.
 CONCEPTS = {

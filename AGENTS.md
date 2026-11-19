@@ -76,7 +76,7 @@ deployment split unless the user explicitly changes the architecture.
   - `docs/ios-asset-inventory.md`
 - The iOS app should preserve the same backend contract: authenticated API calls through the production HTTPS API contract, user-specific Supabase identity, and encrypted IBKR/Yodlee credentials stored only on the backend.
 - Add Sign in with Apple, in-app account deletion, privacy disclosures, and a reviewer demo path before App Store submission.
-- Bundle ID is `tech.thesisforge.guru`; display name is `Guru Intelligence`.
+- Bundle ID is `tech.thesisforge.guru`; display name is `ThesisForge` (all browser tab favicons, PWA/iOS icons, loading marks, and visible product titles must use the official black ThesisForge mark and `ThesisForge` brand name; never reintroduce retired legacy brand labels or green app logos).
 - App Store packaging script is `scripts/build-ios-appstore.sh`.
 - App Store submission requires a paid Apple Developer Program Team. A Personal
   Team can create development certificates, but cannot upload to TestFlight or

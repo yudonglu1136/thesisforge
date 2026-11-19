@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 
 VERSION = "crdo-economic-evidence-v1-2026-09-06"
 CIK = "0001807794"
-USER_AGENT = "Guru Intelligence data engineering luyudong1136@gmail.com"
+USER_AGENT = "ThesisForge data engineering luyudong1136@gmail.com"
 
 
 def sha(raw):
