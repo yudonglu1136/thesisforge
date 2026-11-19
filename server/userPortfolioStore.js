@@ -1220,22 +1220,26 @@ export function writeUserPortfolioNavPoints(user, points = []) {
 }
 
 function inferBackupAccountInception(account = {}) {
-  const explicit = reportDate(cleanString(account.inceptionDate || account.dateOpened || ""));
+  const explicit = reportDate(cleanString(account.inceptionDate || ""));
+  const opened = reportDate(cleanString(account.dateOpened || ""));
   const positive = (account.navHistory || [])
     .filter((r) => reportDate(cleanString(r?.date)) && Number.isFinite(Number(r?.nav)) && Number(r.nav) > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
   const firstPositiveDate = positive[0]?.date || null;
   if (explicit) return firstPositiveDate && explicit > firstPositiveDate ? firstPositiveDate : explicit;
   const h = account.historyEvidence;
-  if (!firstPositiveDate || h?.cashStatus !== "ready" || h?.tradeStatus !== "ready") return null;
-  const fromDate = reportDate(cleanString(h.fromDate));
-  const earliest = [
-    firstPositiveDate,
-    ...(h.realized || []).map((r) => r?.date),
-    ...(h.cashFlows || []).map((r) => r?.date),
-    ...(h.income || []).map((r) => r?.date)
-  ].filter((d) => reportDate(cleanString(d))).sort()[0];
-  return fromDate && earliest && fromDate < earliest ? firstPositiveDate : null;
+  if (firstPositiveDate && h?.cashStatus === "ready" && h?.tradeStatus === "ready") {
+    const fromDate = reportDate(cleanString(h.fromDate));
+    const earliest = [
+      firstPositiveDate,
+      ...(h.realized || []).map((r) => r?.date),
+      ...(h.cashFlows || []).map((r) => r?.date),
+      ...(h.income || []).map((r) => r?.date)
+    ].filter((d) => reportDate(cleanString(d))).sort()[0];
+    if (fromDate && earliest && fromDate < earliest) return firstPositiveDate;
+  }
+  if (opened) return firstPositiveDate && opened > firstPositiveDate ? firstPositiveDate : opened;
+  return null;
 }
 
 export function readUserHistoricalAccountBackup(user) {
@@ -1295,8 +1299,12 @@ export function readUserHistoricalAccountBackup(user) {
       const opened = reportDate(cleanString(account?.dateOpened));
       if (opened && (!entry.dateOpened || opened < entry.dateOpened)) entry.dateOpened = opened;
       const inferredInc = inferBackupAccountInception(account);
-      if (inferredInc && (!entry.inceptionDate || inferredInc < entry.inceptionDate)) {
-        entry.inceptionDate = inferredInc;
+      if (inferredInc) {
+        const isFundedAfterOpen = opened && inferredInc > opened;
+        if (!entry.inceptionDate || isFundedAfterOpen || (!entry.fundedAfterOpen && inferredInc < entry.inceptionDate)) {
+          entry.inceptionDate = inferredInc;
+          if (isFundedAfterOpen) entry.fundedAfterOpen = true;
+        }
       }
       // Prefer multi-day broker EquitySummaryInBase snapshots over degraded fallback snapshots
       const points = Array.isArray(account?.navHistory) ? account.navHistory : [];

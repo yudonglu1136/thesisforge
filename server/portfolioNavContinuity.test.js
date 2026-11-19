@@ -146,7 +146,8 @@ test("multi-account sync preserves full older-account NAV curve across new-accou
         ok: true,
         text: async () =>
           `<FlexQueryResponse><FlexStatements><FlexStatement accountId="U_SECOND" fromDate="20251118" toDate="20261117" currency="USD">` +
-          `<AccountInformation accountId="U_SECOND" currency="USD"/>` +
+          `<AccountInformation accountId="U_SECOND" currency="USD" dateOpened="20251120"/>` +
+          `<EquitySummaryByReportDateInBase reportDate="20251212" total="0" cash="0"/>` +
           buildEquityRows(secondaryDates) +
           `<Trades/>` +
           `<CashTransactions><CashTransaction transactionID="DEP1" dateTime="20251214" type="Deposits/Withdrawals" currency="USD" amount="485"/></CashTransactions>` +
@@ -157,7 +158,7 @@ test("multi-account sync preserves full older-account NAV curve across new-accou
       ok: true,
       text: async () =>
         `<FlexQueryResponse><FlexStatements><FlexStatement accountId="U_SECOND" fromDate="20261117" toDate="20261117" currency="USD">` +
-        `<AccountInformation accountId="U_SECOND" currency="USD"/>` +
+        `<AccountInformation accountId="U_SECOND" currency="USD" dateOpened="20251120"/>` +
         `<EquitySummaryByReportDateInBase reportDate="20261117" total="78404.16" cash="404.16"/>` +
         `<OpenPositions><OpenPosition symbol="AAPL" assetCategory="STK" currency="USD" quantity="300" markPrice="260" positionValue="78000"/></OpenPositions>` +
         `</FlexStatement></FlexStatements></FlexQueryResponse>`
@@ -211,7 +212,7 @@ test("multi-account sync preserves full older-account NAV curve across new-accou
       ok: true,
       text: async () =>
         `<FlexQueryResponse><FlexStatements><FlexStatement accountId="U_SECOND" fromDate="20261118" toDate="20261118" currency="USD">` +
-        `<AccountInformation accountId="U_SECOND" currency="USD"/>` +
+        `<AccountInformation accountId="U_SECOND" currency="USD" dateOpened="20251120"/>` +
         `<EquitySummaryByReportDateInBase reportDate="20261118" total="78632.90" cash="432.90"/>` +
         `<OpenPositions><OpenPosition symbol="AAPL" assetCategory="STK" currency="USD" quantity="300" markPrice="260.6667" positionValue="78200"/></OpenPositions>` +
         `</FlexStatement></FlexStatements></FlexQueryResponse>`

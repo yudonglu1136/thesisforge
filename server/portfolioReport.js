@@ -11,7 +11,17 @@ function inferAccountInceptionDate({dateOpened,navHistory,historyEvidence}) {
   const positive=navHistory.filter(r=>r.nav>0).sort((a,b)=>a.date.localeCompare(b.date));
   const firstPositiveDate=positive[0]?.date??null;
   const firstPositiveNav=positive[0]?.nav??null;
-  if(dateOpened)return firstPositiveDate&&dateOpened>firstPositiveDate?firstPositiveDate:dateOpened;
+  if(dateOpened){
+    const prePositive=firstPositiveDate?navHistory.filter(r=>r.date>=dateOpened&&r.date<firstPositiveDate):[];
+    const priorActivity=firstPositiveDate&&(
+      (historyEvidence?.realized??[]).some(r=>r.date&&r.date<firstPositiveDate)||
+      (historyEvidence?.cashFlows??[]).some(r=>r.date&&r.date<dateOpened)
+    );
+    if(firstPositiveDate&&dateOpened<firstPositiveDate&&!priorActivity&&prePositive.length>0&&prePositive.every(r=>r.nav===0)){
+      return firstPositiveDate;
+    }
+    return firstPositiveDate&&dateOpened>firstPositiveDate?firstPositiveDate:dateOpened;
+  }
   if(!firstPositiveDate||historyEvidence?.cashStatus!=='ready'||historyEvidence?.tradeStatus!=='ready')return null;
   const fromDate=date(historyEvidence.fromDate);
   const activityDates=[

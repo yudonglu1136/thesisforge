@@ -231,6 +231,13 @@ function normalizeReportDate(value) {
   return raw ? isoDate(raw) : isoDate();
 }
 
+function optionalReportDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+
 function portfolioSample() {
   const holdings = [
     { ticker: "AAPL", name: "Apple Inc.", sector: "Technology", quantity: 318, price: 209.43, costBasis: 54320, dayChange: 0.006 },
@@ -1402,13 +1409,20 @@ function truthyPerformanceStatus(status) {
 function mergeAccountNavHistory(account = {}, storedPoints = [], backupEntry = null) {
   const byDate = new Map();
   let storedInception = null;
+  let storedFundedInception = null;
   let storedDateOpened = null;
   for (const point of storedPoints) {
-    const inc = normalizeReportDate(point?.payload?.inceptionDate);
-    if (inc && (!storedInception || inc < storedInception)) storedInception = inc;
-    const opened = normalizeReportDate(point?.payload?.dateOpened);
+    const inc = optionalReportDate(point?.payload?.inceptionDate);
+    const opened = optionalReportDate(point?.payload?.dateOpened);
     if (opened && (!storedDateOpened || opened < storedDateOpened)) storedDateOpened = opened;
-    const date = normalizeReportDate(point?.date);
+    if (inc) {
+      if (opened && inc > opened) {
+        if (!storedFundedInception || inc < storedFundedInception) storedFundedInception = inc;
+      } else if (!storedInception || inc < storedInception) {
+        storedInception = inc;
+      }
+    }
+    const date = optionalReportDate(point?.date);
     const nav = finiteNumber(point?.nav ?? point?.value);
     if (date && nav > 0) byDate.set(date, {date, nav, source: point?.source || "sqlite_daily_nav"});
   }
@@ -1424,18 +1438,21 @@ function mergeAccountNavHistory(account = {}, storedPoints = [], backupEntry = n
   // Re-apply audited EquitySummaryInBase / restored rows from SQLite over older snapshot entries
   for (const point of storedPoints) {
     if (point?.source !== "ibkr_equity_summary_in_base" && point?.source !== "owner_historical_restoration") continue;
-    const date = normalizeReportDate(point?.date);
+    const date = optionalReportDate(point?.date);
     const nav = finiteNumber(point?.nav ?? point?.value);
     if (date && nav > 0) byDate.set(date, {date, nav, source: point.source});
   }
-  // A newly fetched broker row is the most recent evidence for the same date.
+  // A newly fetched broker row is the most recent evidence for the same date (including explicit $0 unfunded days).
   for (const point of account.navHistory || []) {
-    const date = normalizeReportDate(point?.date);
-    const nav = finiteNumber(point?.nav ?? point?.value);
-    if (date && nav > 0) byDate.set(date, {...point, date, nav});
+    const date = optionalReportDate(point?.date);
+    const nav = finiteNumber(point?.nav ?? point?.value, NaN);
+    if (date && Number.isFinite(nav) && nav >= 0) byDate.set(date, {...point, date, nav});
   }
   const navHistory = [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
-  const resolvedInception = account.inceptionDate || storedInception || backupEntry?.inceptionDate || null;
+  const durableInception = storedFundedInception || backupEntry?.inceptionDate || storedInception || null;
+  const resolvedInception = (account.inceptionDate && account.inceptionDate !== account.dateOpened)
+    ? account.inceptionDate
+    : (durableInception || account.inceptionDate || null);
   const resolvedDateOpened = account.dateOpened || storedDateOpened || backupEntry?.dateOpened || null;
   const hasDurableHistory = storedPoints.length > 0 || Boolean(backupEntry?.navByDate?.size);
   return {
