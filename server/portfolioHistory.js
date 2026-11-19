@@ -45,7 +45,12 @@ export function brokerStatementHistory(statement, currency, rows) {
 export function portfolioHistory(accounts, nav) {
   const histories = accounts.map(a => a.historyEvidence);
   const covered = histories.length && histories.every(h => h?.fromDate && h?.toDate);
-  const fromDate = covered ? histories.map(h => h.fromDate).sort().at(-1) : null;
+  const earliestFrom = covered ? histories.map(h => h.fromDate).sort()[0] : null;
+  const fromDate = covered ? accounts.map((a, i) => {
+    const h = histories[i];
+    const inc = date(a.inceptionDate) || date(a.dateOpened);
+    return inc && h.fromDate <= inc ? earliestFrom : h.fromDate;
+  }).sort().at(-1) : null;
   const toDate = covered ? histories.map(h => h.toDate).sort()[0] : null;
   const realizedReady = covered && fromDate <= toDate && histories.every(h => h.tradeStatus === 'ready');
   const realizedEvents = realizedReady ? histories.flatMap(h => h.realized).filter(r => r.date >= fromDate && r.date <= toDate) : [];

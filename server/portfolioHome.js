@@ -13,15 +13,30 @@ export function portfolioHome(accounts, positions, currency) {
   const maps=accounts.map(a=>{
     const m=new Map(), conflicts=new Set();
     for(const p of a.navHistory??[]) {
-      if(!date(p.date)||!finite(p.nav)||!date(a.reportDate)||p.date>a.reportDate)continue;
+      if(!date(p.date)||!finite(p.nav)||p.nav<0||!date(a.reportDate)||p.date>a.reportDate)continue;
       if(m.has(p.date)&&m.get(p.date)!==p.nav)conflicts.add(p.date);
       m.set(p.date,p.nav);
     }
     for(const d of conflicts)m.delete(d);
     return m;
   });
-  const navHistory=currency&&maps.length?[...maps[0]].filter(([d])=>maps.every(m=>m.has(d)))
-    .map(([d])=>({date:d,nav:sum(maps.map(m=>m.get(d)))})).sort((a,b)=>a.date.localeCompare(b.date)):[];
+  const firstPositiveDates=maps.map(m=>[...m.entries()].filter(([,v])=>v>0).map(([d])=>d).sort()[0]??null);
+  const inceptionDates=accounts.map((a,i)=>{
+    const explicit=date(a.inceptionDate)||date(a.dateOpened);
+    const firstPos=firstPositiveDates[i];
+    if(explicit)return firstPos&&explicit>firstPos?firstPos:explicit;
+    const h=a.historyEvidence;
+    if(!firstPos||h?.cashStatus!=='ready'||h?.tradeStatus!=='ready')return null;
+    const from=date(h.fromDate);
+    const earliest=[firstPos,...(h.realized??[]).map(r=>r.date),...(h.cashFlows??[]).map(r=>r.date),...(h.income??[]).map(r=>r.date)].filter(Boolean).sort()[0];
+    return from&&earliest&&from<earliest?firstPos:null;
+  });
+  const candidateDates=currency&&maps.length?[...new Set(maps.flatMap(m=>[...m.keys()]))].sort():[];
+  const navHistory=candidateDates.filter(d=>maps.every((m,i)=>{
+    if(m.has(d))return true;
+    const inc=inceptionDates[i],firstPos=firstPositiveDates[i],rep=date(accounts[i]?.reportDate);
+    return Boolean(inc&&d<inc&&(!firstPos||d<firstPos)&&rep&&d<=rep);
+  })).map(d=>({date:d,nav:sum(maps.map(m=>m.get(d)??0))})).filter(r=>r.nav>0||maps.every(m=>m.has(r.date)));
   const snapshotsAligned=!!currency&&!!reportDate;
   const accountValue=snapshotsAligned&&accounts.every(a=>finite(a.reportedNav))?sum(accounts.map(a=>a.reportedNav)):null;
   const dailyAccounts=accounts.map(a=>a.dailyMtm);

@@ -7,10 +7,30 @@ export function reportRows(value, key) {
 const num=v=>v===null||v===undefined||v===''||typeof v==='boolean'?null:Number.isFinite(Number(v))?Number(v):null;
 const first=(r,keys)=>keys.map(k=>num(r[k])).find(x=>x!==null)??null;
 const date=v=>{const s=String(v??'').replace(/^(\d{4})(\d{2})(\d{2})$/,'$1-$2-$3');const ms=Date.parse(s);return /^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(ms)&&new Date(ms).toISOString().slice(0,10)===s?s:null;};
+function inferAccountInceptionDate({dateOpened,navHistory,historyEvidence}) {
+  const positive=navHistory.filter(r=>r.nav>0).sort((a,b)=>a.date.localeCompare(b.date));
+  const firstPositiveDate=positive[0]?.date??null;
+  const firstPositiveNav=positive[0]?.nav??null;
+  if(dateOpened)return firstPositiveDate&&dateOpened>firstPositiveDate?firstPositiveDate:dateOpened;
+  if(!firstPositiveDate||historyEvidence?.cashStatus!=='ready'||historyEvidence?.tradeStatus!=='ready')return null;
+  const fromDate=date(historyEvidence.fromDate);
+  const activityDates=[
+    firstPositiveDate,
+    ...(historyEvidence.realized??[]).map(r=>r.date),
+    ...(historyEvidence.cashFlows??[]).map(r=>r.date),
+    ...(historyEvidence.income??[]).map(r=>r.date),
+  ].filter(Boolean).sort();
+  if(fromDate&&activityDates[0]&&fromDate<activityDates[0])return firstPositiveDate;
+  const priorTrades=(historyEvidence.realized??[]).some(r=>r.date&&r.date<firstPositiveDate);
+  const initialFlows=(historyEvidence.cashFlows??[]).filter(r=>r.date&&r.date<=firstPositiveDate).reduce((s,r)=>s+(r.amount??0),0);
+  if(!priorTrades&&firstPositiveNav>0&&initialFlows>=firstPositiveNav*0.95)return firstPositiveDate;
+  return null;
+}
 export function reportAnalysisAccounts(parsed, {historyParsed=null}={}) {
   return reportRows(parsed,'FlexStatement').map((s,index)=>{
     const info=reportRows(s,'AccountInformation')[0]??{};
     const currency=String(info.currency||s.currency||s.reportCurrency||'');
+    const dateOpened=date(info.dateOpened||s.dateOpened);
     const reportDate=date(s.toDate||s.fromDate);
     const summaries=reportRows(s,'EquitySummaryByReportDateInBase');
     // A history query is joined only by the same broker account identity AND
@@ -55,8 +75,11 @@ export function reportAnalysisAccounts(parsed, {historyParsed=null}={}) {
     const dailyMtm=date(s.fromDate)===reportDate&&reportDate&&dailyRows.length&&dailyRows.every(r=>r.pnl!==null)&&
       new Set(dailyRows.map(r=>`${r.instrumentId}:${r.assetCategory}`)).size===dailyRows.length
       ?{date:reportDate,basis:'ibkr_instrument_mtm_in_base',rows:dailyRows}:null;
+    const navHistory=[...historyRows,...summaries].map(r=>({date:date(r.reportDate),nav:num(r.total)})).filter(r=>r.date&&r.nav!==null&&r.nav>=0&&reportDate&&r.date<=reportDate);
+    const inceptionDate=inferAccountInceptionDate({dateOpened,navHistory,historyEvidence});
     return {accountId:accountId?String(accountId):null,currency,reportDate,reportedNav:num(nav?.total),accountNumber:index+1,positions,dailyMtm,historyEvidence,
-      navHistory:[...historyRows,...summaries].map(r=>({date:date(r.reportDate),nav:num(r.total)})).filter(r=>r.date&&r.nav!==null&&reportDate&&r.date<=reportDate),
+      ...(dateOpened?{dateOpened}:{}),...(inceptionDate?{inceptionDate}:{}),
+      navHistory,
       performanceBasis:'nav_only_external_flows_not_reconciled'};
   });
 }

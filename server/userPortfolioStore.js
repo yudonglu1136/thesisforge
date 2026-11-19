@@ -244,12 +244,15 @@ export function userPortfolioDbCacheStats() {
   return { entries: dbCache.size, maxEntries: userDbCacheMaxEntries };
 }
 
+const historicalAccountBackupCache = new Map();
+
 export function closeUserPortfolioStores() {
   for (const db of dbCache.values()) db.close();
   dbCache.clear();
   adminRegistryDb?.close();
   adminRegistryDb = null;
   portfolioUserRecordCache.clear();
+  historicalAccountBackupCache.clear();
 }
 
 function encryptJson(payload, aad = encryptionAad) {
@@ -419,7 +422,9 @@ export function writeUserPortfolioReport(user, payload, { connectionRevision, no
         encrypted_json = excluded.encrypted_json`)
       .run("ibkr_flex", connectionRevision, asOf, retrievedAt, reportHash(json), encryptJson(stored, aad));
     const existingLedgerRow = db.prepare(`SELECT encrypted_json FROM portfolio_passive_ledgers
-      WHERE provider = ? AND connection_revision = ?`).get("ibkr_flex", connectionRevision);
+      WHERE provider = ? AND connection_revision = ?`).get("ibkr_flex", connectionRevision)
+      ?? db.prepare(`SELECT encrypted_json FROM portfolio_passive_ledgers
+      WHERE provider = ? ORDER BY updated_at DESC LIMIT 1`).get("ibkr_flex");
     const prevSlots = existingLedgerRow ? (decryptJson(existingLedgerRow.encrypted_json, aad)?.slots || []) : [];
     const mergedSlots = mergePassiveLedgerSlots(prevSlots, stored.analysisAccounts);
     if (mergedSlots.length) {
@@ -444,7 +449,9 @@ export function readUserPortfolioPassiveLedger(user) {
   const db = openUserDb(user);
   const aad = reportAad(user);
   const row = db.prepare(`SELECT encrypted_json FROM portfolio_passive_ledgers
-    WHERE provider = ? AND connection_revision = ?`).get("ibkr_flex", revision);
+    WHERE provider = ? AND connection_revision = ?`).get("ibkr_flex", revision)
+    ?? db.prepare(`SELECT encrypted_json FROM portfolio_passive_ledgers
+    WHERE provider = ? ORDER BY updated_at DESC LIMIT 1`).get("ibkr_flex");
   if (row) {
     try {
       return decryptJson(row.encrypted_json, aad)?.slots || [];
@@ -1121,13 +1128,36 @@ export function restorePortfolioConnection(user, { now = new Date() } = {}) {
 }
 
 export function writeUserPortfolioNavPoint(user, point) {
-  const db = openUserDb(user);
-  const accountId = cleanString(point?.accountId || "portfolio") || "portfolio";
-  const date = cleanString(point?.date || "");
-  const nav = Number(point?.nav);
-  if (!date || !Number.isFinite(nav) || nav <= 0) return;
+  if (!point) return;
+  writeUserPortfolioNavPoints(user, [point]);
+}
 
-  db.prepare(`
+export function writeUserPortfolioNavPoints(user, points = []) {
+  if (!Array.isArray(points) || !points.length) return 0;
+  const valid = [];
+  for (const point of points) {
+    const accountId = cleanString(point?.accountId || "portfolio") || "portfolio";
+    const date = reportDate(cleanString(point?.date || ""));
+    const nav = Number(point?.nav ?? point?.value);
+    if (!date || !Number.isFinite(nav) || nav <= 0) continue;
+    valid.push({
+      accountId,
+      date,
+      nav,
+      cash: Number.isFinite(Number(point?.cash)) ? Number(point.cash) : null,
+      source: cleanString(point?.source || ""),
+      sourceDate: cleanString(point?.sourceDate || date),
+      payload: point?.payload && typeof point.payload === "object" ? point.payload : {}
+    });
+  }
+  if (!valid.length) return 0;
+
+  const db = openUserDb(user);
+  const nowIso = new Date().toISOString();
+  const readExistingStmt = db.prepare(
+    "SELECT source, payload_json FROM portfolio_nav_points WHERE account_id = ? AND date = ?"
+  );
+  const upsertStmt = db.prepare(`
     INSERT INTO portfolio_nav_points (
       account_id,
       date,
@@ -1141,21 +1171,179 @@ export function writeUserPortfolioNavPoint(user, point) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(account_id, date) DO UPDATE SET
       nav = excluded.nav,
-      cash = excluded.cash,
+      cash = COALESCE(excluded.cash, portfolio_nav_points.cash),
       source = excluded.source,
       source_date = excluded.source_date,
       payload_json = excluded.payload_json,
       updated_at = excluded.updated_at
-  `).run(
-    accountId,
-    date,
-    nav,
-    Number.isFinite(Number(point.cash)) ? Number(point.cash) : null,
-    cleanString(point.source || ""),
-    cleanString(point.sourceDate || ""),
-    JSON.stringify(point.payload || {}),
-    new Date().toISOString()
-  );
+  `);
+
+  db.exec("BEGIN IMMEDIATE");
+  let written = 0;
+  try {
+    for (const item of valid) {
+      const existing = readExistingStmt.get(item.accountId, item.date);
+      // Do not overwrite an audited broker EquitySummaryInBase NAV with an approximate holdings sum on the same date.
+      if (
+        existing?.source === "ibkr_equity_summary_in_base" &&
+        item.source &&
+        item.source !== "ibkr_equity_summary_in_base" &&
+        item.source !== "owner_historical_restoration"
+      ) {
+        continue;
+      }
+      const prevPayload = existing ? (parsePayload(existing.payload_json) || {}) : {};
+      const mergedPayload = {
+        ...prevPayload,
+        ...item.payload,
+        ...(prevPayload.inceptionDate && !item.payload.inceptionDate ? { inceptionDate: prevPayload.inceptionDate } : {}),
+        ...(prevPayload.dateOpened && !item.payload.dateOpened ? { dateOpened: prevPayload.dateOpened } : {})
+      };
+      upsertStmt.run(
+        item.accountId,
+        item.date,
+        item.nav,
+        item.cash,
+        item.source,
+        item.sourceDate,
+        JSON.stringify(mergedPayload),
+        nowIso
+      );
+      written += 1;
+    }
+    db.exec("COMMIT");
+    return written;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function inferBackupAccountInception(account = {}) {
+  const explicit = reportDate(cleanString(account.inceptionDate || account.dateOpened || ""));
+  const positive = (account.navHistory || [])
+    .filter((r) => reportDate(cleanString(r?.date)) && Number.isFinite(Number(r?.nav)) && Number(r.nav) > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const firstPositiveDate = positive[0]?.date || null;
+  if (explicit) return firstPositiveDate && explicit > firstPositiveDate ? firstPositiveDate : explicit;
+  const h = account.historyEvidence;
+  if (!firstPositiveDate || h?.cashStatus !== "ready" || h?.tradeStatus !== "ready") return null;
+  const fromDate = reportDate(cleanString(h.fromDate));
+  const earliest = [
+    firstPositiveDate,
+    ...(h.realized || []).map((r) => r?.date),
+    ...(h.cashFlows || []).map((r) => r?.date),
+    ...(h.income || []).map((r) => r?.date)
+  ].filter((d) => reportDate(cleanString(d))).sort()[0];
+  return fromDate && earliest && fromDate < earliest ? firstPositiveDate : null;
+}
+
+export function readUserHistoricalAccountBackup(user) {
+  const id = userIdFromUser(user);
+  const adminHash = cleanPortfolioHash(user?.adminPortfolioHash);
+  if (!id && !adminHash) return new Map();
+  const dbPath = userDbPath(user);
+  if (!fs.existsSync(dbPath)) return new Map();
+  const hash = userHashFromUser(user);
+  const db = openUserDb(user);
+  const meta = db.prepare(`
+    SELECT COUNT(*) AS cnt, COALESCE(MAX(retrieved_at), '') AS max_ret
+    FROM portfolio_report_snapshots
+    WHERE provider = ?
+  `).get("ibkr_flex");
+  if (!meta?.cnt) return new Map();
+  const signature = `${meta.cnt}:${meta.max_ret}`;
+  const cached = historicalAccountBackupCache.get(hash);
+  if (cached?.signature === signature) return cached.byAccount;
+
+  const aad = reportAad(user);
+  const rows = db.prepare(`
+    SELECT connection_revision, report_date, retrieved_at, encrypted_json
+    FROM portfolio_report_snapshots
+    WHERE provider = ?
+    ORDER BY report_date ASC, retrieved_at ASC
+  `).all("ibkr_flex");
+
+  const byAccount = new Map();
+  for (const row of rows) {
+    let payload = null;
+    try {
+      payload = decryptJson(row.encrypted_json, aad);
+    } catch {
+      continue;
+    }
+    const brokerAccounts = payload?.accounts || [];
+    const analysisAccounts = payload?.analysisAccounts || [];
+    for (let i = 0; i < analysisAccounts.length; i += 1) {
+      const account = analysisAccounts[i];
+      const accountId = cleanString(account?.accountId || brokerAccounts[i]?.id || "");
+      const currency = cleanString(account?.currency || "");
+      if (!accountId) continue;
+      let entry = byAccount.get(accountId);
+      if (!entry) {
+        entry = {
+          accountId,
+          currency,
+          navByDate: new Map(),
+          inceptionDate: null,
+          dateOpened: null,
+          latestHistoryEvidenceByCurrency: new Map()
+        };
+        byAccount.set(accountId, entry);
+      }
+      if (currency && !entry.currency) entry.currency = currency;
+      const opened = reportDate(cleanString(account?.dateOpened));
+      if (opened && (!entry.dateOpened || opened < entry.dateOpened)) entry.dateOpened = opened;
+      const inferredInc = inferBackupAccountInception(account);
+      if (inferredInc && (!entry.inceptionDate || inferredInc < entry.inceptionDate)) {
+        entry.inceptionDate = inferredInc;
+      }
+      // Prefer multi-day broker EquitySummaryInBase snapshots over degraded fallback snapshots
+      const points = Array.isArray(account?.navHistory) ? account.navHistory : [];
+      const isRichHistory = points.length > 70 || account?.navHistoryStatus?.source === "broker_report";
+      for (const pt of points) {
+        const d = reportDate(cleanString(pt?.date));
+        const nav = Number(pt?.nav ?? pt?.value);
+        if (!d || !Number.isFinite(nav) || nav <= 0) continue;
+        const prev = entry.navByDate.get(d);
+        if (!prev || isRichHistory || (!prev.rich && d === row.report_date)) {
+          entry.navByDate.set(d, {
+            date: d,
+            nav,
+            source: isRichHistory ? "ibkr_equity_summary_in_base" : (pt?.source || "saved_report_snapshot"),
+            rich: isRichHistory
+          });
+        }
+      }
+      const exactReportDate = reportDate(cleanString(account?.reportDate));
+      const exactReportedNav = Number(account?.reportedNav);
+      if (exactReportDate && Number.isFinite(exactReportedNav) && exactReportedNav > 0) {
+        entry.navByDate.set(exactReportDate, {
+          date: exactReportDate,
+          nav: exactReportedNav,
+          source: "ibkr_equity_summary_in_base",
+          rich: true
+        });
+      }
+      if (
+        currency &&
+        account?.historyEvidence?.fromDate &&
+        account?.historyEvidence?.toDate &&
+        account?.historyEvidenceStatus !== "retained_from_last_verified_report"
+      ) {
+        const prevEv = entry.latestHistoryEvidenceByCurrency.get(currency);
+        if (!prevEv || account.historyEvidence.toDate >= prevEv.toDate) {
+          entry.latestHistoryEvidenceByCurrency.set(currency, account.historyEvidence);
+        }
+      }
+    }
+  }
+
+  historicalAccountBackupCache.set(hash, { signature, byAccount });
+  while (historicalAccountBackupCache.size > 64) {
+    historicalAccountBackupCache.delete(historicalAccountBackupCache.keys().next().value);
+  }
+  return byAccount;
 }
 
 export function readUserPortfolioNavPoints(user, accountId = "portfolio", limit = 5000) {

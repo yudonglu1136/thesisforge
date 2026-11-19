@@ -317,7 +317,7 @@ export function opportunityOwnership(books) {
 const matrixCaches = new WeakMap();
 
 export function buildGuruHoldingsMatrix(source,asOf,reportDate=null) {
-  const generation=`${source.db.prepare('PRAGMA data_version').get().data_version}:${source.db.prepare('SELECT total_changes() n').get().n}:${dataReleaseId()??'legacy'}`;
+  const generation=`${source.db.prepare('PRAGMA data_version').get().data_version}:${source.db.prepare('SELECT total_changes() n').get?.()?.n??0}:${dataReleaseId()??'legacy'}`;
   let cache=matrixCaches.get(source);
   if(!cache||cache.generation!==generation){cache={generation,rows:new Map()};matrixCaches.set(source,cache);}
   const key=`guru-matrix:${asOf}:${reportDate??''}`;
@@ -392,7 +392,7 @@ const timelineCaches = new WeakMap();
 
 export function opportunityTimeline(source,ticker,asOf) {
   ticker=tickerKey(ticker);isoDate(asOf);
-  const generation=`${source.db.prepare('PRAGMA data_version').get().data_version}:${source.db.prepare('SELECT total_changes() n').get().n}:${dataReleaseId()??'legacy'}`;
+  const generation=`${source.db.prepare('PRAGMA data_version').get().data_version}:${source.db.prepare('SELECT total_changes() n').get?.()?.n??0}:${dataReleaseId()??'legacy'}`;
   let cache=timelineCaches.get(source);
   if(!cache||cache.generation!==generation){cache={generation,timelines:new Map()};timelineCaches.set(source,cache);}
   let byTicker=cache.timelines.get(asOf);

@@ -956,6 +956,17 @@ Whenever UI modules are redesigned OR a major quarterly earnings / 13F data refr
 - **Data Consistency & Warm-Latency Slimming (`server/qqqSchdRotationStrategy.js`, `server/investorStyleDashboard.js`, `server/fundamentalResearch.js`, `server/publicAnalysisArtifact.js`, `server/investmentSource.js`)**:
   - `hydrateLiveRadarDiagnostics` keeps `QQQ ⇄ SCHD` radar text and `nextTriggers` aligned with live/cutoff gauges; `?summaryOnly=1` (`investor-styles`) and `?includeCurve=0` (`qqq-schd-rotation/analysis`) eliminate multi-MB unused payloads; `WeakMap` universe/ledger caches and per-entry `marketFactsVersion` keys keep warm API responses sub-2ms.
 
+### 7. Multi-Account Historical NAV Continuity & Anti-Overwrite Contract (2026-11-19)
+
+- **Durable Multi-Day IBKR NAV Persistence (`server/portfolioClient.js`, `server/userPortfolioStore.js`)**:
+  - Every positive daily `EquitySummaryByReportDateInBase.total` row returned by IBKR Flex statements MUST be batch-upserted into `portfolio_nav_points` (`writeUserPortfolioNavPoints`, `source = 'ibkr_equity_summary_in_base'`), never just the single current report date. Audited `ibkr_equity_summary_in_base` observations must never be overwritten by approximate `holdingsTotalValue` sums on the same date, and older rolling dates (`> 365d`) must never be deleted on refresh.
+- **Resilience to IBKR `Error 1018` / `1019` History Rate Limits & `connectionRevision` Updates**:
+  - Fetch multi-account IBKR Flex queries sequentially (`150ms` stagger in `loadFreshPortfolioDashboard`) rather than firing concurrent `Promise.allSettled` bursts.
+  - When a secondary `{periodDays: 365}` history query fails or a new sub-account / rotated token updates `connectionRevision`, `retainSavedHistoricalEvidence` and `readUserHistoricalAccountBackup` MUST retain both `historyEvidence` AND full historical `navHistory` + `inceptionDate` per broker `accountId` across all verified `portfolio_report_snapshots`.
+  - `POST /api/investment/portfolio-analysis/sync` (`forceRefresh = true` in `server/investmentPortfolio.js`) must always recompute when `!saved.exact` rather than serving a stale cached analysis snapshot.
+- **Verified Pre-Inception `$0` Sub-Account Continuity (`server/portfolioReport.js`, `server/portfolioHome.js`, `server/portfolioHistory.js`)**:
+  - Adding a newly opened or newly funded sub-account (`inferAccountInceptionDate`) must never chop off or cliff older accounts' pre-inception NAV, realized P&L, or cash-adjusted P&L history (`Account 1 + $0` strictly prior to verified `inceptionDate`), while still failing closed on missing interior dates or unverified partial windows.
+
 
 
 

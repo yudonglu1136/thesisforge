@@ -32,6 +32,7 @@ import {
   portfolioConnectionAccounts,
   readPortfolioConnection,
   readPortfolioConnectionStatus,
+  readUserHistoricalAccountBackup,
   readUserPortfolioAnalysis,
   readUserPortfolioPassiveLedger,
   readUserPortfolioReport,
@@ -39,7 +40,8 @@ import {
   writePortfolioAccountSyncStatuses,
   writeUserPortfolioAnalysis,
   writeUserPortfolioReport,
-  writeUserPortfolioNavPoint
+  writeUserPortfolioNavPoint,
+  writeUserPortfolioNavPoints
 } from "./userPortfolioStore.js";
 
 const yodleeBaseUrl = String(process.env.YODLEE_BASE_URL || "").replace(/\/+$/, "");
@@ -1306,19 +1308,24 @@ function attachStoredNavHistory(payload, options = {}) {
       payload.generatedAt ||
       new Date()
   );
-  const nav = finiteNumber(payload.summary?.totalValue);
+  const exactNav = finiteNumber(options.exactNav, NaN);
+  const nav = Number.isFinite(exactNav) && exactNav > 0 ? exactNav : finiteNumber(payload.summary?.totalValue);
   if (nav > 0 && options.captureNav !== false) {
     const point = {
       accountId,
       date,
       nav,
       cash: finiteNumber(payload.summary?.cash),
-      source: options.source || payload.source?.label || "portfolio",
+      source: Number.isFinite(exactNav) && exactNav > 0
+        ? "ibkr_equity_summary_in_base"
+        : (options.source || payload.source?.label || "portfolio"),
       sourceDate: options.sourceDate || payload.source?.toDate || date,
       payload: {
         holdings: payload.summary?.holdings,
         accounts: payload.summary?.accounts,
-        currency: payload.summary?.currency
+        currency: payload.summary?.currency,
+        ...(options.inceptionDate ? { inceptionDate: options.inceptionDate } : {}),
+        ...(options.dateOpened ? { dateOpened: options.dateOpened } : {})
       }
     };
     if (options.user) {
@@ -1337,30 +1344,52 @@ function attachStoredNavHistory(payload, options = {}) {
     storedPoints.length >= 2 || !truthyPerformanceStatus(payload.performanceStatus);
   if (!useStoredHistory) return payload;
 
-  const real = storedPoints.length >= 2;
+  const mergedByDate = new Map();
+  for (const point of storedPoints) {
+    const d = normalizeReportDate(point?.date);
+    const v = finiteNumber(point?.value ?? point?.nav);
+    if (d && v > 0) {
+      mergedByDate.set(d, {
+        date: d,
+        value: v,
+        source: point.source || "sqlite_daily_nav"
+      });
+    }
+  }
+  if (truthyPerformanceStatus(payload.performanceStatus)) {
+    for (const point of payload.performance || []) {
+      const d = normalizeReportDate(point?.date);
+      const v = finiteNumber(point?.value ?? point?.nav);
+      if (d && v > 0) {
+        mergedByDate.set(d, {
+          date: d,
+          value: v,
+          source: point.source || "broker_report"
+        });
+      }
+    }
+  }
+  const mergedPerformance = [...mergedByDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const real = mergedPerformance.length >= 2;
   return {
     ...payload,
-    performance: storedPoints.map((point) => ({
-      date: point.date,
-      value: point.value,
-      source: point.source || "sqlite_daily_nav"
-    })),
+    performance: mergedPerformance,
     performanceStatus: {
       real,
-      pointCount: storedPoints.length,
+      pointCount: mergedPerformance.length,
       source: "sqlite_daily_nav",
       message: real
-        ? `Backend database NAV history: ${storedPoints.length} daily points accumulated from IBKR/Yodlee refreshes.`
-        : `Captured the first daily NAV point (${storedPoints[0].date}). The chart will draw automatically after at least two daily snapshots.`
+        ? `Backend database NAV history: ${mergedPerformance.length} daily points accumulated from IBKR/Yodlee refreshes.`
+        : `Captured the first daily NAV point (${mergedPerformance[0]?.date || storedPoints[0].date}). The chart will draw automatically after at least two daily snapshots.`
     },
     source: {
       ...payload.source,
       navHistory: {
         source: "sqlite_daily_nav",
         accountId,
-        pointCount: storedPoints.length,
-        startDate: storedPoints[0]?.date || "",
-        endDate: storedPoints.at(-1)?.date || ""
+        pointCount: mergedPerformance.length,
+        startDate: mergedPerformance[0]?.date || "",
+        endDate: mergedPerformance.at(-1)?.date || ""
       }
     }
   };
@@ -1370,12 +1399,34 @@ function truthyPerformanceStatus(status) {
   return status?.real === true || status?.real === "true";
 }
 
-function mergeAccountNavHistory(account = {}, storedPoints = []) {
+function mergeAccountNavHistory(account = {}, storedPoints = [], backupEntry = null) {
   const byDate = new Map();
+  let storedInception = null;
+  let storedDateOpened = null;
   for (const point of storedPoints) {
+    const inc = normalizeReportDate(point?.payload?.inceptionDate);
+    if (inc && (!storedInception || inc < storedInception)) storedInception = inc;
+    const opened = normalizeReportDate(point?.payload?.dateOpened);
+    if (opened && (!storedDateOpened || opened < storedDateOpened)) storedDateOpened = opened;
     const date = normalizeReportDate(point?.date);
     const nav = finiteNumber(point?.nav ?? point?.value);
     if (date && nav > 0) byDate.set(date, {date, nav, source: point?.source || "sqlite_daily_nav"});
+  }
+  if (backupEntry?.navByDate?.size) {
+    for (const [date, pt] of backupEntry.navByDate.entries()) {
+      const existing = byDate.get(date);
+      // Fill missing historical dates and upgrade legacy non-EquitySummaryInBase approximations
+      if (!existing || (pt.rich && existing.source !== "ibkr_equity_summary_in_base" && existing.source !== "owner_historical_restoration")) {
+        byDate.set(date, {date, nav: pt.nav, source: pt.source || "saved_report_snapshot"});
+      }
+    }
+  }
+  // Re-apply audited EquitySummaryInBase / restored rows from SQLite over older snapshot entries
+  for (const point of storedPoints) {
+    if (point?.source !== "ibkr_equity_summary_in_base" && point?.source !== "owner_historical_restoration") continue;
+    const date = normalizeReportDate(point?.date);
+    const nav = finiteNumber(point?.nav ?? point?.value);
+    if (date && nav > 0) byDate.set(date, {date, nav, source: point.source});
   }
   // A newly fetched broker row is the most recent evidence for the same date.
   for (const point of account.navHistory || []) {
@@ -1384,11 +1435,16 @@ function mergeAccountNavHistory(account = {}, storedPoints = []) {
     if (date && nav > 0) byDate.set(date, {...point, date, nav});
   }
   const navHistory = [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+  const resolvedInception = account.inceptionDate || storedInception || backupEntry?.inceptionDate || null;
+  const resolvedDateOpened = account.dateOpened || storedDateOpened || backupEntry?.dateOpened || null;
+  const hasDurableHistory = storedPoints.length > 0 || Boolean(backupEntry?.navByDate?.size);
   return {
     ...account,
+    ...(resolvedDateOpened ? {dateOpened: resolvedDateOpened} : {}),
+    ...(resolvedInception ? {inceptionDate: resolvedInception} : {}),
     navHistory,
     navHistoryStatus: {
-      source: storedPoints.length ? "broker_and_sqlite_daily_nav" : "broker_report",
+      source: hasDurableHistory ? "broker_and_sqlite_daily_nav" : "broker_report",
       pointCount: navHistory.length,
       startDate: navHistory[0]?.date || "",
       endDate: navHistory.at(-1)?.date || ""
@@ -1401,6 +1457,7 @@ function attachStoredAnalysisNavHistory(payload, {user = null, fallbackAccountId
   const brokerAccounts = payload.accounts || [];
   const passiveSlots = readUserPortfolioPassiveLedger(user);
   const passiveByKey = new Map(passiveSlots.filter(s => s?.accountKey).map(s => [s.accountKey, s]));
+  const historicalBackup = readUserHistoricalAccountBackup(user);
   const analysisAccounts = payload.analysisAccounts.map((account, index) => {
     const accountId = textValue(
       account.accountId || brokerAccounts[index]?.id ||
@@ -1412,9 +1469,11 @@ function attachStoredAnalysisNavHistory(payload, {user = null, fallbackAccountId
       ? {...account, passiveHistoryEvidence: passiveSlot}
       : account;
     if (!accountId) return withPassive;
+    const backupEntry = account.accountId ? (historicalBackup.get(accountId) || null) : null;
     return mergeAccountNavHistory(
       {...withPassive, accountId},
-      readUserPortfolioNavPoints(user, accountId)
+      readUserPortfolioNavPoints(user, accountId),
+      backupEntry && (!backupEntry.currency || backupEntry.currency === account.currency) ? backupEntry : null
     );
   });
   return {...payload, analysisAccounts};
@@ -1423,21 +1482,49 @@ function attachStoredAnalysisNavHistory(payload, {user = null, fallbackAccountId
 function retainSavedHistoricalEvidence(payload, user) {
   if (!user || payload?.source?.historyQueryStatus !== "error") return payload;
   const saved = readUserPortfolioReport(user)?.payload;
-  if (!saved?.analysisAccounts?.length || !payload.analysisAccounts?.length) return payload;
-  const previous = saved.analysisAccounts;
+  const previous = saved?.analysisAccounts || [];
+  const historicalBackup = readUserHistoricalAccountBackup(user);
+  if (!payload.analysisAccounts?.length || (!previous.length && !historicalBackup.size)) return payload;
+  let retainedAny = false;
   const analysisAccounts = payload.analysisAccounts.map((account) => {
     const match = previous.find((candidate) =>
       account.accountId && candidate.accountId === account.accountId &&
       candidate.currency === account.currency
     ) || (previous.length === 1 && payload.analysisAccounts.length === 1 &&
       previous[0].currency === account.currency ? previous[0] : null);
-    if (!match?.historyEvidence) return account;
+    const backupEntry = account.accountId ? historicalBackup.get(account.accountId) : null;
+    const fallbackEvidence = match?.historyEvidence ||
+      (backupEntry && (!backupEntry.currency || backupEntry.currency === account.currency)
+        ? backupEntry.latestHistoryEvidenceByCurrency.get(account.currency) || null
+        : null);
+    if (!fallbackEvidence && !match?.navHistory?.length) return account;
+    retainedAny = true;
+    const mergedNavMap = new Map();
+    for (const pt of match?.navHistory || []) {
+      const d = normalizeReportDate(pt?.date);
+      const v = finiteNumber(pt?.nav ?? pt?.value);
+      if (d && v > 0) mergedNavMap.set(d, {...pt, date: d, nav: v});
+    }
+    for (const pt of account.navHistory || []) {
+      const d = normalizeReportDate(pt?.date);
+      const v = finiteNumber(pt?.nav ?? pt?.value);
+      if (d && v > 0) mergedNavMap.set(d, {...pt, date: d, nav: v});
+    }
+    const mergedNavHistory = [...mergedNavMap.values()].sort((a, b) => a.date.localeCompare(b.date));
+    const retainedInception = account.inceptionDate || match?.inceptionDate || backupEntry?.inceptionDate || null;
+    const retainedOpened = account.dateOpened || match?.dateOpened || backupEntry?.dateOpened || null;
     return {
       ...account,
-      historyEvidence: match.historyEvidence,
-      historyEvidenceStatus: "retained_from_last_verified_report"
+      ...(retainedOpened ? {dateOpened: retainedOpened} : {}),
+      ...(retainedInception ? {inceptionDate: retainedInception} : {}),
+      ...(mergedNavHistory.length ? {navHistory: mergedNavHistory} : {}),
+      ...(fallbackEvidence ? {
+        historyEvidence: fallbackEvidence,
+        historyEvidenceStatus: "retained_from_last_verified_report"
+      } : {})
     };
   });
+  if (!retainedAny) return payload;
   return {
     ...payload,
     analysisAccounts,
@@ -1566,9 +1653,41 @@ export function normalizeIbkrFlexPortfolio(parsed, {
     accountId: account.accountId || accountId,
     connectionId: accountConfig?.id || accountId
   }));
+  const primaryAnalysis = payload.analysisAccounts[0] || null;
+  if (user && captureNav !== false) {
+    const historyPointsToStore = [];
+    for (const acct of payload.analysisAccounts) {
+      const targetAcctId = textValue(acct.accountId || accountId);
+      if (!targetAcctId) continue;
+      const validRows = (acct.navHistory || []).filter(
+        (pt) => normalizeReportDate(pt?.date) && Number.isFinite(Number(pt?.nav)) && Number(pt.nav) > 0
+      );
+      validRows.forEach((pt, idx) => {
+        historyPointsToStore.push({
+          accountId: targetAcctId,
+          date: normalizeReportDate(pt.date),
+          nav: Number(pt.nav),
+          source: "ibkr_equity_summary_in_base",
+          sourceDate: normalizeReportDate(statement.toDate || statement.fromDate || pt.date),
+          payload: idx === 0 && (acct.inceptionDate || acct.dateOpened)
+            ? {
+                ...(acct.inceptionDate ? { inceptionDate: acct.inceptionDate } : {}),
+                ...(acct.dateOpened ? { dateOpened: acct.dateOpened } : {})
+              }
+            : {}
+        });
+      });
+    }
+    if (historyPointsToStore.length) {
+      writeUserPortfolioNavPoints(user, historyPointsToStore);
+    }
+  }
   const withStoredNav = attachStoredNavHistory(attachStoredDividendCalendar(payload), {
     accountId,
     date: statement.toDate || statement.fromDate,
+    exactNav: primaryAnalysis?.reportedNav,
+    inceptionDate: primaryAnalysis?.inceptionDate,
+    dateOpened: primaryAnalysis?.dateOpened,
     source: "IBKR Third-Party Reports / Yodlee",
     sourceDate: statement.toDate || statement.fromDate,
     captureNav,
@@ -1810,13 +1929,24 @@ function aggregateIbkrPortfolios(payloads = [], {
       mode: "multi_account_live",
       asOf: sourceAsOfDates[0] || undefined,
       userScoped: Boolean(user?.id),
-      warnings: errorMessages
+      warnings: [
+        ...new Set([
+          ...errorMessages,
+          ...payloads.flatMap((p) => p?.source?.warnings || [])
+        ])
+      ]
     }
   });
   payload.analysisAccounts = payloads.flatMap(p => p.analysisAccounts || []);
+  const alignedExactNav = payload.analysisAccounts.length &&
+    new Set(payload.analysisAccounts.map((a) => a.reportDate).filter(Boolean)).size === 1 &&
+    payload.analysisAccounts.every((a) => Number.isFinite(Number(a.reportedNav)))
+    ? payload.analysisAccounts.reduce((s, a) => s + Number(a.reportedNav), 0)
+    : NaN;
   return attachStoredNavHistory(attachStoredDividendCalendar(payload), {
     accountId: "portfolio",
-    date: new Date(),
+    date: sourceAsOfDates.at(-1) || new Date(),
+    exactNav: alignedExactNav,
     source: "IBKR/Yodlee multi-account aggregate",
     captureNav,
     user: user || null
@@ -1914,15 +2044,22 @@ async function loadFreshPortfolioDashboard({ user = null, captureNav = true } = 
       throw new Error("No IBKR/Yodlee accounts are saved for this user.");
     }
     const scopedUser = isRealUser(user) ? user : null;
-    const results = await Promise.allSettled(
-      accounts.map((account) =>
-        loadIbkrAccountPortfolio(connection, account, {
+    const results = [];
+    for (let idx = 0; idx < accounts.length; idx += 1) {
+      if (idx > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      try {
+        const value = await loadIbkrAccountPortfolio(connection, accounts[idx], {
           user: scopedUser,
           connectionStatus,
           captureNav
-        })
-      )
-    );
+        });
+        results.push({ status: "fulfilled", value });
+      } catch (reason) {
+        results.push({ status: "rejected", reason });
+      }
+    }
     if (scopedUser && portfolioConnectionRevision(scopedUser) === connectionRevision) {
       writePortfolioAccountSyncStatuses(
         scopedUser,
@@ -1976,9 +2113,9 @@ async function loadFreshPortfolioDashboard({ user = null, captureNav = true } = 
           errors: reportErrors
         });
     if (scopedUser && !reportErrors.length) {
-      const saved = writeUserPortfolioReport(scopedUser, result, {connectionRevision});
       const enriched = attachStoredAnalysisNavHistory(result, {user: scopedUser});
       result.analysisAccounts = enriched.analysisAccounts;
+      const saved = writeUserPortfolioReport(scopedUser, result, {connectionRevision});
       result.freshness = {status:"current_report",basis:"last_successful_broker_report",...saved,live:false};
     }
     return result;

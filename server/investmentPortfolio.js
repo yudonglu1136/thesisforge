@@ -395,7 +395,7 @@ export function registerPortfolioAnalysisRoute(app, service, loadPortfolio,{anal
       const identity=portfolioAnalysisIdentity(payload,{asOf,scope,riskFreeRate:rate,connectionRevision,...dependencies});
       let saved=null;
       if(!local)try{saved=readUserPortfolioAnalysis(req.user,{scope,inputFingerprint:identity.inputFingerprint,asOf});}catch{}
-      const analysis=saved?.payload??analysePortfolio(payload,{asOf});
+      const analysis=(saved&&(saved.exact||!forceRefresh)?saved.payload:null)??analysePortfolio(payload,{asOf});
       analysis.detailLevel??=summary?'summary':home?'home':'detail';
       const rebuilding=!saved?.exact&&!!analysis.groups?.length;
       if(rebuilding&&!local){
