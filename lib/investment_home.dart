@@ -3,67 +3,99 @@ part of 'main.dart';
 // Shared Home loaders and saved-research shelf. The connected desk owns the
 // manager / filing / claim selection; viewing it never saves a user decision.
 extension _InvestmentHome on _InvestmentWorkspaceState {
-  List<Widget> personalHomePage() => [
-    if (homeResearchDesk) ...[
-      Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          onPressed: () {
-            updateUI(() => homeResearchDesk = false);
-            replaceBrowserQuery({'workspace': null});
-          },
-          icon: const Icon(Icons.arrow_back, size: 17),
-          label: Text(w('Back to my portfolio', '返回我的组合')),
+  List<Widget> personalHomePage() {
+    final snowball = isSnowballMobile;
+    return [
+      if (!snowball && homeResearchDesk) ...[
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () {
+              updateUI(() => homeResearchDesk = false);
+              replaceBrowserQuery({'workspace': null});
+            },
+            icon: const Icon(Icons.arrow_back, size: 17),
+            label: Text(w('Back to my portfolio', '返回我的组合')),
+          ),
         ),
-      ),
-      ...opportunityPage(),
-    ] else ...[
-      if (asList(home?['attention']).isNotEmpty) ...[
-        homeReviewAlert(),
-        const SizedBox(height: 18),
-      ],
-      PortfolioResearchPanel(
-        key: const ValueKey('personal-home'),
-        api: widget.api,
-        palette: p,
-        asOf: asOf,
-        homeMode: true,
-        onDetails: () => navigate('book'),
-        onExploreDiscover: () {
-          discoveryTab = 'managers';
-          navigate('discover');
-        },
-        onExploreStrategies: () => navigate('strategies'),
-        onCompany: (symbol, section) =>
-            unawaited(loadCompany(symbol, initialSection: section)),
-        onGuru: (id, filing) {
-          discoveryTab = 'managers';
-          navigate('discover');
-          unawaited(loadGuru(id, filingId: filing));
-        },
-      ),
-      if (home != null &&
-          (asList(home?['watches']).isNotEmpty ||
-              asList(home?['decisions']).isNotEmpty)) ...[
-        const SizedBox(height: 20),
-        homeSavedWatchAndDecisionStrip(),
-      ],
-      const SizedBox(height: 22),
-      Wrap(
-        spacing: 12,
-        runSpacing: 8,
-        children: [
-          TextButton.icon(
-            onPressed: () => navigate('discover'),
-            icon: const Icon(Icons.explore_outlined, size: 18),
-            label: Text(
-              w('Find your next idea in Discover', '前往「发现」寻找下一个投资机会'),
-            ),
+        ...opportunityPage(),
+      ] else ...[
+        if (!snowball && asList(home?['attention']).isNotEmpty) ...[
+          homeReviewAlert(),
+          const SizedBox(height: 18),
+        ],
+        PortfolioResearchPanel(
+          key: const ValueKey('personal-home'),
+          api: widget.api,
+          palette: p,
+          asOf: asOf,
+          homeMode: true,
+          mobileSection: snowball ? page : null,
+          onSwitchMobileTab: snowball
+              ? (nextTab) => unawaited(requestNavigate(nextTab))
+              : null,
+          userEmail: widget.userEmail,
+          localPreview: widget.localPreview,
+          colorBlind: widget.colorBlind,
+          onToggleColorBlind: widget.onToggleColorBlind,
+          onLanguage: widget.onLanguage,
+          onLogout: widget.onLogout != null
+              ? () => unawaited(requestLogout())
+              : null,
+          onSetAppPassword: widget.onUpdatePassword != null
+              ? () => unawaited(showSetAppPasswordDialog())
+              : null,
+          onShowPairCode: widget.onCreatePairCode != null
+              ? () => unawaited(showDevicePairCodeDialog())
+              : null,
+          onShowCutoffPicker: () => unawaited(showDateDialog()),
+          onShowInstallGuide: !isStandaloneDisplayMode()
+              ? () => unawaited(showIosInstallGuideDialog(context, palette: p))
+              : null,
+          onDetails: snowball
+              ? () => unawaited(requestNavigate('holdings'))
+              : () => navigate('book'),
+          onExploreDiscover: snowball
+              ? null
+              : () {
+                  discoveryTab = 'managers';
+                  navigate('discover');
+                },
+          onExploreStrategies: snowball ? null : () => navigate('strategies'),
+          onCompany: (symbol, section) =>
+              unawaited(loadCompany(symbol, initialSection: section)),
+          onGuru: (id, filing) {
+            discoveryTab = 'managers';
+            navigate('discover');
+            unawaited(loadGuru(id, filingId: filing));
+          },
+        ),
+        if (!snowball &&
+            home != null &&
+            (asList(home?['watches']).isNotEmpty ||
+                asList(home?['decisions']).isNotEmpty)) ...[
+          const SizedBox(height: 20),
+          homeSavedWatchAndDecisionStrip(),
+        ],
+        if (!snowball) ...[
+          const SizedBox(height: 22),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: [
+              TextButton.icon(
+                onPressed: () => navigate('discover'),
+                icon: const Icon(Icons.explore_outlined, size: 18),
+                label: Text(
+                  w('Find your next idea in Discover', '前往「发现」寻找下一个投资机会'),
+                ),
+              ),
+            ],
           ),
         ],
-      ),
-    ],
-  ];
+      ],
+    ];
+  }
   // These bundled marks use white lettering on transparent pixels. Preserve
   // the assets, with a contrasting Home backdrop; other terminal uses stay put.
   Widget homeStockLogo(String ticker, double size) => StockLogo(

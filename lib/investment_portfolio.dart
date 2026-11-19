@@ -11,6 +11,18 @@ class PortfolioResearchPanel extends StatefulWidget {
     required this.onCompany,
     required this.onGuru,
     this.homeMode = false,
+    this.mobileSection,
+    this.onSwitchMobileTab,
+    this.userEmail = '',
+    this.localPreview = false,
+    this.colorBlind = false,
+    this.onToggleColorBlind,
+    this.onLanguage,
+    this.onLogout,
+    this.onSetAppPassword,
+    this.onShowPairCode,
+    this.onShowCutoffPicker,
+    this.onShowInstallGuide,
     this.onDetails,
     this.onExploreDiscover,
     this.onExploreStrategies,
@@ -22,6 +34,18 @@ class PortfolioResearchPanel extends StatefulWidget {
   final void Function(String ticker, String section) onCompany;
   final void Function(String id, String filing) onGuru;
   final bool homeMode;
+  final String? mobileSection;
+  final ValueChanged<String>? onSwitchMobileTab;
+  final String userEmail;
+  final bool localPreview;
+  final bool colorBlind;
+  final ValueChanged<bool>? onToggleColorBlind;
+  final ValueChanged<AppLanguage>? onLanguage;
+  final VoidCallback? onLogout;
+  final VoidCallback? onSetAppPassword;
+  final VoidCallback? onShowPairCode;
+  final VoidCallback? onShowCutoffPicker;
+  final VoidCallback? onShowInstallGuide;
   final VoidCallback? onDetails;
   final VoidCallback? onExploreDiscover;
   final VoidCallback? onExploreStrategies;
@@ -46,12 +70,17 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
   double riskFreeRate = .04;
   String homePnlMode = 'auto';
   String mobileHoldingsKind = 'equity';
+  String mobileHoldingsTabFilter = 'all';
+  String mobileHoldingsSort = 'weight';
+  String mobileHoldingsQuery = '';
+  String mobileIncomeSubTab = 'bySymbol';
   String? mobileRequestedChartMetric;
   int mobileRequestedChartNonce = 0;
   bool get hideAmounts => portfolioPrivacyMode.value;
   void privacyChanged() => setState(() {});
   void homeUpdate(VoidCallback action) => setState(action);
   final search = TextEditingController();
+  final mobileHoldingsSearchCtrl = TextEditingController();
   Timer? snapshotPoll;
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
@@ -84,6 +113,7 @@ class _PortfolioResearchPanelState extends State<PortfolioResearchPanel> {
     snapshotPoll?.cancel();
     portfolioPrivacyMode.removeListener(privacyChanged);
     search.dispose();
+    mobileHoldingsSearchCtrl.dispose();
     super.dispose();
   }
 

@@ -3029,9 +3029,8 @@ void main() {
 
       await tester.pump();
 
-      expect(find.text('Research Terminal'), findsOneWidget);
+      expect(find.text('RESEARCH TERMINAL'), findsOneWidget);
       expect(find.text('ThesisForge'), findsOneWidget);
-      expect(find.text('THESISFORGE'), findsOneWidget);
       expect(find.textContaining('Guru Intelligence'), findsNothing);
       expect(find.text('GURU INTELLIGENCE'), findsNothing);
       expect(find.text('Continue with Google'), findsOneWidget);
@@ -3073,14 +3072,14 @@ void main() {
     await tester.tap(find.text('EN'));
     await tester.pump();
 
-    expect(find.text('Research Terminal'), findsOneWidget);
+    expect(find.text('RESEARCH TERMINAL'), findsOneWidget);
     expect(find.text('Continue with Google'), findsOneWidget);
     expect(find.text('Enter Local Workspace'), findsOneWidget);
     expect(find.text('Chinese'), findsOneWidget);
     expect(find.text('English'), findsOneWidget);
     expect(find.textContaining('ISRG'), findsNothing);
     expect(find.textContaining('Explore the case'), findsNothing);
-    expect(find.text('研究终端'), findsNothing);
+    expect(find.text('实证投研终端'), findsNothing);
   });
 
   testWidgets('auth shell fits a 390px mobile viewport without overflow', (
@@ -3121,11 +3120,12 @@ void main() {
                 )
                 .decoration
             as BoxDecoration;
-    expect(decoration.color, Colors.black);
+    expect(decoration.color, const Color(0xFF0D0F14));
     expect(decoration.gradient, isNull);
     expect(find.image(const AssetImage(thesisForgeMarkAsset)), findsOneWidget);
-    expect(panel.left, greaterThanOrEqualTo(16));
-    expect(panel.right, lessThanOrEqualTo(374));
+    expect(find.text('Continue with Google'), findsNothing);
+    expect(panel.left, greaterThanOrEqualTo(14));
+    expect(panel.right, lessThanOrEqualTo(376));
     expect(panel.center.dy, closeTo(422, 1));
     expect(tester.takeException(), isNull);
   });

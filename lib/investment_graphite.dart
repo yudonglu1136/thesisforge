@@ -41,9 +41,15 @@ class _GraphitePalette extends Palette {
 }
 
 extension _GraphiteWorkspace on _InvestmentWorkspaceState {
+  bool get isSnowballMobile =>
+      MediaQuery.sizeOf(context).width < 640 && !homeResearchDesk;
+  bool get _isSnowballPocketRoute =>
+      const {'home', 'holdings', 'income', 'accounts'}.contains(page);
+
   Widget graphiteBuild(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final desktop = screenWidth >= 1100;
+    final snowballMobile = screenWidth < 640;
     final compactDialog = screenWidth < 600;
     final base = Theme.of(context);
     final theme = base.copyWith(
@@ -167,12 +173,14 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                               ? widget.adminContent!
                               : SingleChildScrollView(
                               key: ValueKey(
-                                'workflow-$page-${page == 'research' ? '$ticker-$section' : '$discoveryTab-${text(asMap(selectedGuru?['guru'])['id'])}'}-$asOf-${page == 'discover' && MediaQuery.sizeOf(context).width < 1380 ? opportunityMobileDetail : false}',
+                                snowballMobile && _isSnowballPocketRoute
+                                    ? 'snowball-pocket-$asOf'
+                                    : 'workflow-$page-${page == 'research' ? '$ticker-$section' : '$discoveryTab-${text(asMap(selectedGuru?['guru'])['id'])}'}-$asOf-${page == 'discover' && MediaQuery.sizeOf(context).width < 1380 ? opportunityMobileDetail : false}',
                               ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
-                                  if (page != 'home' &&
+                                  if (! _isSnowballPocketRoute &&
                                       page != 'book' &&
                                       page != 'discover' &&
                                       (page != 'research' || company == null))
@@ -265,7 +273,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.stretch,
                                             children: [
-                                              if (page == 'home')
+                                              if (_isSnowballPocketRoute)
                                                 ...personalHomePage(),
                                               if (page == 'discover')
                                                 ...discoveryPage(),
@@ -350,37 +358,68 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
   ];
 
   List<(String, String, String, IconData, IconData)> get mobileGraphitePages =>
-      const [
-        ('home', 'Home', '首页', Icons.home_outlined, Icons.home_rounded),
-        (
-          'discover',
-          'Discover',
-          '发现',
-          Icons.explore_outlined,
-          Icons.explore_rounded,
-        ),
-        (
-          'research',
-          'Research',
-          '研究',
-          Icons.search_rounded,
-          Icons.manage_search_rounded,
-        ),
-        (
-          'book',
-          'Portfolio',
-          '组合',
-          Icons.pie_chart_outline_rounded,
-          Icons.pie_chart_rounded,
-        ),
-        (
-          'strategies',
-          'Strategies',
-          '策略',
-          Icons.layers_outlined,
-          Icons.layers_rounded,
-        ),
-      ];
+      isSnowballMobile
+      ? const [
+          (
+            'home',
+            'Overview',
+            '总览',
+            Icons.pie_chart_outline_rounded,
+            Icons.pie_chart_rounded,
+          ),
+          (
+            'holdings',
+            'Holdings',
+            '持仓',
+            Icons.account_balance_wallet_outlined,
+            Icons.account_balance_wallet_rounded,
+          ),
+          (
+            'income',
+            'Income',
+            '收益',
+            Icons.payments_outlined,
+            Icons.payments_rounded,
+          ),
+          (
+            'accounts',
+            'Account',
+            '账户',
+            Icons.person_outline_rounded,
+            Icons.person_rounded,
+          ),
+        ]
+      : const [
+          ('home', 'Home', '首页', Icons.home_outlined, Icons.home_rounded),
+          (
+            'discover',
+            'Discover',
+            '发现',
+            Icons.explore_outlined,
+            Icons.explore_rounded,
+          ),
+          (
+            'research',
+            'Research',
+            '研究',
+            Icons.search_rounded,
+            Icons.manage_search_rounded,
+          ),
+          (
+            'book',
+            'Portfolio',
+            '组合',
+            Icons.pie_chart_outline_rounded,
+            Icons.pie_chart_rounded,
+          ),
+          (
+            'strategies',
+            'Strategies',
+            '策略',
+            Icons.layers_outlined,
+            Icons.layers_rounded,
+          ),
+        ];
 
   Widget brand({double size = 20, bool compact = false}) => Row(
     children: [
@@ -686,8 +725,23 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
     ),
   );
 
+  String _snowballHeaderTitle() {
+    switch (page) {
+      case 'holdings':
+        return w('Holdings', '持仓明细');
+      case 'income':
+        return w('Realized & Income', '收益账本');
+      case 'accounts':
+        return w('Account & Security', '账户与安全');
+      case 'home':
+      default:
+        return 'ThesisForge';
+    }
+  }
+
   Widget graphiteMobileHeader() {
     final replay = isHistoricalReplay;
+    final snowball = isSnowballMobile && _isSnowballPocketRoute;
     final statusTint = replay
         ? const Color(0xFFF5A623)
         : const Color(0xFF20C997);
@@ -721,7 +775,7 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'ThesisForge',
+                  snowball ? _snowballHeaderTitle() : 'ThesisForge',
                   style: TextStyle(
                     color: p.text,
                     fontSize: 16.5,
@@ -780,29 +834,69 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
               ),
             ),
             const Spacer(),
-            IconButton(
-              key: const ValueKey('mobile-search-trigger'),
-              tooltip: w('Search ticker', '搜索公司'),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-              style: IconButton.styleFrom(
-                minimumSize: const Size(44, 44),
-                tapTargetSize: MaterialTapTargetSize.padded,
-              ),
-              onPressed: () => unawaited(openGlobalCompanySearch()),
-              icon: Container(
-                width: 35,
-                height: 35,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF171C26),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: .06),
+            if (snowball)
+              ValueListenableBuilder<bool>(
+                valueListenable: portfolioPrivacyMode,
+                builder: (_, hidden, _) => IconButton(
+                  key: const ValueKey('mobile-header-privacy-toggle'),
+                  tooltip: hidden
+                      ? w('Show amounts', '显示金额')
+                      : w('Hide amounts', '隐藏金额'),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 44,
+                    minHeight: 44,
+                  ),
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(44, 44),
+                    tapTargetSize: MaterialTapTargetSize.padded,
+                  ),
+                  onPressed: () =>
+                      portfolioPrivacyMode.value = !portfolioPrivacyMode.value,
+                  icon: Container(
+                    width: 35,
+                    height: 35,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF171C26),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: .06),
+                      ),
+                    ),
+                    child: Icon(
+                      hidden
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                      color: hidden ? const Color(0xFF34D399) : p.text,
+                      size: 17,
+                    ),
                   ),
                 ),
-                child: Icon(Icons.search_rounded, color: p.text, size: 18),
+              )
+            else
+              IconButton(
+                key: const ValueKey('mobile-search-trigger'),
+                tooltip: w('Search ticker', '搜索公司'),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                  tapTargetSize: MaterialTapTargetSize.padded,
+                ),
+                onPressed: () => unawaited(openGlobalCompanySearch()),
+                icon: Container(
+                  width: 35,
+                  height: 35,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF171C26),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: .06),
+                    ),
+                  ),
+                  child: Icon(Icons.search_rounded, color: p.text, size: 18),
+                ),
               ),
-            ),
             IconButton(
               key: const ValueKey('mobile-account-sheet-button'),
               tooltip: w('Account & settings', '账户与设置'),
@@ -823,11 +917,413 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                     color: Colors.white.withValues(alpha: .06),
                   ),
                 ),
-                child: Icon(Icons.tune_rounded, color: p.text, size: 17),
+                child: Icon(
+                  snowball ? Icons.person_outline_rounded : Icons.tune_rounded,
+                  color: p.text,
+                  size: 17,
+                ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Future<void> showSetAppPasswordDialog() async {
+    final handler = widget.onUpdatePassword;
+    if (handler == null) return;
+    var draftPassword = '';
+    var draftConfirm = '';
+    var saving = false;
+    var obscure = true;
+    String? errMsg;
+    var savedOk = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => AlertDialog(
+          key: const ValueKey('app-password-dialog'),
+          backgroundColor: const Color(0xFF131720),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: Colors.white.withValues(alpha: .08)),
+          ),
+          title: Row(
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF34D399).withValues(alpha: .14),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.face_retouching_natural_rounded,
+                  color: Color(0xFF34D399),
+                  size: 16,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  w('Set Direct App Password', '设置 App 直登密码 (FaceID)'),
+                  style: const TextStyle(
+                    color: Color(0xFFF8FAFC),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 380),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    w(
+                      'Sign in directly inside the iPhone Home Screen App in 0.3s with FaceID — no browser jump and no email wait.',
+                      '设置后可在手机桌面 App 内「密码直登 · FaceID」0.3 秒进入，彻底告别跳浏览器与等邮件。',
+                    ),
+                    style: const TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 12.5,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  AutofillGroup(
+                    child: Column(
+                      children: [
+                        TextField(
+                          key: const ValueKey('app-password-input'),
+                          onChanged: (v) => draftPassword = v,
+                          obscureText: obscure,
+                          autofillHints: const [AutofillHints.newPassword],
+                          style: const TextStyle(
+                            color: Color(0xFFF8FAFC),
+                            fontSize: 14.5,
+                          ),
+                          decoration: InputDecoration(
+                            labelText: w('New password (>= 8 chars)', '新直登密码（至少 8 位）'),
+                            filled: true,
+                            fillColor: const Color(0xFF0D0F14),
+                            suffixIcon: IconButton(
+                              onPressed: () =>
+                                  setModalState(() => obscure = !obscure),
+                              icon: Icon(
+                                obscure
+                                    ? Icons.visibility_outlined
+                                    : Icons.visibility_off_outlined,
+                                size: 18,
+                                color: const Color(0xFF64748B),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          key: const ValueKey('app-password-confirm-input'),
+                          onChanged: (v) => draftConfirm = v,
+                          obscureText: obscure,
+                          autofillHints: const [AutofillHints.newPassword],
+                          style: const TextStyle(
+                            color: Color(0xFFF8FAFC),
+                            fontSize: 14.5,
+                          ),
+                          decoration: InputDecoration(
+                            labelText: w('Confirm password', '再次确认新密码'),
+                            filled: true,
+                            fillColor: const Color(0xFF0D0F14),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (errMsg != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      errMsg!,
+                      style: const TextStyle(
+                        color: Color(0xFFFB7185),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                  if (savedOk) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      w(
+                        'Direct App password enabled! iOS FaceID can save it on your next sign-in.',
+                        'App 直登密码已生效！下次可直接在 App 内刷 FaceID 秒登。',
+                      ),
+                      style: const TextStyle(
+                        color: Color(0xFF34D399),
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(ctx),
+              child: Text(savedOk ? w('Done', '完成') : w('Cancel', '取消')),
+            ),
+            if (!savedOk)
+              FilledButton(
+                key: const ValueKey('app-password-submit'),
+                onPressed: saving
+                    ? null
+                    : () async {
+                        final p1 = draftPassword.trim();
+                        final p2 = draftConfirm.trim();
+                        if (p1.length < 8) {
+                          setModalState(
+                            () => errMsg = w(
+                              'Password must be at least 8 characters.',
+                              '密码长度至少需要 8 位字符。',
+                            ),
+                          );
+                          return;
+                        }
+                        if (p1 != p2) {
+                          setModalState(
+                            () => errMsg = w(
+                              'Passwords do not match.',
+                              '两次输入的密码不一致。',
+                            ),
+                          );
+                          return;
+                        }
+                        setModalState(() {
+                          saving = true;
+                          errMsg = null;
+                        });
+                        try {
+                          final resErr = await handler(p1);
+                          if (resErr != null && resErr.trim().isNotEmpty) {
+                            if (ctx.mounted) {
+                              setModalState(() {
+                                saving = false;
+                                errMsg = resErr;
+                              });
+                            }
+                            return;
+                          }
+                          TextInput.finishAutofillContext();
+                          if (ctx.mounted) {
+                            setModalState(() {
+                              saving = false;
+                              savedOk = true;
+                            });
+                          }
+                        } catch (e) {
+                          if (ctx.mounted) {
+                            setModalState(() {
+                              saving = false;
+                              errMsg = e
+                                  .toString()
+                                  .replaceFirst('Exception: ', '')
+                                  .replaceFirst('Bad state: ', '');
+                            });
+                          }
+                        }
+                      },
+                child: Text(
+                  saving ? w('Saving…', '保存中…') : w('Save Password', '保存直登密码'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> showDevicePairCodeDialog() async {
+    final handler = widget.onCreatePairCode;
+    if (handler == null) return;
+    String? code;
+    String? errMsg;
+    var loadingCode = true;
+    var copied = false;
+    var started = false;
+
+    Future<void> mint(StateSetter setModalState) async {
+      setModalState(() {
+        loadingCode = true;
+        errMsg = null;
+        copied = false;
+      });
+      try {
+        final next = await handler();
+        setModalState(() {
+          code = text(next['code']);
+          loadingCode = false;
+        });
+      } catch (e) {
+        setModalState(() {
+          loadingCode = false;
+          errMsg = e
+              .toString()
+              .replaceFirst('Exception: ', '')
+              .replaceFirst('Bad state: ', '');
+        });
+      }
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          if (!started) {
+            started = true;
+            Future<void>.microtask(() {
+              if (ctx.mounted) unawaited(mint(setModalState));
+            });
+          }
+          final raw = (code ?? '').trim();
+          final formatted = raw.length == 6
+              ? '${raw.substring(0, 3)} ${raw.substring(3)}'
+              : raw;
+          return AlertDialog(
+            key: const ValueKey('device-pair-code-dialog'),
+            backgroundColor: const Color(0xFF131720),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+              side: BorderSide(color: Colors.white.withValues(alpha: .08)),
+            ),
+            title: Row(
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF38BDF8).withValues(alpha: .14),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.phonelink_lock_rounded,
+                    color: Color(0xFF38BDF8),
+                    size: 16,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    w('6-Digit App Sign-In Code', '手机 App 6 位数字秒登码'),
+                    style: const TextStyle(
+                      color: Color(0xFFF8FAFC),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 370),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    w(
+                      'Open the ThesisForge App on your iPhone, tap "Have a 6-digit code?", and enter this single-use code within 5 minutes — zero email required.',
+                      '打开手机主屏幕 ThesisForge App，点击登录页「已有 6 位数字码？直接输入秒登」并输入下方数字码（5 分钟内单次有效，无需收邮件）。',
+                    ),
+                    style: const TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 12.5,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 18,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0D0F14),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: const Color(0xFF34D399).withValues(alpha: .32),
+                      ),
+                    ),
+                    alignment: Alignment.center,
+                    child: loadingCode
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2.2),
+                          )
+                        : errMsg != null
+                        ? Text(
+                            errMsg!,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Color(0xFFFB7185),
+                              fontSize: 12.5,
+                            ),
+                          )
+                        : SelectableText(
+                            formatted,
+                            key: const ValueKey('device-pair-code-value'),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Color(0xFFF8FAFC),
+                              fontSize: 32,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 4,
+                              fontFeatures: [ui.FontFeature.tabularFigures()],
+                            ),
+                          ),
+                  ),
+                  if (raw.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      key: const ValueKey('device-pair-code-copy'),
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: raw));
+                        if (ctx.mounted) {
+                          setModalState(() => copied = true);
+                        }
+                      },
+                      icon: Icon(
+                        copied ? Icons.check_rounded : Icons.copy_rounded,
+                        size: 16,
+                      ),
+                      label: Text(
+                        copied
+                            ? w('Copied 6-digit code', '已复制 6 位数字码')
+                            : w('Copy 6-digit code', '复制 6 位数字码'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: loadingCode ? null : () => unawaited(mint(setModalState)),
+                child: Text(w('Refresh code', '重新生成')),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(w('Close', '关闭')),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -842,287 +1338,375 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (sheetCtx) => StatefulBuilder(
-        builder: (sheetCtx, setSheetState) => SafeArea(
-          top: false,
-          child: Padding(
-            key: const ValueKey('mobile-account-bottom-sheet'),
-            padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2E3A4B),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF080B0F),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: p.border),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
+        builder: (sheetCtx, setSheetState) => ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetCtx).height * 0.88,
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              key: const ValueKey('mobile-account-bottom-sheet'),
+              padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
                         width: 36,
-                        height: 36,
+                        height: 4,
                         decoration: BoxDecoration(
-                          color: p.accent.withValues(alpha: .14),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.verified_user_outlined,
-                          color: p.accent,
-                          size: 18,
+                          color: const Color(0xFF2E3A4B),
+                          borderRadius: BorderRadius.circular(999),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              w('Signed-in session', '当前登录账户'),
-                              style: TextStyle(color: p.muted, fontSize: 11),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              widget.localPreview
-                                  ? w('Local preview mode', '本地开发预览')
-                                  : (widget.userEmail.trim().isNotEmpty
-                                        ? widget.userEmail.trim()
-                                        : w(
-                                            'Authenticated investor',
-                                            '已认证账户',
-                                          )),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: p.text,
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF080B0F),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: p.border),
                       ),
-                      SegmentedButton<AppLanguage>(
-                        key: const ValueKey('sheet-language-toggle'),
-                        style: const ButtonStyle(
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        segments: const [
-                          ButtonSegment(
-                            value: AppLanguage.zh,
-                            label: Text('中文'),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: p.accent.withValues(alpha: .14),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.verified_user_outlined,
+                              color: p.accent,
+                              size: 18,
+                            ),
                           ),
-                          ButtonSegment(
-                            value: AppLanguage.en,
-                            label: Text('EN'),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  w('Signed-in session', '当前登录账户'),
+                                  style: TextStyle(color: p.muted, fontSize: 11),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  widget.localPreview
+                                      ? w('Local preview mode', '本地开发预览')
+                                      : (widget.userEmail.trim().isNotEmpty
+                                            ? widget.userEmail.trim()
+                                            : w(
+                                                'Authenticated investor',
+                                                '已认证账户',
+                                              )),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: p.text,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          SegmentedButton<AppLanguage>(
+                            key: const ValueKey('sheet-language-toggle'),
+                            style: const ButtonStyle(
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            segments: const [
+                              ButtonSegment(
+                                value: AppLanguage.zh,
+                                label: Text('中文'),
+                              ),
+                              ButtonSegment(
+                                value: AppLanguage.en,
+                                label: Text('EN'),
+                              ),
+                            ],
+                            selected: {context.language},
+                            onSelectionChanged: (s) {
+                              if (s.isNotEmpty) {
+                                widget.onLanguage(s.first);
+                                Navigator.pop(sheetCtx);
+                              }
+                            },
                           ),
                         ],
-                        selected: {context.language},
-                        onSelectionChanged: (s) {
-                          if (s.isNotEmpty) {
-                            widget.onLanguage(s.first);
-                            Navigator.pop(sheetCtx);
-                          }
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (widget.onUpdatePassword != null)
+                      ListTile(
+                        key: const ValueKey('sheet-set-app-password'),
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                        ),
+                        leading: const Icon(
+                          Icons.face_retouching_natural_rounded,
+                          color: Color(0xFF34D399),
+                          size: 20,
+                        ),
+                        title: Text(
+                          w(
+                            'Set App Direct Password (FaceID)',
+                            '设置 App 直登密码（开启 FaceID 秒登）',
+                          ),
+                          style: TextStyle(
+                            color: p.text,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        trailing: Icon(
+                          Icons.chevron_right_rounded,
+                          color: p.muted,
+                          size: 20,
+                        ),
+                        onTap: () {
+                          Navigator.pop(sheetCtx);
+                          unawaited(showSetAppPasswordDialog());
                         },
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                ListTile(
-                  key: const ValueKey('sheet-date-picker'),
-                  dense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                  leading: Icon(
-                    Icons.history_toggle_off_rounded,
-                    color: isHistoricalReplay
-                        ? const Color(0xFFF5A623)
-                        : p.accent,
-                    size: 20,
-                  ),
-                  title: Text(
-                    w('Information cutoff / PIT replay', '信息截止日与历史时点回放'),
-                    style: TextStyle(
-                      color: p.text,
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  subtitle: Text(
-                    isHistoricalReplay
-                        ? '${w('Replaying', '历史回放')} $asOf'
-                        : '${w('Live', '实时最新数据')} ($asOf)',
-                    style: TextStyle(color: p.muted, fontSize: 11.5),
-                  ),
-                  trailing: Icon(
-                    Icons.chevron_right_rounded,
-                    color: p.muted,
-                    size: 20,
-                  ),
-                  onTap: () {
-                    Navigator.pop(sheetCtx);
-                    unawaited(showDateDialog());
-                  },
-                ),
-                if (widget.onToggleColorBlind != null)
-                  SwitchListTile.adaptive(
-                    dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                    activeThumbColor: p.accent,
-                    title: Text(
-                      w('Color-blind safe palette', '色盲友好高对比配色'),
-                      style: TextStyle(
-                        color: p.text,
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
+                    if (widget.onCreatePairCode != null)
+                      ListTile(
+                        key: const ValueKey('sheet-show-pair-code'),
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                        ),
+                        leading: const Icon(
+                          Icons.phonelink_lock_rounded,
+                          color: Color(0xFF38BDF8),
+                          size: 20,
+                        ),
+                        title: Text(
+                          w(
+                            'Generate 6-Digit App Sign-In Code',
+                            '生成其他设备 6 位数字登录码',
+                          ),
+                          style: TextStyle(
+                            color: p.text,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        trailing: Icon(
+                          Icons.chevron_right_rounded,
+                          color: p.muted,
+                          size: 20,
+                        ),
+                        onTap: () {
+                          Navigator.pop(sheetCtx);
+                          unawaited(showDevicePairCodeDialog());
+                        },
                       ),
-                    ),
-                    value: cb,
-                    onChanged: (next) {
-                      setSheetState(() => cb = next);
-                      widget.onToggleColorBlind!(next);
-                    },
-                  ),
-                if (widget.showAdmin && widget.onLegacyView != null)
-                  ListTile(
-                    key: const ValueKey('sheet-open-admin'),
-                    dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                    leading: Icon(
-                      Icons.admin_panel_settings_outlined,
-                      color: p.muted,
-                      size: 20,
-                    ),
-                    title: Text(
-                      w('Admin console', '系统管理后台'),
-                      style: TextStyle(
-                        color: p.text,
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    trailing: Icon(
-                      Icons.chevron_right_rounded,
-                      color: p.muted,
-                      size: 20,
-                    ),
-                    onTap: () {
-                      Navigator.pop(sheetCtx);
-                      unawaited(requestNavigate('admin'));
-                    },
-                  ),
-                if (!isStandaloneDisplayMode())
-                  ListTile(
-                    key: const ValueKey('sheet-install-ios-app'),
-                    dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                    leading: Icon(
-                      Icons.phone_iphone_rounded,
-                      color: p.accent,
-                      size: 20,
-                    ),
-                    title: Text(
-                      w(
-                        'Install Fullscreen App (.mobileconfig)',
-                        '安装 iPhone 纯净全屏客户端 (.mobileconfig)',
-                      ),
-                      style: TextStyle(
-                        color: p.text,
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    trailing: Icon(
-                      Icons.chevron_right_rounded,
-                      color: p.muted,
-                      size: 20,
-                    ),
-                    onTap: () {
-                      Navigator.pop(sheetCtx);
-                      unawaited(showIosInstallGuideDialog(context, palette: p));
-                    },
-                  ),
-                ListTile(
-                  dense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                  leading: Icon(
-                    Icons.description_outlined,
-                    color: p.muted,
-                    size: 20,
-                  ),
-                  title: Text(
-                    w('Sources & methodology', '数据来源与方法论'),
-                    style: TextStyle(color: p.text, fontSize: 13.5),
-                  ),
-                  onTap: () {
-                    Navigator.pop(sheetCtx);
-                    showMethodology();
-                  },
-                ),
-                if (widget.onLogout != null) ...[
-                  const Divider(height: 14),
-                  if (widget.onSwitchAccount != null)
                     ListTile(
-                      key: const ValueKey('sheet-switch-account'),
+                      key: const ValueKey('sheet-date-picker'),
                       dense: true,
                       contentPadding: const EdgeInsets.symmetric(horizontal: 4),
                       leading: Icon(
-                        Icons.swap_horiz_rounded,
-                        color: p.accent,
+                        Icons.history_toggle_off_rounded,
+                        color: isHistoricalReplay
+                            ? const Color(0xFFF5A623)
+                            : p.accent,
                         size: 20,
                       ),
                       title: Text(
-                        w(
-                          'Switch Google account',
-                          '切换其他 Google 账号登录',
-                        ),
+                        w('Information cutoff / PIT replay', '信息截止日与历史时点回放'),
                         style: TextStyle(
                           color: p.text,
                           fontSize: 13.5,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
+                      subtitle: Text(
+                        isHistoricalReplay
+                            ? '${w('Replaying', '历史回放')} $asOf'
+                            : '${w('Live', '实时最新数据')} ($asOf)',
+                        style: TextStyle(color: p.muted, fontSize: 11.5),
+                      ),
+                      trailing: Icon(
+                        Icons.chevron_right_rounded,
+                        color: p.muted,
+                        size: 20,
+                      ),
                       onTap: () {
                         Navigator.pop(sheetCtx);
-                        unawaited(requestSwitchAccount());
+                        unawaited(showDateDialog());
                       },
                     ),
-                  ListTile(
-                    key: const ValueKey('sheet-logout'),
-                    dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                    leading: Icon(
-                      Icons.logout_rounded,
-                      color: p.negative,
-                      size: 20,
-                    ),
-                    title: Text(
-                      w('Sign out of current account', '退出当前账号（彻底清除会话）'),
-                      style: TextStyle(
-                        color: p.negative,
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
+                    if (widget.onToggleColorBlind != null)
+                      SwitchListTile.adaptive(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                        ),
+                        activeThumbColor: p.accent,
+                        title: Text(
+                          w('Color-blind safe palette', '色盲友好高对比配色'),
+                          style: TextStyle(
+                            color: p.text,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        value: cb,
+                        onChanged: (next) {
+                          setSheetState(() => cb = next);
+                          widget.onToggleColorBlind!(next);
+                        },
                       ),
+                    if (widget.showAdmin && widget.onLegacyView != null)
+                      ListTile(
+                        key: const ValueKey('sheet-open-admin'),
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                        ),
+                        leading: Icon(
+                          Icons.admin_panel_settings_outlined,
+                          color: p.muted,
+                          size: 20,
+                        ),
+                        title: Text(
+                          w('Admin console', '系统管理后台'),
+                          style: TextStyle(
+                            color: p.text,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        trailing: Icon(
+                          Icons.chevron_right_rounded,
+                          color: p.muted,
+                          size: 20,
+                        ),
+                        onTap: () {
+                          Navigator.pop(sheetCtx);
+                          unawaited(requestNavigate('admin'));
+                        },
+                      ),
+                    if (!isStandaloneDisplayMode())
+                      ListTile(
+                        key: const ValueKey('sheet-install-ios-app'),
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                        ),
+                        leading: Icon(
+                          Icons.phone_iphone_rounded,
+                          color: p.accent,
+                          size: 20,
+                        ),
+                        title: Text(
+                          w(
+                            'Install Fullscreen App (.mobileconfig)',
+                            '安装 iPhone 纯净全屏客户端 (.mobileconfig)',
+                          ),
+                          style: TextStyle(
+                            color: p.text,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        trailing: Icon(
+                          Icons.chevron_right_rounded,
+                          color: p.muted,
+                          size: 20,
+                        ),
+                        onTap: () {
+                          Navigator.pop(sheetCtx);
+                          unawaited(
+                            showIosInstallGuideDialog(context, palette: p),
+                          );
+                        },
+                      ),
+                    ListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                      leading: Icon(
+                        Icons.description_outlined,
+                        color: p.muted,
+                        size: 20,
+                      ),
+                      title: Text(
+                        w('Sources & methodology', '数据来源与方法论'),
+                        style: TextStyle(color: p.text, fontSize: 13.5),
+                      ),
+                      onTap: () {
+                        Navigator.pop(sheetCtx);
+                        showMethodology();
+                      },
                     ),
-                    onTap: () {
-                      Navigator.pop(sheetCtx);
-                      unawaited(requestLogout());
-                    },
-                  ),
-                ],
-              ],
+                    if (widget.onLogout != null) ...[
+                      const Divider(height: 14),
+                      if (widget.onSwitchAccount != null && !isSnowballMobile)
+                        ListTile(
+                          key: const ValueKey('sheet-switch-account'),
+                          dense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                          ),
+                          leading: Icon(
+                            Icons.swap_horiz_rounded,
+                            color: p.accent,
+                            size: 20,
+                          ),
+                          title: Text(
+                            w(
+                              'Switch Google account',
+                              '切换其他 Google 账号登录',
+                            ),
+                            style: TextStyle(
+                              color: p.text,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          onTap: () {
+                            Navigator.pop(sheetCtx);
+                            unawaited(requestSwitchAccount());
+                          },
+                        ),
+                      ListTile(
+                        key: const ValueKey('sheet-logout'),
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                        ),
+                        leading: Icon(
+                          Icons.logout_rounded,
+                          color: p.negative,
+                          size: 20,
+                        ),
+                        title: Text(
+                          w(
+                            'Sign out of current account',
+                            '退出当前账号（彻底清除会话）',
+                          ),
+                          style: TextStyle(
+                            color: p.negative,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.pop(sheetCtx);
+                          unawaited(requestLogout());
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -1710,6 +2294,50 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
                   ],
                 ),
                 const Divider(height: 20),
+                if (widget.onCreatePairCode != null) ...[
+                  OutlinedButton.icon(
+                    key: const ValueKey('prefs-show-pair-code'),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      unawaited(showDevicePairCodeDialog());
+                    },
+                    icon: const Icon(
+                      Icons.phonelink_lock_rounded,
+                      size: 17,
+                      color: Color(0xFF38BDF8),
+                    ),
+                    label: Text(
+                      w(
+                        'Generate iPhone App 6-Digit Sign-In Code',
+                        '生成手机 App 6 位数字登录码',
+                      ),
+                      style: TextStyle(color: p.text, fontSize: 13),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                if (widget.onUpdatePassword != null) ...[
+                  OutlinedButton.icon(
+                    key: const ValueKey('prefs-set-app-password'),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      unawaited(showSetAppPasswordDialog());
+                    },
+                    icon: const Icon(
+                      Icons.face_retouching_natural_rounded,
+                      size: 17,
+                      color: Color(0xFF34D399),
+                    ),
+                    label: Text(
+                      w(
+                        'Set App Direct Password (FaceID)',
+                        '设置 App 直登密码（FaceID 秒登）',
+                      ),
+                      style: TextStyle(color: p.text, fontSize: 13),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 OutlinedButton.icon(
                   key: const ValueKey('prefs-install-ios-app'),
                   onPressed: () {

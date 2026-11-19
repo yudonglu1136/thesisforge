@@ -17,6 +17,8 @@ class InvestmentWorkspace extends StatefulWidget {
     this.showAdmin = false,
     this.onLogout,
     this.onSwitchAccount,
+    this.onUpdatePassword,
+    this.onCreatePairCode,
     this.localPreview = false,
     this.userEmail = '',
     this.colorBlind = false,
@@ -36,6 +38,8 @@ class InvestmentWorkspace extends StatefulWidget {
   final bool showAdmin;
   final VoidCallback? onLogout;
   final VoidCallback? onSwitchAccount;
+  final Future<String?> Function(String newPassword)? onUpdatePassword;
+  final Future<Map<String, dynamic>> Function()? onCreatePairCode;
   final bool localPreview;
   final String userEmail;
   final bool colorBlind;

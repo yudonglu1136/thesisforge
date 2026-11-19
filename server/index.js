@@ -26,6 +26,10 @@ import { requireAuth } from "./auth/requireAuth.js";
 import { ADMIN_OWNER_EMAIL, adminResponsePrivacy, requireAdmin } from "./auth/requireAdmin.js";
 import { recordLoginActivity, registerLoginActivityRoutes } from "./loginActivityRoutes.js";
 import {
+  mountProtectedAuthHandoffRoutes,
+  mountPublicAuthHandoffRoutes
+} from "./authHandoffRoutes.js";
+import {
   backtestEndGraceDays,
   guruBacktestRefreshStatus,
   loadGuruBacktest,
@@ -460,7 +464,9 @@ app.use("/api/admin", adminResponsePrivacy);
 // Connector capability is upload-only and independently authenticated.
 const {mountBrokerRoutes, mountFutuConnectorRoute} = await import('./readOnlyBrokers.js');
 mountFutuConnectorRoute(app);
+mountPublicAuthHandoffRoutes(app);
 app.use("/api", requireAuth);
+mountProtectedAuthHandoffRoutes(app);
 // Apply the owner gate to every current and future Admin route, before reads.
 app.use("/api/admin", requireAdmin);
 app.get('/api/admin/data-pipeline/status',(_request,response)=>response.json(dataReleaseStatus()??{status:'not_activated'}));

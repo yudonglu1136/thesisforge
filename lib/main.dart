@@ -83,6 +83,9 @@ bool isInvestmentMode(String mode) =>
     investmentWorkflowEnabled &&
     const {
       'home',
+      'holdings',
+      'income',
+      'accounts',
       'research',
       'discover',
       'book',
@@ -1319,6 +1322,10 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   Session? _session;
   StreamSubscription<AuthState>? _authSub;
   StreamSubscription<dynamic>? _storageSub;
+  Timer? _handoffPollTimer;
+  String? _activeHandoffId;
+  String? _activePollSecret;
+  bool _handoffPollInFlight = false;
   String? _syncedPreferenceOwner;
   late final String? _returnTo = retiredModuleReturnPath(
     readBrowserQuery()['returnTo'],
@@ -1348,6 +1355,9 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _syncSessionFromBrowserStorage();
+      if (_session == null && _activeHandoffId != null) {
+        unawaited(_pollActiveHandoffOnce());
+      }
     }
   }
 
@@ -1555,6 +1565,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.onRegisterLanguageSaver?.call(null);
+    _handoffPollTimer?.cancel();
     _storageSub?.cancel();
     _authSub?.cancel();
     super.dispose();
@@ -1601,6 +1612,90 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     );
   }
 
+  void _stopHandoffPolling() {
+    _handoffPollTimer?.cancel();
+    _handoffPollTimer = null;
+    _activeHandoffId = null;
+    _activePollSecret = null;
+    _handoffPollInFlight = false;
+  }
+
+  Future<bool> _applyRefreshTokenSession(
+    String refreshToken, {
+    String? expectedEmail,
+  }) async {
+    if (!await _ensureSupabaseReady()) return false;
+    final cleanRefresh = refreshToken.trim();
+    if (cleanRefresh.isEmpty) return false;
+    final currentEmail = _session?.user.email?.trim().toLowerCase();
+    final targetEmail = expectedEmail?.trim().toLowerCase();
+    if (currentEmail != null &&
+        targetEmail != null &&
+        targetEmail.isNotEmpty &&
+        currentEmail != targetEmail) {
+      await _clearClientSessionAndStorage();
+    }
+    final res = await Supabase.instance.client.auth.setSession(cleanRefresh);
+    stripBrowserAuthCallbackParams();
+    final nextSession = res.session ?? Supabase.instance.client.auth.currentSession;
+    if (nextSession != null && mounted) {
+      _stopHandoffPolling();
+      setState(() {
+        _localWorkspace = false;
+        _session = nextSession;
+        _authMessageZh = null;
+        _authMessageEn = null;
+      });
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> _pollActiveHandoffOnce() async {
+    final handoffId = _activeHandoffId;
+    final pollSecret = _activePollSecret;
+    if (!mounted ||
+        _session != null ||
+        handoffId == null ||
+        pollSecret == null ||
+        _handoffPollInFlight) {
+      return;
+    }
+    _handoffPollInFlight = true;
+    try {
+      final resp = await http
+          .post(
+            apiUri('/api/auth/handoff/poll'),
+            headers: const {'content-type': 'application/json'},
+            body: jsonEncode({
+              'handoffId': handoffId,
+              'pollSecret': pollSecret,
+            }),
+          )
+          .timeout(const Duration(seconds: 6));
+      if (!mounted) return;
+      if (resp.statusCode == 404 || resp.statusCode == 403) {
+        _stopHandoffPolling();
+        return;
+      }
+      if (resp.statusCode == 200) {
+        final decoded = jsonDecode(resp.body);
+        if (decoded is Map<String, dynamic> &&
+            decoded['status'] == 'completed') {
+          final refresh = text(decoded['refreshToken']).trim();
+          final email = text(decoded['email']).trim();
+          if (refresh.isNotEmpty) {
+            await _applyRefreshTokenSession(refresh, expectedEmail: email);
+          }
+        }
+      }
+    } catch (_) {
+      // Transient background/resume network errors retry on next tick or resume.
+    } finally {
+      _handoffPollInFlight = false;
+    }
+  }
+
   Future<String?> _sendEmailOtp(String rawEmail) async {
     final email = rawEmail.trim();
     if (email.isEmpty || !email.contains('@')) {
@@ -1617,13 +1712,47 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
         'Auth service is temporarily unreachable. Please retry.',
       );
     }
+    _stopHandoffPolling();
+    try {
+      final origin = Uri.base.hasAuthority
+          ? '${Uri.base.scheme}://${Uri.base.authority}'
+          : 'https://www.thesisforge.tech';
+      final resp = await http
+          .post(
+            apiUri('/api/auth/handoff/start'),
+            headers: const {'content-type': 'application/json'},
+            body: jsonEncode({'email': email, 'origin': origin}),
+          )
+          .timeout(const Duration(seconds: 12));
+      final body = resp.body.isNotEmpty ? jsonDecode(resp.body) : null;
+      if (resp.statusCode == 200 &&
+          body is Map<String, dynamic> &&
+          body['ok'] == true) {
+        _activeHandoffId = text(body['handoffId']).trim();
+        _activePollSecret = text(body['pollSecret']).trim();
+        _handoffPollTimer = Timer.periodic(
+          const Duration(milliseconds: 1600),
+          (_) => unawaited(_pollActiveHandoffOnce()),
+        );
+        return null;
+      }
+      if (resp.statusCode == 429) {
+        return trFor(
+          widget.language,
+          '验证码请求过于频繁，请等待 1 分钟后再试，或使用「密码直登」秒登。',
+          'Too many code requests. Wait a minute or use Password direct sign-in.',
+        );
+      }
+    } catch (_) {
+      // Fall back to direct Supabase OTP below when local backend handoff is unavailable.
+    }
     try {
       await Supabase.instance.client.auth.signInWithOtp(
         email: email,
         shouldCreateUser: true,
       );
       return null;
-    } catch (e) {
+    } catch (_) {
       return trFor(
         widget.language,
         '发送验证码失败，请确认邮箱拼写或稍后再试。',
@@ -1634,12 +1763,12 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
 
   Future<String?> _verifyEmailOtp(String rawEmail, String rawCode) async {
     final email = rawEmail.trim();
-    final code = rawCode.replaceAll(RegExp(r'\s+'), '');
-    if (code.length < 6) {
+    final trimmedInput = rawCode.trim();
+    if (trimmedInput.isEmpty) {
       return trFor(
         widget.language,
-        '请输入邮件中的 6 位数字验证码。',
-        'Enter the 6-digit verification code from your email.',
+        '请输入 6 位数字验证码。',
+        'Enter the 6-digit verification code.',
       );
     }
     if (!await _ensureSupabaseReady()) {
@@ -1647,6 +1776,91 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
         widget.language,
         '暂时无法连接身份验证服务，请稍后重试。',
         'Auth service is temporarily unreachable. Please retry.',
+      );
+    }
+
+    // Support pasted magic-link URLs directly inside the App without opening Safari
+    if (trimmedInput.contains('http://') ||
+        trimmedInput.contains('https://') ||
+        trimmedInput.contains('token=')) {
+      final parsedUri = Uri.tryParse(trimmedInput);
+      final hashMap = parsedUri != null && parsedUri.fragment.isNotEmpty
+          ? Uri.splitQueryString(parsedUri.fragment)
+          : const <String, String>{};
+      final directRefresh =
+          hashMap['refresh_token'] ?? parsedUri?.queryParameters['refresh_token'];
+      if (directRefresh != null && directRefresh.trim().isNotEmpty) {
+        try {
+          if (await _applyRefreshTokenSession(directRefresh)) return null;
+        } catch (_) {}
+      }
+      final tokenHash =
+          parsedUri?.queryParameters['token_hash'] ??
+          parsedUri?.queryParameters['token'];
+      if (tokenHash != null && tokenHash.trim().isNotEmpty) {
+        try {
+          final res = await Supabase.instance.client.auth.verifyOTP(
+            tokenHash: tokenHash.trim(),
+            type: OtpType.magiclink,
+          );
+          stripBrowserAuthCallbackParams();
+          if (res.session != null && mounted) {
+            _stopHandoffPolling();
+            setState(() {
+              _session = res.session;
+              _authMessageZh = null;
+              _authMessageEn = null;
+            });
+            return null;
+          }
+        } catch (_) {}
+      }
+    }
+
+    final code = trimmedInput.replaceAll(RegExp(r'\s+'), '');
+    if (code.length < 6) {
+      return trFor(
+        widget.language,
+        '请输入 6 位数字验证码。',
+        'Enter the 6-digit verification code.',
+      );
+    }
+
+    // 1. Redeem 6-digit App Pairing / Email Handoff Code from ThesisForge backend
+    if (RegExp(r'^\d{6}$').hasMatch(code)) {
+      try {
+        final resp = await http
+            .post(
+              apiUri('/api/auth/pair-code/redeem'),
+              headers: const {'content-type': 'application/json'},
+              body: jsonEncode({'pairCode': code, 'email': email}),
+            )
+            .timeout(const Duration(seconds: 8));
+        final body = resp.body.isNotEmpty ? jsonDecode(resp.body) : null;
+        if (resp.statusCode == 200 &&
+            body is Map<String, dynamic> &&
+            body['ok'] == true) {
+          final refresh = text(body['refreshToken']).trim();
+          final redeemedEmail = text(body['email']).trim();
+          if (refresh.isNotEmpty &&
+              await _applyRefreshTokenSession(
+                refresh,
+                expectedEmail: redeemedEmail,
+              )) {
+            return null;
+          }
+        }
+      } catch (_) {
+        // Fall through to native Supabase OTP check
+      }
+    }
+
+    // 2. Fallback to native Supabase 6-digit email OTP
+    if (!email.contains('@')) {
+      return trFor(
+        widget.language,
+        '该 6 位登录码无效或已过期，请在电脑/网页端重新生成，或输入邮箱获取新验证码。',
+        'Invalid or expired 6-digit code. Generate a fresh code or enter your email first.',
       );
     }
     try {
@@ -1661,6 +1875,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       );
       stripBrowserAuthCallbackParams();
       if (res.session != null && mounted) {
+        _stopHandoffPolling();
         setState(() {
           _session = res.session;
           _authMessageZh = null;
@@ -1671,13 +1886,136 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     } catch (_) {
       return trFor(
         widget.language,
-        '验证码无效或已过期，请重新获取 6 位验证码。',
-        'Invalid or expired code. Request a new 6-digit code.',
+        '验证码无效或已过期，请点击邮件确认以自动同步或重新获取 6 位验证码。',
+        'Invalid or expired code. Tap the email link to sync or request a fresh 6-digit code.',
       );
     }
   }
 
+  Future<String?> _signInWithPassword(
+    String rawEmail,
+    String rawPassword,
+  ) async {
+    final email = rawEmail.trim();
+    final password = rawPassword;
+    if (email.isEmpty || !email.contains('@')) {
+      return trFor(
+        widget.language,
+        '请输入有效的登录邮箱。',
+        'Please enter a valid email address.',
+      );
+    }
+    if (password.length < 6) {
+      return trFor(
+        widget.language,
+        '请输入您的 App 直登密码（至少 6 位）。若尚未设置，请先用「验证码 / 免密」登录一次后在「账户」页设置。',
+        'Enter your password (at least 6 characters). If not set yet, sign in once via 6-digit code and set it in Account.',
+      );
+    }
+    if (!await _ensureSupabaseReady()) {
+      return trFor(
+        widget.language,
+        '暂时无法连接身份验证服务，请稍后重试。',
+        'Auth service is temporarily unreachable. Please retry.',
+      );
+    }
+    try {
+      final currentEmail = _session?.user.email?.trim().toLowerCase();
+      if (currentEmail != null && currentEmail != email.toLowerCase()) {
+        await _clearClientSessionAndStorage();
+      }
+      final res = await Supabase.instance.client.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+      stripBrowserAuthCallbackParams();
+      if (res.session != null && mounted) {
+        _stopHandoffPolling();
+        setState(() {
+          _localWorkspace = false;
+          _session = res.session;
+          _authMessageZh = null;
+          _authMessageEn = null;
+        });
+      }
+      return null;
+    } catch (_) {
+      return trFor(
+        widget.language,
+        '邮箱或密码不正确。若您此前使用 Google 登录且尚未设置密码，请先用「6 位验证码」进入后在「账户」页一键开启直登密码。',
+        'Incorrect email or password. If your account was created with Google, sign in via 6-digit code first and set an App password in Account.',
+      );
+    }
+  }
+
+  Future<String?> _updateAppPassword(String newPassword) async {
+    if (newPassword.trim().length < 6) {
+      return trFor(
+        widget.language,
+        '直登密码长度至少需要 6 位字符。',
+        'Password must be at least 6 characters.',
+      );
+    }
+    if (_localWorkspace) {
+      return trFor(
+        widget.language,
+        '本地预览模式不支持设置云端密码。',
+        'Local preview mode cannot update cloud passwords.',
+      );
+    }
+    if (!await _ensureSupabaseReady()) {
+      return trFor(
+        widget.language,
+        '身份验证服务暂不可用，请稍后重试。',
+        'Authentication service is temporarily unavailable.',
+      );
+    }
+    try {
+      await Supabase.instance.client.auth.updateUser(
+        UserAttributes(password: newPassword.trim()),
+      );
+      return null;
+    } catch (_) {
+      return trFor(
+        widget.language,
+        '密码保存未完成，请重新登录后再试。',
+        'Could not update password. Please sign in again and retry.',
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _createDevicePairCode() async {
+    if (_localWorkspace) {
+      throw StateError(
+        trFor(
+          widget.language,
+          '本地预览模式无法生成跨设备登录码。',
+          'Pair codes require a signed-in cloud account.',
+        ),
+      );
+    }
+    final activeSession = _authConfigured && _supabaseReady
+        ? (Supabase.instance.client.auth.currentSession ?? _session)
+        : _session;
+    final refresh = activeSession?.refreshToken ?? '';
+    final access = activeSession?.accessToken ?? '';
+    if (access.isEmpty || refresh.isEmpty) {
+      throw StateError(
+        trFor(
+          widget.language,
+          '当前会话缺少刷新凭证，请重新登录。',
+          'Current session cannot mint a pairing code.',
+        ),
+      );
+    }
+    final api = ApiClient(() => access);
+    return api.postJson('/api/auth/pair-code/create', {
+      'refreshToken': refresh,
+    });
+  }
+
   Future<void> _logout() async {
+    _stopHandoffPolling();
     final previousEmail = _session?.user.email?.trim() ?? '';
     await _clearClientSessionAndStorage();
     if (!mounted) return;
@@ -1687,8 +2025,8 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       _syncedPreferenceOwner = null;
       if (previousEmail.isNotEmpty) {
         _setAuthMessage(
-          '已退出 $previousEmail（本地会话已彻底清除），请选择其他 Google 账号或输入新邮箱登录。',
-          'Signed out of $previousEmail (local session cleared). Choose another Google account or sign in via email.',
+          '已退出 $previousEmail（本地会话已彻底清除），可使用 6 位验证码或密码直登。',
+          'Signed out of $previousEmail (local session cleared). Sign in via 6-digit code or password.',
         );
       }
     });
@@ -1742,6 +2080,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
         onGoogle: _signInWithGoogle,
         onSendOtp: _sendEmailOtp,
         onVerifyOtp: _verifyEmailOtp,
+        onPasswordSignIn: _signInWithPassword,
         onLocal: _enterLocalWorkspace,
         onRetry: _retryBootstrap,
       );
@@ -1766,6 +2105,12 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
         onLanguage: widget.onLanguage,
         onLogout: _logout,
         onSwitchAccount: _authConfigured ? _switchGoogleAccount : null,
+        onUpdatePassword: _authConfigured && !_localWorkspace
+            ? _updateAppPassword
+            : null,
+        onCreatePairCode: _authConfigured && !_localWorkspace
+            ? _createDevicePairCode
+            : null,
       );
     }
 
@@ -1989,6 +2334,7 @@ class LoginScreen extends StatefulWidget {
     required this.onGoogle,
     this.onSendOtp,
     this.onVerifyOtp,
+    this.onPasswordSignIn,
     required this.onLocal,
     required this.onRetry,
   });
@@ -2001,6 +2347,8 @@ class LoginScreen extends StatefulWidget {
   final VoidCallback onGoogle;
   final Future<String?> Function(String email)? onSendOtp;
   final Future<String?> Function(String email, String code)? onVerifyOtp;
+  final Future<String?> Function(String email, String password)?
+  onPasswordSignIn;
   final VoidCallback onLocal;
   final VoidCallback onRetry;
 
@@ -2011,7 +2359,11 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailCtrl = TextEditingController();
   final TextEditingController _otpCtrl = TextEditingController();
+  final TextEditingController _passwordCtrl = TextEditingController();
+  String _authMode = 'code'; // 'code' | 'password'
   bool _otpSent = false;
+  bool _directPairCodeOpen = false;
+  bool _obscurePassword = true;
   bool _busy = false;
   String? _otpError;
   String? _otpNotice;
@@ -2020,6 +2372,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _emailCtrl.dispose();
     _otpCtrl.dispose();
+    _passwordCtrl.dispose();
     super.dispose();
   }
 
@@ -2039,8 +2392,8 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         _otpSent = true;
         _otpNotice = context.tr(
-          '验证码已发送至邮箱，输入 6 位数字即可免跳出直接进入全屏工作台。',
-          'Code sent. Enter the 6-digit code to sign in directly without leaving fullscreen.',
+          '确认邮件已发出：在手机打开邮件点击 Sign in 将生成专属 6 位验证码并自动同步至本 App（切回即自动进入，不会跳到网页版）！',
+          'Email sent! Tap Sign in from your email to reveal your 6-digit code & auto-sync directly back into this App.',
         );
       }
     });
@@ -2060,19 +2413,49 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
+  Future<void> _handlePasswordSignIn() async {
+    if (widget.onPasswordSignIn == null || _busy) return;
+    setState(() {
+      _busy = true;
+      _otpError = null;
+      _otpNotice = null;
+    });
+    final err = await widget.onPasswordSignIn!(
+      _emailCtrl.text,
+      _passwordCtrl.text,
+    );
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      if (err != null) {
+        _otpError = err;
+      } else {
+        TextInput.finishAutofillContext();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = Palette(false);
-    final compact = MediaQuery.sizeOf(context).width < 480;
+    final screenW = MediaQuery.sizeOf(context).width;
+    final compact = screenW < 480;
+    final mobileViewport = screenW < 640;
     final standalone = isStandaloneDisplayMode();
     final showInstallGuide = !standalone;
     final otpSupported = widget.onSendOtp != null && widget.onVerifyOtp != null;
+    final passwordSupported = widget.onPasswordSignIn != null;
     return Scaffold(
+      backgroundColor: mobileViewport
+          ? const Color(0xFF0D0F14)
+          : palette.background,
       body: Container(
         key: const ValueKey('login-background'),
         decoration: BoxDecoration(
-          color: blackEditionPreview ? palette.background : null,
-          gradient: blackEditionPreview
+          color: mobileViewport
+              ? const Color(0xFF0D0F14)
+              : (blackEditionPreview ? palette.background : null),
+          gradient: mobileViewport || blackEditionPreview
               ? null
               : const LinearGradient(
                   begin: Alignment.topLeft,
@@ -2089,12 +2472,20 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Center(
               child: SingleChildScrollView(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 480),
+                  constraints: const BoxConstraints(maxWidth: 460),
                   child: Container(
                     key: const ValueKey('login-panel'),
                     width: double.infinity,
-                    padding: EdgeInsets.all(compact ? 20 : 32),
-                    decoration: panelDecoration(palette),
+                    padding: EdgeInsets.all(compact ? 20 : 30),
+                    decoration: mobileViewport
+                        ? BoxDecoration(
+                            color: const Color(0xFF161B24),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: .06),
+                            ),
+                          )
+                        : panelDecoration(palette),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2102,20 +2493,22 @@ class _LoginScreenState extends State<LoginScreen> {
                         Row(
                           children: [
                             Container(
-                              width: compact ? 42 : 50,
-                              height: compact ? 42 : 50,
+                              width: compact ? 42 : 48,
+                              height: compact ? 42 : 48,
                               padding: const EdgeInsets.all(6),
                               decoration: BoxDecoration(
-                                color: palette.background,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: palette.border),
+                                color: const Color(0xFF0D0F14),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: .08),
+                                ),
                               ),
                               child: Image.asset(
                                 thesisForgeMarkAsset,
                                 fit: BoxFit.contain,
                                 semanticLabel: context.tr(
-                                  'ThesisForge',
-                                  'ThesisForge',
+                                  'ThesisForge 品牌标识',
+                                  'ThesisForge logo',
                                 ),
                               ),
                             ),
@@ -2137,11 +2530,21 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    context.tr('实证投研终端', 'RESEARCH TERMINAL'),
+                                    mobileViewport
+                                        ? context.tr(
+                                            '个人组合随身版',
+                                            'PORTFOLIO COMPANION',
+                                          )
+                                        : context.tr(
+                                            '实证投研终端',
+                                            'RESEARCH TERMINAL',
+                                          ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                      color: palette.accent,
+                                      color: mobileViewport
+                                          ? const Color(0xFF34D399)
+                                          : palette.accent,
                                       fontSize: 10,
                                       fontWeight: FontWeight.w800,
                                       letterSpacing: 0.4,
@@ -2159,38 +2562,134 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         SizedBox(height: compact ? 16 : 20),
                         Text(
-                          context.tr('登录投研工作台', 'Sign in to Terminal'),
+                          mobileViewport
+                              ? context.tr('登录我的组合', 'Sign in to Portfolio')
+                              : context.tr('登录投研工作台', 'Sign in to Terminal'),
                           style: TextStyle(
                             color: palette.text,
-                            fontSize: compact ? 24 : 28,
+                            fontSize: compact ? 23 : 27,
                             fontWeight: FontWeight.w800,
                             letterSpacing: -0.5,
                           ),
                         ),
-                        const SizedBox(height: 6),
+                        const SizedBox(height: 5),
                         Text(
-                          context.tr(
-                            '整合真实组合净值、13F 机构流向、量化策略与公司估值。',
-                            'Connected portfolio NAV, 13F institutional flows, audited strategies, and company valuation.',
-                          ),
+                          mobileViewport
+                              ? context.tr(
+                                  'App 原生免跳出直登 · 实时追踪净值、持仓、已实现盈亏与股息。',
+                                  '100% in-app sign-in · Track net worth, holdings, realized P&L & dividends.',
+                                )
+                              : context.tr(
+                                  '整合真实组合净值、13F 机构流向、量化策略与公司估值。',
+                                  'Connected portfolio NAV, 13F institutional flows, audited strategies, and company valuation.',
+                                ),
                           style: TextStyle(
                             color: palette.muted,
                             fontSize: compact ? 12.5 : 13.5,
                             height: 1.4,
                           ),
                         ),
-                        const SizedBox(height: 18),
-                        if (otpSupported) ...[
+                        const SizedBox(height: 16),
+                        if (otpSupported && passwordSupported) ...[
+                          Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0D0F14),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: .06),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: InkWell(
+                                    key: const ValueKey('login-mode-code'),
+                                    borderRadius: BorderRadius.circular(9),
+                                    onTap: () => setState(() {
+                                      _authMode = 'code';
+                                      _otpError = null;
+                                    }),
+                                    child: Container(
+                                      height: 36,
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
+                                        color: _authMode == 'code'
+                                            ? const Color(0xFF1F2735)
+                                            : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(9),
+                                      ),
+                                      child: Text(
+                                        context.tr(
+                                          '6 位验证码 / 免密',
+                                          '6-Digit Code',
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: _authMode == 'code'
+                                              ? Colors.white
+                                              : const Color(0xFF94A3B8),
+                                          fontSize: 12.5,
+                                          fontWeight: _authMode == 'code'
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: InkWell(
+                                    key: const ValueKey('login-mode-password'),
+                                    borderRadius: BorderRadius.circular(9),
+                                    onTap: () => setState(() {
+                                      _authMode = 'password';
+                                      _otpError = null;
+                                    }),
+                                    child: Container(
+                                      height: 36,
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
+                                        color: _authMode == 'password'
+                                            ? const Color(0xFF1F2735)
+                                            : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(9),
+                                      ),
+                                      child: Text(
+                                        context.tr(
+                                          '密码直登 · FaceID',
+                                          'Password · FaceID',
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: _authMode == 'password'
+                                              ? Colors.white
+                                              : const Color(0xFF94A3B8),
+                                          fontSize: 12.5,
+                                          fontWeight: _authMode == 'password'
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        if (otpSupported && _authMode == 'code') ...[
                           Container(
                             key: const ValueKey('login-email-otp-card'),
                             padding: const EdgeInsets.all(14),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF0A0E14),
-                              borderRadius: BorderRadius.circular(12),
+                              color: const Color(0xFF0F131B),
+                              borderRadius: BorderRadius.circular(16),
                               border: Border.all(
-                                color: standalone
-                                    ? palette.accent.withValues(alpha: .42)
-                                    : palette.border,
+                                color: Colors.white.withValues(alpha: .07),
                               ),
                             ),
                             child: Column(
@@ -2198,20 +2697,20 @@ class _LoginScreenState extends State<LoginScreen> {
                               children: [
                                 Row(
                                   children: [
-                                    Icon(
+                                    const Icon(
                                       Icons.verified_user_outlined,
                                       size: 15,
-                                      color: palette.accent,
+                                      color: Color(0xFF34D399),
                                     ),
                                     const SizedBox(width: 6),
                                     Expanded(
                                       child: Text(
                                         context.tr(
-                                          '邮箱验证码免跳转直登（iPhone 全屏首选 · 零浏览器框）',
-                                          'Email 6-Digit Code · Zero-Redirect Fullscreen Sign-In',
+                                          'App 内原生验证码 / 邮件自动同步（零浏览器跳转）',
+                                          'In-App 6-Digit Code & Auto-Sync (Zero Browser Redirect)',
                                         ),
-                                        style: TextStyle(
-                                          color: palette.accent,
+                                        style: const TextStyle(
+                                          color: Color(0xFF34D399),
                                           fontSize: 11.5,
                                           fontWeight: FontWeight.w700,
                                         ),
@@ -2224,6 +2723,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   key: const ValueKey('login-email-input'),
                                   controller: _emailCtrl,
                                   keyboardType: TextInputType.emailAddress,
+                                  autofillHints: const [AutofillHints.email],
                                   autocorrect: false,
                                   style: TextStyle(
                                     color: palette.text,
@@ -2232,7 +2732,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   decoration: InputDecoration(
                                     isDense: true,
                                     filled: true,
-                                    fillColor: const Color(0xFF11161F),
+                                    fillColor: const Color(0xFF171D28),
                                     prefixIcon: Icon(
                                       Icons.alternate_email_rounded,
                                       size: 17,
@@ -2244,23 +2744,27 @@ class _LoginScreenState extends State<LoginScreen> {
                                     ),
                                     contentPadding: const EdgeInsets.symmetric(
                                       horizontal: 12,
-                                      vertical: 12,
+                                      vertical: 13,
                                     ),
                                     border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(9),
+                                      borderRadius: BorderRadius.circular(12),
                                       borderSide: BorderSide(
-                                        color: palette.border,
+                                        color: Colors.white.withValues(
+                                          alpha: .08,
+                                        ),
                                       ),
                                     ),
                                     enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(9),
+                                      borderRadius: BorderRadius.circular(12),
                                       borderSide: BorderSide(
-                                        color: palette.border,
+                                        color: Colors.white.withValues(
+                                          alpha: .08,
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
-                                if (_otpSent) ...[
+                                if (_otpSent || _directPairCodeOpen) ...[
                                   const SizedBox(height: 10),
                                   TextField(
                                     key: const ValueKey('login-otp-code-input'),
@@ -2268,32 +2772,40 @@ class _LoginScreenState extends State<LoginScreen> {
                                     keyboardType: TextInputType.number,
                                     style: TextStyle(
                                       color: palette.text,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                      letterSpacing: 3,
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 3.5,
                                     ),
                                     decoration: InputDecoration(
                                       isDense: true,
                                       filled: true,
-                                      fillColor: const Color(0xFF11161F),
-                                      prefixIcon: Icon(
+                                      fillColor: const Color(0xFF171D28),
+                                      prefixIcon: const Icon(
                                         Icons.pin_outlined,
                                         size: 18,
-                                        color: palette.accent,
+                                        color: Color(0xFF34D399),
                                       ),
                                       hintText: context.tr(
-                                        '输入邮件 6 位验证码',
+                                        '输入 6 位数字验证码',
                                         '6-digit verification code',
                                       ),
                                       contentPadding:
                                           const EdgeInsets.symmetric(
                                             horizontal: 12,
-                                            vertical: 12,
+                                            vertical: 13,
                                           ),
                                       border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(9),
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: const BorderSide(
+                                          color: Color(0xFF34D399),
+                                        ),
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
                                         borderSide: BorderSide(
-                                          color: palette.accent,
+                                          color: const Color(
+                                            0xFF34D399,
+                                          ).withValues(alpha: .45),
                                         ),
                                       ),
                                     ),
@@ -2311,25 +2823,38 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ],
                                 if (_otpNotice != null) ...[
                                   const SizedBox(height: 8),
-                                  Text(
-                                    _otpNotice!,
-                                    style: TextStyle(
-                                      color: palette.accent,
-                                      fontSize: 11.5,
+                                  Container(
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: const Color(
+                                        0xFF34D399,
+                                      ).withValues(alpha: .10),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      _otpNotice!,
+                                      style: const TextStyle(
+                                        color: Color(0xFF34D399),
+                                        fontSize: 11.5,
+                                        height: 1.45,
+                                      ),
                                     ),
                                   ),
                                 ],
                                 const SizedBox(height: 10),
-                                if (!_otpSent)
+                                if (!_otpSent && !_directPairCodeOpen) ...[
                                   FilledButton.icon(
                                     key: const ValueKey('login-send-otp-btn'),
                                     style: FilledButton.styleFrom(
                                       minimumSize: const Size(
                                         double.infinity,
-                                        45,
+                                        46,
                                       ),
-                                      backgroundColor: palette.accent,
+                                      backgroundColor: const Color(0xFF34D399),
                                       foregroundColor: const Color(0xFF04120D),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(13),
+                                      ),
                                     ),
                                     onPressed: widget.authConfigured && !_busy
                                         ? _handleSendOtp
@@ -2349,8 +2874,39 @@ class _LoginScreenState extends State<LoginScreen> {
                                         fontWeight: FontWeight.w700,
                                       ),
                                     ),
-                                  )
-                                else
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Align(
+                                    alignment: Alignment.center,
+                                    child: TextButton.icon(
+                                      key: const ValueKey(
+                                        'login-open-pair-code-btn',
+                                      ),
+                                      style: TextButton.styleFrom(
+                                        minimumSize: const Size(44, 36),
+                                      ),
+                                      onPressed: () => setState(() {
+                                        _directPairCodeOpen = true;
+                                        _otpError = null;
+                                      }),
+                                      icon: const Icon(
+                                        Icons.phonelink_lock_rounded,
+                                        size: 15,
+                                        color: Color(0xFF94A3B8),
+                                      ),
+                                      label: Text(
+                                        context.tr(
+                                          '已有电脑/网页生成的 6 位数字码？直接输入秒登',
+                                          'Already have a 6-digit pairing code? Enter directly',
+                                        ),
+                                        style: const TextStyle(
+                                          color: Color(0xFF94A3B8),
+                                          fontSize: 11.5,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ] else
                                   Row(
                                     children: [
                                       Expanded(
@@ -2359,10 +2915,16 @@ class _LoginScreenState extends State<LoginScreen> {
                                             'login-verify-otp-btn',
                                           ),
                                           style: FilledButton.styleFrom(
-                                            minimumSize: const Size(0, 45),
-                                            backgroundColor: palette.accent,
+                                            minimumSize: const Size(0, 46),
+                                            backgroundColor: const Color(
+                                              0xFF34D399,
+                                            ),
                                             foregroundColor: const Color(
                                               0xFF04120D,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(13),
                                             ),
                                           ),
                                           onPressed: !_busy
@@ -2379,7 +2941,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                                     'Verifying…',
                                                   )
                                                 : context.tr(
-                                                    '验证并进入全屏终端',
+                                                    '验证并进入 App',
                                                     'Verify & Enter',
                                                   ),
                                             style: const TextStyle(
@@ -2394,7 +2956,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                             ? _handleSendOtp
                                             : null,
                                         child: Text(
-                                          context.tr('重发', 'Resend'),
+                                          context.tr('重发邮件', 'Resend'),
                                           style: TextStyle(
                                             color: palette.muted,
                                             fontSize: 12.5,
@@ -2407,37 +2969,244 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                           const SizedBox(height: 14),
+                        ] else if (passwordSupported &&
+                            _authMode == 'password') ...[
+                          AutofillGroup(
+                            child: Container(
+                              key: const ValueKey('login-password-card'),
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0F131B),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: .07),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.face_unlock_outlined,
+                                        size: 16,
+                                        color: Color(0xFF34D399),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          context.tr(
+                                            '邮箱 + 密码直登（支持 iPhone 面容 ID 永久秒登）',
+                                            'Direct Password Sign-In (Supports iPhone FaceID)',
+                                          ),
+                                          style: const TextStyle(
+                                            color: Color(0xFF34D399),
+                                            fontSize: 11.5,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  TextField(
+                                    key: const ValueKey(
+                                      'login-password-email-input',
+                                    ),
+                                    controller: _emailCtrl,
+                                    keyboardType: TextInputType.emailAddress,
+                                    autofillHints: const [AutofillHints.email],
+                                    autocorrect: false,
+                                    style: TextStyle(
+                                      color: palette.text,
+                                      fontSize: 14,
+                                    ),
+                                    decoration: InputDecoration(
+                                      isDense: true,
+                                      filled: true,
+                                      fillColor: const Color(0xFF171D28),
+                                      prefixIcon: Icon(
+                                        Icons.alternate_email_rounded,
+                                        size: 17,
+                                        color: palette.muted,
+                                      ),
+                                      hintText: context.tr(
+                                        '登录邮箱',
+                                        'Account email',
+                                      ),
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 13,
+                                          ),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: Colors.white.withValues(
+                                            alpha: .08,
+                                          ),
+                                        ),
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: Colors.white.withValues(
+                                            alpha: .08,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  TextField(
+                                    key: const ValueKey('login-password-input'),
+                                    controller: _passwordCtrl,
+                                    obscureText: _obscurePassword,
+                                    autofillHints: const [
+                                      AutofillHints.password,
+                                    ],
+                                    onSubmitted: (_) =>
+                                        unawaited(_handlePasswordSignIn()),
+                                    style: TextStyle(
+                                      color: palette.text,
+                                      fontSize: 14,
+                                    ),
+                                    decoration: InputDecoration(
+                                      isDense: true,
+                                      filled: true,
+                                      fillColor: const Color(0xFF171D28),
+                                      prefixIcon: Icon(
+                                        Icons.lock_outline_rounded,
+                                        size: 17,
+                                        color: palette.muted,
+                                      ),
+                                      suffixIcon: IconButton(
+                                        onPressed: () => setState(
+                                          () => _obscurePassword =
+                                              !_obscurePassword,
+                                        ),
+                                        icon: Icon(
+                                          _obscurePassword
+                                              ? Icons.visibility_outlined
+                                              : Icons.visibility_off_outlined,
+                                          size: 17,
+                                          color: palette.muted,
+                                        ),
+                                      ),
+                                      hintText: context.tr(
+                                        '输入 App 直登密码',
+                                        'Enter App password',
+                                      ),
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 13,
+                                          ),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: Colors.white.withValues(
+                                            alpha: .08,
+                                          ),
+                                        ),
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: Colors.white.withValues(
+                                            alpha: .08,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  if (_otpError != null) ...[
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      _otpError!,
+                                      style: TextStyle(
+                                        color: palette.negative,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 12),
+                                  FilledButton.icon(
+                                    key: const ValueKey(
+                                      'login-password-submit-btn',
+                                    ),
+                                    style: FilledButton.styleFrom(
+                                      minimumSize: const Size(
+                                        double.infinity,
+                                        46,
+                                      ),
+                                      backgroundColor: const Color(0xFF34D399),
+                                      foregroundColor: const Color(0xFF04120D),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(13),
+                                      ),
+                                    ),
+                                    onPressed: widget.authConfigured && !_busy
+                                        ? _handlePasswordSignIn
+                                        : null,
+                                    icon: const Icon(
+                                      Icons.bolt_rounded,
+                                      size: 18,
+                                    ),
+                                    label: Text(
+                                      _busy
+                                          ? context.tr('登录中…', 'Signing in…')
+                                          : context.tr(
+                                              '立即直登 App',
+                                              'Sign In Directly',
+                                            ),
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
                         ],
-                        FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(double.infinity, 46),
-                            backgroundColor: blackEditionPreview
-                                ? palette.text
+                        // Never render browser-redirecting Google OAuth inside standalone iOS Home Screen App!
+                        if (!standalone && !mobileViewport) ...[
+                          FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 46),
+                              backgroundColor: blackEditionPreview
+                                  ? palette.text
+                                  : null,
+                              foregroundColor: blackEditionPreview
+                                  ? palette.background
+                                  : null,
+                            ),
+                            onPressed: widget.authConfigured
+                                ? widget.onGoogle
                                 : null,
-                            foregroundColor: blackEditionPreview
-                                ? palette.background
-                                : null,
+                            icon: const Icon(Icons.login_rounded, size: 18),
+                            label: Text(
+                              context.tr(
+                                '使用 Google 账号继续',
+                                'Continue with Google',
+                              ),
+                            ),
                           ),
-                          onPressed: widget.authConfigured
-                              ? widget.onGoogle
-                              : null,
-                          icon: const Icon(Icons.login_rounded, size: 18),
-                          label: Text(
-                            context.tr('使用 Google 账号继续', 'Continue with Google'),
+                          const SizedBox(height: 6),
+                          Text(
+                            context.tr(
+                              '每次均会弹出 Google 账号选择，不会自动沿用上一次账号',
+                              'Always prompts to choose your Google account',
+                            ),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: palette.muted,
+                              fontSize: 11.5,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          context.tr(
-                            '每次均会弹出 Google 账号选择，不会自动沿用上一次账号',
-                            'Always prompts to choose your Google account',
-                          ),
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: palette.muted,
-                            fontSize: 11.5,
-                          ),
-                        ),
+                        ],
                         if (widget.localBypassEnabled) ...[
                           const SizedBox(height: 10),
                           OutlinedButton.icon(
@@ -2541,6 +3310,8 @@ class TerminalHome extends StatefulWidget {
     required this.onLanguage,
     required this.onLogout,
     this.onSwitchAccount,
+    this.onUpdatePassword,
+    this.onCreatePairCode,
   });
 
   final String accessToken;
@@ -2554,6 +3325,8 @@ class TerminalHome extends StatefulWidget {
   final ValueChanged<AppLanguage> onLanguage;
   final VoidCallback onLogout;
   final VoidCallback? onSwitchAccount;
+  final Future<String?> Function(String newPassword)? onUpdatePassword;
+  final Future<Map<String, dynamic>> Function()? onCreatePairCode;
 
   @override
   State<TerminalHome> createState() => _TerminalHomeState();
@@ -2998,6 +3771,8 @@ class _TerminalHomeState extends State<TerminalHome>
           showAdmin: _adminEnabled,
           onLogout: widget.onLogout,
           onSwitchAccount: widget.onSwitchAccount,
+          onUpdatePassword: widget.onUpdatePassword,
+          onCreatePairCode: widget.onCreatePairCode,
           localPreview: widget.accessToken == _localDevToken,
           userEmail: widget.userEmail,
           colorBlind: _colorBlind,

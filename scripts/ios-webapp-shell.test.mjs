@@ -54,4 +54,9 @@ test('web/index.html declares full-screen iOS WebApp viewport, SafeArea CSS, 180
     assert.ok(matched, `${samplePath} must match an explicit cache rule in vercel.json`);
     assert.match(matched.headers['Cache-Control'], /must-revalidate/);
   }
+
+  // Verify 0ms Email Auth Handoff & 6-Digit Code Card interception in web/index.html
+  assert.match(html, /searchParams\.get\('auth_handoff'\)/);
+  assert.match(html, /\/api\/auth\/handoff\/complete/);
+  assert.match(html, /tf-pair-code-box/);
 });
