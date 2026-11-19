@@ -17,7 +17,9 @@ test('iPhone .mobileconfig file passes Apple plutil validation and launches Thes
   assert.match(lintOut, /OK/);
 
   const xml = fs.readFileSync(mobileconfigPath, 'utf8');
-  assert.match(xml, /com\.apple\.webclip\.managed/);
+  // Apple iOS PayloadType is strictly case-sensitive: must be com.apple.webClip.managed (capital C!)
+  assert.match(xml, /<string>com\.apple\.webClip\.managed<\/string>/);
+  assert.doesNotMatch(xml, /com\.apple\.webclip\.managed/);
   assert.match(xml, /<key>FullScreen<\/key>\s*<true\/>/);
   assert.match(xml, /<key>Precomposed<\/key>\s*<true\/>/);
   assert.match(xml, /<key>IsRemovable<\/key>\s*<true\/>/);
