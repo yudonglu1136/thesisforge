@@ -447,13 +447,13 @@ extension _InvestmentHome on _InvestmentWorkspaceState {
           alignment: Alignment.centerLeft,
           child: TextButton(
             onPressed: () {
-              updateUI(() => discoveryTab = 'fundamentals');
+              updateUI(() => discoveryTab = 'copycat');
               navigate('discover');
             },
             child: Text(
               w(
-                'Prefer to start with the business? Explore fundamental changes',
-                '想从公司经营出发？探索基本面变化',
+                'Want executable 13F portfolios? Open Copycat Playbook',
+                '想直接跟投高胜率大师组合？打开大师作业指挥台',
               ),
               style: const TextStyle(fontSize: 11),
             ),

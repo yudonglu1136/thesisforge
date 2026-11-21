@@ -113,7 +113,7 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
       final study = discoveryTab == 'managers' && selectedGuru == null;
       final opportunities = discoveryTab == 'gurus' && selectedGuru == null;
       final showTitle =
-          !{'aiinsights', 'fundamentals'}.contains(discoveryTab) &&
+          !{'aiinsights', 'fundamentals', 'copycat'}.contains(discoveryTab) &&
           (selectedGuru == null ||
               !{'gurus', 'managers'}.contains(discoveryTab));
       final headingText = study
@@ -211,6 +211,8 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
       ])
         'ai_$key': aiInsightsSelection[key]?.toString(),
       'ai_tickers': (aiInsightsSelection['tickers'] as List?)?.join(','),
+      for (final key in ['scheme', 'weightMode', 'blotter', 'quarter'])
+        'cc_$key': copycatSelection[key]?.toString(),
       'guru': selectedGuru == null
           ? null
           : text(asMap(selectedGuru?['guru'])['id']),

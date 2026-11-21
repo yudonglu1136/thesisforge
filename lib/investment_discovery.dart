@@ -110,7 +110,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
         final tabs = const [
           ('gurus', '13F Insights', '13F 洞察'),
           ('managers', 'Guru', '大师持仓'),
-          ('fundamentals', 'Fundamentals', '基本面'),
+          ('copycat', 'Copycat Playbook', '大师作业'),
           ('aiinsights', 'AI Insights', 'AI 洞察'),
         ];
         if (c.maxWidth < 650) {
@@ -133,15 +133,11 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
                         onTap: () {
                           updateUI(() {
                             discoveryTab = tab.$1;
-                            if (tab.$1 == 'gurus') selectedGuru = null;
+                            if (tab.$1 != 'managers') selectedGuru = null;
                           });
                           persistDiscover();
                           if (tab.$1 == 'gurus' && institutional13f == null) {
                             unawaited(load13FInsights());
-                          }
-                          if (tab.$1 == 'fundamentals' &&
-                              opportunities == null) {
-                            unawaited(loadOpportunities());
                           }
                         },
                         child: Container(
@@ -188,20 +184,18 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
                 Padding(
                   padding: const EdgeInsets.only(right: 6),
                   child: InkWell(
+                    key: ValueKey('discover-tab-${tab.$1}'),
                     borderRadius: const BorderRadius.vertical(
                       top: Radius.circular(6),
                     ),
                     onTap: () {
                       updateUI(() {
                         discoveryTab = tab.$1;
-                        if (tab.$1 == 'gurus') selectedGuru = null;
+                        if (tab.$1 != 'managers') selectedGuru = null;
                       });
                       persistDiscover();
                       if (tab.$1 == 'gurus' && institutional13f == null) {
                         unawaited(load13FInsights());
-                      }
-                      if (tab.$1 == 'fundamentals' && opportunities == null) {
-                        unawaited(loadOpportunities());
                       }
                     },
                     child: Container(
@@ -270,22 +264,30 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
       ),
     if ({'gurus', 'managers'}.contains(discoveryTab) && selectedGuru != null)
       ...guruDetailPage(),
-    if (discoveryTab == 'fundamentals')
-      FundamentalsPanel(
+    if (discoveryTab == 'copycat')
+      GuruCopycatPlaybookPanel(
         api: widget.api,
         palette: p,
         asOf: asOf,
-        initialSelection: fundamentalSelection,
-        onSelection: (selection) => fundamentalSelection = selection,
-        onCompany: (symbol, destination) {
+        initialSelection: copycatSelection,
+        onSelection: (selection) {
+          copycatSelection = selection;
+          persistDiscover();
+        },
+        onCompany: (symbol) {
           opportunityReturnDate = '';
           unawaited(
             loadCompany(
               symbol,
-              origin: 'fundamental_research',
-              initialSection: destination,
+              origin: 'guru_copycat_playbook',
+              initialSection: 'value',
             ),
           );
+        },
+        onExploreGuru: (guruId) {
+          updateUI(() => discoveryTab = 'managers');
+          persistDiscover();
+          unawaited(loadGuru(guruId));
         },
       ),
     if (discoveryTab == 'aiinsights')

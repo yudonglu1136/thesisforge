@@ -94,6 +94,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   // developed separately and must not be pulled into this release.
   Map<String, dynamic> valueFlowSelection = {};
   Map<String, dynamic> fundamentalSelection = {};
+  Map<String, dynamic> copycatSelection = {};
   Map<String, dynamic> guruStudySelection = {};
   Map<String, dynamic>? homeExample;
   String homeGuruId = 'bill-ackman',
@@ -337,13 +338,19 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         const {
           'gurus',
           'managers',
-          'fundamentals',
+          'copycat',
           'aiinsights',
         }.contains(query['discoverTab'])
         ? query['discoverTab']!
+        : query['discoverTab'] == 'fundamentals'
+        ? 'copycat'
         : query['discoverTab'] == 'valueflow'
         ? 'aiinsights'
         : 'gurus';
+    copycatSelection = {
+      for (final key in ['scheme', 'weightMode', 'blotter', 'quarter'])
+        if (query['cc_$key'] != null) key: query['cc_$key'],
+    };
     final legacyAutoPinnedAi =
         query['ai_snapshotId'] != null && query['ai_quarter_pinned'] != '1';
     aiInsightsSelection = {
@@ -371,6 +378,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     };
     if (query['discoverTab'] == 'valueflow') {
       replaceBrowserQuery({'discoverTab': 'aiinsights'}, replaceCurrent: true);
+    } else if (query['discoverTab'] == 'fundamentals') {
+      replaceBrowserQuery({'discoverTab': 'copycat'}, replaceCurrent: true);
     }
     // Guru consensus owns a compact, cacheable bootstrap payload. Loading the
     // full home dashboard here previously added an unrelated database pass to
@@ -383,8 +392,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     opportunityQuarter = query['quarter'] ?? '';
     managerDesk = query['workspace'] == 'manager';
     homeResearchDesk = managerDesk || query['workspace'] == 'research';
-    if ((page == 'home' && homeResearchDesk) ||
-        (page == 'discover' && discoveryTab == 'fundamentals')) {
+    if (page == 'home' && homeResearchDesk) {
       unawaited(loadOpportunities());
     }
     if (page == 'home' && homeResearchDesk) {
@@ -540,8 +548,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         !insightLoading) {
       unawaited(load13FInsights());
     }
-    if (((value == 'home' && homeResearchDesk) ||
-            (value == 'discover' && discoveryTab == 'fundamentals')) &&
+    if (value == 'home' &&
+        homeResearchDesk &&
         opportunities == null &&
         !opportunityLoading) {
       unawaited(loadOpportunities());

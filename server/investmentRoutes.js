@@ -21,6 +21,7 @@ import { loadInvestorStyleDashboard } from './investorStyleDashboard.js';
 import { createRuleAnalysisService,analyzeRuleRange,hydrateRuleLedger } from './rulePortfolioAnalysis.js';
 import { loadBreakoutPullbackDashboard, analyzeBreakoutPullbackRange } from './breakoutPullbackStrategy.js';
 import { loadQqqSchdRotationDashboard, analyzeQqqSchdRotationRange } from './qqqSchdRotationStrategy.js';
+import { loadGuruCopycatPlaybookDashboard, loadGuruCopycatPlaybookSnapshot } from './guruCopycatPlaybook.js';
 import { researchInsiders } from './researchInsiders.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
 import { factOsEnabled } from './factRepository.js';
@@ -119,6 +120,19 @@ export function registerInvestmentRoutes(app,service) {
     end:r.query.end??null,
     includeCurve:r.query.includeCurve!=='0'&&r.query.includeCurve!=='false',
   }));
+  route('get','/guru-copycat-playbook',(_,r)=>loadGuruCopycatPlaybookDashboard({
+    asOf:service.date(r.query.asOf),
+    scheme:r.query.scheme??null,
+    weightMode:r.query.weightMode??'conviction',
+    quarter:r.query.quarter??null,
+    source:service.source,
+  }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
+  route('get','/guru-copycat-playbook/snapshot',(_,r)=>loadGuruCopycatPlaybookSnapshot({
+    asOf:service.date(r.query.asOf),
+    scheme:r.query.scheme??null,
+    quarter:r.query.quarter??null,
+    source:service.source,
+  }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
     search:r.query.search,limit:r.query.limit,
   }));
@@ -254,6 +268,7 @@ export function enableInvestmentPreview(app) {
         try{guruStudy(source,today);}catch{}
         try{loadInvestorStyleDashboard({asOf:today,summaryOnly:true});}catch{}
         try{loadBreakoutPullbackDashboard({asOf:today,mode:'flagship'});}catch{}
+        try{loadGuruCopycatPlaybookDashboard({asOf:today,source});}catch{}
         (async()=>{
           for(const d of warmDates){
             await researchCompanies(source,d).catch(()=>{});

@@ -77,6 +77,10 @@ log_stage "Stage 2/6 — Tactical Strategy Artifacts (QQQ <-> SCHD & Hot Breakou
   --fact-root data/fact_os \
   --output server/config/hot-breakout-pullback-dashboard.json
 
+"$PYTHON_BIN" scripts/build-guru-copycat-playbook-artifact.py \
+  --fact-root data/fact_os \
+  --output server/config/guru-copycat-playbook-dashboard.json
+
 # Stage 3: Verify curated public research snapshot integrity
 log_stage "Stage 3/6 — Public Research Snapshot Verification"
 node scripts/build-public-research.mjs --check

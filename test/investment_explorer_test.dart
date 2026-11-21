@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:guru_analysis_terminal/main.dart';
 import 'investment_opportunities_test.dart' as opportunities;
 import 'investment_fundamentals_test.dart' as fundamentals;
+import 'investment_copycat_playbook_test.dart' as copycat;
 
 Map<String, dynamic> qualityFixture() => {
   'status': 'available',
@@ -479,6 +480,16 @@ class ExplorerApi extends opportunities.OpportunityApi {
         },
       };
     }
+    if (path.contains('/guru-copycat-playbook/snapshot')) {
+      return copycat.CopycatPlaybookFixtureApi().snapshotResponse(
+        Uri.parse(path),
+      );
+    }
+    if (path.contains('/guru-copycat-playbook')) {
+      return copycat.CopycatPlaybookFixtureApi().dashboardResponse(
+        Uri.parse(path),
+      );
+    }
     if (path.contains('/fundamentals?')) {
       return fundamentals.FundamentalApi().response(
         Uri.parse(path).queryParameters['asOf']!,
@@ -829,29 +840,18 @@ void main() {
     expect(find.byKey(const ValueKey('13f-stock-TEST')), findsOneWidget);
   });
   testWidgets(
-    'fundamentals workbench replaces the revenue-only screen and resets search',
+    'Copycat Playbook replaces Fundamentals right after Guru in Discover',
     (tester) async {
       await mountExplorer(tester, ExplorerApi());
-      await tester.tap(find.text('Fundamentals'));
+      expect(find.text('Fundamentals'), findsNothing);
+      expect(find.text('Copycat Playbook'), findsOneWidget);
+      await tester.tap(find.text('Copycat Playbook'));
       await tester.pumpAndSettle();
-      expect(find.text('Find your next company to research.'), findsOneWidget);
-      await tester.enterText(
-        find.byKey(const ValueKey('fundamental-search')),
-        'absent',
-      );
-      await tester.pumpAndSettle();
-      final clearSearch = find.byIcon(Icons.close);
-      await tester.ensureVisible(clearSearch);
-      await tester.tap(clearSearch);
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('fund-row-UBER')), findsOneWidget);
       expect(
-        tester
-            .widget<TextField>(find.byKey(const ValueKey('fundamental-search')))
-            .controller!
-            .text,
-        '',
+        find.byKey(const ValueKey('guru-copycat-playbook-root')),
+        findsOneWidget,
       );
+      expect(find.textContaining('17.78%'), findsWidgets);
     },
   );
 }

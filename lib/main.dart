@@ -62,6 +62,7 @@ part 'investment_ai_insights.dart';
 part 'investment_ai_insights_export.dart';
 part 'investment_fundamentals.dart';
 part 'investment_fundamental_rules.dart';
+part 'investment_copycat_playbook.dart';
 part 'investment_hedge.dart';
 part 'investment_strategy_hedge.dart';
 
