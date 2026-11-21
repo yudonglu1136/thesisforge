@@ -834,6 +834,37 @@ String localizeHedgeReason(String? rawReason, AppLanguage language) {
   };
 }
 
+bool isTransientBrokerSyncError(String raw) {
+  final lower = raw.trim().toLowerCase();
+  if (lower.isEmpty) return false;
+  if (lower.contains('error 1012') ||
+      lower.contains('error 1013') ||
+      lower.contains('error 1014') ||
+      lower.contains('error 1015') ||
+      lower.contains('error 1025') ||
+      lower.contains('token has expired') ||
+      lower.contains('token is invalid') ||
+      lower.contains('query is invalid') ||
+      lower.contains('query not found')) {
+    return false;
+  }
+  return lower.contains('error 1003') ||
+      lower.contains('error 1004') ||
+      lower.contains('error 1018') ||
+      lower.contains('error 1019') ||
+      lower.contains('statement is incomplete') ||
+      lower.contains('statement is not available') ||
+      lower.contains('too many requests') ||
+      lower.contains('generation in progress') ||
+      lower.contains('try again shortly') ||
+      lower.contains('temporarily') ||
+      lower.contains('timeout') ||
+      lower.contains('timed out') ||
+      lower.contains('http 502') ||
+      lower.contains('http 503') ||
+      lower.contains('http 504');
+}
+
 String localizeBrokerError(String raw, AppLanguage language) {
   final clean = raw.replaceFirst('Exception: ', '').trim();
   if (clean.isEmpty) return clean;
@@ -870,10 +901,15 @@ String localizeBrokerError(String raw, AppLanguage language) {
         ? 'IBKR 正在后台生成您的首次报表或触发短时限流（Error 1018/1019）。请等待 10–20 秒后再次点击同步即可。'
         : 'IBKR is still generating the report or rate-limiting rapid retries (Error 1018/1019). Wait 10–20 seconds and sync again.';
   }
+  if (lower.contains('error 1004') || lower.contains('statement is incomplete')) {
+    return zh
+        ? 'IBKR 正在例行结算并生成最新报表（Error 1004），常见于美东夜间或周末维护窗口。你的凭证完全正常，无需重新绑定，维护结束后系统会自动重试或稍后手动刷新即可。'
+        : 'IBKR Error 1004: Statement is still being compiled during IBKR’s overnight/weekend settlement window. Your credentials are valid — no action needed; sync will recover automatically or retry shortly.';
+  }
   if (lower.contains('error 1003') || lower.contains('statement is not available')) {
     return zh
-        ? 'IBKR 返回 Error 1003：报表暂不可用。若刚新开户或刚勾选 Yodlee，IBKR 通常在数分钟或首个结算日后产出报表。'
-        : 'IBKR Error 1003: Statement is not available yet. Newly opened accounts or freshly enabled Yodlee rows may take a few minutes to populate.';
+        ? 'IBKR 暂时无法提供报表（Error 1003）：若此前已正常同步，通常是因为当前正值美东夜间/周末例行结算维护（凭证正常，无需移除账户，稍后自动恢复）；若刚新开户或刚勾选 Yodlee，一般需等待数分钟或首个结算日。'
+        : 'IBKR Error 1003: Statement temporarily unavailable. For previously verified accounts this typically happens during US overnight/weekend settlement maintenance (credentials remain valid); for newly opened or freshly enabled Yodlee rows, allow a few minutes or the first settlement day.';
   }
   if (lower.contains('token format looks invalid')) {
     return zh

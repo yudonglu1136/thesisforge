@@ -15950,6 +15950,39 @@ class _PortfolioConnectionStatusPanelState
     }
   }
 
+  bool _isTransientAccountFailure(Map<String, dynamic> account) {
+    final errType = text(account['lastErrorType']);
+    if (errType == 'transient') return true;
+    if (errType == 'credential') return false;
+    return isTransientBrokerSyncError(text(account['lastError']));
+  }
+
+  bool _isTransientConnectionFailure(
+    Map<String, dynamic> connection,
+    List<dynamic> savedAccounts,
+  ) {
+    final errType = text(connection['lastErrorType']);
+    if (errType == 'transient') return true;
+    if (errType == 'credential') return false;
+    final upstream = text(connection['upstreamError']);
+    final lastErr = text(connection['lastError']);
+    if (isTransientBrokerSyncError(upstream) ||
+        isTransientBrokerSyncError(lastErr)) {
+      return true;
+    }
+    final failedAccounts = savedAccounts
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .where(
+          (acc) =>
+              text(acc['syncStatus']) == 'failed' ||
+              text(acc['lastError']).trim().isNotEmpty,
+        )
+        .toList();
+    return failedAccounts.isNotEmpty &&
+        failedAccounts.every(_isTransientAccountFailure);
+  }
+
   Future<void> _showAddAccount() async {
     final savedAccounts = asList(widget.connection['accounts']);
     final status = text(widget.connection['status'], 'linked');
@@ -15958,9 +15991,18 @@ class _PortfolioConnectionStatusPanelState
         status == 'stale_report' ||
         status == 'linked_partial' ||
         text(widget.connection['lastError']).isNotEmpty;
+    final transientOnly =
+        overallFailed &&
+        _isTransientConnectionFailure(widget.connection, savedAccounts);
+    final hasPermanentFailedAccount = savedAccounts.any((row) {
+      final acc = asMap(row);
+      final failedAcc =
+          text(acc['syncStatus']) == 'failed' ||
+          text(acc['lastError']).trim().isNotEmpty;
+      return failedAcc && !_isTransientAccountFailure(acc);
+    });
     final hasFailedAccount =
-        overallFailed ||
-        savedAccounts.any((acc) => text(acc['syncStatus']) == 'failed');
+        (!transientOnly && overallFailed) || hasPermanentFailedAccount;
     await showDialog<void>(
       context: context,
       builder: (context) => PortfolioAddAccountDialog(
@@ -15989,6 +16031,8 @@ class _PortfolioConnectionStatusPanelState
         status == 'stale_report' ||
         status == 'linked_partial' ||
         text(connection['lastError']).isNotEmpty;
+    final isTransientFailure =
+        failed && _isTransientConnectionFailure(connection, savedAccounts);
     final updatedAt = formatDate(text(connection['updatedAt']));
     final lastConnectedAt = formatDate(text(connection['lastConnectedAt']));
     final queryId = text(connection['queryId']);
@@ -16011,11 +16055,18 @@ class _PortfolioConnectionStatusPanelState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           PanelTitle(
-            icon: failed
+            icon: isTransientFailure
+                ? Icons.schedule_rounded
+                : failed
                 ? Icons.warning_amber_rounded
                 : Icons.verified_user_rounded,
             kicker: 'PRIVATE PORTFOLIO',
-            title: failed
+            title: isTransientFailure
+                ? context.tr(
+                    'IBKR 例行维护中，已保留最新持仓',
+                    'IBKR Settlement Window; Saved Report Active',
+                  )
+                : failed
                 ? context.tr(
                     '连接已保存，等待修复同步',
                     'Connection Saved; Sync Needs Attention',
@@ -16034,10 +16085,15 @@ class _PortfolioConnectionStatusPanelState
           ),
           const SizedBox(height: 10),
           Text(
-            failed
+            isTransientFailure
                 ? context.tr(
-                    '你的连接记录仍然保留在后端加密用户库里，不需要重新注册。同步失败通常是 token 过期或 Query ID 权限变化；需要更换时先断开再重新注册。',
-                    'Your connection is still encrypted in the per-user backend store. You do not need to register again. Sync failures usually mean the token expired or the Query ID permissions changed; disconnect first only if you need to replace credentials.',
+                    '你的 IBKR 凭证完全正常，仍然加密保存在后端，无需重新注册、更换 Token 或移除账户。当前正值盈透（IBKR）美东夜间/周末例行结算窗口（Error 1003/1004），系统每 30 分钟会自动重试恢复，你也可以稍后点击「更新数据」。',
+                    'Your IBKR credentials remain valid and encrypted on the backend — do not remove accounts or regenerate tokens. IBKR is in its overnight/weekend statement settlement window (Error 1003/1004); automatic recovery retries every 30 minutes, or click Update data later.',
+                  )
+                : failed
+                ? context.tr(
+                    '你的连接记录仍然保留在后端加密用户库里，不需要重新注册。同步失败通常是 token 过期或 Query ID 权限变化；需要更换时点击对应账户的「更新凭证」即可。',
+                    'Your connection is still encrypted in the per-user backend store. You do not need to register again. Sync failures usually mean the token expired or the Query ID permissions changed; use Update credentials on the affected account.',
                   )
                 : syncState == 'connected'
                 ? context.tr(
@@ -16080,11 +16136,16 @@ class _PortfolioConnectionStatusPanelState
           if (failed) ...[
             const SizedBox(height: 10),
             PortfolioDataNotice(
-              icon: Icons.error_outline_rounded,
+              icon: isTransientFailure
+                  ? Icons.schedule_rounded
+                  : Icons.error_outline_rounded,
               text: localizeBrokerError(
                 text(
-                  connection['lastError'],
-                  text(connection['message'], 'Latest sync failed.'),
+                  connection['upstreamError'],
+                  text(
+                    connection['lastError'],
+                    text(connection['message'], 'Latest sync failed.'),
+                  ),
                 ),
                 context.language,
               ),
@@ -16246,17 +16307,27 @@ class _PortfolioConnectionStatusPanelState
     final accountError = text(account['lastError']);
     final isFailedAccount =
         syncStatus == 'failed' || accountError.trim().isNotEmpty;
+    final isTransientAccount =
+        isFailedAccount && _isTransientAccountFailure(account);
     final isVerifiedAccount = syncStatus == 'verified' && !isFailedAccount;
+    final accountLastSync = formatDate(text(account['lastSyncAt']));
+    final effectiveSyncDate = accountLastSync != '-'
+        ? accountLastSync
+        : updatedAt;
     final tokenPreview = text(
       account['tokenPreview'],
       context.tr('已加密', 'encrypted'),
     );
-    final badgeColor = isFailedAccount
+    final badgeColor = isTransientAccount
+        ? palette.secondary
+        : isFailedAccount
         ? palette.negative
         : isVerifiedAccount
         ? palette.positive
         : palette.secondary;
-    final badgeText = isFailedAccount
+    final badgeText = isTransientAccount
+        ? context.tr('结算维护中', 'Maintenance')
+        : isFailedAccount
         ? context.tr('同步失败', 'Sync failed')
         : isVerifiedAccount
         ? context.tr('已验证', 'Verified')
@@ -16267,7 +16338,9 @@ class _PortfolioConnectionStatusPanelState
         color: palette.card,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: isFailedAccount
+          color: isTransientAccount
+              ? palette.secondary.withValues(alpha: .5)
+              : isFailedAccount
               ? palette.negative.withValues(alpha: .55)
               : palette.border,
         ),
@@ -16278,7 +16351,9 @@ class _PortfolioConnectionStatusPanelState
           Row(
             children: [
               Icon(
-                isFailedAccount
+                isTransientAccount
+                    ? Icons.schedule_rounded
+                    : isFailedAccount
                     ? Icons.error_outline_rounded
                     : Icons.account_balance_wallet_rounded,
                 color: badgeColor,
@@ -16340,7 +16415,15 @@ class _PortfolioConnectionStatusPanelState
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '${context.tr('上次同步', 'Last sync')} $updatedAt',
+                      accountLastSync != '-'
+                          ? context.tr(
+                              '上次成功同步 $effectiveSyncDate',
+                              'Last verified sync $effectiveSyncDate',
+                            )
+                          : context.tr(
+                              '上次同步 $effectiveSyncDate',
+                              'Last sync $effectiveSyncDate',
+                            ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: palette.faint, fontSize: 11),
@@ -16355,7 +16438,7 @@ class _PortfolioConnectionStatusPanelState
             Text(
               localizeBrokerError(accountError, context.language),
               style: TextStyle(
-                color: palette.negative,
+                color: isTransientAccount ? palette.secondary : palette.negative,
                 fontSize: 11.5,
                 height: 1.35,
               ),
@@ -16400,7 +16483,9 @@ class _PortfolioConnectionStatusPanelState
                   key: ValueKey('account-remove-$queryId'),
                   style: TextButton.styleFrom(
                     visualDensity: VisualDensity.compact,
-                    foregroundColor: palette.negative,
+                    foregroundColor: isTransientAccount
+                        ? palette.muted
+                        : palette.negative,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
                       vertical: 4,
@@ -16429,41 +16514,6 @@ class _PortfolioConnectionStatusPanelState
                     style: const TextStyle(fontSize: 12),
                   ),
                 ),
-                if (isFailedAccount)
-                  TextButton(
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      foregroundColor: palette.negative,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                    ),
-                    onPressed: _updating
-                        ? null
-                        : () async {
-                            setState(() => _updating = true);
-                            try {
-                              await widget.api.deleteJson(
-                                '/api/portfolio/accounts/${Uri.encodeComponent(accountId)}',
-                              );
-                              await widget.onRefresh();
-                            } catch (e) {
-                              if (mounted) {
-                                setState(() => _error = e.toString());
-                              }
-                            } finally {
-                              if (mounted) setState(() => _updating = false);
-                            }
-                          },
-                    child: Text(
-                      context.tr('移除失效账户', 'Remove failed account'),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
               ],
             ),
           ],

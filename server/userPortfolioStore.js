@@ -673,6 +673,24 @@ export function normalizePortfolioConnectionInput(input = {}) {
   };
 }
 
+export function classifyIbkrSyncError(errorMessage = "") {
+  const clean = cleanString(errorMessage).toLowerCase();
+  if (!clean) return "";
+  if (
+    /\berror\s*(1012|1013|1014|1015|1025)\b/.test(clean) ||
+    /token has expired|token is invalid|ip address|query is invalid|query not found|not configured|token\/query id/.test(clean)
+  ) {
+    return "credential";
+  }
+  if (
+    /\berror\s*(1003|1004|1018|1019)\b/.test(clean) ||
+    /statement is incomplete|statement is not available|too many requests|generation in progress|try again shortly|not ready|temporarily|http\s*(429|500|502|503|504)|timeout|timed out|econnreset|etimedout|fetch failed/.test(clean)
+  ) {
+    return "transient";
+  }
+  return "unknown";
+}
+
 function publicConnectionStatus(row, connection = null, recovery = null) {
   const accounts = portfolioConnectionAccounts(connection);
   if (!row) {
@@ -719,6 +737,7 @@ function publicConnectionStatus(row, connection = null, recovery = null) {
     updatedAt: row.updated_at,
     lastConnectedAt: row.last_connected_at || "",
     lastError: row.last_error || "",
+    lastErrorType: classifyIbkrSyncError(row.last_error),
     accountCount: accounts.length,
     tokenPreview: first.ibkrFlexToken ? maskSecret(first.ibkrFlexToken) : "",
     queryId: first.ibkrFlexQueryId || "",
@@ -788,7 +807,8 @@ export function readPortfolioConnectionStatus(user) {
       syncStatus: syncRow?.status || (status.status === "linked" || status.status === "linked_empty" ? "verified" : "pending"),
       holdingsCount: syncRow?.holdings_count ?? null,
       lastSyncAt: syncRow?.last_synced_at || "",
-      lastError: syncRow?.last_error || ""
+      lastError: syncRow?.last_error || "",
+      lastErrorType: classifyIbkrSyncError(syncRow?.last_error || "")
     };
   });
   const syncState = status.status === "linked" || status.status === "linked_empty"
@@ -918,9 +938,14 @@ export function addPortfolioAccount(user, input = {}) {
   const replaceFailed = input.replaceFailedAccounts === true || input.replaceFailedAccounts === "true";
   const failedIds = new Set();
   const syncFailedRows = db.prepare(
-    "SELECT account_id, query_id FROM portfolio_account_sync_status WHERE status = 'failed'"
+    "SELECT account_id, query_id, last_synced_at, last_error FROM portfolio_account_sync_status WHERE status = 'failed'"
   ).all();
   for (const row of syncFailedRows) {
+    // Never auto-replace previously verified accounts that merely hit a transient
+    // IBKR maintenance / settlement-window error (Error 1003/1004/1018/1019).
+    if (cleanString(row.last_synced_at) && classifyIbkrSyncError(row.last_error) === "transient") {
+      continue;
+    }
     if (row.account_id) failedIds.add(String(row.account_id));
     if (row.query_id) failedIds.add(String(row.query_id));
   }
@@ -997,18 +1022,20 @@ export function removePortfolioAccount(user, accountKey = "") {
 
 export function markPortfolioConnectionSync(user, { ok, error = "" } = {}) {
   const db = openUserDb(user);
+  const now = new Date().toISOString();
   db.prepare(`
     UPDATE portfolio_connections
     SET status = ?,
-        last_connected_at = ?,
+        last_connected_at = CASE WHEN ? != '' THEN ? ELSE last_connected_at END,
         last_error = ?,
         updated_at = ?
     WHERE provider = ?
   `).run(
     ok ? "linked" : "error",
-    ok ? new Date().toISOString() : "",
+    ok ? now : "",
+    ok ? now : "",
     ok ? "" : cleanString(error).slice(0, 500),
-    new Date().toISOString(),
+    now,
     "ibkr_flex"
   );
 }

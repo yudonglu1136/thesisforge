@@ -26,6 +26,7 @@ import {
   valuationTickerCandidates
 } from "./tickerAliases.js";
 import {
+  classifyIbkrSyncError,
   markPortfolioConnectionSync,
   listAdminPortfolioUsers,
   portfolioConnectionRevision,
@@ -902,6 +903,7 @@ export async function loadIbkrFlexXml(queryId = ibkrFlexQueryId, connection = {}
     : [0, 3500, 7000, 12_000];
   let sendRoot = null;
   let lastSendError = null;
+  let maintenanceSendRetries = 0;
   for (const delayMs of sendDelays) {
     if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
     const sendXml = await fetchXml(sendUrl, "IBKR Flex SendRequest");
@@ -914,6 +916,15 @@ export async function loadIbkrFlexXml(queryId = ibkrFlexQueryId, connection = {}
     }
     const errorCode = textValue(sendRoot.ErrorCode || sendRoot.errorCode);
     lastSendError = new Error(`IBKR SendRequest: ${flexErrorMessage(sendRoot, "Request failed.")}`);
+    if (errorCode === "1003" || errorCode === "1004") {
+      // IBKR overnight/weekend settlement window: retry once in case of a brief
+      // edge blip, then fail fast so the UI stays responsive during multi-hour maintenance.
+      if (maintenanceSendRetries < 1) {
+        maintenanceSendRetries += 1;
+        continue;
+      }
+      throw lastSendError;
+    }
     if (
       errorCode === "1018" ||
       errorCode === "1019" ||
@@ -964,6 +975,10 @@ export async function loadIbkrFlexXml(queryId = ibkrFlexQueryId, connection = {}
       const stmtErrorCode = textValue(root.ErrorCode || root.errorCode);
       lastError = new Error(`IBKR GetStatement: ${flexErrorMessage(root, "Statement is not ready.")}`);
       if (rootStatus === "success" || rootStatus === "ok") continue;
+      if (stmtErrorCode === "1003" || stmtErrorCode === "1004") {
+        if (attempt < 1) continue;
+        throw lastError;
+      }
       if (
         stmtErrorCode === "1018" ||
         stmtErrorCode === "1019" ||
@@ -2149,10 +2164,11 @@ function savedPortfolioReportPayload(user) {
   if (!saved) return null;
   const status = readPortfolioConnectionStatus(user);
   const upstreamError = status.lastError || "";
+  const lastErrorType = status.lastErrorType || classifyIbkrSyncError(upstreamError);
   const message = `Broker refresh unavailable. Showing the saved report dated ${saved.reportAsOf}; not live quotes.`;
   return attachStoredAnalysisNavHistory({
     ...saved.payload,
-    connection: {...status, status:"stale_report", lastError:message, upstreamError, message},
+    connection: {...status, status:"stale_report", lastError:message, upstreamError, lastErrorType, message},
     source: {...saved.payload.source, mode:"saved_broker_report", stale:true,
       retrievedAt:saved.retrievedAt, warnings:[...(saved.payload.source.warnings || []),message]},
     freshness:{status:"stale",basis:"last_successful_broker_report",
@@ -2392,12 +2408,61 @@ export async function warmRegisteredPortfolioAnalyses({
   return { enqueued, skipped };
 }
 
+export async function retryTransientPortfolioUsers({
+  listUsers = listAdminPortfolioUsers,
+  readStatus = readPortfolioConnectionStatus,
+  loadDashboard = loadPortfolioDashboard,
+  clearCache = clearPortfolioCache
+} = {}) {
+  const inventory = await listUsers();
+  const targets = (inventory?.users || []).filter((row) =>
+    productionUserId.test(String(row?.userId || "")) &&
+    row?.connection?.configured === true
+  );
+  const result = { checked: targets.length, retried: 0, recovered: 0, stillTransient: 0, failed: 0 };
+  for (const target of targets) {
+    const user = { id: target.userId };
+    let status = null;
+    try {
+      status = readStatus(user);
+    } catch {
+      continue;
+    }
+    const isTransientErr =
+      (status?.status === "error" || Boolean(status?.lastError)) &&
+      (status?.lastErrorType === "transient" || classifyIbkrSyncError(status?.lastError) === "transient");
+    if (!isTransientErr) continue;
+    result.retried += 1;
+    try {
+      clearCache(user);
+      const payload = await loadDashboard({
+        user,
+        forceRefresh: true,
+        captureNav: true,
+        includeAnalytics: false
+      });
+      const recovered = ["live", "multi_account_live"].includes(payload?.source?.mode) &&
+        payload?.freshness?.status !== "stale" &&
+        !["error", "stale_report", "linked_partial"].includes(payload?.connection?.status);
+      if (recovered) result.recovered += 1;
+      else result.stillTransient += 1;
+    } catch {
+      result.failed += 1;
+    } finally {
+      clearCache(user);
+    }
+  }
+  return result;
+}
+
 export function startPortfolioNavRecorder({
   initialDelayMs = finiteNumber(process.env.PORTFOLIO_NAV_CAPTURE_INITIAL_DELAY_MS, 30_000),
   intervalMs = finiteNumber(process.env.PORTFOLIO_NAV_CAPTURE_INTERVAL_MS, 24 * 60 * 60 * 1000),
+  transientRetryIntervalMs = finiteNumber(process.env.PORTFOLIO_TRANSIENT_RETRY_INTERVAL_MS, 30 * 60 * 1000),
   warmDelayMs = finiteNumber(process.env.PORTFOLIO_ANALYSIS_WARM_DELAY_MS, 8_000),
   warmIntervalMs = finiteNumber(process.env.PORTFOLIO_ANALYSIS_WARM_INTERVAL_MS, 15 * 60 * 1000),
-  syncUsers = syncRegisteredPortfolioUsers
+  syncUsers = syncRegisteredPortfolioUsers,
+  retryTransient = retryTransientPortfolioUsers
 } = {}) {
   if (portfolioNavRecorderStarted) return;
   portfolioNavRecorderStarted = true;
@@ -2456,6 +2521,21 @@ export function startPortfolioNavRecorder({
   initialTimer.unref?.();
   const intervalTimer = setInterval(capture, Math.max(60_000, intervalMs));
   intervalTimer.unref?.();
+  const transientTimer = setInterval(() => {
+    retryTransient()
+      .then((res) => {
+        if (res.retried > 0) {
+          console.log(
+            `Portfolio transient maintenance recovery: ${res.recovered}/${res.retried} recovered; ${res.stillTransient} still in maintenance.`
+          );
+          if (res.recovered > 0) {
+            warmRegisteredPortfolioAnalyses().catch(() => {});
+          }
+        }
+      })
+      .catch(() => {});
+  }, Math.max(5 * 60_000, transientRetryIntervalMs));
+  transientTimer.unref?.();
 }
 
 export const __portfolioTestInternals = {

@@ -10,7 +10,7 @@ process.env.SQLITE_DB_PATH = path.join(root, 'research.sqlite');
 process.env.PORTFOLIO_CREDENTIALS_KEY = 'synthetic-prefs-ibkr-secret';
 
 const store = await import('./userPortfolioStore.js');
-const { loadPortfolioDashboard, clearPortfolioCache, loadIbkrFlexXml } = await import('./portfolioClient.js');
+const { loadPortfolioDashboard, clearPortfolioCache, loadIbkrFlexXml, retryTransientPortfolioUsers } = await import('./portfolioClient.js');
 const { loadQqqSchdRotationDashboard, analyzeQqqSchdRotationRange } = await import('./qqqSchdRotationStrategy.js');
 const { loadInvestorStyleDashboard } = await import('./investorStyleDashboard.js');
 const originalFetch = globalThis.fetch;
@@ -165,6 +165,112 @@ test('loadIbkrFlexXml retries Error 1019 statement generation in progress', asyn
   const parsed = await loadIbkrFlexXml('1712970', { ibkrFlexToken: 'SYNTHETIC_TOKEN_1019' });
   assert.equal(stmtCalls, 2);
   assert.ok(parsed.FlexQueryResponse);
+});
+
+test('transient IBKR maintenance errors (1003/1004) preserve lastConnectedAt, cap retries, protect verified accounts, and auto-recover', async () => {
+  assert.equal(store.classifyIbkrSyncError('IBKR SendRequest: Statement is incomplete at this time. · Error 1004'), 'transient');
+  assert.equal(store.classifyIbkrSyncError('IBKR SendRequest: Statement is not available. · Error 1003'), 'transient');
+  assert.equal(store.classifyIbkrSyncError('IBKR SendRequest: Token has expired. · Error 1012'), 'credential');
+
+  const user = { id: '33333333-3333-4333-8333-333333333333' };
+  store.savePortfolioConnection(user, {
+    label: 'IBKR account 1',
+    ibkrFlexToken: 'SYNTHETIC_MAINT_TOKEN_001',
+    ibkrFlexQueryId: '1200871',
+  });
+
+  // 1. Initial successful sync establishes lastConnectedAt and verified account status
+  globalThis.fetch = async input => {
+    const url = new URL(input);
+    if (url.pathname.endsWith('SendRequest')) {
+      return {
+        ok: true,
+        text: async () =>
+          '<FlexStatementResponse><Status>Success</Status><ReferenceCode>REF_OK</ReferenceCode></FlexStatementResponse>',
+      };
+    }
+    return {
+      ok: true,
+      text: async () =>
+        '<FlexQueryResponse><FlexStatements><FlexStatement accountId="U_MAINT" fromDate="20261118" toDate="20261119" currency="USD"><AccountInformation currency="USD"/><EquitySummaryByReportDateInBase total="100000" cash="10000" reportDate="20261119"/><OpenPositions><OpenPosition symbol="QQQ" assetCategory="STK" currency="USD" quantity="200" markPrice="450" positionValue="90000"/></OpenPositions></FlexStatement></FlexStatements></FlexQueryResponse>',
+    };
+  };
+  clearPortfolioCache(user);
+  const okDash = await loadPortfolioDashboard({ user, forceRefresh: true });
+  assert.equal(okDash.connection.status, 'linked');
+  const okStatus = store.readPortfolioConnectionStatus(user);
+  assert.ok(okStatus.lastConnectedAt);
+  const savedLastConnected = okStatus.lastConnectedAt;
+
+  // 2. IBKR enters weekend settlement maintenance (Error 1004): caps SendRequest attempts to 2,
+  // preserves lastConnectedAt, marks lastErrorType='transient', and keeps saved holdings intact.
+  let sendAttempts = 0;
+  globalThis.fetch = async () => {
+    sendAttempts += 1;
+    return {
+      ok: true,
+      text: async () =>
+        '<FlexStatementResponse><Status>Fail</Status><ErrorCode>1004</ErrorCode><ErrorMessage>Statement is incomplete at this time. Please try again shortly.</ErrorMessage></FlexStatementResponse>',
+    };
+  };
+  await assert.rejects(
+    () => loadIbkrFlexXml('1200871', { ibkrFlexToken: 'SYNTHETIC_MAINT_TOKEN_001' }, { sendRetryDelays: [0, 1, 1, 1] }),
+    /Error 1004/,
+  );
+  assert.equal(sendAttempts, 2);
+
+  clearPortfolioCache(user);
+  // Override fetch again for loadPortfolioDashboard with fast Error 1003 maintenance
+  globalThis.fetch = async () => ({
+    ok: true,
+    text: async () =>
+      '<FlexStatementResponse><Status>Fail</Status><ErrorCode>1003</ErrorCode><ErrorMessage>Statement is not available.</ErrorMessage></FlexStatementResponse>',
+  });
+  const maintDash = await loadPortfolioDashboard({ user, forceRefresh: true });
+  assert.equal(maintDash.connection.status, 'stale_report');
+  assert.equal(maintDash.connection.lastErrorType, 'transient');
+  assert.equal(maintDash.holdings[0].ticker, 'QQQ');
+
+  const maintStatus = store.readPortfolioConnectionStatus(user);
+  assert.equal(maintStatus.lastConnectedAt, savedLastConnected);
+  assert.equal(maintStatus.lastErrorType, 'transient');
+  assert.equal(maintStatus.accounts[0].lastErrorType, 'transient');
+
+  // 3. Adding another account with replaceFailedAccounts: true must NOT delete the healthy account in transient maintenance!
+  const afterAdd = store.addPortfolioAccount(user, {
+    label: 'Zimeng',
+    ibkrFlexToken: 'SYNTHETIC_MAINT_TOKEN_002',
+    ibkrFlexQueryId: '1712970',
+    replaceFailedAccounts: true,
+  });
+  assert.equal(afterAdd.accountCount, 2);
+
+  // 4. retryTransientPortfolioUsers recovers ONLY transient users and skips credential errors
+  const credUser = { id: '44444444-4444-4444-8444-444444444444' };
+  const retriedIds = [];
+  const recovery = await retryTransientPortfolioUsers({
+    listUsers: async () => ({
+      users: [
+        { userId: user.id, connection: { configured: true } },
+        { userId: credUser.id, connection: { configured: true } },
+      ],
+    }),
+    readStatus: target =>
+      target.id === user.id
+        ? { status: 'error', lastError: 'Error 1004', lastErrorType: 'transient' }
+        : { status: 'error', lastError: 'Error 1012 Token has expired', lastErrorType: 'credential' },
+    clearCache: () => {},
+    loadDashboard: async opts => {
+      retriedIds.push(opts.user.id);
+      return {
+        source: { mode: 'live' },
+        freshness: { status: 'current_report' },
+        connection: { status: 'linked' },
+      };
+    },
+  });
+  assert.deepEqual(retriedIds, [user.id]);
+  assert.equal(recovery.recovered, 1);
 });
 
 test('liveRadar diagnostics stay dynamically aligned with scalar gauges and summary/curve flags trim payload weight', () => {

@@ -243,4 +243,79 @@ void main() {
       });
     }
   }
+
+  testWidgets(
+    'transient IBKR Error 1003/1004 maintenance renders calm settlement guidance without duplicate remove buttons',
+    (tester) async {
+      expect(
+        isTransientBrokerSyncError(
+          'IBKR SendRequest: Statement is incomplete at this time. · Error 1004',
+        ),
+        isTrue,
+      );
+      expect(
+        isTransientBrokerSyncError('IBKR SendRequest: Token has expired. · Error 1012'),
+        isFalse,
+      );
+      expect(
+        localizeBrokerError('Error 1004', AppLanguage.zh),
+        contains('例行结算'),
+      );
+
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LanguageScope(
+            language: AppLanguage.zh,
+            child: Scaffold(
+              body: SingleChildScrollView(
+                child: PortfolioConnectionStatusPanel(
+                  connection: const {
+                    'status': 'error',
+                    'lastConnectedAt': '2026-11-20T15:06:56Z',
+                    'lastError':
+                        'IBKR SendRequest: Statement is incomplete at this time. Please try again shortly. · Error 1004',
+                    'lastErrorType': 'transient',
+                    'accounts': [
+                      {
+                        'id': 'acc-1',
+                        'label': 'IBKR 账户 1',
+                        'queryId': '1200871',
+                        'syncStatus': 'failed',
+                        'lastSyncAt': '2026-11-20T15:06:56Z',
+                        'lastError': 'Error 1004 Statement is incomplete',
+                        'lastErrorType': 'transient',
+                      },
+                      {
+                        'id': 'acc-2',
+                        'label': 'Zimeng',
+                        'queryId': '1712970',
+                        'syncStatus': 'failed',
+                        'lastSyncAt': '2026-11-20T15:06:56Z',
+                        'lastError': 'Error 1003 Statement is not available',
+                        'lastErrorType': 'transient',
+                      },
+                    ],
+                  },
+                  api: _SavedReportApi(),
+                  palette: Palette(true),
+                  onRefresh: () async {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('IBKR 例行维护中，已保留最新持仓'), findsOneWidget);
+      expect(find.text('连接已保存，等待修复同步'), findsNothing);
+      expect(find.text('结算维护中'), findsNWidgets(2));
+      expect(find.text('移除失效账户'), findsNothing);
+      expect(find.textContaining('上次成功同步'), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
