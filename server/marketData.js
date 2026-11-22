@@ -155,7 +155,7 @@ function unavailableFactPriceSeries(symbol, priceType, error) {
 }
 
 const LIVE_TAIL_TTL_MS = 30 * 60 * 1000;
-const LIVE_TAIL_MAX_ENTRIES = 2048;
+const LIVE_TAIL_MAX_ENTRIES = 6000;
 const liveYahooTailCache = new Map();
 
 async function fetchYahooRecentDailyMap(symbol) {
@@ -181,12 +181,28 @@ async function fetchYahooRecentDailyMap(symbol) {
     const tsList = res0?.timestamp || [];
     const closes = res0?.indicators?.quote?.[0]?.close || [];
     const adjs = res0?.indicators?.adjclose?.[0]?.adjclose || closes;
+    const metaPrice = Number(res0?.meta?.regularMarketPrice);
+    const metaTimeSec = Number(res0?.meta?.regularMarketTime);
+    const metaDate =
+      metaTimeSec > 0 ? new Date(metaTimeSec * 1000).toISOString().slice(0, 10) : "";
+    const metaUtcHour = metaTimeSec > 0 ? new Date(metaTimeSec * 1000).getUTCHours() : 0;
     const byDate = new Map();
     for (let i = 0; i < tsList.length; i += 1) {
-      const cl = Number(closes[i]);
-      const ad = Number(adjs[i] ?? closes[i]);
+      const dt = new Date(Number(tsList[i]) * 1000).toISOString().slice(0, 10);
+      let cl = Number(closes[i]);
+      let ad = Number(adjs[i] ?? closes[i]);
+      if (
+        i === tsList.length - 1 &&
+        !(Number.isFinite(cl) && cl > 0) &&
+        Number.isFinite(metaPrice) &&
+        metaPrice > 0 &&
+        metaDate === dt &&
+        metaUtcHour >= 20
+      ) {
+        cl = metaPrice;
+        ad = metaPrice;
+      }
       if (Number.isFinite(cl) && cl > 0 && Number.isFinite(ad) && ad > 0) {
-        const dt = new Date(Number(tsList[i]) * 1000).toISOString().slice(0, 10);
         byDate.set(dt, { close: cl, adj: ad });
       }
     }
