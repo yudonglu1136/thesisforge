@@ -1,5 +1,5 @@
 import express from "express";
-import { dataReleaseMiddleware,dataReleaseStatus,retainDataRelease } from './dataReleaseContext.js';
+import { dataReleaseMiddleware,dataReleaseStatus,retainDataRelease,withActiveDataRelease } from './dataReleaseContext.js';
 import { DataReleaseVerification } from './dataReleaseVerification.js';
 import { queryFacts } from './factRepository.js';
 import { verifyReleasedFundamentals } from './fundamentalReleaseProbe.js';
@@ -39,6 +39,7 @@ import {
   manager13fSecurityMasterVersion,
   publicBacktestRequestPolicy,
   refreshGuruBacktestCache,
+  refreshScheduledGuruBacktestWindows,
   startGuruBacktestRefresher
 } from "./backtest.js";
 import { loadValuationDashboard, loadValuationTicker } from "./valuationClient.js";
@@ -139,6 +140,7 @@ app.get('/api/internal/research-data-release',requireLoopbackRequest,requireInte
   }catch{return response.status(503).json({error:'research_release_probe_failed'});}
 });
 const dataReleaseVerification=new DataReleaseVerification();
+let lastBacktestRefreshedReleaseId = "";
 app.get('/api/internal/data-release',requireLoopbackRequest,requireInternalCron,async (_request,response)=>{
   try {
     const release=dataReleaseStatus();
@@ -153,6 +155,18 @@ app.get('/api/internal/data-release',requireLoopbackRequest,requireInternalCron,
         const research=await stage('research',()=>verifyReleasedResearch(asOf));
         return {status:'verified',releaseId:release.releaseId,groups:release.groups,coverage,fundamentals,publicAnalysis,research};
       }});
+    if (result.status === 'verified' && release.releaseId && release.releaseId !== lastBacktestRefreshedReleaseId) {
+      lastBacktestRefreshedReleaseId = release.releaseId;
+      setImmediate(() => {
+        withActiveDataRelease(() => {
+          refreshScheduledGuruBacktestWindows({
+            reason: `data-release-${release.releaseId.slice(0, 12)}`
+          }).catch((err) => {
+            console.warn('[guru-backtest:data-release]', err?.message || err);
+          });
+        });
+      });
+    }
     response.set('Cache-Control','no-store');
     response.status(result.status==='verified'?200:result.status==='preparing'?202:503).json(result);
   }catch{return response.status(503).json({error:'data_release_probe_failed'});}

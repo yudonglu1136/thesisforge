@@ -92,6 +92,17 @@ class WorkerBoundaryTest(unittest.TestCase):
         sync.bulk_sync.assert_called_once_with('funds')
         sync.sync.assert_not_called()
 
+    def test_bulk_sync_falls_back_to_query_sync_on_403(self):
+        from .sync import UpstreamError
+        sync=MagicMock();events=[]
+        sync.bulk_sync.side_effect=UpstreamError('bulk archive unavailable (years=5): HTTP 403')
+        sync.sync.return_value={'status':'ingested'}
+        result=aws_worker.sync_source(sync,'stocks',events.append,bulk=True)
+        self.assertEqual(result,{'status':'ingested'})
+        sync.bulk_sync.assert_called_once_with('stocks')
+        sync.sync.assert_called_once_with('stocks')
+        self.assertEqual(events[0]['phase'],'source_fallback')
+
     def test_data_only_syncs_all_tables_and_stages_without_api_install(self):
         self.run_daily_fixture()
 

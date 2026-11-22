@@ -6,6 +6,7 @@ import { opportunityValuations } from './investmentOpportunities.js';
 import { investmentCurrentQuotes, preferInvestmentQuote } from './investmentPrices.js';
 import { dataReleaseId } from './dataReleaseContext.js';
 import { marketFactsVersion } from './investmentMarketContext.js';
+import { readGuruBacktest, readGuruBacktestProxy, readGuruBacktestVersion } from './localDatabase.js';
 
 const profileCaches = new WeakMap();
 const parseJson = row => {
@@ -184,15 +185,12 @@ function loadGuruBacktestBundle(source, guruId, configured, asOf) {
   if (configured?.disableSimulation || configured?.type !== 'manager13f') {
     return { status: 'unsupported', simulationNote: configured?.simulationNote ?? null, windows: {} };
   }
-  if (!hasTable(source.db, 'guru_backtests')) {
+  const hasSourceBacktests = hasTable(source.db, 'guru_backtests');
+  if (!hasSourceBacktests && source.canonicalMarket !== true) {
     return { status: 'unavailable', windows: {} };
   }
-  const hasProxies = hasTable(source.db, 'guru_backtest_proxies');
-  const readWindow = years => {
-    const strict = parseJson(source.db.prepare('SELECT payload_json FROM guru_backtests WHERE guru_id=? AND years=?').get(guruId, years));
-    const proxy = hasProxies
-      ? parseJson(source.db.prepare('SELECT payload_json FROM guru_backtest_proxies WHERE guru_id=? AND years=?').get(guruId, years))
-      : null;
+  const hasProxies = hasSourceBacktests && hasTable(source.db, 'guru_backtest_proxies');
+  const selectValidCandidate = (strict, proxy, years) => {
     try {
       const selected = selectManagerBacktestCache(strict, proxy, years, guruId);
       if (selected?.payload && ['ready', 'proxy_ready'].includes(selected.payload.status)) {
@@ -202,6 +200,29 @@ function loadGuruBacktestBundle(source, guruId, configured, asOf) {
       // Fall through to unavailable
     }
     return null;
+  };
+  const candidateEndDate = cand =>
+    String(cand?.payload?.window?.end ?? cand?.payload?.equity?.at(-1)?.date ?? '');
+  const readWindow = years => {
+    let best = null;
+    if (hasSourceBacktests) {
+      const strict = parseJson(source.db.prepare('SELECT payload_json FROM guru_backtests WHERE guru_id=? AND years=?').get(guruId, years));
+      const proxy = hasProxies
+        ? parseJson(source.db.prepare('SELECT payload_json FROM guru_backtest_proxies WHERE guru_id=? AND years=?').get(guruId, years))
+        : null;
+      best = selectValidCandidate(strict, proxy, years);
+    }
+    if (source.canonicalMarket === true) {
+      const runtimeCandidate = selectValidCandidate(
+        readGuruBacktest(guruId, years),
+        readGuruBacktestProxy(guruId, years),
+        years,
+      );
+      if (runtimeCandidate && (!best || candidateEndDate(runtimeCandidate) > candidateEndDate(best))) {
+        best = runtimeCandidate;
+      }
+    }
+    return best;
   };
 
   const w5 = readWindow(5);
@@ -413,7 +434,10 @@ function normalizeActionItem(item, totalCommonValue, previousCommonValue) {
 
 export function enrichGuruDetail(source, base) {
   const guruId = base.guru.id, asOf = base.asOf;
-  const generation = `${source.db.prepare('PRAGMA data_version').get().data_version}:${dataReleaseId() ?? 'legacy'}`;
+  const runtimeBacktestVer = source.canonicalMarket === true
+    ? `:${readGuruBacktestVersion(5)}:${readGuruBacktestVersion(10)}`
+    : '';
+  const generation = `${source.db.prepare('PRAGMA data_version').get().data_version}:${dataReleaseId() ?? 'legacy'}${runtimeBacktestVer}`;
   let cache = profileCaches.get(source);
   if (!cache || cache.generation !== generation) {
     cache = { generation, items: new Map(), snapshots: new Map() };

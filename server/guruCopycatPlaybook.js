@@ -2,14 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { factOsEnabled, PRICE_TYPES } from './factRepository.js';
+import { loadPriceSeriesBatch } from './marketData.js';
 
 export const GURU_COPYCAT_PLAYBOOK_VERSION = 'guru-copycat-playbook-v1';
 export const GURU_COPYCAT_SCHEME_IDS = Object.freeze([
+  'qqq80_exqqq_monopoly',
   'barbell_70_30',
   'monopoly_compounders',
   'pre2014_legends',
   'new_adds_catalyst',
-  'hf4_smart_flow',
 ]);
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -143,19 +145,19 @@ function lookupFreshQuotes(source, asOf, latestPriceDate, tickers) {
   return out;
 }
 
-function extendDailyCurveFromLiveDb(dailyCurve, liveAnchor, liveHoldings, source, cutoff) {
+function extendDailyCurveFromLiveDb(
+  dailyCurve,
+  liveAnchor,
+  liveHoldings,
+  source,
+  cutoff,
+  extraPriceRows = [],
+) {
   if (!dailyCurve || !liveAnchor?.anchorDate || !liveAnchor?.prices || cutoff <= dailyCurve.endDate) {
     return dailyCurve;
   }
-  const db = source?.db;
-  if (!db || typeof db.prepare !== 'function') return dailyCurve;
 
   try {
-    const exists = db
-      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_points'")
-      .get();
-    if (!exists) return dailyCurve;
-
     const anchorDate = String(liveAnchor.anchorDate).slice(0, 10);
     if (dailyCurve.endDate !== anchorDate) return dailyCurve;
     const anchorPrices = liveAnchor.prices;
@@ -163,22 +165,60 @@ function extendDailyCurveFromLiveDb(dailyCurve, liveAnchor, liveHoldings, source
     const tickers = [...new Set(['SPY', 'QQQ', ...holdings.map(h => h.ticker).filter(Boolean)])];
     if (!tickers.length || !anchorPrices.SPY || !anchorPrices.QQQ) return dailyCurve;
 
-    const placeholders = tickers.map(() => '?').join(',');
-    const rows = db
-      .prepare(
-        `SELECT symbol, substr(date, 1, 10) AS dt, COALESCE(adjusted_close, close) AS px
-         FROM price_points
-         WHERE symbol IN (${placeholders})
-           AND substr(date, 1, 10) > ?
-           AND substr(date, 1, 10) <= ?
-         ORDER BY dt ASC`,
-      )
-      .all(...tickers, anchorDate, cutoff);
+    const mergedRows = [];
+    if (Array.isArray(extraPriceRows) && extraPriceRows.length) {
+      for (const r of extraPriceRows) {
+        if (r?.symbol && r?.dt > anchorDate && r?.dt <= cutoff) mergedRows.push(r);
+      }
+    }
 
-    if (!rows.length) return dailyCurve;
+    const db = source?.db;
+    if (db && typeof db.prepare === 'function') {
+      const exists = db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_points'")
+        .get();
+      if (exists) {
+        const placeholders = tickers.map(() => '?').join(',');
+        const rows = db
+          .prepare(
+            `SELECT symbol, substr(date, 1, 10) AS dt, COALESCE(adjusted_close, close) AS px
+             FROM price_points
+             WHERE symbol IN (${placeholders})
+               AND substr(date, 1, 10) > ?
+               AND substr(date, 1, 10) <= ?
+             ORDER BY dt ASC`,
+          )
+          .all(...tickers, anchorDate, cutoff);
+        mergedRows.push(...rows);
+      }
+    }
+
+    const quotesDb = source?.publicFactsDb ?? source?.db;
+    if (!mergedRows.length && quotesDb && typeof quotesDb.prepare === 'function') {
+      const existsQ = quotesDb
+        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='investment_current_quotes'")
+        .get();
+      if (existsQ) {
+        const placeholders = tickers.map(() => '?').join(',');
+        const qRows = quotesDb
+          .prepare(
+            `SELECT ticker AS symbol, substr(price_date, 1, 10) AS dt, close AS px
+             FROM investment_current_quotes
+             WHERE ticker IN (${placeholders})
+               AND close > 0
+               AND substr(price_date, 1, 10) > ?
+               AND substr(price_date, 1, 10) <= ?
+             ORDER BY dt ASC`,
+          )
+          .all(...tickers, anchorDate, cutoff);
+        mergedRows.push(...qRows);
+      }
+    }
+
+    if (!mergedRows.length) return dailyCurve;
 
     const byDate = new Map();
-    for (const row of rows) {
+    for (const row of mergedRows) {
       const dt = String(row.dt ?? '').slice(0, 10);
       const px = Number(row.px);
       if (!dt || !Number.isFinite(px) || px <= 0) continue;
@@ -252,6 +292,39 @@ function extendDailyCurveFromLiveDb(dailyCurve, liveAnchor, liveHoldings, source
   } catch {
     return dailyCurve;
   }
+}
+
+function overlayLiveExtendedMetrics(metrics, navArr, spyArr, qqqArr) {
+  if (!metrics || !Array.isArray(navArr) || navArr.length < 2 || navArr[0] <= 0) return metrics;
+  const n = navArr.length;
+  const yrs = (n - 1) / 252.0;
+  if (yrs <= 0) return metrics;
+  const cagr = (Math.pow(navArr[n - 1] / navArr[0], 1 / yrs) - 1) * 100;
+  const spyCagr =
+    Array.isArray(spyArr) && spyArr.length === n && spyArr[0] > 0
+      ? (Math.pow(spyArr[n - 1] / spyArr[0], 1 / yrs) - 1) * 100
+      : metrics.cagrPct - (metrics.alphaPct ?? 0);
+  const qqqCagr =
+    Array.isArray(qqqArr) && qqqArr.length === n && qqqArr[0] > 0
+      ? (Math.pow(qqqArr[n - 1] / qqqArr[0], 1 / yrs) - 1) * 100
+      : null;
+  let peak = navArr[0];
+  let mdd = 0;
+  for (let i = 0; i < n; i += 1) {
+    if (navArr[i] > peak) peak = navArr[i];
+    const dd = (navArr[i] / peak - 1) * 100;
+    if (dd < mdd) mdd = dd;
+  }
+  return {
+    ...metrics,
+    cagrPct: r2(cagr),
+    alphaPct: r2(cagr - spyCagr),
+    ...(qqqCagr !== null ? { alphaVsQqqPct: r2(cagr - qqqCagr) } : {}),
+    maxDrawdownPct: r2(mdd),
+    final100k: r2(navArr[n - 1]),
+    cumReturnPct: r2((navArr[n - 1] / navArr[0] - 1) * 100),
+    tradingDays: n,
+  };
 }
 
 function applyQuoteOverlay(row, quoteMap, costKey = 'estGuruCost', priceKey = 'latestPrice', vsKey = 'vsGuruCostPct') {
@@ -346,16 +419,21 @@ export function loadGuruCopycatPlaybookDashboard({
   quarter = null,
   source = null,
   file = defaultFile,
+  livePriceRows = [],
 } = {}) {
   const cutoff = isIsoDate(asOf) ? asOf : new Date().toISOString().slice(0, 10);
   const { snapshotId, data } = readArtifact(file);
 
   const schemeId = GURU_COPYCAT_SCHEME_IDS.includes(scheme)
     ? scheme
-    : data.defaultSchemeId || 'barbell_70_30';
+    : data.defaultSchemeId || 'qqq80_exqqq_monopoly';
   const normalizedWeightMode = weightMode === 'equal' ? 'equal' : 'conviction';
+  const snapshotSchemeKey =
+    normalizedWeightMode === 'equal' && Array.isArray(data.snapshotsByScheme?.[`${schemeId}_equal`])
+      ? `${schemeId}_equal`
+      : schemeId;
 
-  const rawSnaps = data.snapshotsByScheme?.[schemeId] ?? [];
+  const rawSnaps = data.snapshotsByScheme?.[snapshotSchemeKey] ?? data.snapshotsByScheme?.[schemeId] ?? [];
   const visibleRawSnaps = rawSnaps.filter(s => String(s.filedAt ?? '') <= cutoff);
   if (!visibleRawSnaps.length) {
     return {
@@ -383,7 +461,7 @@ export function loadGuruCopycatPlaybookDashboard({
 
   // Collect live tickers for optional quote refresh
   const liveTickers = [];
-  if (isLatestWindowVisible && source) {
+  if (isLatestWindowVisible && (source || livePriceRows.length)) {
     for (const r of data.masterBlueprint16 ?? []) liveTickers.push(r.ticker);
     for (const r of data.q1HfDumpRadar ?? []) liveTickers.push(r.ticker);
     for (const r of data.guruExitsAndSlashes ?? []) liveTickers.push(r.ticker);
@@ -393,7 +471,15 @@ export function loadGuruCopycatPlaybookDashboard({
     const lastSnap = visibleRawSnaps[visibleRawSnaps.length - 1];
     for (const h of lastSnap?.holdings ?? []) liveTickers.push(h.ticker);
   }
-  const quoteMap = lookupFreshQuotes(source, cutoff, String(data.latestPriceDate || '2026-11-18'), liveTickers);
+  const quoteMap = lookupFreshQuotes(source, cutoff, String(data.latestPriceDate || '2026-11-20'), liveTickers);
+  for (const r of livePriceRows) {
+    if (r?.symbol && Number.isFinite(Number(r.px)) && Number(r.px) > 0 && r.dt <= cutoff) {
+      const prev = quoteMap.get(String(r.symbol));
+      if (!prev || r.dt >= prev.date) {
+        quoteMap.set(String(r.symbol), { price: Number(r.px), date: String(r.dt) });
+      }
+    }
+  }
 
   const maskedSnaps = visibleRawSnaps.map(s => maskSnapshotForCutoff(s, cutoff, quoteMap));
   const targetQuarterDate = normalizeQuarterKey(quarter, maskedSnaps);
@@ -406,7 +492,7 @@ export function loadGuruCopycatPlaybookDashboard({
     .reverse()
     .find(s => !s.isLive && s.portRetPct !== null)?.quarterDate ?? '2014-03-31';
 
-  const fullArtifactEndDate = String(data.dailyCurves?.endDate || data.latestPriceDate || '2026-11-17');
+  const fullArtifactEndDate = String(data.dailyCurves?.endDate || data.latestPriceDate || '2026-11-20');
   const sliceMetrics = m => {
     if (!m) return null;
     if (cutoff >= fullArtifactEndDate) return m;
@@ -417,16 +503,51 @@ export function loadGuruCopycatPlaybookDashboard({
     };
   };
 
+  const dailySeriesKey =
+    normalizedWeightMode === 'equal' && Array.isArray(data.dailyCurves?.series?.[`${schemeId}_equal`])
+      ? `${schemeId}_equal`
+      : schemeId;
+  const rawDailyCurve = buildSlicedDailyCurve(data.dailyCurves, dailySeriesKey, cutoff);
+  const dailyCurve = extendDailyCurveFromLiveDb(
+    rawDailyCurve,
+    data.dailyCurves?.liveAnchor,
+    latestBlotterSnapshot?.holdings,
+    source,
+    cutoff,
+    livePriceRows,
+  );
+  const effectiveLatestPriceDate =
+    dailyCurve?.endDate && dailyCurve.endDate > String(data.latestPriceDate || '')
+      ? dailyCurve.endDate
+      : data.latestPriceDate;
+
   const schemes = (data.schemes ?? []).map(sc => {
-    const useEq = sc.id === 'monopoly_compounders' && normalizedWeightMode === 'equal' && sc.equalWeightVariant;
+    const hasEq = Boolean(sc.equalWeightVariant);
+    const useEq = hasEq && normalizedWeightMode === 'equal';
+    const baseMetrics = sliceMetrics(useEq ? sc.equalWeightVariant : sc.metrics);
+    const metrics =
+      sc.id === schemeId && dailyCurve?.liveExtendedDays > 0
+        ? overlayLiveExtendedMetrics(baseMetrics, dailyCurve.schemeNav, dailyCurve.spyNav, dailyCurve.qqqNav)
+        : baseMetrics;
     return {
       ...sc,
-      activeWeightMode: sc.id === 'monopoly_compounders' ? normalizedWeightMode : 'default',
-      metrics: sliceMetrics(useEq ? sc.equalWeightVariant : sc.metrics),
-      convictionVariant: sc.id === 'monopoly_compounders' ? sliceMetrics(sc.metrics) : undefined,
-      equalWeightVariant: sc.equalWeightVariant ? sliceMetrics(sc.equalWeightVariant) : undefined,
+      activeWeightMode: hasEq ? normalizedWeightMode : 'default',
+      metrics,
+      convictionVariant: hasEq ? sliceMetrics(sc.metrics) : undefined,
+      equalWeightVariant: hasEq ? sliceMetrics(sc.equalWeightVariant) : undefined,
     };
   });
+
+  const spyBenchBase = sliceMetrics(data.benchmarks?.SPY);
+  const qqqBenchBase = sliceMetrics(data.benchmarks?.QQQ);
+  const spyBench =
+    dailyCurve?.liveExtendedDays > 0
+      ? overlayLiveExtendedMetrics(spyBenchBase, dailyCurve.spyNav, dailyCurve.spyNav, dailyCurve.qqqNav)
+      : spyBenchBase;
+  const qqqBench =
+    dailyCurve?.liveExtendedDays > 0
+      ? overlayLiveExtendedMetrics(qqqBenchBase, dailyCurve.qqqNav, dailyCurve.spyNav, dailyCurve.qqqNav)
+      : qqqBenchBase;
 
   const masterBlueprint16 = isLatestWindowVisible
     ? (data.masterBlueprint16 ?? []).map(r => applyQuoteOverlay(r, quoteMap))
@@ -444,6 +565,7 @@ export function loadGuruCopycatPlaybookDashboard({
   const guruRoster = isLatestWindowVisible
     ? (data.guruRoster ?? []).map(g => ({
         ...g,
+        ...(effectiveLatestPriceDate ? { navEndDate: effectiveLatestPriceDate } : {}),
         top12Holdings: (g.top12Holdings ?? []).map(h => applyQuoteOverlay(h, quoteMap)),
       }))
     : (data.guruRoster ?? []).map(g => ({
@@ -453,23 +575,6 @@ export function loadGuruCopycatPlaybookDashboard({
         filedAt: latestBlotterSnapshot.filedAt,
         top12Holdings: [],
       }));
-
-  const dailySeriesKey =
-    schemeId === 'monopoly_compounders' && normalizedWeightMode === 'equal'
-      ? 'monopoly_compounders_equal'
-      : schemeId;
-  const rawDailyCurve = buildSlicedDailyCurve(data.dailyCurves, dailySeriesKey, cutoff);
-  const dailyCurve = extendDailyCurveFromLiveDb(
-    rawDailyCurve,
-    data.dailyCurves?.liveAnchor,
-    latestBlotterSnapshot?.holdings,
-    source,
-    cutoff,
-  );
-  const effectiveLatestPriceDate =
-    dailyCurve?.endDate && dailyCurve.endDate > String(data.latestPriceDate || '')
-      ? dailyCurve.endDate
-      : data.latestPriceDate;
 
   return {
     version: GURU_COPYCAT_PLAYBOOK_VERSION,
@@ -485,10 +590,15 @@ export function loadGuruCopycatPlaybookDashboard({
     weightMode: normalizedWeightMode,
     selectedQuarterDate: activeSnapshot.quarterDate,
     rebalanceSchedule: data.rebalanceSchedule,
-    backtestWindow: data.backtestWindow,
+    backtestWindow: {
+      ...data.backtestWindow,
+      ...(dailyCurve?.endDate
+        ? { endDate: dailyCurve.endDate, tradingDays: dailyCurve.tradingDays }
+        : {}),
+    },
     benchmarks: {
-      SPY: sliceMetrics(data.benchmarks?.SPY),
-      QQQ: sliceMetrics(data.benchmarks?.QQQ),
+      SPY: spyBench,
+      QQQ: qqqBench,
     },
     dailyCurve,
     schemes,
@@ -504,9 +614,58 @@ export function loadGuruCopycatPlaybookDashboard({
   };
 }
 
+export async function loadGuruCopycatPlaybookDashboardLive(options = {}) {
+  const { asOf, scheme = null, weightMode = 'conviction', source = null, file = defaultFile } = options;
+  const cutoff = isIsoDate(asOf) ? asOf : new Date().toISOString().slice(0, 10);
+  let livePriceRows = [];
+  if (source?.canonicalMarket && factOsEnabled()) {
+    try {
+      const { data } = readArtifact(file);
+      const anchorDate = String(data.dailyCurves?.liveAnchor?.anchorDate || data.latestPriceDate || '');
+      if (anchorDate && cutoff > anchorDate) {
+        const schemeId = GURU_COPYCAT_SCHEME_IDS.includes(scheme)
+          ? scheme
+          : data.defaultSchemeId || 'qqq80_exqqq_monopoly';
+        const normalizedWeightMode = weightMode === 'equal' ? 'equal' : 'conviction';
+        const snapshotSchemeKey =
+          normalizedWeightMode === 'equal' && Array.isArray(data.snapshotsByScheme?.[`${schemeId}_equal`])
+            ? `${schemeId}_equal`
+            : schemeId;
+        const snaps = data.snapshotsByScheme?.[snapshotSchemeKey] ?? data.snapshotsByScheme?.[schemeId] ?? [];
+        const lastSnap = snaps[snaps.length - 1];
+        const tickers = [
+          ...new Set(['SPY', 'QQQ', ...(lastSnap?.holdings ?? []).map(h => h.ticker).filter(Boolean)]),
+        ];
+        const batch = await loadPriceSeriesBatch(
+          tickers.map(symbol => ({
+            symbol,
+            start: anchorDate,
+            end: cutoff,
+            priceType: PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE,
+          })),
+        );
+        for (const series of batch) {
+          if (series?.status !== 'available' || !Array.isArray(series.points)) continue;
+          for (const pt of series.points) {
+            const dt = String(pt.date ?? '').slice(0, 10);
+            const px = Number(pt.adjustedClose ?? pt.close);
+            if (dt > anchorDate && dt <= cutoff && Number.isFinite(px) && px > 0) {
+              livePriceRows.push({ symbol: series.symbol, dt, px });
+            }
+          }
+        }
+      }
+    } catch {
+      livePriceRows = [];
+    }
+  }
+  return loadGuruCopycatPlaybookDashboard({ ...options, livePriceRows });
+}
+
 export function loadGuruCopycatPlaybookSnapshot({
   asOf,
   scheme = null,
+  weightMode = 'conviction',
   quarter = null,
   source = null,
   file = defaultFile,
@@ -515,8 +674,13 @@ export function loadGuruCopycatPlaybookSnapshot({
   const { snapshotId, data } = readArtifact(file);
   const schemeId = GURU_COPYCAT_SCHEME_IDS.includes(scheme)
     ? scheme
-    : data.defaultSchemeId || 'barbell_70_30';
-  const rawSnaps = (data.snapshotsByScheme?.[schemeId] ?? []).filter(
+    : data.defaultSchemeId || 'qqq80_exqqq_monopoly';
+  const normalizedWeightMode = weightMode === 'equal' ? 'equal' : 'conviction';
+  const snapshotSchemeKey =
+    normalizedWeightMode === 'equal' && Array.isArray(data.snapshotsByScheme?.[`${schemeId}_equal`])
+      ? `${schemeId}_equal`
+      : schemeId;
+  const rawSnaps = (data.snapshotsByScheme?.[snapshotSchemeKey] ?? data.snapshotsByScheme?.[schemeId] ?? []).filter(
     s => String(s.filedAt ?? '') <= cutoff,
   );
   if (!rawSnaps.length) fail('guru_copycat_snapshot_not_found', 404);
@@ -527,7 +691,7 @@ export function loadGuruCopycatPlaybookSnapshot({
       ? lookupFreshQuotes(
           source,
           cutoff,
-          String(data.latestPriceDate || '2026-11-18'),
+          String(data.latestPriceDate || '2026-11-20'),
           (found.holdings ?? []).map(h => h.ticker),
         )
       : new Map();
@@ -536,6 +700,7 @@ export function loadGuruCopycatPlaybookSnapshot({
     snapshotId,
     asOf: cutoff,
     schemeId,
+    weightMode: normalizedWeightMode,
     snapshot: maskSnapshotForCutoff(found, cutoff, quoteMap),
   };
 }

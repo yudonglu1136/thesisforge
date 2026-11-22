@@ -23,8 +23,8 @@ class CopycatPlaybookFixtureApi extends ApiClient {
   Map<String, dynamic> dashboardResponse(Uri uri) {
     final raw = artifact;
     final qp = uri.queryParameters;
-    final cutoff = qp['asOf'] ?? '2026-11-21';
-    final schemeParam = qp['scheme'] ?? 'barbell_70_30';
+    final cutoff = qp['asOf'] ?? '2026-11-22';
+    final schemeParam = qp['scheme'] ?? 'qqq80_exqqq_monopoly';
     final normalizedWeightMode = qp['weightMode'] == 'equal'
         ? 'equal'
         : 'conviction';
@@ -35,12 +35,16 @@ class CopycatPlaybookFixtureApi extends ApiClient {
         .toList();
     final schemeId = schemeIds.contains(schemeParam)
         ? schemeParam
-        : 'barbell_70_30';
+        : 'qqq80_exqqq_monopoly';
 
     final snapsByScheme = Map<String, dynamic>.from(
       raw['snapshotsByScheme'] as Map? ?? {},
     );
-    final rawSnaps = List<dynamic>.from(snapsByScheme[schemeId] as List? ?? [])
+    final snapKey = normalizedWeightMode == 'equal' &&
+            snapsByScheme['${schemeId}_equal'] is List
+        ? '${schemeId}_equal'
+        : schemeId;
+    final rawSnaps = List<dynamic>.from(snapsByScheme[snapKey] as List? ?? [])
         .map((s) => Map<String, dynamic>.from(s as Map))
         .where((s) => (s['filedAt']?.toString() ?? '').compareTo(cutoff) <= 0)
         .toList();
@@ -83,18 +87,13 @@ class CopycatPlaybookFixtureApi extends ApiClient {
 
     final schemes = rawSchemes.map((item) {
       final sc = jsonDecode(jsonEncode(item)) as Map<String, dynamic>;
-      final useEq =
-          sc['id'] == 'monopoly_compounders' &&
-          normalizedWeightMode == 'equal' &&
-          sc['equalWeightVariant'] != null;
+      final hasEq = sc['equalWeightVariant'] != null;
+      final useEq = hasEq && normalizedWeightMode == 'equal';
       return {
         ...sc,
-        'activeWeightMode': sc['id'] == 'monopoly_compounders'
-            ? normalizedWeightMode
-            : 'default',
+        'activeWeightMode': hasEq ? normalizedWeightMode : 'default',
         'metrics': useEq ? sc['equalWeightVariant'] : sc['metrics'],
-        if (sc['id'] == 'monopoly_compounders')
-          'convictionVariant': sc['metrics'],
+        if (hasEq) 'convictionVariant': sc['metrics'],
       };
     }).toList();
 
@@ -111,9 +110,10 @@ class CopycatPlaybookFixtureApi extends ApiClient {
       final dcSeries = Map<String, dynamic>.from(
         dailyCurves['series'] as Map? ?? {},
       );
+      final eqKey = '${schemeId}_equal';
       final seriesKey =
-          schemeId == 'monopoly_compounders' && normalizedWeightMode == 'equal'
-          ? 'monopoly_compounders_equal'
+          normalizedWeightMode == 'equal' && dcSeries[eqKey] is List
+          ? eqKey
           : schemeId;
       final sNav = List<dynamic>.from(dcSeries[seriesKey] as List? ?? []);
       final spyNav = List<dynamic>.from(dcSeries['SPY'] as List? ?? []);
@@ -175,7 +175,7 @@ class CopycatPlaybookFixtureApi extends ApiClient {
   Map<String, dynamic> snapshotResponse(Uri uri) {
     final full = dashboardResponse(uri);
     return {
-      'asOf': uri.queryParameters['asOf'] ?? '2026-11-21',
+      'asOf': uri.queryParameters['asOf'] ?? '2026-11-22',
       'schemeId': full['selectedSchemeId'],
       'snapshot': full['activeSnapshot'],
     };
@@ -238,7 +238,7 @@ Future<void> mountCopycatPanel(
             child: GuruCopycatPlaybookPanel(
               api: api,
               palette: Palette(false),
-              asOf: '2026-11-21',
+              asOf: '2026-11-22',
               initialSelection: initialSelection,
               onSelection: onSelection,
               onCompany: onCompany ?? (_) {},
@@ -278,7 +278,7 @@ void main() {
               palette: Palette(false),
               initialPage: 'discover',
               initialTicker: '',
-              initialAsOf: '2026-11-21',
+              initialAsOf: '2026-11-22',
               initialQuery: const {'discoverTab': 'fundamentals'},
               onLanguage: (_) {},
               onLegacy: () {},
@@ -288,7 +288,6 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Fundamentals tab is completely replaced by Copycat Playbook right after Guru
       expect(find.text('Fundamentals'), findsNothing);
       expect(find.text('Copycat Playbook'), findsWidgets);
       expect(
@@ -304,52 +303,71 @@ void main() {
   );
 
   testWidgets(
-    'switches all 5 schemes, toggles monopoly Equal-Weight 73.5% win rate, and toggles Underwater Drawdown chart',
+    'defaults to 80% QQQ + 20% Ex-QQQ Monopoly flagship, toggles Top-8 Equal-Weight, removes hf4_smart_flow, and switches all 5 schemes',
     (tester) async {
       final api = CopycatPlaybookFixtureApi();
+      final endDate =
+          ((CopycatPlaybookFixtureApi.artifact['dailyCurves']
+                      as Map<String, dynamic>)['endDate'] ??
+                  '2026-11-20')
+              .toString();
       Map<String, dynamic> latestSelection = {};
       await mountCopycatPanel(
         tester,
         api,
+        initialSelection: const {'scheme': 'hf4_smart_flow'},
         onSelection: (s) => latestSelection = s,
       );
 
-      // Default scheme is 70/30 Barbell (16.86% CAGR through 2026-11-17, true daily MDD -33.60%, 3,146 sessions)
-      expect(find.textContaining('16.86%'), findsWidgets);
-      expect(find.textContaining('\$698.9k'), findsWidgets);
-      expect(find.textContaining('-33.60%'), findsWidgets);
-      expect(find.text('2026-11-17'), findsWidgets);
-      expect(find.textContaining('3146'), findsWidgets);
-      expect(find.textContaining('+598.9%'), findsWidgets);
-
-      // Switch to Monopoly Compounders (20.11% CAGR, $984.2k through 2026-11-17)
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('copycat-scheme-monopoly_compounders')),
+      // hf4_smart_flow is completely removed and falls back to qqq80_exqqq_monopoly
+      expect(
+        find.byKey(const ValueKey('copycat-scheme-hf4_smart_flow')),
+        findsNothing,
       );
-      expect(latestSelection['scheme'], 'monopoly_compounders');
-      expect(find.textContaining('20.11%'), findsWidgets);
-      expect(find.textContaining('\$984.2k'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('copycat-scheme-qqq80_exqqq_monopoly')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('NAV Through $endDate'), findsWidgets);
+      expect(find.textContaining('vs QQQ'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('copycat-blotter-ticker-V')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('copycat-blotter-ticker-TSM')),
+        findsNothing,
+      );
 
-      // Toggle Equal-Weight mode (74.0% Win Rate, 18.59% CAGR)
+      // Toggle flagship to Top-8 Equal-Weight (adds TSM, PGR, TDG)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('copycat-weight-equal')),
       );
       expect(latestSelection['weightMode'], 'equal');
-      expect(find.textContaining('18.59%'), findsWidgets);
-      expect(find.textContaining('74.0%'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('copycat-blotter-ticker-TSM')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('copycat-blotter-ticker-PGR')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('copycat-blotter-ticker-TDG')),
+        findsOneWidget,
+      );
 
-      // Switch through Pre-2014 Legends, New & Big Adds Catalyst, and 4-Factor HF Smart Flow
+      // Switch across remaining 4 schemes cleanly
       for (final sid in [
+        'barbell_70_30',
+        'monopoly_compounders',
         'pre2014_legends',
         'new_adds_catalyst',
-        'hf4_smart_flow',
       ]) {
         await tapVisible(tester, find.byKey(ValueKey('copycat-scheme-$sid')));
         expect(latestSelection['scheme'], sid);
       }
-      expect(find.textContaining('15.89%'), findsWidgets);
 
       // Toggle Drawdown chart mode & Log/Linear toggle
       await tapVisible(tester, find.byKey(const ValueKey('copycat-chart-dd')));
@@ -370,7 +388,6 @@ void main() {
         onCompany: openedTickers.add,
       );
 
-      // Filter current scheme blotter to Cheaper Than Guru and click a ticker
       await tapVisible(
         tester,
         find.byKey(const ValueKey('copycat-blotter-filter-discount')),
@@ -385,7 +402,7 @@ void main() {
       );
       expect(openedTickers, contains('GE'));
 
-      // Tab 2: 16-Stock Master Blueprint (42% Non-Tech + 42% Tech + 16% Catalyst)
+      // Tab 2: 16-Stock Master Blueprint
       await tapVisible(
         tester,
         find.byKey(const ValueKey('copycat-blotter-tab-blueprint16')),
@@ -423,7 +440,6 @@ void main() {
         onExploreGuru: openedGurus.add,
       );
 
-      // Default drawer shows TCI Fund Management (Chris Hohn) -> launch Guru Dossier
       expect(
         find.byKey(const ValueKey('copycat-guru-drawer-TCIFUN')),
         findsOneWidget,
@@ -434,7 +450,6 @@ void main() {
       );
       expect(openedGurus, ['chris-hohn']);
 
-      // Filter bucket to Activist & Macro HF and inspect Duquesne (Druckenmiller)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('copycat-guru-bucket-L2_CATALYST')),
@@ -465,7 +480,6 @@ void main() {
       final api = CopycatPlaybookFixtureApi();
       await mountCopycatPanel(tester, api);
 
-      // Step backward one quarter from 2026 Q3 -> 2026 Q2 via Prev button
       await tapVisible(tester, find.byKey(const ValueKey('copycat-snap-prev')));
       expect(
         api.calls.any(
@@ -476,14 +490,12 @@ void main() {
         isTrue,
       );
 
-      // Click historical 2022 Q2 heatmap tile directly
       await tapVisible(
         tester,
         find.byKey(const ValueKey('copycat-snap-tile-2022-06-30')),
       );
       expect(find.textContaining('2022 Q2'), findsWidgets);
 
-      // Click earliest 2014 Q1 tile directly
       await tapVisible(
         tester,
         find.byKey(const ValueKey('copycat-snap-tile-2014-03-31')),

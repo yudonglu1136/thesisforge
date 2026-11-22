@@ -39,7 +39,7 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
   bool snapshotLoading = false;
   String? error;
 
-  String schemeId = 'barbell_70_30';
+  String schemeId = 'qqq80_exqqq_monopoly';
   String weightMode = 'conviction';
   String blotterTab = 'scheme';
   String blotterFilter = 'all';
@@ -71,11 +71,11 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
     super.initState();
     final initScheme = text(widget.initialSelection['scheme']);
     if (const {
+      'qqq80_exqqq_monopoly',
       'barbell_70_30',
       'monopoly_compounders',
       'pre2014_legends',
       'new_adds_catalyst',
-      'hf4_smart_flow',
     }.contains(initScheme)) {
       schemeId = initScheme;
     }
@@ -171,6 +171,7 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
         queryParameters: {
           'asOf': widget.asOf,
           'scheme': schemeId,
+          'weightMode': weightMode,
           'quarter': quarterDate,
         },
       );
@@ -558,6 +559,10 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
     final latestQ = text(data?['latestQuarter'], '2026 Q3');
     final latestFiled = text(data?['latestFiledDate'], '2026-11-16');
     final nextReb = text(sched['nextRebalanceDate'], '2027-02-16');
+    final latestNavDate = text(
+      asMap(data?['dailyCurve'])['endDate'],
+      text(data?['latestPriceDate'], widget.asOf),
+    );
 
     return _panelCard(
       child: Column(
@@ -619,6 +624,14 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                 spacing: 8,
                 runSpacing: 6,
                 children: [
+                  _badgePill(
+                    w(
+                      'NAV Through $latestNavDate (Daily MTM)',
+                      '净值持续至 $latestNavDate (日频盯市)',
+                    ),
+                    fg: p.positive,
+                    icon: Icons.trending_up_rounded,
+                  ),
                   _badgePill(
                     w(
                       'Active 13F Window: $latestQ (Filed $latestFiled)',
@@ -703,13 +716,31 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                     ],
                   ),
                 ),
-                if (schemeId == 'monopoly_compounders')
+                if (schemeId == 'qqq80_exqqq_monopoly' ||
+                    schemeId == 'monopoly_compounders')
                   Builder(
                     builder: (_) {
                       final convM = asMap(active['convictionVariant']);
                       final eqM = asMap(active['equalWeightVariant']);
-                      final convLbl = _fmtPct(convM['cagrPct'], digits: 1);
+                      final convLbl = _fmtPct(convM['cagrPct'], digits: 2);
+                      final eqCagrLbl = _fmtPct(eqM['cagrPct'], digits: 2);
                       final eqWinLbl = _fmtPct(eqM['winRatePct'], digits: 1);
+                      final isQqq80 = schemeId == 'qqq80_exqqq_monopoly';
+                      final convText = isQqq80
+                          ? w(
+                              'Top-5 Conviction ($convLbl · ${_fmtPct(convM['annTurnoverPct'], digits: 0)} TO)',
+                              'Top-5 信念加权 ($convLbl · ${_fmtPct(convM['annTurnoverPct'], digits: 0)}换手)',
+                            )
+                          : w('Conviction Wt ($convLbl)', '信念加权 ($convLbl)');
+                      final eqText = isQqq80
+                          ? w(
+                              'Top-8 Equal ($eqCagrLbl · ${_fmtPct(eqM['annTurnoverPct'], digits: 0)} TO)',
+                              'Top-8 等权 ($eqCagrLbl · ${_fmtPct(eqM['annTurnoverPct'], digits: 0)}低换手)',
+                            )
+                          : w(
+                              'Equal Wt ($eqWinLbl Win)',
+                              '等权高胜率 ($eqWinLbl)',
+                            );
                       return Container(
                         key: const ValueKey('copycat-weight-toggle'),
                         padding: const EdgeInsets.all(3),
@@ -718,18 +749,12 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(color: p.border),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
+                        child: Wrap(
+                          spacing: 4,
+                          runSpacing: 4,
                           children: [
-                            _weightModePill(
-                              'conviction',
-                              w('Conviction Wt ($convLbl)', '信念加权 ($convLbl)'),
-                            ),
-                            const SizedBox(width: 4),
-                            _weightModePill(
-                              'equal',
-                              w('Equal Wt ($eqWinLbl Win)', '等权高胜率 ($eqWinLbl)'),
-                            ),
+                            _weightModePill('conviction', convText),
+                            _weightModePill('equal', eqText),
                           ],
                         ),
                       );
@@ -748,6 +773,9 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                   : 2;
               const gap = 8.0;
               final tileW = (c.maxWidth - (cols - 1) * gap) / cols;
+              final isQqqFlagship = schemeId == 'qqq80_exqqq_monopoly';
+              final hasQqqAlpha = nullableNumber(m['alphaVsQqqPct']) != null;
+              final hasRoll3yQqq = nullableNumber(m['roll3yWinQqqPct']) != null;
               final kpis = [
                 (
                   w('Strict T+45 CAGR', '严格 T+45 年化'),
@@ -758,18 +786,28 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                   ),
                   _mint,
                 ),
-                (
-                  w('Net Alpha vs SPY', '净超额 Alpha'),
-                  _fmtPct(m['alphaPct'], signed: true),
-                  w('Net of 10 bps cost', '已扣 10 bps 摩擦'),
-                  _signedColor(nullableNumber(m['alphaPct'])),
-                ),
+                isQqqFlagship && hasQqqAlpha
+                    ? (
+                        w('Net Alpha vs QQQ', '较 QQQ 净超额'),
+                        _fmtPct(m['alphaVsQqqPct'], signed: true),
+                        w(
+                          '${_fmtPct(m['alphaPct'], signed: true)} vs SPY · 10bps',
+                          '较标普 ${_fmtPct(m['alphaPct'], signed: true)} · 扣10bps',
+                        ),
+                        _signedColor(nullableNumber(m['alphaVsQqqPct'])),
+                      )
+                    : (
+                        w('Net Alpha vs SPY', '净超额 Alpha'),
+                        _fmtPct(m['alphaPct'], signed: true),
+                        w('Net of 10 bps cost', '已扣 10 bps 摩擦'),
+                        _signedColor(nullableNumber(m['alphaPct'])),
+                      ),
                 (
                   w('Sharpe · IR', '夏普比 · 信息比'),
                   '${nullableNumber(m['sharpe'])?.toStringAsFixed(2) ?? '—'} · ${nullableNumber(m['ir'])?.toStringAsFixed(2) ?? '—'}',
                   w(
-                    'SPY Sharpe ${nullableNumber(spyM['sharpe'])?.toStringAsFixed(2) ?? '1.06'}',
-                    '标普夏普 ${nullableNumber(spyM['sharpe'])?.toStringAsFixed(2) ?? '1.06'}',
+                    'QQQ Sharpe ${nullableNumber(qqqM['sharpe'])?.toStringAsFixed(2) ?? '1.06'}',
+                    '纳指夏普 ${nullableNumber(qqqM['sharpe'])?.toStringAsFixed(2) ?? '1.06'}',
                   ),
                   _sky,
                 ),
@@ -782,21 +820,31 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                   ),
                   _amber,
                 ),
-                (
-                  w('Quarterly Win Rate', '季度跑赢胜率'),
-                  _fmtPct(m['winRatePct'], digits: 1),
-                  w(
-                    '${m['winQuarters'] ?? '—'}/${m['quarters'] ?? 49} realized Qs',
-                    '${m['winQuarters'] ?? '—'}/${m['quarters'] ?? 49} 季跑赢标普',
-                  ),
-                  p.positive,
-                ),
+                isQqqFlagship && hasRoll3yQqq
+                    ? (
+                        w('3Y Beat-QQQ Win Rate', '滚动3年跑赢QQQ'),
+                        _fmtPct(m['roll3yWinQqqPct'], digits: 1),
+                        w(
+                          'Qtr vs SPY ${_fmtPct(m['winRatePct'], digits: 1)}',
+                          '单季胜标普 ${_fmtPct(m['winRatePct'], digits: 1)}',
+                        ),
+                        p.positive,
+                      )
+                    : (
+                        w('Quarterly Win Rate', '季度跑赢胜率'),
+                        _fmtPct(m['winRatePct'], digits: 1),
+                        w(
+                          '${m['winQuarters'] ?? '—'}/${m['quarters'] ?? 50} realized Qs',
+                          '${m['winQuarters'] ?? '—'}/${m['quarters'] ?? 50} 季跑赢标普',
+                        ),
+                        p.positive,
+                      ),
                 (
                   w('Annual Turnover', '年化换手率'),
                   _fmtPct(m['annTurnoverPct'], digits: 0),
                   w(
-                    'Avg ${nullableNumber(m['avgHoldings'])?.toStringAsFixed(0) ?? '10'} active stocks',
-                    '平均持仓 ${nullableNumber(m['avgHoldings'])?.toStringAsFixed(0) ?? '10'} 只',
+                    'Avg ${nullableNumber(m['avgHoldings'])?.toStringAsFixed(0) ?? '6'} positions',
+                    '平均持仓 ${nullableNumber(m['avgHoldings'])?.toStringAsFixed(0) ?? '6'} 只',
                   ),
                   (nullableNumber(m['annTurnoverPct']) ?? 0) > 250
                       ? _amber
@@ -805,16 +853,21 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                 (
                   w('Dual-Regime Alpha', '双周期超额检验'),
                   '${_fmtPct(m['alpha1419Pct'], signed: true, digits: 1)} / ${_fmtPct(m['alpha2026Pct'], signed: true, digits: 1)}',
-                  w('2014–19 / 2020–26', '14–19上半场 / 20–26下半场'),
+                  w('2014–19 / 2020–26 vs SPY', '14–19上半场 / 20–26下半场'),
                   m['bothHalvesBeat'] == true ? p.positive : _sky,
                 ),
                 (
                   w('\$100k Terminal NAV', '十万美元终值'),
                   _fmt100k(m['final100k']),
-                  w(
-                    'vs ${_fmt100k(spyM['final100k'])} SPY',
-                    '对比标普 ${_fmt100k(spyM['final100k'])}',
-                  ),
+                  isQqqFlagship
+                      ? w(
+                          'QQQ ${_fmt100k(qqqM['final100k'])} · SPY ${_fmt100k(spyM['final100k'])}',
+                          '纳指 ${_fmt100k(qqqM['final100k'])} · 标普 ${_fmt100k(spyM['final100k'])}',
+                        )
+                      : w(
+                          'vs ${_fmt100k(spyM['final100k'])} SPY',
+                          '对比标普 ${_fmt100k(spyM['final100k'])}',
+                        ),
                   _mint,
                 ),
               ];
@@ -913,7 +966,9 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
     final id = text(sc['id']);
     final selected = id == schemeId;
     final m = asMap(sc['metrics']);
-    final isHighTo = id == 'hf4_smart_flow' || id == 'new_adds_catalyst';
+    final isHighTo = id == 'new_adds_catalyst';
+    final isQqqFlagship = id == 'qqq80_exqqq_monopoly';
+    final hasQqqAlpha = nullableNumber(m['alphaVsQqqPct']) != null;
     final badgeColor = sc['recommended'] == true
         ? _mint
         : isHighTo
@@ -982,7 +1037,9 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                   const SizedBox(width: 6),
                   Flexible(
                     child: Text(
-                      '${_fmtPct(m['alphaPct'], signed: true, digits: 1)} vs SPY',
+                      isQqqFlagship && hasQqqAlpha
+                          ? '${_fmtPct(m['alphaVsQqqPct'], signed: true, digits: 2)} vs QQQ'
+                          : '${_fmtPct(m['alphaPct'], signed: true, digits: 1)} vs SPY',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -996,10 +1053,15 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
               ),
               const SizedBox(height: 4),
               Text(
-                w(
-                  'Win ${_fmtPct(m['winRatePct'], digits: 1)} · Sharpe ${nullableNumber(m['sharpe'])?.toStringAsFixed(2) ?? '—'} · MDD ${_fmtPct(m['maxDrawdownPct'], digits: 1)}',
-                  '胜率 ${_fmtPct(m['winRatePct'], digits: 1)} · 夏普 ${nullableNumber(m['sharpe'])?.toStringAsFixed(2) ?? '—'} · 回撤 ${_fmtPct(m['maxDrawdownPct'], digits: 1)}',
-                ),
+                isQqqFlagship
+                    ? w(
+                        '${_fmtPct(m['alphaPct'], signed: true, digits: 1)} vs SPY · Sharpe ${nullableNumber(m['sharpe'])?.toStringAsFixed(2) ?? '—'} · TO ${_fmtPct(m['annTurnoverPct'], digits: 0)}',
+                        '较标普 ${_fmtPct(m['alphaPct'], signed: true, digits: 1)} · 夏普 ${nullableNumber(m['sharpe'])?.toStringAsFixed(2) ?? '—'} · 换手 ${_fmtPct(m['annTurnoverPct'], digits: 0)}',
+                      )
+                    : w(
+                        'Win ${_fmtPct(m['winRatePct'], digits: 1)} · Sharpe ${nullableNumber(m['sharpe'])?.toStringAsFixed(2) ?? '—'} · MDD ${_fmtPct(m['maxDrawdownPct'], digits: 1)}',
+                        '胜率 ${_fmtPct(m['winRatePct'], digits: 1)} · 夏普 ${nullableNumber(m['sharpe'])?.toStringAsFixed(2) ?? '—'} · 回撤 ${_fmtPct(m['maxDrawdownPct'], digits: 1)}',
+                      ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: p.muted, fontSize: 10.8),

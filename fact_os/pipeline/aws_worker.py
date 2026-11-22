@@ -42,6 +42,11 @@ def sync_source(sync,table,emit,*,bulk=False):
               'reason':'upstream_snapshot_changed','delaySeconds':30})
         time.sleep(30)
         return fetch(table)
+    except UpstreamError as error:
+        if bulk and 'bulk archive unavailable' in str(error) and ('HTTP 401' in str(error) or 'HTTP 403' in str(error)):
+            emit({'phase':'source_fallback','table':table,'reason':'bulk_archive_forbidden','fallback':'query_sync'})
+            return sync_source(sync,table,emit,bulk=False)
+        raise
 
 
 def load_data_ready(s3,bucket):

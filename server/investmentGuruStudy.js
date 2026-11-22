@@ -4,12 +4,25 @@ import { gurus } from './gurus.js';
 import { auditPayload, measure } from './guruTurnoverMath.js';
 import { assert, isoDate } from './investmentMath.js';
 import { selectManagerBacktestCache, manager13fBacktestMethodVersion } from './backtest.js';
+import { readGuruBacktest, readGuruBacktestProxy, readGuruBacktestVersion } from './localDatabase.js';
 
 const cache = new WeakMap();
+function buildAuditedStudyEntry(g, s, proxy) {
+  const { payload: p } = selectManagerBacktestCache(s, proxy, 5, g.id);
+  assert(p && ['ready', 'proxy_ready'].includes(p.status), 'no_comparable_simulation');
+  assert(p.method?.benchmark === 'SPY', 'unsupported_simulation_method');
+  assert(!p.guru?.id || p.guru.id === g.id, 'simulation_manager_mismatch');
+  if (p.status === 'proxy_ready' && (s?.refreshGeneration || p.refreshGeneration)) {
+    assert(s?.refreshGeneration && p.refreshGeneration === s.refreshGeneration, 'proxy_refresh_generation_mismatch');
+  }
+  return { g, p, trades: auditPayload(p) };
+}
+
 function entriesFor(source) {
   // data_version detects another connection; total_changes detects writes made
   // by the same connection. Neither may leave a rejected generation charted.
-  const generation = `${source.db.prepare('PRAGMA data_version').get().data_version}:${source.db.prepare('SELECT total_changes() n').get().n}`;
+  const runtimeVer = source.canonicalMarket === true ? `:${readGuruBacktestVersion(5)}` : '';
+  const generation = `${source.db.prepare('PRAGMA data_version').get().data_version}:${source.db.prepare('SELECT total_changes() n').get().n}${runtimeVer}`;
   const prior = cache.get(source);
   if (prior?.generation === generation) return prior;
   const entries = [], unavailable = [];
@@ -21,22 +34,29 @@ function entriesFor(source) {
   const strict = read('guru_backtests'), proxies = read('guru_backtest_proxies');
   for (const g of gurus.filter(g => g.type === 'manager13f' && !g.disableSimulation)) {
     const s = strict.get(g.id), proxy = proxies.get(g.id);
+    let best = null;
     try {
-      // Use the same identity, method, security-master and per-manager proxy
-      // policy as the existing public simulation. A separately plausible CAGR
-      // is not authorization to publish an incompatible cache generation.
-      const {payload:p} = selectManagerBacktestCache(s,proxy,5,g.id);
-      assert(p && ['ready','proxy_ready'].includes(p.status), 'no_comparable_simulation');
-      assert(p.method?.benchmark === 'SPY', 'unsupported_simulation_method');
-      assert(!p.guru?.id || p.guru.id === g.id, 'simulation_manager_mismatch');
-      if(p.status==='proxy_ready' && (s.refreshGeneration || p.refreshGeneration)) {
-        assert(s.refreshGeneration && p.refreshGeneration===s.refreshGeneration,'proxy_refresh_generation_mismatch');
+      best = buildAuditedStudyEntry(g, s, proxy);
+    } catch {
+      best = null;
+    }
+    if (source.canonicalMarket === true) {
+      try {
+        const rs = readGuruBacktest(g.id, 5);
+        const rp = readGuruBacktestProxy(g.id, 5);
+        const runtimeEntry = buildAuditedStudyEntry(g, rs, rp);
+        const bestEnd = String(best?.p?.equity?.at(-1)?.date ?? '');
+        const runEnd = String(runtimeEntry?.p?.equity?.at(-1)?.date ?? '');
+        if (!best || runEnd > bestEnd) best = runtimeEntry;
+      } catch {
+        // Keep valid source.db entry if runtime cache is absent or invalid
       }
-      entries.push({g,p,trades:auditPayload(p)});
-    } catch { unavailable.push({id:g.id, name:g.name, reason:'simulation_unavailable_or_unreconciled'}); }
+    }
+    if (best) entries.push(best);
+    else unavailable.push({ id: g.id, name: g.name, reason: 'simulation_unavailable_or_unreconciled' });
   }
-  const result = {generation, entries, unavailable, views: new Map(), spanViews: new Map()};
-  cache.set(source,result); return result;
+  const result = { generation, entries, unavailable, views: new Map(), spanViews: new Map() };
+  cache.set(source, result); return result;
 }
 
 export function guruStudy(source, asOf, period='common') {

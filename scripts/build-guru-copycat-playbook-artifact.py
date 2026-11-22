@@ -34,7 +34,54 @@ if str(REPO_ROOT) not in sys.path:
 ARTIFACT_VERSION = "guru-copycat-playbook-v1"
 DEFAULT_FACT_ROOT = REPO_ROOT / "data/fact_os"
 DEFAULT_TAXONOMY_FILE = REPO_ROOT / "server/config/investor-strategy-taxonomy.json"
+DEFAULT_RULE_QQQ_FILE = REPO_ROOT / "server/config/rule-universe-qqq.json"
 DEFAULT_OUTPUT_FILE = REPO_ROOT / "server/config/guru-copycat-playbook-dashboard.json"
+
+DUAL_CLASS_PAIRS: dict[str, str] = {
+    "GOOG": "GOOGL",
+    "GOOGL": "GOOG",
+    "CMCSA": "CMCSK",
+    "CMCSK": "CMCSA",
+    "FOX": "FOXA",
+    "FOXA": "FOX",
+    "TFCF": "TFCFA",
+    "TFCFA": "TFCF",
+}
+
+
+def load_sec_qqq_snapshots(rule_qqq_file: Path) -> list[dict]:
+    if not rule_qqq_file.exists():
+        return []
+    raw = json.loads(rule_qqq_file.read_text(encoding="utf-8"))
+    snaps = []
+    for s in raw.get("snapshots", []):
+        filed_at = str(s.get("filed") or s.get("filedAt") or "")[:10]
+        report_dt = str(s.get("period") or s.get("reportDate") or "")[:10]
+        tickers: set[str] = set()
+        permas: set[int] = set()
+        for m in s.get("members") or s.get("holdings") or []:
+            for t in m.get("tickers", []):
+                tu = str(t).strip().upper()
+                if tu:
+                    tickers.add(tu)
+            tk = str(m.get("ticker") or "").strip().upper()
+            if tk:
+                tickers.add(tk)
+            pm = m.get("permaticker")
+            if pm is not None:
+                try:
+                    permas.add(int(pm))
+                except (TypeError, ValueError):
+                    pass
+        if filed_at and (tickers or permas):
+            snaps.append({
+                "filedAt": filed_at,
+                "reportDate": report_dt,
+                "tickers": tickers,
+                "permatickers": permas,
+            })
+    snaps.sort(key=lambda x: (x["reportDate"], x["filedAt"]))
+    return snaps
 
 
 def r1(v: float | None) -> float | None:
@@ -349,6 +396,7 @@ def calc_series_metrics(
     peak_r = 1.0
     mdd = 0.0
     wins = 0
+    wins_qqq = 0
     rs: list[float] = []
     diffs: list[float] = []
     curve: list[dict] = []
@@ -364,6 +412,8 @@ def calc_series_metrics(
             mdd = dd
         if r > s:
             wins += 1
+        if r > qq:
+            wins_qqq += 1
         rs.append(r)
         diffs.append(r - s)
         curve.append({
@@ -373,9 +423,11 @@ def calc_series_metrics(
             "spyRetPct": r2(s * 100.0),
             "qqqRetPct": r2(qq * 100.0),
             "excessSpyPct": r2((r - s) * 100.0),
+            "excessQqqPct": r2((r - qq) * 100.0),
             "nav100k": r2(eq_r * 100.0),
             "drawdownPct": r2(dd * 100.0),
             "beatSpy": bool(r > s),
+            "beatQqq": bool(r > qq),
         })
         by_year.setdefault(qd[:4], []).append((r, s, qq))
 
@@ -390,6 +442,7 @@ def calc_series_metrics(
     sharpe = (mean_r * 4.0 - 0.025) / (std_r * 2.0) if std_r > 0 else 0.0
     ir = (mean_d * 4.0) / (std_d * 2.0) if std_d > 0 else 0.0
     win_q = (wins / n) * 100.0
+    win_q_qqq = (wins_qqq / n) * 100.0
 
     def sub_alpha(pred) -> float | None:
         sub = [(r, s) for qd, r, s, _ in pairs if pred(qd)]
@@ -426,7 +479,9 @@ def calc_series_metrics(
             "spyRetPct": r2(sr),
             "qqqRetPct": r2(qr),
             "excessSpyPct": r2(rr - sr),
+            "excessQqqPct": r2(rr - qr),
             "beatSpy": bool(rr > sr),
+            "beatQqq": bool(rr > qr),
         })
 
     return {
@@ -445,6 +500,8 @@ def calc_series_metrics(
         "maxDrawdownPct": r2(mdd * 100.0),
         "winRatePct": r1(win_q),
         "winQuarters": wins,
+        "winRateVsQqqPct": r1(win_q_qqq),
+        "winQuartersVsQqq": wins_qqq,
         "final100k": r1(eq_r * 100.0),
         "curve": curve,
         "annualReturns": annual_rows,
@@ -1121,60 +1178,144 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
 
             return _select
 
-        def select_hf4(qd: str, require_realized_ret: bool = True) -> list[dict]:
-            sub = [
-                r for r in hf_by_q.get(qd, [])
-                if (not require_realized_ret or r["retT45"] is not None)
+        # Point-in-Time QQQ Constituent Filter (SEC N-PORT 2019 Q4..2026 Q3 + PIT Top-100 Non-Financial NASDAQ 2014 Q1..2019 Q3)
+        sec_qqq_snaps = load_sec_qqq_snapshots(DEFAULT_RULE_QQQ_FILE)
+        ticker_to_permas: dict[str, set[int]] = {}
+        for tk_r, pm_r in con.execute(
+            "SELECT DISTINCT ticker, permaticker FROM tickers WHERE ticker IS NOT NULL AND permaticker IS NOT NULL"
+        ).fetchall():
+            ticker_to_permas.setdefault(str(tk_r).upper(), set()).add(int(pm_r))
+
+        pit_ndx_rows = con.execute("""
+            WITH tk_clean AS (
+                SELECT ticker,
+                       arg_max(permaticker, lastupdated) AS permaticker,
+                       arg_max(exchange, lastupdated) AS exchange,
+                       arg_max(sector, lastupdated) AS sector
+                FROM tickers
+                WHERE ticker IS NOT NULL
+                GROUP BY 1
+            ),
+            q_mcap AS (
+                SELECT CAST(c.q_date AS VARCHAR) AS qd,
+                       d.ticker,
+                       LAST(d.marketcap ORDER BY d.date) AS mcap
+                FROM q_cal c
+                JOIN daily d
+                  ON d.date <= c.q_date AND d.date >= c.q_date - INTERVAL 15 DAY
+                JOIN tk_clean t ON t.ticker = d.ticker
+                WHERE c.q_date >= DATE '2014-03-31'
+                  AND t.exchange = 'NASDAQ'
+                  AND COALESCE(t.sector, '') <> 'Financial Services'
+                  AND d.marketcap > 0
+                GROUP BY 1, 2
+            ),
+            ranked AS (
+                SELECT qd, ticker, mcap,
+                       ROW_NUMBER() OVER (PARTITION BY qd ORDER BY mcap DESC) AS rk
+                FROM q_mcap
+            )
+            SELECT qd, ticker FROM ranked WHERE rk <= 100
+        """).fetchall()
+        pit_ndx_by_q: dict[str, set[str]] = {}
+        for qd_s, tk_s in pit_ndx_rows:
+            pit_ndx_by_q.setdefault(str(qd_s)[:10], set()).add(str(tk_s).upper())
+
+        def is_in_qqq_pit(qd: str, entry_dt: str, ticker: str) -> bool:
+            tk = ticker.upper()
+            if tk in ("QQQ", "SPY"):
+                return True
+            visible = [
+                snap for snap in sec_qqq_snaps
+                if snap["filedAt"] < entry_dt and snap["reportDate"] <= entry_dt
             ]
-            if not sub:
-                return []
-            pas_cut = quantile_linear([r["pasFlowPct"] for r in sub], 0.80)
-            is_live_q3 = qd == "2026-09-30"
-            min_prev_m = 5000.0 if is_live_q3 else 0.0
-            cand = [
-                r for r in sub
-                if r["tot13fM"] >= 5000.0
-                and r["prevTot13fM"] >= min_prev_m
-                and r["nHf"] >= 6
-                and r["podFlowPct"] > 0.0
-                and r["pasFlowPct"] < pas_cut
-                and (not is_live_q3 or r["hfFlowPct"] > 0.0)
-            ]
-            if not cand:
-                return []
-            # Note: rank(pct=True) in Step 13B was computed on `p` (filtered candidates)
-            r_hf = percentile_rank_map([(x["ticker"], x["hfFlowPct"]) for x in cand])
-            r_pod = percentile_rank_map([(x["ticker"], x["podFlowPct"]) for x in cand])
-            r_pas = percentile_rank_map([(x["ticker"], x["pasFlowPct"]) for x in cand])
-            scored = []
-            for x in cand:
-                tk = x["ticker"]
-                sc = 0.50 * r_hf[tk] + 0.30 * r_pod[tk] - 0.20 * r_pas[tk]
-                scored.append({
-                    "ticker": tk,
-                    "convScore": sc,
-                    "rawWeight": 1.0,
-                    "guruCount": x["nHf"],
-                    "sumGuruWtPct": x["hfFlowPct"] * 100.0,
-                    "backingGurus": [
-                        f"{x['nHf']} HFs ({x['dNHf']:+d} QoQ)",
-                        f"HF +${x['hfNetM']:.0f}M",
-                        f"Pod {x['podFlowPct']*100:+.1f}%",
-                    ],
-                    "leadAction": f"HF +{x['hfFlowPct']*100:.1f}%",
-                })
-            scored.sort(key=lambda z: (z["convScore"], z["sumGuruWtPct"]), reverse=True)
-            top_k = 15
-            picks = scored[:top_k]
-            tot_w = sum(p["rawWeight"] for p in picks) or 1.0
-            for p in picks:
-                p["weight"] = p["rawWeight"] / tot_w
-            return picks
+            if visible:
+                best_sec = max(visible, key=lambda s: (s["reportDate"], s["filedAt"]))
+                t_set = best_sec["tickers"]
+                p_set = best_sec["permatickers"]
+                if tk in t_set:
+                    return True
+                alt = DUAL_CLASS_PAIRS.get(tk)
+                if alt and alt in t_set:
+                    return True
+                t_permas = ticker_to_permas.get(tk, set())
+                if t_permas and (t_permas & p_set):
+                    return True
+                return False
+            ndx_set = pit_ndx_by_q.get(qd, set())
+            if tk in ndx_set:
+                return True
+            alt = DUAL_CLASS_PAIRS.get(tk)
+            if alt and alt in ndx_set:
+                return True
+            return False
+
+        def make_exqqq_monopoly_selector(top_k: int = 5, weight_mode: str = "conviction"):
+            pool_set = set(TOP_COMPOUND_IDS)
+
+            def _select(qd: str, require_realized_ret: bool = True) -> list[dict]:
+                entry_dt = session_info[qd]["t45EntryDate"]
+                base_rows = [
+                    r for r in guru_by_q.get(qd, [])
+                    if r["investorid"] in pool_set
+                    and (not require_realized_ret or r["pT45"] is not None)
+                    and not is_in_qqq_pit(qd, entry_dt, r["ticker"])
+                ]
+                strict_rows = [r for r in base_rows if r["rk"] <= 6 and r["wt"] >= 0.04]
+                strict_tks = {r["ticker"] for r in strict_rows}
+                if len(strict_tks) < top_k:
+                    extra_rows = [
+                        r for r in base_rows
+                        if r["rk"] <= 10 and r["wt"] >= 0.025 and r["ticker"] not in strict_tks
+                    ]
+                    use_rows = strict_rows + extra_rows
+                else:
+                    use_rows = strict_rows
+                if not use_rows:
+                    return []
+                by_tk: dict[str, list[dict]] = {}
+                for r in use_rows:
+                    by_tk.setdefault(r["ticker"], []).append(r)
+                scored = []
+                for tk, grp in by_tk.items():
+                    wt_sum = sum(x["wt"] for x in grp)
+                    n_g = len({x["investorid"] for x in grp})
+                    is_primary = any(x["rk"] <= 6 and x["wt"] >= 0.04 for x in grp)
+                    conv_score = (10.0 if is_primary else 0.0) + wt_sum + 0.05 * (n_g - 1)
+                    raw_w = wt_sum if weight_mode == "conviction" else 1.0
+                    grp_sorted = sorted(grp, key=lambda x: x["wt"], reverse=True)
+                    backing = [
+                        f"{GURU_META[x['investorid']]['shortName']} ({x['wt']*100:.1f}%)"
+                        for x in grp_sorted[:4]
+                    ]
+                    lead_act = grp_sorted[0]["action"]
+                    for x in grp_sorted:
+                        if x["action"].startswith("NEW") or x["action"].startswith("ADD"):
+                            lead_act = x["action"]
+                            break
+                    scored.append({
+                        "ticker": tk,
+                        "convScore": conv_score,
+                        "rawWeight": raw_w,
+                        "guruCount": n_g,
+                        "sumGuruWtPct": wt_sum * 100.0,
+                        "backingGurus": backing,
+                        "leadAction": lead_act,
+                    })
+                scored.sort(key=lambda x: (x["convScore"], x["sumGuruWtPct"], x["ticker"]), reverse=True)
+                picks = scored[:top_k]
+                tot_w = sum(x["rawWeight"] for x in picks) or 1.0
+                for p in picks:
+                    p["weight"] = p["rawWeight"] / tot_w
+                return picks
+
+            return _select
 
         def run_full_scheme(
             selector_fn,
             cost_bps: float = 10.0,
             barbell_etf: bool = False,
+            qqq80_etf: bool = False,
         ) -> tuple[dict[str, float], float, float, list[dict], list[dict]]:
             prev_w: dict[str, float] = {}
             rets_49: dict[str, float] = {}
@@ -1191,7 +1332,21 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 has_realized_t45 = is_bt_q
                 picks = selector_fn(qd, require_realized_ret=is_bt_q)
 
-                if barbell_etf:
+                if qqq80_etf:
+                    eff_picks = [
+                        {
+                            "ticker": "QQQ",
+                            "weight": 0.80,
+                            "guruCount": 0,
+                            "sumGuruWtPct": 80.0,
+                            "backingGurus": ["Nasdaq-100 Growth Core (80%)"],
+                            "leadAction": "CORE ETF",
+                        },
+                    ] + [
+                        {**p, "weight": p["weight"] * 0.20}
+                        for p in picks
+                    ]
+                elif barbell_etf:
                     eff_picks = [
                         {
                             "ticker": "SPY",
@@ -1245,6 +1400,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 valid_ret_sum = 0.0
                 valid_w_sum = 0.0
                 valid_w_map: dict[str, float] = {}
+                drifted_end_raw: dict[str, float] = {}
                 for p in eff_picks:
                     tk = p["ticker"]
                     if tk in ("SPY", "QQQ"):
@@ -1262,6 +1418,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                         valid_ret_sum += p["weight"] * tk_ret
                         valid_w_sum += p["weight"]
                         valid_w_map[tk] = p["weight"]
+                        drifted_end_raw[tk] = p["weight"] * (1.0 + tk_ret)
 
                     sp = spot_meta.get(tk, {})
                     tm = ticker_meta.get(tk, {"name": tk, "sector": ""})
@@ -1303,7 +1460,15 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     holdings_detail.append(h_item)
 
                 if has_realized_t45 and valid_w_sum > 0:
-                    if barbell_etf and spy_r is not None and qqq_r is not None:
+                    if qqq80_etf and qqq_r is not None:
+                        sat_w = sum(p["weight"] for p in eff_picks if p["ticker"] != "QQQ" and px_by_q_tk.get((qd, p["ticker"]), {}).get("retT45") is not None)
+                        sat_r_gross = sum(
+                            (p["weight"] / sat_w) * px_by_q_tk[(qd, p["ticker"])]["retT45"]
+                            for p in eff_picks
+                            if p["ticker"] != "QQQ" and px_by_q_tk.get((qd, p["ticker"]), {}).get("retT45") is not None
+                        ) if sat_w > 0 else 0.0
+                        port_r = 0.80 * qqq_r + 0.20 * sat_r_gross - q_to * (cost_bps / 10000.0)
+                    elif barbell_etf and spy_r is not None and qqq_r is not None:
                         # Exact 35% SPY + 35% QQQ + 30% net active sleeve
                         sat_w = sum(p["weight"] for p in eff_picks if p["ticker"] not in ("SPY", "QQQ") and px_by_q_tk.get((qd, p["ticker"]), {}).get("retT45") is not None)
                         sat_r_gross = sum(
@@ -1324,7 +1489,8 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                             "entryDate": s_info["t45EntryDate"],
                             "exitDate": s_info["t45ExitDate"],
                             "barbellEtf": barbell_etf,
-                            "weights": valid_w_map,
+                            "qqq80Etf": qqq80_etf,
+                            "weights": w_map if qqq80_etf else valid_w_map,
                             "turnover": q_to,
                             "costBps": cost_bps,
                             "portRet": port_r,
@@ -1337,6 +1503,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                         "entryDate": s_info["t45EntryDate"],
                         "exitDate": latest_price_date,
                         "barbellEtf": barbell_etf,
+                        "qqq80Etf": qqq80_etf,
                         "weights": dict(w_map),
                         "turnover": q_to,
                         "costBps": cost_bps,
@@ -1357,7 +1524,9 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     "spyRetPct": r2(spy_r * 100.0) if (has_realized_t45 and spy_r is not None) else None,
                     "qqqRetPct": r2(qqq_r * 100.0) if (has_realized_t45 and qqq_r is not None) else None,
                     "excessSpyPct": r2((port_r - spy_r) * 100.0) if (port_r is not None and has_realized_t45 and spy_r is not None) else None,
+                    "excessQqqPct": r2((port_r - qqq_r) * 100.0) if (port_r is not None and has_realized_t45 and qqq_r is not None) else None,
                     "beatSpy": bool(port_r > spy_r) if (port_r is not None and has_realized_t45 and spy_r is not None) else None,
+                    "beatQqq": bool(port_r > qqq_r) if (port_r is not None and has_realized_t45 and qqq_r is not None) else None,
                     "turnoverPct": r1(q_to * 100.0),
                     "enteredCount": len(entered_tks),
                     "exitedCount": len(exited_tks),
@@ -1372,18 +1541,21 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             ann_to = 40.0 if barbell_etf else (sum(tos_49) / len(tos_49) if tos_49 else 0.0)
             return rets_49, avg_n, ann_to, snapshots, rebalance_legs
 
-        # Run all 5 Interactive Copycat Schemes + Equal-Weight Monopoly Variant
+        # Run all 5 Interactive Low/Moderate-Turnover Copycat Schemes + Conviction/Equal-Weight Variants
+        sel_exqqq5_cw = make_exqqq_monopoly_selector(top_k=5, weight_mode="conviction")
+        sel_exqqq8_ew = make_exqqq_monopoly_selector(top_k=8, weight_mode="equal")
         sel_cmp_ew = make_guru_selector(TOP_COMPOUND_IDS, max_rk=6, top_k=10, min_wt=0.04, weight_mode="equal")
         sel_cmp_cw = make_guru_selector(TOP_COMPOUND_IDS, max_rk=6, top_k=10, min_wt=0.04, weight_mode="conviction")
         sel_fam12 = make_guru_selector(PRE2014_FAMOUS_IDS, max_rk=6, top_k=12, min_wt=0.04, weight_mode="equal")
         sel_adds = make_guru_selector(PRE2014_FAMOUS_IDS, max_rk=15, top_k=12, min_wt=0.025, weight_mode="equal", only_adds=True)
 
+        r_qqq80_cw, n_qqq80_cw, to_qqq80_cw, snap_qqq80_cw, legs_qqq80_cw = run_full_scheme(sel_exqqq5_cw, cost_bps=10.0, qqq80_etf=True)
+        r_qqq80_ew, n_qqq80_ew, to_qqq80_ew, snap_qqq80_ew, legs_qqq80_ew = run_full_scheme(sel_exqqq8_ew, cost_bps=10.0, qqq80_etf=True)
         r_barbell, n_barbell, to_barbell, snap_barbell, legs_barbell = run_full_scheme(sel_cmp_ew, cost_bps=10.0, barbell_etf=True)
         r_cmp_cw, n_cmp_cw, to_cmp_cw, snap_cmp_cw, legs_cmp_cw = run_full_scheme(sel_cmp_cw, cost_bps=10.0)
         r_cmp_ew, n_cmp_ew, to_cmp_ew, snap_cmp_ew, legs_cmp_ew = run_full_scheme(sel_cmp_ew, cost_bps=10.0)
         r_fam12, n_fam12, to_fam12, snap_fam12, legs_fam12 = run_full_scheme(sel_fam12, cost_bps=10.0)
         r_adds, n_adds, to_adds, snap_adds, legs_adds = run_full_scheme(sel_adds, cost_bps=10.0)
-        r_hf4, n_hf4, to_hf4, snap_hf4, legs_hf4 = run_full_scheme(select_hf4, cost_bps=10.0)
 
         # Position Count Sensitivity legs (computed before daily price fetch so all tickers are loaded in one query)
         pos_sensitivity_raw: list[tuple[int, dict[str, float], float, float, list[dict]]] = []
@@ -1410,15 +1582,49 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
         ]
         date_to_idx = {d: i for i, d in enumerate(daily_trading_dates)}
 
+        # Also collect all 16 gurus' top-60 holdings for daily mark-to-market NAV through daily_end_date
+        guru_daily_legs_by_id: dict[str, list[dict]] = {}
+        for gid in guru_ids:
+            by_q_g = guru_by_id_q.get(gid, {})
+            g_legs: list[dict] = []
+            for qd in all_snapshot_q_dates:
+                recs_g = by_q_g.get(qd, [])
+                if not recs_g:
+                    continue
+                s_info_g = session_info[qd]
+                e0_g = s_info_g["t45EntryDate"]
+                e1_g = s_info_g["t45ExitDate"] if (s_info_g["t45ExitDate"] and s_info_g["t45ExitDate"] <= latest_price_date) else latest_price_date
+                if not e0_g or e0_g > latest_price_date or e1_g <= e0_g:
+                    continue
+                top_recs = [x for x in recs_g[:60] if x["pT45"] is not None]
+                w_sum_g = sum(x["wt"] for x in top_recs)
+                if w_sum_g <= 0:
+                    continue
+                g_legs.append({
+                    "qd": qd,
+                    "entryDate": e0_g,
+                    "exitDate": e1_g,
+                    "barbellEtf": False,
+                    "qqq80Etf": False,
+                    "weights": {x["ticker"]: x["wt"] / w_sum_g for x in top_recs},
+                    "turnover": 0.0,
+                    "costBps": 0.0,
+                    "portRet": None,
+                    "isLiveLeg": not bool(s_info_g["t45ExitDate"] and s_info_g["t45ExitDate"] <= latest_price_date),
+                })
+            guru_daily_legs_by_id[gid] = g_legs
+
         daily_needed_tickers: set[str] = {"SPY", "QQQ"}
         for leg_list in [
+            legs_qqq80_cw,
+            legs_qqq80_ew,
             legs_barbell,
             legs_cmp_cw,
             legs_cmp_ew,
             legs_fam12,
             legs_adds,
-            legs_hf4,
             *[x[4] for x in pos_sensitivity_raw],
+            *guru_daily_legs_by_id.values(),
         ]:
             for leg in leg_list:
                 daily_needed_tickers.update(leg["weights"].keys())
@@ -1458,6 +1664,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
         def simulate_daily_scheme(legs: list[dict]) -> list[float]:
             nav_vals = [100.0] * len(daily_trading_dates)
             cur_nav = 100.0
+            last_filled = 0
             for leg in legs:
                 e0 = leg["entryDate"]
                 e1 = leg["exitDate"]
@@ -1467,6 +1674,9 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 i1 = date_to_idx[e1]
                 if i1 <= i0:
                     continue
+                if i0 > last_filled:
+                    for fill_i in range(last_filled + 1, i0 + 1):
+                        nav_vals[fill_i] = cur_nav
 
                 raw_weights = leg["weights"]
                 entry_px: dict[str, float] = {}
@@ -1491,10 +1701,20 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                         entry_px[tk] = p0
                         usable_w[tk] = w
 
-                if leg["barbellEtf"]:
+                if leg.get("qqq80Etf"):
+                    sat_tks = [tk for tk in usable_w if tk != "QQQ"]
+                    sat_sum = sum(usable_w[tk] for tk in sat_tks)
+                    eff_w: dict[str, float] = {"QQQ": 0.80}
+                    if sat_sum > 0:
+                        for tk in sat_tks:
+                            eff_w[tk] = 0.20 * (usable_w[tk] / sat_sum)
+                    else:
+                        eff_w = {"QQQ": 1.0}
+                    cost = leg["turnover"] * (leg["costBps"] / 10000.0)
+                elif leg["barbellEtf"]:
                     sat_tks = [tk for tk in usable_w if tk not in ("SPY", "QQQ")]
                     sat_sum = sum(usable_w[tk] for tk in sat_tks)
-                    eff_w: dict[str, float] = {"SPY": 0.35, "QQQ": 0.35}
+                    eff_w = {"SPY": 0.35, "QQQ": 0.35}
                     if sat_sum > 0:
                         for tk in sat_tks:
                             eff_w[tk] = 0.30 * (usable_w[tk] / sat_sum)
@@ -1522,22 +1742,30 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
 
                 # Carry exact compounded NAV to next rebalance date
                 cur_nav = nav_vals[i1]
+                last_filled = max(last_filled, i1)
+            if last_filled > 0 and last_filled < len(daily_trading_dates) - 1:
+                for fill_i in range(last_filled + 1, len(daily_trading_dates)):
+                    nav_vals[fill_i] = cur_nav
             return nav_vals
 
         def compute_daily_risk_overlay(
             nav_vals: list[float],
             spy_nav: list[float],
             qqq_nav: list[float],
+            dates_override: list[str] | None = None,
         ) -> dict:
+            cur_dates = dates_override if dates_override is not None else daily_trading_dates
             n = len(nav_vals)
             yrs = (n - 1) / 252.0 if n > 1 else 1.0
             cagr = ((nav_vals[-1] / nav_vals[0]) ** (1.0 / yrs) - 1.0) * 100.0
             spy_cagr = ((spy_nav[-1] / spy_nav[0]) ** (1.0 / yrs) - 1.0) * 100.0
+            qqq_cagr = ((qqq_nav[-1] / qqq_nav[0]) ** (1.0 / yrs) - 1.0) * 100.0
             peak = nav_vals[0]
             mdd = 0.0
-            mdd_dt = daily_trading_dates[0]
+            mdd_dt = cur_dates[0]
             rets: list[float] = []
             diffs: list[float] = []
+            diffs_qqq: list[float] = []
             for i in range(n):
                 v = nav_vals[i]
                 if v > peak:
@@ -1545,22 +1773,45 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 dd = (v / peak - 1.0) * 100.0
                 if dd < mdd:
                     mdd = dd
-                    mdd_dt = daily_trading_dates[i]
-                if i > 0 and nav_vals[i - 1] > 0 and spy_nav[i - 1] > 0:
+                    mdd_dt = cur_dates[i]
+                if i > 0 and nav_vals[i - 1] > 0 and spy_nav[i - 1] > 0 and qqq_nav[i - 1] > 0:
                     r = v / nav_vals[i - 1] - 1.0
                     sr = spy_nav[i] / spy_nav[i - 1] - 1.0
+                    qr = qqq_nav[i] / qqq_nav[i - 1] - 1.0
                     rets.append(r)
                     diffs.append(r - sr)
+                    diffs_qqq.append(r - qr)
             std_r = sample_std(rets)
             std_d = sample_std(diffs)
+            std_dq = sample_std(diffs_qqq)
             mean_r = sum(rets) / len(rets) if rets else 0.0
             mean_d = sum(diffs) / len(diffs) if diffs else 0.0
+            mean_dq = sum(diffs_qqq) / len(diffs_qqq) if diffs_qqq else 0.0
             ann_vol = std_r * math.sqrt(252.0) * 100.0
             d_sharpe = (mean_r * 252.0 - 0.025) / (std_r * math.sqrt(252.0)) if std_r > 0 else 0.0
             d_ir = (mean_d * 252.0) / (std_d * math.sqrt(252.0)) if std_d > 0 else 0.0
+            d_ir_qqq = (mean_dq * 252.0) / (std_dq * math.sqrt(252.0)) if std_dq > 0 else 0.0
+
+            # Rolling 3Y (756 trading sessions) beat SPY & beat QQQ win rates
+            roll_w = 756
+            roll_spy_wins = 0
+            roll_qqq_wins = 0
+            roll_cnt = 0
+            if n > roll_w:
+                for i in range(roll_w, n):
+                    r_p = nav_vals[i] / nav_vals[i - roll_w] - 1.0
+                    r_s = spy_nav[i] / spy_nav[i - roll_w] - 1.0
+                    r_q = qqq_nav[i] / qqq_nav[i - roll_w] - 1.0
+                    roll_cnt += 1
+                    if r_p > r_s:
+                        roll_spy_wins += 1
+                    if r_p > r_q:
+                        roll_qqq_wins += 1
+            roll3y_spy_pct = (roll_spy_wins / roll_cnt * 100.0) if roll_cnt > 0 else 0.0
+            roll3y_qqq_pct = (roll_qqq_wins / roll_cnt * 100.0) if roll_cnt > 0 else 0.0
 
             # Dual-regime daily alpha vs SPY (2014-2019 vs 2020-present)
-            split_idx = next((i for i, d in enumerate(daily_trading_dates) if d >= "2020-01-01"), n // 2)
+            split_idx = next((i for i, d in enumerate(cur_dates) if d >= "2020-01-01"), int(n * 0.5))
             def sub_cagr(arr: list[float], i0: int, i1: int) -> float:
                 if i1 <= i0 or arr[i0] <= 0:
                     return 0.0
@@ -1569,10 +1820,12 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
 
             a14_19 = sub_cagr(nav_vals, 0, split_idx) - sub_cagr(spy_nav, 0, split_idx)
             a20_26 = sub_cagr(nav_vals, split_idx, n - 1) - sub_cagr(spy_nav, split_idx, n - 1)
+            a14_19_qqq = sub_cagr(nav_vals, 0, split_idx) - sub_cagr(qqq_nav, 0, split_idx)
+            a20_26_qqq = sub_cagr(nav_vals, split_idx, n - 1) - sub_cagr(qqq_nav, split_idx, n - 1)
 
             # Calendar-year returns (2014 .. 2026 YTD through latest market close) directly from daily NAV
             yr_bounds: dict[str, tuple[int, int]] = {}
-            for i, d in enumerate(daily_trading_dates):
+            for i, d in enumerate(cur_dates):
                 yr = d[:4]
                 if yr not in yr_bounds:
                     yr_bounds[yr] = (max(0, i - 1), i)
@@ -1590,21 +1843,31 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     "spyRetPct": r2(sr),
                     "qqqRetPct": r2(qr),
                     "excessSpyPct": r2(pr - sr),
+                    "excessQqqPct": r2(pr - qr),
                     "beatSpy": bool(pr > sr),
+                    "beatQqq": bool(pr > qr),
                 })
 
             return {
                 "dailyCagrPct": r2(cagr),
                 "dailySpyCagrPct": r2(spy_cagr),
+                "dailyQqqCagrPct": r2(qqq_cagr),
                 "dailyAlphaPct": r2(cagr - spy_cagr),
+                "dailyAlphaVsQqqPct": r2(cagr - qqq_cagr),
                 "dailyAlpha1419Pct": r2(a14_19),
                 "dailyAlpha2026Pct": r2(a20_26),
+                "dailyAlpha1419VsQqqPct": r2(a14_19_qqq),
+                "dailyAlpha2026VsQqqPct": r2(a20_26_qqq),
                 "dailyBothHalvesBeat": bool(a14_19 > 0 and a20_26 > 0),
+                "dailyBothHalvesBeatQqq": bool(a14_19_qqq > 0 and a20_26_qqq > 0),
                 "dailyMaxDrawdownPct": r2(mdd),
                 "dailyMddDate": mdd_dt,
                 "dailyVolPct": r2(ann_vol),
                 "dailySharpe": r2(d_sharpe),
                 "dailyIr": r2(d_ir),
+                "dailyIrVsQqq": r2(d_ir_qqq),
+                "roll3yWinSpyPct": r1(roll3y_spy_pct),
+                "roll3yWinQqqPct": r1(roll3y_qqq_pct),
                 "tradingDays": n,
                 "dailyFinal100k": r1(nav_vals[-1]),
                 "dailyAnnualReturns": cal_annuals,
@@ -1615,34 +1878,45 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             nav_vals: list[float],
             spy_nav: list[float],
             qqq_nav: list[float],
+            dates_override: list[str] | None = None,
         ) -> dict:
-            overlay = compute_daily_risk_overlay(nav_vals, spy_nav, qqq_nav)
+            overlay = compute_daily_risk_overlay(nav_vals, spy_nav, qqq_nav, dates_override)
             out = dict(metrics_dict)
             out["quarterlyMaxDrawdownPct"] = out.get("maxDrawdownPct")
             out["cagrPct"] = overlay["dailyCagrPct"]
             out["spyCagrPct"] = overlay["dailySpyCagrPct"]
+            out["qqqCagrPct"] = overlay["dailyQqqCagrPct"]
             out["alphaPct"] = overlay["dailyAlphaPct"]
+            out["alphaVsQqqPct"] = overlay["dailyAlphaVsQqqPct"]
             out["alpha1419Pct"] = overlay["dailyAlpha1419Pct"]
             out["alpha2026Pct"] = overlay["dailyAlpha2026Pct"]
+            out["alpha1419VsQqqPct"] = overlay["dailyAlpha1419VsQqqPct"]
+            out["alpha2026VsQqqPct"] = overlay["dailyAlpha2026VsQqqPct"]
             out["bothHalvesBeat"] = overlay["dailyBothHalvesBeat"]
+            out["bothHalvesBeatQqq"] = overlay["dailyBothHalvesBeatQqq"]
             out["final100k"] = overlay["dailyFinal100k"]
             out["maxDrawdownPct"] = overlay["dailyMaxDrawdownPct"]
             out["dailyMddDate"] = overlay["dailyMddDate"]
             out["dailyVolPct"] = overlay["dailyVolPct"]
             out["dailySharpe"] = overlay["dailySharpe"]
             out["dailyIr"] = overlay["dailyIr"]
+            out["irVsQqq"] = overlay["dailyIrVsQqq"]
+            out["roll3yWinSpyPct"] = overlay["roll3yWinSpyPct"]
+            out["roll3yWinQqqPct"] = overlay["roll3yWinQqqPct"]
             out["tradingDays"] = overlay["tradingDays"]
+            out["navEndDate"] = daily_end_date
             out["annualReturns"] = overlay["dailyAnnualReturns"]
             return out
 
         daily_spy = simulate_daily_etf("SPY")
         daily_qqq = simulate_daily_etf("QQQ")
+        daily_qqq80_cw = simulate_daily_scheme(legs_qqq80_cw)
+        daily_qqq80_ew = simulate_daily_scheme(legs_qqq80_ew)
         daily_barbell = simulate_daily_scheme(legs_barbell)
         daily_cmp_cw = simulate_daily_scheme(legs_cmp_cw)
         daily_cmp_ew = simulate_daily_scheme(legs_cmp_ew)
         daily_fam12 = simulate_daily_scheme(legs_fam12)
         daily_adds = simulate_daily_scheme(legs_adds)
-        daily_hf4 = simulate_daily_scheme(legs_hf4)
 
         # Benchmarks
         spy_metrics = apply_daily_risk(
@@ -1658,6 +1932,18 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             daily_qqq,
         )
 
+        m_qqq80_cw = apply_daily_risk(
+            calc_series_metrics(realized_q_dates, r_qqq80_cw, spy_t45, qqq_t45, n_qqq80_cw, to_qqq80_cw),
+            daily_qqq80_cw,
+            daily_spy,
+            daily_qqq,
+        )
+        m_qqq80_ew = apply_daily_risk(
+            calc_series_metrics(realized_q_dates, r_qqq80_ew, spy_t45, qqq_t45, n_qqq80_ew, to_qqq80_ew),
+            daily_qqq80_ew,
+            daily_spy,
+            daily_qqq,
+        )
         m_barbell = apply_daily_risk(
             calc_series_metrics(realized_q_dates, r_barbell, spy_t45, qqq_t45, n_barbell, to_barbell),
             daily_barbell,
@@ -1688,16 +1974,10 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             daily_spy,
             daily_qqq,
         )
-        m_hf4 = apply_daily_risk(
-            calc_series_metrics(realized_q_dates, r_hf4, spy_t45, qqq_t45, n_hf4, to_hf4),
-            daily_hf4,
-            daily_spy,
-            daily_qqq,
-        )
 
-        # Anchor prices on daily_end_date for live runtime tail extension when newer closes arrive in SQLite
+        # Anchor prices on daily_end_date for live runtime tail extension when newer closes arrive in FactOS / SQLite
         live_anchor_tickers: set[str] = {"SPY", "QQQ"}
-        for leg_list in (legs_barbell, legs_cmp_cw, legs_cmp_ew, legs_fam12, legs_adds, legs_hf4):
+        for leg_list in (legs_qqq80_cw, legs_qqq80_ew, legs_barbell, legs_cmp_cw, legs_cmp_ew, legs_fam12, legs_adds):
             if leg_list:
                 live_anchor_tickers.update(leg_list[-1]["weights"].keys())
         live_anchor_prices: dict[str, float] = {}
@@ -1724,21 +2004,52 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             "series": {
                 "SPY": [r2(v) for v in daily_spy],
                 "QQQ": [r2(v) for v in daily_qqq],
+                "qqq80_exqqq_monopoly": [r2(v) for v in daily_qqq80_cw],
+                "qqq80_exqqq_monopoly_equal": [r2(v) for v in daily_qqq80_ew],
                 "barbell_70_30": [r2(v) for v in daily_barbell],
                 "monopoly_compounders": [r2(v) for v in daily_cmp_cw],
                 "monopoly_compounders_equal": [r2(v) for v in daily_cmp_ew],
                 "pre2014_legends": [r2(v) for v in daily_fam12],
                 "new_adds_catalyst": [r2(v) for v in daily_adds],
-                "hf4_smart_flow": [r2(v) for v in daily_hf4],
             },
         }
 
         schemes_meta = [
             {
-                "id": "barbell_70_30",
+                "id": "qqq80_exqqq_monopoly",
                 "recommended": True,
+                "taxBadge": {
+                    "en": f"Tax-Optimal · {m_qqq80_cw['annTurnoverPct']:.0f}% Turnover · 0% QQQ Overlap",
+                    "zh": f"极低摩擦 · {m_qqq80_cw['annTurnoverPct']:.0f}%年换手 · 零重叠",
+                },
+                "badge": {
+                    "en": f"Flagship #1 · Beats QQQ ({m_qqq80_cw['alphaVsQqqPct']:+.2f}%)",
+                    "zh": f"旗舰主推 · 跑赢纳指 ({m_qqq80_cw['alphaVsQqqPct']:+.2f}%)",
+                },
+                "name": {
+                    "en": "80% QQQ + 20% Ex-QQQ Monopoly Compounders",
+                    "zh": "80% QQQ + 20% 非QQQ垄断复利精选",
+                },
+                "shortName": {
+                    "en": "80% QQQ + 20% Ex-QQQ",
+                    "zh": "80%纳指+20%非纳指垄断",
+                },
+                "formula": {
+                    "en": "80% QQQ Core + 20% PIT SEC N-PORT Ex-QQQ Monopoly Compounders (Top-5 Conviction or Top-8 Equal-Weight, Rebalanced 4×/yr on T+45)",
+                    "zh": "80% QQQ 科技复利底座 + 20% SEC N-PORT 时点剔除QQQ成分后的垄断复利大师重仓（支持 Top-5 信念加权 ⇄ Top-8 等权一键切换）",
+                },
+                "whyItWorks": {
+                    "en": f"Eliminates duplicate mega-cap tech exposure via strict PIT SEC N-PORT QQQ exclusion (V, GE, MCO, UNH, SPGI), lifting 12Y strict T+45 CAGR to {m_qqq80_cw['cagrPct']:.2f}% ({m_qqq80_cw['alphaVsQqqPct']:+.2f}% vs QQQ, {m_qqq80_cw['alphaPct']:+.2f}% vs SPY) while compressing daily max drawdown to {m_qqq80_cw['maxDrawdownPct']:.1f}% vs QQQ {qqq_metrics['maxDrawdownPct']:.1f}%. Toggle Top-8 Equal-Weight for {m_qqq80_ew['cagrPct']:.2f}% CAGR, {m_qqq80_ew['annTurnoverPct']:.0f}% turnover, and {m_qqq80_ew['roll3yWinQqqPct']:.1f}% rolling 3Y beat-QQQ win rate.",
+                    "zh": f"基于 SEC N-PORT 时点成分表严格剔除与 QQQ 重复的科技巨头，20%卫星仓100%聚焦非纳指收费站垄断寡头（V / GE / MCO / UNH / SPGI）：严格 T+45 年化 {m_qqq80_cw['cagrPct']:.2f}%（跑赢纳指 {m_qqq80_cw['alphaVsQqqPct']:+.2f}%、跑赢标普 {m_qqq80_cw['alphaPct']:+.2f}%），同时将日频最大回撤从纳指 {qqq_metrics['maxDrawdownPct']:.1f}% 压缩至 {m_qqq80_cw['maxDrawdownPct']:.1f}%；切换 Top-8 等权版年化达 {m_qqq80_ew['cagrPct']:.2f}%、年换手仅 {m_qqq80_ew['annTurnoverPct']:.0f}%、滚动3年赢纳指胜率高达 {m_qqq80_ew['roll3yWinQqqPct']:.1f}%。",
+                },
+                "metrics": m_qqq80_cw,
+                "equalWeightVariant": m_qqq80_ew,
+            },
+            {
+                "id": "barbell_70_30",
+                "recommended": False,
                 "taxBadge": {"en": "Taxable-Friendly · 40% Turnover", "zh": "应税账户友好 · 40%低换手"},
-                "badge": {"en": "Recommended Core", "zh": "首选落地底座"},
+                "badge": {"en": "Lowest Drawdown Barbell", "zh": "最低回撤杠铃舱"},
                 "name": {"en": "70/30 Core-Satellite Barbell", "zh": "70/30 宽基杠铃落地舱"},
                 "shortName": {"en": "70/30 Barbell", "zh": "70/30 杠铃舱"},
                 "formula": {
@@ -1746,8 +2057,8 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     "zh": "35% SPY + 35% QQQ + 30% 垄断复利6大师 Top-10（每年4次法定日再平衡）",
                 },
                 "whyItWorks": {
-                    "en": f"Highest risk-adjusted IR ({m_barbell['ir']:.2f}) with {m_barbell['sharpe']:.2f} Sharpe: captures Nasdaq/S&P beta with the lowest daily max drawdown ({m_barbell['maxDrawdownPct']:.1f}%, beating SPY {spy_metrics['maxDrawdownPct']:.1f}% and QQQ {qqq_metrics['maxDrawdownPct']:.1f}%) while harvesting low-decay monopoly alpha.",
-                    "zh": f"全测试最高信息比 ({m_barbell['ir']:.2f}) 与高夏普比 ({m_barbell['sharpe']:.2f})：70%宽基锁住国运Beta，30%低衰减垄断复利大师贡献纯Alpha，日频最大回撤仅 {m_barbell['maxDrawdownPct']:.1f}%（优于标普 {spy_metrics['maxDrawdownPct']:.1f}% 与纳指 {qqq_metrics['maxDrawdownPct']:.1f}%），心态最稳。",
+                    "en": f"Highest risk-adjusted IR vs SPY ({m_barbell['ir']:.2f}) with {m_barbell['sharpe']:.2f} Sharpe: captures Nasdaq/S&P beta with the lowest daily max drawdown ({m_barbell['maxDrawdownPct']:.1f}%, beating SPY {spy_metrics['maxDrawdownPct']:.1f}% and QQQ {qqq_metrics['maxDrawdownPct']:.1f}%) while harvesting low-decay monopoly alpha.",
+                    "zh": f"对标标普最高信息比 ({m_barbell['ir']:.2f}) 与高夏普比 ({m_barbell['sharpe']:.2f})：70%宽基锁住国运Beta，30%低衰减垄断复利大师贡献纯Alpha，日频最大回撤仅 {m_barbell['maxDrawdownPct']:.1f}%（优于标普 {spy_metrics['maxDrawdownPct']:.1f}% 与纳指 {qqq_metrics['maxDrawdownPct']:.1f}%），心态最稳。",
                 },
                 "metrics": m_barbell,
             },
@@ -1755,7 +2066,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 "id": "monopoly_compounders",
                 "recommended": False,
                 "taxBadge": {"en": f"Low T+45 Decay · {m_cmp_cw['annTurnoverPct']:.0f}% Turnover", "zh": f"T+45零衰减 · {m_cmp_cw['annTurnoverPct']:.0f}%换手"},
-                "badge": {"en": f"Highest Pure Alpha ({m_cmp_cw['alphaPct']:+.2f}%)", "zh": f"纯多最高超额 ({m_cmp_cw['alphaPct']:+.2f}%)"},
+                "badge": {"en": f"100% Active Pure Alpha ({m_cmp_cw['alphaPct']:+.2f}%)", "zh": f"全主动纯多超额 ({m_cmp_cw['alphaPct']:+.2f}%)"},
                 "name": {"en": "Monopoly Compounders Top-10", "zh": "垄断复利 6 大师核心 Top-10"},
                 "shortName": {"en": "Monopoly Top-10", "zh": "垄断复利 Top-10"},
                 "formula": {
@@ -1803,31 +2114,16 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 },
                 "metrics": m_adds,
             },
-            {
-                "id": "hf4_smart_flow",
-                "recommended": False,
-                "taxBadge": {"en": f"IRA / Tax-Exempt Only · {m_hf4['annTurnoverPct']:.0f}% Turnover", "zh": f"仅限免税账户 · {m_hf4['annTurnoverPct']:.0f}%高换手"},
-                "badge": {"en": f"Quant 3-Factor · {m_hf4['alphaPct']:+.1f}% α", "zh": f"三因子量化 · {m_hf4['alphaPct']:+.1f}%超额"},
-                "name": {"en": "HF-4 Smart-Money Flow (HF × Pod × Anti-Passive)", "zh": "HF-4 聪明钱三因子共振 Top-15"},
-                "shortName": {"en": "HF-4 Smart Flow", "zh": "HF-4 三因子"},
-                "formula": {
-                    "en": "2,092 Active HFs Net Inflow (50%) + 59 Multi-Strat Pods Resonance (30%) − 123 Passive Crowding (20%), ≥$5B Cap Top-15",
-                    "zh": "2,092家主动HF净买占比 (50%) + 59家多策略Pod同向加仓 (30%) − 123家被动指数拥挤度 (20%)，≥$50亿市值 Top-15",
-                },
-                "whyItWorks": {
-                    "en": f"Raw HF Q5 buying underperforms SPY, because 80% of raw HF alpha is shorting Q1 dumps. Requiring Pod resonance + Anti-Passive upgrades pure-long T+45 CAGR to {m_hf4['cagrPct']:.2f}% ({m_hf4['maxDrawdownPct']:.1f}% daily MDD).",
-                    "zh": f"无脑抄主动HF净买入(Q5)长期跑输标普！叠加多策略Pod共振确认与反被动拥挤过滤后，纯多头严格T+45年化跃升至 {m_hf4['cagrPct']:.2f}%（日频最大回撤 {m_hf4['maxDrawdownPct']:.1f}%）。",
-                },
-                "metrics": m_hf4,
-            },
         ]
 
         snapshots_by_scheme = {
+            "qqq80_exqqq_monopoly": snap_qqq80_cw,
+            "qqq80_exqqq_monopoly_equal": snap_qqq80_ew,
             "barbell_70_30": snap_barbell,
             "monopoly_compounders": snap_cmp_cw,
+            "monopoly_compounders_equal": snap_cmp_ew,
             "pre2014_legends": snap_fam12,
             "new_adds_catalyst": snap_adds,
-            "hf4_smart_flow": snap_hf4,
         }
 
         # Position Count Sensitivity (Top-5 / Top-8 / Top-12 / Top-20 / Top-35)
@@ -1991,7 +2287,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                         turnovers.append(0.5 * sum(abs(cur_w_g.get(k, 0.0) - prev_w_g.get(k, 0.0)) for k in ak) * 100.0)
                     prev_w_g = cur_w_g
 
-                if "2014-03-31" <= qd <= "2026-03-31":
+                if "2014-03-31" <= qd <= "2026-06-30":
                     v_qe = [(x["wt"], x["retQe"]) for x in recs if x["retQe"] is not None]
                     if v_qe:
                         sw = sum(w for w, _ in v_qe)
@@ -2006,18 +2302,59 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             common_qs = sorted(set(qe_rets.keys()) & set(t45_rets.keys()) & set(spy_t45.keys()))
             spy_qe_aligned = {qd: spy_qe.get(qd, spy_t45[qd]) for qd in common_qs}
             m_qe = calc_series_metrics(common_qs, qe_rets, spy_qe_aligned)
-            m_t45 = calc_series_metrics(common_qs, t45_rets, spy_t45)
+            m_t45_paired = calc_series_metrics(common_qs, t45_rets, spy_t45, qqq_t45)
 
             qe_alpha = m_qe.get("alphaPct") or 0.0
-            t45_alpha = m_t45.get("alphaPct") or 0.0
+            t45_paired_alpha = m_t45_paired.get("alphaPct") or 0.0
             if qe_alpha >= 1.0:
-                retention_pct = max(0.0, min(125.0, (t45_alpha / qe_alpha) * 100.0))
-            elif t45_alpha > 0:
+                retention_pct = max(0.0, min(125.0, (t45_paired_alpha / qe_alpha) * 100.0))
+            elif t45_paired_alpha > 0:
                 retention_pct = 100.0
             else:
                 retention_pct = 0.0
 
-            if t45_alpha >= 3.5 and retention_pct >= 80.0:
+            g_legs_cur = guru_daily_legs_by_id.get(gid, [])
+            daily_g = simulate_daily_scheme(g_legs_cur)
+            m_t45 = dict(m_t45_paired)
+            if common_qs and g_legs_cur:
+                first_entry_dt = session_info[common_qs[0]]["t45EntryDate"]
+                live_legs = [gl for gl in g_legs_cur if gl.get("isLiveLeg")]
+                if live_legs and first_entry_dt:
+                    live_leg = live_legs[-1]
+                    ge0 = live_leg.get("entryDate")
+                    ge1 = live_leg.get("exitDate")
+                    if ge0 in date_to_idx and ge1 in date_to_idx:
+                        gi0 = date_to_idx[ge0]
+                        gi1 = date_to_idx[ge1]
+                        r_live_g = daily_g[gi1] / daily_g[gi0] if daily_g[gi0] > 0 else 1.0
+                        r_live_s = daily_spy[gi1] / daily_spy[gi0] if daily_spy[gi0] > 0 else 1.0
+                        r_live_q = daily_qqq[gi1] / daily_qqq[gi0] if daily_qqq[gi0] > 0 else 1.0
+                        nav_g_end = (m_t45_paired.get("final100k") or 100.0) * r_live_g
+                        # Reconstruct paired SPY / QQQ cumulative multiple through daily_end_date
+                        spy_mult = 1.0
+                        qqq_mult = 1.0
+                        for qd_c in common_qs:
+                            spy_mult *= 1.0 + spy_t45.get(qd_c, 0.0)
+                            qqq_mult *= 1.0 + qqq_t45.get(qd_c, 0.0)
+                        spy_mult *= r_live_s
+                        qqq_mult *= r_live_q
+                        total_days_g = (date.fromisoformat(ge1) - date.fromisoformat(first_entry_dt)).days
+                        yrs_g = max(0.25, total_days_g / 365.25)
+                        cagr_g = ((nav_g_end / 100.0) ** (1.0 / yrs_g) - 1.0) * 100.0
+                        cagr_s = (spy_mult ** (1.0 / yrs_g) - 1.0) * 100.0
+                        cagr_q = (qqq_mult ** (1.0 / yrs_g) - 1.0) * 100.0
+                        m_t45["final100k"] = round(nav_g_end, 1)
+                        m_t45["cagrPct"] = round(cagr_g, 2)
+                        m_t45["spyCagrPct"] = round(cagr_s, 2)
+                        m_t45["qqqCagrPct"] = round(cagr_q, 2)
+                        m_t45["alphaPct"] = round(cagr_g - cagr_s, 2)
+                        m_t45["alphaVsQqqPct"] = round(cagr_g - cagr_q, 2)
+
+            avg_to_g = statistics.mean(turnovers) if turnovers else 0.0
+            t45_alpha = m_t45.get("alphaPct") or 0.0
+            if (t45_alpha >= 3.5 and retention_pct >= 80.0) or (
+                t45_alpha >= 2.8 and retention_pct >= 85.0 and avg_to_g <= 20.0
+            ):
                 grade = "A+"
             elif t45_alpha >= 2.0 and retention_pct >= 65.0:
                 grade = "A"
@@ -2077,10 +2414,13 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 "pre2014Famous": gm["pre2014Famous"],
                 "copyabilityGrade": grade,
                 "quartersAudited": len(common_qs),
+                "navEndDate": daily_end_date,
+                "final100k": m_t45.get("final100k"),
                 "qeCagrPct": m_qe.get("cagrPct"),
                 "qeAlphaPct": m_qe.get("alphaPct"),
                 "t45CagrPct": m_t45.get("cagrPct"),
                 "t45AlphaPct": m_t45.get("alphaPct"),
+                "t45AlphaVsQqqPct": m_t45.get("alphaVsQqqPct"),
                 "alphaRetentionPct": r1(retention_pct),
                 "ir": m_t45.get("ir"),
                 "sharpe": m_t45.get("sharpe"),
@@ -2116,7 +2456,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             "latestQuarter": "2026 Q3",
             "latestFiledDate": "2026-11-16",
             "latestPriceDate": latest_price_date,
-            "defaultSchemeId": "barbell_70_30",
+            "defaultSchemeId": "qqq80_exqqq_monopoly",
             "rebalanceSchedule": {
                 "cadence": {"en": "4× Yearly on SEC 45-Day Statutory Deadlines", "zh": "每年 4 次按 SEC 13F 法定披露截止日调仓"},
                 "statutoryDates": ["02-16 (Q4)", "05-16 (Q1)", "08-16 (Q2)", "11-16 (Q3)"],
@@ -2165,27 +2505,38 @@ def main() -> int:
             return 1
         existing = json.loads(args.output.read_text(encoding="utf-8"))
         assert existing.get("version") == ARTIFACT_VERSION
-        assert len(existing.get("schemes", [])) == 5
+        assert existing.get("defaultSchemeId") == "qqq80_exqqq_monopoly"
+        scheme_ids = [s.get("id") for s in existing.get("schemes", [])]
+        assert scheme_ids == [
+            "qqq80_exqqq_monopoly",
+            "barbell_70_30",
+            "monopoly_compounders",
+            "pre2014_legends",
+            "new_adds_catalyst",
+        ], f"unexpected scheme_ids: {scheme_ids}"
+        assert "hf4_smart_flow" not in scheme_ids
         assert len(existing.get("guruRoster", [])) == 16
         assert len(existing.get("masterBlueprint16", [])) == 16
         dc = existing.get("dailyCurves") or {}
         dc_dates = dc.get("dates") or []
         dc_series = dc.get("series") or {}
+        assert "hf4_smart_flow" not in dc_series
         assert len(dc_dates) >= 2500, f"expected >=2500 daily NAV points, got {len(dc_dates)}"
         for key in (
             "SPY",
             "QQQ",
+            "qqq80_exqqq_monopoly",
+            "qqq80_exqqq_monopoly_equal",
             "barbell_70_30",
             "monopoly_compounders",
             "monopoly_compounders_equal",
             "pre2014_legends",
             "new_adds_catalyst",
-            "hf4_smart_flow",
         ):
             assert len(dc_series.get(key) or []) == len(dc_dates), f"dailyCurves.{key} length mismatch"
         print(
             f"OK: verified {args.output} ({len(existing['schemes'])} schemes, "
-            f"{len(existing['guruRoster'])} gurus, {len(dc_dates)} daily NAV sessions)"
+            f"{len(existing['guruRoster'])} gurus, {len(dc_dates)} daily NAV sessions through {dc.get('endDate')})"
         )
         return 0
 
@@ -2198,10 +2549,11 @@ def main() -> int:
     print(f"Built {args.output} ({size_kb:.1f} KB) | latestPriceDate={artifact['latestPriceDate']}")
     for sc in artifact["schemes"]:
         m = sc["metrics"]
+        a_qqq = m.get("alphaVsQqqPct") or 0.0
         print(
-            f"  [{sc['id']:22s}] CAGR={m['cagrPct']:6.2f}% | Alpha={m['alphaPct']:+6.2f}% | "
-            f"Sharpe={m['sharpe']:4.2f} | MDD={m['maxDrawdownPct']:6.2f}% | "
-            f"WinQ={m['winRatePct']:5.1f}% | TO={m['annTurnoverPct']:5.1f}% | $100k->${m['final100k']:.1f}k"
+            f"  [{sc['id']:22s}] CAGR={m['cagrPct']:6.2f}% | vsSPY={m['alphaPct']:+6.2f}% | "
+            f"vsQQQ={a_qqq:+6.2f}% | Sharpe={m['sharpe']:4.2f} | MDD={m['maxDrawdownPct']:6.2f}% | "
+            f"TO={m['annTurnoverPct']:5.1f}% | $100k->${m['final100k']:.1f}k"
         )
     return 0
 
