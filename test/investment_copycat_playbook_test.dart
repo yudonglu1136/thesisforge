@@ -104,6 +104,45 @@ class CopycatPlaybookFixtureApi extends ApiClient {
       return {...copy, 'holdingsCount': holdings.length};
     }).toList();
 
+    final dailyCurves = raw['dailyCurves'] as Map<String, dynamic>?;
+    Map<String, dynamic>? slicedDailyCurve;
+    if (dailyCurves != null) {
+      final dcDates = List<String>.from(dailyCurves['dates'] as List? ?? []);
+      final dcSeries = Map<String, dynamic>.from(
+        dailyCurves['series'] as Map? ?? {},
+      );
+      final seriesKey =
+          schemeId == 'monopoly_compounders' && normalizedWeightMode == 'equal'
+          ? 'monopoly_compounders_equal'
+          : schemeId;
+      final sNav = List<dynamic>.from(dcSeries[seriesKey] as List? ?? []);
+      final spyNav = List<dynamic>.from(dcSeries['SPY'] as List? ?? []);
+      final qqqNav = List<dynamic>.from(dcSeries['QQQ'] as List? ?? []);
+      var endIdx = -1;
+      for (var i = 0; i < dcDates.length; i++) {
+        if (dcDates[i].compareTo(cutoff) <= 0) {
+          endIdx = i;
+        } else {
+          break;
+        }
+      }
+      if (endIdx >= 1 &&
+          sNav.length > endIdx &&
+          spyNav.length > endIdx &&
+          qqqNav.length > endIdx) {
+        final end = endIdx + 1;
+        slicedDailyCurve = {
+          'startDate': dcDates.first,
+          'endDate': dcDates[endIdx],
+          'tradingDays': end,
+          'dates': dcDates.sublist(0, end),
+          'schemeNav': sNav.sublist(0, end),
+          'spyNav': spyNav.sublist(0, end),
+          'qqqNav': qqqNav.sublist(0, end),
+        };
+      }
+    }
+
     return {
       'version': raw['version'],
       'generatedAt': raw['generatedAt'],
@@ -119,6 +158,7 @@ class CopycatPlaybookFixtureApi extends ApiClient {
       'rebalanceSchedule': raw['rebalanceSchedule'],
       'backtestWindow': raw['backtestWindow'],
       'benchmarks': raw['benchmarks'],
+      'dailyCurve': slicedDailyCurve,
       'schemes': schemes,
       'positionCountSensitivity': raw['positionCountSensitivity'] ?? [],
       'antiPatterns': raw['antiPatterns'] ?? [],
@@ -274,9 +314,13 @@ void main() {
         onSelection: (s) => latestSelection = s,
       );
 
-      // Default scheme is 70/30 Barbell (17.78% CAGR, 1.17x Sharpe)
+      // Default scheme is 70/30 Barbell (17.78% CAGR, true daily MDD -33.60%, daily NAV curve through 2026-08-17)
       expect(find.textContaining('17.78%'), findsWidgets);
       expect(find.textContaining('\$742.6k'), findsWidgets);
+      expect(find.textContaining('-33.60%'), findsWidgets);
+      expect(find.text('2026-08-17'), findsWidgets);
+      expect(find.textContaining('3081'), findsWidgets);
+      expect(find.textContaining('+642.6%'), findsWidgets);
 
       // Switch to Monopoly Compounders (20.60% CAGR, $991.9k)
       await tapVisible(

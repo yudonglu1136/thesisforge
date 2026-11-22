@@ -1170,12 +1170,13 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             selector_fn,
             cost_bps: float = 10.0,
             barbell_etf: bool = False,
-        ) -> tuple[dict[str, float], float, float, list[dict]]:
+        ) -> tuple[dict[str, float], float, float, list[dict], list[dict]]:
             prev_w: dict[str, float] = {}
             rets_49: dict[str, float] = {}
             ns_49: list[float] = []
             tos_49: list[float] = []
             snapshots: list[dict] = []
+            rebalance_legs: list[dict] = []
             prev_stock_set: set[str] = set()
 
             # Evaluate across all quarters 2014-03-31 .. 2026-09-30 (51 quarters!)
@@ -1238,6 +1239,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
 
                 valid_ret_sum = 0.0
                 valid_w_sum = 0.0
+                valid_w_map: dict[str, float] = {}
                 for p in eff_picks:
                     tk = p["ticker"]
                     if tk in ("SPY", "QQQ"):
@@ -1254,6 +1256,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     if tk_ret is not None and math.isfinite(tk_ret):
                         valid_ret_sum += p["weight"] * tk_ret
                         valid_w_sum += p["weight"]
+                        valid_w_map[tk] = p["weight"]
 
                     sp = spot_meta.get(tk, {})
                     tm = ticker_meta.get(tk, {"name": tk, "sector": ""})
@@ -1311,6 +1314,16 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
 
                     if is_bt_q:
                         rets_49[qd] = port_r
+                        rebalance_legs.append({
+                            "qd": qd,
+                            "entryDate": s_info["t45EntryDate"],
+                            "exitDate": s_info["t45ExitDate"],
+                            "barbellEtf": barbell_etf,
+                            "weights": valid_w_map,
+                            "turnover": q_to,
+                            "costBps": cost_bps,
+                            "portRet": port_r,
+                        })
 
                 prev_stock_set = cur_stock_set
                 snapshots.append({
@@ -1338,7 +1351,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
 
             avg_n = sum(ns_49) / len(ns_49) if ns_49 else 0.0
             ann_to = 40.0 if barbell_etf else (sum(tos_49) / len(tos_49) if tos_49 else 0.0)
-            return rets_49, avg_n, ann_to, snapshots
+            return rets_49, avg_n, ann_to, snapshots, rebalance_legs
 
         # Run all 5 Interactive Copycat Schemes + Equal-Weight Monopoly Variant
         sel_cmp_ew = make_guru_selector(TOP_COMPOUND_IDS, max_rk=6, top_k=10, min_wt=0.04, weight_mode="equal")
@@ -1346,23 +1359,268 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
         sel_fam12 = make_guru_selector(PRE2014_FAMOUS_IDS, max_rk=6, top_k=12, min_wt=0.04, weight_mode="equal")
         sel_adds = make_guru_selector(PRE2014_FAMOUS_IDS, max_rk=15, top_k=12, min_wt=0.025, weight_mode="equal", only_adds=True)
 
-        r_barbell, n_barbell, to_barbell, snap_barbell = run_full_scheme(sel_cmp_ew, cost_bps=10.0, barbell_etf=True)
-        r_cmp_cw, n_cmp_cw, to_cmp_cw, snap_cmp_cw = run_full_scheme(sel_cmp_cw, cost_bps=10.0)
-        r_cmp_ew, n_cmp_ew, to_cmp_ew, snap_cmp_ew = run_full_scheme(sel_cmp_ew, cost_bps=10.0)
-        r_fam12, n_fam12, to_fam12, snap_fam12 = run_full_scheme(sel_fam12, cost_bps=10.0)
-        r_adds, n_adds, to_adds, snap_adds = run_full_scheme(sel_adds, cost_bps=10.0)
-        r_hf4, n_hf4, to_hf4, snap_hf4 = run_full_scheme(select_hf4, cost_bps=10.0)
+        r_barbell, n_barbell, to_barbell, snap_barbell, legs_barbell = run_full_scheme(sel_cmp_ew, cost_bps=10.0, barbell_etf=True)
+        r_cmp_cw, n_cmp_cw, to_cmp_cw, snap_cmp_cw, legs_cmp_cw = run_full_scheme(sel_cmp_cw, cost_bps=10.0)
+        r_cmp_ew, n_cmp_ew, to_cmp_ew, snap_cmp_ew, legs_cmp_ew = run_full_scheme(sel_cmp_ew, cost_bps=10.0)
+        r_fam12, n_fam12, to_fam12, snap_fam12, legs_fam12 = run_full_scheme(sel_fam12, cost_bps=10.0)
+        r_adds, n_adds, to_adds, snap_adds, legs_adds = run_full_scheme(sel_adds, cost_bps=10.0)
+        r_hf4, n_hf4, to_hf4, snap_hf4, legs_hf4 = run_full_scheme(select_hf4, cost_bps=10.0)
+
+        # Position Count Sensitivity legs (computed before daily price fetch so all tickers are loaded in one query)
+        pos_sensitivity_raw: list[tuple[int, dict[str, float], float, float, list[dict]]] = []
+        for k in [5, 8, 12, 20, 35]:
+            sel_k = make_guru_selector(PRE2014_FAMOUS_IDS, max_rk=10, top_k=k, min_wt=0.02, weight_mode="equal")
+            rk_map, an_k, ato_k, _, legs_k = run_full_scheme(sel_k, cost_bps=10.0)
+            pos_sensitivity_raw.append((k, rk_map, an_k, ato_k, legs_k))
+
+        # True Daily Mark-to-Market NAV Simulation across all 49 realized T+45 windows
+        daily_start_date = session_info[realized_q_dates[0]]["t45EntryDate"]
+        daily_end_date = session_info[realized_q_dates[-1]]["t45ExitDate"] or "2026-08-17"
+        daily_trading_dates = [
+            str(r[0])[:10]
+            for r in con.execute(
+                """
+                SELECT CAST(date AS VARCHAR)
+                FROM spy_days
+                WHERE date >= CAST(? AS DATE) AND date <= CAST(? AS DATE)
+                ORDER BY date
+                """,
+                [daily_start_date, daily_end_date],
+            ).fetchall()
+        ]
+        date_to_idx = {d: i for i, d in enumerate(daily_trading_dates)}
+
+        daily_needed_tickers: set[str] = {"SPY", "QQQ"}
+        for leg_list in [
+            legs_barbell,
+            legs_cmp_cw,
+            legs_cmp_ew,
+            legs_fam12,
+            legs_adds,
+            legs_hf4,
+            *[x[4] for x in pos_sensitivity_raw],
+        ]:
+            for leg in leg_list:
+                daily_needed_tickers.update(leg["weights"].keys())
+
+        con.execute("CREATE TEMP TABLE daily_need_tks (ticker VARCHAR);")
+        con.executemany(
+            "INSERT INTO daily_need_tks VALUES (?)",
+            [(tk,) for tk in sorted(daily_needed_tickers)],
+        )
+        daily_px_rows = con.execute(
+            """
+            SELECT p.ticker, CAST(p.date AS VARCHAR) AS dt, p.closeadj
+            FROM px_dedup p
+            JOIN daily_need_tks n ON p.ticker = n.ticker
+            WHERE p.date >= CAST(? AS DATE) - INTERVAL 10 DAY
+              AND p.date <= CAST(? AS DATE)
+            ORDER BY p.ticker, p.date
+            """,
+            [daily_start_date, daily_end_date],
+        ).fetchall()
+        daily_px_by_tk: dict[str, dict[str, float]] = {}
+        for tk, dt_s, cadj in daily_px_rows:
+            daily_px_by_tk.setdefault(str(tk), {})[str(dt_s)[:10]] = float(cadj)
+
+        def simulate_daily_etf(ticker: str) -> list[float]:
+            tk_map = daily_px_by_tk[ticker]
+            p0 = tk_map[daily_trading_dates[0]]
+            last_p = p0
+            out: list[float] = []
+            for d in daily_trading_dates:
+                p_cur = tk_map.get(d)
+                if p_cur and p_cur > 0:
+                    last_p = p_cur
+                out.append(100.0 * (last_p / p0))
+            return out
+
+        def simulate_daily_scheme(legs: list[dict]) -> list[float]:
+            nav_vals = [100.0] * len(daily_trading_dates)
+            cur_nav = 100.0
+            for leg in legs:
+                e0 = leg["entryDate"]
+                e1 = leg["exitDate"]
+                if not e0 or not e1 or e0 not in date_to_idx or e1 not in date_to_idx:
+                    continue
+                i0 = date_to_idx[e0]
+                i1 = date_to_idx[e1]
+                if i1 <= i0:
+                    continue
+
+                raw_weights = leg["weights"]
+                entry_px: dict[str, float] = {}
+                usable_w: dict[str, float] = {}
+                for tk, w in raw_weights.items():
+                    tk_map = daily_px_by_tk.get(tk, {})
+                    p0 = tk_map.get(e0)
+                    if p0 is None:
+                        # Match DuckDB FIRST(closeadj) within T+45..T+56 window
+                        for scan_i in range(i0, min(i1 + 1, i0 + 8)):
+                            cand = tk_map.get(daily_trading_dates[scan_i])
+                            if cand and cand > 0:
+                                p0 = cand
+                                break
+                    if p0 is None:
+                        for back_i in range(i0 - 1, max(-1, i0 - 6), -1):
+                            cand = tk_map.get(daily_trading_dates[back_i])
+                            if cand and cand > 0:
+                                p0 = cand
+                                break
+                    if p0 and p0 > 0:
+                        entry_px[tk] = p0
+                        usable_w[tk] = w
+
+                if leg["barbellEtf"]:
+                    sat_tks = [tk for tk in usable_w if tk not in ("SPY", "QQQ")]
+                    sat_sum = sum(usable_w[tk] for tk in sat_tks)
+                    eff_w: dict[str, float] = {"SPY": 0.35, "QQQ": 0.35}
+                    if sat_sum > 0:
+                        for tk in sat_tks:
+                            eff_w[tk] = 0.30 * (usable_w[tk] / sat_sum)
+                    else:
+                        eff_w = {"SPY": 0.50, "QQQ": 0.50}
+                    sat_to = leg["turnover"] / 0.30 if leg["turnover"] > 0 else 0.0
+                    cost = 0.30 * sat_to * (leg["costBps"] / 10000.0)
+                else:
+                    w_sum = sum(usable_w.values())
+                    eff_w = {tk: w / w_sum for tk, w in usable_w.items()} if w_sum > 0 else {}
+                    cost = leg["turnover"] * (leg["costBps"] / 10000.0)
+
+                last_valid = dict(entry_px)
+                for idx_d in range(i0 + 1, i1 + 1):
+                    d_str = daily_trading_dates[idx_d]
+                    gross_mult = 0.0
+                    for tk, w in eff_w.items():
+                        p_cur = daily_px_by_tk.get(tk, {}).get(d_str)
+                        if p_cur and p_cur > 0:
+                            last_valid[tk] = p_cur
+                        rel = min(5.0, max(0.05, last_valid[tk] / entry_px[tk]))
+                        gross_mult += w * rel
+                    net_mult = max(0.05, gross_mult - cost)
+                    nav_vals[idx_d] = cur_nav * net_mult
+
+                # Carry exact compounded NAV to next rebalance date
+                cur_nav = nav_vals[i1]
+            return nav_vals
+
+        def compute_daily_risk_overlay(nav_vals: list[float], spy_nav: list[float]) -> dict:
+            n = len(nav_vals)
+            peak = nav_vals[0]
+            mdd = 0.0
+            mdd_dt = daily_trading_dates[0]
+            rets: list[float] = []
+            diffs: list[float] = []
+            for i in range(n):
+                v = nav_vals[i]
+                if v > peak:
+                    peak = v
+                dd = (v / peak - 1.0) * 100.0
+                if dd < mdd:
+                    mdd = dd
+                    mdd_dt = daily_trading_dates[i]
+                if i > 0 and nav_vals[i - 1] > 0 and spy_nav[i - 1] > 0:
+                    r = v / nav_vals[i - 1] - 1.0
+                    sr = spy_nav[i] / spy_nav[i - 1] - 1.0
+                    rets.append(r)
+                    diffs.append(r - sr)
+            std_r = sample_std(rets)
+            std_d = sample_std(diffs)
+            mean_r = sum(rets) / len(rets) if rets else 0.0
+            mean_d = sum(diffs) / len(diffs) if diffs else 0.0
+            ann_vol = std_r * math.sqrt(252.0) * 100.0
+            d_sharpe = (mean_r * 252.0 - 0.025) / (std_r * math.sqrt(252.0)) if std_r > 0 else 0.0
+            d_ir = (mean_d * 252.0) / (std_d * math.sqrt(252.0)) if std_d > 0 else 0.0
+            return {
+                "dailyMaxDrawdownPct": r2(mdd),
+                "dailyMddDate": mdd_dt,
+                "dailyVolPct": r2(ann_vol),
+                "dailySharpe": r2(d_sharpe),
+                "dailyIr": r2(d_ir),
+                "tradingDays": n,
+                "dailyFinal100k": r1(nav_vals[-1]),
+            }
+
+        def apply_daily_risk(metrics_dict: dict, nav_vals: list[float], spy_nav: list[float]) -> dict:
+            overlay = compute_daily_risk_overlay(nav_vals, spy_nav)
+            out = dict(metrics_dict)
+            out["quarterlyMaxDrawdownPct"] = out.get("maxDrawdownPct")
+            out["maxDrawdownPct"] = overlay["dailyMaxDrawdownPct"]
+            out["dailyMddDate"] = overlay["dailyMddDate"]
+            out["dailyVolPct"] = overlay["dailyVolPct"]
+            out["dailySharpe"] = overlay["dailySharpe"]
+            out["dailyIr"] = overlay["dailyIr"]
+            out["tradingDays"] = overlay["tradingDays"]
+            return out
+
+        daily_spy = simulate_daily_etf("SPY")
+        daily_qqq = simulate_daily_etf("QQQ")
+        daily_barbell = simulate_daily_scheme(legs_barbell)
+        daily_cmp_cw = simulate_daily_scheme(legs_cmp_cw)
+        daily_cmp_ew = simulate_daily_scheme(legs_cmp_ew)
+        daily_fam12 = simulate_daily_scheme(legs_fam12)
+        daily_adds = simulate_daily_scheme(legs_adds)
+        daily_hf4 = simulate_daily_scheme(legs_hf4)
 
         # Benchmarks
-        spy_metrics = calc_series_metrics(realized_q_dates, spy_t45, spy_t45, qqq_t45, avg_n=500.0, ann_to_pct=0.0)
-        qqq_metrics = calc_series_metrics(realized_q_dates, qqq_t45, spy_t45, qqq_t45, avg_n=100.0, ann_to_pct=0.0)
+        spy_metrics = apply_daily_risk(
+            calc_series_metrics(realized_q_dates, spy_t45, spy_t45, qqq_t45, avg_n=500.0, ann_to_pct=0.0),
+            daily_spy,
+            daily_spy,
+        )
+        qqq_metrics = apply_daily_risk(
+            calc_series_metrics(realized_q_dates, qqq_t45, spy_t45, qqq_t45, avg_n=100.0, ann_to_pct=0.0),
+            daily_qqq,
+            daily_spy,
+        )
 
-        m_barbell = calc_series_metrics(realized_q_dates, r_barbell, spy_t45, qqq_t45, n_barbell, to_barbell)
-        m_cmp_cw = calc_series_metrics(realized_q_dates, r_cmp_cw, spy_t45, qqq_t45, n_cmp_cw, to_cmp_cw)
-        m_cmp_ew = calc_series_metrics(realized_q_dates, r_cmp_ew, spy_t45, qqq_t45, n_cmp_ew, to_cmp_ew)
-        m_fam12 = calc_series_metrics(realized_q_dates, r_fam12, spy_t45, qqq_t45, n_fam12, to_fam12)
-        m_adds = calc_series_metrics(realized_q_dates, r_adds, spy_t45, qqq_t45, n_adds, to_adds)
-        m_hf4 = calc_series_metrics(realized_q_dates, r_hf4, spy_t45, qqq_t45, n_hf4, to_hf4)
+        m_barbell = apply_daily_risk(
+            calc_series_metrics(realized_q_dates, r_barbell, spy_t45, qqq_t45, n_barbell, to_barbell),
+            daily_barbell,
+            daily_spy,
+        )
+        m_cmp_cw = apply_daily_risk(
+            calc_series_metrics(realized_q_dates, r_cmp_cw, spy_t45, qqq_t45, n_cmp_cw, to_cmp_cw),
+            daily_cmp_cw,
+            daily_spy,
+        )
+        m_cmp_ew = apply_daily_risk(
+            calc_series_metrics(realized_q_dates, r_cmp_ew, spy_t45, qqq_t45, n_cmp_ew, to_cmp_ew),
+            daily_cmp_ew,
+            daily_spy,
+        )
+        m_fam12 = apply_daily_risk(
+            calc_series_metrics(realized_q_dates, r_fam12, spy_t45, qqq_t45, n_fam12, to_fam12),
+            daily_fam12,
+            daily_spy,
+        )
+        m_adds = apply_daily_risk(
+            calc_series_metrics(realized_q_dates, r_adds, spy_t45, qqq_t45, n_adds, to_adds),
+            daily_adds,
+            daily_spy,
+        )
+        m_hf4 = apply_daily_risk(
+            calc_series_metrics(realized_q_dates, r_hf4, spy_t45, qqq_t45, n_hf4, to_hf4),
+            daily_hf4,
+            daily_spy,
+        )
+
+        daily_curves_payload = {
+            "startDate": daily_start_date,
+            "endDate": daily_end_date,
+            "tradingDays": len(daily_trading_dates),
+            "dates": daily_trading_dates,
+            "series": {
+                "SPY": [r2(v) for v in daily_spy],
+                "QQQ": [r2(v) for v in daily_qqq],
+                "barbell_70_30": [r2(v) for v in daily_barbell],
+                "monopoly_compounders": [r2(v) for v in daily_cmp_cw],
+                "monopoly_compounders_equal": [r2(v) for v in daily_cmp_ew],
+                "pre2014_legends": [r2(v) for v in daily_fam12],
+                "new_adds_catalyst": [r2(v) for v in daily_adds],
+                "hf4_smart_flow": [r2(v) for v in daily_hf4],
+            },
+        }
 
         schemes_meta = [
             {
@@ -1377,8 +1635,8 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     "zh": "35% SPY + 35% QQQ + 30% 垄断复利6大师 Top-10（每年4次法定日再平衡）",
                 },
                 "whyItWorks": {
-                    "en": "Highest risk-adjusted Sharpe (1.17) and IR (1.00): captures Nasdaq/S&P beta with -21.0% controlled drawdown while harvesting low-decay monopoly compounder alpha.",
-                    "zh": "全测试最高夏普比 (1.17) 与信息比 (1.00)：70%宽基锁住国运Beta，30%低衰减垄断复利大师贡献纯Alpha，最大回撤仅 -21.0%，心态最稳。",
+                    "en": f"Highest risk-adjusted Sharpe ({m_barbell['sharpe']:.2f}) and IR ({m_barbell['ir']:.2f}): captures Nasdaq/S&P beta with the lowest daily max drawdown ({m_barbell['maxDrawdownPct']:.1f}%, beating SPY {spy_metrics['maxDrawdownPct']:.1f}% and QQQ {qqq_metrics['maxDrawdownPct']:.1f}%) while harvesting low-decay monopoly alpha.",
+                    "zh": f"全测试最高夏普比 ({m_barbell['sharpe']:.2f}) 与信息比 ({m_barbell['ir']:.2f})：70%宽基锁住国运Beta，30%低衰减垄断复利大师贡献纯Alpha，日频最大回撤仅 {m_barbell['maxDrawdownPct']:.1f}%（优于标普 {spy_metrics['maxDrawdownPct']:.1f}% 与纳指 {qqq_metrics['maxDrawdownPct']:.1f}%），心态最稳。",
                 },
                 "metrics": m_barbell,
             },
@@ -1429,8 +1687,8 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     "zh": "只抄当季单票仓位环比猛增 Δwt ≥ +1.5%（且总仓位 ≥ 2.5%）的新建仓与重手加仓股，Top-12 等权",
                 },
                 "whyItWorks": {
-                    "en": "Captures multi-quarter institutional accumulation waves (e.g., Duquesne/Tepper AI memory & semi cap-equip cycles) with -18.6% max drawdown and +9.00%/yr post-2020 alpha.",
-                    "zh": "精准捕捉顶级大师基本面拐点建仓周期（机构建满大仓往往横跨2–3个季度），2020–26年化超额高达 +9.00%，最大回撤仅 -18.6%。",
+                    "en": f"Captures multi-quarter institutional accumulation waves (e.g., Duquesne/Tepper AI memory & semi cap-equip cycles) with +9.00%/yr post-2020 alpha and {m_adds['maxDrawdownPct']:.1f}% daily max drawdown.",
+                    "zh": f"精准捕捉顶级大师基本面拐点建仓周期（机构建满大仓往往横跨2–3个季度），2020–26年化超额高达 +9.00%，日频最大回撤 {m_adds['maxDrawdownPct']:.1f}%。",
                 },
                 "metrics": m_adds,
             },
@@ -1438,7 +1696,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 "id": "hf4_smart_flow",
                 "recommended": False,
                 "taxBadge": {"en": "IRA / Tax-Exempt Only · 380% Turnover", "zh": "仅限免税账户 · 380%高换手"},
-                "badge": {"en": "Quant 3-Factor · MDD -16.8%", "zh": "三因子量化 · 回撤-16.8%"},
+                "badge": {"en": "Quant 3-Factor · +3.7% α", "zh": "三因子量化 · +3.7%超额"},
                 "name": {"en": "HF-4 Smart-Money Flow (HF × Pod × Anti-Passive)", "zh": "HF-4 聪明钱三因子共振 Top-15"},
                 "shortName": {"en": "HF-4 Smart Flow", "zh": "HF-4 三因子"},
                 "formula": {
@@ -1446,8 +1704,8 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     "zh": "2,092家主动HF净买占比 (50%) + 59家多策略Pod同向加仓 (30%) − 123家被动指数拥挤度 (20%)，≥$50亿市值 Top-15",
                 },
                 "whyItWorks": {
-                    "en": "Raw HF Q5 buying underperforms SPY (11.54%), because 80% of raw HF alpha is shorting Q1 dumps. Requiring Pod resonance + Anti-Passive upgrades pure-long T+45 CAGR to 17.87% with -16.8% MDD.",
-                    "zh": "无脑抄主动HF净买入(Q5)仅11.54%跑输标普！叠加多策略Pod共振确认与反被动拥挤过滤后，纯多头严格T+45年化跃升至 17.87%，最大回撤压至全场最低 -16.8%。",
+                    "en": f"Raw HF Q5 buying underperforms SPY (11.54%), because 80% of raw HF alpha is shorting Q1 dumps. Requiring Pod resonance + Anti-Passive upgrades pure-long T+45 CAGR to 17.87% ({m_hf4['maxDrawdownPct']:.1f}% daily MDD, {m_hf4['quarterlyMaxDrawdownPct']:.1f}% quarterly MDD).",
+                    "zh": f"无脑抄主动HF净买入(Q5)仅11.54%跑输标普！叠加多策略Pod共振确认与反被动拥挤过滤后，纯多头严格T+45年化跃升至 17.87%（日频最大回撤 {m_hf4['maxDrawdownPct']:.1f}%，季末收盘回撤仅 {m_hf4['quarterlyMaxDrawdownPct']:.1f}%）。",
                 },
                 "metrics": m_hf4,
             },
@@ -1463,10 +1721,13 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
 
         # Position Count Sensitivity (Top-5 / Top-8 / Top-12 / Top-20 / Top-35)
         pos_sensitivity = []
-        for k in [5, 8, 12, 20, 35]:
-            sel_k = make_guru_selector(PRE2014_FAMOUS_IDS, max_rk=10, top_k=k, min_wt=0.02, weight_mode="equal")
-            rk_map, an_k, ato_k, _ = run_full_scheme(sel_k, cost_bps=10.0)
-            mk = calc_series_metrics(realized_q_dates, rk_map, spy_t45, qqq_t45, an_k, ato_k)
+        for k, rk_map, an_k, ato_k, legs_k in pos_sensitivity_raw:
+            daily_k = simulate_daily_scheme(legs_k)
+            mk = apply_daily_risk(
+                calc_series_metrics(realized_q_dates, rk_map, spy_t45, qqq_t45, an_k, ato_k),
+                daily_k,
+                daily_spy,
+            )
             pos_sensitivity.append({
                 "label": f"Top-{k}",
                 "holdingsCount": k,
@@ -1485,7 +1746,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
         sel_cheaper = make_guru_selector(
             PRE2014_FAMOUS_IDS, max_rk=10, top_k=12, min_wt=0.03, weight_mode="equal", price_filter="discount_qavg"
         )
-        r_cheaper, n_cheaper, to_cheaper, _ = run_full_scheme(sel_cheaper, cost_bps=10.0)
+        r_cheaper, n_cheaper, to_cheaper, _, _ = run_full_scheme(sel_cheaper, cost_bps=10.0)
         m_cheaper = calc_series_metrics(realized_q_dates, r_cheaper, spy_t45, qqq_t45, n_cheaper, to_cheaper)
 
         anti_patterns = [
@@ -1754,6 +2015,9 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             "backtestWindow": {
                 "startQuarter": "2014 Q1",
                 "endQuarter": "2026 Q1 (Exit Aug 2026) + 2026 Q2 Realized",
+                "startDate": daily_start_date,
+                "endDate": daily_end_date,
+                "tradingDays": len(daily_trading_dates),
                 "realizedQuarters": len(realized_q_dates),
                 "totalSnapshots": len(all_snapshot_q_dates),
             },
@@ -1761,6 +2025,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 "SPY": spy_metrics,
                 "QQQ": qqq_metrics,
             },
+            "dailyCurves": daily_curves_payload,
             "schemes": schemes_meta,
             "positionCountSensitivity": pos_sensitivity,
             "antiPatterns": anti_patterns,
@@ -1791,7 +2056,25 @@ def main() -> int:
         assert len(existing.get("schemes", [])) == 5
         assert len(existing.get("guruRoster", [])) == 16
         assert len(existing.get("masterBlueprint16", [])) == 16
-        print(f"OK: verified {args.output} ({len(existing['schemes'])} schemes, {len(existing['guruRoster'])} gurus)")
+        dc = existing.get("dailyCurves") or {}
+        dc_dates = dc.get("dates") or []
+        dc_series = dc.get("series") or {}
+        assert len(dc_dates) >= 2500, f"expected >=2500 daily NAV points, got {len(dc_dates)}"
+        for key in (
+            "SPY",
+            "QQQ",
+            "barbell_70_30",
+            "monopoly_compounders",
+            "monopoly_compounders_equal",
+            "pre2014_legends",
+            "new_adds_catalyst",
+            "hf4_smart_flow",
+        ):
+            assert len(dc_series.get(key) or []) == len(dc_dates), f"dailyCurves.{key} length mismatch"
+        print(
+            f"OK: verified {args.output} ({len(existing['schemes'])} schemes, "
+            f"{len(existing['guruRoster'])} gurus, {len(dc_dates)} daily NAV sessions)"
+        )
         return 0
 
     artifact = build_artifact(args.fact_root, args.taxonomy)

@@ -34,6 +34,7 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
 
   Map<String, dynamic>? data;
   Map<String, dynamic>? activeSnapshotOverride;
+  _CopycatCurveSeries? _cachedCurveSeries;
   bool loading = true;
   bool snapshotLoading = false;
   String? error;
@@ -135,6 +136,7 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
       final roster = asList(res['guruRoster']);
       setState(() {
         data = res;
+        _cachedCurveSeries = _parseCurveSeries(res);
         activeSnapshotOverride = null;
         selectedQuarterDate = text(
           activeSnap['quarterDate'],
@@ -219,6 +221,115 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
       return activeSnapshotOverride!;
     }
     return asMap(data?['activeSnapshot']);
+  }
+
+  static List<double> _computeDrawdownPct(List<double> navs) {
+    if (navs.isEmpty) return const [];
+    final out = List<double>.filled(navs.length, 0.0);
+    var peak = navs.first > 0 ? navs.first : 100.0;
+    for (var i = 0; i < navs.length; i++) {
+      final v = navs[i];
+      if (v > peak) peak = v;
+      out[i] = peak > 0 ? ((v / peak) - 1.0) * 100.0 : 0.0;
+    }
+    return out;
+  }
+
+  _CopycatCurveSeries _parseCurveSeries(Map<String, dynamic>? res) {
+    final dc = asMap(res?['dailyCurve']);
+    final rawDates = dc['dates'];
+    final rawScheme = dc['schemeNav'];
+    final rawSpy = dc['spyNav'];
+    final rawQqq = dc['qqqNav'];
+    if (rawDates is List &&
+        rawScheme is List &&
+        rawSpy is List &&
+        rawQqq is List) {
+      final n = math.min(
+        math.min(rawDates.length, rawScheme.length),
+        math.min(rawSpy.length, rawQqq.length),
+      );
+      if (n >= 2) {
+        final dates = List<String>.generate(n, (i) => text(rawDates[i]));
+        final sNav = List<double>.generate(
+          n,
+          (i) => (nullableNumber(rawScheme[i]) ?? 100.0).toDouble(),
+        );
+        final spyNav = List<double>.generate(
+          n,
+          (i) => (nullableNumber(rawSpy[i]) ?? 100.0).toDouble(),
+        );
+        final qqqNav = List<double>.generate(
+          n,
+          (i) => (nullableNumber(rawQqq[i]) ?? 100.0).toDouble(),
+        );
+        return _CopycatCurveSeries(
+          dates: dates,
+          schemeNav: sNav,
+          spyNav: spyNav,
+          qqqNav: qqqNav,
+          schemeDd: _computeDrawdownPct(sNav),
+          spyDd: _computeDrawdownPct(spyNav),
+          qqqDd: _computeDrawdownPct(qqqNav),
+          isDaily: true,
+        );
+      }
+    }
+
+    // Graceful fallback to quarterly curve if dailyCurve is unavailable
+    final schemes = asList(res?['schemes']);
+    final active = schemes.firstWhere(
+      (s) => text(s['id']) == schemeId,
+      orElse: () => schemes.isNotEmpty ? schemes.first : const {},
+    );
+    final qCurve = asList(asMap(active['metrics'])['curve']);
+    final spyQ = asList(asMap(asMap(res?['benchmarks'])['SPY'])['curve']);
+    final qqqQ = asList(asMap(asMap(res?['benchmarks'])['QQQ'])['curve']);
+    final n = qCurve.length;
+    if (n < 2) return _CopycatCurveSeries.empty;
+    final dates = List<String>.generate(n, (i) => text(qCurve[i]['quarter']));
+    final sNav = List<double>.generate(
+      n,
+      (i) => (nullableNumber(qCurve[i]['nav100k']) ?? 100.0).toDouble(),
+    );
+    final spyNav = List<double>.generate(
+      n,
+      (i) => i < spyQ.length
+          ? (nullableNumber(spyQ[i]['nav100k']) ?? 100.0).toDouble()
+          : 100.0,
+    );
+    final qqqNav = List<double>.generate(
+      n,
+      (i) => i < qqqQ.length
+          ? (nullableNumber(qqqQ[i]['nav100k']) ?? 100.0).toDouble()
+          : 100.0,
+    );
+    final sDd = List<double>.generate(
+      n,
+      (i) => (nullableNumber(qCurve[i]['drawdownPct']) ?? 0.0).toDouble(),
+    );
+    final spyDd = List<double>.generate(
+      n,
+      (i) => i < spyQ.length
+          ? (nullableNumber(spyQ[i]['drawdownPct']) ?? 0.0).toDouble()
+          : 0.0,
+    );
+    final qqqDd = List<double>.generate(
+      n,
+      (i) => i < qqqQ.length
+          ? (nullableNumber(qqqQ[i]['drawdownPct']) ?? 0.0).toDouble()
+          : 0.0,
+    );
+    return _CopycatCurveSeries(
+      dates: dates,
+      schemeNav: sNav,
+      spyNav: spyNav,
+      qqqNav: qqqNav,
+      schemeDd: sDd,
+      spyDd: spyDd,
+      qqqDd: qqqDd,
+      isDaily: false,
+    );
   }
 
   String _fmtPct(dynamic v, {bool signed = false, int digits = 2}) {
@@ -658,8 +769,8 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                   w('Max Drawdown', '最大回撤 MDD'),
                   _fmtPct(m['maxDrawdownPct']),
                   w(
-                    'QQQ ${_fmtPct(qqqM['maxDrawdownPct'])}',
-                    '对比纳指 ${_fmtPct(qqqM['maxDrawdownPct'])}',
+                    'SPY ${_fmtPct(spyM['maxDrawdownPct'], digits: 1)} · QQQ ${_fmtPct(qqqM['maxDrawdownPct'], digits: 1)}',
+                    '标普 ${_fmtPct(spyM['maxDrawdownPct'], digits: 1)} · 纳指 ${_fmtPct(qqqM['maxDrawdownPct'], digits: 1)}',
                   ),
                   _amber,
                 ),
@@ -904,14 +1015,12 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
   }
 
   // ===========================================================================
-  // MODULE 2: Interactive 12-Year Strict T+45 Equity Curve + Position Count + Anti-Patterns
+  // MODULE 2: Interactive 12-Year Strict T+45 Daily Equity Curve + Position Count + Anti-Patterns
   // ===========================================================================
   Widget _buildModule2BacktestAndAnalytics() {
     final active = _activeScheme;
     final m = asMap(active['metrics']);
-    final curve = asList(m['curve']);
-    final spyCurve = asList(asMap(asMap(data?['benchmarks'])['SPY'])['curve']);
-    final qqqCurve = asList(asMap(asMap(data?['benchmarks'])['QQQ'])['curve']);
+    final curveSeries = _cachedCurveSeries ?? _parseCurveSeries(data);
     final annuals = asList(m['annualReturns']);
     final posRows = asList(data?['positionCountSensitivity']);
     final traps = asList(data?['antiPatterns']);
@@ -934,8 +1043,8 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                     children: [
                       Text(
                         w(
-                          '12-Year Strict T+45 Growth of \$100k & Drawdown',
-                          '12年严格 T+45 披露滞后十万美元复利净值与回撤对比',
+                          '12-Year Strict T+45 Daily NAV & Drawdown',
+                          '12年严格 T+45 披露滞后十万美元日频净值与回撤对比',
                         ),
                         style: TextStyle(
                           color: p.text,
@@ -945,10 +1054,15 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        w(
-                          'Every trade executes 45+ calendar days after quarter-end (Feb 16 / May 16 / Aug 16 / Nov 16), net of 10 bps turnover cost.',
-                          '全部调仓严格在季末 45 天后法定披露窗口成交，已扣除单边 10 bps 交易摩擦，零前视偏差。',
-                        ),
+                        curveSeries.isDaily
+                            ? w(
+                                'Daily mark-to-market NAV (${curveSeries.length} sessions · ${curveSeries.startLabel} – ${curveSeries.endLabel}), strictly rebalanced 4×/yr on T+45 net of 10 bps cost.',
+                                '日频盯市净值（${curveSeries.length} 个交易日 · ${curveSeries.startLabel} – ${curveSeries.endLabel}），严格于季末 45 天法定日调仓并扣单边 10 bps 摩擦，零前视偏差。',
+                              )
+                            : w(
+                                'Every trade executes 45+ calendar days after quarter-end (Feb 16 / May 16 / Aug 16 / Nov 16), net of 10 bps turnover cost.',
+                                '全部调仓严格在季末 45 天后法定披露窗口成交，已扣除单边 10 bps 交易摩擦，零前视偏差。',
+                              ),
                         style: TextStyle(color: p.muted, fontSize: 11.5),
                       ),
                     ],
@@ -981,11 +1095,11 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                 ],
               ),
               const SizedBox(height: 10),
-              _buildHoverReadoutBar(curve, spyCurve, qqqCurve, active),
+              _buildHoverReadoutBar(curveSeries, active),
               const SizedBox(height: 8),
               SizedBox(
                 height: 250,
-                child: _buildInteractiveCurveCanvas(curve, spyCurve, qqqCurve),
+                child: _buildInteractiveCurveCanvas(curveSeries),
               ),
               const SizedBox(height: 12),
               Text(
@@ -1244,18 +1358,20 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
   }
 
   Widget _buildHoverReadoutBar(
-    List<Map<String, dynamic>> curve,
-    List<Map<String, dynamic>> spyCurve,
-    List<Map<String, dynamic>> qqqCurve,
+    _CopycatCurveSeries series,
     Map<String, dynamic> active,
   ) {
-    if (curve.isEmpty) return const SizedBox.shrink();
-    final idx = (hoverIndex >= 0 && hoverIndex < curve.length)
+    if (series.isEmpty) return const SizedBox.shrink();
+    final idx = (hoverIndex >= 0 && hoverIndex < series.length)
         ? hoverIndex
-        : curve.length - 1;
-    final pt = curve[idx];
-    final spyPt = idx < spyCurve.length ? spyCurve[idx] : const <String, dynamic>{};
-    final qqqPt = idx < qqqCurve.length ? qqqCurve[idx] : const <String, dynamic>{};
+        : series.length - 1;
+    final dateLabel = series.dates[idx];
+    final sNav = series.schemeNav[idx];
+    final spyNav = series.spyNav[idx];
+    final qqqNav = series.qqqNav[idx];
+    final sDd = series.schemeDd[idx];
+    final spyDd = series.spyDd[idx];
+    final qqqDd = series.qqqDd[idx];
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
@@ -1270,33 +1386,34 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           Text(
-            text(pt['quarter']),
+            dateLabel,
             style: TextStyle(
               color: p.text,
               fontSize: 12,
               fontWeight: FontWeight.w800,
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
           _legendMetricDot(
             _mint,
             loc(active['shortName']),
             showDrawdown
-                ? _fmtPct(pt['drawdownPct'])
-                : '${_fmt100k(pt['nav100k'])} (${_fmtPct(pt['retPct'], signed: true, digits: 1)})',
+                ? _fmtPct(sDd)
+                : '${_fmt100k(sNav)} (${_fmtPct(sNav - 100.0, signed: true, digits: 1)})',
           ),
           _legendMetricDot(
             _sky,
             'SPY',
             showDrawdown
-                ? _fmtPct(spyPt['drawdownPct'])
-                : '${_fmt100k(spyPt['nav100k'])} (${_fmtPct(spyPt['retPct'], signed: true, digits: 1)})',
+                ? _fmtPct(spyDd)
+                : '${_fmt100k(spyNav)} (${_fmtPct(spyNav - 100.0, signed: true, digits: 1)})',
           ),
           _legendMetricDot(
             _violet,
             'QQQ',
             showDrawdown
-                ? _fmtPct(qqqPt['drawdownPct'])
-                : '${_fmt100k(qqqPt['nav100k'])} (${_fmtPct(qqqPt['retPct'], signed: true, digits: 1)})',
+                ? _fmtPct(qqqDd)
+                : '${_fmt100k(qqqNav)} (${_fmtPct(qqqNav - 100.0, signed: true, digits: 1)})',
           ),
         ],
       ),
@@ -1339,12 +1456,8 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
     );
   }
 
-  Widget _buildInteractiveCurveCanvas(
-    List<Map<String, dynamic>> curve,
-    List<Map<String, dynamic>> spyCurve,
-    List<Map<String, dynamic>> qqqCurve,
-  ) {
-    if (curve.length < 2) return const SizedBox.shrink();
+  Widget _buildInteractiveCurveCanvas(_CopycatCurveSeries series) {
+    if (series.length < 2) return const SizedBox.shrink();
     return LayoutBuilder(
       builder: (_, c) {
         void updateHover(Offset localPos) {
@@ -1352,7 +1465,7 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
           const padRight = 12.0;
           final plotW = math.max(1.0, c.maxWidth - padLeft - padRight);
           final frac = ((localPos.dx - padLeft) / plotW).clamp(0.0, 1.0);
-          final nextIdx = (frac * (curve.length - 1)).round();
+          final nextIdx = (frac * (series.length - 1)).round();
           if (nextIdx != hoverIndex) {
             setState(() => hoverIndex = nextIdx);
           }
@@ -1368,9 +1481,7 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
             child: CustomPaint(
               size: Size(c.maxWidth, 250),
               painter: _CopycatEquityCurvePainter(
-                schemeCurve: curve,
-                spyCurve: spyCurve,
-                qqqCurve: qqqCurve,
+                series: series,
                 showDrawdown: showDrawdown,
                 logScale: logScale,
                 hoverIndex: hoverIndex,
@@ -3131,11 +3242,47 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
   }
 }
 
+class _CopycatCurveSeries {
+  const _CopycatCurveSeries({
+    required this.dates,
+    required this.schemeNav,
+    required this.spyNav,
+    required this.qqqNav,
+    required this.schemeDd,
+    required this.spyDd,
+    required this.qqqDd,
+    required this.isDaily,
+  });
+
+  static const empty = _CopycatCurveSeries(
+    dates: [],
+    schemeNav: [],
+    spyNav: [],
+    qqqNav: [],
+    schemeDd: [],
+    spyDd: [],
+    qqqDd: [],
+    isDaily: false,
+  );
+
+  final List<String> dates;
+  final List<double> schemeNav;
+  final List<double> spyNav;
+  final List<double> qqqNav;
+  final List<double> schemeDd;
+  final List<double> spyDd;
+  final List<double> qqqDd;
+  final bool isDaily;
+
+  int get length => dates.length;
+  bool get isEmpty => dates.isEmpty;
+  String get startLabel => dates.isNotEmpty ? dates.first : '';
+  String get endLabel => dates.isNotEmpty ? dates.last : '';
+}
+
 class _CopycatEquityCurvePainter extends CustomPainter {
   _CopycatEquityCurvePainter({
-    required this.schemeCurve,
-    required this.spyCurve,
-    required this.qqqCurve,
+    required this.series,
     required this.showDrawdown,
     required this.logScale,
     required this.hoverIndex,
@@ -3143,25 +3290,27 @@ class _CopycatEquityCurvePainter extends CustomPainter {
     required this.gridColor,
   });
 
-  final List<Map<String, dynamic>> schemeCurve;
-  final List<Map<String, dynamic>> spyCurve;
-  final List<Map<String, dynamic>> qqqCurve;
+  final _CopycatCurveSeries series;
   final bool showDrawdown;
   final bool logScale;
   final int hoverIndex;
   final Color textColor;
   final Color gridColor;
 
-  double _val(Map<String, dynamic> pt) {
-    if (showDrawdown) {
-      return (nullableNumber(pt['drawdownPct']) ?? 0.0).toDouble();
-    }
-    final nav = math.max(10.0, (nullableNumber(pt['nav100k']) ?? 100.0).toDouble());
-    return logScale ? math.log(nav) : nav;
+  double _mapNav(double nav) {
+    final safe = math.max(10.0, nav);
+    return logScale ? math.log(safe) : safe;
+  }
+
+  double _valAt(List<double> navs, List<double> dds, int idx) {
+    if (showDrawdown) return dds[idx];
+    return _mapNav(navs[idx]);
   }
 
   @override
   void paint(Canvas canvas, Size size) {
+    final n = series.length;
+    if (n < 2) return;
     const padLeft = 52.0;
     const padRight = 12.0;
     const padTop = 10.0;
@@ -3169,15 +3318,19 @@ class _CopycatEquityCurvePainter extends CustomPainter {
     final plotW = math.max(1.0, size.width - padLeft - padRight);
     final plotH = math.max(1.0, size.height - padTop - padBottom);
 
-    final allVals = <double>[
-      if (!showDrawdown) logScale ? math.log(100.0) : 100.0,
-      if (showDrawdown) 0.0,
-      for (final pt in schemeCurve) _val(pt),
-      for (final pt in spyCurve) _val(pt),
-      for (final pt in qqqCurve) _val(pt),
-    ];
-    var minY = allVals.reduce(math.min);
-    var maxY = allVals.reduce(math.max);
+    var minY = showDrawdown ? 0.0 : (logScale ? math.log(100.0) : 100.0);
+    var maxY = minY;
+    for (var i = 0; i < n; i++) {
+      final sv = _valAt(series.schemeNav, series.schemeDd, i);
+      final bv = _valAt(series.spyNav, series.spyDd, i);
+      final qv = _valAt(series.qqqNav, series.qqqDd, i);
+      if (sv < minY) minY = sv;
+      if (bv < minY) minY = bv;
+      if (qv < minY) minY = qv;
+      if (sv > maxY) maxY = sv;
+      if (bv > maxY) maxY = bv;
+      if (qv > maxY) maxY = qv;
+    }
     if ((maxY - minY).abs() < 1e-6) maxY = minY + 1.0;
     final padY = (maxY - minY) * 0.06;
     if (!showDrawdown) {
@@ -3185,11 +3338,10 @@ class _CopycatEquityCurvePainter extends CustomPainter {
       maxY += padY;
     } else {
       minY -= padY;
-      maxY = 0.5;
+      maxY = 0.0;
     }
 
-    double xAt(int i, int n) =>
-        padLeft + (n <= 1 ? 0.0 : (i / (n - 1)) * plotW);
+    double xAt(int i) => padLeft + (i / (n - 1)) * plotW;
     double yAt(double v) =>
         padTop + (1.0 - ((v - minY) / (maxY - minY)).clamp(0.0, 1.0)) * plotH;
 
@@ -3220,16 +3372,46 @@ class _CopycatEquityCurvePainter extends CustomPainter {
       tp.paint(canvas, Offset(padLeft - tp.width - 6, y - tp.height / 2));
     }
 
-    final n = schemeCurve.length;
-    final q1 = (n * 0.25).floor();
-    final q2 = (n * 0.50).floor();
-    final q3 = (n * 0.75).floor();
-    for (final tickIdx in {0, q1, q2, q3, n - 1}) {
-      if (tickIdx < 0 || tickIdx >= n) continue;
-      final x = xAt(tickIdx, n);
+    // X-axis labels: clean calendar years for daily NAV, quarter anchors for fallback
+    final tickEntries = <(int, String)>[];
+    if (series.isDaily && series.dates.first.length >= 4) {
+      final yearStarts = <(int, String)>[];
+      String? lastYr;
+      for (var i = 0; i < n; i++) {
+        final yr = series.dates[i].substring(0, 4);
+        if (yr != lastYr) {
+          yearStarts.add((i, yr));
+          lastYr = yr;
+        }
+      }
+      final step = yearStarts.length > 8 ? 2 : 1;
+      for (var k = 0; k < yearStarts.length; k += step) {
+        tickEntries.add(yearStarts[k]);
+      }
+      if (yearStarts.isNotEmpty &&
+          (tickEntries.isEmpty || tickEntries.last.$2 != yearStarts.last.$2)) {
+        final lastStart = yearStarts.last;
+        if (tickEntries.isEmpty ||
+            (xAt(lastStart.$1) - xAt(tickEntries.last.$1)) > 42) {
+          tickEntries.add(lastStart);
+        }
+      }
+    } else {
+      final q1 = (n * 0.25).floor();
+      final q2 = (n * 0.50).floor();
+      final q3 = (n * 0.75).floor();
+      for (final idx in {0, q1, q2, q3, n - 1}) {
+        if (idx >= 0 && idx < n) {
+          tickEntries.add((idx, series.dates[idx]));
+        }
+      }
+    }
+
+    for (final tick in tickEntries) {
+      final x = xAt(tick.$1);
       final tp = TextPainter(
         text: TextSpan(
-          text: text(schemeCurve[tickIdx]['quarter']),
+          text: tick.$2,
           style: TextStyle(color: textColor, fontSize: 9.8),
         ),
         textDirection: TextDirection.ltr,
@@ -3239,16 +3421,16 @@ class _CopycatEquityCurvePainter extends CustomPainter {
     }
 
     void drawSeries(
-      List<Map<String, dynamic>> pts,
+      List<double> navs,
+      List<double> dds,
       Color color,
       double width, {
       bool fill = false,
     }) {
-      if (pts.length < 2) return;
       final path = Path();
-      for (var i = 0; i < pts.length; i++) {
-        final px = xAt(i, pts.length);
-        final py = yAt(_val(pts[i]));
+      for (var i = 0; i < n; i++) {
+        final px = xAt(i);
+        final py = yAt(_valAt(navs, dds, i));
         if (i == 0) {
           path.moveTo(px, py);
         } else {
@@ -3256,9 +3438,10 @@ class _CopycatEquityCurvePainter extends CustomPainter {
         }
       }
       if (fill) {
+        final baseY = showDrawdown ? yAt(0.0) : (padTop + plotH);
         final fillPath = Path.from(path)
-          ..lineTo(xAt(pts.length - 1, pts.length), padTop + plotH)
-          ..lineTo(xAt(0, pts.length), padTop + plotH)
+          ..lineTo(xAt(n - 1), baseY)
+          ..lineTo(xAt(0), baseY)
           ..close();
         canvas.drawPath(
           fillPath,
@@ -3266,7 +3449,9 @@ class _CopycatEquityCurvePainter extends CustomPainter {
             ..shader = ui.Gradient.linear(
               Offset(0, padTop),
               Offset(0, padTop + plotH),
-              [color.withValues(alpha: 0.22), color.withValues(alpha: 0.0)],
+              showDrawdown
+                  ? [color.withValues(alpha: 0.04), color.withValues(alpha: 0.24)]
+                  : [color.withValues(alpha: 0.20), color.withValues(alpha: 0.0)],
             ),
         );
       }
@@ -3281,12 +3466,22 @@ class _CopycatEquityCurvePainter extends CustomPainter {
       );
     }
 
-    drawSeries(qqqCurve, const Color(0xFFA78BFA), 1.5);
-    drawSeries(spyCurve, const Color(0xFF38BDF8), 1.7);
-    drawSeries(schemeCurve, const Color(0xFF14B8A6), 2.5, fill: true);
+    final qqqW = series.isDaily ? 1.25 : 1.5;
+    final spyW = series.isDaily ? 1.40 : 1.7;
+    final schemeW = series.isDaily ? 1.85 : 2.5;
 
-    if (hoverIndex >= 0 && hoverIndex < schemeCurve.length) {
-      final hx = xAt(hoverIndex, schemeCurve.length);
+    drawSeries(series.qqqNav, series.qqqDd, const Color(0xFFA78BFA), qqqW);
+    drawSeries(series.spyNav, series.spyDd, const Color(0xFF38BDF8), spyW);
+    drawSeries(
+      series.schemeNav,
+      series.schemeDd,
+      const Color(0xFF14B8A6),
+      schemeW,
+      fill: true,
+    );
+
+    if (hoverIndex >= 0 && hoverIndex < n) {
+      final hx = xAt(hoverIndex);
       canvas.drawLine(
         Offset(hx, padTop),
         Offset(hx, padTop + plotH),
@@ -3294,18 +3489,38 @@ class _CopycatEquityCurvePainter extends CustomPainter {
           ..color = textColor.withValues(alpha: 0.45)
           ..strokeWidth = 1.0,
       );
-      final hy = yAt(_val(schemeCurve[hoverIndex]));
+      final qy = yAt(_valAt(series.qqqNav, series.qqqDd, hoverIndex));
+      final by = yAt(_valAt(series.spyNav, series.spyDd, hoverIndex));
+      final sy = yAt(_valAt(series.schemeNav, series.schemeDd, hoverIndex));
       canvas.drawCircle(
-        Offset(hx, hy),
+        Offset(hx, qy),
+        3.0,
+        Paint()..color = const Color(0xFFA78BFA),
+      );
+      canvas.drawCircle(
+        Offset(hx, by),
+        3.2,
+        Paint()..color = const Color(0xFF38BDF8),
+      );
+      canvas.drawCircle(
+        Offset(hx, sy),
         4.2,
         Paint()..color = const Color(0xFF14B8A6),
+      );
+      canvas.drawCircle(
+        Offset(hx, sy),
+        5.8,
+        Paint()
+          ..color = const Color(0xFF14B8A6).withValues(alpha: 0.35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
       );
     }
   }
 
   @override
   bool shouldRepaint(covariant _CopycatEquityCurvePainter oldDelegate) =>
-      oldDelegate.schemeCurve != schemeCurve ||
+      oldDelegate.series != series ||
       oldDelegate.showDrawdown != showDrawdown ||
       oldDelegate.logScale != logScale ||
       oldDelegate.hoverIndex != hoverIndex;

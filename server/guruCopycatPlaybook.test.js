@@ -29,7 +29,22 @@ test('loads flagship Guru Copycat Playbook with all 5 schemes, 16 gurus, 16-stoc
   assert.equal(byId.pre2014_legends.metrics.bothHalvesBeat, true);
   assert.ok(Math.abs(byId.new_adds_catalyst.metrics.cagrPct - 19.82) < 0.05);
   assert.ok(Math.abs(byId.hf4_smart_flow.metrics.cagrPct - 17.87) < 0.05);
-  assert.ok(byId.hf4_smart_flow.metrics.maxDrawdownPct > -17.0);
+  assert.ok(byId.hf4_smart_flow.metrics.quarterlyMaxDrawdownPct > -17.0);
+  assert.ok(byId.barbell_70_30.metrics.maxDrawdownPct > dash.benchmarks.SPY.maxDrawdownPct);
+  assert.ok(dash.benchmarks.SPY.maxDrawdownPct < -33.0 && dash.benchmarks.SPY.maxDrawdownPct > -34.5);
+
+  // Verify true daily mark-to-market NAV curve (~3,081 trading sessions)
+  assert.ok(dash.dailyCurve);
+  assert.equal(dash.dailyCurve.startDate, '2014-05-16');
+  assert.equal(dash.dailyCurve.endDate, '2026-08-17');
+  assert.ok(dash.dailyCurve.dates.length >= 3000);
+  assert.equal(dash.dailyCurve.schemeNav.length, dash.dailyCurve.dates.length);
+  assert.equal(dash.dailyCurve.spyNav.length, dash.dailyCurve.dates.length);
+  assert.equal(dash.dailyCurve.qqqNav.length, dash.dailyCurve.dates.length);
+  assert.equal(dash.dailyCurve.schemeNav[0], 100);
+  assert.ok(Math.abs(dash.dailyCurve.schemeNav.at(-1) - byId.barbell_70_30.metrics.final100k) < 0.1);
+  assert.ok(Math.abs(dash.dailyCurve.spyNav.at(-1) - dash.benchmarks.SPY.final100k) < 0.1);
+  assert.ok(Math.abs(dash.dailyCurve.qqqNav.at(-1) - dash.benchmarks.QQQ.final100k) < 0.1);
 
   // Position count sensitivity & anti-patterns
   assert.equal(dash.positionCountSensitivity.length, 5);
@@ -76,6 +91,8 @@ test('supports Equal-Weight toggle on Monopoly Compounders and historical quarte
   const mono = eqDash.schemes.find(s => s.id === 'monopoly_compounders');
   assert.equal(mono.activeWeightMode, 'equal');
   assert.ok(Math.abs(mono.metrics.winRatePct - 73.5) < 0.2);
+  assert.ok(eqDash.dailyCurve);
+  assert.ok(Math.abs(eqDash.dailyCurve.schemeNav.at(-1) - mono.metrics.final100k) < 0.1);
   assert.equal(eqDash.activeSnapshot.quarter, '2022 Q2');
   assert.equal(eqDash.activeSnapshot.isLive, false);
   assert.ok(Number.isFinite(eqDash.activeSnapshot.portRetPct));
@@ -106,4 +123,9 @@ test('enforces strict point-in-time cutoff without leaking future 13F filings or
   assert.equal(pit.activeSnapshot.portRetPct, null);
   assert.equal(pit.activeSnapshot.holdings[0].realizedRetPct, null);
   assert.equal(pit.masterBlueprint16.length, 0);
+  // Daily NAV curve must also stop strictly on or before cutoff
+  assert.ok(pit.dailyCurve);
+  assert.ok(pit.dailyCurve.endDate <= '2022-09-01');
+  assert.ok(pit.dailyCurve.dates.at(-1) <= '2022-09-01');
+  assert.ok(pit.dailyCurve.dates.length > 2000 && pit.dailyCurve.dates.length < 2200);
 });

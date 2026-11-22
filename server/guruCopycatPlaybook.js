@@ -146,6 +146,43 @@ function toCompactTimelineEntry(snap) {
   };
 }
 
+function buildSlicedDailyCurve(dailyCurves, seriesKey, cutoff) {
+  const dates = Array.isArray(dailyCurves?.dates) ? dailyCurves.dates : [];
+  const series = dailyCurves?.series ?? {};
+  const schemeRaw = Array.isArray(series[seriesKey]) ? series[seriesKey] : [];
+  const spyRaw = Array.isArray(series.SPY) ? series.SPY : [];
+  const qqqRaw = Array.isArray(series.QQQ) ? series.QQQ : [];
+  const n = Math.min(dates.length, schemeRaw.length, spyRaw.length, qqqRaw.length);
+  if (n < 2) return null;
+
+  // Binary search for last index with dates[idx] <= cutoff (strict PIT)
+  let lo = 0;
+  let hi = n - 1;
+  let endIdx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (String(dates[mid]) <= cutoff) {
+      endIdx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (endIdx < 1) return null;
+
+  const end = endIdx + 1;
+  const slicedDates = dates.slice(0, end);
+  return {
+    startDate: slicedDates[0],
+    endDate: slicedDates[slicedDates.length - 1],
+    tradingDays: slicedDates.length,
+    dates: slicedDates,
+    schemeNav: schemeRaw.slice(0, end),
+    spyNav: spyRaw.slice(0, end),
+    qqqNav: qqqRaw.slice(0, end),
+  };
+}
+
 export function loadGuruCopycatPlaybookDashboard({
   asOf,
   scheme = null,
@@ -172,6 +209,7 @@ export function loadGuruCopycatPlaybookDashboard({
       status: 'pre_history',
       selectedSchemeId: schemeId,
       weightMode: normalizedWeightMode,
+      dailyCurve: null,
       schemes: [],
       snapshotTimeline: [],
       activeSnapshot: null,
@@ -259,6 +297,12 @@ export function loadGuruCopycatPlaybookDashboard({
         top12Holdings: [],
       }));
 
+  const dailySeriesKey =
+    schemeId === 'monopoly_compounders' && normalizedWeightMode === 'equal'
+      ? 'monopoly_compounders_equal'
+      : schemeId;
+  const dailyCurve = buildSlicedDailyCurve(data.dailyCurves, dailySeriesKey, cutoff);
+
   return {
     version: GURU_COPYCAT_PLAYBOOK_VERSION,
     snapshotId,
@@ -278,6 +322,7 @@ export function loadGuruCopycatPlaybookDashboard({
       SPY: sliceMetrics(data.benchmarks?.SPY),
       QQQ: sliceMetrics(data.benchmarks?.QQQ),
     },
+    dailyCurve,
     schemes,
     positionCountSensitivity: data.positionCountSensitivity ?? [],
     antiPatterns: data.antiPatterns ?? [],
