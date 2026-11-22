@@ -314,31 +314,31 @@ void main() {
         onSelection: (s) => latestSelection = s,
       );
 
-      // Default scheme is 70/30 Barbell (17.78% CAGR, true daily MDD -33.60%, daily NAV curve through 2026-08-17)
-      expect(find.textContaining('17.78%'), findsWidgets);
-      expect(find.textContaining('\$742.6k'), findsWidgets);
+      // Default scheme is 70/30 Barbell (16.86% CAGR through 2026-11-17, true daily MDD -33.60%, 3,146 sessions)
+      expect(find.textContaining('16.86%'), findsWidgets);
+      expect(find.textContaining('\$698.9k'), findsWidgets);
       expect(find.textContaining('-33.60%'), findsWidgets);
-      expect(find.text('2026-08-17'), findsWidgets);
-      expect(find.textContaining('3081'), findsWidgets);
-      expect(find.textContaining('+642.6%'), findsWidgets);
+      expect(find.text('2026-11-17'), findsWidgets);
+      expect(find.textContaining('3146'), findsWidgets);
+      expect(find.textContaining('+598.9%'), findsWidgets);
 
-      // Switch to Monopoly Compounders (20.60% CAGR, $991.9k)
+      // Switch to Monopoly Compounders (20.11% CAGR, $984.2k through 2026-11-17)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('copycat-scheme-monopoly_compounders')),
       );
       expect(latestSelection['scheme'], 'monopoly_compounders');
-      expect(find.textContaining('20.60%'), findsWidgets);
-      expect(find.textContaining('\$991.9k'), findsWidgets);
+      expect(find.textContaining('20.11%'), findsWidgets);
+      expect(find.textContaining('\$984.2k'), findsWidgets);
 
-      // Toggle Equal-Weight mode (73.5% Win Rate, 19.20% CAGR)
+      // Toggle Equal-Weight mode (74.0% Win Rate, 18.59% CAGR)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('copycat-weight-equal')),
       );
       expect(latestSelection['weightMode'], 'equal');
-      expect(find.textContaining('19.20%'), findsWidgets);
-      expect(find.textContaining('73.5%'), findsWidgets);
+      expect(find.textContaining('18.59%'), findsWidgets);
+      expect(find.textContaining('74.0%'), findsWidgets);
 
       // Switch through Pre-2014 Legends, New & Big Adds Catalyst, and 4-Factor HF Smart Flow
       for (final sid in [
@@ -349,7 +349,7 @@ void main() {
         await tapVisible(tester, find.byKey(ValueKey('copycat-scheme-$sid')));
         expect(latestSelection['scheme'], sid);
       }
-      expect(find.textContaining('17.87%'), findsWidgets);
+      expect(find.textContaining('15.89%'), findsWidgets);
 
       // Toggle Drawdown chart mode & Log/Linear toggle
       await tapVisible(tester, find.byKey(const ValueKey('copycat-chart-dd')));

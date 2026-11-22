@@ -704,28 +704,36 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
                   ),
                 ),
                 if (schemeId == 'monopoly_compounders')
-                  Container(
-                    key: const ValueKey('copycat-weight-toggle'),
-                    padding: const EdgeInsets.all(3),
-                    decoration: BoxDecoration(
-                      color: p.card,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: p.border),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _weightModePill(
-                          'conviction',
-                          w('Conviction Wt (20.6%)', '信念加权 (20.6%)'),
+                  Builder(
+                    builder: (_) {
+                      final convM = asMap(active['convictionVariant']);
+                      final eqM = asMap(active['equalWeightVariant']);
+                      final convLbl = _fmtPct(convM['cagrPct'], digits: 1);
+                      final eqWinLbl = _fmtPct(eqM['winRatePct'], digits: 1);
+                      return Container(
+                        key: const ValueKey('copycat-weight-toggle'),
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          color: p.card,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: p.border),
                         ),
-                        const SizedBox(width: 4),
-                        _weightModePill(
-                          'equal',
-                          w('Equal Wt (73.5% Win)', '等权高胜率 (73.5%)'),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _weightModePill(
+                              'conviction',
+                              w('Conviction Wt ($convLbl)', '信念加权 ($convLbl)'),
+                            ),
+                            const SizedBox(width: 4),
+                            _weightModePill(
+                              'equal',
+                              w('Equal Wt ($eqWinLbl Win)', '等权高胜率 ($eqWinLbl)'),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
               ],
             ),
@@ -1104,8 +1112,8 @@ class _GuruCopycatPlaybookPanelState extends State<GuruCopycatPlaybookPanel> {
               const SizedBox(height: 12),
               Text(
                 w(
-                  'Calendar-Year Realized T+45 Excess Return vs SPY (2014–2026)',
-                  '历年严格 T+45 实盘收益与跑赢标普超额分布 (2014–2026)',
+                  'Calendar-Year Realized & Live YTD Returns vs SPY (2014–2026 YTD)',
+                  '历年严格 T+45 实盘与 2026 年至今 (YTD) 收益分布',
                 ),
                 style: TextStyle(
                   color: p.muted,

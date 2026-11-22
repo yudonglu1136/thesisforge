@@ -851,7 +851,7 @@ void main() {
         find.byKey(const ValueKey('guru-copycat-playbook-root')),
         findsOneWidget,
       );
-      expect(find.textContaining('17.78%'), findsWidgets);
+      expect(find.textContaining('16.86%'), findsWidgets);
     },
   );
 }

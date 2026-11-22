@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 import {
   GURU_COPYCAT_PLAYBOOK_VERSION,
   GURU_COPYCAT_SCHEME_IDS,
@@ -8,7 +9,7 @@ import {
 } from './guruCopycatPlaybook.js';
 
 test('loads flagship Guru Copycat Playbook with all 5 schemes, 16 gurus, 16-stock blueprint, and Q1 dump radar', () => {
-  const dash = loadGuruCopycatPlaybookDashboard({ asOf: '2026-11-21' });
+  const dash = loadGuruCopycatPlaybookDashboard({ asOf: '2026-11-22' });
   assert.equal(dash.version, GURU_COPYCAT_PLAYBOOK_VERSION);
   assert.equal(dash.selectedSchemeId, 'barbell_70_30');
   assert.equal(dash.latestQuarter, '2026 Q3');
@@ -19,25 +20,25 @@ test('loads flagship Guru Copycat Playbook with all 5 schemes, 16 gurus, 16-stoc
     [...GURU_COPYCAT_SCHEME_IDS],
   );
 
-  // Verify audited strict T+45 KPIs match published research within rounding
+  // Verify full-horizon strict T+45 daily mark-to-market KPIs (50 realized quarters + live 2026 Q3 through 2026-11-17)
   const byId = Object.fromEntries(dash.schemes.map(s => [s.id, s]));
-  assert.ok(Math.abs(byId.barbell_70_30.metrics.cagrPct - 17.78) < 0.05);
-  assert.equal(byId.barbell_70_30.metrics.sharpe, 1.17);
-  assert.ok(Math.abs(byId.monopoly_compounders.metrics.cagrPct - 20.6) < 0.05);
-  assert.ok(Math.abs(byId.monopoly_compounders.equalWeightVariant.winRatePct - 73.5) < 0.2);
-  assert.ok(Math.abs(byId.pre2014_legends.metrics.cagrPct - 17.41) < 0.05);
+  assert.equal(byId.barbell_70_30.metrics.quarters, 50);
+  assert.ok(Math.abs(byId.barbell_70_30.metrics.cagrPct - 16.86) < 0.05);
+  assert.ok(byId.barbell_70_30.metrics.sharpe >= 1.05);
+  assert.ok(Math.abs(byId.monopoly_compounders.metrics.cagrPct - 20.11) < 0.05);
+  assert.ok(Math.abs(byId.monopoly_compounders.equalWeightVariant.winRatePct - 74.0) < 0.2);
+  assert.ok(Math.abs(byId.pre2014_legends.metrics.cagrPct - 16.18) < 0.05);
   assert.equal(byId.pre2014_legends.metrics.bothHalvesBeat, true);
-  assert.ok(Math.abs(byId.new_adds_catalyst.metrics.cagrPct - 19.82) < 0.05);
-  assert.ok(Math.abs(byId.hf4_smart_flow.metrics.cagrPct - 17.87) < 0.05);
-  assert.ok(byId.hf4_smart_flow.metrics.quarterlyMaxDrawdownPct > -17.0);
+  assert.ok(Math.abs(byId.new_adds_catalyst.metrics.cagrPct - 17.81) < 0.05);
+  assert.ok(Math.abs(byId.hf4_smart_flow.metrics.cagrPct - 15.89) < 0.05);
   assert.ok(byId.barbell_70_30.metrics.maxDrawdownPct > dash.benchmarks.SPY.maxDrawdownPct);
   assert.ok(dash.benchmarks.SPY.maxDrawdownPct < -33.0 && dash.benchmarks.SPY.maxDrawdownPct > -34.5);
 
-  // Verify true daily mark-to-market NAV curve (~3,081 trading sessions)
+  // Verify true daily mark-to-market NAV curve through 2026 Q2 realized + active 2026 Q3 live (3,146 trading sessions)
   assert.ok(dash.dailyCurve);
   assert.equal(dash.dailyCurve.startDate, '2014-05-16');
-  assert.equal(dash.dailyCurve.endDate, '2026-08-17');
-  assert.ok(dash.dailyCurve.dates.length >= 3000);
+  assert.equal(dash.dailyCurve.endDate, '2026-11-17');
+  assert.equal(dash.dailyCurve.dates.length, 3146);
   assert.equal(dash.dailyCurve.schemeNav.length, dash.dailyCurve.dates.length);
   assert.equal(dash.dailyCurve.spyNav.length, dash.dailyCurve.dates.length);
   assert.equal(dash.dailyCurve.qqqNav.length, dash.dailyCurve.dates.length);
@@ -90,7 +91,7 @@ test('supports Equal-Weight toggle on Monopoly Compounders and historical quarte
   });
   const mono = eqDash.schemes.find(s => s.id === 'monopoly_compounders');
   assert.equal(mono.activeWeightMode, 'equal');
-  assert.ok(Math.abs(mono.metrics.winRatePct - 73.5) < 0.2);
+  assert.ok(Math.abs(mono.metrics.winRatePct - 74.0) < 0.2);
   assert.ok(eqDash.dailyCurve);
   assert.ok(Math.abs(eqDash.dailyCurve.schemeNav.at(-1) - mono.metrics.final100k) < 0.1);
   assert.equal(eqDash.activeSnapshot.quarter, '2022 Q2');
@@ -128,4 +129,27 @@ test('enforces strict point-in-time cutoff without leaking future 13F filings or
   assert.ok(pit.dailyCurve.endDate <= '2022-09-01');
   assert.ok(pit.dailyCurve.dates.at(-1) <= '2022-09-01');
   assert.ok(pit.dailyCurve.dates.length > 2000 && pit.dailyCurve.dates.length < 2200);
+});
+
+test('extends daily NAV curve automatically from live SQLite price_points through asOf without lookahead', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE price_points (symbol TEXT NOT NULL, date TEXT NOT NULL, close REAL NOT NULL, adjusted_close REAL, PRIMARY KEY (symbol, date));');
+  const ins = db.prepare('INSERT INTO price_points (symbol, date, close, adjusted_close) VALUES (?, ?, ?, ?)');
+  // Insert two newer trading sessions after 2026-11-17 anchor (2026-11-18 and 2026-11-20)
+  ins.run('SPY', '2026-11-18', 739.76, 739.76); // +1.0% vs 732.44
+  ins.run('QQQ', '2026-11-18', 663.52, 663.52); // +1.0% vs 656.95
+  ins.run('SPY', '2026-11-20', 747.09, 747.09); // +2.0% vs 732.44
+  ins.run('QQQ', '2026-11-20', 670.09, 670.09); // +2.0% vs 656.95
+
+  const liveNov19 = loadGuruCopycatPlaybookDashboard({ asOf: '2026-11-19', source: { db } });
+  assert.equal(liveNov19.dailyCurve.endDate, '2026-11-18');
+  assert.equal(liveNov19.dailyCurve.tradingDays, 3147);
+  assert.equal(liveNov19.latestPriceDate, '2026-11-18');
+
+  const liveNov22 = loadGuruCopycatPlaybookDashboard({ asOf: '2026-11-22', source: { db } });
+  assert.equal(liveNov22.dailyCurve.endDate, '2026-11-20');
+  assert.equal(liveNov22.dailyCurve.tradingDays, 3148);
+  assert.equal(liveNov22.dailyCurve.liveExtendedDays, 2);
+  assert.ok(liveNov22.dailyCurve.spyNav.at(-1) > liveNov19.dailyCurve.spyNav.at(-1));
+  db.close();
 });

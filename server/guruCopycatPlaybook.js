@@ -69,32 +69,188 @@ function normalizeQuarterKey(rawQuarter, availableSnapshots) {
 }
 
 function lookupFreshQuotes(source, asOf, latestPriceDate, tickers) {
-  if (!source?.db || typeof source.db.prepare !== 'function' || asOf < latestPriceDate || !tickers.length) {
+  const db = source?.publicFactsDb ?? source?.db;
+  if (!db || typeof db.prepare !== 'function' || asOf < latestPriceDate || !tickers.length) {
     return new Map();
   }
+  const unique = [...new Set(tickers.filter(Boolean))];
+  if (!unique.length) return new Map();
+  const placeholders = unique.map(() => '?').join(',');
+  const out = new Map();
+
+  // 1) Read latest split-adjusted close from investment_current_quotes if present
   try {
-    const unique = [...new Set(tickers.filter(Boolean))];
-    if (!unique.length) return new Map();
-    const placeholders = unique.map(() => '?').join(',');
-    const rows = source.db
-      .prepare(
-        `SELECT ticker, price, as_of_date
-         FROM investment_current_quotes
-         WHERE ticker IN (${placeholders})
-           AND price > 0
-           AND substr(as_of_date, 1, 10) <= ?`,
-      )
-      .all(...unique, asOf);
-    const out = new Map();
-    for (const row of rows) {
-      const dt = String(row.as_of_date ?? '').slice(0, 10);
-      if (dt >= latestPriceDate && Number.isFinite(Number(row.price)) && Number(row.price) > 0) {
-        out.set(String(row.ticker), { price: Number(row.price), date: dt });
+    const exists = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='investment_current_quotes'")
+      .get();
+    if (exists) {
+      const rows = db
+        .prepare(
+          `SELECT ticker, close, price_date
+           FROM investment_current_quotes
+           WHERE ticker IN (${placeholders})
+             AND close > 0
+             AND substr(price_date, 1, 10) <= ?
+           ORDER BY price_date ASC`,
+        )
+        .all(...unique, asOf);
+      for (const row of rows) {
+        const dt = String(row.price_date ?? '').slice(0, 10);
+        const px = Number(row.close);
+        if (dt >= latestPriceDate && Number.isFinite(px) && px > 0) {
+          const prev = out.get(String(row.ticker));
+          if (!prev || dt >= prev.date) {
+            out.set(String(row.ticker), { price: px, date: dt });
+          }
+        }
       }
     }
-    return out;
   } catch {
-    return new Map();
+    // Ignore optional table errors
+  }
+
+  // 2) Overlay newer daily closes from price_points if present
+  try {
+    const ppDb = source?.db ?? db;
+    const exists = ppDb
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_points'")
+      .get();
+    if (exists) {
+      const rows = ppDb
+        .prepare(
+          `SELECT symbol, COALESCE(adjusted_close, close) AS px, substr(date, 1, 10) AS dt
+           FROM price_points
+           WHERE symbol IN (${placeholders})
+             AND substr(date, 1, 10) >= ?
+             AND substr(date, 1, 10) <= ?
+           ORDER BY dt ASC`,
+        )
+        .all(...unique, latestPriceDate, asOf);
+      for (const row of rows) {
+        const dt = String(row.dt ?? '').slice(0, 10);
+        const px = Number(row.px);
+        if (Number.isFinite(px) && px > 0) {
+          const prev = out.get(String(row.symbol));
+          if (!prev || dt >= prev.date) {
+            out.set(String(row.symbol), { price: px, date: dt });
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore optional table errors
+  }
+  return out;
+}
+
+function extendDailyCurveFromLiveDb(dailyCurve, liveAnchor, liveHoldings, source, cutoff) {
+  if (!dailyCurve || !liveAnchor?.anchorDate || !liveAnchor?.prices || cutoff <= dailyCurve.endDate) {
+    return dailyCurve;
+  }
+  const db = source?.db;
+  if (!db || typeof db.prepare !== 'function') return dailyCurve;
+
+  try {
+    const exists = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_points'")
+      .get();
+    if (!exists) return dailyCurve;
+
+    const anchorDate = String(liveAnchor.anchorDate).slice(0, 10);
+    if (dailyCurve.endDate !== anchorDate) return dailyCurve;
+    const anchorPrices = liveAnchor.prices;
+    const holdings = Array.isArray(liveHoldings) ? liveHoldings : [];
+    const tickers = [...new Set(['SPY', 'QQQ', ...holdings.map(h => h.ticker).filter(Boolean)])];
+    if (!tickers.length || !anchorPrices.SPY || !anchorPrices.QQQ) return dailyCurve;
+
+    const placeholders = tickers.map(() => '?').join(',');
+    const rows = db
+      .prepare(
+        `SELECT symbol, substr(date, 1, 10) AS dt, COALESCE(adjusted_close, close) AS px
+         FROM price_points
+         WHERE symbol IN (${placeholders})
+           AND substr(date, 1, 10) > ?
+           AND substr(date, 1, 10) <= ?
+         ORDER BY dt ASC`,
+      )
+      .all(...tickers, anchorDate, cutoff);
+
+    if (!rows.length) return dailyCurve;
+
+    const byDate = new Map();
+    for (const row of rows) {
+      const dt = String(row.dt ?? '').slice(0, 10);
+      const px = Number(row.px);
+      if (!dt || !Number.isFinite(px) || px <= 0) continue;
+      let m = byDate.get(dt);
+      if (!m) {
+        m = new Map();
+        byDate.set(dt, m);
+      }
+      m.set(String(row.symbol), px);
+    }
+
+    const extraDates = [...byDate.keys()]
+      .sort()
+      .filter(dt => byDate.get(dt).has('SPY') && byDate.get(dt).has('QQQ'));
+    if (!extraDates.length) return dailyCurve;
+
+    // Normalize weights across holdings that have an anchor price
+    const usable = [];
+    let wSum = 0;
+    for (const h of holdings) {
+      const tk = h.ticker;
+      const w = Number(h.weightPct) / 100;
+      const p0 = Number(anchorPrices[tk]);
+      if (tk && Number.isFinite(w) && w > 0 && Number.isFinite(p0) && p0 > 0) {
+        usable.push({ tk, w, p0 });
+        wSum += w;
+      }
+    }
+    if (wSum <= 0) return dailyCurve;
+
+    const baseSchemeNav = Number(dailyCurve.schemeNav[dailyCurve.schemeNav.length - 1]);
+    const baseSpyNav = Number(dailyCurve.spyNav[dailyCurve.spyNav.length - 1]);
+    const baseQqqNav = Number(dailyCurve.qqqNav[dailyCurve.qqqNav.length - 1]);
+    const spyP0 = Number(anchorPrices.SPY);
+    const qqqP0 = Number(anchorPrices.QQQ);
+
+    const lastPx = new Map(Object.entries(anchorPrices).map(([k, v]) => [k, Number(v)]));
+    const dates = [...dailyCurve.dates];
+    const schemeNav = [...dailyCurve.schemeNav];
+    const spyNav = [...dailyCurve.spyNav];
+    const qqqNav = [...dailyCurve.qqqNav];
+
+    for (const dt of extraDates) {
+      const dayMap = byDate.get(dt);
+      for (const [tk, px] of dayMap.entries()) lastPx.set(tk, px);
+
+      const spyCur = lastPx.get('SPY') / spyP0;
+      const qqqCur = lastPx.get('QQQ') / qqqP0;
+      let portMult = 0;
+      for (const item of usable) {
+        const rel = Math.min(5.0, Math.max(0.05, (lastPx.get(item.tk) ?? item.p0) / item.p0));
+        portMult += (item.w / wSum) * rel;
+      }
+
+      dates.push(dt);
+      schemeNav.push(r2(baseSchemeNav * portMult));
+      spyNav.push(r2(baseSpyNav * spyCur));
+      qqqNav.push(r2(baseQqqNav * qqqCur));
+    }
+
+    return {
+      ...dailyCurve,
+      endDate: dates[dates.length - 1],
+      tradingDays: dates.length,
+      dates,
+      schemeNav,
+      spyNav,
+      qqqNav,
+      liveExtendedDays: extraDates.length,
+    };
+  } catch {
+    return dailyCurve;
   }
 }
 
@@ -250,9 +406,10 @@ export function loadGuruCopycatPlaybookDashboard({
     .reverse()
     .find(s => !s.isLive && s.portRetPct !== null)?.quarterDate ?? '2014-03-31';
 
+  const fullArtifactEndDate = String(data.dailyCurves?.endDate || data.latestPriceDate || '2026-11-17');
   const sliceMetrics = m => {
     if (!m) return null;
-    if (cutoff >= '2026-08-18') return m;
+    if (cutoff >= fullArtifactEndDate) return m;
     return {
       ...m,
       curve: (m.curve ?? []).filter(pt => pt.quarterDate <= maxRealizedQd),
@@ -301,7 +458,18 @@ export function loadGuruCopycatPlaybookDashboard({
     schemeId === 'monopoly_compounders' && normalizedWeightMode === 'equal'
       ? 'monopoly_compounders_equal'
       : schemeId;
-  const dailyCurve = buildSlicedDailyCurve(data.dailyCurves, dailySeriesKey, cutoff);
+  const rawDailyCurve = buildSlicedDailyCurve(data.dailyCurves, dailySeriesKey, cutoff);
+  const dailyCurve = extendDailyCurveFromLiveDb(
+    rawDailyCurve,
+    data.dailyCurves?.liveAnchor,
+    latestBlotterSnapshot?.holdings,
+    source,
+    cutoff,
+  );
+  const effectiveLatestPriceDate =
+    dailyCurve?.endDate && dailyCurve.endDate > String(data.latestPriceDate || '')
+      ? dailyCurve.endDate
+      : data.latestPriceDate;
 
   return {
     version: GURU_COPYCAT_PLAYBOOK_VERSION,
@@ -312,7 +480,7 @@ export function loadGuruCopycatPlaybookDashboard({
     latestQuarter: latestBlotterSnapshot.quarter,
     latestQuarterDate: latestBlotterSnapshot.quarterDate,
     latestFiledDate: latestBlotterSnapshot.filedAt,
-    latestPriceDate: data.latestPriceDate,
+    latestPriceDate: effectiveLatestPriceDate,
     selectedSchemeId: schemeId,
     weightMode: normalizedWeightMode,
     selectedQuarterDate: activeSnapshot.quarterDate,

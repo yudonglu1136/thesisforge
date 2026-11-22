@@ -557,8 +557,15 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             GROUP BY 1, 2;
         """)
 
-        max_px_row = con.execute("SELECT CAST(MAX(date) AS VARCHAR) FROM px_dedup WHERE ticker IN ('SPY', 'AAPL', 'MSFT', 'NVDA')").fetchone()
-        latest_price_date = str(max_px_row[0])[:10] if max_px_row and max_px_row[0] else "2026-11-18"
+        # Latest complete trading date where BOTH SPY & QQQ and broad market (>=500 tickers) have closes
+        max_px_row = con.execute("""
+            SELECT CAST(MAX(s.date) AS VARCHAR)
+            FROM px_dedup s
+            JOIN px_dedup q ON q.date = s.date AND q.ticker = 'QQQ'
+            WHERE s.ticker = 'SPY'
+              AND (SELECT COUNT(*) FROM px_dedup p WHERE p.date = s.date) >= 500
+        """).fetchone()
+        latest_price_date = str(max_px_row[0])[:10] if max_px_row and max_px_row[0] else "2026-11-17"
 
         q_dates_raw = [
             str(r[0])[:10]
@@ -641,7 +648,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             FROM lead_px;
         """)
 
-        # Fetch SPY & QQQ benchmark returns across the 49 realized T+45 quarters (2014-03-31 .. 2026-03-31)
+        # Fetch SPY & QQQ benchmark returns across all realized T+45 quarters (through latest complete price date)
         bm_rows = con.execute("""
             SELECT qd, ticker, ret_t45, ret_qe, p_t45_raw, p_next_t45_raw
             FROM q_px_panel
@@ -660,7 +667,8 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 float(p1) if p1 is not None else None,
                 float(rt45) if rt45 is not None else None,
             )
-            if qd_k <= "2026-03-31" and rt45 is not None:
+            exit_dt_q = session_info.get(qd_k, {}).get("t45ExitDate")
+            if exit_dt_q and exit_dt_q <= latest_price_date and rt45 is not None:
                 if tk == "SPY":
                     spy_t45[qd_k] = float(rt45)
                 elif tk == "QQQ":
@@ -668,13 +676,10 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             if qd_k <= "2026-06-30" and rqe is not None and tk == "SPY":
                 spy_qe[qd_k] = float(rqe)
 
-        realized_q_dates = sorted(spy_t45.keys())  # 49 quarters: 2014-03-31 .. 2026-03-31
+        realized_q_dates = sorted(spy_t45.keys())  # All 50 realized quarters: 2014-03-31 .. 2026-06-30 (exit 2026-11-16)
         all_snapshot_q_dates = sorted(
             qd for qd in session_info.keys() if "2014-03-31" <= qd <= "2026-09-30"
-        )  # 51 quarter-ends (or 50 through 2026-06-30 + 2026-09-30 -> let's check: 2014Q1..2026Q3 = 51 quarters!)
-        # Note: 2014 Q1 .. 2026 Q1 = 49 realized T+45 windows (since 2026 Q2 T+45 entered Aug 17, 2026 -> Nov 16, 2026 IS ALSO REALIZED in FactOS through Nov 18, 2026!)
-        # Wait: let's check why 12_guru_copycat_playbook_engine.py had 49 quarters (2014-03-31 .. 2026-03-31 = 49 quarters)!
-        # Let's check both 2026-06-30 (whose T+45 exit is 2026-11-16, which IS in FactOS!) and keep exact 49-quarter benchmark window (2014-03-31 .. 2026-03-31) for 100% parity with the published research KPIs, while ALSO computing realized T+45 return on 2026-06-30 in the snapshot explorer!
+        )  # 51 quarter-ends (2014 Q1 .. 2026 Q3; Q1..Q2 realized + Q3 live mark-to-market through latest_price_date)
 
         # Latest spot price, Q3 2026 avg price, Q2 2026 avg price, and 52-week high for all stocks/ETFs
         latest_px_rows = con.execute("""
@@ -1179,11 +1184,11 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             rebalance_legs: list[dict] = []
             prev_stock_set: set[str] = set()
 
-            # Evaluate across all quarters 2014-03-31 .. 2026-09-30 (51 quarters!)
+            # Evaluate across all quarters 2014-03-31 .. 2026-09-30 (51 quarters: 50 realized + active 2026 Q3 live!)
             for qd in all_snapshot_q_dates:
-                is_bt_q = qd <= "2026-03-31"
-                # For 2026-06-30, T+45 exit is 2026-11-16 which IS realized in FactOS!
-                has_realized_t45 = qd <= "2026-06-30"
+                s_info = session_info[qd]
+                is_bt_q = bool(s_info["t45ExitDate"] and s_info["t45ExitDate"] <= latest_price_date)
+                has_realized_t45 = is_bt_q
                 picks = selector_fn(qd, require_realized_ret=is_bt_q)
 
                 if barbell_etf:
@@ -1323,7 +1328,21 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                             "turnover": q_to,
                             "costBps": cost_bps,
                             "portRet": port_r,
+                            "isLiveLeg": False,
                         })
+                elif (not has_realized_t45) and w_map and s_info["t45EntryDate"] and s_info["t45EntryDate"] <= latest_price_date:
+                    # Active live quarter leg (e.g. 2026 Q3 entered 2026-11-16 -> latest_price_date)
+                    rebalance_legs.append({
+                        "qd": qd,
+                        "entryDate": s_info["t45EntryDate"],
+                        "exitDate": latest_price_date,
+                        "barbellEtf": barbell_etf,
+                        "weights": dict(w_map),
+                        "turnover": q_to,
+                        "costBps": cost_bps,
+                        "portRet": None,
+                        "isLiveLeg": True,
+                    })
 
                 prev_stock_set = cur_stock_set
                 snapshots.append({
@@ -1373,17 +1392,18 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             rk_map, an_k, ato_k, _, legs_k = run_full_scheme(sel_k, cost_bps=10.0)
             pos_sensitivity_raw.append((k, rk_map, an_k, ato_k, legs_k))
 
-        # True Daily Mark-to-Market NAV Simulation across all 49 realized T+45 windows
+        # True Daily Mark-to-Market NAV Simulation through latest complete market close (incl. 2026 Q1, Q2 realized + active 2026 Q3 live!)
         daily_start_date = session_info[realized_q_dates[0]]["t45EntryDate"]
-        daily_end_date = session_info[realized_q_dates[-1]]["t45ExitDate"] or "2026-08-17"
+        daily_end_date = latest_price_date
         daily_trading_dates = [
             str(r[0])[:10]
             for r in con.execute(
                 """
-                SELECT CAST(date AS VARCHAR)
-                FROM spy_days
-                WHERE date >= CAST(? AS DATE) AND date <= CAST(? AS DATE)
-                ORDER BY date
+                SELECT CAST(s.date AS VARCHAR)
+                FROM spy_days s
+                JOIN px_dedup q ON q.date = s.date AND q.ticker = 'QQQ'
+                WHERE s.date >= CAST(? AS DATE) AND s.date <= CAST(? AS DATE)
+                ORDER BY s.date
                 """,
                 [daily_start_date, daily_end_date],
             ).fetchall()
@@ -1504,8 +1524,15 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 cur_nav = nav_vals[i1]
             return nav_vals
 
-        def compute_daily_risk_overlay(nav_vals: list[float], spy_nav: list[float]) -> dict:
+        def compute_daily_risk_overlay(
+            nav_vals: list[float],
+            spy_nav: list[float],
+            qqq_nav: list[float],
+        ) -> dict:
             n = len(nav_vals)
+            yrs = (n - 1) / 252.0 if n > 1 else 1.0
+            cagr = ((nav_vals[-1] / nav_vals[0]) ** (1.0 / yrs) - 1.0) * 100.0
+            spy_cagr = ((spy_nav[-1] / spy_nav[0]) ** (1.0 / yrs) - 1.0) * 100.0
             peak = nav_vals[0]
             mdd = 0.0
             mdd_dt = daily_trading_dates[0]
@@ -1531,7 +1558,48 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             ann_vol = std_r * math.sqrt(252.0) * 100.0
             d_sharpe = (mean_r * 252.0 - 0.025) / (std_r * math.sqrt(252.0)) if std_r > 0 else 0.0
             d_ir = (mean_d * 252.0) / (std_d * math.sqrt(252.0)) if std_d > 0 else 0.0
+
+            # Dual-regime daily alpha vs SPY (2014-2019 vs 2020-present)
+            split_idx = next((i for i, d in enumerate(daily_trading_dates) if d >= "2020-01-01"), n // 2)
+            def sub_cagr(arr: list[float], i0: int, i1: int) -> float:
+                if i1 <= i0 or arr[i0] <= 0:
+                    return 0.0
+                y = (i1 - i0) / 252.0
+                return ((arr[i1] / arr[i0]) ** (1.0 / y) - 1.0) * 100.0
+
+            a14_19 = sub_cagr(nav_vals, 0, split_idx) - sub_cagr(spy_nav, 0, split_idx)
+            a20_26 = sub_cagr(nav_vals, split_idx, n - 1) - sub_cagr(spy_nav, split_idx, n - 1)
+
+            # Calendar-year returns (2014 .. 2026 YTD through latest market close) directly from daily NAV
+            yr_bounds: dict[str, tuple[int, int]] = {}
+            for i, d in enumerate(daily_trading_dates):
+                yr = d[:4]
+                if yr not in yr_bounds:
+                    yr_bounds[yr] = (max(0, i - 1), i)
+                else:
+                    yr_bounds[yr] = (yr_bounds[yr][0], i)
+            cal_annuals = []
+            for yr, (i0, i1) in sorted(yr_bounds.items()):
+                pr = (nav_vals[i1] / nav_vals[i0] - 1.0) * 100.0 if nav_vals[i0] > 0 else 0.0
+                sr = (spy_nav[i1] / spy_nav[i0] - 1.0) * 100.0 if spy_nav[i0] > 0 else 0.0
+                qr = (qqq_nav[i1] / qqq_nav[i0] - 1.0) * 100.0 if qqq_nav[i0] > 0 else 0.0
+                cal_annuals.append({
+                    "year": yr,
+                    "quarters": 4 if yr not in ("2014", daily_end_date[:4]) else 3,
+                    "retPct": r2(pr),
+                    "spyRetPct": r2(sr),
+                    "qqqRetPct": r2(qr),
+                    "excessSpyPct": r2(pr - sr),
+                    "beatSpy": bool(pr > sr),
+                })
+
             return {
+                "dailyCagrPct": r2(cagr),
+                "dailySpyCagrPct": r2(spy_cagr),
+                "dailyAlphaPct": r2(cagr - spy_cagr),
+                "dailyAlpha1419Pct": r2(a14_19),
+                "dailyAlpha2026Pct": r2(a20_26),
+                "dailyBothHalvesBeat": bool(a14_19 > 0 and a20_26 > 0),
                 "dailyMaxDrawdownPct": r2(mdd),
                 "dailyMddDate": mdd_dt,
                 "dailyVolPct": r2(ann_vol),
@@ -1539,18 +1607,32 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 "dailyIr": r2(d_ir),
                 "tradingDays": n,
                 "dailyFinal100k": r1(nav_vals[-1]),
+                "dailyAnnualReturns": cal_annuals,
             }
 
-        def apply_daily_risk(metrics_dict: dict, nav_vals: list[float], spy_nav: list[float]) -> dict:
-            overlay = compute_daily_risk_overlay(nav_vals, spy_nav)
+        def apply_daily_risk(
+            metrics_dict: dict,
+            nav_vals: list[float],
+            spy_nav: list[float],
+            qqq_nav: list[float],
+        ) -> dict:
+            overlay = compute_daily_risk_overlay(nav_vals, spy_nav, qqq_nav)
             out = dict(metrics_dict)
             out["quarterlyMaxDrawdownPct"] = out.get("maxDrawdownPct")
+            out["cagrPct"] = overlay["dailyCagrPct"]
+            out["spyCagrPct"] = overlay["dailySpyCagrPct"]
+            out["alphaPct"] = overlay["dailyAlphaPct"]
+            out["alpha1419Pct"] = overlay["dailyAlpha1419Pct"]
+            out["alpha2026Pct"] = overlay["dailyAlpha2026Pct"]
+            out["bothHalvesBeat"] = overlay["dailyBothHalvesBeat"]
+            out["final100k"] = overlay["dailyFinal100k"]
             out["maxDrawdownPct"] = overlay["dailyMaxDrawdownPct"]
             out["dailyMddDate"] = overlay["dailyMddDate"]
             out["dailyVolPct"] = overlay["dailyVolPct"]
             out["dailySharpe"] = overlay["dailySharpe"]
             out["dailyIr"] = overlay["dailyIr"]
             out["tradingDays"] = overlay["tradingDays"]
+            out["annualReturns"] = overlay["dailyAnnualReturns"]
             return out
 
         daily_spy = simulate_daily_etf("SPY")
@@ -1567,49 +1649,78 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             calc_series_metrics(realized_q_dates, spy_t45, spy_t45, qqq_t45, avg_n=500.0, ann_to_pct=0.0),
             daily_spy,
             daily_spy,
+            daily_qqq,
         )
         qqq_metrics = apply_daily_risk(
             calc_series_metrics(realized_q_dates, qqq_t45, spy_t45, qqq_t45, avg_n=100.0, ann_to_pct=0.0),
             daily_qqq,
             daily_spy,
+            daily_qqq,
         )
 
         m_barbell = apply_daily_risk(
             calc_series_metrics(realized_q_dates, r_barbell, spy_t45, qqq_t45, n_barbell, to_barbell),
             daily_barbell,
             daily_spy,
+            daily_qqq,
         )
         m_cmp_cw = apply_daily_risk(
             calc_series_metrics(realized_q_dates, r_cmp_cw, spy_t45, qqq_t45, n_cmp_cw, to_cmp_cw),
             daily_cmp_cw,
             daily_spy,
+            daily_qqq,
         )
         m_cmp_ew = apply_daily_risk(
             calc_series_metrics(realized_q_dates, r_cmp_ew, spy_t45, qqq_t45, n_cmp_ew, to_cmp_ew),
             daily_cmp_ew,
             daily_spy,
+            daily_qqq,
         )
         m_fam12 = apply_daily_risk(
             calc_series_metrics(realized_q_dates, r_fam12, spy_t45, qqq_t45, n_fam12, to_fam12),
             daily_fam12,
             daily_spy,
+            daily_qqq,
         )
         m_adds = apply_daily_risk(
             calc_series_metrics(realized_q_dates, r_adds, spy_t45, qqq_t45, n_adds, to_adds),
             daily_adds,
             daily_spy,
+            daily_qqq,
         )
         m_hf4 = apply_daily_risk(
             calc_series_metrics(realized_q_dates, r_hf4, spy_t45, qqq_t45, n_hf4, to_hf4),
             daily_hf4,
             daily_spy,
+            daily_qqq,
         )
+
+        # Anchor prices on daily_end_date for live runtime tail extension when newer closes arrive in SQLite
+        live_anchor_tickers: set[str] = {"SPY", "QQQ"}
+        for leg_list in (legs_barbell, legs_cmp_cw, legs_cmp_ew, legs_fam12, legs_adds, legs_hf4):
+            if leg_list:
+                live_anchor_tickers.update(leg_list[-1]["weights"].keys())
+        live_anchor_prices: dict[str, float] = {}
+        for tk in sorted(live_anchor_tickers):
+            tk_m = daily_px_by_tk.get(tk, {})
+            p_end = tk_m.get(daily_end_date)
+            if p_end is None:
+                for back_d in reversed(daily_trading_dates[-6:]):
+                    if back_d in tk_m:
+                        p_end = tk_m[back_d]
+                        break
+            if p_end and p_end > 0:
+                live_anchor_prices[tk] = r4(p_end)
 
         daily_curves_payload = {
             "startDate": daily_start_date,
             "endDate": daily_end_date,
             "tradingDays": len(daily_trading_dates),
             "dates": daily_trading_dates,
+            "liveAnchor": {
+                "anchorDate": daily_end_date,
+                "prices": live_anchor_prices,
+            },
             "series": {
                 "SPY": [r2(v) for v in daily_spy],
                 "QQQ": [r2(v) for v in daily_qqq],
@@ -1635,16 +1746,16 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     "zh": "35% SPY + 35% QQQ + 30% 垄断复利6大师 Top-10（每年4次法定日再平衡）",
                 },
                 "whyItWorks": {
-                    "en": f"Highest risk-adjusted Sharpe ({m_barbell['sharpe']:.2f}) and IR ({m_barbell['ir']:.2f}): captures Nasdaq/S&P beta with the lowest daily max drawdown ({m_barbell['maxDrawdownPct']:.1f}%, beating SPY {spy_metrics['maxDrawdownPct']:.1f}% and QQQ {qqq_metrics['maxDrawdownPct']:.1f}%) while harvesting low-decay monopoly alpha.",
-                    "zh": f"全测试最高夏普比 ({m_barbell['sharpe']:.2f}) 与信息比 ({m_barbell['ir']:.2f})：70%宽基锁住国运Beta，30%低衰减垄断复利大师贡献纯Alpha，日频最大回撤仅 {m_barbell['maxDrawdownPct']:.1f}%（优于标普 {spy_metrics['maxDrawdownPct']:.1f}% 与纳指 {qqq_metrics['maxDrawdownPct']:.1f}%），心态最稳。",
+                    "en": f"Highest risk-adjusted IR ({m_barbell['ir']:.2f}) with {m_barbell['sharpe']:.2f} Sharpe: captures Nasdaq/S&P beta with the lowest daily max drawdown ({m_barbell['maxDrawdownPct']:.1f}%, beating SPY {spy_metrics['maxDrawdownPct']:.1f}% and QQQ {qqq_metrics['maxDrawdownPct']:.1f}%) while harvesting low-decay monopoly alpha.",
+                    "zh": f"全测试最高信息比 ({m_barbell['ir']:.2f}) 与高夏普比 ({m_barbell['sharpe']:.2f})：70%宽基锁住国运Beta，30%低衰减垄断复利大师贡献纯Alpha，日频最大回撤仅 {m_barbell['maxDrawdownPct']:.1f}%（优于标普 {spy_metrics['maxDrawdownPct']:.1f}% 与纳指 {qqq_metrics['maxDrawdownPct']:.1f}%），心态最稳。",
                 },
                 "metrics": m_barbell,
             },
             {
                 "id": "monopoly_compounders",
                 "recommended": False,
-                "taxBadge": {"en": "Low T+45 Decay · 91% Turnover", "zh": "T+45零衰减 · 91%换手"},
-                "badge": {"en": "Highest Pure Alpha (+6.47%)", "zh": "纯多最高超额 (+6.47%)"},
+                "taxBadge": {"en": f"Low T+45 Decay · {m_cmp_cw['annTurnoverPct']:.0f}% Turnover", "zh": f"T+45零衰减 · {m_cmp_cw['annTurnoverPct']:.0f}%换手"},
+                "badge": {"en": f"Highest Pure Alpha ({m_cmp_cw['alphaPct']:+.2f}%)", "zh": f"纯多最高超额 ({m_cmp_cw['alphaPct']:+.2f}%)"},
                 "name": {"en": "Monopoly Compounders Top-10", "zh": "垄断复利 6 大师核心 Top-10"},
                 "shortName": {"en": "Monopoly Top-10", "zh": "垄断复利 Top-10"},
                 "formula": {
@@ -1652,8 +1763,8 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     "zh": "TCI · Sanders · PRIMECAP · Marshfield · Windacre · Sachem Head（前6重仓且≥4%，信念加权 Top-10）",
                 },
                 "whyItWorks": {
-                    "en": "Ultra-low turnover compounders hold 3–5+ years, retaining 88%–107% of their alpha after the 45-day SEC lag. Toggle Equal-Weight for a 73.5% quarterly win rate.",
-                    "zh": "低换手垄断复利大师平均持股3–5年以上，45天披露滞后几乎不损耗超额（留存率88%–107%）；切换等权版季度胜率高达 73.5%。",
+                    "en": f"Ultra-low turnover compounders hold 3–5+ years, retaining 88%–107% of their alpha after the 45-day SEC lag ({m_cmp_cw['cagrPct']:.2f}% CAGR through {daily_end_date}). Toggle Equal-Weight for a {m_cmp_ew['winRatePct']:.1f}% quarterly win rate.",
+                    "zh": f"低换手垄断复利大师平均持股3–5年以上，45天披露滞后几乎不损耗超额（截至 {daily_end_date} 年化仍高达 {m_cmp_cw['cagrPct']:.2f}%）；切换等权版季度跑赢标普胜率高达 {m_cmp_ew['winRatePct']:.1f}%。",
                 },
                 "metrics": m_cmp_cw,
                 "equalWeightVariant": m_cmp_ew,
@@ -1661,7 +1772,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             {
                 "id": "pre2014_legends",
                 "recommended": False,
-                "taxBadge": {"en": "Zero Selection Bias · 81% Turnover", "zh": "100%零后视镜 · 81%换手"},
+                "taxBadge": {"en": f"Zero Selection Bias · {m_fam12['annTurnoverPct']:.0f}% Turnover", "zh": f"100%零后视镜 · {m_fam12['annTurnoverPct']:.0f}%换手"},
                 "badge": {"en": "Zero-Hindsight Proof", "zh": "零后视镜铁证"},
                 "name": {"en": "Pre-2014 Famous 12 Legends Top-12", "zh": "2014前已成名 12 大师 Top-12"},
                 "shortName": {"en": "Pre-2014 Legends", "zh": "零后视镜12大师"},
@@ -1670,16 +1781,16 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     "zh": "仅用 2014 年前已享誉华尔街的 12 位老牌名将（含巴菲特/阿克曼等后来跑输者），前6重仓共识 Top-12 等权",
                 },
                 "whyItWorks": {
-                    "en": "Eliminates survivorship bias completely: even keeping Berkshire and Pershing Square inside the pool, core Top-6 consensus beats SPY in BOTH 2014–19 (+3.01%) and 2020–26 (+3.55%).",
-                    "zh": "彻底排除幸存者偏差：即便把后来跑输标普的巴菲特和阿克曼原封保留在池内，前6重仓共识仍在 2014–19 (+3.01%) 与 2020–26 (+3.55%) 上下半场双杀标普！",
+                    "en": f"Eliminates survivorship bias completely: even keeping Berkshire and Pershing Square inside the pool, core Top-6 consensus beats SPY in BOTH 2014–19 ({m_fam12['alpha1419Pct']:+.2f}%) and 2020–26 ({m_fam12['alpha2026Pct']:+.2f}%).",
+                    "zh": f"彻底排除幸存者偏差：即便把后来跑输标普的巴菲特和阿克曼原封保留在池内，前6重仓共识仍在 2014–19 ({m_fam12['alpha1419Pct']:+.2f}%) 与 2020–26 ({m_fam12['alpha2026Pct']:+.2f}%) 上下半场双杀标普！",
                 },
                 "metrics": m_fam12,
             },
             {
                 "id": "new_adds_catalyst",
                 "recommended": False,
-                "taxBadge": {"en": "Tactical Sleeve · 283% Turnover", "zh": "进攻卫星仓 · 283%换手"},
-                "badge": {"en": "2020–26 Alpha +9.00%", "zh": "近6年超额 +9.00%"},
+                "taxBadge": {"en": f"Tactical Sleeve · {m_adds['annTurnoverPct']:.0f}% Turnover", "zh": f"进攻卫星仓 · {m_adds['annTurnoverPct']:.0f}%换手"},
+                "badge": {"en": f"2020–26 Alpha {m_adds['alpha2026Pct']:+.2f}%", "zh": f"近6年超额 {m_adds['alpha2026Pct']:+.2f}%"},
                 "name": {"en": "Guru New Buys & Big Adds (Δwt ≥ +1.5%)", "zh": "大师新建仓与猛加仓催化"},
                 "shortName": {"en": "New Adds Catalyst", "zh": "新进猛加催化"},
                 "formula": {
@@ -1687,16 +1798,16 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     "zh": "只抄当季单票仓位环比猛增 Δwt ≥ +1.5%（且总仓位 ≥ 2.5%）的新建仓与重手加仓股，Top-12 等权",
                 },
                 "whyItWorks": {
-                    "en": f"Captures multi-quarter institutional accumulation waves (e.g., Duquesne/Tepper AI memory & semi cap-equip cycles) with +9.00%/yr post-2020 alpha and {m_adds['maxDrawdownPct']:.1f}% daily max drawdown.",
-                    "zh": f"精准捕捉顶级大师基本面拐点建仓周期（机构建满大仓往往横跨2–3个季度），2020–26年化超额高达 +9.00%，日频最大回撤 {m_adds['maxDrawdownPct']:.1f}%。",
+                    "en": f"Captures multi-quarter institutional accumulation waves (e.g., Duquesne/Tepper AI memory & semi cap-equip cycles) with {m_adds['alpha2026Pct']:+.2f}%/yr post-2020 alpha and {m_adds['maxDrawdownPct']:.1f}% daily max drawdown.",
+                    "zh": f"精准捕捉顶级大师基本面拐点建仓周期（机构建满大仓往往横跨2–3个季度），2020–26年化超额高达 {m_adds['alpha2026Pct']:+.2f}%，日频最大回撤 {m_adds['maxDrawdownPct']:.1f}%。",
                 },
                 "metrics": m_adds,
             },
             {
                 "id": "hf4_smart_flow",
                 "recommended": False,
-                "taxBadge": {"en": "IRA / Tax-Exempt Only · 380% Turnover", "zh": "仅限免税账户 · 380%高换手"},
-                "badge": {"en": "Quant 3-Factor · +3.7% α", "zh": "三因子量化 · +3.7%超额"},
+                "taxBadge": {"en": f"IRA / Tax-Exempt Only · {m_hf4['annTurnoverPct']:.0f}% Turnover", "zh": f"仅限免税账户 · {m_hf4['annTurnoverPct']:.0f}%高换手"},
+                "badge": {"en": f"Quant 3-Factor · {m_hf4['alphaPct']:+.1f}% α", "zh": f"三因子量化 · {m_hf4['alphaPct']:+.1f}%超额"},
                 "name": {"en": "HF-4 Smart-Money Flow (HF × Pod × Anti-Passive)", "zh": "HF-4 聪明钱三因子共振 Top-15"},
                 "shortName": {"en": "HF-4 Smart Flow", "zh": "HF-4 三因子"},
                 "formula": {
@@ -1704,8 +1815,8 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                     "zh": "2,092家主动HF净买占比 (50%) + 59家多策略Pod同向加仓 (30%) − 123家被动指数拥挤度 (20%)，≥$50亿市值 Top-15",
                 },
                 "whyItWorks": {
-                    "en": f"Raw HF Q5 buying underperforms SPY (11.54%), because 80% of raw HF alpha is shorting Q1 dumps. Requiring Pod resonance + Anti-Passive upgrades pure-long T+45 CAGR to 17.87% ({m_hf4['maxDrawdownPct']:.1f}% daily MDD, {m_hf4['quarterlyMaxDrawdownPct']:.1f}% quarterly MDD).",
-                    "zh": f"无脑抄主动HF净买入(Q5)仅11.54%跑输标普！叠加多策略Pod共振确认与反被动拥挤过滤后，纯多头严格T+45年化跃升至 17.87%（日频最大回撤 {m_hf4['maxDrawdownPct']:.1f}%，季末收盘回撤仅 {m_hf4['quarterlyMaxDrawdownPct']:.1f}%）。",
+                    "en": f"Raw HF Q5 buying underperforms SPY, because 80% of raw HF alpha is shorting Q1 dumps. Requiring Pod resonance + Anti-Passive upgrades pure-long T+45 CAGR to {m_hf4['cagrPct']:.2f}% ({m_hf4['maxDrawdownPct']:.1f}% daily MDD).",
+                    "zh": f"无脑抄主动HF净买入(Q5)长期跑输标普！叠加多策略Pod共振确认与反被动拥挤过滤后，纯多头严格T+45年化跃升至 {m_hf4['cagrPct']:.2f}%（日频最大回撤 {m_hf4['maxDrawdownPct']:.1f}%）。",
                 },
                 "metrics": m_hf4,
             },
@@ -1727,6 +1838,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
                 calc_series_metrics(realized_q_dates, rk_map, spy_t45, qqq_t45, an_k, ato_k),
                 daily_k,
                 daily_spy,
+                daily_qqq,
             )
             pos_sensitivity.append({
                 "label": f"Top-{k}",
@@ -2014,7 +2126,7 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             },
             "backtestWindow": {
                 "startQuarter": "2014 Q1",
-                "endQuarter": "2026 Q1 (Exit Aug 2026) + 2026 Q2 Realized",
+                "endQuarter": f"2026 Q2 Realized + 2026 Q3 Live ({daily_end_date})",
                 "startDate": daily_start_date,
                 "endDate": daily_end_date,
                 "tradingDays": len(daily_trading_dates),
