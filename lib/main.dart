@@ -63,6 +63,7 @@ part 'investment_ai_insights_export.dart';
 part 'investment_fundamentals.dart';
 part 'investment_fundamental_rules.dart';
 part 'investment_copycat_playbook.dart';
+part 'investment_cta_flow_radar.dart';
 part 'investment_hedge.dart';
 part 'investment_strategy_hedge.dart';
 
@@ -3398,7 +3399,9 @@ class _TerminalHomeState extends State<TerminalHome>
     );
     final route = widget.routeUri.queryParameters;
     _mode = normalizeRouteMode(
-      route['view'] ?? route['mode'],
+      route['view'] ??
+          route['mode'] ??
+          ((route['discoverTab'] ?? '').trim().isNotEmpty ? 'discover' : null),
       path: widget.routeUri.path,
     );
     if (_mode == 'admin' && !_adminEnabled) _mode = 'guru';
@@ -3480,7 +3483,9 @@ class _TerminalHomeState extends State<TerminalHome>
   void _restoreBrowserRoute(Uri uri) {
     final route = uri.queryParameters;
     var nextMode = normalizeRouteMode(
-      route['view'] ?? route['mode'],
+      route['view'] ??
+          route['mode'] ??
+          ((route['discoverTab'] ?? '').trim().isNotEmpty ? 'discover' : null),
       path: uri.path,
     );
     if (nextMode == 'admin' && !_adminEnabled) nextMode = 'guru';

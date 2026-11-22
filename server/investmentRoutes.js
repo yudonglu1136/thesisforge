@@ -26,6 +26,10 @@ import {
   loadGuruCopycatPlaybookDashboardLive,
   loadGuruCopycatPlaybookSnapshot,
 } from './guruCopycatPlaybook.js';
+import {
+  loadCtaFlowRadarDashboard,
+  loadCtaFlowRadarDashboardLive,
+} from './ctaFlowRadar.js';
 import { researchInsiders } from './researchInsiders.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
 import { factOsEnabled } from './factRepository.js';
@@ -137,6 +141,11 @@ export function registerInvestmentRoutes(app,service) {
     weightMode:r.query.weightMode??'conviction',
     quarter:r.query.quarter??null,
     source:service.source,
+  }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
+  route('get','/cta-flow-radar',(_,r)=>loadCtaFlowRadarDashboardLive({
+    asOf:service.date(r.query.asOf),
+    asset:r.query.asset??'SPY',
+    horizon:r.query.horizon??'10D',
   }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
     search:r.query.search,limit:r.query.limit,
@@ -274,6 +283,7 @@ export function enableInvestmentPreview(app) {
         try{loadInvestorStyleDashboard({asOf:today,summaryOnly:true});}catch{}
         try{loadBreakoutPullbackDashboard({asOf:today,mode:'flagship'});}catch{}
         try{loadGuruCopycatPlaybookDashboard({asOf:today,source});}catch{}
+        try{loadCtaFlowRadarDashboard({asOf:today});}catch{}
         (async()=>{
           for(const d of warmDates){
             await researchCompanies(source,d).catch(()=>{});

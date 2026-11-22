@@ -95,6 +95,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
   Map<String, dynamic> valueFlowSelection = {};
   Map<String, dynamic> fundamentalSelection = {};
   Map<String, dynamic> copycatSelection = {};
+  Map<String, dynamic> ctaRadarSelection = {};
   Map<String, dynamic> guruStudySelection = {};
   Map<String, dynamic>? homeExample;
   String homeGuruId = 'bill-ackman',
@@ -339,6 +340,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
           'gurus',
           'managers',
           'copycat',
+          'cta_radar',
           'aiinsights',
         }.contains(query['discoverTab'])
         ? query['discoverTab']!
@@ -350,6 +352,10 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
     copycatSelection = {
       for (final key in ['scheme', 'weightMode', 'blotter', 'quarter'])
         if (query['cc_$key'] != null) key: query['cc_$key'],
+    };
+    ctaRadarSelection = {
+      for (final key in ['asset', 'horizon'])
+        if (query['cta_$key'] != null) key: query['cta_$key'],
     };
     final legacyAutoPinnedAi =
         query['ai_snapshotId'] != null && query['ai_quarter_pinned'] != '1';

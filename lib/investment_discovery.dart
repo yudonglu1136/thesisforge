@@ -111,6 +111,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
           ('gurus', '13F Insights', '13F 洞察'),
           ('managers', 'Guru', '大师持仓'),
           ('copycat', 'Copycat Playbook', '大师作业'),
+          ('cta_radar', 'CTA Flow Radar', 'CTA 资金流雷达'),
           ('aiinsights', 'AI Insights', 'AI 洞察'),
         ];
         if (c.maxWidth < 650) {
@@ -288,6 +289,27 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
           updateUI(() => discoveryTab = 'managers');
           persistDiscover();
           unawaited(loadGuru(guruId));
+        },
+      ),
+    if (discoveryTab == 'cta_radar')
+      CtaFlowRadarPanel(
+        api: widget.api,
+        palette: p,
+        asOf: asOf,
+        initialSelection: ctaRadarSelection,
+        onSelection: (selection) {
+          ctaRadarSelection = selection;
+          persistDiscover();
+        },
+        onCompany: (symbol) {
+          opportunityReturnDate = '';
+          unawaited(
+            loadCompany(
+              symbol,
+              origin: 'cta_flow_radar',
+              initialSection: 'value',
+            ),
+          );
         },
       ),
     if (discoveryTab == 'aiinsights')

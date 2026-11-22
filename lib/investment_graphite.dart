@@ -2068,7 +2068,8 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
         aiInsightsSelection.remove('quarter');
         aiInsightsSelection.remove('quarterPinned');
       }
-      if (page == 'discover' && discoveryTab == 'aiinsights') {
+      if (page == 'discover' &&
+          const {'aiinsights', 'copycat', 'cta_radar'}.contains(discoveryTab)) {
         home = null;
       } else {
         await loadHome();

@@ -4,6 +4,7 @@ import 'package:guru_analysis_terminal/main.dart';
 import 'investment_opportunities_test.dart' as opportunities;
 import 'investment_fundamentals_test.dart' as fundamentals;
 import 'investment_copycat_playbook_test.dart' as copycat;
+import 'investment_cta_flow_radar_test.dart' as cta_radar;
 
 Map<String, dynamic> qualityFixture() => {
   'status': 'available',
@@ -490,6 +491,9 @@ class ExplorerApi extends opportunities.OpportunityApi {
         Uri.parse(path),
       );
     }
+    if (path.contains('/cta-flow-radar')) {
+      return cta_radar.CtaFlowRadarFixtureApi().getJson(path);
+    }
     if (path.contains('/fundamentals?')) {
       return fundamentals.FundamentalApi().response(
         Uri.parse(path).queryParameters['asOf']!,
@@ -851,7 +855,14 @@ void main() {
         find.byKey(const ValueKey('guru-copycat-playbook-root')),
         findsOneWidget,
       );
-      expect(find.textContaining('16.86%'), findsWidgets);
+      expect(find.textContaining('18.03%'), findsWidgets);
+      expect(find.text('CTA Flow Radar'), findsOneWidget);
+      await tester.tap(find.text('CTA Flow Radar'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('cta-flow-radar-root')),
+        findsOneWidget,
+      );
     },
   );
 }
