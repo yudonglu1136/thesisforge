@@ -50,6 +50,61 @@ def r6(v: float | None) -> float | None:
     return None if v is None or not math.isfinite(v) else round(float(v), 6)
 
 
+def _supplement_rotation_etfs_from_yahoo(
+    by_tk: dict[str, dict[str, tuple[float, float]]],
+) -> float | None:
+    """When FactOS funds lag recent trading sessions, chain Yahoo adjusted closes onto FactOS's last anchor."""
+    import os as _os
+    import urllib.request
+
+    if _os.environ.get('LIVE_MARKET_TAIL_ENABLED', 'true') == 'false':
+        return None
+
+    latest_vix: float | None = None
+    for tk in ('QQQ', 'SCHD', 'BIL'):
+        series = by_tk.get(tk) or {}
+        if not series:
+            continue
+        last_dt = max(series.keys())
+        last_raw, last_adj = series[last_dt]
+        url = f'https://query1.finance.yahoo.com/v8/finance/chart/{tk}?range=15d&interval=1d'
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            raw = json.loads(urllib.request.urlopen(req, timeout=10).read())
+            res0 = (raw.get('chart') or {}).get('result', [None])[0] or {}
+            ts_list = res0.get('timestamp') or []
+            closes = ((res0.get('indicators') or {}).get('quote', [{}])[0]).get('close') or []
+            adjs = ((res0.get('indicators') or {}).get('adjclose', [{}])[0]).get('adjclose') or closes
+            yh_map: dict[str, tuple[float, float]] = {}
+            for t_sec, c_val, a_val in zip(ts_list, closes, adjs):
+                if c_val is not None and a_val is not None and float(c_val) > 0 and float(a_val) > 0:
+                    dt_iso = datetime.fromtimestamp(int(t_sec), timezone.utc).strftime('%Y-%m-%d')
+                    yh_map[dt_iso] = (float(c_val), float(a_val))
+            anchor = yh_map.get(last_dt)
+            if anchor and anchor[1] > 0:
+                for dt_iso in sorted(yh_map.keys()):
+                    if dt_iso > last_dt:
+                        yh_c, yh_a = yh_map[dt_iso]
+                        series[dt_iso] = (yh_c, last_adj * (yh_a / anchor[1]))
+        except Exception:
+            pass
+
+    try:
+        req = urllib.request.Request(
+            'https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=10d&interval=1d',
+            headers={'User-Agent': 'Mozilla/5.0'},
+        )
+        raw = json.loads(urllib.request.urlopen(req, timeout=10).read())
+        res0 = (raw.get('chart') or {}).get('result', [None])[0] or {}
+        closes = ((res0.get('indicators') or {}).get('quote', [{}])[0]).get('close') or []
+        valid = [float(x) for x in closes if x is not None and float(x) > 0]
+        if valid:
+            latest_vix = valid[-1]
+    except Exception:
+        pass
+    return latest_vix
+
+
 def probe_fact_os_max_date(fact_root: Path) -> dict:
     from fact_os.repository import FactRepository
 
@@ -63,6 +118,15 @@ def probe_fact_os_max_date(fact_root: Path) -> dict:
         ).fetchone()
         q_max = str(q_row[0])[:10] if q_row and q_row[0] else None
         s_max = str(s_row[0])[:10] if s_row and s_row[0] else None
+        by_probe: dict[str, dict[str, tuple[float, float]]] = {
+            'QQQ': {q_max: (1.0, 1.0)} if q_max else {},
+            'SCHD': {s_max: (1.0, 1.0)} if s_max else {},
+        }
+        _supplement_rotation_etfs_from_yahoo(by_probe)
+        if by_probe['QQQ']:
+            q_max = max(by_probe['QQQ'].keys())
+        if by_probe['SCHD']:
+            s_max = max(by_probe['SCHD'].keys())
         common_max = min(q_max, s_max) if (q_max and s_max) else None
         return {
             'factRoot': str(repo.root),
@@ -1553,6 +1617,7 @@ def forward_extend_from_fact_os(base_file: Path, fact_root: Path, output_file: P
     for tk, d, c_raw, c_adj in rows:
         if tk in by_tk and c_adj is not None:
             by_tk[tk][str(d)] = (float(c_raw or c_adj), float(c_adj))
+    live_vix = _supplement_rotation_etfs_from_yahoo(by_tk)
 
     new_dates = sorted(
         d for d in by_tk['QQQ'].keys() if d > base_through and d in by_tk['SCHD']
@@ -1567,7 +1632,7 @@ def forward_extend_from_fact_os(base_file: Path, fact_root: Path, output_file: P
     base_q_close = float(base_lr['qqqClose'])
     base_pe = float(base_lr['posPe'])
     base_fcf = float(base_lr['fcfYieldPct'])
-    last_vix = float(base_lr['vix'])
+    last_vix = float(live_vix) if live_vix is not None else float(base_lr['vix'])
 
     for d in new_dates:
         idx_q = q_hist_dates.index(d)
