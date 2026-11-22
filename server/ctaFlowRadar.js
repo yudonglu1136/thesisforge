@@ -41,8 +41,630 @@ const isIsoDate = value =>
   new Date(value).toISOString().slice(0, 10) === value;
 
 const clip = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+const r1 = v => (Number.isFinite(v) ? Math.round(v * 10) / 10 : null);
 const r2 = v => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const r3 = v => (Number.isFinite(v) ? Math.round(v * 1000) / 1000 : null);
+const r4 = v => (Number.isFinite(v) ? Math.round(v * 10000) / 10000 : null);
+
+function medianVal(arr) {
+  if (!arr.length) return null;
+  const s = arr.slice().sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+function percentileLinear(arr, qPct) {
+  if (!arr.length) return null;
+  const s = arr.slice().sort((a, b) => a - b);
+  if (s.length === 1) return s[0];
+  const pos = (qPct / 100) * (s.length - 1);
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return s[lo];
+  const w = pos - lo;
+  return s[lo] + w * (s[hi] - s[lo]);
+}
+
+function logGamma(z) {
+  const p = [
+    0.9999999999998099,
+    676.5203681218851,
+    -1259.1392167224028,
+    771.3234287776531,
+    -176.6150291621406,
+    12.507343278686905,
+    -0.13857109526572012,
+    9.984369578019572e-6,
+    1.5056327351493116e-7,
+  ];
+  if (z < 0.5) {
+    return Math.log(Math.PI / Math.sin(Math.PI * z)) - logGamma(1 - z);
+  }
+  const zm = z - 1;
+  let x = p[0];
+  for (let i = 1; i < p.length; i += 1) x += p[i] / (zm + i);
+  const t = zm + 7.5;
+  return 0.5 * Math.log(2 * Math.PI) + (zm + 0.5) * Math.log(t) - t + Math.log(x);
+}
+
+function betacf(a, b, x) {
+  const maxIt = 200;
+  const eps = 3e-12;
+  const fpMin = 1e-30;
+  const qab = a + b;
+  const qap = a + 1;
+  const qam = a - 1;
+  let c = 1;
+  let d = 1 - (qab * x) / qap;
+  if (Math.abs(d) < fpMin) d = fpMin;
+  d = 1 / d;
+  let h = d;
+  for (let m = 1; m <= maxIt; m += 1) {
+    const m2 = 2 * m;
+    let aa = (m * (b - m) * x) / ((qam + m2) * (a + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < fpMin) d = fpMin;
+    c = 1 + aa / c;
+    if (Math.abs(c) < fpMin) c = fpMin;
+    d = 1 / d;
+    h *= d * c;
+    aa = (-(a + m) * (qab + m) * x) / ((a + m2) * (qap + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < fpMin) d = fpMin;
+    c = 1 + aa / c;
+    if (Math.abs(c) < fpMin) c = fpMin;
+    d = 1 / d;
+    const delta = d * c;
+    h *= delta;
+    if (Math.abs(delta - 1) < eps) break;
+  }
+  return h;
+}
+
+function betainc(a, b, x) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const bt = Math.exp(logGamma(a + b) - logGamma(a) - logGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  if (x < (a + 1) / (a + b + 2)) return (bt * betacf(a, b, x)) / a;
+  return 1 - (bt * betacf(b, a, 1 - x)) / b;
+}
+
+function welchTTestPVal(xa, ya) {
+  const nx = xa.length;
+  const ny = ya.length;
+  if (nx < 2 || ny < 2) return null;
+  const mx = xa.reduce((acc, v) => acc + v, 0) / nx;
+  const my = ya.reduce((acc, v) => acc + v, 0) / ny;
+  let sqx = 0;
+  let sqy = 0;
+  for (let i = 0; i < nx; i += 1) sqx += (xa[i] - mx) ** 2;
+  for (let i = 0; i < ny; i += 1) sqy += (ya[i] - my) ** 2;
+  const vx = sqx / (nx - 1);
+  const vy = sqy / (ny - 1);
+  const se2 = vx / nx + vy / ny;
+  if (se2 <= 1e-18) return 1;
+  const tStat = (mx - my) / Math.sqrt(se2);
+  const dfNum = se2 * se2;
+  const dfDen = (vx / nx) ** 2 / (nx - 1) + (vy / ny) ** 2 / (ny - 1);
+  const df = dfNum / Math.max(dfDen, 1e-18);
+  const xBeta = df / (df + tStat * tStat);
+  return betainc(0.5 * df, 0.5, xBeta);
+}
+
+function declusterIndices(mask, minGap = 20) {
+  const kept = [];
+  let lastIdx = -999999;
+  for (let i = 0; i < mask.length; i += 1) {
+    if (mask[i] && i - lastIdx >= minGap) {
+      kept.push(i);
+      lastIdx = i;
+    }
+  }
+  return kept;
+}
+
+function summarizeForwardList(rets, baseAllRets, baseNonoverlapRets) {
+  const n = rets.length;
+  const bWin = baseAllRets.length
+    ? (baseAllRets.filter(v => v > 0).length / baseAllRets.length) * 100
+    : null;
+  const bMean = baseAllRets.length
+    ? baseAllRets.reduce((acc, v) => acc + v, 0) / baseAllRets.length
+    : null;
+  const bMed = baseAllRets.length ? medianVal(baseAllRets) : null;
+
+  if (n === 0) {
+    return {
+      nCompleted: 0,
+      winCount: 0,
+      winRatePct: null,
+      medianRetPct: null,
+      meanRetPct: null,
+      minRetPct: null,
+      maxRetPct: null,
+      p25RetPct: null,
+      p75RetPct: null,
+      baselineWinRatePct: bWin !== null ? r1(bWin) : null,
+      baselineMeanRetPct: bMean !== null ? r2(bMean) : null,
+      baselineMedianRetPct: bMed !== null ? r2(bMed) : null,
+      excessMeanRetPct: null,
+      excessMedianRetPct: null,
+      pValVsBaseline: null,
+    };
+  }
+
+  const winCount = rets.filter(v => v > 0).length;
+  const meanR = rets.reduce((acc, v) => acc + v, 0) / n;
+  const medR = medianVal(rets);
+  const pVal = n >= 2 && baseNonoverlapRets.length >= 2 ? welchTTestPVal(rets, baseNonoverlapRets) : null;
+
+  return {
+    nCompleted: n,
+    winCount,
+    winRatePct: r1((winCount / n) * 100),
+    medianRetPct: r2(medR),
+    meanRetPct: r2(meanR),
+    minRetPct: r2(Math.min(...rets)),
+    maxRetPct: r2(Math.max(...rets)),
+    p25RetPct: r2(percentileLinear(rets, 25)),
+    p75RetPct: r2(percentileLinear(rets, 75)),
+    baselineWinRatePct: bWin !== null ? r1(bWin) : null,
+    baselineMeanRetPct: bMean !== null ? r2(bMean) : null,
+    baselineMedianRetPct: bMed !== null ? r2(bMed) : null,
+    excessMeanRetPct: bMean !== null ? r2(meanR - bMean) : null,
+    excessMedianRetPct: bMed !== null ? r2(medR - bMed) : null,
+    pValVsBaseline: pVal !== null ? r4(pVal) : null,
+  };
+}
+
+function computeSingleRegimeBacktest({
+  regimeId,
+  titleEn,
+  titleZh,
+  ruleEn,
+  ruleZh,
+  mask,
+  series,
+  cooldownDays = 20,
+  waitWindowDays = 20,
+}) {
+  const m = series.length;
+  const epIndices = declusterIndices(mask, cooldownDays);
+  const horizonsCfg = [10, 20, 60, 120];
+  const ddWindows = [10, 20, 60];
+
+  const baseAll = {};
+  const baseNonoverlap = {};
+  for (const h of horizonsCfg) {
+    const allR = [];
+    const nonOv = [];
+    if (m > h) {
+      for (let j = 0; j < m - h; j += 1) {
+        allR.push((series[j + h][1] / series[j][1] - 1) * 100);
+      }
+      const step = Math.max(h, cooldownDays);
+      for (let j = 0; j < m - h; j += step) {
+        nonOv.push((series[j + h][1] / series[j][1] - 1) * 100);
+      }
+    }
+    baseAll[h] = allR;
+    baseNonoverlap[h] = nonOv;
+  }
+
+  const ddSummary = {};
+  for (const w of ddWindows) {
+    const drops = [];
+    const troughDays = [];
+    for (const idx of epIndices) {
+      if (idx + w >= m) continue;
+      const p0 = series[idx][1];
+      let minR = 0;
+      let minD = 0;
+      for (let d = 1; d <= w; d += 1) {
+        const rd = (series[idx + d][1] / p0 - 1) * 100;
+        if (rd < minR) {
+          minR = rd;
+          minD = d;
+        }
+      }
+      drops.push(minR);
+      troughDays.push(minD);
+    }
+    if (drops.length) {
+      ddSummary[`${w}D`] = {
+        nCompleted: drops.length,
+        medianDropPct: r2(medianVal(drops)),
+        meanDropPct: r2(drops.reduce((a, v) => a + v, 0) / drops.length),
+        worstDropPct: r2(Math.min(...drops)),
+        bestDropPct: r2(Math.max(...drops)),
+        zeroFurtherDropCount: drops.filter(v => v >= -1e-9).length,
+        dropGe2PctCount: drops.filter(v => v <= -2).length,
+        dropGe5PctCount: drops.filter(v => v <= -5).length,
+        medianDaysToTrough: r1(medianVal(troughDays)),
+        meanDaysToTrough: r1(troughDays.reduce((a, v) => a + v, 0) / troughDays.length),
+        maxDaysToTrough: Math.max(...troughDays),
+      };
+    } else {
+      ddSummary[`${w}D`] = {
+        nCompleted: 0,
+        medianDropPct: null,
+        meanDropPct: null,
+        worstDropPct: null,
+        bestDropPct: null,
+        zeroFurtherDropCount: 0,
+        dropGe2PctCount: 0,
+        dropGe5PctCount: 0,
+        medianDaysToTrough: null,
+        meanDaysToTrough: null,
+        maxDaysToTrough: null,
+      };
+    }
+  }
+
+  const fwdSummary = {};
+  for (const h of horizonsCfg) {
+    const retsH = epIndices
+      .filter(idx => idx + h < m)
+      .map(idx => (series[idx + h][1] / series[idx][1] - 1) * 100);
+    fwdSummary[`${h}D`] = summarizeForwardList(retsH, baseAll[h], baseNonoverlap[h]);
+  }
+
+  const eligibleDipEps = epIndices.filter(idx => idx + waitWindowDays < m);
+  const dipSpecs = [
+    ['dip_0pct', 0, '0% (Buy Signal Close)', '0%（信号日收盘即买）', '100% immediate entry at signal-day close', '信号触发当日收盘 100% 直接买入'],
+    ['dip_2pct', -2, '-2% Dip Limit (20D)', '再跌 -2% 挂单（20D内）', 'Buy at first close <= -2% below signal close within 20 trading days', '信号后 20 个交易日内首次收盘跌破 -2% 买入'],
+    ['dip_3pct', -3, '-3% Dip Limit (20D)', '再跌 -3% 挂单（20D内）', 'Buy at first close <= -3% below signal close within 20 trading days', '信号后 20 个交易日内首次收盘跌破 -3% 买入'],
+    ['dip_5pct', -5, '-5% Dip Limit (20D)', '再跌 -5% 挂单（20D内）', 'Buy at first close <= -5% below signal close within 20 trading days', '信号后 20 个交易日内首次收盘跌破 -5% 买入'],
+  ];
+
+  const dipMatrix = [];
+  for (const [modeId, dipPct, lblEn, lblZh, rEn, rZh] of dipSpecs) {
+    const filledEntries = [];
+    const missedIndices = [];
+    for (const idx of eligibleDipEps) {
+      const p0 = series[idx][1];
+      if (Math.abs(dipPct) < 1e-9) {
+        filledEntries.push([idx, idx, p0]);
+      } else {
+        const thresh = p0 * (1 + dipPct / 100);
+        let hitK = null;
+        for (let k = idx + 1; k <= idx + waitWindowDays; k += 1) {
+          if (series[k][1] <= thresh + 1e-12) {
+            hitK = k;
+            break;
+          }
+        }
+        if (hitK !== null) filledEntries.push([idx, hitK, series[hitK][1]]);
+        else missedIndices.push(idx);
+      }
+    }
+
+    const maes20d = [];
+    const fillWaits = [];
+    for (const [sigIdx, fillK, fillPx] of filledEntries) {
+      fillWaits.push(fillK - sigIdx);
+      if (fillK + 20 < m) {
+        let minAfter = 0;
+        for (let d = 1; d <= 20; d += 1) {
+          const rd = (series[fillK + d][1] / fillPx - 1) * 100;
+          if (rd < minAfter) minAfter = rd;
+        }
+        maes20d.push(minAfter);
+      }
+    }
+
+    const missed20 = missedIndices
+      .filter(idx => idx + 20 < m)
+      .map(idx => (series[idx + 20][1] / series[idx][1] - 1) * 100);
+    const missed60 = missedIndices
+      .filter(idx => idx + 60 < m)
+      .map(idx => (series[idx + 60][1] / series[idx][1] - 1) * 100);
+
+    const modeHorizons = {};
+    for (const h of horizonsCfg) {
+      const hRets = filledEntries
+        .filter(([, fillK]) => fillK + h < m)
+        .map(([, fillK, fillPx]) => (series[fillK + h][1] / fillPx - 1) * 100);
+      if (hRets.length) {
+        const wC = hRets.filter(v => v > 0).length;
+        modeHorizons[`${h}D`] = {
+          nFilled: hRets.length,
+          winCount: wC,
+          winRatePct: r1((wC / hRets.length) * 100),
+          medianRetPct: r2(medianVal(hRets)),
+          meanRetPct: r2(hRets.reduce((a, v) => a + v, 0) / hRets.length),
+          minRetPct: r2(Math.min(...hRets)),
+          maxRetPct: r2(Math.max(...hRets)),
+        };
+      } else {
+        modeHorizons[`${h}D`] = {
+          nFilled: 0,
+          winCount: 0,
+          winRatePct: null,
+          medianRetPct: null,
+          meanRetPct: null,
+          minRetPct: null,
+          maxRetPct: null,
+        };
+      }
+    }
+
+    const nElig = eligibleDipEps.length;
+    const nFill = filledEntries.length;
+    dipMatrix.push({
+      id: modeId,
+      dipPct,
+      labelEn: lblEn,
+      labelZh: lblZh,
+      ruleEn: rEn,
+      ruleZh: rZh,
+      eligibleEpisodes: nElig,
+      filledCount: nFill,
+      missedCount: missedIndices.length,
+      fillRatePct: nElig > 0 ? r1((nFill / nElig) * 100) : null,
+      avgDeployedCapitalPct: nElig > 0 ? r1((nFill / nElig) * 100) : null,
+      avgDaysToFill: fillWaits.length ? r1(fillWaits.reduce((a, v) => a + v, 0) / fillWaits.length) : null,
+      postEntry20dMaeMedianPct: maes20d.length ? r2(medianVal(maes20d)) : null,
+      postEntry20dMaeMeanPct: maes20d.length ? r2(maes20d.reduce((a, v) => a + v, 0) / maes20d.length) : null,
+      postEntry20dMaeWorstPct: maes20d.length ? r2(Math.min(...maes20d)) : null,
+      missed20dMeanRetPct: missed20.length ? r2(missed20.reduce((a, v) => a + v, 0) / missed20.length) : null,
+      missed60dMeanRetPct: missed60.length ? r2(missed60.reduce((a, v) => a + v, 0) / missed60.length) : null,
+      horizons: modeHorizons,
+    });
+  }
+
+  // 5th Mode: 3-Tranche DCA (0% / -2% / -5%)
+  const dcaDeployedList = [];
+  const dcaMaes20d = [];
+  const dcaHorizonsRets = { 10: [], 20: [], 60: [], 120: [] };
+  const dcaDeployedHorizonsRets = { 10: [], 20: [], 60: [], 120: [] };
+
+  for (const idx of eligibleDipEps) {
+    const p0 = series[idx][1];
+    let k2 = null;
+    let k5 = null;
+    for (let k = idx + 1; k <= idx + waitWindowDays; k += 1) {
+      if (k2 === null && series[k][1] <= p0 * 0.98 + 1e-12) k2 = k;
+      if (k5 === null && series[k][1] <= p0 * 0.95 + 1e-12) k5 = k;
+    }
+    const tranchesFilled = 1 + (k2 !== null ? 1 : 0) + (k5 !== null ? 1 : 0);
+    dcaDeployedList.push((tranchesFilled / 3) * 100);
+
+    const dcaEquityAt = tIdx => {
+      const eq1 = series[tIdx][1] / p0;
+      const eq2 = k2 !== null && k2 <= tIdx ? series[tIdx][1] / series[k2][1] : 1;
+      const eq3 = k5 !== null && k5 <= tIdx ? series[tIdx][1] / series[k5][1] : 1;
+      return (eq1 + eq2 + eq3) / 3;
+    };
+    const dcaDeployedRetAt = tIdx => {
+      const gains = [series[tIdx][1] / p0 - 1];
+      if (k2 !== null && k2 <= tIdx) gains.push(series[tIdx][1] / series[k2][1] - 1);
+      if (k5 !== null && k5 <= tIdx) gains.push(series[tIdx][1] / series[k5][1] - 1);
+      return (gains.reduce((a, v) => a + v, 0) / gains.length) * 100;
+    };
+
+    let minDca20 = 0;
+    for (let d = 1; d <= waitWindowDays; d += 1) {
+      const rd = (dcaEquityAt(idx + d) - 1) * 100;
+      if (rd < minDca20) minDca20 = rd;
+    }
+    dcaMaes20d.push(minDca20);
+
+    for (const h of horizonsCfg) {
+      if (idx + h < m) {
+        dcaHorizonsRets[h].push((dcaEquityAt(idx + h) - 1) * 100);
+        dcaDeployedHorizonsRets[h].push(dcaDeployedRetAt(idx + h));
+      }
+    }
+  }
+
+  const dcaHorizonsOut = {};
+  for (const h of horizonsCfg) {
+    const hr = dcaHorizonsRets[h];
+    const dr = dcaDeployedHorizonsRets[h];
+    if (hr.length) {
+      const wc = hr.filter(v => v > 0).length;
+      dcaHorizonsOut[`${h}D`] = {
+        nFilled: hr.length,
+        winCount: wc,
+        winRatePct: r1((wc / hr.length) * 100),
+        medianRetPct: r2(medianVal(hr)),
+        meanRetPct: r2(hr.reduce((a, v) => a + v, 0) / hr.length),
+        minRetPct: r2(Math.min(...hr)),
+        maxRetPct: r2(Math.max(...hr)),
+        deployedMedianRetPct: dr.length ? r2(medianVal(dr)) : null,
+        deployedMeanRetPct: dr.length ? r2(dr.reduce((a, v) => a + v, 0) / dr.length) : null,
+      };
+    } else {
+      dcaHorizonsOut[`${h}D`] = {
+        nFilled: 0,
+        winCount: 0,
+        winRatePct: null,
+        medianRetPct: null,
+        meanRetPct: null,
+        minRetPct: null,
+        maxRetPct: null,
+        deployedMedianRetPct: null,
+        deployedMeanRetPct: null,
+      };
+    }
+  }
+
+  const nEligDca = eligibleDipEps.length;
+  dipMatrix.push({
+    id: 'dca_3tranche',
+    dipPct: null,
+    labelEn: '3-Tranche DCA (0% / -2% / -5%)',
+    labelZh: '分 3 批阶梯买（0% / -2% / -5%）',
+    ruleEn: '1/3 at signal close + 1/3 at -2% + 1/3 at -5% within 20D (unfilled cash earns 0%)',
+    ruleZh: '信号日收盘买 1/3 + 再跌 -2% 买 1/3 + 再跌 -5% 买 1/3（20D内未触发部分按现金 0% 计）',
+    eligibleEpisodes: nEligDca,
+    filledCount: nEligDca,
+    missedCount: 0,
+    fillRatePct: nEligDca > 0 ? 100 : null,
+    avgDeployedCapitalPct: dcaDeployedList.length
+      ? r1(dcaDeployedList.reduce((a, v) => a + v, 0) / dcaDeployedList.length)
+      : null,
+    avgDaysToFill: nEligDca > 0 ? 0 : null,
+    postEntry20dMaeMedianPct: dcaMaes20d.length ? r2(medianVal(dcaMaes20d)) : null,
+    postEntry20dMaeMeanPct: dcaMaes20d.length ? r2(dcaMaes20d.reduce((a, v) => a + v, 0) / dcaMaes20d.length) : null,
+    postEntry20dMaeWorstPct: dcaMaes20d.length ? r2(Math.min(...dcaMaes20d)) : null,
+    missed20dMeanRetPct: null,
+    missed60dMeanRetPct: null,
+    horizons: dcaHorizonsOut,
+  });
+
+  const ledger = epIndices.map((idx, rankZero) => {
+    const daysElapsed = m - 1 - idx;
+    const status = daysElapsed < 10 ? 'LIVE' : daysElapsed < 120 ? 'PARTIAL' : 'COMPLETED';
+    const p0 = series[idx][1];
+
+    const epDd = w => {
+      if (idx + w >= m) return [null, null, null];
+      let minR = 0;
+      let minD = 0;
+      for (let d = 1; d <= w; d += 1) {
+        const rd = (series[idx + d][1] / p0 - 1) * 100;
+        if (rd < minR) {
+          minR = rd;
+          minD = d;
+        }
+      }
+      return [r2(minR), minD, series[idx + minD][0]];
+    };
+
+    const [dd10] = epDd(10);
+    const [dd20, dt20, tDate20] = epDd(20);
+    const [dd60, dt60] = epDd(60);
+
+    const retAt = h => (idx + h < m ? r2((series[idx + h][1] / p0 - 1) * 100) : null);
+    let liveRunningRetPct = 0;
+    let liveRunningMaxDropPct = 0;
+    if (daysElapsed >= 1) {
+      liveRunningRetPct = r2((series[m - 1][1] / p0 - 1) * 100);
+      let minRun = 0;
+      for (let d = 1; d <= daysElapsed; d += 1) {
+        const rd = (series[idx + d][1] / p0 - 1) * 100;
+        if (rd < minRun) minRun = rd;
+      }
+      liveRunningMaxDropPct = r2(minRun);
+    }
+
+    let f2 = null;
+    let f3 = null;
+    let f5 = null;
+    let dcaDep = null;
+    if (idx + waitWindowDays < m) {
+      f2 = false;
+      f3 = false;
+      f5 = false;
+      for (let k = idx + 1; k <= idx + waitWindowDays; k += 1) {
+        if (series[k][1] <= p0 * 0.98 + 1e-12) f2 = true;
+        if (series[k][1] <= p0 * 0.97 + 1e-12) f3 = true;
+        if (series[k][1] <= p0 * 0.95 + 1e-12) f5 = true;
+      }
+      dcaDep = r1(((1 + (f2 ? 1 : 0) + (f5 ? 1 : 0)) / 3) * 100);
+    }
+
+    return {
+      rank: rankZero + 1,
+      date: series[idx][0],
+      status,
+      daysElapsed,
+      signalClose: r2(series[idx][2]),
+      fCarver: r2(series[idx][3]),
+      convexity3Pct: r2(series[idx][4]),
+      vixRatio: r3(series[idx][5]),
+      vixClose: r2(series[idx][6]),
+      maxDrop10dPct: dd10,
+      maxDrop20dPct: dd20,
+      maxDrop60dPct: dd60,
+      daysToTrough20d: dt20,
+      daysToTrough60d: dt60,
+      troughDate20d: tDate20,
+      ret10dPct: retAt(10),
+      ret20dPct: retAt(20),
+      ret60dPct: retAt(60),
+      ret120dPct: retAt(120),
+      liveRunningRetPct,
+      liveRunningMaxDropPct,
+      filledDip2Pct: f2,
+      filledDip3Pct: f3,
+      filledDip5Pct: f5,
+      dcaDeployedPct: dcaDep,
+    };
+  });
+
+  const nComp20 = ddSummary['20D'].nCompleted;
+  return {
+    id: regimeId,
+    titleEn,
+    titleZh,
+    ruleEn,
+    ruleZh,
+    cooldownDays,
+    activeToday: mask.length ? Boolean(mask[mask.length - 1]) : false,
+    totalEpisodes: epIndices.length,
+    completedEpisodes10d: fwdSummary['10D'].nCompleted,
+    completedEpisodes20d: nComp20,
+    completedEpisodes60d: fwdSummary['60D'].nCompleted,
+    completedEpisodes120d: fwdSummary['120D'].nCompleted,
+    livePendingCount: ledger.filter(row => row.status === 'LIVE').length,
+    smallSampleCaveat: nComp20 < 12,
+    postSignalDrawdown: ddSummary,
+    forwardHorizons: fwdSummary,
+    dipEntryMatrix: dipMatrix,
+    episodes: ledger,
+  };
+}
+
+function computeSignalBacktestFromSeries(series) {
+  const maskExh = series.map(r => r[3] <= -10 && r[4] >= 1.8);
+  const maskQ2 = series.map(r => r[3] <= -10 && r[4] >= 1.8 && r[5] >= 1.0);
+  const maskVix = series.map(r => r[5] >= 1.0);
+
+  return {
+    basis: 'close_to_close_total_return_adjusted',
+    priceMethodologyEn:
+      'Strict zero-lookahead close-to-close total-return series (dividend & split adjusted) for all forward returns, post-signal drawdowns, and 20-day limit-order dip fills; spot close displays unadjusted exchange close on signal date.',
+    priceMethodologyZh:
+      '严格零前视收盘对收盘全收益序列（含分红复权与拆股校准）计算全部后续最大再跌、20 日内挂单触发成交及 +10/+20/+60/+120 日涨幅；信号日价格展示当日交易所实际收盘价。',
+    cooldownTradingDays: 20,
+    dipWaitWindowDays: 20,
+    defaultRegimeId: 'exhaustion_convexity',
+    regimeOrder: ['exhaustion_convexity', 'quadrant2_combo', 'vix_backwardation_lock'],
+    dipModeOrder: ['dip_0pct', 'dip_2pct', 'dip_3pct', 'dip_5pct', 'dca_3tranche'],
+    regimes: {
+      exhaustion_convexity: computeSingleRegimeBacktest({
+        regimeId: 'exhaustion_convexity',
+        titleEn: 'Short Exhaustion + Convexity Turn',
+        titleZh: '空头衰竭 + 凸性拐点',
+        ruleEn: 'Carver F <= -10.0 AND +3%/-3% Pure Marginal Convexity >= 1.80x (>=20D cooldown)',
+        ruleZh: 'Carver F <= -10.0 且 +3%/-3% 纯价格边际凸性 >= 1.80x（>=20 交易日冷却去重）',
+        mask: maskExh,
+        series,
+      }),
+      quadrant2_combo: computeSingleRegimeBacktest({
+        regimeId: 'quadrant2_combo',
+        titleEn: 'Quadrant 2 Combo (+ VIX Lock >= 1.00)',
+        titleZh: '组合象限 2（叠加 VIX 倒挂 >= 1.00）',
+        ruleEn: 'Carver F <= -10.0 AND Convexity >= 1.80x AND VIX/VIX3M >= 1.00 (>=20D cooldown)',
+        ruleZh: 'Carver F <= -10.0 + 凸性 >= 1.80x + VIX/VIX3M >= 1.00 期现倒挂共振（今日 SPY 实盘象限）',
+        mask: maskQ2,
+        series,
+      }),
+      vix_backwardation_lock: computeSingleRegimeBacktest({
+        regimeId: 'vix_backwardation_lock',
+        titleEn: 'VIX Backwardation Lock Only',
+        titleZh: '仅 VIX 倒挂恐慌锁',
+        ruleEn: 'VIX / VIX3M >= 1.00 term-structure inversion onset (>=20D cooldown)',
+        ruleZh: '仅 VIX / VIX3M >= 1.00 期现倒挂首次触发（无趋势耗尽过滤，>=20 交易日冷却去重）',
+        mask: maskVix,
+        series,
+      }),
+    },
+  };
+}
 
 function sampleStd(arr) {
   const n = arr.length;
@@ -375,6 +997,7 @@ function stepAssetFromCheckpoint(baseAsset, cpAsset, bars) {
   const scList = EWMAC_CONFIGS.map(c => c[2]);
 
   const fPostCp = [];
+  const evalPostCp = [];
   const trajAll = [];
   let lastSnapshot = null;
 
@@ -457,6 +1080,34 @@ function stepAssetFromCheckpoint(baseAsset, cpAsset, bars) {
     const posCombinedB = posCarverB + posVcB;
     const prevCombined = trajAll.length ? trajAll[trajAll.length - 1].posCombinedB : posCombinedB;
     const vixRatio = vix3m > 0 ? vix / vix3m : 0.9;
+
+    const daySurf3 = simulateSurfaceFromState(
+      {
+        px0: px,
+        var36,
+        longPctVol,
+        capCtaB,
+        capVcB,
+        posCarverB,
+        posSmaB,
+        posHybridB,
+        posVcB,
+        trailingPx200,
+        trailingRet60,
+        emaFast: ef,
+        emaSlow: es,
+        ctaTargetVol,
+        vcTargetVol,
+      },
+      [-3, 0, 3],
+      5,
+    );
+    const cEqM3 = daySurf3.flowCarverB[0] / ctaMult;
+    const cEq0 = daySurf3.flowCarverB[1] / ctaMult;
+    const cEqP3 = daySurf3.flowCarverB[2] / ctaMult;
+    const dayMargAsym3 = Math.max(cEqP3 - cEq0, 0) / Math.max(-(cEqM3 - cEq0), 0.5);
+    evalPostCp.push([dt, px, pxUnadj, fCarver, dayMargAsym3, vixRatio, vix]);
+
     trajAll.push({
       date: dt,
       close: r2(pxUnadj),
@@ -559,7 +1210,22 @@ function stepAssetFromCheckpoint(baseAsset, cpAsset, bars) {
   const cumDelev = s.posCombinedB - peakRecent;
   const primaryActive = s.fCarver <= -10 && margAsym3 >= 1.8;
 
-  const completedEps = baseAsset.signals.primaryExhaustionBuy.completedEpisodes;
+  const fullEvalSeries = Array.isArray(cpAsset.evalSeriesPre2025)
+    ? cpAsset.evalSeriesPre2025.concat(evalPostCp)
+    : null;
+  const dynamicSignalBacktest = fullEvalSeries
+    ? computeSignalBacktestFromSeries(fullEvalSeries)
+    : baseAsset.signalBacktest;
+
+  let completedEps = baseAsset.signals.primaryExhaustionBuy.completedEpisodes;
+  let historicalTriggerDates = baseAsset.signals.primaryExhaustionBuy.historicalTriggerDates;
+  if (fullEvalSeries) {
+    const margMask15 = fullEvalSeries.map(r => r[3] <= -10 && r[4] >= 1.8);
+    const margIdx15 = declusterIndices(margMask15, 15);
+    completedEps = margIdx15.filter(idx => idx + 63 < fullEvalSeries.length).length;
+    historicalTriggerDates = margIdx15.map(idx => fullEvalSeries[idx][0]);
+  }
+
   const ewmacComponents = EWMAC_CONFIGS.map(([lf, ls, sc], k) => ({
     rule: `EWMAC(${lf},${ls})`,
     fastSpan: lf,
@@ -646,6 +1312,8 @@ function stepAssetFromCheckpoint(baseAsset, cpAsset, bars) {
       primaryExhaustionBuy: {
         ...baseAsset.signals.primaryExhaustionBuy,
         active: primaryActive,
+        completedEpisodes: completedEps,
+        historicalTriggerDates,
         triggerRank: primaryActive ? completedEps + 1 : null,
         currentF: r2(s.fCarver),
         currentConvexity3Pct: r2(margAsym3),
@@ -664,6 +1332,8 @@ function stepAssetFromCheckpoint(baseAsset, cpAsset, bars) {
     flowCurve,
     matrix5d: buildMatrixRows(s.pxUnadj, surf5d, fine5d, zero5dPct),
     matrix10d: buildMatrixRows(s.pxUnadj, surf10d, fine10d, zero10dPct),
+    signalBacktest: dynamicSignalBacktest,
+    signal_backtest: dynamicSignalBacktest,
     recentTrajectory: trajAll.slice(-45).map(({ pxAdj, ...rest }) => rest),
   };
 }

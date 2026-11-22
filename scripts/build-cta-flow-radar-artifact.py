@@ -747,6 +747,498 @@ def eval_event_study(px: list[float], signal_mask: list[bool], horizons: list[in
     return out
 
 
+def _summarize_forward_list(rets: list[float], base_all_rets: list[float], base_nonoverlap_rets: list[float]) -> dict:
+    n = len(rets)
+    if n == 0:
+        return {
+            "nCompleted": 0,
+            "winCount": 0,
+            "winRatePct": None,
+            "medianRetPct": None,
+            "meanRetPct": None,
+            "minRetPct": None,
+            "maxRetPct": None,
+            "p25RetPct": None,
+            "p75RetPct": None,
+            "baselineWinRatePct": round(sum(1 for v in base_all_rets if v > 0) / len(base_all_rets) * 100.0, 1) if base_all_rets else None,
+            "baselineMeanRetPct": round(sum(base_all_rets) / len(base_all_rets), 2) if base_all_rets else None,
+            "baselineMedianRetPct": round(statistics.median(base_all_rets), 2) if base_all_rets else None,
+            "excessMeanRetPct": None,
+            "excessMedianRetPct": None,
+            "pValVsBaseline": None,
+        }
+    win_cnt = sum(1 for v in rets if v > 0.0)
+    mean_r = sum(rets) / n
+    med_r = statistics.median(rets)
+    b_win = sum(1 for v in base_all_rets if v > 0.0) / len(base_all_rets) * 100.0 if base_all_rets else 0.0
+    b_mean = sum(base_all_rets) / len(base_all_rets) if base_all_rets else 0.0
+    b_med = statistics.median(base_all_rets) if base_all_rets else 0.0
+    _, p_val = welch_ttest(rets, base_nonoverlap_rets) if n >= 2 and len(base_nonoverlap_rets) >= 2 else (0.0, None)
+    return {
+        "nCompleted": n,
+        "winCount": win_cnt,
+        "winRatePct": round(win_cnt / n * 100.0, 1),
+        "medianRetPct": round(med_r, 2),
+        "meanRetPct": round(mean_r, 2),
+        "minRetPct": round(min(rets), 2),
+        "maxRetPct": round(max(rets), 2),
+        "p25RetPct": round(_percentile_linear(rets, 25.0), 2),
+        "p75RetPct": round(_percentile_linear(rets, 75.0), 2),
+        "baselineWinRatePct": round(b_win, 1),
+        "baselineMeanRetPct": round(b_mean, 2),
+        "baselineMedianRetPct": round(b_med, 2),
+        "excessMeanRetPct": round(mean_r - b_mean, 2),
+        "excessMedianRetPct": round(med_r - b_med, 2),
+        "pValVsBaseline": round(p_val, 4) if p_val is not None else None,
+    }
+
+
+def _compute_single_regime_backtest(
+    regime_id: str,
+    title_en: str,
+    title_zh: str,
+    rule_en: str,
+    rule_zh: str,
+    mask: list[bool],
+    dates: list[str],
+    px_adj: list[float],
+    px_unadj: list[float],
+    f_carver: list[float],
+    marg_asym_3: list[float],
+    vix_ratio: list[float],
+    vix_close: list[float],
+    cooldown_days: int = 20,
+    wait_window_days: int = 20,
+) -> dict:
+    m = len(px_adj)
+    ep_indices = decluster_indices(mask, min_gap=cooldown_days)
+    horizons_cfg = (10, 20, 60, 120)
+    dd_windows = (10, 20, 60)
+
+    # Precompute unconditional all-day and non-overlapping baselines
+    base_all: dict[int, list[float]] = {}
+    base_nonoverlap: dict[int, list[float]] = {}
+    for h in horizons_cfg:
+        if m > h:
+            base_all[h] = [(px_adj[j + h] / px_adj[j] - 1.0) * 100.0 for j in range(m - h)]
+            step = max(h, cooldown_days)
+            base_nonoverlap[h] = [(px_adj[j + h] / px_adj[j] - 1.0) * 100.0 for j in range(0, m - h, step)]
+        else:
+            base_all[h] = []
+            base_nonoverlap[h] = []
+
+    # Post-signal further drawdown summary across 10D, 20D, 60D
+    dd_summary: dict[str, dict] = {}
+    for w in dd_windows:
+        drops: list[float] = []
+        trough_days: list[int] = []
+        for idx in ep_indices:
+            if idx + w >= m:
+                continue
+            p0 = px_adj[idx]
+            min_r = 0.0
+            min_d = 0
+            for d in range(1, w + 1):
+                r_d = (px_adj[idx + d] / p0 - 1.0) * 100.0
+                if r_d < min_r:
+                    min_r = r_d
+                    min_d = d
+            drops.append(min_r)
+            trough_days.append(min_d)
+        if drops:
+            dd_summary[f"{w}D"] = {
+                "nCompleted": len(drops),
+                "medianDropPct": round(statistics.median(drops), 2),
+                "meanDropPct": round(sum(drops) / len(drops), 2),
+                "worstDropPct": round(min(drops), 2),
+                "bestDropPct": round(max(drops), 2),
+                "zeroFurtherDropCount": sum(1 for v in drops if v >= -1e-9),
+                "dropGe2PctCount": sum(1 for v in drops if v <= -2.0),
+                "dropGe5PctCount": sum(1 for v in drops if v <= -5.0),
+                "medianDaysToTrough": round(float(statistics.median(trough_days)), 1),
+                "meanDaysToTrough": round(sum(trough_days) / len(trough_days), 1),
+                "maxDaysToTrough": max(trough_days),
+            }
+        else:
+            dd_summary[f"{w}D"] = {
+                "nCompleted": 0,
+                "medianDropPct": None,
+                "meanDropPct": None,
+                "worstDropPct": None,
+                "bestDropPct": None,
+                "zeroFurtherDropCount": 0,
+                "dropGe2PctCount": 0,
+                "dropGe5PctCount": 0,
+                "medianDaysToTrough": None,
+                "meanDaysToTrough": None,
+                "maxDaysToTrough": None,
+            }
+
+    # Forward returns from signal close (+10D, +20D, +60D, +120D)
+    fwd_summary: dict[str, dict] = {}
+    for h in horizons_cfg:
+        rets_h = [(px_adj[idx + h] / px_adj[idx] - 1.0) * 100.0 for idx in ep_indices if idx + h < m]
+        fwd_summary[f"{h}D"] = _summarize_forward_list(rets_h, base_all[h], base_nonoverlap[h])
+
+    # Dip-entry limit-order simulator (0%, -2%, -3%, -5%, and 3-Tranche DCA within 20D waiting window)
+    eligible_dip_eps = [idx for idx in ep_indices if idx + wait_window_days < m]
+    dip_specs = [
+        ("dip_0pct", 0.0, "0% (Buy Signal Close)", "0%（信号日收盘即买）", "100% immediate entry at signal-day close", "信号触发当日收盘 100% 直接买入"),
+        ("dip_2pct", -2.0, "-2% Dip Limit (20D)", "再跌 -2% 挂单（20D内）", "Buy at first close <= -2% below signal close within 20 trading days", "信号后 20 个交易日内首次收盘跌破 -2% 买入"),
+        ("dip_3pct", -3.0, "-3% Dip Limit (20D)", "再跌 -3% 挂单（20D内）", "Buy at first close <= -3% below signal close within 20 trading days", "信号后 20 个交易日内首次收盘跌破 -3% 买入"),
+        ("dip_5pct", -5.0, "-5% Dip Limit (20D)", "再跌 -5% 挂单（20D内）", "Buy at first close <= -5% below signal close within 20 trading days", "信号后 20 个交易日内首次收盘跌破 -5% 买入"),
+    ]
+    dip_matrix: list[dict] = []
+
+    for mode_id, dip_pct, lbl_en, lbl_zh, r_en, r_zh in dip_specs:
+        filled_entries: list[tuple[int, int, float]] = []
+        missed_indices: list[int] = []
+        for idx in eligible_dip_eps:
+            p0 = px_adj[idx]
+            if abs(dip_pct) < 1e-9:
+                filled_entries.append((idx, idx, p0))
+            else:
+                thresh = p0 * (1.0 + dip_pct / 100.0)
+                hit_k = None
+                for k in range(idx + 1, idx + wait_window_days + 1):
+                    if px_adj[k] <= thresh + 1e-12:
+                        hit_k = k
+                        break
+                if hit_k is not None:
+                    filled_entries.append((idx, hit_k, px_adj[hit_k]))
+                else:
+                    missed_indices.append(idx)
+
+        maes_20d: list[float] = []
+        fill_waits: list[int] = []
+        for sig_idx, fill_k, fill_px in filled_entries:
+            fill_waits.append(fill_k - sig_idx)
+            if fill_k + 20 < m:
+                min_after = min(0.0, min((px_adj[fill_k + d] / fill_px - 1.0) * 100.0 for d in range(1, 21)))
+                maes_20d.append(min_after)
+
+        missed_20 = [(px_adj[idx + 20] / px_adj[idx] - 1.0) * 100.0 for idx in missed_indices if idx + 20 < m]
+        missed_60 = [(px_adj[idx + 60] / px_adj[idx] - 1.0) * 100.0 for idx in missed_indices if idx + 60 < m]
+
+        mode_horizons: dict[str, dict] = {}
+        for h in horizons_cfg:
+            h_rets = [(px_adj[fill_k + h] / fill_px - 1.0) * 100.0 for _, fill_k, fill_px in filled_entries if fill_k + h < m]
+            if h_rets:
+                w_c = sum(1 for v in h_rets if v > 0.0)
+                mode_horizons[f"{h}D"] = {
+                    "nFilled": len(h_rets),
+                    "winCount": w_c,
+                    "winRatePct": round(w_c / len(h_rets) * 100.0, 1),
+                    "medianRetPct": round(statistics.median(h_rets), 2),
+                    "meanRetPct": round(sum(h_rets) / len(h_rets), 2),
+                    "minRetPct": round(min(h_rets), 2),
+                    "maxRetPct": round(max(h_rets), 2),
+                }
+            else:
+                mode_horizons[f"{h}D"] = {
+                    "nFilled": 0,
+                    "winCount": 0,
+                    "winRatePct": None,
+                    "medianRetPct": None,
+                    "meanRetPct": None,
+                    "minRetPct": None,
+                    "maxRetPct": None,
+                }
+
+        n_elig = len(eligible_dip_eps)
+        n_fill = len(filled_entries)
+        dip_matrix.append({
+            "id": mode_id,
+            "dipPct": dip_pct,
+            "labelEn": lbl_en,
+            "labelZh": lbl_zh,
+            "ruleEn": r_en,
+            "ruleZh": r_zh,
+            "eligibleEpisodes": n_elig,
+            "filledCount": n_fill,
+            "missedCount": len(missed_indices),
+            "fillRatePct": round(n_fill / n_elig * 100.0, 1) if n_elig > 0 else None,
+            "avgDeployedCapitalPct": round(n_fill / n_elig * 100.0, 1) if n_elig > 0 else None,
+            "avgDaysToFill": round(sum(fill_waits) / len(fill_waits), 1) if fill_waits else None,
+            "postEntry20dMaeMedianPct": round(statistics.median(maes_20d), 2) if maes_20d else None,
+            "postEntry20dMaeMeanPct": round(sum(maes_20d) / len(maes_20d), 2) if maes_20d else None,
+            "postEntry20dMaeWorstPct": round(min(maes_20d), 2) if maes_20d else None,
+            "missed20dMeanRetPct": round(sum(missed_20) / len(missed_20), 2) if missed_20 else None,
+            "missed60dMeanRetPct": round(sum(missed_60) / len(missed_60), 2) if missed_60 else None,
+            "horizons": mode_horizons,
+        })
+
+    # 5th Mode: 3-Tranche DCA (1/3 Signal Close + 1/3 at -2% + 1/3 at -5% within 20D, uninvested cash = 0%)
+    dca_deployed_list: list[float] = []
+    dca_maes_20d: list[float] = []
+    dca_horizons_rets: dict[int, list[float]] = {h: [] for h in horizons_cfg}
+    dca_deployed_horizons_rets: dict[int, list[float]] = {h: [] for h in horizons_cfg}
+
+    for idx in eligible_dip_eps:
+        p0 = px_adj[idx]
+        k2 = next((k for k in range(idx + 1, idx + wait_window_days + 1) if px_adj[k] <= p0 * 0.98 + 1e-12), None)
+        k5 = next((k for k in range(idx + 1, idx + wait_window_days + 1) if px_adj[k] <= p0 * 0.95 + 1e-12), None)
+        tranches_filled = 1 + (1 if k2 is not None else 0) + (1 if k5 is not None else 0)
+        dca_deployed_list.append(tranches_filled / 3.0 * 100.0)
+
+        def _dca_equity_at(t_idx: int) -> float:
+            eq1 = px_adj[t_idx] / p0
+            eq2 = (px_adj[t_idx] / px_adj[k2]) if (k2 is not None and k2 <= t_idx) else 1.0
+            eq3 = (px_adj[t_idx] / px_adj[k5]) if (k5 is not None and k5 <= t_idx) else 1.0
+            return (eq1 + eq2 + eq3) / 3.0
+
+        def _dca_deployed_ret_at(t_idx: int) -> float:
+            gains = [px_adj[t_idx] / p0 - 1.0]
+            if k2 is not None and k2 <= t_idx:
+                gains.append(px_adj[t_idx] / px_adj[k2] - 1.0)
+            if k5 is not None and k5 <= t_idx:
+                gains.append(px_adj[t_idx] / px_adj[k5] - 1.0)
+            return (sum(gains) / len(gains)) * 100.0
+
+        min_dca_20 = min(0.0, min((_dca_equity_at(idx + d) - 1.0) * 100.0 for d in range(1, wait_window_days + 1)))
+        dca_maes_20d.append(min_dca_20)
+        for h in horizons_cfg:
+            if idx + h < m:
+                dca_horizons_rets[h].append((_dca_equity_at(idx + h) - 1.0) * 100.0)
+                dca_deployed_horizons_rets[h].append(_dca_deployed_ret_at(idx + h))
+
+    dca_horizons_out: dict[str, dict] = {}
+    for h in horizons_cfg:
+        hr = dca_horizons_rets[h]
+        dr = dca_deployed_horizons_rets[h]
+        if hr:
+            wc = sum(1 for v in hr if v > 0.0)
+            dca_horizons_out[f"{h}D"] = {
+                "nFilled": len(hr),
+                "winCount": wc,
+                "winRatePct": round(wc / len(hr) * 100.0, 1),
+                "medianRetPct": round(statistics.median(hr), 2),
+                "meanRetPct": round(sum(hr) / len(hr), 2),
+                "minRetPct": round(min(hr), 2),
+                "maxRetPct": round(max(hr), 2),
+                "deployedMedianRetPct": round(statistics.median(dr), 2) if dr else None,
+                "deployedMeanRetPct": round(sum(dr) / len(dr), 2) if dr else None,
+            }
+        else:
+            dca_horizons_out[f"{h}D"] = {
+                "nFilled": 0,
+                "winCount": 0,
+                "winRatePct": None,
+                "medianRetPct": None,
+                "meanRetPct": None,
+                "minRetPct": None,
+                "maxRetPct": None,
+                "deployedMedianRetPct": None,
+                "deployedMeanRetPct": None,
+            }
+
+    n_elig_dca = len(eligible_dip_eps)
+    dip_matrix.append({
+        "id": "dca_3tranche",
+        "dipPct": None,
+        "labelEn": "3-Tranche DCA (0% / -2% / -5%)",
+        "labelZh": "分 3 批阶梯买（0% / -2% / -5%）",
+        "ruleEn": "1/3 at signal close + 1/3 at -2% + 1/3 at -5% within 20D (unfilled cash earns 0%)",
+        "ruleZh": "信号日收盘买 1/3 + 再跌 -2% 买 1/3 + 再跌 -5% 买 1/3（20D内未触发部分按现金 0% 计）",
+        "eligibleEpisodes": n_elig_dca,
+        "filledCount": n_elig_dca,
+        "missedCount": 0,
+        "fillRatePct": 100.0 if n_elig_dca > 0 else None,
+        "avgDeployedCapitalPct": round(sum(dca_deployed_list) / len(dca_deployed_list), 1) if dca_deployed_list else None,
+        "avgDaysToFill": 0.0 if n_elig_dca > 0 else None,
+        "postEntry20dMaeMedianPct": round(statistics.median(dca_maes_20d), 2) if dca_maes_20d else None,
+        "postEntry20dMaeMeanPct": round(sum(dca_maes_20d) / len(dca_maes_20d), 2) if dca_maes_20d else None,
+        "postEntry20dMaeWorstPct": round(min(dca_maes_20d), 2) if dca_maes_20d else None,
+        "missed20dMeanRetPct": None,
+        "missed60dMeanRetPct": None,
+        "horizons": dca_horizons_out,
+    })
+
+    # Episode-by-episode historical ledger
+    ledger: list[dict] = []
+    for rank_idx, idx in enumerate(ep_indices, start=1):
+        days_elapsed = (m - 1) - idx
+        status = "LIVE" if days_elapsed < 10 else ("PARTIAL" if days_elapsed < 120 else "COMPLETED")
+        p0 = px_adj[idx]
+
+        def _ep_dd(w: int) -> tuple[float | None, int | None, str | None]:
+            if idx + w >= m:
+                if days_elapsed >= 1:
+                    min_r = 0.0
+                    min_d = 0
+                    for d in range(1, days_elapsed + 1):
+                        rd = (px_adj[idx + d] / p0 - 1.0) * 100.0
+                        if rd < min_r:
+                            min_r = rd
+                            min_d = d
+                    return None, None, None
+                return None, None, None
+            min_r = 0.0
+            min_d = 0
+            for d in range(1, w + 1):
+                rd = (px_adj[idx + d] / p0 - 1.0) * 100.0
+                if rd < min_r:
+                    min_r = rd
+                    min_d = d
+            t_dt = dates[idx + min_d]
+            return round(min_r, 2), min_d, t_dt
+
+        dd10, _, _ = _ep_dd(10)
+        dd20, dt20, t_date20 = _ep_dd(20)
+        dd60, dt60, _ = _ep_dd(60)
+
+        r10 = round((px_adj[idx + 10] / p0 - 1.0) * 100.0, 2) if idx + 10 < m else None
+        r20 = round((px_adj[idx + 20] / p0 - 1.0) * 100.0, 2) if idx + 20 < m else None
+        r60 = round((px_adj[idx + 60] / p0 - 1.0) * 100.0, 2) if idx + 60 < m else None
+        r120 = round((px_adj[idx + 120] / p0 - 1.0) * 100.0, 2) if idx + 120 < m else None
+
+        live_ret = round((px_adj[m - 1] / p0 - 1.0) * 100.0, 2) if days_elapsed >= 1 else 0.0
+        live_min_drop = (
+            round(min(0.0, min((px_adj[idx + d] / p0 - 1.0) * 100.0 for d in range(1, days_elapsed + 1))), 2)
+            if days_elapsed >= 1
+            else 0.0
+        )
+
+        if idx + wait_window_days < m:
+            f2 = any(px_adj[k] <= p0 * 0.98 + 1e-12 for k in range(idx + 1, idx + wait_window_days + 1))
+            f3 = any(px_adj[k] <= p0 * 0.97 + 1e-12 for k in range(idx + 1, idx + wait_window_days + 1))
+            f5 = any(px_adj[k] <= p0 * 0.95 + 1e-12 for k in range(idx + 1, idx + wait_window_days + 1))
+            dca_dep = round((1 + (1 if f2 else 0) + (1 if f5 else 0)) / 3.0 * 100.0, 1)
+        else:
+            f2, f3, f5, dca_dep = None, None, None, None
+
+        ledger.append({
+            "rank": rank_idx,
+            "date": dates[idx],
+            "status": status,
+            "daysElapsed": days_elapsed,
+            "signalClose": round(px_unadj[idx], 2),
+            "fCarver": round(f_carver[idx], 2),
+            "convexity3Pct": round(marg_asym_3[idx], 2),
+            "vixRatio": round(vix_ratio[idx], 3),
+            "vixClose": round(vix_close[idx], 2),
+            "maxDrop10dPct": dd10,
+            "maxDrop20dPct": dd20,
+            "maxDrop60dPct": dd60,
+            "daysToTrough20d": dt20,
+            "daysToTrough60d": dt60,
+            "troughDate20d": t_date20,
+            "ret10dPct": r10,
+            "ret20dPct": r20,
+            "ret60dPct": r60,
+            "ret120dPct": r120,
+            "liveRunningRetPct": live_ret,
+            "liveRunningMaxDropPct": live_min_drop,
+            "filledDip2Pct": f2,
+            "filledDip3Pct": f3,
+            "filledDip5Pct": f5,
+            "dcaDeployedPct": dca_dep,
+        })
+
+    n_comp20 = dd_summary["20D"]["nCompleted"]
+    return {
+        "id": regime_id,
+        "titleEn": title_en,
+        "titleZh": title_zh,
+        "ruleEn": rule_en,
+        "ruleZh": rule_zh,
+        "cooldownDays": cooldown_days,
+        "activeToday": bool(mask[-1]) if mask else False,
+        "totalEpisodes": len(ep_indices),
+        "completedEpisodes10d": fwd_summary["10D"]["nCompleted"],
+        "completedEpisodes20d": n_comp20,
+        "completedEpisodes60d": fwd_summary["60D"]["nCompleted"],
+        "completedEpisodes120d": fwd_summary["120D"]["nCompleted"],
+        "livePendingCount": sum(1 for row in ledger if row["status"] == "LIVE"),
+        "smallSampleCaveat": n_comp20 < 12,
+        "postSignalDrawdown": dd_summary,
+        "forwardHorizons": fwd_summary,
+        "dipEntryMatrix": dip_matrix,
+        "episodes": ledger,
+    }
+
+
+def compute_signal_backtest(
+    dates: list[str],
+    px_adj: list[float],
+    px_unadj: list[float],
+    f_carver: list[float],
+    marg_asym_3: list[float],
+    vix_ratio: list[float],
+    vix_close: list[float],
+) -> dict:
+    m = len(px_adj)
+    mask_exh = [f_carver[i] <= -10.0 and marg_asym_3[i] >= 1.80 for i in range(m)]
+    mask_q2 = [f_carver[i] <= -10.0 and marg_asym_3[i] >= 1.80 and vix_ratio[i] >= 1.00 for i in range(m)]
+    mask_vix = [vix_ratio[i] >= 1.00 for i in range(m)]
+
+    regimes = {
+        "exhaustion_convexity": _compute_single_regime_backtest(
+            regime_id="exhaustion_convexity",
+            title_en="Short Exhaustion + Convexity Turn",
+            title_zh="空头衰竭 + 凸性拐点",
+            rule_en="Carver F <= -10.0 AND +3%/-3% Pure Marginal Convexity >= 1.80x (>=20D cooldown)",
+            rule_zh="Carver F <= -10.0 且 +3%/-3% 纯价格边际凸性 >= 1.80x（>=20 交易日冷却去重）",
+            mask=mask_exh,
+            dates=dates,
+            px_adj=px_adj,
+            px_unadj=px_unadj,
+            f_carver=f_carver,
+            marg_asym_3=marg_asym_3,
+            vix_ratio=vix_ratio,
+            vix_close=vix_close,
+            cooldown_days=20,
+            wait_window_days=20,
+        ),
+        "quadrant2_combo": _compute_single_regime_backtest(
+            regime_id="quadrant2_combo",
+            title_en="Quadrant 2 Combo (+ VIX Lock >= 1.00)",
+            title_zh="组合象限 2（叠加 VIX 倒挂 >= 1.00）",
+            rule_en="Carver F <= -10.0 AND Convexity >= 1.80x AND VIX/VIX3M >= 1.00 (>=20D cooldown)",
+            rule_zh="Carver F <= -10.0 + 凸性 >= 1.80x + VIX/VIX3M >= 1.00 期现倒挂共振（今日 SPY 实盘象限）",
+            mask=mask_q2,
+            dates=dates,
+            px_adj=px_adj,
+            px_unadj=px_unadj,
+            f_carver=f_carver,
+            marg_asym_3=marg_asym_3,
+            vix_ratio=vix_ratio,
+            vix_close=vix_close,
+            cooldown_days=20,
+            wait_window_days=20,
+        ),
+        "vix_backwardation_lock": _compute_single_regime_backtest(
+            regime_id="vix_backwardation_lock",
+            title_en="VIX Backwardation Lock Only",
+            title_zh="仅 VIX 倒挂恐慌锁",
+            rule_en="VIX / VIX3M >= 1.00 term-structure inversion onset (>=20D cooldown)",
+            rule_zh="仅 VIX / VIX3M >= 1.00 期现倒挂首次触发（无趋势耗尽过滤，>=20 交易日冷却去重）",
+            mask=mask_vix,
+            dates=dates,
+            px_adj=px_adj,
+            px_unadj=px_unadj,
+            f_carver=f_carver,
+            marg_asym_3=marg_asym_3,
+            vix_ratio=vix_ratio,
+            vix_close=vix_close,
+            cooldown_days=20,
+            wait_window_days=20,
+        ),
+    }
+
+    return {
+        "basis": "close_to_close_total_return_adjusted",
+        "priceMethodologyEn": "Strict zero-lookahead close-to-close total-return series (dividend & split adjusted) for all forward returns, post-signal drawdowns, and 20-day limit-order dip fills; spot close displays unadjusted exchange close on signal date.",
+        "priceMethodologyZh": "严格零前视收盘对收盘全收益序列（含分红复权与拆股校准）计算全部后续最大再跌、20 日内挂单触发成交及 +10/+20/+60/+120 日涨幅；信号日价格展示当日交易所实际收盘价。",
+        "cooldownTradingDays": 20,
+        "dipWaitWindowDays": 20,
+        "defaultRegimeId": "exhaustion_convexity",
+        "regimeOrder": ["exhaustion_convexity", "quadrant2_combo", "vix_backwardation_lock"],
+        "dipModeOrder": ["dip_0pct", "dip_2pct", "dip_3pct", "dip_5pct", "dca_3tranche"],
+        "regimes": regimes,
+    }
+
+
 def _interp_linear(x: float, xs: list[float], ys: list[float]) -> float:
     if x <= xs[0]:
         return ys[0]
@@ -1309,11 +1801,35 @@ def build_artifact(max_date: str | None = None) -> dict:
             "historicalTimeline": timeline,
             "recentTrajectory": recent_traj,
         }
+        sig_bt = compute_signal_backtest(
+            dates=eval_dates,
+            px_adj=px_eval,
+            px_unadj=px_unadj_eval,
+            f_carver=f_carver_eval,
+            marg_asym_3=marg_asym_3_c,
+            vix_ratio=vix_ratio_eval,
+            vix_close=vix_eval,
+        )
+        assets_out[tk]["signalBacktest"] = sig_bt
+        assets_out[tk]["signal_backtest"] = sig_bt
 
         # Compact checkpoint state at cp_idx (2024-12-31) for dynamic runtime stepping
         f_sorted_2014_cp = sorted(
             round(st["f_carver"][idx], 3) for idx in eval_indices if idx <= cp_idx
         )
+        eval_pre2025 = [
+            [
+                eval_dates[j],
+                round(px_eval[j], 4),
+                round(px_unadj_eval[j], 2),
+                round(f_carver_eval[j], 3),
+                round(marg_asym_3_c[j], 3),
+                round(vix_ratio_eval[j], 4),
+                round(vix_eval[j], 2),
+            ]
+            for j, raw_idx in enumerate(eval_indices)
+            if raw_idx <= cp_idx
+        ]
         asset_checkpoints[tk] = {
             "cpDate": rows[cp_idx]["date"],
             "trailingPx200": [round(v, 4) for v in st["px"][cp_idx - 200 + 1 : cp_idx + 1]],
@@ -1330,6 +1846,7 @@ def build_artifact(max_date: str | None = None) -> dict:
             "fCarverPre2025": f_sorted_2014_cp,
             "completedMargEpsPre2025": sum(1 for d in marg_ep_dates if d <= rows[cp_idx]["date"]),
             "margEpDatesPre2025": [d for d in marg_ep_dates if d <= rows[cp_idx]["date"]],
+            "evalSeriesPre2025": eval_pre2025,
         }
 
     return {
@@ -1408,6 +1925,12 @@ def verify_artifact(doc: dict) -> None:
     b63 = spy["signals"]["primaryExhaustionBuy"]["oosStats"]["63D"]
     assert b63["winRatePct"] == 100.0
     assert b63["pValRet"] <= 0.005
+    spy_bt = spy["signalBacktest"]["regimes"]["exhaustion_convexity"]
+    qqq_bt = qqq["signalBacktest"]["regimes"]["exhaustion_convexity"]
+    assert spy_bt["completedEpisodes120d"] == 10
+    assert spy_bt["livePendingCount"] >= 1
+    assert len(spy_bt["dipEntryMatrix"]) == 5
+    assert len(qqq_bt["dipEntryMatrix"]) == 5
 
 
 def main() -> None:

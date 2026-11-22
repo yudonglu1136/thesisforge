@@ -83,6 +83,68 @@ test('loads canonical 2026-11-20 Rob Carver CTA Flow Radar for SPY and QQQ with 
   assert.equal(qqq.empiricalScorecard.flowSurfaceEndpointR2, 0.7833);
   assert.ok(spy.historicalTimeline.some(ep => ep.id === '2022_bear' && ep.verdict === 'CAVEAT'));
   assert.ok(spy.historicalTimeline.some(ep => ep.id === '2026_11_live' && ep.verdict === 'LIVE_ACTIVE'));
+
+  // Signal Backtest & Dip-Entry Simulator (zero-lookahead 2014-2026, >=20D cooldown, close-to-close total return)
+  assert.deepEqual(spy.signalBacktest, spy.signal_backtest);
+  assert.deepEqual(spy.signalBacktest.regimeOrder, [
+    'exhaustion_convexity',
+    'quadrant2_combo',
+    'vix_backwardation_lock',
+  ]);
+  const spyExh = spy.signalBacktest.regimes.exhaustion_convexity;
+  assert.equal(spyExh.totalEpisodes, 11);
+  assert.equal(spyExh.completedEpisodes10d, 10);
+  assert.equal(spyExh.completedEpisodes20d, 10);
+  assert.equal(spyExh.completedEpisodes60d, 10);
+  assert.equal(spyExh.completedEpisodes120d, 10);
+  assert.equal(spyExh.livePendingCount, 1);
+  assert.equal(spyExh.activeToday, true);
+  assert.equal(spyExh.postSignalDrawdown['20D'].medianDropPct, -2.76);
+  assert.equal(spyExh.postSignalDrawdown['20D'].meanDropPct, -3.96);
+  assert.equal(spyExh.postSignalDrawdown['20D'].worstDropPct, -16.73);
+  assert.equal(spyExh.postSignalDrawdown['20D'].zeroFurtherDropCount, 2);
+  assert.equal(spyExh.postSignalDrawdown['20D'].medianDaysToTrough, 2);
+  assert.equal(spyExh.forwardHorizons['10D'].winRatePct, 80);
+  assert.equal(spyExh.forwardHorizons['10D'].medianRetPct, 2.78);
+  assert.equal(spyExh.forwardHorizons['20D'].winRatePct, 80);
+  assert.equal(spyExh.forwardHorizons['20D'].medianRetPct, 4.18);
+  assert.equal(spyExh.forwardHorizons['60D'].winRatePct, 100);
+  assert.equal(spyExh.forwardHorizons['60D'].medianRetPct, 12.04);
+  assert.equal(spyExh.forwardHorizons['60D'].meanRetPct, 12.29);
+  assert.equal(spyExh.forwardHorizons['60D'].pValVsBaseline, 0.0036);
+  assert.equal(spyExh.forwardHorizons['120D'].winRatePct, 90);
+  assert.equal(spyExh.forwardHorizons['120D'].medianRetPct, 14.27);
+  assert.equal(spyExh.dipEntryMatrix.length, 5);
+  const spyDip2 = spyExh.dipEntryMatrix.find(m => m.id === 'dip_2pct');
+  const spyDca = spyExh.dipEntryMatrix.find(m => m.id === 'dca_3tranche');
+  assert.equal(spyDip2.fillRatePct, 50);
+  assert.equal(spyDip2.missed60dMeanRetPct, 14.39);
+  assert.equal(spyDca.fillRatePct, 100);
+  assert.equal(spyDca.avgDeployedCapitalPct, 56.7);
+  assert.equal(spyDca.postEntry20dMaeMedianPct, -1.2);
+  assert.ok(Number.isFinite(spyDca.horizons['60D'].deployedMedianRetPct));
+  const spyLiveEp = spyExh.episodes.at(-1);
+  assert.equal(spyLiveEp.rank, 11);
+  assert.equal(spyLiveEp.date, '2026-11-20');
+  assert.equal(spyLiveEp.status, 'LIVE');
+  assert.equal(spyLiveEp.ret10dPct, null);
+
+  // SPY Quadrant 2 Combo (7/7 100% +60D & +120D win rate + 1 LIVE)
+  const spyQ2 = spy.signalBacktest.regimes.quadrant2_combo;
+  assert.equal(spyQ2.completedEpisodes60d, 7);
+  assert.equal(spyQ2.completedEpisodes120d, 7);
+  assert.equal(spyQ2.livePendingCount, 1);
+  assert.equal(spyQ2.forwardHorizons['60D'].winRatePct, 100);
+  assert.equal(spyQ2.forwardHorizons['120D'].winRatePct, 100);
+
+  // QQQ Signal Backtest (10 completed exhaustion episodes; 4/4 Quadrant 2 with smallSampleCaveat)
+  const qqqExh = qqq.signalBacktest.regimes.exhaustion_convexity;
+  const qqqQ2 = qqq.signalBacktest.regimes.quadrant2_combo;
+  assert.equal(qqqExh.completedEpisodes120d, 10);
+  assert.equal(qqqExh.livePendingCount, 0);
+  assert.equal(qqqQ2.completedEpisodes120d, 4);
+  assert.equal(qqqQ2.smallSampleCaveat, true);
+  assert.equal(qqqQ2.forwardHorizons['60D'].winRatePct, 100);
 });
 
 test('steps historical asOf cutoffs without lookahead and extends dynamically on new live closes', async () => {
@@ -94,6 +156,15 @@ test('steps historical asOf cutoffs without lookahead and extends dynamically on
   assert.ok(preCrash.assets.SPY.liveState.spotClose > 720, 'Nov 10 SPY was above $720 prior to selloff');
   assert.ok(preCrash.assets.SPY.liveState.fCarver > -5, 'Nov 10 SPY was not yet at -10 exhaustion');
   assert.equal(preCrash.assets.SPY.signals.primaryExhaustionBuy.active, false);
+
+  // 1b) Historical cutoff right after 2025-04-04 tariff shock (2025-04-08): 2025-04-04 is LIVE, zero future leakage
+  const apr2025 = loadCtaFlowRadarDashboard({ asOf: '2025-04-08', asset: 'SPY', horizon: '10D' });
+  const aprExh = apr2025.assets.SPY.signalBacktest.regimes.exhaustion_convexity;
+  assert.equal(aprExh.episodes.at(-1).date, '2025-04-04');
+  assert.equal(aprExh.episodes.at(-1).status, 'LIVE');
+  assert.equal(aprExh.episodes.at(-1).ret10dPct, null);
+  assert.equal(aprExh.completedEpisodes120d, 8);
+  assert.ok(!aprExh.episodes.some(e => e.date > '2025-04-08'));
 
   // 2) Live runtime forward extension onto synthetic Monday 2026-11-23 rebound (+2.5%)
   const liveExtended = await loadCtaFlowRadarDashboardLive({
@@ -128,6 +199,11 @@ test('steps historical asOf cutoffs without lookahead and extends dynamically on
   assert.equal(liveExtended.assets.SPY.liveState.vixBackwardation, false);
   assert.ok(liveExtended.assets.SPY.liveState.fCarver > -10.56, 'Rebound lifts Carver composite forecast');
   assert.equal(liveExtended.assets.SPY.recentTrajectory.at(-1).date, '2026-11-23');
+  const extLiveEp = liveExtended.assets.SPY.signalBacktest.regimes.exhaustion_convexity.episodes.at(-1);
+  assert.equal(extLiveEp.date, '2026-11-20');
+  assert.equal(extLiveEp.status, 'LIVE');
+  assert.equal(extLiveEp.daysElapsed, 1);
+  assert.equal(extLiveEp.liveRunningRetPct, 2.5);
 });
 
 test('validates invalid query parameters and serves GET /api/investment/cta-flow-radar cleanly', async t => {

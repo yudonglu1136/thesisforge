@@ -104,6 +104,51 @@ void main() {
         findsOneWidget,
       );
 
+      // Verify Signal Backtest & Dip-Entry Simulator on SPY (10 completed + #11 LIVE 2026-11-20)
+      expect(
+        find.byKey(const ValueKey('cta-signal-backtest-section')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('cta-signal-horizon-bars-canvas')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('cta-bt-ep-11-2026-11-20')),
+        findsOneWidget,
+      );
+      expect(find.text('-2.76%'), findsWidgets);
+      expect(find.textContaining('+12.04%'), findsWidgets);
+
+      // Click 3-Tranche DCA row -> updates Post-Entry 20D Residual MAE to -1.20%
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('cta-dip-row-dca_3tranche')),
+      );
+      expect(find.text('-1.20%'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('cta-dip-reset-0pct')),
+        findsOneWidget,
+      );
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('cta-dip-reset-0pct')),
+      );
+
+      // Switch backtest regime to Quadrant 2 Combo -> 7/7 100% +60D & +120D win rate
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('cta-bt-regime-quadrant2_combo')),
+      );
+      expect(find.textContaining('+15.08%'), findsWidgets);
+      expect(find.textContaining('+18.23%'), findsWidgets);
+
+      // Switch back to Exhaustion + Convexity before switching asset
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('cta-bt-regime-exhaustion_convexity')),
+      );
+
       // Toggle 5D (1W) horizon -> breakeven flip updates to SPY 5D ($738.78)
       await tapVisible(tester, find.byKey(const ValueKey('cta-horizon-5D')));
       expect(find.textContaining('\$738.78'), findsWidgets);
@@ -176,6 +221,16 @@ void main() {
       expect(find.text('CTA 系统化资金流雷达'), findsOneWidget);
       expect(find.textContaining('已触发 · 历史第 11 次'), findsOneWidget);
       expect(find.textContaining('倒挂锁开启'), findsOneWidget);
+      expect(
+        find.textContaining('信号历史回测 · 后续最大再跌与 10/20/60/120 日涨幅'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('分 3 批阶梯买'), findsWidgets);
+      expect(tester.takeException(), isNull);
+
+      // Verify compact iPhone viewport (390x844) renders zero RenderFlex overflow
+      tester.view.physicalSize = const Size(390, 844);
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     },
   );
