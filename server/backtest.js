@@ -7,6 +7,7 @@ import {
 import { load13fHoldingHistory, loadGuruDashboard } from "./secClient.js";
 import { loadPriceSeries, loadPriceSeriesBatch } from "./marketData.js";
 import { factOsEnabled } from "./factRepository.js";
+import { withActiveDataRelease } from "./dataReleaseContext.js";
 import {
   adjustedClosePriceMap,
   filingExecutionDecision,
@@ -3250,7 +3251,9 @@ export function startGuruBacktestRefresher() {
   if (backtestAutoRefreshTimer) return backtestAutoRefreshTimer;
 
   const run = () => {
-    refreshScheduledGuruBacktestWindows({ reason: "scheduled" }).catch((error) => {
+    Promise.resolve()
+      .then(() => withActiveDataRelease(() => refreshScheduledGuruBacktestWindows({ reason: "scheduled" })))
+      .catch((error) => {
       lastBacktestRefreshStatus = {
         ...lastBacktestRefreshStatus,
         running: false,
