@@ -614,13 +614,115 @@ def build_artifact(fact_root: Path, taxonomy_file: Path) -> dict:
             GROUP BY 1, 2;
         """)
 
-        # Latest complete trading date where BOTH SPY & QQQ and broad market (>=500 tickers) have closes
+        # Extend px_dedup through the latest completed US market close (e.g. when upstream Sharadar lags recent sessions)
+        import os as _os
+        if _os.environ.get("COPYCAT_OFFLINE_ONLY") != "1":
+            try:
+                from concurrent.futures import ThreadPoolExecutor
+                from datetime import datetime, timezone
+                import httpx
+
+                fact_max_row = con.execute(
+                    "SELECT CAST(MAX(s.date) AS VARCHAR) FROM px_dedup s JOIN px_dedup q ON q.date = s.date AND q.ticker = 'QQQ' WHERE s.ticker = 'SPY'"
+                ).fetchone()
+                fact_max_dt = str(fact_max_row[0])[:10] if fact_max_row and fact_max_row[0] else "2026-11-17"
+
+                tail_tks_rows = con.execute("""
+                    SELECT DISTINCT ticker FROM (
+                        SELECT ticker FROM holdings
+                        WHERE date >= DATE '2026-03-31' AND securitytype = 'SHR'
+                          AND investorid IN (SELECT investorid FROM guru_ids)
+                          AND ticker IS NOT NULL
+                        UNION
+                        SELECT ticker FROM (
+                            SELECT ticker, SUM(value) AS v
+                            FROM holdings
+                            WHERE date >= DATE '2025-12-31' AND securitytype = 'SHR'
+                              AND investorid IN (SELECT investorid FROM inv_tax WHERE strategy = 'ACTIVE_HF')
+                              AND ticker IS NOT NULL
+                            GROUP BY 1 ORDER BY v DESC LIMIT 180
+                        )
+                    )
+                """).fetchall()
+                tail_tickers = sorted({"SPY", "QQQ", *(str(r[0]) for r in tail_tks_rows if r[0])})
+
+                con.execute("CREATE TEMP TABLE tail_tks (ticker VARCHAR);")
+                con.executemany("INSERT INTO tail_tks VALUES (?)", [(t,) for t in tail_tickers])
+                anchor_rows = con.execute("""
+                    SELECT p.ticker, CAST(MAX(p.date) AS VARCHAR) AS max_dt,
+                           LAST(p.closeadj ORDER BY p.date) AS last_adj
+                    FROM px_dedup p
+                    JOIN tail_tks t ON t.ticker = p.ticker
+                    WHERE p.date >= DATE '2026-10-15'
+                    GROUP BY 1
+                """).fetchall()
+                anchor_by_tk = {str(t): (str(mdt)[:10], float(ladj)) for t, mdt, ladj in anchor_rows if ladj and ladj > 0}
+
+                def fetch_yh_tail(tk: str) -> list[tuple[str, str, float, float]]:
+                    anc = anchor_by_tk.get(tk)
+                    if not anc and tk not in ("SPY", "QQQ"):
+                        return []
+                    yh_sym = tk.replace(".", "-")
+                    try:
+                        with httpx.Client(timeout=10.0, headers={"User-Agent": "Mozilla/5.0"}) as cli:
+                            resp = cli.get(
+                                f"https://query1.finance.yahoo.com/v8/finance/chart/{yh_sym}",
+                                params={"range": "15d", "interval": "1d"},
+                            )
+                            if resp.status_code != 200:
+                                return []
+                            res_list = resp.json().get("chart", {}).get("result") or []
+                            if not res_list:
+                                return []
+                            res0 = res_list[0]
+                            ts_list = res0.get("timestamp") or []
+                            closes = ((res0.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+                            adjs = ((res0.get("indicators") or {}).get("adjclose") or [{}])[0].get("adjclose") or closes
+                            pts: dict[str, tuple[float, float]] = {}
+                            for ts_v, cl_v, ad_v in zip(ts_list, closes, adjs):
+                                if cl_v and cl_v > 0 and ad_v and ad_v > 0:
+                                    dt_iso = datetime.fromtimestamp(int(ts_v), tz=timezone.utc).strftime("%Y-%m-%d")
+                                    pts[dt_iso] = (float(cl_v), float(ad_v))
+                            if not pts or not anc:
+                                return []
+                            anc_dt, anc_adj = anc
+                            yh_anc = pts.get(anc_dt)
+                            if not yh_anc:
+                                prior_dts = [d for d in sorted(pts.keys()) if d <= anc_dt]
+                                if not prior_dts:
+                                    return []
+                                yh_anc = pts[prior_dts[-1]]
+                            yh_anc_adj = yh_anc[1]
+                            out_rows: list[tuple[str, str, float, float]] = []
+                            for dt_iso, (cl_v, ad_v) in sorted(pts.items()):
+                                if dt_iso > anc_dt:
+                                    chained_adj = anc_adj * (ad_v / yh_anc_adj)
+                                    out_rows.append((tk, dt_iso, chained_adj, cl_v))
+                            return out_rows
+                    except Exception:
+                        return []
+
+                spy_probe = fetch_yh_tail("SPY")
+                if spy_probe and spy_probe[-1][1] > fact_max_dt:
+                    new_px_rows: list[tuple[str, str, float, float]] = []
+                    with ThreadPoolExecutor(max_workers=16) as pool:
+                        for batch_rows in pool.map(fetch_yh_tail, tail_tickers):
+                            new_px_rows.extend(batch_rows)
+                    if new_px_rows:
+                        con.executemany(
+                            "INSERT INTO px_dedup (ticker, date, closeadj, close_raw) VALUES (?, CAST(? AS DATE), ?, ?)",
+                            new_px_rows,
+                        )
+            except Exception as yh_err:
+                print(f"  [warn] Yahoo tail extension skipped: {yh_err}")
+
+        # Latest complete trading date where BOTH SPY & QQQ and active universe (>=150 tickers) have closes
         max_px_row = con.execute("""
             SELECT CAST(MAX(s.date) AS VARCHAR)
             FROM px_dedup s
             JOIN px_dedup q ON q.date = s.date AND q.ticker = 'QQQ'
             WHERE s.ticker = 'SPY'
-              AND (SELECT COUNT(*) FROM px_dedup p WHERE p.date = s.date) >= 500
+              AND (SELECT COUNT(*) FROM px_dedup p WHERE p.date = s.date) >= 150
         """).fetchone()
         latest_price_date = str(max_px_row[0])[:10] if max_px_row and max_px_row[0] else "2026-11-17"
 

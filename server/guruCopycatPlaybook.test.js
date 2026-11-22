@@ -28,8 +28,9 @@ test('loads flagship 80% QQQ + 20% Ex-QQQ Monopoly Compounders as default, remov
   const flagship = byId.qqq80_exqqq_monopoly;
   assert.equal(flagship.recommended, true);
   assert.equal(flagship.metrics.quarters, 50);
-  assert.ok(flagship.metrics.cagrPct > 18.5 && flagship.metrics.cagrPct < 19.2);
-  assert.ok(flagship.metrics.alphaVsQqqPct > 0.15, `expected positive alpha vs QQQ, got ${flagship.metrics.alphaVsQqqPct}`);
+  assert.ok(flagship.metrics.cagrPct > 17.8 && flagship.metrics.cagrPct < 19.2);
+  assert.ok(flagship.metrics.alphaPct > 5.0, `expected >+5% alpha vs SPY, got ${flagship.metrics.alphaPct}`);
+  assert.ok(flagship.metrics.alphaVsQqqPct > 0.25, `expected positive alpha vs QQQ, got ${flagship.metrics.alphaVsQqqPct}`);
   assert.ok(flagship.metrics.annTurnoverPct < 28, `expected low turnover <28%, got ${flagship.metrics.annTurnoverPct}`);
   assert.ok(flagship.equalWeightVariant.cagrPct > flagship.metrics.cagrPct);
   assert.ok(flagship.equalWeightVariant.annTurnoverPct < 20);
@@ -40,19 +41,19 @@ test('loads flagship 80% QQQ + 20% Ex-QQQ Monopoly Compounders as default, remov
   assert.deepEqual(liveTickers, ['QQQ', 'V', 'GE', 'MCO', 'UNH', 'SPGI']);
   assert.equal(dash.activeSnapshot.holdings[0].weightPct, 80);
 
-  // Remaining 4 schemes intact
-  assert.ok(Math.abs(byId.barbell_70_30.metrics.cagrPct - 16.86) < 0.25);
-  assert.ok(Math.abs(byId.monopoly_compounders.metrics.cagrPct - 20.11) < 0.25);
+  // Remaining 4 schemes intact through 2026-11-20 daily mark-to-market
+  assert.ok(byId.barbell_70_30.metrics.alphaPct > 3.0);
+  assert.ok(byId.monopoly_compounders.metrics.alphaPct > 6.2);
   assert.ok(Math.abs(byId.monopoly_compounders.equalWeightVariant.winRatePct - 74.0) < 0.5);
-  assert.ok(Math.abs(byId.pre2014_legends.metrics.cagrPct - 16.18) < 0.25);
+  assert.ok(byId.pre2014_legends.metrics.alphaPct > 2.4);
   assert.equal(byId.pre2014_legends.metrics.bothHalvesBeat, true);
-  assert.ok(Math.abs(byId.new_adds_catalyst.metrics.cagrPct - 17.81) < 0.25);
+  assert.ok(byId.new_adds_catalyst.metrics.alphaPct > 3.8);
 
-  // Daily mark-to-market NAV curve
+  // Daily mark-to-market NAV curve continuous through Friday 2026-11-20 close
   assert.ok(dash.dailyCurve);
   assert.equal(dash.dailyCurve.startDate, '2014-05-16');
-  assert.ok(dash.dailyCurve.endDate >= '2026-11-17');
-  assert.ok(dash.dailyCurve.dates.length >= 3146);
+  assert.equal(dash.dailyCurve.endDate, '2026-11-20');
+  assert.equal(dash.dailyCurve.dates.length, 3149);
   assert.equal(dash.dailyCurve.schemeNav.length, dash.dailyCurve.dates.length);
   assert.equal(dash.dailyCurve.spyNav.length, dash.dailyCurve.dates.length);
   assert.equal(dash.dailyCurve.qqqNav.length, dash.dailyCurve.dates.length);

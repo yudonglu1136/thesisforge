@@ -154,6 +154,106 @@ function unavailableFactPriceSeries(symbol, priceType, error) {
     points: [], error: error.code, message: error.message};
 }
 
+const LIVE_TAIL_TTL_MS = 30 * 60 * 1000;
+const LIVE_TAIL_MAX_ENTRIES = 2048;
+const liveYahooTailCache = new Map();
+
+async function fetchYahooRecentDailyMap(symbol) {
+  const nowMs = Date.now();
+  const cached = liveYahooTailCache.get(symbol);
+  if (cached && nowMs - cached.fetchedAt < LIVE_TAIL_TTL_MS) {
+    return cached.byDate;
+  }
+  const yhSym = encodeURIComponent(String(symbol).replace(/\./g, "-"));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const resp = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${yhSym}?range=15d&interval=1d`,
+      {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: controller.signal
+      }
+    );
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    const res0 = json?.chart?.result?.[0];
+    const tsList = res0?.timestamp || [];
+    const closes = res0?.indicators?.quote?.[0]?.close || [];
+    const adjs = res0?.indicators?.adjclose?.[0]?.adjclose || closes;
+    const byDate = new Map();
+    for (let i = 0; i < tsList.length; i += 1) {
+      const cl = Number(closes[i]);
+      const ad = Number(adjs[i] ?? closes[i]);
+      if (Number.isFinite(cl) && cl > 0 && Number.isFinite(ad) && ad > 0) {
+        const dt = new Date(Number(tsList[i]) * 1000).toISOString().slice(0, 10);
+        byDate.set(dt, { close: cl, adj: ad });
+      }
+    }
+    if (liveYahooTailCache.size >= LIVE_TAIL_MAX_ENTRIES) {
+      const oldestKey = liveYahooTailCache.keys().next().value;
+      if (oldestKey !== undefined) liveYahooTailCache.delete(oldestKey);
+    }
+    liveYahooTailCache.set(symbol, { fetchedAt: nowMs, byDate });
+    return byDate;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function supplementLiveAdjustedTail(series, { end, priceType } = {}) {
+  if (
+    process.env.LIVE_MARKET_TAIL_ENABLED !== "true" ||
+    priceType !== PRICE_TYPES.TOTAL_RETURN_ADJUSTED_CLOSE ||
+    series?.status !== "available" ||
+    !Array.isArray(series.points) ||
+    !series.points.length
+  ) {
+    return series;
+  }
+  const endIso = String(end || "").slice(0, 10);
+  const lastPt = series.points[series.points.length - 1];
+  const lastDate = String(lastPt?.date || "").slice(0, 10);
+  const lastVal = Number(lastPt?.adjustedClose ?? lastPt?.close);
+  if (!endIso || !lastDate || lastDate < "2026-10-15" || endIso <= lastDate || !(lastVal > 0)) {
+    return series;
+  }
+  const byDate = await fetchYahooRecentDailyMap(series.symbol);
+  if (!byDate || !byDate.size) return series;
+  let anchorRec = byDate.get(lastDate);
+  if (!anchorRec) {
+    const prior = [...byDate.keys()].filter((d) => d <= lastDate).sort();
+    if (!prior.length) return series;
+    anchorRec = byDate.get(prior[prior.length - 1]);
+  }
+  if (!anchorRec || !(anchorRec.adj > 0)) return series;
+  const appended = [];
+  for (const dt of [...byDate.keys()].sort()) {
+    if (dt > lastDate && dt <= endIso) {
+      const rec = byDate.get(dt);
+      const chained = lastVal * (rec.adj / anchorRec.adj);
+      if (Number.isFinite(chained) && chained > 0) {
+        appended.push({
+          date: dt,
+          symbol: series.symbol,
+          close: chained,
+          adjustedClose: chained,
+          priceType,
+          securityId: lastPt.securityId ?? null,
+          provenance: "yahoo_adjusted_tail_chained"
+        });
+      }
+    }
+  }
+  if (!appended.length) return series;
+  return {
+    ...series,
+    points: [...series.points, ...appended]
+  };
+}
+
 // Reuse the canonical repository's pinned-generation batch protocol. Keep
 // history batches small: 10Y points carry per-observation provenance and must
 // remain below the existing RPC memory/response limit. Missing securities are
@@ -184,12 +284,19 @@ export async function loadPriceSeriesBatch(requests) {
       responses = nonempty.map(() => ({ok: false, error}));
     }
     let index = 0;
+    const groupSeries = [];
     for (const r of group) {
-      if (!r.symbol) { output.push({symbol: "", source: "missing", points: []}); continue; }
+      if (!r.symbol) { groupSeries.push({ req: r, series: {symbol: "", source: "missing", points: []} }); continue; }
       const result = responses[index++];
-      output.push(result.ok ? factPriceSeries(r.symbol, r.priceType, result.result)
-        : unavailableFactPriceSeries(r.symbol, r.priceType, result.error));
+      const base = result.ok
+        ? factPriceSeries(r.symbol, r.priceType, result.result)
+        : unavailableFactPriceSeries(r.symbol, r.priceType, result.error);
+      groupSeries.push({ req: r, series: base });
     }
+    const supplemented = await Promise.all(
+      groupSeries.map(({ req, series }) => supplementLiveAdjustedTail(series, req))
+    );
+    output.push(...supplemented);
   }
   return output;
 }
@@ -219,7 +326,10 @@ export async function loadPriceSeries(symbol, {
         [normalized, start, end, priceType],
         { dataset: "auto" }
       );
-      return factPriceSeries(normalized, priceType, rows);
+      return await supplementLiveAdjustedTail(factPriceSeries(normalized, priceType, rows), {
+        end,
+        priceType
+      });
     } catch (error) {
       if (!(error instanceof FactDataError)) throw error;
       return unavailableFactPriceSeries(normalized, priceType, error);
