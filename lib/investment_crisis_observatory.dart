@@ -1696,11 +1696,25 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             ),
           ),
           const SizedBox(height: 10),
-          // Interactive Multi-Track CustomPainter Canvas
+          // Interactive Multi-Track CustomPainter Canvas + Floating Hover Tooltip
           LayoutBuilder(
             builder: (context, chartConstraints) {
               final chartWidth = chartConstraints.maxWidth;
-              final chartHeight = compact ? 340.0 : 410.0;
+              final chartHeight = compact ? 350.0 : 420.0;
+              final isHoverActive =
+                  hoverIndex >= 0 && hoverIndex < visibleDaily.length;
+              final activeHoverRow = isHoverActive
+                  ? visibleDaily[hoverIndex]
+                  : const <String, dynamic>{};
+              final hoverEvents = isHoverActive
+                  ? _eventsNearHoverIndex(
+                      visibleDaily: visibleDaily,
+                      visibleEvents: visibleEvents,
+                      hoverIdx: hoverIndex,
+                      chartWidth: chartWidth,
+                    )
+                  : const <Map<String, dynamic>>[];
+
               return MouseRegion(
                 onHover: (ev) => _updateHoverFromDx(
                   ev.localPosition.dx,
@@ -1710,6 +1724,11 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 onExit: (_) => setState(() => hoverIndex = -1),
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
+                  onTapDown: (d) => _updateHoverFromDx(
+                    d.localPosition.dx,
+                    chartWidth,
+                    visibleDaily.length,
+                  ),
                   onPanDown: (d) => _updateHoverFromDx(
                     d.localPosition.dx,
                     chartWidth,
@@ -1730,16 +1749,38 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(10),
-                      child: CustomPaint(
-                        size: Size(chartWidth, chartHeight),
-                        painter: _CrisisObservatoryChartPainter(
-                          rows: visibleDaily,
-                          events: visibleEvents,
-                          navKey: navKey,
-                          rebasedMode: rebasedActive,
-                          useLogScale: !rebasedActive && useLogScale,
-                          hoverIndex: hoverIndex,
-                        ),
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: CustomPaint(
+                              size: Size(chartWidth, chartHeight),
+                              painter: _CrisisObservatoryChartPainter(
+                                rows: visibleDaily,
+                                events: visibleEvents,
+                                navKey: navKey,
+                                rebasedMode: rebasedActive,
+                                useLogScale: !rebasedActive && useLogScale,
+                                hoverIndex: hoverIndex,
+                              ),
+                            ),
+                          ),
+                          if (isHoverActive && activeHoverRow.isNotEmpty)
+                            _buildChartHoverTooltip(
+                              row: activeHoverRow,
+                              hoverEvents: hoverEvents,
+                              stratSummary: stratSummary,
+                              navKey: navKey,
+                              startStratNav: startStratNav,
+                              startBhNav: startBhNav,
+                              isZoomed: isZoomed,
+                              rebasedActive: rebasedActive,
+                              hoverIdx: hoverIndex,
+                              totalVisible: visibleDaily.length,
+                              chartWidth: chartWidth,
+                              chartHeight: chartHeight,
+                              compact: compact,
+                            ),
+                        ],
                       ),
                     ),
                   ),
@@ -1866,6 +1907,512 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     if (idx != hoverIndex) {
       setState(() => hoverIndex = idx);
     }
+  }
+
+  List<Map<String, dynamic>> _eventsNearHoverIndex({
+    required List<Map<String, dynamic>> visibleDaily,
+    required List<Map<String, dynamic>> visibleEvents,
+    required int hoverIdx,
+    required double chartWidth,
+  }) {
+    if (visibleDaily.isEmpty ||
+        visibleEvents.isEmpty ||
+        hoverIdx < 0 ||
+        hoverIdx >= visibleDaily.length) {
+      return const [];
+    }
+    final hoverDate = text(visibleDaily[hoverIdx]['date']);
+    final exact = visibleEvents
+        .where((ev) => text(ev['date']) == hoverDate)
+        .toList();
+    if (exact.isNotEmpty) return exact;
+
+    // On dense multi-year ranges, snap to the nearest marker within 9px of crosshair
+    final n = visibleDaily.length;
+    if (n <= 1) return const [];
+    const padL = 54.0;
+    const padR = 14.0;
+    final plotW = math.max(1.0, chartWidth - padL - padR);
+    final hoverX = padL + (hoverIdx / (n - 1)) * plotW;
+
+    final idxByDate = <String, int>{
+      for (var i = 0; i < n; i++) text(visibleDaily[i]['date']): i,
+    };
+    String? bestDate;
+    var bestDist = 9.5;
+    for (final ev in visibleEvents) {
+      final evDate = text(ev['date']);
+      final evIdx = idxByDate[evDate];
+      if (evIdx == null) continue;
+      final evX = padL + (evIdx / (n - 1)) * plotW;
+      final dist = (evX - hoverX).abs();
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestDate = evDate;
+      }
+    }
+    if (bestDate == null) return const [];
+    return visibleEvents.where((ev) => text(ev['date']) == bestDate).toList();
+  }
+
+  Widget _buildChartHoverTooltip({
+    required Map<String, dynamic> row,
+    required List<Map<String, dynamic>> hoverEvents,
+    required Map<String, dynamic> stratSummary,
+    required String navKey,
+    required double startStratNav,
+    required double startBhNav,
+    required bool isZoomed,
+    required bool rebasedActive,
+    required int hoverIdx,
+    required int totalVisible,
+    required double chartWidth,
+    required double chartHeight,
+    required bool compact,
+  }) {
+    const padL = 54.0;
+    const padR = 14.0;
+    final plotW = math.max(1.0, chartWidth - padL - padR);
+    final hx = totalVisible > 1
+        ? padL + (hoverIdx / (totalVisible - 1)) * plotW
+        : padL;
+    final tooltipW = compact ? math.min(272.0, chartWidth - 18.0) : 336.0;
+    final placeRight = hx + 14.0 + tooltipW <= chartWidth - 8.0;
+    final double leftPos = placeRight
+        ? hx + 14.0
+        : (hx - tooltipW - 14.0).clamp(
+            8.0,
+            math.max(8.0, chartWidth - tooltipW - 8.0),
+          );
+
+    final dt = text(row['date']);
+    final qqqClose = _numVal(row['qqq_close']);
+    final ddAth = _numVal(row['dd_ath_pct']);
+    final stratNav = _numVal(row[navKey]);
+    final bhNav = _numVal(row['nav_bh']);
+    final stratWinRet =
+        startStratNav > 0 ? (stratNav / startStratNav - 1.0) * 100.0 : 0.0;
+    final bhWinRet =
+        startBhNav > 0 ? (bhNav / startBhNav - 1.0) * 100.0 : 0.0;
+    final winExcess = stratWinRet - bhWinRet;
+    final stratRebased =
+        startStratNav > 0 ? (stratNav / startStratNav) * 100.0 : 100.0;
+    final bhRebased = startBhNav > 0 ? (bhNav / startBhNav) * 100.0 : 100.0;
+    final dollarAlpha = stratNav - bhNav;
+
+    final lightsCount = _numVal(row['crisis_lights']).round();
+    final lightsMask = _numVal(row['lights_mask']).round();
+    final vix = _numVal(row['vix']);
+    final vix3m = _numVal(row['vix3m']);
+    final vixRatio = _numVal(row['vix_ratio']);
+    final vxn = _numVal(row['vxn']);
+    final adVs50 = _numVal(row['ad_vs_50ma']);
+    final activeSlots = _numVal(row['active_slots']).round();
+
+    final stratLabel = w(
+      text(stratSummary['short_en']).isEmpty
+          ? selectedStrategyId
+          : text(stratSummary['short_en']),
+      text(stratSummary['short_zh']).isEmpty
+          ? selectedStrategyId
+          : text(stratSummary['short_zh']),
+    );
+
+    final lightNames = <(int, String, String)>[
+      (1, 'Rates', '利率'),
+      (2, 'Credit', '信用'),
+      (4, 'Breadth', '宽度'),
+      (8, 'Copper', '铜价'),
+      (16, 'Def/Cyc', '防御'),
+      (32, 'Curve', '曲线'),
+    ];
+    final litLabels = [
+      for (final item in lightNames)
+        if ((lightsMask & item.$1) != 0) w(item.$2, item.$3),
+    ];
+
+    Color borderColor = _hairline;
+    if (hoverEvents.isNotEmpty) {
+      final firstType = text(hoverEvents.first['event_type']);
+      if (firstType == 'vix110_tp' || firstType == 'tp_exit') {
+        borderColor = _mint.withValues(alpha: 0.75);
+      } else if (firstType == 'slot1_naked_put' ||
+          firstType == 'open_naked_put') {
+        borderColor = _amber.withValues(alpha: 0.75);
+      } else if (firstType.endsWith('_collar') || firstType == 'open_collar') {
+        borderColor = _lilac.withValues(alpha: 0.75);
+      }
+    }
+
+    return Positioned(
+      left: leftPos,
+      top: 10,
+      width: tooltipW,
+      child: IgnorePointer(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: math.max(120, chartHeight - 24)),
+          child: Container(
+            key: const ValueKey('crisis-chart-hover-tooltip'),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xF20B1118),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: borderColor, width: 1.1),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  blurRadius: 14,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: SingleChildScrollView(
+              physics: const NeverScrollableScrollPhysics(),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Header: Date + QQQ Spot & ATH DD
+                  Row(
+                    children: [
+                      Text(
+                        dt,
+                        style: TextStyle(
+                          color: p.text,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _surfaceRaised,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: _hairline),
+                            ),
+                            child: Text(
+                              'QQQ \$${qqqClose.toStringAsFixed(2)} (${_fmtPct(ddAth, digits: 1)})',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: ddAth <= -5.0 ? _coral : _sky,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  // Strategy vs QQQ NAV & Return
+                  _tooltipMetricRow(
+                    dotColor: _mint,
+                    label: stratLabel,
+                    value: rebasedActive
+                        ? '${stratRebased.toStringAsFixed(1)} (${_fmtPct(stratWinRet, digits: 1)}) · ${_fmtUsd(stratNav, compact: true)}'
+                        : '${_fmtUsd(stratNav)} (${_fmtPct(stratWinRet, digits: 1)})',
+                    valueColor: _mint,
+                  ),
+                  const SizedBox(height: 3),
+                  _tooltipMetricRow(
+                    dotColor: _sky,
+                    label: w('Pure QQQ', '纯持 QQQ'),
+                    value: rebasedActive
+                        ? '${bhRebased.toStringAsFixed(1)} (${_fmtPct(bhWinRet, digits: 1)}) · ${_fmtUsd(bhNav, compact: true)}'
+                        : '${_fmtUsd(bhNav)} (${_fmtPct(bhWinRet, digits: 1)})',
+                    valueColor: _sky,
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Text(
+                        isZoomed
+                            ? w('Window Excess', '区间超额')
+                            : w('Cumulative Alpha', '累计净超额'),
+                        style: const TextStyle(color: _slate, fontSize: 10.5),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          isZoomed
+                              ? '${_fmtPct(winExcess)} (${_fmtUsd(dollarAlpha, signed: true, compact: true)})'
+                              : '${_fmtUsd(dollarAlpha, signed: true)} (${_fmtPct(winExcess)})',
+                          textAlign: TextAlign.right,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: (isZoomed ? winExcess : dollarAlpha) >= 0
+                                ? _mint
+                                : _coral,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 11, color: _hairline),
+                  // Crisis Lights + Lit Tags + VIX/VIX3M + AD Breadth
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1.5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: (lightsCount >= 4 ? _coral : _mint)
+                              .withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          w('Lights $lightsCount/6', '危机灯 $lightsCount/6'),
+                          style: TextStyle(
+                            color: lightsCount >= 4 ? _coral : _mint,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          litLabels.isEmpty
+                              ? w('All 6 Clear', '六灯全灭')
+                              : litLabels.join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _slate,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 3,
+                    children: [
+                      Text(
+                        'VIX ${vix.toStringAsFixed(1)} / 3M ${vix3m.toStringAsFixed(1)}',
+                        style: const TextStyle(color: _slate, fontSize: 10.5),
+                      ),
+                      Text(
+                        'VIX/3M ${vixRatio.toStringAsFixed(3)}${vixRatio >= 1.10 ? ' TP!' : ''}',
+                        style: TextStyle(
+                          color: vixRatio >= 1.10 ? _amber : p.text,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        'VXN ${vxn.toStringAsFixed(1)}',
+                        style: const TextStyle(color: _slate, fontSize: 10.5),
+                      ),
+                      Text(
+                        'AD ${adVs50 >= 0 ? '+' : ''}${adVs50.round()}',
+                        style: TextStyle(
+                          color: adVs50 < 0 ? _coral : _mint,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (selectedStrategyId == 'U1_PureOptions')
+                        Text(
+                          w('Slots $activeSlots/2', '槽位 $activeSlots/2'),
+                          style: TextStyle(
+                            color: activeSlots > 0 ? _sky : _slate,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                    ],
+                  ),
+                  // Option Event Callouts (if hovering on or near any marker!)
+                  if (hoverEvents.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    for (var i = 0; i < math.min(2, hoverEvents.length); i++) ...[
+                      if (i > 0) const SizedBox(height: 5),
+                      _buildTooltipEventCard(
+                        hoverEvents[i],
+                        hoveredDate: dt,
+                      ),
+                    ],
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tooltipMetricRow({
+    required Color dotColor,
+    required String label,
+    required String value,
+    required Color valueColor,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          flex: 4,
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: _slate, fontSize: 10.5),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          flex: 6,
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTooltipEventCard(
+    Map<String, dynamic> ev, {
+    required String hoveredDate,
+  }) {
+    final et = text(ev['event_type']);
+    final evDate = text(ev['date']);
+    final isTp = et == 'vix110_tp' || et == 'tp_exit';
+    final isNakedOpen = et == 'slot1_naked_put' || et == 'open_naked_put';
+    final isCollarOpen = et.endsWith('_collar') || et == 'open_collar';
+
+    final Color accent = isTp
+        ? _mint
+        : (isNakedOpen ? _amber : (isCollarOpen ? _lilac : _slate));
+    final String badgeText = isTp
+        ? w('◆ 1.10 PANIC TP', '◆ 1.10 恐慌止盈抄底')
+        : (isNakedOpen
+            ? w('▲ SLOT 1 NAKED PUT', '▲ 首仓 50% 裸 Put 建仓')
+            : (isCollarOpen
+                ? w('● ZERO-COST COLLAR', '● 零成本 Collar 建仓')
+                : w('90-DTE EXPIRY', '90-DTE 到期结算')));
+
+    final spot = _numVal(ev['spot']);
+    final kp = _numVal(ev['kp']);
+    final kc = ev['kc'] == null ? null : _numVal(ev['kc']);
+    final capPct = ev['call_cap_pct'] == null ? null : _numVal(ev['call_cap_pct']);
+    final strikeLine = kc == null
+        ? 'K_P=\$${kp.toStringAsFixed(2)} (${w('No Call Cap', '无卖Call封顶')})'
+        : 'K_P=\$${kp.toStringAsFixed(2)} / K_C=\$${kc.toStringAsFixed(2)}${capPct != null ? ' (+${capPct.toStringAsFixed(1)}%)' : ''}';
+    final triggerTxt = w(text(ev['trigger_en']), text(ev['trigger_zh']));
+    final netPnl = ev['net_pnl_usd'] == null ? null : _numVal(ev['net_pnl_usd']);
+    final shAdded = ev['shares_added'] == null ? null : _numVal(ev['shares_added']);
+
+    return Container(
+      key: ValueKey('crisis-hover-event-${text(ev['event_id'])}'),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.11),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: accent.withValues(alpha: 0.48)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  evDate != hoveredDate ? '$badgeText · $evDate' : badgeText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: accent,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (netPnl != null && (isTp || et == 'option_expiry')) ...[
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    '${_fmtUsd(netPnl, signed: true)} (${shAdded != null && shAdded >= 0 ? '+' : ''}${shAdded?.toStringAsFixed(1) ?? '0.0'} sh)',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: netPnl >= 0 ? _mint : _coral,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '@\$${spot.toStringAsFixed(2)} · $strikeLine',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: p.text,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (triggerTxt.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              triggerTxt,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: _slate, fontSize: 10),
+            ),
+          ],
+          if (isTp && ev['gamma_usd'] != null && ev['vega_usd'] != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              'Delta ${_fmtUsd(_numVal(ev['delta_usd']), signed: true, compact: true)} · Gamma ${_fmtUsd(_numVal(ev['gamma_usd']), signed: true, compact: true)} · Vega ${_fmtUsd(_numVal(ev['vega_usd']), signed: true, compact: true)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _amber,
+                fontSize: 9.8,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _scaleToggleBtn({
@@ -3032,26 +3579,40 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
       _drawLabel(canvas, shortDt, Offset(dx, vixBot + 5), _slate, 9.5);
     }
 
-    // 8. Hover vertical crosshair
+    // 8. Hover vertical crosshair across all 3 synchronized tracks
     if (hoverIndex >= 0 && hoverIndex < n) {
       final hx = xAt(hoverIndex);
       canvas.drawLine(
         Offset(hx, mainTop),
         Offset(hx, vixBot),
         Paint()
-          ..color = Colors.white.withValues(alpha: 0.35)
+          ..color = Colors.white.withValues(alpha: 0.42)
           ..strokeWidth = 1.0,
       );
-      canvas.drawCircle(
-        Offset(hx, yMain(stratVals[hoverIndex])),
-        4.0,
-        Paint()..color = _mint,
-      );
-      canvas.drawCircle(
-        Offset(hx, yMain(bhVals[hoverIndex])),
-        3.5,
-        Paint()..color = _sky,
-      );
+      final ringPaint = Paint()
+        ..color = const Color(0xFF080B0F)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+
+      // Main NAV track dots
+      final ys = yMain(stratVals[hoverIndex]);
+      final yb = yMain(bhVals[hoverIndex]);
+      canvas.drawCircle(Offset(hx, ys), 4.6, Paint()..color = _mint);
+      canvas.drawCircle(Offset(hx, ys), 4.6, ringPaint);
+      canvas.drawCircle(Offset(hx, yb), 4.0, Paint()..color = _sky);
+      canvas.drawCircle(Offset(hx, yb), 4.0, ringPaint);
+
+      // Crisis Lights track dot
+      final scHov = _val(rows[hoverIndex]['crisis_lights']).clamp(0.0, 6.0);
+      final yl = lightsBot - (scHov / 6.0) * lightsH;
+      canvas.drawCircle(Offset(hx, yl), 3.6, Paint()..color = _coral);
+      canvas.drawCircle(Offset(hx, yl), 3.6, ringPaint);
+
+      // VIX / VIX3M track dot
+      final vrHov = _val(rows[hoverIndex]['vix_ratio'], 0.90);
+      final yv = yVix(vrHov);
+      canvas.drawCircle(Offset(hx, yv), 3.6, Paint()..color = _amber);
+      canvas.drawCircle(Offset(hx, yv), 3.6, ringPaint);
     }
   }
 

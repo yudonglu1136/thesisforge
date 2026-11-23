@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:guru_analysis_terminal/main.dart';
@@ -186,6 +187,63 @@ void main() {
         find.byKey(const ValueKey('crisis-zoom-pill-2025-04')),
       );
       expect(find.textContaining('Rebased to 100.0'), findsOneWidget);
+
+      // 6b. Hover over the 2025-04-07 Panic TP marker on the chart canvas -> verifies floating tooltip + trade details!
+      final canvasFinder = find.byKey(const ValueKey('crisis-observatory-canvas'));
+      await tester.ensureVisible(canvasFinder);
+      await tester.pumpAndSettle();
+      final canvasRect = tester.getRect(canvasFinder);
+      // 2025-04-07 is at ~72% across the 2024-12-18 .. 2025-05-16 (102-day) window
+      final hoverTarget = Offset(
+        canvasRect.left + 54.0 + (canvasRect.width - 68.0) * (73.0 / 101.0),
+        canvasRect.top + 120.0,
+      );
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+      await gesture.moveTo(hoverTarget);
+      await tester.pumpAndSettle();
+
+      final tooltipFinder = find.byKey(
+        const ValueKey('crisis-chart-hover-tooltip'),
+      );
+      expect(tooltipFinder, findsOneWidget);
+      expect(
+        find.descendant(
+          of: tooltipFinder,
+          matching: find.textContaining('2025-04-07'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: tooltipFinder,
+          matching: find.textContaining('◆ 1.10 PANIC TP'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: tooltipFinder,
+          matching: find.textContaining('+\$69,571'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: tooltipFinder,
+          matching: find.textContaining('VIX/3M'),
+        ),
+        findsOneWidget,
+      );
+
+      // Move pointer out -> tooltip dismisses cleanly
+      await gesture.moveTo(Offset.zero);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('crisis-chart-hover-tooltip')),
+        findsNothing,
+      );
 
       // Zoom into 2026-11 LIVE Pure-Options Campaign
       await tapVisible(
