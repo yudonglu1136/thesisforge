@@ -23,22 +23,15 @@ class CrisisObservatoryPanel extends StatefulWidget {
 }
 
 class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
-  static const Color _obsidian = Color(0xFF080B0F);
-  static const Color _surface = Color(0xFF0E141B);
-  static const Color _surfaceRaised = Color(0xFF131B24);
-  static const Color _hairline = Color(0xFF25313B);
-  static const Color _mint = Color(0xFF80C6A8);
-  static const Color _sky = Color(0xFF7DB8F0);
-  static const Color _amber = Color(0xFFF2BC60);
-  static const Color _lilac = Color(0xFFB8A1EA);
-  static const Color _coral = Color(0xFFEC8C98);
-  static const Color _slate = Color(0xFF9CABB9);
+  // Strictly 3 calm semantic accents; everything else uses native Palette tokens.
+  static const Color _emerald = Color(0xFF5EC49E);
+  static const Color _amber = Color(0xFFE5B45B);
+  static const Color _coral = Color(0xFFE47F8B);
 
-  static const List<String> _selectableStrategies = [
+  static const List<String> _primaryStrategies = [
     'U1_PureOptions',
     'B1c_PureAD',
     'D2_SixLights',
-    'H2_G4_PriceGate',
   ];
 
   static const Map<String, String> _strategyNavKeys = {
@@ -49,43 +42,42 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     'BH_Pure_QQQ': 'nav_bh',
   };
 
-  static const int _minZoomSpan = 15;
-
   Map<String, dynamic>? data;
   bool loading = true;
   String? error;
 
   String selectedStrategyId = 'U1_PureOptions';
   String selectedWindowId = 'ALL';
-  String activePeriodPreset = 'ALL';
   String activeForensicWindowId = '2026-08_11_LIVE';
-  int rangeStartIdx = 0;
-  int rangeEndIdx = -1;
-  bool useRebasedZoom = true;
   bool useLogScale = true;
+  bool showRulesDisclosure = false;
+  bool showSignalSubTrack = false;
   bool showFullLedger = false;
-  bool showMethodology = false;
+  final Set<int> expandedTrancheIds = <int>{};
   int hoverIndex = -1;
   int loadSerial = 0;
 
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
 
+  String _normalizeStrategyId(String raw) {
+    if (raw == 'U4_DualEngine' || raw.isEmpty || raw == 'BH_Pure_QQQ') {
+      return 'U1_PureOptions';
+    }
+    return _strategyNavKeys.containsKey(raw) ? raw : 'U1_PureOptions';
+  }
+
   @override
   void initState() {
     super.initState();
-    final rawInitStrat = text(widget.initialSelection['strategy']);
-    final initStrat =
-        rawInitStrat == 'U4_DualEngine' ? 'U1_PureOptions' : rawInitStrat;
-    if (_selectableStrategies.contains(initStrat)) {
-      selectedStrategyId = initStrat;
-    }
+    selectedStrategyId = _normalizeStrategyId(
+      text(widget.initialSelection['strategy']),
+    );
     final initWin = text(widget.initialSelection['window']);
     if (initWin.isNotEmpty) {
       selectedWindowId = initWin;
-      if (initWin != 'ALL' && initWin != 'CUSTOM') {
+      if (initWin != 'ALL' && initWin != '1Y' && initWin != '3Y') {
         activeForensicWindowId = initWin;
-        activePeriodPreset = 'CRISIS';
       }
     }
     unawaited(_loadObservatory());
@@ -106,144 +98,6 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     });
   }
 
-  (int, int) _windowBoundsInSeries(
-    List<Map<String, dynamic>> allDaily,
-    Map<String, dynamic>? win,
-  ) {
-    if (allDaily.isEmpty) return (0, 0);
-    final last = allDaily.length - 1;
-    if (win == null) return (0, last);
-    final startStr = text(win['start_date']);
-    final endStr = text(win['end_date']);
-    var s = 0;
-    while (s < last && text(allDaily[s]['date']).compareTo(startStr) < 0) {
-      s++;
-    }
-    var e = last;
-    while (e > s && text(allDaily[e]['date']).compareTo(endStr) > 0) {
-      e--;
-    }
-    if (e - s < _minZoomSpan && allDaily.length > _minZoomSpan) {
-      e = math.min(last, s + _minZoomSpan);
-      s = math.max(0, e - _minZoomSpan);
-    }
-    return (s, e);
-  }
-
-  (int, int) _resolvedRange(int totalLen) {
-    if (totalLen <= 1) return (0, 0);
-    final last = totalLen - 1;
-    final rawEnd = (rangeEndIdx < 0 || rangeEndIdx > last) ? last : rangeEndIdx;
-    final rawStart = rangeStartIdx.clamp(0, rawEnd);
-    if (rawEnd - rawStart < _minZoomSpan && totalLen > _minZoomSpan) {
-      final adjustedEnd = math.min(last, rawStart + _minZoomSpan);
-      final adjustedStart = math.max(0, adjustedEnd - _minZoomSpan);
-      return (adjustedStart, adjustedEnd);
-    }
-    return (rawStart, rawEnd);
-  }
-
-  void _applyWindowSelection(
-    List<Map<String, dynamic>> allDaily,
-    Map<String, dynamic> doc,
-    String winId,
-  ) {
-    if (allDaily.isEmpty) return;
-    final last = allDaily.length - 1;
-    if (winId == 'ALL') {
-      setState(() {
-        selectedWindowId = 'ALL';
-        activePeriodPreset = 'ALL';
-        rangeStartIdx = 0;
-        rangeEndIdx = last;
-        hoverIndex = -1;
-      });
-    } else {
-      final win = _findWindow(doc, winId);
-      final bounds = _windowBoundsInSeries(allDaily, win);
-      setState(() {
-        selectedWindowId = winId;
-        activeForensicWindowId = winId;
-        activePeriodPreset = 'CRISIS';
-        rangeStartIdx = bounds.$1;
-        rangeEndIdx = bounds.$2;
-        useRebasedZoom = true;
-        hoverIndex = -1;
-      });
-    }
-    _emitSelection();
-  }
-
-  void _applyPeriodPreset(List<Map<String, dynamic>> allDaily, String preset) {
-    if (allDaily.isEmpty) return;
-    final last = allDaily.length - 1;
-    final int spanDays = switch (preset) {
-      '6M' => 126,
-      '1Y' => 252,
-      '3Y' => 756,
-      '5Y' => 1260,
-      _ => allDaily.length,
-    };
-    final nextStart = preset == 'ALL' ? 0 : math.max(0, allDaily.length - spanDays);
-    setState(() {
-      rangeStartIdx = nextStart;
-      rangeEndIdx = last;
-      activePeriodPreset = preset;
-      selectedWindowId = preset == 'ALL' ? 'ALL' : 'CUSTOM';
-      hoverIndex = -1;
-    });
-    _emitSelection();
-  }
-
-  void _zoomByFactor(List<Map<String, dynamic>> allDaily, double factor) {
-    if (allDaily.length <= _minZoomSpan + 1) return;
-    final last = allDaily.length - 1;
-    final (curStart, curEnd) = _resolvedRange(allDaily.length);
-    final curSpan = math.max(_minZoomSpan, curEnd - curStart);
-    final targetSpan = (curSpan * factor).round().clamp(_minZoomSpan, last);
-    final center = (curStart + curEnd) / 2.0;
-    var nextStart = (center - targetSpan / 2.0).round();
-    var nextEnd = nextStart + targetSpan;
-    if (nextStart < 0) {
-      nextStart = 0;
-      nextEnd = math.min(last, targetSpan);
-    }
-    if (nextEnd > last) {
-      nextEnd = last;
-      nextStart = math.max(0, last - targetSpan);
-    }
-    final isFull = nextStart == 0 && nextEnd == last;
-    setState(() {
-      rangeStartIdx = nextStart;
-      rangeEndIdx = nextEnd;
-      selectedWindowId = isFull ? 'ALL' : 'CUSTOM';
-      activePeriodPreset = isFull ? 'ALL' : 'CUSTOM';
-      hoverIndex = -1;
-    });
-    _emitSelection();
-  }
-
-  void _panRange(List<Map<String, dynamic>> allDaily, double fraction) {
-    if (allDaily.length <= _minZoomSpan + 1) return;
-    final last = allDaily.length - 1;
-    final (curStart, curEnd) = _resolvedRange(allDaily.length);
-    final curSpan = curEnd - curStart;
-    if (curSpan >= last) return;
-    final rawShift = (curSpan * fraction).round();
-    final shift = rawShift == 0 ? (fraction < 0 ? -5 : 5) : rawShift;
-    var nextStart = (curStart + shift).clamp(0, last - curSpan);
-    var nextEnd = nextStart + curSpan;
-    if (nextStart == curStart && nextEnd == curEnd) return;
-    setState(() {
-      rangeStartIdx = nextStart;
-      rangeEndIdx = nextEnd;
-      selectedWindowId = 'CUSTOM';
-      activePeriodPreset = 'CUSTOM';
-      hoverIndex = -1;
-    });
-    _emitSelection();
-  }
-
   Future<void> _loadObservatory() async {
     final serial = ++loadSerial;
     setState(() {
@@ -261,7 +115,6 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       final res = await widget.api.getJson(uri.toString());
       if (!mounted || serial != loadSerial) return;
       final windows = asList(res['crisis_windows']);
-      final allDaily = asList(res['daily_series']);
       var nextForensic = activeForensicWindowId;
       if (windows.isNotEmpty &&
           !windows.any((item) => text(item['id']) == nextForensic)) {
@@ -269,24 +122,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       }
       var nextWindow = selectedWindowId;
       if (nextWindow != 'ALL' &&
-          nextWindow != 'CUSTOM' &&
+          nextWindow != '1Y' &&
+          nextWindow != '3Y' &&
           !windows.any((item) => text(item['id']) == nextWindow)) {
         nextWindow = 'ALL';
       }
-      final initWinObj = (nextWindow != 'ALL' && nextWindow != 'CUSTOM')
-          ? windows.cast<Map<String, dynamic>?>().firstWhere(
-              (item) => text(item?['id']) == nextWindow,
-              orElse: () => null,
-            )
-          : null;
-      final bounds = _windowBoundsInSeries(allDaily, initWinObj);
       setState(() {
         data = res;
         activeForensicWindowId = nextForensic;
         selectedWindowId = nextWindow;
-        activePeriodPreset = nextWindow == 'ALL' ? 'ALL' : 'CRISIS';
-        rangeStartIdx = bounds.$1;
-        rangeEndIdx = bounds.$2;
         hoverIndex = -1;
         loading = false;
       });
@@ -308,18 +152,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     return fallback;
   }
 
-  String _fmtUsd(double v, {bool signed = false, bool compact = false}) {
+  String _fmtUsd(double v, {bool signed = false}) {
     final sign = v < 0 ? '-' : (signed && v > 0 ? '+' : '');
-    final absV = v.abs();
-    if (compact) {
-      if (absV >= 1000000) {
-        return '$sign\$${(absV / 1000000).toStringAsFixed(3)}M';
-      }
-      if (absV >= 1000) {
-        return '$sign\$${(absV / 1000).toStringAsFixed(1)}K';
-      }
-    }
-    final fixed = absV.round().toString();
+    final fixed = v.abs().round().toString();
     final buf = StringBuffer();
     for (var i = 0; i < fixed.length; i++) {
       if (i > 0 && (fixed.length - i) % 3 == 0) buf.write(',');
@@ -328,19 +163,83 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     return '$sign\$$buf';
   }
 
-  String _fmtPct(double v, {int digits = 2, bool signed = true}) {
+  String _fmtPct(double v, {int digits = 1, bool signed = true}) {
     final sign = v > 0 && signed ? '+' : '';
     return '$sign${v.toStringAsFixed(digits)}%';
   }
 
-  List<Map<String, dynamic>> _currentEventsForStrategy(Map<String, dynamic> doc) {
+  String _humanStrategyLabel(String id) {
+    return switch (id) {
+      'U1_PureOptions' => w('Naked Put + Collar', '纯期权双槽（推荐）'),
+      'B1c_PureAD' => w('Breadth Divergence', '纯宽度背离'),
+      'D2_SixLights' => w('Six-Lights Collar', '纯六灯领口'),
+      'H2_G4_PriceGate' => w('Price & Vol Gate', '价格低波门控'),
+      'BH_Pure_QQQ' => w('Buy & Hold QQQ', '死拿 QQQ'),
+      _ => w('Protected Strategy', '保护策略'),
+    };
+  }
+
+  String _humanWindowChipLabel(Map<String, dynamic> win) {
+    final id = text(win['id']);
+    return switch (id) {
+      '2015-08' => w('2015 Aug', '2015 汇改'),
+      '2018-Q4' => w('2018 Q4', '2018 缩表'),
+      '2020-03' => w('2020 COVID', '2020 熔断'),
+      '2022' => w('2022 Bear', '2022 慢熊'),
+      '2024-08' => w('2024 Yen', '2024 日元'),
+      '2025-04' => w('2025 Tariff', '2025 关税'),
+      '2026-08_11_LIVE' => w('2026 LIVE', '2026 LIVE'),
+      _ => w(text(win['pill_en']), text(win['pill_zh'])),
+    };
+  }
+
+  String _humanWindowTitle(Map<String, dynamic> win) {
+    final id = text(win['id']);
+    return switch (id) {
+      '2015-08' => w(
+        '2015 Flash Crash & Devaluation Shock',
+        '2015 年 8 月汇改闪崩',
+      ),
+      '2018-Q4' => w(
+        '2018 Q4 Fed Tightening Selloff',
+        '2018 四季度联储缩表急跌',
+      ),
+      '2020-03' => w(
+        '2020 COVID-19 Liquidity Crash',
+        '2020 年 3 月疫情流动性熔断',
+      ),
+      '2022' => w(
+        '2022 Rate-Hike Grinding Bear Market',
+        '2022 加息周期慢熊阴跌',
+      ),
+      '2024-08' => w(
+        '2024 August Yen Carry Unwind',
+        '2024 年 8 月日元套息平仓闪崩',
+      ),
+      '2025-04' => w(
+        '2025 April Tariff Crash',
+        '2025 年 4 月关税冲击大跌',
+      ),
+      '2026-08_11_LIVE' => w(
+        '2026 Autumn Correction (Live)',
+        '2026 秋季回调实战（进行中）',
+      ),
+      _ => w(text(win['title_en']), text(win['title_zh'])),
+    };
+  }
+
+  List<Map<String, dynamic>> _currentEventsForStrategy(
+    Map<String, dynamic> doc,
+  ) {
     final byStrat = asMap(doc['events_by_strategy']);
     final list = asList(byStrat[selectedStrategyId]);
     if (list.isNotEmpty) return list;
     return asList(doc['events']);
   }
 
-  List<Map<String, dynamic>> _currentLedgerForStrategy(Map<String, dynamic> doc) {
+  List<Map<String, dynamic>> _currentLedgerForStrategy(
+    Map<String, dynamic> doc,
+  ) {
     final byStrat = asMap(doc['trade_ledgers_by_strategy']);
     final list = asList(byStrat[selectedStrategyId]);
     if (list.isNotEmpty) return list;
@@ -354,12 +253,21 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     return null;
   }
 
-  Map<String, dynamic> _findStrategySummary(Map<String, dynamic> doc, String id) {
+  Map<String, dynamic> _findStrategySummary(
+    Map<String, dynamic> doc,
+    String id,
+  ) {
     for (final s in asList(doc['strategies_summary'])) {
       if (text(s['id']) == id) return s;
     }
     return const {};
   }
+
+  BoxDecoration _calmSurfaceDecoration() => BoxDecoration(
+    color: p.card,
+    borderRadius: BorderRadius.circular(14),
+    border: Border.all(color: p.border, width: 1),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -367,22 +275,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       return Container(
         key: const ValueKey('crisis-observatory-loading'),
         padding: const EdgeInsets.all(28),
-        decoration: BoxDecoration(
-          color: _surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _hairline),
-        ),
+        decoration: _calmSurfaceDecoration(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const LinearProgressIndicator(minHeight: 2, color: _mint),
+            const LinearProgressIndicator(minHeight: 2, color: _emerald),
             const SizedBox(height: 14),
             Text(
-              w(
-                'Loading QQQ Crisis Observatory (6 Druckenmiller Signals, AD Divergence & Option Convexity)...',
-                '正在加载 QQQ 危机观测台（六大宏观危机灯 × 市场宽度顶背离 × 裸 Put / Collar 凸性台账）...',
-              ),
-              style: const TextStyle(color: _slate, fontSize: 13),
+              w('Loading Crisis Observatory...', '正在加载危机观测数据...'),
+              style: TextStyle(color: p.muted, fontSize: 13),
             ),
           ],
         ),
@@ -393,31 +294,26 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       return Container(
         key: const ValueKey('crisis-observatory-error'),
         padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: _surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _coral.withValues(alpha: 0.45)),
-        ),
+        decoration: _calmSurfaceDecoration(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               w(
                 'Crisis Observatory data is temporarily unavailable.',
-                '危机观测模块数据暂时无法加载。',
+                '危机观测数据暂时无法加载。',
               ),
               style: TextStyle(
                 color: p.text,
                 fontSize: 15,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
+            const SizedBox(height: 12),
+            OutlinedButton(
               key: const ValueKey('crisis-observatory-retry'),
               onPressed: () => unawaited(_loadObservatory()),
-              icon: const Icon(Icons.refresh, size: 16),
-              label: Text(w('Retry Crisis Observatory', '重新加载危机观测')),
+              child: Text(w('Retry', '重试')),
             ),
           ],
         ),
@@ -428,338 +324,286 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 680;
-        final desktop = constraints.maxWidth >= 980;
+        final desktop = constraints.maxWidth >= 960;
+        final gap = compact ? 18.0 : 24.0;
         return Column(
           key: const ValueKey('crisis-observatory-root'),
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildHeaderBanner(doc, compact: compact),
-            const SizedBox(height: 14),
-            _buildHeroSignalCommandCenter(doc, compact: compact, desktop: desktop),
-            const SizedBox(height: 14),
-            _buildSixSignalsAndBreadthSection(
+            _buildVerdictBlock(doc, compact: compact, desktop: desktop),
+            SizedBox(height: gap),
+            _buildSixSignalsBlock(
               doc,
               maxWidth: constraints.maxWidth,
               compact: compact,
             ),
-            const SizedBox(height: 14),
-            _buildEquityCurveAndZoomSection(
+            SizedBox(height: gap),
+            _buildHeroChartBlock(doc, compact: compact, desktop: desktop),
+            SizedBox(height: gap),
+            _buildCrisisStoryAndTimelineBlock(
               doc,
               compact: compact,
               desktop: desktop,
             ),
-            const SizedBox(height: 14),
-            _buildForensicDrawerAndLedgerSection(
-              doc,
-              compact: compact,
-              desktop: desktop,
-            ),
-            const SizedBox(height: 12),
-            _buildMethodologyAccordion(compact: compact),
           ],
         );
       },
     );
   }
 
-  Widget _buildHeaderBanner(Map<String, dynamic> doc, {required bool compact}) {
+  // ===========================================================================
+  // BLOCK 1: Clean Verdict Header (今日信号结论)
+  // ===========================================================================
+  Widget _buildVerdictBlock(
+    Map<String, dynamic> doc, {
+    required bool compact,
+    required bool desktop,
+  }) {
     final snap = asMap(doc['live_market_snapshot']);
+    final sig = asMap(doc['live_signal_state']);
+    final stratSummary = _findStrategySummary(doc, selectedStrategyId);
     final asOfDate = text(doc['as_of_date']).isEmpty
         ? widget.asOf
         : text(doc['as_of_date']);
+
     final qqqClose = _numVal(snap['qqq_close']);
     final ddAth = _numVal(snap['dd_from_ath_pct']);
-    final ma200 = _numVal(snap['qqq_ma200']);
-    final vix = _numVal(snap['vix']);
     final vixRatio = _numVal(snap['vix_vix3m_ratio']);
-    final vxn = _numVal(snap['vxn']);
     final rawLights = _numVal(snap['raw_crisis_score']).round();
 
-    return Container(
-      padding: EdgeInsets.all(compact ? 14 : 18),
-      decoration: BoxDecoration(
-        color: _obsidian,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _hairline),
+    final regimeCode = text(sig['regime_code']);
+    final slot1 = asMap(sig['slot1_naked_put']);
+    final slot2 = asMap(sig['slot2_collar']);
+    final s1Act = asMap(slot1['latest_action']);
+    final s2Act = asMap(slot2['latest_action']);
+    final gates = asList(sig['gate_checklist']);
+
+    final Color statusColor = rawLights >= 5
+        ? _coral
+        : (rawLights >= 3 || regimeCode.contains('ACTIVE') ? _amber : _emerald);
+
+    final String verdictHeadline = switch (regimeCode) {
+      'VIX110_TP_TRIGGERED' => w(
+        'Panic Harvest Triggered · Monetize Hedges into QQQ',
+        '恐慌极值触发 · 期权保护次日止盈换股',
       ),
+      'DUAL_SLOT_FULL_SHIELD' => w(
+        'Full Hedge Active · Naked Put + Collar On',
+        '双槽满盾保护中 · 首仓裸 Put + 次仓领口',
+      ),
+      'SLOT1_NAKED_PUT_ACTIVE' => w(
+        'Early Warning · First-Half Naked Put Active',
+        '高位预警 · 首仓 50% 裸 Put 保护中',
+      ),
+      'LOW_SPOT_FREEZE_NO_NEW_COLLAR' => w(
+        '100% Hold QQQ · Call Caps Paused in Pullback ($rawLights/6 Lights)',
+        '100% 持有 QQQ · 低位暂停新卖 Call（$rawLights/6 亮灯）',
+      ),
+      _ => w(
+        'Calm Trend · 100% Hold QQQ ($rawLights/6 Lights)',
+        '顺风区间 · 100% 持有 QQQ（$rawLights/6 亮灯）',
+      ),
+    };
+
+    final totalLastHarvest =
+        _numVal(s1Act['u1_net_pnl_usd']) + _numVal(s2Act['u1_net_pnl_usd']);
+    final totalLastShares =
+        _numVal(s1Act['u1_shares_added']) + _numVal(s2Act['u1_shares_added']);
+    final lastExitDate = text(s2Act['exit_date']).length >= 10
+        ? text(s2Act['exit_date']).substring(5)
+        : '';
+
+    final String humanSummary;
+    if (regimeCode == 'LOW_SPOT_FREEZE_NO_NEW_COLLAR') {
+      humanSummary = w(
+        '${lastExitDate.isNotEmpty ? 'Harvested ${_fmtUsd(totalLastHarvest, signed: true)} (+${totalLastShares.toStringAsFixed(1)} extra QQQ shares) on $lastExitDate panic spike; ' : ''}new Call caps stay paused below -5% drawdown while holding 100% QQQ for full rebound upside.',
+        '${lastExitDate.isNotEmpty ? '$lastExitDate 已在恐慌倒挂中止盈落袋 ${_fmtUsd(totalLastHarvest, signed: true)}（低位增持 +${totalLastShares.toStringAsFixed(1)} 股 QQQ）；' : ''}当前跌离高点超 5% 暂停新卖 Call，100% 满仓 QQQ 完整保留反弹空间。',
+      );
+    } else if (regimeCode == 'DUAL_SLOT_FULL_SHIELD' ||
+        regimeCode == 'SLOT1_NAKED_PUT_ACTIVE') {
+      humanSummary = w(
+        'Protective puts are in place near market highs; hold 100% QQQ until VIX/VIX3M crosses 1.10 panic inversion to monetize into extra shares.',
+        '高位看跌保护已就位；底仓 100% 持有 QQQ，静待 VIX/VIX3M 突破 1.10 恐慌倒挂时止盈变现换股。',
+      );
+    } else {
+      humanSummary = w(
+        'Hold 100% QQQ with zero option drag until top breadth divergence or 4+ crisis lights appear near highs.',
+        '保持 100% QQQ 现货复利、零期权损耗，静待高位出现市场宽度背离或 4 盏以上危机灯再买保护。',
+      );
+    }
+
+    // 3 plain-human pure-options status columns (Core QQQ + Slot 1 + Slot 2)
+    final extraShares = _numVal(stratSummary['extra_shares_vs_bh'], 273.34);
+    final coreValue = w('100% QQQ Held', '100% 满仓 QQQ');
+    final coreSub = w(
+      'Never sells equity · +${extraShares.toStringAsFixed(1)} extra sh',
+      '永不卖股择时 · 累计多攒 +${extraShares.toStringAsFixed(1)} 股',
+    );
+
+    final s1Open = slot1['open_position'] != null;
+    final s1Value = s1Open
+        ? w('Active Hedge', '保护运行中')
+        : (_numVal(s1Act['u1_net_pnl_usd']) > 0
+              ? w(
+                  'Harvested ${_fmtUsd(_numVal(s1Act['u1_net_pnl_usd']), signed: true)} · Standby',
+                  '已止盈 ${_fmtUsd(_numVal(s1Act['u1_net_pnl_usd']), signed: true)} · 待命',
+                )
+              : w('Standby', '待命'));
+    final s1Sub = text(s1Act['entry_date']).length >= 10 &&
+            text(s1Act['exit_date']).length >= 10
+        ? w(
+            '${text(s1Act['entry_date']).substring(5)} @\$${_numVal(s1Act['entry_spot']).toStringAsFixed(0)} -> ${text(s1Act['exit_date']).substring(5)} @\$${_numVal(s1Act['exit_spot']).toStringAsFixed(0)} (+${_numVal(s1Act['u1_shares_added']).toStringAsFixed(1)} sh)',
+            '${text(s1Act['entry_date']).substring(5)} @\$${_numVal(s1Act['entry_spot']).toStringAsFixed(0)} 开 → ${text(s1Act['exit_date']).substring(5)} @\$${_numVal(s1Act['exit_spot']).toStringAsFixed(0)} 平（+${_numVal(s1Act['u1_shares_added']).toStringAsFixed(1)} 股）',
+          )
+        : w('50% size · No upside Call cap', '50% 仓位 · 不卖 Call 保留冲顶');
+
+    final s2Open = slot2['open_position'] != null;
+    final s2Frozen = text(slot2['status']).contains('FROZEN');
+    final s2Value = s2Open
+        ? w('Active Collar', '领口保护中')
+        : (s2Frozen
+              ? (_numVal(s2Act['u1_net_pnl_usd']) > 0
+                    ? w(
+                        'Harvested ${_fmtUsd(_numVal(s2Act['u1_net_pnl_usd']), signed: true)} · Paused',
+                        '已止盈 ${_fmtUsd(_numVal(s2Act['u1_net_pnl_usd']), signed: true)} · 低位暂停',
+                      )
+                    : w('Paused Below -5%', '低位暂停卖 Call'))
+              : w('Standby (30D Step)', '待命（满 30 天开启）'));
+    final s2Sub = text(s2Act['entry_date']).length >= 10 &&
+            text(s2Act['exit_date']).length >= 10
+        ? w(
+            '${text(s2Act['entry_date']).substring(5)} @\$${_numVal(s2Act['entry_spot']).toStringAsFixed(0)} -> ${text(s2Act['exit_date']).substring(5)} @\$${_numVal(s2Act['exit_spot']).toStringAsFixed(0)} (+${_numVal(s2Act['u1_shares_added']).toStringAsFixed(1)} sh)',
+            '${text(s2Act['entry_date']).substring(5)} @\$${_numVal(s2Act['entry_spot']).toStringAsFixed(0)} 开 → ${text(s2Act['exit_date']).substring(5)} @\$${_numVal(s2Act['exit_spot']).toStringAsFixed(0)} 平（+${_numVal(s2Act['u1_shares_added']).toStringAsFixed(1)} 股）',
+          )
+        : w('Zero-cost Put + Call collar', '零成本领口保护');
+
+    return Container(
+      key: const ValueKey('crisis-observatory-command-center'),
+      padding: EdgeInsets.all(compact ? 16 : 22),
+      decoration: _calmSurfaceDecoration(),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Wrap(
-            spacing: 8,
+            spacing: 12,
             runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                decoration: BoxDecoration(
-                  color: _mint.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: _mint.withValues(alpha: 0.45)),
-                ),
-                child: Text(
-                  w('CRISIS OBSERVATORY · ZERO-LOOKAHEAD', '危机观测 · 零前视实盘引擎'),
-                  style: const TextStyle(
-                    color: _mint,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-              InkWell(
-                key: const ValueKey('crisis-observatory-qqq-chip'),
-                borderRadius: BorderRadius.circular(6),
-                onTap: () => widget.onCompany('QQQ'),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: _sky.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: _sky.withValues(alpha: 0.45)),
-                  ),
-                  child: Text(
-                    'QQQ \$${qqqClose.toStringAsFixed(2)} (${_fmtPct(ddAth)})',
-                    style: const TextStyle(
-                      color: _sky,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 9,
+                    height: 9,
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      shape: BoxShape.circle,
                     ),
                   ),
-                ),
+                  const SizedBox(width: 9),
+                  Flexible(
+                    child: Text(
+                      verdictHeadline,
+                      style: TextStyle(
+                        color: p.text,
+                        fontSize: compact ? 17 : 19,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              _metricChip(
-                w('As Of $asOfDate', '数据截至 $asOfDate'),
-                _slate,
-              ),
-              _metricChip(
-                w('Lights $rawLights/6', '危机灯 $rawLights/6'),
-                rawLights >= 4 ? _coral : _mint,
-              ),
-              _metricChip(
-                'VIX ${vix.toStringAsFixed(2)} · VIX/3M ${vixRatio.toStringAsFixed(3)}',
-                vixRatio >= 1.10 ? _amber : _slate,
-              ),
-              _metricChip(
-                'VXN ${vxn.toStringAsFixed(2)} · 200DMA \$${ma200.toStringAsFixed(2)}',
-                _slate,
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  InkWell(
+                    key: const ValueKey('crisis-observatory-qqq-chip'),
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: () => widget.onCompany('QQQ'),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2,
+                      ),
+                      child: Text(
+                        'QQQ \$${qqqClose.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          color: p.text,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    w(
+                      '· ${_fmtPct(ddAth)} off high · VIX/3M ${vixRatio.toStringAsFixed(2)} · $asOfDate',
+                      '· 距高点 ${_fmtPct(ddAth)} · VIX/3M ${vixRatio.toStringAsFixed(2)} · $asOfDate',
+                    ),
+                    style: TextStyle(color: p.muted, fontSize: 12.5),
+                  ),
+                ],
               ),
             ],
           ),
           const SizedBox(height: 10),
           Text(
-            w(
-              'Druckenmiller 6 Crisis Lights × AD Top-Divergence × Pure-Options Naked Put + Collar Shield',
-              '德鲁肯米勒六大危机信号 × 全美腾落线顶背离 × 首仓裸 Put + 次仓零成本 Collar 纯期权护城河',
-            ),
+            humanSummary,
             style: TextStyle(
-              color: p.text,
-              fontSize: compact ? 17.5 : 20.5,
-              fontWeight: FontWeight.w800,
-              height: 1.25,
+              color: p.muted,
+              fontSize: compact ? 13 : 13.5,
+              height: 1.5,
             ),
           ),
-          const SizedBox(height: 6),
-          Text(
-            w(
-              '100% QQQ core forever (zero cash/bond timing): Slot 1 buys a 50% 90-DTE -10% Naked Put near highs (retaining 100% upside); Slot 2 adds a 50% Zero-Cost Collar >=30 days later; VIX/VIX3M >= 1.10 harvests put convexity into extra QQQ shares; new Collars are hard-frozen below ATH -5%.',
-              '底仓 100% 满仓 QQQ 永不卖股：高位出现宽度顶背离或 >=4 灯且 VXN<=22 时，首仓买 50% 裸 -10% Put（不卖 Call 保留 100% 冲顶收益）；满 30 日补齐次仓 50% 零成本 Collar；VIX/VIX3M >= 1.10 恐慌倒挂全额止盈抄底增持 QQQ 股数；跌离前高超 5% 严禁低位新开 Collar。',
-            ),
-            style: TextStyle(
-              color: _slate,
-              fontSize: compact ? 12 : 13,
-              height: 1.45,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _metricChip(String label, Color accent) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: _surfaceRaised,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: accent.withValues(alpha: 0.35)),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: accent,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeroSignalCommandCenter(
-    Map<String, dynamic> doc, {
-    required bool compact,
-    required bool desktop,
-  }) {
-    final sig = asMap(doc['live_signal_state']);
-    final regimeCode = text(sig['regime_code']);
-    final title = w(
-      text(sig['regime_title_en']),
-      text(sig['regime_title_zh']),
-    );
-    final subtitle = w(
-      text(sig['regime_subtitle_en']),
-      text(sig['regime_subtitle_zh']),
-    );
-    final activeSlots = _numVal(sig['active_option_slots']).round();
-
-    final Color bannerAccent = switch (regimeCode) {
-      'VIX110_TP_TRIGGERED' => _mint,
-      'DUAL_SLOT_FULL_SHIELD' || 'SLOT1_NAKED_PUT_ACTIVE' => _sky,
-      'SLOT1_NAKED_PUT_ARMED' => _lilac,
-      'LOW_SPOT_FREEZE_NO_NEW_COLLAR' => _coral,
-      _ => _mint,
-    };
-
-    final slot1 = asMap(sig['slot1_naked_put']);
-    final slot2 = asMap(sig['slot2_collar']);
-    final gates = asList(sig['gate_checklist']);
-
-    final slotCards = [
-      _buildTacticalSlotCard(
-        keyId: 'slot1',
-        title: w(text(slot1['title_en']), text(slot1['title_zh'])),
-        badge: w(text(slot1['status_label_en']), text(slot1['status_label_zh'])),
-        statusCode: text(slot1['status']),
-        accent: _sky,
-        ruleText: w(text(slot1['rule_en']), text(slot1['rule_zh'])),
-        actionLabel: w('Latest Verified Execution', '最近一笔实盘执行'),
-        actionText: w(
-          text(asMap(slot1['latest_action'])['summary_en']),
-          text(asMap(slot1['latest_action'])['summary_zh']),
-        ),
-      ),
-      _buildTacticalSlotCard(
-        keyId: 'slot2',
-        title: w(text(slot2['title_en']), text(slot2['title_zh'])),
-        badge: w(text(slot2['status_label_en']), text(slot2['status_label_zh'])),
-        statusCode: text(slot2['status']),
-        accent: _lilac,
-        ruleText: w(text(slot2['rule_en']), text(slot2['rule_zh'])),
-        actionLabel: w('Latest Verified Execution', '最近一笔实盘执行'),
-        actionText: w(
-          text(asMap(slot2['latest_action'])['summary_en']),
-          text(asMap(slot2['latest_action'])['summary_zh']),
-        ),
-      ),
-    ];
-
-    return Container(
-      key: const ValueKey('crisis-observatory-command-center'),
-      padding: EdgeInsets.all(compact ? 14 : 18),
-      decoration: BoxDecoration(
-        color: _surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: bannerAccent.withValues(alpha: 0.45)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                margin: const EdgeInsets.only(top: 5, right: 10),
-                decoration: BoxDecoration(
-                  color: bannerAccent,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: bannerAccent.withValues(alpha: 0.65),
-                      blurRadius: 8,
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      w(
-                        'LIVE TACTICAL SIGNAL COMMAND CENTER · PURE OPTIONS',
-                        '实时战术信号指令舱 · 首仓裸 Put / 次仓 Collar 纯期权双槽',
-                      ),
-                      style: TextStyle(
-                        color: bannerAccent,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: p.text,
-                        fontSize: compact ? 15 : 17,
-                        fontWeight: FontWeight.w800,
-                        height: 1.25,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(color: _slate, fontSize: 12.5),
-                    ),
-                  ],
-                ),
-              ),
-              if (!compact) ...[
-                const SizedBox(width: 12),
-                Container(
-                  key: const ValueKey('crisis-core-allocation-badge'),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: _obsidian,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: _mint.withValues(alpha: 0.45)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        w('U1 Pure-Options Core', 'U1 纯期权核心底仓'),
-                        style: const TextStyle(color: _slate, fontSize: 10.5),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        w(
-                          '100% QQQ · $activeSlots/2 Option Slots',
-                          '100% 满仓 QQQ · $activeSlots/2 持盾槽位',
-                        ),
-                        style: TextStyle(
-                          color: activeSlots > 0 ? _sky : _mint,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 18),
+          Container(height: 1, color: p.border),
+          const SizedBox(height: 16),
           if (desktop)
             IntrinsicHeight(
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: slotCards[0]),
-                  const SizedBox(width: 10),
-                  Expanded(child: slotCards[1]),
+                  Expanded(
+                    child: _buildMinimalSlotColumn(
+                      keyId: 'core',
+                      label: w('Core Equity Position', '现货底仓'),
+                      value: coreValue,
+                      sub: coreSub,
+                      accent: p.text,
+                    ),
+                  ),
+                  Container(
+                    width: 1,
+                    margin: const EdgeInsets.symmetric(horizontal: 18),
+                    color: p.border,
+                  ),
+                  Expanded(
+                    child: _buildMinimalSlotColumn(
+                      keyId: 'slot1',
+                      label: w('First-Half Naked Put (50%)', '首仓裸 Put（50%）'),
+                      value: s1Value,
+                      sub: s1Sub,
+                      accent: s1Open ? _amber : _emerald,
+                    ),
+                  ),
+                  Container(
+                    width: 1,
+                    margin: const EdgeInsets.symmetric(horizontal: 18),
+                    color: p.border,
+                  ),
+                  Expanded(
+                    child: _buildMinimalSlotColumn(
+                      keyId: 'slot2',
+                      label: w('Second-Half Collar (50%)', '次仓领口（50%）'),
+                      value: s2Value,
+                      sub: s2Sub,
+                      accent: s2Open ? _amber : (s2Frozen ? p.text : _emerald),
+                    ),
+                  ),
                 ],
               ),
             )
@@ -767,19 +611,101 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                slotCards[0],
-                const SizedBox(height: 10),
-                slotCards[1],
+                _buildMinimalSlotColumn(
+                  keyId: 'core',
+                  label: w('Core Equity Position', '现货底仓'),
+                  value: coreValue,
+                  sub: coreSub,
+                  accent: p.text,
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Container(height: 1, color: p.border),
+                ),
+                _buildMinimalSlotColumn(
+                  keyId: 'slot1',
+                  label: w('First-Half Naked Put (50%)', '首仓裸 Put（50%）'),
+                  value: s1Value,
+                  sub: s1Sub,
+                  accent: s1Open ? _amber : _emerald,
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Container(height: 1, color: p.border),
+                ),
+                _buildMinimalSlotColumn(
+                  keyId: 'slot2',
+                  label: w('Second-Half Collar (50%)', '次仓领口（50%）'),
+                  value: s2Value,
+                  sub: s2Sub,
+                  accent: s2Open ? _amber : (s2Frozen ? p.text : _emerald),
+                ),
               ],
             ),
-          if (gates.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final g in gates) _buildGatePill(g),
-              ],
+          const SizedBox(height: 14),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: InkWell(
+              key: const ValueKey('crisis-rules-toggle'),
+              borderRadius: BorderRadius.circular(6),
+              onTap: () =>
+                  setState(() => showRulesDisclosure = !showRulesDisclosure),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      showRulesDisclosure
+                          ? w('Hide Trigger Rules', '收起触发条件')
+                          : w('View Trigger Rules', '查看触发条件'),
+                      style: TextStyle(
+                        color: p.muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      showRulesDisclosure
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                      size: 16,
+                      color: p.muted,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (showRulesDisclosure) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: p.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 18,
+                    runSpacing: 8,
+                    children: [
+                      for (final g in gates) _buildCalmGateItem(g),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    w(
+                      'Execution rules: 1) Hold 100% QQQ forever. 2) Within 5% of ATH with calm volatility (VXN <= 22) and either AD < 50DMA or >= 4 lights -> buy 50% 90-day -10% Put (no Call cap). 3) After 30 days if still active -> add 50% zero-cost Collar. 4) Monetize all puts when VIX/VIX3M >= 1.10 to buy extra QQQ shares at T+1 Open. 5) Never open new Collars below -5% drawdown.',
+                      '实战规则：① 底仓 100% 持有 QQQ 永不卖股；② 距高点 5% 内、波动率 VXN ≤ 22，且涨跌线跌破 50 日线或亮起 ≥ 4 盏灯 → 次日开盘买 50% 仓位 90 天 -10% 裸 Put（不卖封顶）；③ 满 30 天仍预警 → 补齐 50% 零成本领口；④ VIX/VIX3M ≥ 1.10 恐慌倒挂 → 次日开盘全额止盈换股抄底 QQQ；⑤ 跌离高点超 5% 严禁新卖 Call。',
+                    ),
+                    style: TextStyle(color: p.muted, fontSize: 12, height: 1.5),
+                  ),
+                ],
+              ),
             ),
           ],
         ],
@@ -787,373 +713,251 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     );
   }
 
-  Widget _buildTacticalSlotCard({
+  Widget _buildMinimalSlotColumn({
     required String keyId,
-    required String title,
-    required String badge,
-    required String statusCode,
+    required String label,
+    required String value,
+    required String sub,
     required Color accent,
-    required String ruleText,
-    required String actionLabel,
-    required String actionText,
   }) {
-    final isFrozen = statusCode.contains('FROZEN');
-    final isActive = statusCode.startsWith('ACTIVE') || statusCode.contains('ARMED');
-    final badgeColor = isFrozen ? _coral : (isActive ? accent : _mint);
-
-    return Container(
+    return Column(
       key: ValueKey('crisis-slot-card-$keyId'),
-      padding: const EdgeInsets.all(13),
-      decoration: BoxDecoration(
-        color: _obsidian,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isActive
-              ? badgeColor.withValues(alpha: 0.55)
-              : _hairline,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: p.muted,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    color: p.text,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: badgeColor.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(5),
-                    border: Border.all(color: badgeColor.withValues(alpha: 0.45)),
-                  ),
-                  child: Text(
-                    badge,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: badgeColor,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+        const SizedBox(height: 5),
+        Text(
+          value,
+          style: TextStyle(
+            color: accent,
+            fontSize: 14.5,
+            fontWeight: FontWeight.w700,
           ),
-          const SizedBox(height: 8),
-          Text(
-            ruleText,
-            style: const TextStyle(color: _slate, fontSize: 11.5, height: 1.4),
-          ),
-          const SizedBox(height: 10),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(9),
-            decoration: BoxDecoration(
-              color: _surfaceRaised,
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(color: _hairline),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  actionLabel,
-                  style: TextStyle(
-                    color: accent,
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  actionText,
-                  style: TextStyle(
-                    color: p.text,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w600,
-                    height: 1.35,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          sub,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: p.muted, fontSize: 11.5),
+        ),
+      ],
     );
   }
 
-  Widget _buildGatePill(Map<String, dynamic> gate) {
+  Widget _buildCalmGateItem(Map<String, dynamic> gate) {
     final passed = gate['passed'] == true;
-    final keyStr = text(gate['key']);
-    final isTp = keyStr == 'vix_ratio_ge_110_tp' || keyStr == 'vix_tp_110';
-    final color = passed ? (isTp ? _amber : _mint) : _slate;
     final label = w(text(gate['label_en']), text(gate['label_zh']));
-    final readingVal = text(gate['current_value']).isNotEmpty
-        ? text(gate['current_value'])
-        : text(gate['reading']);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: passed ? color.withValues(alpha: 0.12) : _obsidian,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: passed ? color.withValues(alpha: 0.5) : _hairline,
+    final reading = text(gate['reading']);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(
+            color: passed ? _emerald : p.muted.withValues(alpha: 0.45),
+            shape: BoxShape.circle,
+          ),
         ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            passed ? Icons.check_circle : Icons.radio_button_unchecked,
-            size: 13,
-            color: color,
+        const SizedBox(width: 6),
+        Text(
+          '$label: $reading',
+          style: TextStyle(
+            color: passed ? p.text : p.muted,
+            fontSize: 12,
+            fontWeight: passed ? FontWeight.w600 : FontWeight.w400,
           ),
-          const SizedBox(width: 5),
-          Flexible(
-            child: Text(
-              readingVal.isEmpty ? label : '$label: $readingVal',
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: passed ? p.text : _slate,
-                fontSize: 11.5,
-                fontWeight: passed ? FontWeight.w700 : FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _buildSixSignalsAndBreadthSection(
+  // ===========================================================================
+  // BLOCK 2: Minimalist 6 Crisis Signals Strip (六大危机信号状态)
+  // ===========================================================================
+  Widget _buildSixSignalsBlock(
     Map<String, dynamic> doc, {
     required double maxWidth,
     required bool compact,
   }) {
     final lights = asList(doc['six_crisis_lights']);
     final ad = asMap(doc['ad_line_signal']);
-    final snap = asMap(doc['live_market_snapshot']);
     final litCount = lights.where((item) => item['lit'] == true).length;
-    final smooth5d = _numVal(
-      snap['smooth_crisis_score_5d'],
-      _numVal(snap['smooth_5d_score']),
-    );
-
-    final int cols = maxWidth >= 980 ? 3 : (maxWidth >= 620 ? 2 : 1);
-    final double spacing = 10;
-    final double innerWidth = maxWidth - (compact ? 28 : 36);
-    final double cardWidth = cols == 1
-        ? innerWidth
-        : (innerWidth - spacing * (cols - 1)) / cols;
-
     final adBelow = ad['below_50ma'] == true;
     final adTopDiv = ad['top_divergence_active'] == true;
-    final adAccent = adTopDiv ? _amber : (adBelow ? _coral : _mint);
+
+    final int cols = maxWidth >= 900 ? 3 : (maxWidth >= 560 ? 2 : 1);
+    final rowsCount =
+        cols == 0 ? 0 : ((lights.length + cols - 1) / cols).floor();
 
     return Container(
       key: const ValueKey('crisis-observatory-six-lights'),
-      padding: EdgeInsets.all(compact ? 14 : 18),
-      decoration: BoxDecoration(
-        color: _surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _hairline),
-      ),
+      padding: EdgeInsets.all(compact ? 16 : 22),
+      decoration: _calmSurfaceDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          Row(
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    w(
-                      'SIX DRUCKENMILLER MACRO CRISIS SIGNALS + AD BREADTH MONITOR',
-                      '德鲁肯米勒六大危机信号灯状态 × 全美股票腾落线顶背离监测',
-                    ),
-                    style: const TextStyle(
-                      color: _mint,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.4,
-                    ),
+              Expanded(
+                child: Text(
+                  w('Six Macro Crisis Signals', '六大危机信号状态'),
+                  style: TextStyle(
+                    color: p.text,
+                    fontSize: compact ? 15.5 : 16.5,
+                    fontWeight: FontWeight.w700,
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    w(
-                      'Cross-Asset Early-Warning Matrix (Rates · Credit · Breadth · Copper · Defensives · Curve/NFCI)',
-                      '跨资产六维先行危机矩阵（前端利率 · 信用利差 · 市场宽度 · 铜博士 · 防御/周期 · 曲线与金融条件）',
-                    ),
-                    style: TextStyle(
-                      color: p.text,
-                      fontSize: compact ? 14.5 : 16,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
+                ),
               ),
-              Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: (litCount >= 4 ? _coral : _mint).withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(7),
-                      border: Border.all(
-                        color: (litCount >= 4 ? _coral : _mint).withValues(alpha: 0.5),
-                      ),
-                    ),
-                    child: Text(
-                      w(
-                        '$litCount / 6 LIGHTS ON',
-                        '$litCount / 6 危机灯亮起',
-                      ),
-                      style: TextStyle(
-                        color: litCount >= 4 ? _coral : _mint,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: _obsidian,
-                      borderRadius: BorderRadius.circular(7),
-                      border: Border.all(color: _hairline),
-                    ),
-                    child: Text(
-                      w(
-                        '5D Avg: ${smooth5d.toStringAsFixed(2)}',
-                        '5日均灯: ${smooth5d.toStringAsFixed(2)}',
-                      ),
-                      style: const TextStyle(
-                        color: _amber,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
+              const SizedBox(width: 8),
+              Text(
+                w('$litCount / 6 Active', '$litCount / 6 亮灯'),
+                style: TextStyle(
+                  color: litCount >= 4
+                      ? _coral
+                      : (litCount >= 2 ? _amber : _emerald),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
           const SizedBox(height: 14),
-          Wrap(
-            spacing: spacing,
-            runSpacing: spacing,
-            children: [
-              for (final light in lights)
-                SizedBox(
-                  width: cardWidth,
-                  child: _buildSingleCrisisLightCard(light),
-                ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Container(
-            key: const ValueKey('crisis-observatory-ad-banner'),
-            padding: const EdgeInsets.all(13),
-            decoration: BoxDecoration(
-              color: _obsidian,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: adAccent.withValues(alpha: 0.45)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: adAccent.withValues(alpha: 0.14),
-                        borderRadius: BorderRadius.circular(5),
-                        border: Border.all(color: adAccent.withValues(alpha: 0.45)),
-                      ),
-                      child: Text(
-                        w(text(ad['status_en']), text(ad['status_zh'])),
-                        style: TextStyle(
-                          color: adAccent,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
+          Container(height: 1, color: p.border),
+          for (var r = 0; r < rowsCount; r++) ...[
+            if (r > 0) Container(height: 1, color: p.border),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var c = 0; c < cols; c++) ...[
+                    if (c > 0) Container(width: 1, color: p.border),
+                    Expanded(
+                      child: (r * cols + c < lights.length)
+                          ? _buildCleanLightCell(
+                              lights[r * cols + c],
+                              compact: compact,
+                            )
+                          : const SizedBox.shrink(),
                     ),
-                    Text(
-                      w(
-                        'AD ${_numVal(ad['ad_line']).toStringAsFixed(0)} vs 50DMA ${_numVal(ad['ad_sma50']).toStringAsFixed(0)} (${_numVal(ad['spread_vs_50ma']) >= 0 ? '+' : ''}${_numVal(ad['spread_vs_50ma']).toStringAsFixed(0)})',
-                        '腾落线 AD ${_numVal(ad['ad_line']).toStringAsFixed(0)} vs 50DMA ${_numVal(ad['ad_sma50']).toStringAsFixed(0)}（差值 ${_numVal(ad['spread_vs_50ma']) >= 0 ? '+' : ''}${_numVal(ad['spread_vs_50ma']).toStringAsFixed(0)}）',
-                      ),
-                      style: TextStyle(
-                        color: p.text,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if (text(ad['last_top_divergence_date']).isNotEmpty)
-                      Text(
-                        w(
-                          'Last Pre-Crash ATH<=5% Divergence: ${text(ad['last_top_divergence_date'])}',
-                          '最近一次高位顶背离信号日: ${text(ad['last_top_divergence_date'])}',
-                        ),
-                        style: const TextStyle(color: _sky, fontSize: 11.5, fontWeight: FontWeight.w600),
-                      ),
                   ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  w(text(ad['note_en']), text(ad['note_zh'])),
-                  style: const TextStyle(color: _slate, fontSize: 12, height: 1.4),
-                ),
-              ],
+                ],
+              ),
             ),
+          ],
+          Container(height: 1, color: p.border),
+          const SizedBox(height: 12),
+          Row(
+            key: const ValueKey('crisis-observatory-ad-banner'),
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: adTopDiv ? _amber : (adBelow ? _coral : _emerald),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  adBelow
+                      ? w(
+                          'US Stock Advance-Decline Line (AD Line): Below 50DMA (${_numVal(ad['ad_line']).toStringAsFixed(0)} vs ${_numVal(ad['ad_sma50']).toStringAsFixed(0)}${text(ad['last_top_divergence_date']).isNotEmpty ? ' · Top divergence ${text(ad['last_top_divergence_date'])}' : ''})',
+                          '全美股票涨跌线（AD Line）：低于 50 日均线（${_numVal(ad['ad_line']).toStringAsFixed(0)} vs ${_numVal(ad['ad_sma50']).toStringAsFixed(0)}${text(ad['last_top_divergence_date']).isNotEmpty ? ' · 顶背离预警 ${text(ad['last_top_divergence_date'])}' : ''}）',
+                        )
+                      : w(
+                          'US Stock Advance-Decline Line (AD Line): Above 50DMA (Healthy Breadth)',
+                          '全美股票涨跌线（AD Line）：站上 50 日均线（宽度健康）',
+                        ),
+                  style: TextStyle(color: p.muted, fontSize: 12.5),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSingleCrisisLightCard(Map<String, dynamic> light) {
+  (String, String, String) _cleanLightDisplay(Map<String, dynamic> light) {
+    final keyStr = text(light['key']);
+    final rawReading = text(light['reading_value']);
+    var primary = rawReading;
+    final parenIdx = rawReading.indexOf('(');
+    if (parenIdx > 0) {
+      primary = rawReading.substring(0, parenIdx).trim();
+    }
+    primary = primary
+        .replaceFirst('2Y ', '')
+        .replaceFirst('10Y-2Y ', '')
+        .replaceFirst(' >200D', '');
+
+    return switch (keyStr) {
+      'sig1_fed' => (
+        w('Front-End Rates', '短端利率'),
+        primary,
+        w('2Y Treasury vs 12M low & 63DMA', '2年期美债较年内低点显著抬升'),
+      ),
+      'sig2_credit' => (
+        w('Credit Spread', '信用利差'),
+        primary,
+        w('Corporate Baa-10Y spread widening', '企业信用利差走阔破季线'),
+      ),
+      'sig3_breadth' => (
+        w('Market Breadth', '市场宽度'),
+        primary,
+        w('Share of stocks above 200DMA', '站上年线个股占比显著回落'),
+      ),
+      'sig4_copper' => (
+        w('Industrial Copper', '工业铜价'),
+        primary,
+        w('COMEX copper vs 12M high & 63DMA', '铜价较年内高点回撤破季线'),
+      ),
+      'sig5_defensive' => (
+        w('Defensive Rotation', '防御抱团'),
+        primary,
+        w('Utilities/Staples/Health vs Cyclicals', '防御板块相对周期板块走强'),
+      ),
+      'sig6_macro' => (
+        w('Yield Curve', '收益率曲线'),
+        primary,
+        w('10Y-2Y curve flattening / NFCI', '期限利差压平与金融条件收紧'),
+      ),
+      _ => (
+        w(text(light['short_en']), text(light['short_zh'])),
+        primary,
+        w(text(light['threshold_en']), text(light['threshold_zh'])),
+      ),
+    };
+  }
+
+  Widget _buildCleanLightCell(
+    Map<String, dynamic> light, {
+    required bool compact,
+  }) {
     final lit = light['lit'] == true;
     final keyStr = text(light['key']);
-    final idx = _numVal(light['index']).round();
-    final accent = lit ? _coral : _slate;
+    final info = _cleanLightDisplay(light);
 
-    return Container(
+    return Padding(
       key: ValueKey('crisis-light-card-$keyStr'),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _obsidian,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: lit ? _coral.withValues(alpha: 0.45) : _hairline,
-        ),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 4 : 14,
+        vertical: 14,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Row(
             children: [
@@ -1161,135 +965,112 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 width: 8,
                 height: 8,
                 decoration: BoxDecoration(
-                  color: lit ? _coral : _hairline,
+                  color: lit ? _coral : Colors.transparent,
                   shape: BoxShape.circle,
-                  boxShadow: lit
-                      ? [
-                          BoxShadow(
-                            color: _coral.withValues(alpha: 0.65),
-                            blurRadius: 6,
-                          ),
-                        ]
-                      : null,
+                  border: lit
+                      ? null
+                      : Border.all(
+                          color: p.muted.withValues(alpha: 0.5),
+                          width: 1.4,
+                        ),
                 ),
               ),
-              const SizedBox(width: 7),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  '#$idx · ${w(text(light['name_en']), text(light['name_zh']))}',
+                  info.$1,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: p.text,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: lit ? _coral.withValues(alpha: 0.16) : _surfaceRaised,
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(
-                    color: lit ? _coral.withValues(alpha: 0.5) : _hairline,
-                  ),
-                ),
-                child: Text(
-                  lit ? w('ON', '亮灯') : w('OFF', '熄灭'),
-                  style: TextStyle(
-                    color: accent,
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  text(light['reading_value']),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: lit ? _amber : p.text,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  text(light['secondary_value']),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: _slate,
-                    fontSize: 11,
+                    fontSize: 13.5,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
+              Text(
+                info.$2,
+                style: TextStyle(
+                  color: lit ? _coral : p.text,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            w(text(light['threshold_en']), text(light['threshold_zh'])),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _slate, fontSize: 11, height: 1.35),
+          const SizedBox(height: 5),
+          Padding(
+            padding: const EdgeInsets.only(left: 16),
+            child: Text(
+              info.$3,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: p.muted, fontSize: 11.5),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildEquityCurveAndZoomSection(
+  // ===========================================================================
+  // BLOCK 3: Hero Interactive Chart + Crisis Zoom-In (历史保护策略 vs 死拿 QQQ)
+  // ===========================================================================
+  Widget _buildHeroChartBlock(
     Map<String, dynamic> doc, {
     required bool compact,
     required bool desktop,
   }) {
     final allDaily = asList(doc['daily_series']);
     final windows = asList(doc['crisis_windows']);
-    final (effStart, effEnd) = _resolvedRange(allDaily.length);
-    final isZoomed =
-        allDaily.length > 1 && (effStart > 0 || effEnd < allDaily.length - 1);
-    final activeWin =
-        (selectedWindowId != 'ALL' && selectedWindowId != 'CUSTOM')
-            ? _findWindow(doc, selectedWindowId)
-            : null;
+    final activeWin = (selectedWindowId == 'ALL' ||
+            selectedWindowId == '1Y' ||
+            selectedWindowId == '3Y')
+        ? null
+        : _findWindow(doc, selectedWindowId);
 
-    final List<Map<String, dynamic>> visibleDaily = allDaily.isEmpty
-        ? const []
-        : allDaily.sublist(effStart, effEnd + 1);
+    final List<Map<String, dynamic>> visibleDaily;
+    if (activeWin != null) {
+      visibleDaily = allDaily.where((row) {
+        final dt = text(row['date']);
+        return dt.compareTo(text(activeWin['start_date'])) >= 0 &&
+            dt.compareTo(text(activeWin['end_date'])) <= 0;
+      }).toList();
+    } else if (selectedWindowId == '1Y' && allDaily.length > 252) {
+      visibleDaily = allDaily.sublist(allDaily.length - 252);
+    } else if (selectedWindowId == '3Y' && allDaily.length > 756) {
+      visibleDaily = allDaily.sublist(allDaily.length - 756);
+    } else {
+      visibleDaily = allDaily;
+    }
 
-    final visStartDate =
-        visibleDaily.isNotEmpty ? text(visibleDaily.first['date']) : '';
-    final visEndDate =
-        visibleDaily.isNotEmpty ? text(visibleDaily.last['date']) : '';
-
+    final rebasedMode = selectedWindowId != 'ALL';
     final stratSummary = _findStrategySummary(doc, selectedStrategyId);
     final bhSummary = _findStrategySummary(doc, 'BH_Pure_QQQ');
     final navKey = _strategyNavKeys[selectedStrategyId] ?? 'nav_u1';
 
     final allEvents = _currentEventsForStrategy(doc);
+    final visibleStart = visibleDaily.isNotEmpty
+        ? text(visibleDaily.first['date'])
+        : '';
+    final visibleEnd = visibleDaily.isNotEmpty
+        ? text(visibleDaily.last['date'])
+        : '';
     final visibleEvents = visibleDaily.isEmpty
         ? const <Map<String, dynamic>>[]
         : allEvents.where((ev) {
             final dt = text(ev['date']);
-            return dt.compareTo(visStartDate) >= 0 &&
-                dt.compareTo(visEndDate) <= 0;
+            return dt.compareTo(visibleStart) >= 0 &&
+                dt.compareTo(visibleEnd) <= 0;
           }).toList();
 
-    final hoveredRow =
-        (hoverIndex >= 0 && hoverIndex < visibleDaily.length)
+    final isHoverActive = hoverIndex >= 0 && hoverIndex < visibleDaily.length;
+    final hoveredRow = isHoverActive
         ? visibleDaily[hoverIndex]
-        : (visibleDaily.isNotEmpty ? visibleDaily.last : const <String, dynamic>{});
+        : (visibleDaily.isNotEmpty
+              ? visibleDaily.last
+              : const <String, dynamic>{});
 
     final startStratNav = visibleDaily.isNotEmpty
         ? _numVal(visibleDaily.first[navKey], 200000)
@@ -1297,102 +1078,52 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final startBhNav = visibleDaily.isNotEmpty
         ? _numVal(visibleDaily.first['nav_bh'], 200000)
         : 200000.0;
-    final endStratNav = visibleDaily.isNotEmpty
-        ? _numVal(visibleDaily.last[navKey], startStratNav)
-        : startStratNav;
-    final endBhNav = visibleDaily.isNotEmpty
-        ? _numVal(visibleDaily.last['nav_bh'], startBhNav)
-        : startBhNav;
 
     final hovStratNav = _numVal(hoveredRow[navKey]);
     final hovBhNav = _numVal(hoveredRow['nav_bh']);
-    final hovStratRebased = startStratNav > 0 ? (hovStratNav / startStratNav) * 100 : 100.0;
-    final hovBhRebased = startBhNav > 0 ? (hovBhNav / startBhNav) * 100 : 100.0;
-    final rebasedActive = isZoomed && useRebasedZoom;
+    final hovStratRet = startStratNav > 0
+        ? (hovStratNav / startStratNav - 1) * 100
+        : 0.0;
+    final hovBhRet = startBhNav > 0 ? (hovBhNav / startBhNav - 1) * 100 : 0.0;
 
-    double winStratRetPct = 0;
-    double winBhRetPct = 0;
-    double winStratMddPct = 0;
-    double winBhMddPct = 0;
-    if (visibleDaily.length >= 2) {
-      winStratRetPct =
-          startStratNav > 0 ? (endStratNav / startStratNav - 1.0) * 100.0 : 0.0;
-      winBhRetPct =
-          startBhNav > 0 ? (endBhNav / startBhNav - 1.0) * 100.0 : 0.0;
-      var pkS = startStratNav;
-      var pkB = startBhNav;
-      for (final row in visibleDaily) {
-        final sv = _numVal(row[navKey], pkS);
-        final bv = _numVal(row['nav_bh'], pkB);
-        if (sv > pkS) pkS = sv;
-        if (bv > pkB) pkB = bv;
-        final ddS = pkS > 0 ? (sv / pkS - 1.0) * 100.0 : 0.0;
-        final ddB = pkB > 0 ? (bv / pkB - 1.0) * 100.0 : 0.0;
-        if (ddS < winStratMddPct) winStratMddPct = ddS;
-        if (ddB < winBhMddPct) winBhMddPct = ddB;
-      }
+    final strategyTabs = [
+      ..._primaryStrategies,
+      if (!_primaryStrategies.contains(selectedStrategyId)) selectedStrategyId,
+    ];
+
+    final String subtitleText;
+    if (activeWin != null) {
+      subtitleText = w(
+        'Zoomed In: ${_humanWindowTitle(activeWin)} (Rebased to 100)',
+        '危机放大：${_humanWindowTitle(activeWin)}（起点归 100）',
+      );
+    } else if (selectedWindowId == '1Y') {
+      subtitleText = w(
+        'Trailing 1 Year ($visibleStart to $visibleEnd, Rebased to 100)',
+        '近 1 年走势（$visibleStart 至 $visibleEnd · 起点归 100）',
+      );
+    } else if (selectedWindowId == '3Y') {
+      subtitleText = w(
+        'Trailing 3 Years ($visibleStart to $visibleEnd, Rebased to 100)',
+        '近 3 年走势（$visibleStart 至 $visibleEnd · 起点归 100）',
+      );
+    } else {
+      subtitleText = w(
+        '\$200,000 initial capital (2015–2026, dividends reinvested)',
+        '\$200,000 起投（2015–2026 股息再投 · 含真实期权滑点）',
+      );
     }
-    final winExcessPct = winStratRetPct - winBhRetPct;
-    final tpEventsInWin = visibleEvents
-        .where((e) {
-          final et = text(e['event_type']);
-          return et == 'vix110_tp' || et == 'tp_exit';
-        })
-        .length;
-    final openEventsInWin = visibleEvents
-        .where((e) {
-          final et = text(e['event_type']);
-          return et == 'slot1_naked_put' ||
-              et.endsWith('_collar') ||
-              et == 'open_naked_put' ||
-              et == 'open_collar';
-        })
-        .length;
-
-    final canZoomIn = (effEnd - effStart) > _minZoomSpan;
-    final canZoomOut = isZoomed;
-    final canPanLeft = isZoomed && effStart > 0;
-    final canPanRight = isZoomed && effEnd < allDaily.length - 1;
-
-    final String headerTitle = activeWin != null
-        ? (rebasedActive
-            ? w(
-                'Zoomed In: ${text(activeWin['title_en'])} (Rebased to 100.0 at Window Start)',
-                '危机放大视图：${text(activeWin['title_zh'])}（窗口起点归一化 = 100.0）',
-              )
-            : w(
-                'Zoomed In: ${text(activeWin['title_en'])} ($visStartDate -> $visEndDate)',
-                '危机放大视图：${text(activeWin['title_zh'])}（$visStartDate -> $visEndDate）',
-              ))
-        : (isZoomed
-            ? (rebasedActive
-                ? w(
-                    'Custom Range: $visStartDate -> $visEndDate (${visibleDaily.length}D · Rebased to 100.0)',
-                    '自定义观测时段：$visStartDate -> $visEndDate（${visibleDaily.length} 个交易日 · 起点归一化 = 100.0）',
-                  )
-                : w(
-                    'Custom Range: $visStartDate -> $visEndDate (${visibleDaily.length}D · Absolute NAV \$)',
-                    '自定义观测时段：$visStartDate -> $visEndDate（${visibleDaily.length} 个交易日 · 美元净值）',
-                  ))
-            : w(
-                'Full-Cycle Compounding (2015-01-02 to ${text(doc['as_of_date'])}) · Drag Slider or Click Any Crisis to Zoom In',
-                '2015-2026 完整周期净值对比 · 支持拖动下方时间滑块、快捷时段按钮或危机胶囊任意缩放',
-              ));
 
     return Container(
       key: const ValueKey('crisis-observatory-chart-section'),
-      padding: EdgeInsets.all(compact ? 14 : 18),
-      decoration: BoxDecoration(
-        color: _surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _hairline),
-      ),
+      padding: EdgeInsets.all(compact ? 16 : 22),
+      decoration: _calmSurfaceDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Wrap(
-            spacing: 10,
-            runSpacing: 8,
+            spacing: 16,
+            runSpacing: 12,
             alignment: WrapAlignment.spaceBetween,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
@@ -1401,311 +1132,218 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 children: [
                   Text(
                     w(
-                      'HISTORICAL EQUITY CURVE & INTERACTIVE TIME-RANGE ZOOM INSPECTOR (\$200K DRIP START)',
-                      '历史纯期权保护 vs 纯持有 QQQ 净值曲线与交互式时段放大镜（\$200,000 起投股息再投）',
+                      'Protected Strategy vs Buy & Hold QQQ',
+                      '历史保护策略 vs 死拿 QQQ',
                     ),
-                    style: const TextStyle(
-                      color: _mint,
-                      fontSize: 11,
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: compact ? 16 : 17.5,
                       fontWeight: FontWeight.w700,
-                      letterSpacing: 0.4,
                     ),
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    headerTitle,
-                    style: TextStyle(
-                      color: p.text,
-                      fontSize: compact ? 14.5 : 16,
-                      fontWeight: FontWeight.w800,
-                    ),
+                    subtitleText,
+                    style: TextStyle(color: p.muted, fontSize: 12),
                   ),
                 ],
               ),
               Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: compact ? 16 : 24,
+                runSpacing: 8,
                 children: [
-                  if (isZoomed) ...[
-                    _scaleToggleBtn(
-                      key: const ValueKey('crisis-rebased-toggle-btn'),
-                      label: rebasedActive
-                          ? w('Rebased 100', '归一化 = 100')
-                          : w('USD NAV (\$)', '美元净值 (\$)'),
-                      active: true,
-                      onTap: () =>
-                          setState(() => useRebasedZoom = !useRebasedZoom),
+                  _heroStatMetric(
+                    label: w('Ending Value', '策略终值'),
+                    value: _fmtUsd(_numVal(stratSummary['end_nav'])),
+                    sub: w(
+                      'vs QQQ ${_fmtUsd(_numVal(bhSummary['end_nav']))}',
+                      '死拿 ${_fmtUsd(_numVal(bhSummary['end_nav']))}',
                     ),
-                    OutlinedButton.icon(
-                      key: const ValueKey('crisis-zoom-reset-btn'),
-                      onPressed: () =>
-                          _applyWindowSelection(allDaily, doc, 'ALL'),
-                      icon: const Icon(
-                        Icons.zoom_out_map,
-                        size: 14,
-                        color: _mint,
-                      ),
-                      label: Text(
-                        w('Reset Full Range', '重置全景'),
-                        style: const TextStyle(color: _mint, fontSize: 12),
-                      ),
+                    color: p.text,
+                  ),
+                  _heroStatMetric(
+                    label: w('Net Alpha', '累计超额'),
+                    value: _fmtUsd(
+                      _numVal(stratSummary['net_alpha_usd']),
+                      signed: true,
                     ),
-                  ],
-                  if (!rebasedActive) ...[
-                    _scaleToggleBtn(
-                      key: const ValueKey('crisis-scale-log-btn'),
-                      label: w('Log Scale', '对数坐标'),
-                      active: useLogScale,
-                      onTap: () => setState(() => useLogScale = true),
+                    sub: w(
+                      'CAGR ${_numVal(stratSummary['cagr_pct']).toStringAsFixed(1)}%',
+                      '年化 ${_numVal(stratSummary['cagr_pct']).toStringAsFixed(1)}%',
                     ),
-                    _scaleToggleBtn(
-                      key: const ValueKey('crisis-scale-linear-btn'),
-                      label: w('Linear', '线性坐标'),
-                      active: !useLogScale,
-                      onTap: () => setState(() => useLogScale = false),
+                    color: _emerald,
+                  ),
+                  _heroStatMetric(
+                    label: w('Max Drawdown', '最大回撤'),
+                    value:
+                        '${_numVal(stratSummary['max_dd_pct']).toStringAsFixed(1)}%',
+                    sub: w(
+                      'vs ${_numVal(bhSummary['max_dd_pct']).toStringAsFixed(1)}%',
+                      '死拿 ${_numVal(bhSummary['max_dd_pct']).toStringAsFixed(1)}%',
                     ),
-                  ],
+                    color: p.text,
+                  ),
                 ],
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final sid in strategyTabs)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: _buildCalmStrategyTab(sid),
+                      ),
+                  ],
+                ),
+              ),
+              if (!rebasedMode)
+                InkWell(
+                  key: const ValueKey('crisis-scale-toggle'),
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: () => setState(() => useLogScale = !useLogScale),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: Text(
+                      useLogScale
+                          ? w('Scale: Log', '坐标：对数')
+                          : w('Scale: Linear', '坐标：线性'),
+                      style: TextStyle(
+                        color: p.muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                )
+              else
+                InkWell(
+                  key: const ValueKey('crisis-zoom-reset-btn'),
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: () {
+                    setState(() {
+                      selectedWindowId = 'ALL';
+                      hoverIndex = -1;
+                    });
+                    _emitSelection();
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: Text(
+                      w('Reset to All 12Y', '返回全部 12 年'),
+                      style: const TextStyle(
+                        color: _emerald,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 12),
-          // Strategy selector pills
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                for (final sid in _selectableStrategies)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: _buildStrategyPill(doc, sid),
+                _buildCleanZoomChip(
+                  id: 'ALL',
+                  label: w('All 12Y', '全部 12 年'),
+                  isLive: false,
+                ),
+                const SizedBox(width: 6),
+                _buildCleanZoomChip(
+                  id: '1Y',
+                  label: w('1Y', '近 1 年'),
+                  isLive: false,
+                ),
+                const SizedBox(width: 6),
+                _buildCleanZoomChip(
+                  id: '3Y',
+                  label: w('3Y', '近 3 年'),
+                  isLive: false,
+                ),
+                for (final win in windows) ...[
+                  const SizedBox(width: 6),
+                  _buildCleanZoomChip(
+                    id: text(win['id']),
+                    label: _humanWindowChipLabel(win),
+                    isLive: win['is_live'] == true,
                   ),
+                ],
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          // Full-cycle KPI comparison strip
-          _buildStrategyKpiStrip(
-            stratSummary,
-            bhSummary,
-            compact: compact,
-            desktop: desktop,
-          ),
-          const SizedBox(height: 12),
-          // Interactive Time-Range Presets + Precision Zoom/Pan Bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: _obsidian,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: _hairline),
-            ),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      w('Range:', '快捷时段:'),
-                      style: const TextStyle(
-                        color: _slate,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    for (final preset in const [
-                      ('6M', '6M', '近6月'),
-                      ('1Y', '1Y', '近1年'),
-                      ('3Y', '3Y', '近3年'),
-                      ('5Y', '5Y', '近5年'),
-                      ('ALL', 'ALL', '全周期'),
-                    ])
-                      _scaleToggleBtn(
-                        key: ValueKey('crisis-period-pill-${preset.$1}'),
-                        label: w(preset.$2, preset.$3),
-                        active: activePeriodPreset == preset.$1,
-                        onTap: () => _applyPeriodPreset(allDaily, preset.$1),
-                      ),
-                  ],
-                ),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    _zoomIconBtn(
-                      key: const ValueKey('crisis-pan-left-btn'),
-                      icon: Icons.chevron_left,
-                      label: w('Pan', '左移'),
-                      enabled: canPanLeft,
-                      onTap: () => _panRange(allDaily, -0.25),
-                    ),
-                    _zoomIconBtn(
-                      key: const ValueKey('crisis-zoom-in-btn'),
-                      icon: Icons.zoom_in,
-                      label: w('Zoom In', '放大'),
-                      enabled: canZoomIn,
-                      onTap: () => _zoomByFactor(allDaily, 0.55),
-                    ),
-                    _zoomIconBtn(
-                      key: const ValueKey('crisis-zoom-out-btn'),
-                      icon: Icons.zoom_out,
-                      label: w('Zoom Out', '缩小'),
-                      enabled: canZoomOut,
-                      onTap: () => _zoomByFactor(allDaily, 1.75),
-                    ),
-                    _zoomIconBtn(
-                      key: const ValueKey('crisis-pan-right-btn'),
-                      icon: Icons.chevron_right,
-                      label: w('Pan', '右移'),
-                      enabled: canPanRight,
-                      onTap: () => _panRange(allDaily, 0.25),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          // Crisis Zoom-In Pills
+          const SizedBox(height: 16),
           Wrap(
-            spacing: 7,
-            runSpacing: 7,
+            spacing: 16,
+            runSpacing: 6,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              _buildWindowZoomPill(
-                id: 'ALL',
-                label: w('All 2015-2026', '全周期 2015-2026'),
-                isLive: false,
-                onTap: () => _applyWindowSelection(allDaily, doc, 'ALL'),
-              ),
-              for (final win in windows)
-                _buildWindowZoomPill(
-                  id: text(win['id']),
-                  label: w(text(win['pill_en']), text(win['pill_zh'])),
-                  isLive: win['is_live'] == true,
-                  onTap: () =>
-                      _applyWindowSelection(allDaily, doc, text(win['id'])),
-                ),
-            ],
-          ),
-          if (isZoomed && visibleDaily.length >= 2) ...[
-            const SizedBox(height: 10),
-            Container(
-              key: const ValueKey('crisis-zoom-window-stats'),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-              decoration: BoxDecoration(
-                color: _obsidian,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _mint.withValues(alpha: 0.35)),
-              ),
-              child: Wrap(
+              Wrap(
                 spacing: 14,
-                runSpacing: 6,
+                runSpacing: 4,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  Text(
-                    w(
-                      'Window: $visStartDate -> $visEndDate (${visibleDaily.length}D)',
-                      '当前区间：$visStartDate -> $visEndDate（${visibleDaily.length} 交易日）',
-                    ),
-                    style: const TextStyle(
-                      color: _sky,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  _cleanLegendItem(
+                    color: _emerald,
+                    dashed: false,
+                    label: _humanStrategyLabel(selectedStrategyId),
                   ),
-                  Text(
-                    '${w('Strategy', '策略收益')} ${_fmtPct(winStratRetPct)} vs QQQ ${_fmtPct(winBhRetPct)} (${w('Excess', '超额')} ${_fmtPct(winExcessPct)})',
-                    style: TextStyle(
-                      color: winExcessPct >= 0 ? _mint : _coral,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w800,
-                    ),
+                  _cleanLegendItem(
+                    color: p.muted,
+                    dashed: true,
+                    label: w('Buy & Hold QQQ', '死拿 QQQ'),
                   ),
-                  Text(
-                    '${w('Window MDD', '区间最大回撤')}: ${_fmtPct(winStratMddPct, signed: false)} vs QQQ ${_fmtPct(winBhMddPct, signed: false)}',
-                    style: const TextStyle(
-                      color: _amber,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  _cleanMarkerLegend(
+                    symbol: '▲',
+                    color: _amber,
+                    label: w('Open Hedge', '买保护'),
                   ),
-                  Text(
-                    w(
-                      'Events: $openEventsInWin Opens · $tpEventsInWin Panic TPs',
-                      '区间期权信号：$openEventsInWin 次建仓 · $tpEventsInWin 次 1.10 止盈',
-                    ),
-                    style: const TextStyle(
-                      color: _slate,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  _cleanMarkerLegend(
+                    symbol: '◆',
+                    color: _emerald,
+                    label: w('Panic Harvest', '恐慌止盈'),
                   ),
                 ],
               ),
-            ),
-          ],
-          const SizedBox(height: 10),
-          // Legend + Live Hover Readout Bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            decoration: BoxDecoration(
-              color: _obsidian,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: _hairline),
-            ),
-            child: Wrap(
-              spacing: 14,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                _legendItem(
-                  _mint,
-                  w(
-                    text(stratSummary['short_en']).isEmpty
-                        ? selectedStrategyId
-                        : text(stratSummary['short_en']),
-                    text(stratSummary['short_zh']).isEmpty
-                        ? selectedStrategyId
-                        : text(stratSummary['short_zh']),
+              if (hoveredRow.isNotEmpty)
+                Text(
+                  !rebasedMode
+                      ? '${text(hoveredRow['date'])} · ${_fmtUsd(hovStratNav)} vs ${_fmtUsd(hovBhNav)} · VIX/3M ${_numVal(hoveredRow['vix_ratio']).toStringAsFixed(2)}'
+                      : '${text(hoveredRow['date'])} · ${_fmtPct(hovStratRet)} vs QQQ ${_fmtPct(hovBhRet)} · QQQ \$${_numVal(hoveredRow['qqq_close']).toStringAsFixed(1)}',
+                  style: TextStyle(
+                    color: p.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                _legendItem(_sky, w('Pure QQQ Hold (DRIP)', '纯持有 QQQ (股息再投)')),
-                _legendItem(_amber, w('▲ Slot 1 Naked Put', '▲ 首仓裸 Put')),
-                _legendItem(_lilac, w('● Slot 2 Collar', '● 次仓 Collar')),
-                _legendItem(_mint, w('◆ 1.10 Panic TP', '◆ 1.10 恐慌止盈')),
-                if (hoveredRow.isNotEmpty)
-                  Text(
-                    rebasedActive
-                        ? '${text(hoveredRow['date'])} · ${w('Idx', '归一化')} ${hovStratRebased.toStringAsFixed(1)} vs QQQ ${hovBhRebased.toStringAsFixed(1)} · QQQ \$${_numVal(hoveredRow['qqq_close']).toStringAsFixed(2)} · ${w('Lights', '灯')} ${_numVal(hoveredRow['crisis_lights']).round()}/6 · VIX/3M ${_numVal(hoveredRow['vix_ratio']).toStringAsFixed(2)}'
-                        : '${text(hoveredRow['date'])} · ${_fmtUsd(hovStratNav)} vs QQQ ${_fmtUsd(hovBhNav)} · ${w('Lights', '危机灯')} ${_numVal(hoveredRow['crisis_lights']).round()}/6 · VIX/3M ${_numVal(hoveredRow['vix_ratio']).toStringAsFixed(2)}',
-                    style: TextStyle(
-                      color: p.text,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-              ],
-            ),
+            ],
           ),
           const SizedBox(height: 10),
-          // Interactive Multi-Track CustomPainter Canvas + Floating Hover Tooltip
           LayoutBuilder(
             builder: (context, chartConstraints) {
               final chartWidth = chartConstraints.maxWidth;
-              final chartHeight = compact ? 350.0 : 420.0;
-              final isHoverActive =
-                  hoverIndex >= 0 && hoverIndex < visibleDaily.length;
-              final activeHoverRow = isHoverActive
-                  ? visibleDaily[hoverIndex]
-                  : const <String, dynamic>{};
+              final mainHeight = compact ? 290.0 : 350.0;
+              final totalHeight = showSignalSubTrack
+                  ? mainHeight + 84.0
+                  : mainHeight;
               final hoverEvents = isHoverActive
                   ? _eventsNearHoverIndex(
                       visibleDaily: visibleDaily,
@@ -1739,174 +1377,78 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     chartWidth,
                     visibleDaily.length,
                   ),
-                  child: Container(
+                  child: SizedBox(
                     key: const ValueKey('crisis-observatory-canvas'),
-                    height: chartHeight,
-                    decoration: BoxDecoration(
-                      color: _obsidian,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: _hairline),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            child: CustomPaint(
-                              size: Size(chartWidth, chartHeight),
-                              painter: _CrisisObservatoryChartPainter(
-                                rows: visibleDaily,
-                                events: visibleEvents,
-                                navKey: navKey,
-                                rebasedMode: rebasedActive,
-                                useLogScale: !rebasedActive && useLogScale,
-                                hoverIndex: hoverIndex,
-                              ),
+                    width: chartWidth,
+                    height: totalHeight,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Positioned.fill(
+                          child: CustomPaint(
+                            size: Size(chartWidth, totalHeight),
+                            painter: _CrisisObservatoryChartPainter(
+                              rows: visibleDaily,
+                              events: visibleEvents,
+                              navKey: navKey,
+                              rebasedMode: rebasedMode,
+                              useLogScale: !rebasedMode && useLogScale,
+                              showSubTrack: showSignalSubTrack,
+                              hoverIndex: hoverIndex,
+                              borderColor: p.border,
+                              mutedColor: p.muted,
+                              textColor: p.text,
                             ),
                           ),
-                          if (isHoverActive && activeHoverRow.isNotEmpty)
-                            _buildChartHoverTooltip(
-                              row: activeHoverRow,
-                              hoverEvents: hoverEvents,
-                              stratSummary: stratSummary,
-                              navKey: navKey,
-                              startStratNav: startStratNav,
-                              startBhNav: startBhNav,
-                              isZoomed: isZoomed,
-                              rebasedActive: rebasedActive,
-                              hoverIdx: hoverIndex,
-                              totalVisible: visibleDaily.length,
-                              chartWidth: chartWidth,
-                              chartHeight: chartHeight,
-                              compact: compact,
-                            ),
-                        ],
-                      ),
+                        ),
+                        if (isHoverActive && hoveredRow.isNotEmpty)
+                          _buildCleanHoverTooltip(
+                            row: hoveredRow,
+                            hoverEvents: hoverEvents,
+                            navKey: navKey,
+                            startStratNav: startStratNav,
+                            startBhNav: startBhNav,
+                            rebasedMode: rebasedMode,
+                            hoverIdx: hoverIndex,
+                            totalVisible: visibleDaily.length,
+                            chartWidth: chartWidth,
+                            compact: compact,
+                          ),
+                      ],
                     ),
                   ),
                 ),
               );
             },
           ),
-          if (allDaily.length > _minZoomSpan + 1) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: _obsidian,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _hairline),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        visStartDate,
-                        style: const TextStyle(
-                          color: _mint,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: InkWell(
+              key: const ValueKey('crisis-subtrack-toggle'),
+              borderRadius: BorderRadius.circular(6),
+              onTap: () =>
+                  setState(() => showSignalSubTrack = !showSignalSubTrack),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: Text(
+                  showSignalSubTrack
+                      ? w(
+                          'Hide Crisis Lights & VIX Sub-Track',
+                          '收起危机灯与恐慌副图',
+                        )
+                      : w(
+                          'Show Crisis Lights & VIX Sub-Track',
+                          '展开危机灯与恐慌副图',
                         ),
-                      ),
-                      Expanded(
-                        child: Text(
-                          w(
-                            'Drag handles to adjust time range (${visibleDaily.length}/${allDaily.length} trading days)',
-                            '拖动两端滑块自由缩放/平移观测时段（${visibleDaily.length}/${allDaily.length} 交易日）',
-                          ),
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: _slate,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        visEndDate,
-                        style: const TextStyle(
-                          color: _mint,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 4,
-                      activeTrackColor: _mint,
-                      inactiveTrackColor: _hairline,
-                      thumbColor: _mint,
-                      overlayColor: _mint.withValues(alpha: 0.18),
-                      rangeThumbShape: const RoundRangeSliderThumbShape(
-                        enabledThumbRadius: 7,
-                      ),
-                      valueIndicatorColor: _surfaceRaised,
-                      valueIndicatorTextStyle: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    child: RangeSlider(
-                      key: const ValueKey('crisis-zoom-range-slider'),
-                      min: 0,
-                      max: (allDaily.length - 1).toDouble(),
-                      values: RangeValues(
-                        effStart.toDouble(),
-                        effEnd.toDouble(),
-                      ),
-                      labels: RangeLabels(visStartDate, visEndDate),
-                      onChanged: (rv) {
-                        var nextS = rv.start.round().clamp(0, allDaily.length - 1);
-                        var nextE = rv.end.round().clamp(0, allDaily.length - 1);
-                        if (nextE - nextS < _minZoomSpan) {
-                          if ((nextS - effStart).abs() > (nextE - effEnd).abs()) {
-                            nextS = math.max(0, nextE - _minZoomSpan);
-                          } else {
-                            nextE = math.min(
-                              allDaily.length - 1,
-                              nextS + _minZoomSpan,
-                            );
-                          }
-                        }
-                        if (nextS == effStart && nextE == effEnd) return;
-                        final isFull =
-                            nextS == 0 && nextE == allDaily.length - 1;
-                        setState(() {
-                          rangeStartIdx = nextS;
-                          rangeEndIdx = nextE;
-                          selectedWindowId = isFull ? 'ALL' : 'CUSTOM';
-                          activePeriodPreset = isFull ? 'ALL' : 'CUSTOM';
-                          hoverIndex = -1;
-                        });
-                      },
-                      onChangeEnd: (_) => _emitSelection(),
-                    ),
-                  ),
-                ],
+                  style: TextStyle(color: p.muted, fontSize: 11.5),
+                ),
               ),
             ),
-          ],
+          ),
         ],
       ),
     );
-  }
-
-  void _updateHoverFromDx(double dx, double width, int count) {
-    if (count <= 1 || width <= 64) return;
-    const padL = 54.0;
-    const padR = 14.0;
-    final plotW = math.max(1.0, width - padL - padR);
-    final rel = ((dx - padL) / plotW).clamp(0.0, 1.0);
-    final idx = (rel * (count - 1)).round().clamp(0, count - 1);
-    if (idx != hoverIndex) {
-      setState(() => hoverIndex = idx);
-    }
   }
 
   List<Map<String, dynamic>> _eventsNearHoverIndex({
@@ -1927,11 +1469,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         .toList();
     if (exact.isNotEmpty) return exact;
 
-    // On dense multi-year ranges, snap to the nearest marker within 9px of crosshair
     final n = visibleDaily.length;
     if (n <= 1) return const [];
-    const padL = 54.0;
-    const padR = 14.0;
+    const padL = 52.0;
+    const padR = 12.0;
     final plotW = math.max(1.0, chartWidth - padL - padR);
     final hoverX = padL + (hoverIdx / (n - 1)) * plotW;
 
@@ -1939,7 +1480,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       for (var i = 0; i < n; i++) text(visibleDaily[i]['date']): i,
     };
     String? bestDate;
-    var bestDist = 9.5;
+    var bestDist = 9.0;
     for (final ev in visibleEvents) {
       final evDate = text(ev['date']);
       final evIdx = idxByDate[evDate];
@@ -1955,544 +1496,162 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     return visibleEvents.where((ev) => text(ev['date']) == bestDate).toList();
   }
 
-  Widget _buildChartHoverTooltip({
+  Widget _buildCleanHoverTooltip({
     required Map<String, dynamic> row,
     required List<Map<String, dynamic>> hoverEvents,
-    required Map<String, dynamic> stratSummary,
     required String navKey,
     required double startStratNav,
     required double startBhNav,
-    required bool isZoomed,
-    required bool rebasedActive,
+    required bool rebasedMode,
     required int hoverIdx,
     required int totalVisible,
     required double chartWidth,
-    required double chartHeight,
     required bool compact,
   }) {
-    const padL = 54.0;
-    const padR = 14.0;
+    const padL = 52.0;
+    const padR = 12.0;
     final plotW = math.max(1.0, chartWidth - padL - padR);
-    final hx = totalVisible > 1
+    final cursorX = totalVisible > 1
         ? padL + (hoverIdx / (totalVisible - 1)) * plotW
         : padL;
-    final tooltipW = compact ? math.min(272.0, chartWidth - 18.0) : 336.0;
-    final placeRight = hx + 14.0 + tooltipW <= chartWidth - 8.0;
-    final double leftPos = placeRight
-        ? hx + 14.0
-        : (hx - tooltipW - 14.0).clamp(
-            8.0,
-            math.max(8.0, chartWidth - tooltipW - 8.0),
-          );
+    final cardWidth = math.min(compact ? 230.0 : 270.0, chartWidth - 16.0);
+    final placeLeft = cursorX > chartWidth * 0.56;
+    final rawLeft = placeLeft ? cursorX - cardWidth - 12.0 : cursorX + 12.0;
+    final clampedLeft = rawLeft.clamp(4.0, math.max(4.0, chartWidth - cardWidth - 4.0));
 
-    final dt = text(row['date']);
-    final qqqClose = _numVal(row['qqq_close']);
-    final ddAth = _numVal(row['dd_ath_pct']);
     final stratNav = _numVal(row[navKey]);
     final bhNav = _numVal(row['nav_bh']);
-    final stratWinRet =
-        startStratNav > 0 ? (stratNav / startStratNav - 1.0) * 100.0 : 0.0;
-    final bhWinRet =
-        startBhNav > 0 ? (bhNav / startBhNav - 1.0) * 100.0 : 0.0;
-    final winExcess = stratWinRet - bhWinRet;
-    final stratRebased =
-        startStratNav > 0 ? (stratNav / startStratNav) * 100.0 : 100.0;
-    final bhRebased = startBhNav > 0 ? (bhNav / startBhNav) * 100.0 : 100.0;
-    final dollarAlpha = stratNav - bhNav;
-
-    final lightsCount = _numVal(row['crisis_lights']).round();
-    final lightsMask = _numVal(row['lights_mask']).round();
-    final vix = _numVal(row['vix']);
-    final vix3m = _numVal(row['vix3m']);
+    final stratRet = startStratNav > 0 ? (stratNav / startStratNav - 1) * 100 : 0.0;
+    final bhRet = startBhNav > 0 ? (bhNav / startBhNav - 1) * 100 : 0.0;
+    final lights = _numVal(row['crisis_lights']).round();
     final vixRatio = _numVal(row['vix_ratio']);
-    final vxn = _numVal(row['vxn']);
-    final adVs50 = _numVal(row['ad_vs_50ma']);
-    final activeSlots = _numVal(row['active_slots']).round();
+    final qqqClose = _numVal(row['qqq_close']);
 
-    final stratLabel = w(
-      text(stratSummary['short_en']).isEmpty
-          ? selectedStrategyId
-          : text(stratSummary['short_en']),
-      text(stratSummary['short_zh']).isEmpty
-          ? selectedStrategyId
-          : text(stratSummary['short_zh']),
-    );
-
-    final lightNames = <(int, String, String)>[
-      (1, 'Rates', '利率'),
-      (2, 'Credit', '信用'),
-      (4, 'Breadth', '宽度'),
-      (8, 'Copper', '铜价'),
-      (16, 'Def/Cyc', '防御'),
-      (32, 'Curve', '曲线'),
-    ];
-    final litLabels = [
-      for (final item in lightNames)
-        if ((lightsMask & item.$1) != 0) w(item.$2, item.$3),
-    ];
-
-    Color borderColor = _hairline;
-    if (hoverEvents.isNotEmpty) {
-      final firstType = text(hoverEvents.first['event_type']);
-      if (firstType == 'vix110_tp' || firstType == 'tp_exit') {
-        borderColor = _mint.withValues(alpha: 0.75);
-      } else if (firstType == 'slot1_naked_put' ||
-          firstType == 'open_naked_put') {
-        borderColor = _amber.withValues(alpha: 0.75);
-      } else if (firstType.endsWith('_collar') || firstType == 'open_collar') {
-        borderColor = _lilac.withValues(alpha: 0.75);
+    double netPnlSum = 0;
+    double sharesSum = 0;
+    bool hasTp = false;
+    bool hasOpen = false;
+    for (final ev in hoverEvents) {
+      final et = text(ev['event_type']);
+      if (et == 'vix110_tp') {
+        hasTp = true;
+        netPnlSum += _numVal(ev['net_pnl_usd']);
+        sharesSum += _numVal(ev['shares_added']);
+      } else if (et.startsWith('slot')) {
+        hasOpen = true;
       }
     }
 
     return Positioned(
-      left: leftPos,
+      left: clampedLeft.toDouble(),
       top: 10,
-      width: tooltipW,
+      width: cardWidth,
       child: IgnorePointer(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: math.max(120, chartHeight - 24)),
-          child: Container(
-            key: const ValueKey('crisis-chart-hover-tooltip'),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: const Color(0xF20B1118),
-              borderRadius: BorderRadius.circular(9),
-              border: Border.all(color: borderColor, width: 1.1),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.6),
-                  blurRadius: 14,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: SingleChildScrollView(
-              physics: const NeverScrollableScrollPhysics(),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Container(
+          key: const ValueKey('crisis-chart-hover-tooltip'),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: p.card.withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: p.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 2,
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  // Header: Date + QQQ Spot & ATH DD
-                  Row(
-                    children: [
-                      Text(
-                        dt,
-                        style: TextStyle(
-                          color: p.text,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.centerRight,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: _surfaceRaised,
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(color: _hairline),
-                            ),
-                            child: Text(
-                              'QQQ \$${qqqClose.toStringAsFixed(2)} (${_fmtPct(ddAth, digits: 1)})',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: ddAth <= -5.0 ? _coral : _sky,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                  Text(
+                    text(row['date']),
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                  const SizedBox(height: 6),
-                  // Strategy vs QQQ NAV & Return
-                  _tooltipMetricRow(
-                    dotColor: _mint,
-                    label: stratLabel,
-                    value: rebasedActive
-                        ? '${stratRebased.toStringAsFixed(1)} (${_fmtPct(stratWinRet, digits: 1)}) · ${_fmtUsd(stratNav, compact: true)}'
-                        : '${_fmtUsd(stratNav)} (${_fmtPct(stratWinRet, digits: 1)})',
-                    valueColor: _mint,
+                  Text(
+                    'QQQ \$${qqqClose.toStringAsFixed(1)} · VIX/3M ${vixRatio.toStringAsFixed(2)}',
+                    style: TextStyle(color: p.muted, fontSize: 11),
                   ),
-                  const SizedBox(height: 3),
-                  _tooltipMetricRow(
-                    dotColor: _sky,
-                    label: w('Pure QQQ', '纯持 QQQ'),
-                    value: rebasedActive
-                        ? '${bhRebased.toStringAsFixed(1)} (${_fmtPct(bhWinRet, digits: 1)}) · ${_fmtUsd(bhNav, compact: true)}'
-                        : '${_fmtUsd(bhNav)} (${_fmtPct(bhWinRet, digits: 1)})',
-                    valueColor: _sky,
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Text(
-                        isZoomed
-                            ? w('Window Excess', '区间超额')
-                            : w('Cumulative Alpha', '累计净超额'),
-                        style: const TextStyle(color: _slate, fontSize: 10.5),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          isZoomed
-                              ? '${_fmtPct(winExcess)} (${_fmtUsd(dollarAlpha, signed: true, compact: true)})'
-                              : '${_fmtUsd(dollarAlpha, signed: true)} (${_fmtPct(winExcess)})',
-                          textAlign: TextAlign.right,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: (isZoomed ? winExcess : dollarAlpha) >= 0
-                                ? _mint
-                                : _coral,
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 11, color: _hairline),
-                  // Crisis Lights + Lit Tags + VIX/VIX3M + AD Breadth
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 5,
-                          vertical: 1.5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: (lightsCount >= 4 ? _coral : _mint)
-                              .withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          w('Lights $lightsCount/6', '危机灯 $lightsCount/6'),
-                          style: TextStyle(
-                            color: lightsCount >= 4 ? _coral : _mint,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          litLabels.isEmpty
-                              ? w('All 6 Clear', '六灯全灭')
-                              : litLabels.join(' · '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: _slate,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 3,
-                    children: [
-                      Text(
-                        'VIX ${vix.toStringAsFixed(1)} / 3M ${vix3m.toStringAsFixed(1)}',
-                        style: const TextStyle(color: _slate, fontSize: 10.5),
-                      ),
-                      Text(
-                        'VIX/3M ${vixRatio.toStringAsFixed(3)}${vixRatio >= 1.10 ? ' TP!' : ''}',
-                        style: TextStyle(
-                          color: vixRatio >= 1.10 ? _amber : p.text,
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      Text(
-                        'VXN ${vxn.toStringAsFixed(1)}',
-                        style: const TextStyle(color: _slate, fontSize: 10.5),
-                      ),
-                      Text(
-                        'AD ${adVs50 >= 0 ? '+' : ''}${adVs50.round()}',
-                        style: TextStyle(
-                          color: adVs50 < 0 ? _coral : _mint,
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      if (selectedStrategyId == 'U1_PureOptions')
-                        Text(
-                          w('Slots $activeSlots/2', '槽位 $activeSlots/2'),
-                          style: TextStyle(
-                            color: activeSlots > 0 ? _sky : _slate,
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                    ],
-                  ),
-                  // Option Event Callouts (if hovering on or near any marker!)
-                  if (hoverEvents.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    for (var i = 0; i < math.min(2, hoverEvents.length); i++) ...[
-                      if (i > 0) const SizedBox(height: 5),
-                      _buildTooltipEventCard(
-                        hoverEvents[i],
-                        hoveredDate: dt,
-                      ),
-                    ],
-                  ],
                 ],
               ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _tooltipMetricRow({
-    required Color dotColor,
-    required String label,
-    required String value,
-    required Color valueColor,
-  }) {
-    return Row(
-      children: [
-        Container(
-          width: 7,
-          height: 7,
-          decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 6),
-        Flexible(
-          flex: 4,
-          child: Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _slate, fontSize: 10.5),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Expanded(
-          flex: 6,
-          child: Text(
-            value,
-            textAlign: TextAlign.right,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: valueColor,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTooltipEventCard(
-    Map<String, dynamic> ev, {
-    required String hoveredDate,
-  }) {
-    final et = text(ev['event_type']);
-    final evDate = text(ev['date']);
-    final isTp = et == 'vix110_tp' || et == 'tp_exit';
-    final isNakedOpen = et == 'slot1_naked_put' || et == 'open_naked_put';
-    final isCollarOpen = et.endsWith('_collar') || et == 'open_collar';
-
-    final Color accent = isTp
-        ? _mint
-        : (isNakedOpen ? _amber : (isCollarOpen ? _lilac : _slate));
-    final String badgeText = isTp
-        ? w('◆ 1.10 PANIC TP', '◆ 1.10 恐慌止盈抄底')
-        : (isNakedOpen
-            ? w('▲ SLOT 1 NAKED PUT', '▲ 首仓 50% 裸 Put 建仓')
-            : (isCollarOpen
-                ? w('● ZERO-COST COLLAR', '● 零成本 Collar 建仓')
-                : w('90-DTE EXPIRY', '90-DTE 到期结算')));
-
-    final spot = _numVal(ev['spot']);
-    final kp = _numVal(ev['kp']);
-    final kc = ev['kc'] == null ? null : _numVal(ev['kc']);
-    final capPct = ev['call_cap_pct'] == null ? null : _numVal(ev['call_cap_pct']);
-    final strikeLine = kc == null
-        ? 'K_P=\$${kp.toStringAsFixed(2)} (${w('No Call Cap', '无卖Call封顶')})'
-        : 'K_P=\$${kp.toStringAsFixed(2)} / K_C=\$${kc.toStringAsFixed(2)}${capPct != null ? ' (+${capPct.toStringAsFixed(1)}%)' : ''}';
-    final triggerTxt = w(text(ev['trigger_en']), text(ev['trigger_zh']));
-    final netPnl = ev['net_pnl_usd'] == null ? null : _numVal(ev['net_pnl_usd']);
-    final shAdded = ev['shares_added'] == null ? null : _numVal(ev['shares_added']);
-
-    return Container(
-      key: ValueKey('crisis-hover-event-${text(ev['event_id'])}'),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: accent.withValues(alpha: 0.11),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: accent.withValues(alpha: 0.48)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  evDate != hoveredDate ? '$badgeText · $evDate' : badgeText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: accent,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                  ),
+              const SizedBox(height: 5),
+              Text(
+                rebasedMode
+                    ? '${_humanStrategyLabel(selectedStrategyId)} ${_fmtPct(stratRet)} vs QQQ ${_fmtPct(bhRet)}'
+                    : '${_fmtUsd(stratNav)} vs QQQ ${_fmtUsd(bhNav)}',
+                style: TextStyle(
+                  color: _emerald,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-              if (netPnl != null && (isTp || et == 'option_expiry')) ...[
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    '${_fmtUsd(netPnl, signed: true)} (${shAdded != null && shAdded >= 0 ? '+' : ''}${shAdded?.toStringAsFixed(1) ?? '0.0'} sh)',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      color: netPnl >= 0 ? _mint : _coral,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                    ),
+              const SizedBox(height: 3),
+              Text(
+                w(
+                  'Crisis Lights: $lights / 6 active',
+                  '当日危机灯：$lights / 6 亮起',
+                ),
+                style: TextStyle(color: p.muted, fontSize: 11),
+              ),
+              if (hasTp || hasOpen) ...[
+                const SizedBox(height: 6),
+                Container(height: 1, color: p.border),
+                const SizedBox(height: 6),
+                Text(
+                  hasTp
+                      ? w(
+                          '◆ 1.10 Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                          '◆ 1.10 恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                        )
+                      : w(
+                          '▲ Opened Protective Option Hedge (${text(hoverEvents.first['date'])})',
+                          '▲ 开启高位看跌期权保护（${text(hoverEvents.first['date'])}）',
+                        ),
+                  style: TextStyle(
+                    color: hasTp ? _emerald : _amber,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
             ],
           ),
-          const SizedBox(height: 2),
-          Text(
-            '@\$${spot.toStringAsFixed(2)} · $strikeLine',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: p.text,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          if (triggerTxt.isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Text(
-              triggerTxt,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: _slate, fontSize: 10),
-            ),
-          ],
-          if (isTp && ev['gamma_usd'] != null && ev['vega_usd'] != null) ...[
-            const SizedBox(height: 2),
-            Text(
-              'Delta ${_fmtUsd(_numVal(ev['delta_usd']), signed: true, compact: true)} · Gamma ${_fmtUsd(_numVal(ev['gamma_usd']), signed: true, compact: true)} · Vega ${_fmtUsd(_numVal(ev['vega_usd']), signed: true, compact: true)}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: _amber,
-                fontSize: 9.8,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
 
-  Widget _scaleToggleBtn({
-    Key? key,
+  Widget _heroStatMetric({
     required String label,
-    required bool active,
-    required VoidCallback onTap,
+    required String value,
+    required String sub,
+    required Color color,
   }) {
-    return InkWell(
-      key: key,
-      borderRadius: BorderRadius.circular(6),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: active ? _mint.withValues(alpha: 0.16) : _obsidian,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: active ? _mint : _hairline),
-        ),
-        child: Text(
-          label,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: p.muted, fontSize: 11)),
+        const SizedBox(height: 2),
+        Text(
+          value,
           style: TextStyle(
-            color: active ? _mint : _slate,
-            fontSize: 11.5,
+            color: color,
+            fontSize: 16.5,
             fontWeight: FontWeight.w700,
           ),
         ),
-      ),
+        Text(sub, style: TextStyle(color: p.muted, fontSize: 11)),
+      ],
     );
   }
 
-  Widget _zoomIconBtn({
-    Key? key,
-    required IconData icon,
-    required String label,
-    required bool enabled,
-    required VoidCallback onTap,
-  }) {
-    final fg = enabled ? p.text : _slate.withValues(alpha: 0.38);
-    return InkWell(
-      key: key,
-      borderRadius: BorderRadius.circular(6),
-      onTap: enabled ? onTap : null,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-        decoration: BoxDecoration(
-          color: enabled ? _surfaceRaised : _obsidian,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-            color: enabled ? _hairline : _hairline.withValues(alpha: 0.5),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: enabled ? _sky : fg),
-            const SizedBox(width: 3),
-            Text(
-              label,
-              style: TextStyle(
-                color: fg,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStrategyPill(Map<String, dynamic> doc, String sid) {
-    final s = _findStrategySummary(doc, sid);
+  Widget _buildCalmStrategyTab(String sid) {
     final active = selectedStrategyId == sid;
-    final label = w(
-      text(s['short_en']).isEmpty ? sid : text(s['short_en']),
-      text(s['short_zh']).isEmpty ? sid : text(s['short_zh']),
-    );
-    final alpha = _numVal(s['net_alpha_usd']);
-
     return InkWell(
       key: ValueKey('crisis-strategy-pill-$sid'),
       borderRadius: BorderRadius.circular(8),
@@ -2504,184 +1663,77 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         _emitSelection();
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
-          color: active ? _mint.withValues(alpha: 0.16) : _obsidian,
+          color: active ? p.text.withValues(alpha: 0.08) : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: active ? _mint : _hairline,
-            width: active ? 1.4 : 1.0,
+            color: active ? p.text.withValues(alpha: 0.28) : p.border,
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                color: active ? p.text : _slate,
-                fontSize: 12,
-                fontWeight: active ? FontWeight.w800 : FontWeight.w600,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              _fmtUsd(alpha, signed: true, compact: true),
-              style: TextStyle(
-                color: active ? _mint : _sky,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
+        child: Text(
+          _humanStrategyLabel(sid),
+          style: TextStyle(
+            color: active ? p.text : p.muted,
+            fontSize: 12.5,
+            fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildStrategyKpiStrip(
-    Map<String, dynamic> strat,
-    Map<String, dynamic> bh, {
-    required bool compact,
-    required bool desktop,
-  }) {
-    final tiles = [
-      (
-        w('Strategy End NAV', '保护策略期末净值'),
-        _fmtUsd(_numVal(strat['end_nav'])),
-        '${w('vs QQQ', '对比纯持')} ${_fmtUsd(_numVal(bh['end_nav']), compact: true)}',
-        _mint,
-      ),
-      (
-        w('Net Dollar Alpha', '累计净超额收益'),
-        _fmtUsd(_numVal(strat['net_alpha_usd']), signed: true),
-        '+${(_numVal(strat['final_shares']) - _numVal(bh['final_shares'])).toStringAsFixed(1)} QQQ sh',
-        _mint,
-      ),
-      (
-        w('CAGR (2015-2026)', '年化复合收益 CAGR'),
-        _fmtPct(_numVal(strat['cagr_pct']), signed: false),
-        'QQQ ${_fmtPct(_numVal(bh['cagr_pct']), signed: false)}',
-        _sky,
-      ),
-      (
-        w('Max Drawdown', '历史最大回撤 MDD'),
-        _fmtPct(_numVal(strat['max_dd_pct']), signed: false),
-        'QQQ ${_fmtPct(_numVal(bh['max_dd_pct']), signed: false)}',
-        _amber,
-      ),
-      (
-        w('Sharpe / Calmar', '夏普 / 卡玛比率'),
-        '${_numVal(strat['sharpe']).toStringAsFixed(3)} / ${_numVal(strat['calmar']).toStringAsFixed(3)}',
-        'QQQ ${_numVal(bh['sharpe']).toStringAsFixed(3)} / ${_numVal(bh['calmar']).toStringAsFixed(3)}',
-        _lilac,
-      ),
-    ];
-
-    if (desktop) {
-      return Row(
-        children: [
-          for (var i = 0; i < tiles.length; i++) ...[
-            if (i > 0) const SizedBox(width: 8),
-            Expanded(child: _kpiTile(tiles[i])),
-          ],
-        ],
-      );
-    }
-
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final t in tiles)
-          SizedBox(
-            width: compact ? 155 : 190,
-            child: _kpiTile(t),
-          ),
-      ],
-    );
-  }
-
-  Widget _kpiTile((String, String, String, Color) item) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: _obsidian,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _hairline),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            item.$1,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _slate, fontSize: 10.5),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            item.$2,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: item.$4,
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            item.$3,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _slate, fontSize: 10.5),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWindowZoomPill({
+  Widget _buildCleanZoomChip({
     required String id,
     required String label,
     required bool isLive,
-    required VoidCallback onTap,
   }) {
     final active = selectedWindowId == id;
-    final accent = isLive ? _coral : _sky;
     return InkWell(
       key: ValueKey('crisis-zoom-pill-$id'),
-      borderRadius: BorderRadius.circular(7),
-      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      onTap: () {
+        setState(() {
+          selectedWindowId = id;
+          if (id != 'ALL' && id != '1Y' && id != '3Y') {
+            activeForensicWindowId = id;
+            showFullLedger = false;
+          }
+          hoverIndex = -1;
+        });
+        _emitSelection();
+      },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5.5),
         decoration: BoxDecoration(
           color: active
-              ? accent.withValues(alpha: 0.18)
-              : (isLive ? _coral.withValues(alpha: 0.08) : _obsidian),
-          borderRadius: BorderRadius.circular(7),
+              ? _emerald.withValues(alpha: 0.14)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
           border: Border.all(
-            color: active
-                ? accent
-                : (isLive ? _coral.withValues(alpha: 0.45) : _hairline),
+            color: active ? _emerald.withValues(alpha: 0.65) : p.border,
           ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              id == 'ALL' ? Icons.public : Icons.zoom_in,
-              size: 13,
-              color: active ? accent : _slate,
-            ),
-            const SizedBox(width: 4),
+            if (isLive) ...[
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: _coral,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 5),
+            ],
             Text(
               label,
               style: TextStyle(
-                color: active ? p.text : (isLive ? _coral : _slate),
-                fontSize: 11.5,
-                fontWeight: active || isLive ? FontWeight.w700 : FontWeight.w500,
+                color: active ? p.text : p.muted,
+                fontSize: 12,
+                fontWeight: active ? FontWeight.w600 : FontWeight.w500,
               ),
             ),
           ],
@@ -2690,37 +1742,69 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     );
   }
 
-  Widget _legendItem(Color color, String label) {
+  Widget _cleanLegendItem({
+    required Color color,
+    required bool dashed,
+    required String label,
+  }) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 10,
-          height: 3,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        const SizedBox(width: 5),
-        Text(
-          label,
-          style: const TextStyle(
-            color: _slate,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        if (dashed)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(width: 5, height: 2, color: color),
+              const SizedBox(width: 2),
+              Container(width: 5, height: 2, color: color),
+            ],
+          )
+        else
+          Container(width: 12, height: 2.5, color: color),
+        const SizedBox(width: 6),
+        Text(label, style: TextStyle(color: p.muted, fontSize: 12)),
       ],
     );
   }
 
-  Widget _buildForensicDrawerAndLedgerSection(
+  Widget _cleanMarkerLegend({
+    required String symbol,
+    required Color color,
+    required String label,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          symbol,
+          style: TextStyle(color: color, fontSize: 10, height: 1),
+        ),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(color: p.muted, fontSize: 12)),
+      ],
+    );
+  }
+
+  void _updateHoverFromDx(double dx, double width, int count) {
+    if (count <= 1 || width <= 64) return;
+    const padL = 52.0;
+    const padR = 12.0;
+    final plotW = math.max(1.0, width - padL - padR);
+    final rel = ((dx - padL) / plotW).clamp(0.0, 1.0);
+    final idx = (rel * (count - 1)).round().clamp(0, count - 1);
+    if (idx != hoverIndex) {
+      setState(() => hoverIndex = idx);
+    }
+  }
+
+  // ===========================================================================
+  // BLOCK 4: Zoomed-In Crisis Story & Clean Action Timeline (危机复盘与具体操作)
+  // ===========================================================================
+  Widget _buildCrisisStoryAndTimelineBlock(
     Map<String, dynamic> doc, {
     required bool compact,
     required bool desktop,
   }) {
-    final allDaily = asList(doc['daily_series']);
     final windows = asList(doc['crisis_windows']);
     final forensicWin =
         _findWindow(doc, activeForensicWindowId) ??
@@ -2731,7 +1815,6 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     );
 
     final fullLedger = _currentLedgerForStrategy(doc);
-
     final winStart = text(forensicWin['start_date']);
     final winEnd = text(forensicWin['end_date']);
 
@@ -2762,21 +1845,16 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       winStratStats['shares_added_tp'],
       _numVal(forensicWin['shares_added']),
     );
-    final peakVixRatio = _numVal(forensicWin['peak_vix_ratio']);
 
     return Container(
       key: const ValueKey('crisis-observatory-forensic-section'),
-      padding: EdgeInsets.all(compact ? 14 : 18),
-      decoration: BoxDecoration(
-        color: _surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _hairline),
-      ),
+      padding: EdgeInsets.all(compact ? 16 : 22),
+      decoration: _calmSurfaceDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Wrap(
-            spacing: 10,
+            spacing: 12,
             runSpacing: 8,
             alignment: WrapAlignment.spaceBetween,
             crossAxisAlignment: WrapCrossAlignment.center,
@@ -2785,508 +1863,432 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    w(
-                      'CRISIS FORENSIC REPLAY & STEP-BY-STEP OPTION TRADE LEDGER',
-                      '历史危机切片复盘 × 逐笔裸 Put / Collar 期权操作明细台账',
-                    ),
-                    style: const TextStyle(
-                      color: _mint,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.4,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    w(
-                      text(forensicWin['title_en']),
-                      text(forensicWin['title_zh']),
-                    ),
+                    showFullLedger
+                        ? w(
+                            'All 12-Year Historical Operations (2015–2026)',
+                            '全部 12 年历史实战记录（2015–2026）',
+                          )
+                        : _humanWindowTitle(forensicWin),
                     style: TextStyle(
                       color: p.text,
-                      fontSize: compact ? 14.5 : 16,
-                      fontWeight: FontWeight.w800,
+                      fontSize: compact ? 16 : 17.5,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
+                  if (!showFullLedger) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      '$winStart → $winEnd',
+                      style: TextStyle(color: p.muted, fontSize: 12),
+                    ),
+                  ],
                 ],
               ),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final win in windows)
-                    InkWell(
-                      key: ValueKey('crisis-forensic-pill-${text(win['id'])}'),
-                      borderRadius: BorderRadius.circular(6),
-                      onTap: () {
-                        final id = text(win['id']);
-                        showFullLedger = false;
-                        _applyWindowSelection(allDaily, doc, id);
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: winId == text(win['id'])
-                              ? _sky.withValues(alpha: 0.18)
-                              : _obsidian,
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: winId == text(win['id']) ? _sky : _hairline,
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final win in windows) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: InkWell(
+                          key: ValueKey(
+                            'crisis-forensic-pill-${text(win['id'])}',
                           ),
-                        ),
-                        child: Text(
-                          w(text(win['pill_en']), text(win['pill_zh'])),
-                          style: TextStyle(
-                            color: winId == text(win['id']) ? p.text : _slate,
-                            fontSize: 11,
-                            fontWeight: winId == text(win['id'])
-                                ? FontWeight.w700
-                                : FontWeight.w500,
+                          borderRadius: BorderRadius.circular(999),
+                          onTap: () {
+                            final id = text(win['id']);
+                            setState(() {
+                              activeForensicWindowId = id;
+                              selectedWindowId = id;
+                              showFullLedger = false;
+                              hoverIndex = -1;
+                            });
+                            _emitSelection();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4.5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: !showFullLedger && winId == text(win['id'])
+                                  ? p.text.withValues(alpha: 0.09)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color:
+                                    !showFullLedger && winId == text(win['id'])
+                                    ? p.text.withValues(alpha: 0.28)
+                                    : p.border,
+                              ),
+                            ),
+                            child: Text(
+                              _humanWindowChipLabel(win),
+                              style: TextStyle(
+                                color:
+                                    !showFullLedger && winId == text(win['id'])
+                                    ? p.text
+                                    : p.muted,
+                                fontSize: 11.5,
+                                fontWeight:
+                                    !showFullLedger && winId == text(win['id'])
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
+                    ],
+                  ],
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          // Forensic narrative box
-          Container(
-            padding: const EdgeInsets.all(13),
-            decoration: BoxDecoration(
-              color: _obsidian,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _sky.withValues(alpha: 0.35)),
+          if (!showFullLedger) ...[
+            const SizedBox(height: 12),
+            Text(
+              w(
+                text(forensicWin['narrative_en']),
+                text(forensicWin['narrative_zh']),
+              ),
+              style: TextStyle(
+                color: p.muted,
+                fontSize: compact ? 12.5 : 13,
+                height: 1.55,
+              ),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: compact ? 20 : 36,
+              runSpacing: 12,
               children: [
-                Text(
-                  w(
-                    'Window: $winStart -> $winEnd (Crash Core: ${text(forensicWin['crash_start_date'])} -> ${text(forensicWin['crash_end_date'])})',
-                    '观测窗口：$winStart -> $winEnd（主跌核心段：${text(forensicWin['crash_start_date'])} -> ${text(forensicWin['crash_end_date'])}）',
+                _heroStatMetric(
+                  label: w('Drawdown vs QQQ', '区间回撤对比'),
+                  value:
+                      '${stratMdd.toStringAsFixed(1)}% vs ${qqqMdd.toStringAsFixed(1)}%',
+                  sub: w(
+                    'Protection ${_fmtPct(excessPct)}',
+                    '区间超额 ${_fmtPct(excessPct)}',
                   ),
-                  style: const TextStyle(
-                    color: _sky,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  color: excessPct >= 0 ? _emerald : p.text,
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  w(
-                    text(forensicWin['narrative_en']),
-                    text(forensicWin['narrative_zh']),
-                  ),
-                  style: TextStyle(
-                    color: p.text,
-                    fontSize: 12.5,
-                    height: 1.45,
-                  ),
+                _heroStatMetric(
+                  label: w('Option Profit Harvested', '期权止盈落袋'),
+                  value: _fmtUsd(harvestedUsd, signed: harvestedUsd > 0),
+                  sub: w('Monetized on panic spike', '恐慌倒挂变现现金'),
+                  color: harvestedUsd > 0 ? _emerald : p.text,
                 ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _forensicMiniStat(
-                      w('QQQ Window MDD', 'QQQ 窗口最大回撤'),
-                      _fmtPct(qqqMdd, signed: false),
-                      _coral,
-                    ),
-                    _forensicMiniStat(
-                      w('Strategy MDD', '保护策略最大回撤'),
-                      _fmtPct(stratMdd, signed: false),
-                      _mint,
-                    ),
-                    _forensicMiniStat(
-                      w('Window Excess', '危机窗口超额保护'),
-                      _fmtPct(excessPct),
-                      excessPct >= 0 ? _mint : _coral,
-                    ),
-                    _forensicMiniStat(
-                      w('Put Cash Harvested', '期权止盈变现现金'),
-                      _fmtUsd(harvestedUsd, signed: harvestedUsd > 0),
-                      _amber,
-                    ),
-                    _forensicMiniStat(
-                      w('QQQ Shares Added', '低位净增持 QQQ 股数'),
-                      '+${sharesAdded.toStringAsFixed(2)} sh',
-                      _sky,
-                    ),
-                    _forensicMiniStat(
-                      w('Peak VIX/VIX3M', '峰值恐慌倒挂比'),
-                      peakVixRatio.toStringAsFixed(3),
-                      peakVixRatio >= 1.10 ? _amber : _slate,
-                    ),
-                  ],
+                _heroStatMetric(
+                  label: w('QQQ Shares Added', '低位增持 QQQ'),
+                  value: '+${sharesAdded.toStringAsFixed(1)} ${w('sh', '股')}',
+                  sub: w(
+                    'Peak VIX/3M ${_numVal(forensicWin['peak_vix_ratio']).toStringAsFixed(2)}',
+                    '峰值恐慌比 ${_numVal(forensicWin['peak_vix_ratio']).toStringAsFixed(2)}',
+                  ),
+                  color: sharesAdded > 0 ? _emerald : p.text,
                 ),
               ],
             ),
-          ),
+          ],
+          const SizedBox(height: 18),
+          Container(height: 1, color: p.border),
           const SizedBox(height: 14),
-          // Option Action Ledger Header + Toggle
           Wrap(
             spacing: 10,
-            runSpacing: 8,
+            runSpacing: 6,
             alignment: WrapAlignment.spaceBetween,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(
                 showFullLedger
                     ? w(
-                        'Full Historical Pure-Options Action Ledger (${fullLedger.length} Option Tranches)',
-                        '2015-2026 全部历史纯期权实战台账（共 ${fullLedger.length} 笔期权操作）',
+                        'Chronological Operations (${fullLedger.length})',
+                        '逐笔操作明细（共 ${fullLedger.length} 笔）',
                       )
-                    : w(
-                        'Exact Option Operations Inside ${text(forensicWin['pill_en'])} (${filteredTranches.length} Option Tranches)',
-                        '${text(forensicWin['pill_zh'])} 期间具体期权操作（${filteredTranches.length} 笔期权交易）',
-                      ),
+                    : w('Operations in This Crisis', '当期具体操作时间线'),
                 style: TextStyle(
                   color: p.text,
                   fontSize: 13.5,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               InkWell(
                 key: const ValueKey('crisis-ledger-scope-toggle'),
                 borderRadius: BorderRadius.circular(6),
                 onTap: () => setState(() => showFullLedger = !showFullLedger),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: _obsidian,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: _mint.withValues(alpha: 0.45)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 4,
                   ),
                   child: Text(
                     showFullLedger
-                        ? w('Show Selected Crisis Only', '仅看当前选中危机操作')
+                        ? w('Show Selected Crisis Only', '仅看当前危机')
                         : w(
-                            'Show All ${fullLedger.length} Historical Trades',
-                            '展开 2015-2026 全部 ${fullLedger.length} 笔台账',
+                            'View All 12Y (${fullLedger.length})',
+                            '查看全部 12 年（${fullLedger.length} 笔）',
                           ),
                     style: const TextStyle(
-                      color: _mint,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
+                      color: _emerald,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           if (filteredTranches.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: _obsidian,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _hairline),
-              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
               child: Text(
                 w(
-                  'Zero option tranches fired in this window under the selected strategy gate (100% QQQ held unhedged with zero call-cap drag).',
-                  '当前所选策略门控在该窗口内未触发建仓（100% 现货持有 QQQ，零期权保费损耗与零卖 Call 封顶拖累）。',
+                  'No option hedges triggered during this window; 100% QQQ held unhedged.',
+                  '该窗口内未触发期权保护，全程 100% 持有 QQQ 现货。',
                 ),
-                style: const TextStyle(color: _slate, fontSize: 12),
+                style: TextStyle(color: p.muted, fontSize: 13),
               ),
             )
           else
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final tr in filteredTranches) ...[
-                  _buildTrancheLedgerCard(tr, compact: compact),
-                  const SizedBox(height: 8),
-                ],
-              ],
-            ),
+            for (final tr in filteredTranches)
+              _buildCleanTimelineTrancheRow(tr, compact: compact),
         ],
       ),
     );
   }
 
-  Widget _forensicMiniStat(String label, String val, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: _surfaceRaised,
-        borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: _hairline),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(color: _slate, fontSize: 10.5)),
-          const SizedBox(height: 2),
-          Text(
-            val,
-            style: TextStyle(
-              color: color,
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTrancheLedgerCard(
+  Widget _buildCleanTimelineTrancheRow(
     Map<String, dynamic> tr, {
     required bool compact,
   }) {
+    final trancheId = _numVal(tr['tranche_id']).round();
+    final expanded = expandedTrancheIds.contains(trancheId);
     final isNaked = text(tr['tranche_type']) == 'naked_put';
     final isOpenCutoff = tr['exit_date'] == null;
     final isTp = text(tr['exit_reason']).contains('tp');
     final netPnl = _numVal(tr['net_pnl_usd']);
     final shAdded = _numVal(tr['shares_added']);
-    final slotAccent = isNaked ? _amber : _lilac;
-    final pnlColor = isOpenCutoff
-        ? _sky
-        : (netPnl > 0 ? _mint : (netPnl < 0 ? _coral : _slate));
-
     final kp = _numVal(tr['kp']);
     final kc = tr['kc'] == null ? null : _numVal(tr['kc']);
-    final strikesLabel = isNaked || kc == null
-        ? 'Put K=\$${kp.toStringAsFixed(2)} (${w('No Call Cap', '无卖Call封顶')})'
-        : 'Put K=\$${kp.toStringAsFixed(2)} / Call K=\$${kc.toStringAsFixed(2)} (+${_numVal(tr['call_cap_pct']).toStringAsFixed(1)}%)';
 
-    return Container(
-      key: ValueKey('crisis-tranche-row-${tr['tranche_id']}'),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _obsidian,
-        borderRadius: BorderRadius.circular(9),
-        border: Border.all(
-          color: isTp ? _mint.withValues(alpha: 0.45) : _hairline,
+    final tagLabel = isNaked
+        ? w('First-Half Put', '首仓裸 Put')
+        : w('Zero-Cost Collar', '次仓领口');
+    final tagColor = isNaked ? _amber : p.muted;
+
+    final entrySpot = _numVal(tr['entry_spot']).toStringAsFixed(1);
+    final exitSpot = _numVal(tr['exit_spot']).toStringAsFixed(1);
+    final exitShort = isOpenCutoff || text(tr['exit_date']).length < 10
+        ? ''
+        : text(tr['exit_date']).substring(5);
+
+    final String actionSentence;
+    if (isNaked) {
+      actionSentence = isOpenCutoff
+          ? w(
+              'QQQ \$$entrySpot -> Bought 90D \$${kp.toStringAsFixed(1)} Put (no upside cap) · Open',
+              'QQQ \$$entrySpot 买入 90 天 \$${kp.toStringAsFixed(1)} 看跌保护（不卖封顶）· 持仓中',
+            )
+          : w(
+              'QQQ \$$entrySpot -> Bought \$${kp.toStringAsFixed(1)} Put (no cap) · ${isTp ? 'Harvested $exitShort @\$$exitSpot' : 'Expired $exitShort @\$$exitSpot'}',
+              'QQQ \$$entrySpot 买入 \$${kp.toStringAsFixed(1)} 看跌保护（不卖封顶） → $exitShort @\$$exitSpot ${isTp ? '恐慌止盈' : '到期结算'}',
+            );
+    } else {
+      actionSentence = isOpenCutoff
+          ? w(
+              'QQQ \$$entrySpot -> Zero-cost Collar (\$${kp.toStringAsFixed(0)} Put / \$${(kc ?? 0).toStringAsFixed(0)} Call) · Open',
+              'QQQ \$$entrySpot 开启零成本领口（保护 \$${kp.toStringAsFixed(0)} / 封顶 \$${(kc ?? 0).toStringAsFixed(0)}）· 持仓中',
+            )
+          : w(
+              'QQQ \$$entrySpot -> Collar (\$${kp.toStringAsFixed(0)} Put / \$${(kc ?? 0).toStringAsFixed(0)} Call) · ${isTp ? 'Harvested $exitShort @\$$exitSpot' : 'Settled $exitShort @\$$exitSpot'}',
+              'QQQ \$$entrySpot 零成本领口（保护 \$${kp.toStringAsFixed(0)} / 封顶 \$${(kc ?? 0).toStringAsFixed(0)}） → $exitShort @\$$exitSpot ${isTp ? '恐慌止盈' : '到期结算'}',
+            );
+    }
+
+    final pnlText = isOpenCutoff
+        ? w('Open', '持仓中')
+        : '${_fmtUsd(netPnl, signed: true)}${shAdded.abs() >= 0.1 ? ' · ${shAdded >= 0 ? '+' : ''}${shAdded.toStringAsFixed(1)} ${w('sh', '股')}' : ''}';
+    final pnlColor = isOpenCutoff
+        ? _amber
+        : (netPnl > 0 ? _emerald : p.muted);
+
+    return InkWell(
+      key: ValueKey('crisis-tranche-row-$trancheId'),
+      onTap: isOpenCutoff
+          ? null
+          : () => setState(() {
+              if (expanded) {
+                expandedTrancheIds.remove(trancheId);
+              } else {
+                expandedTrancheIds.add(trancheId);
+              }
+            }),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: p.border, width: 1)),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Wrap(
-                spacing: 7,
-                runSpacing: 5,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: slotAccent.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(5),
-                      border: Border.all(color: slotAccent.withValues(alpha: 0.45)),
-                    ),
-                    child: Text(
-                      isNaked
-                          ? w('Slot 1 · 50% Naked -10% Put', '首仓 50% 裸 -10% Put')
-                          : w('Slot 2 · 50% Zero-Cost Collar', '次仓 50% 零成本 Collar'),
-                      style: TextStyle(
-                        color: slotAccent,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    isOpenCutoff
-                        ? '${text(tr['entry_date'])} -> ${w('OPEN', '持仓中')}'
-                        : '${text(tr['entry_date'])} -> ${text(tr['exit_date'])} (${_numVal(tr['actual_days_held']).round()}D)',
-                    style: TextStyle(
-                      color: p.text,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: _surfaceRaised,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      w(text(tr['trigger_en']), text(tr['trigger_zh'])),
-                      style: const TextStyle(
-                        color: _sky,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (compact) ...[
               Wrap(
                 spacing: 8,
                 runSpacing: 4,
+                alignment: WrapAlignment.spaceBetween,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  if (!isOpenCutoff)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: isTp
-                            ? _mint.withValues(alpha: 0.16)
-                            : _surfaceRaised,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        isTp
-                            ? w('VIX/3M >= 1.10 TP', '1.10 恐慌倒挂止盈')
-                            : w('90-DTE Expiry', '90日到期结算'),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        text(tr['entry_date']),
                         style: TextStyle(
-                          color: isTp ? _mint : _slate,
-                          fontSize: 10.5,
+                          color: p.muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _smallTimelineTag(tagLabel, tagColor),
+                    ],
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        pnlText,
+                        style: TextStyle(
+                          color: pnlColor,
+                          fontSize: 13,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
+                      if (!isOpenCutoff) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          expanded
+                              ? Icons.keyboard_arrow_up
+                              : Icons.keyboard_arrow_down,
+                          size: 16,
+                          color: p.muted,
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                actionSentence,
+                style: TextStyle(color: p.text, fontSize: 13, height: 1.4),
+              ),
+            ] else
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 88,
+                    child: Text(
+                      text(tr['entry_date']),
+                      style: TextStyle(
+                        color: p.muted,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
+                  ),
+                  _smallTimelineTag(tagLabel, tagColor),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      actionSentence,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: p.text, fontSize: 13),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
                   Text(
-                    isOpenCutoff
-                        ? w('Active Open Shield', '保护伞运行中')
-                        : '${_fmtUsd(netPnl, signed: true)} (${shAdded >= 0 ? '+' : ''}${shAdded.toStringAsFixed(2)} sh)',
+                    pnlText,
                     style: TextStyle(
                       color: pnlColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
                     ),
+                  ),
+                  if (!isOpenCutoff) ...[
+                    const SizedBox(width: 4),
+                    Icon(
+                      expanded
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                      size: 16,
+                      color: p.muted,
+                    ),
+                  ],
+                ],
+              ),
+            if (expanded && !isOpenCutoff) ...[
+              const SizedBox(height: 9),
+              Wrap(
+                spacing: 18,
+                runSpacing: 6,
+                children: [
+                  Text(
+                    '${w('Trigger', '触发信号')}: ${w(text(tr['trigger_en']), text(tr['trigger_zh']))}',
+                    style: TextStyle(color: p.muted, fontSize: 11.5),
+                  ),
+                  Text(
+                    'Delta ${_fmtUsd(_numVal(tr['delta_usd']), signed: true)}',
+                    style: TextStyle(color: p.muted, fontSize: 11.5),
+                  ),
+                  Text(
+                    'Gamma ${_fmtUsd(_numVal(tr['gamma_usd']), signed: true)}',
+                    style: TextStyle(color: p.muted, fontSize: 11.5),
+                  ),
+                  Text(
+                    'Vega ${_fmtUsd(_numVal(tr['vega_usd']), signed: true)}',
+                    style: TextStyle(color: p.muted, fontSize: 11.5),
+                  ),
+                  Text(
+                    '${w('Time & Slippage', '时间损耗与滑点')} ${_fmtUsd(_numVal(tr['theta_slip_usd']), signed: true)}',
+                    style: TextStyle(color: p.muted, fontSize: 11.5),
                   ),
                 ],
               ),
             ],
-          ),
-          const SizedBox(height: 7),
-          Wrap(
-            spacing: 14,
-            runSpacing: 4,
-            children: [
-              Text(
-                isOpenCutoff
-                    ? 'QQQ @\$${_numVal(tr['entry_spot']).toStringAsFixed(2)} · VXN ${_numVal(tr['entry_vxn']).toStringAsFixed(1)}'
-                    : 'QQQ \$${_numVal(tr['entry_spot']).toStringAsFixed(2)} -> \$${_numVal(tr['exit_spot']).toStringAsFixed(2)} (${_fmtPct(_numVal(tr['underlying_ret_pct']))}) · VXN ${_numVal(tr['entry_vxn']).toStringAsFixed(1)} -> ${_numVal(tr['exit_vxn']).toStringAsFixed(1)}',
-                style: const TextStyle(color: _slate, fontSize: 11.5),
-              ),
-              Text(
-                strikesLabel,
-                style: TextStyle(
-                  color: p.text,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-          if (!isOpenCutoff) ...[
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 10,
-              runSpacing: 4,
-              children: [
-                Text(
-                  w('4-Factor Convexity:', '四因子凸性归因:'),
-                  style: const TextStyle(
-                    color: _slate,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                Text(
-                  'Delta ${_fmtUsd(_numVal(tr['delta_usd']), signed: true)}',
-                  style: const TextStyle(color: _sky, fontSize: 11),
-                ),
-                Text(
-                  'Gamma ${_fmtUsd(_numVal(tr['gamma_usd']), signed: true)}',
-                  style: const TextStyle(color: _mint, fontSize: 11),
-                ),
-                Text(
-                  'Vega ${_fmtUsd(_numVal(tr['vega_usd']), signed: true)}',
-                  style: const TextStyle(color: _amber, fontSize: 11),
-                ),
-                Text(
-                  'Theta+Slip ${_fmtUsd(_numVal(tr['theta_slip_usd']), signed: true)}',
-                  style: const TextStyle(color: _coral, fontSize: 11),
-                ),
-              ],
-            ),
           ],
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildMethodologyAccordion({required bool compact}) {
+  Widget _smallTimelineTag(String label, Color color) {
     return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 14 : 18,
-        vertical: 12,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
       decoration: BoxDecoration(
-        color: _surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _hairline),
+        color: color.withValues(alpha: 0.11),
+        borderRadius: BorderRadius.circular(5),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          InkWell(
-            key: const ValueKey('crisis-methodology-toggle'),
-            onTap: () => setState(() => showMethodology = !showMethodology),
-            child: Row(
-              children: [
-                const Icon(Icons.verified_outlined, size: 16, color: _mint),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    w(
-                      'Zero-Lookahead Execution & OPRA Skew Pricing Audit Contract',
-                      '零前视执行规范与 OPRA 真实期权偏度定价审计契约',
-                    ),
-                    style: TextStyle(
-                      color: p.text,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                Icon(
-                  showMethodology ? Icons.expand_less : Icons.expand_more,
-                  size: 18,
-                  color: _slate,
-                ),
-              ],
-            ),
-          ),
-          if (showMethodology) ...[
-            const SizedBox(height: 10),
-            Text(
-              w(
-                '1. T+1 Open Execution: Every signal (6 Crisis Lights, US Liquid Common-Stock AD Line < 50DMA, VXN <= 22, and VIX/VIX3M >= 1.10 TP) is evaluated strictly at Day-t Close and executed at Day-(t+1) Open with +/-2.5% per-leg bid-ask slippage.\n'
-                '2. Empirical OPRA Skew: 90-DTE option strikes are priced via continuous-dividend Black-Scholes-Merton calibrated to QQQ OPRA cubic implied-volatility skew across moneyness.\n'
-                '3. Asymmetric 2-Slot Campaign: First tranche buys a 50% -10% OTM Naked Put (funded from QQQ shares, zero short Call cap). Second tranche (>=30 calendar days later if gates remain ON) opens a 50% Zero-Cost Collar. Below ATH -5%, new or rolled Collars are hard-frozen to preserve 100% rebound upside.',
-                '1. 严格 T+1 开盘成交：全部六大危机灯、全美高流动性普通股腾落线 AD < 50DMA、VXN <= 22 及 VIX/VIX3M >= 1.10 止盈信号均在 t 日收盘判定，严格于 t+1 日开盘价计入单腿 +/-2.5% 买卖价差滑点成交。\n'
-                '2. OPRA 真实隐含波动率偏度：90-DTE 期权采用连续分红 BSM 模型叠加 QQQ 实证三次多项式波动率偏度曲面定价。\n'
-                '3. 非对称双槽战役铁律：首仓买入 50% 仓位 -10% 虚值裸 Put（不卖 Call，100% 保留慢牛冲顶斜率）；满 30 自然日且门控仍亮灯才补齐次仓 50% 零成本 Collar；一旦 QQQ 距历史最高点回撤超过 5%，硬性冻结一切新开或展期 Collar，绝不在坑底封死反弹空间。',
-              ),
-              style: const TextStyle(color: _slate, fontSize: 11.5, height: 1.5),
-            ),
-          ],
-        ],
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
 }
 
+// =============================================================================
+// Minimalist Apple-Stocks / Linear Style Equity Curve Painter
+// =============================================================================
 class _CrisisObservatoryChartPainter extends CustomPainter {
   _CrisisObservatoryChartPainter({
     required this.rows,
@@ -3294,7 +2296,11 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
     required this.navKey,
     required this.rebasedMode,
     required this.useLogScale,
+    required this.showSubTrack,
     required this.hoverIndex,
+    required this.borderColor,
+    required this.mutedColor,
+    required this.textColor,
   });
 
   final List<Map<String, dynamic>> rows;
@@ -3302,15 +2308,15 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
   final String navKey;
   final bool rebasedMode;
   final bool useLogScale;
+  final bool showSubTrack;
   final int hoverIndex;
+  final Color borderColor;
+  final Color mutedColor;
+  final Color textColor;
 
-  static const Color _hairline = Color(0xFF25313B);
-  static const Color _mint = Color(0xFF80C6A8);
-  static const Color _sky = Color(0xFF7DB8F0);
-  static const Color _amber = Color(0xFFF2BC60);
-  static const Color _lilac = Color(0xFFB8A1EA);
-  static const Color _coral = Color(0xFFEC8C98);
-  static const Color _slate = Color(0xFF9CABB9);
+  static const Color _emerald = Color(0xFF5EC49E);
+  static const Color _amber = Color(0xFFE5B45B);
+  static const Color _coral = Color(0xFFE47F8B);
 
   double _val(dynamic v, [double fb = 0]) {
     if (v is num && v.isFinite) return v.toDouble();
@@ -3321,25 +2327,21 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (rows.length < 2) return;
 
-    const padL = 54.0;
-    const padR = 14.0;
-    const padT = 14.0;
+    const padL = 52.0;
+    const padR = 12.0;
+    const padT = 10.0;
     const padB = 24.0;
     final plotW = math.max(1.0, size.width - padL - padR);
     final totalH = math.max(1.0, size.height - padT - padB);
 
-    final mainH = totalH * 0.62;
-    const gap1 = 10.0;
-    final lightsH = totalH * 0.16;
-    const gap2 = 10.0;
-    final vixH = math.max(24.0, totalH - mainH - lightsH - gap1 - gap2);
+    final subH = showSubTrack ? 68.0 : 0.0;
+    final gap = showSubTrack ? 14.0 : 0.0;
+    final mainH = math.max(80.0, totalH - subH - gap);
 
     final mainTop = padT;
     final mainBot = mainTop + mainH;
-    final lightsTop = mainBot + gap1;
-    final lightsBot = lightsTop + lightsH;
-    final vixTop = lightsBot + gap2;
-    final vixBot = vixTop + vixH;
+    final subTop = mainBot + gap;
+    final subBot = subTop + subH;
 
     final n = rows.length;
     double xAt(int i) => padL + (i / (n - 1)) * plotW;
@@ -3361,41 +2363,34 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
       }
     }
 
-    var yMin = math.min(
-      stratVals.reduce(math.min),
-      bhVals.reduce(math.min),
-    );
-    var yMax = math.max(
-      stratVals.reduce(math.max),
-      bhVals.reduce(math.max),
-    );
+    var yMin = math.min(stratVals.reduce(math.min), bhVals.reduce(math.min));
+    var yMax = math.max(stratVals.reduce(math.max), bhVals.reduce(math.max));
     if ((yMax - yMin).abs() < 1e-6) {
       yMax += 1.0;
       yMin -= 1.0;
     }
-    final padY = (yMax - yMin) * 0.07;
+    final padY = (yMax - yMin) * 0.08;
     yMin -= padY;
     yMax += padY;
 
     double yMain(double v) =>
         mainBot - ((v - yMin) / (yMax - yMin)).clamp(0.0, 1.0) * mainH;
 
-    // 1. Background regime shading (Crisis Lights >= 4 in soft coral)
-    final crisisShadePaint = Paint()..color = _coral.withValues(alpha: 0.08);
+    // 1. Ultra-subtle translucent crisis tint when >= 5 lights ON
+    final crisisTint = Paint()..color = _coral.withValues(alpha: 0.045);
     final stepW = math.max(1.0, plotW / (n - 1));
     for (var i = 0; i < n; i++) {
-      final x = xAt(i);
-      if (_val(rows[i]['crisis_lights']) >= 4) {
+      if (_val(rows[i]['crisis_lights']) >= 5) {
         canvas.drawRect(
-          Rect.fromLTWH(x - stepW * 0.5, mainTop, stepW, mainH),
-          crisisShadePaint,
+          Rect.fromLTWH(xAt(i) - stepW * 0.5, mainTop, stepW, mainH),
+          crisisTint,
         );
       }
     }
 
-    // 2. Horizontal gridlines & Y-axis labels on Main Track
+    // 2. Clean 3 horizontal gridlines
     final gridPaint = Paint()
-      ..color = _hairline
+      ..color = borderColor.withValues(alpha: 0.7)
       ..strokeWidth = 0.8;
     for (var g = 0; g <= 3; g++) {
       final frac = g / 3.0;
@@ -3408,15 +2403,16 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
       } else {
         final usd = useLogScale ? math.exp(rawVal) : rawVal;
         lbl = usd >= 1000000
-            ? '\$${(usd / 1000000).toStringAsFixed(2)}M'
+            ? '\$${(usd / 1000000).toStringAsFixed(1)}M'
             : '\$${(usd / 1000).toStringAsFixed(0)}K';
       }
-      _drawLabel(canvas, lbl, Offset(4, gy - 6), _slate, 9.5);
+      _drawLabel(canvas, lbl, Offset(2, gy - 6), mutedColor, 10.0);
     }
 
-    // 3. Pure QQQ Hold curve (Sky Blue) & Selected Strategy curve (Mint)
+    // 3. Dashed Buy & Hold QQQ curve + Solid Emerald Strategy curve with soft area fill
     final bhPath = Path();
     final stratPath = Path();
+    final fillPath = Path();
     for (var i = 0; i < n; i++) {
       final x = xAt(i);
       final yb = yMain(bhVals[i]);
@@ -3424,141 +2420,133 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
       if (i == 0) {
         bhPath.moveTo(x, yb);
         stratPath.moveTo(x, ys);
+        fillPath.moveTo(x, mainBot);
+        fillPath.lineTo(x, ys);
       } else {
         bhPath.lineTo(x, yb);
         stratPath.lineTo(x, ys);
+        fillPath.lineTo(x, ys);
       }
     }
+    fillPath
+      ..lineTo(xAt(n - 1), mainBot)
+      ..close();
+
     canvas.drawPath(
+      fillPath,
+      Paint()
+        ..shader = ui.Gradient.linear(
+          Offset(0, mainTop),
+          Offset(0, mainBot),
+          [
+            _emerald.withValues(alpha: 0.13),
+            _emerald.withValues(alpha: 0.0),
+          ],
+        ),
+    );
+
+    _drawDashedPath(
+      canvas,
       bhPath,
       Paint()
-        ..color = _sky.withValues(alpha: 0.78)
+        ..color = mutedColor.withValues(alpha: 0.72)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.6,
+        ..strokeWidth = 1.45,
     );
+
     canvas.drawPath(
       stratPath,
       Paint()
-        ..color = _mint
+        ..color = _emerald
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.3,
+        ..strokeWidth = 2.2,
     );
 
-    // 4. Trade Event Markers on Strategy Curve (Slot 1 Naked Put ▲, Collar ●, 1.10 Panic TP ◆)
+    // 4. Clean entry (▲ Amber) and panic harvest (◆ Emerald) markers
     final idxByDate = <String, int>{
       for (var i = 0; i < n; i++) text(rows[i]['date']): i,
     };
-    final markerOutline = Paint()
-      ..color = const Color(0xFF080B0F)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2;
     for (final ev in events) {
       final idx = idxByDate[text(ev['date'])];
       if (idx == null) continue;
       final x = xAt(idx);
       final y = yMain(stratVals[idx]);
       final et = text(ev['event_type']);
-      if (et == 'slot1_naked_put' || et == 'open_naked_put') {
+      if (et == 'slot1_naked_put' ||
+          et == 'slot2_collar' ||
+          et == 'slot1_collar') {
+        final r = rebasedMode ? 4.8 : 3.6;
         final tri = Path()
-          ..moveTo(x, y - 6.5)
-          ..lineTo(x - 5.5, y + 4.5)
-          ..lineTo(x + 5.5, y + 4.5)
+          ..moveTo(x, y - r)
+          ..lineTo(x - r * 0.85, y + r * 0.75)
+          ..lineTo(x + r * 0.85, y + r * 0.75)
           ..close();
         canvas.drawPath(tri, Paint()..color = _amber);
-        canvas.drawPath(tri, markerOutline);
-      } else if (et.endsWith('_collar') || et == 'open_collar') {
-        canvas.drawCircle(Offset(x, y), 4.6, Paint()..color = _lilac);
-        canvas.drawCircle(Offset(x, y), 4.6, markerOutline);
-      } else if (et == 'vix110_tp' || et == 'tp_exit') {
+      } else if (et == 'vix110_tp') {
+        final r = rebasedMode ? 5.2 : 4.0;
         final dia = Path()
-          ..moveTo(x, y - 6.8)
-          ..lineTo(x + 6.0, y)
-          ..lineTo(x, y + 6.8)
-          ..lineTo(x - 6.0, y)
+          ..moveTo(x, y - r)
+          ..lineTo(x + r, y)
+          ..lineTo(x, y + r)
+          ..lineTo(x - r, y)
           ..close();
-        canvas.drawPath(dia, Paint()..color = _mint);
-        canvas.drawPath(dia, markerOutline);
+        canvas.drawPath(dia, Paint()..color = _emerald);
       }
     }
 
-    // 5. Middle Sub-Track: 0..6 Crisis Lights + AD < 50DMA Breadth
-    canvas.drawLine(
-      Offset(padL, lightsTop),
-      Offset(padL + plotW, lightsTop),
-      gridPaint,
-    );
-    canvas.drawLine(
-      Offset(padL, lightsBot),
-      Offset(padL + plotW, lightsBot),
-      gridPaint,
-    );
-    _drawLabel(canvas, '6L', Offset(6, lightsTop - 2), _coral, 9.0);
-    _drawLabel(canvas, '0L', Offset(6, lightsBot - 11), _slate, 9.0);
+    // 5. Optional compact sub-track (Crisis Lights + VIX/3M 1.10 threshold)
+    if (showSubTrack) {
+      canvas.drawLine(
+        Offset(padL, subTop),
+        Offset(padL + plotW, subTop),
+        gridPaint,
+      );
+      canvas.drawLine(
+        Offset(padL, subBot),
+        Offset(padL + plotW, subBot),
+        gridPaint,
+      );
+      _drawLabel(canvas, '1.10', Offset(6, subTop + 8), _amber, 9.5);
 
-    final lightsPath = Path();
-    for (var i = 0; i < n; i++) {
-      final x = xAt(i);
-      final sc = _val(rows[i]['crisis_lights']).clamp(0.0, 6.0);
-      final y = lightsBot - (sc / 6.0) * lightsH;
-      if (i == 0) {
-        lightsPath.moveTo(x, y);
-      } else {
-        lightsPath.lineTo(x, y);
+      const vMin = 0.75;
+      const vMax = 1.35;
+      double yVix(double vr) =>
+          subBot - ((vr - vMin) / (vMax - vMin)).clamp(0.0, 1.0) * subH;
+
+      final y110 = yVix(1.10);
+      _drawDashedPath(
+        canvas,
+        Path()
+          ..moveTo(padL, y110)
+          ..lineTo(padL + plotW, y110),
+        Paint()
+          ..color = _amber.withValues(alpha: 0.55)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.9,
+      );
+
+      final vixPath = Path();
+      for (var i = 0; i < n; i++) {
+        final x = xAt(i);
+        final vr = _val(rows[i]['vix_ratio'], 0.90);
+        final y = yVix(vr);
+        if (i == 0) {
+          vixPath.moveTo(x, y);
+        } else {
+          vixPath.lineTo(x, y);
+        }
       }
-      if (_val(rows[i]['ad_vs_50ma']) < 0 && (n <= 260 || i % 4 == 0)) {
-        canvas.drawCircle(
-          Offset(x, lightsBot - 2),
-          1.2,
-          Paint()..color = _sky.withValues(alpha: 0.65),
-        );
-      }
+      canvas.drawPath(
+        vixPath,
+        Paint()
+          ..color = _amber.withValues(alpha: 0.85)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.25,
+      );
     }
-    canvas.drawPath(
-      lightsPath,
-      Paint()
-        ..color = _coral
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4,
-    );
 
-    // 6. Bottom Sub-Track: VIX / VIX3M Ratio with 1.10 Take-Profit Threshold
-    canvas.drawLine(Offset(padL, vixTop), Offset(padL + plotW, vixTop), gridPaint);
-    canvas.drawLine(Offset(padL, vixBot), Offset(padL + plotW, vixBot), gridPaint);
-    const vMin = 0.75;
-    const vMax = 1.35;
-    double yVix(double vr) =>
-        vixBot - ((vr - vMin) / (vMax - vMin)).clamp(0.0, 1.0) * vixH;
-
-    final y110 = yVix(1.10);
-    canvas.drawLine(
-      Offset(padL, y110),
-      Offset(padL + plotW, y110),
-      Paint()
-        ..color = _amber.withValues(alpha: 0.65)
-        ..strokeWidth = 1.0,
-    );
-    _drawLabel(canvas, '1.10 TP', Offset(4, y110 - 6), _amber, 8.8);
-
-    final vixPath = Path();
-    for (var i = 0; i < n; i++) {
-      final x = xAt(i);
-      final vr = _val(rows[i]['vix_ratio'], 0.90);
-      final y = yVix(vr);
-      if (i == 0) {
-        vixPath.moveTo(x, y);
-      } else {
-        vixPath.lineTo(x, y);
-      }
-    }
-    canvas.drawPath(
-      vixPath,
-      Paint()
-        ..color = _amber
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.3,
-    );
-
-    // 7. X-axis date ticks
+    // 6. Clean X-axis date ticks (zero overlap)
+    final axisBaseY = showSubTrack ? subBot : mainBot;
     final tickIndices = [
       0,
       ((n - 1) * 0.25).round(),
@@ -3566,76 +2554,73 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
       ((n - 1) * 0.75).round(),
       n - 1,
     ];
-    final showFullDate = n <= 420;
+    double lastRight = -999;
     for (final ti in tickIndices) {
       final dt = text(rows[ti]['date']);
-      final shortDt = dt.length >= 10
-          ? dt.substring(0, showFullDate ? 10 : 7)
-          : dt;
-      final dx = (xAt(ti) - (showFullDate ? 28 : 20)).clamp(
-        padL,
-        padL + plotW - (showFullDate ? 62 : 46),
-      );
-      _drawLabel(canvas, shortDt, Offset(dx, vixBot + 5), _slate, 9.5);
+      final lbl = rebasedMode ? dt.substring(2) : dt.substring(0, 7);
+      final x = xAt(ti);
+      final estW = lbl.length * 5.8;
+      final drawX = (x - estW * 0.5)
+          .clamp(padL, math.max(padL, padL + plotW - estW))
+          .toDouble();
+      if (drawX - lastRight < 14) continue;
+      _drawLabel(canvas, lbl, Offset(drawX, axisBaseY + 6), mutedColor, 10.0);
+      lastRight = drawX + estW;
     }
 
-    // 8. Hover vertical crosshair across all 3 synchronized tracks
+    // 7. Calm hover crosshair + active dots
     if (hoverIndex >= 0 && hoverIndex < n) {
       final hx = xAt(hoverIndex);
       canvas.drawLine(
         Offset(hx, mainTop),
-        Offset(hx, vixBot),
+        Offset(hx, axisBaseY),
         Paint()
-          ..color = Colors.white.withValues(alpha: 0.42)
+          ..color = textColor.withValues(alpha: 0.28)
           ..strokeWidth = 1.0,
       );
-      final ringPaint = Paint()
-        ..color = const Color(0xFF080B0F)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5;
+      final hsY = yMain(stratVals[hoverIndex]);
+      final hbY = yMain(bhVals[hoverIndex]);
+      canvas.drawCircle(Offset(hx, hbY), 3.2, Paint()..color = mutedColor);
+      canvas.drawCircle(Offset(hx, hsY), 4.2, Paint()..color = _emerald);
+    }
+  }
 
-      // Main NAV track dots
-      final ys = yMain(stratVals[hoverIndex]);
-      final yb = yMain(bhVals[hoverIndex]);
-      canvas.drawCircle(Offset(hx, ys), 4.6, Paint()..color = _mint);
-      canvas.drawCircle(Offset(hx, ys), 4.6, ringPaint);
-      canvas.drawCircle(Offset(hx, yb), 4.0, Paint()..color = _sky);
-      canvas.drawCircle(Offset(hx, yb), 4.0, ringPaint);
-
-      // Crisis Lights track dot
-      final scHov = _val(rows[hoverIndex]['crisis_lights']).clamp(0.0, 6.0);
-      final yl = lightsBot - (scHov / 6.0) * lightsH;
-      canvas.drawCircle(Offset(hx, yl), 3.6, Paint()..color = _coral);
-      canvas.drawCircle(Offset(hx, yl), 3.6, ringPaint);
-
-      // VIX / VIX3M track dot
-      final vrHov = _val(rows[hoverIndex]['vix_ratio'], 0.90);
-      final yv = yVix(vrHov);
-      canvas.drawCircle(Offset(hx, yv), 3.6, Paint()..color = _amber);
-      canvas.drawCircle(Offset(hx, yv), 3.6, ringPaint);
+  void _drawDashedPath(
+    Canvas canvas,
+    Path source,
+    Paint paint, {
+    double dash = 4.5,
+    double gap = 3.5,
+  }) {
+    for (final metric in source.computeMetrics()) {
+      double distance = 0.0;
+      while (distance < metric.length) {
+        final next = math.min(distance + dash, metric.length);
+        canvas.drawPath(metric.extractPath(distance, next), paint);
+        distance += dash + gap;
+      }
     }
   }
 
   void _drawLabel(
     Canvas canvas,
-    String str,
-    Offset pos,
+    String value,
+    Offset offset,
     Color color,
     double fontSize,
   ) {
     final tp = TextPainter(
       text: TextSpan(
-        text: str,
+        text: value,
         style: TextStyle(
           color: color,
           fontSize: fontSize,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w500,
         ),
       ),
       textDirection: TextDirection.ltr,
-      maxLines: 1,
     )..layout();
-    tp.paint(canvas, pos);
+    tp.paint(canvas, offset);
   }
 
   @override
@@ -3645,6 +2630,8 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
         oldDelegate.navKey != navKey ||
         oldDelegate.rebasedMode != rebasedMode ||
         oldDelegate.useLogScale != useLogScale ||
-        oldDelegate.hoverIndex != hoverIndex;
+        oldDelegate.showSubTrack != showSubTrack ||
+        oldDelegate.hoverIndex != hoverIndex ||
+        oldDelegate.borderColor != borderColor;
   }
 }

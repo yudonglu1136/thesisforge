@@ -31,7 +31,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       final strat = qp['strategy'] ?? 'U1_PureOptions';
       return {
         ...raw,
-        'snapshotId': 'fixture-crisis-v2',
+        'snapshotId': 'fixture-crisis-v2-minimal',
         'requestedAsOf': qp['asOf'] ?? raw['as_of_date'],
         'selected_strategy_id': strat,
         'liveExtended': false,
@@ -54,7 +54,7 @@ Future<void> tapVisible(WidgetTester tester, Finder finder) async {
 
 void main() {
   testWidgets(
-    'Discover renders pure-options U1 Crisis Observatory (zero T-Bill) with interactive Zoom In, Period Presets & RangeSlider',
+    'Discover renders minimalist Crisis Observatory via ?discoverTab=crisis_observatory with plain human copy, 6 signals, interactive chart hover & expandable timeline',
     (tester) async {
       tester.view.physicalSize = const Size(1440, 1200);
       tester.view.devicePixelRatio = 1.0;
@@ -93,28 +93,31 @@ void main() {
         isTrue,
       );
 
-      // 1. Verify Hero Live Tactical Signal Command Center (Slot 1 + Slot 2 ONLY, ZERO T-Bill Shield)
+      // Zero raw internal engineering IDs or bond-timing clutter exposed on screen
+      expect(find.textContaining('U4_DualEngine'), findsNothing);
+      expect(find.textContaining('U1_PureOptions'), findsNothing);
+      expect(find.textContaining('B1c_PureAD'), findsNothing);
+      expect(find.textContaining('MONETIZED_STANDBY'), findsNothing);
+      expect(find.textContaining('T-Bill'), findsNothing);
+
+      // 1. Clean Verdict Header + 3-column pure-options hairline strip + expandable rules
       expect(
         find.byKey(const ValueKey('crisis-observatory-command-center')),
         findsOneWidget,
       );
-      expect(find.byKey(const ValueKey('crisis-slot-card-slot1')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-slot-card-slot2')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-slot-card-shield')), findsNothing);
-      expect(find.textContaining('T-BILL'), findsNothing);
-      expect(find.textContaining('T-Bill'), findsNothing);
       expect(
-        find.textContaining('NEW COLLARS HARD FROZEN BELOW ATH -5%'),
+        find.text('100% Hold QQQ · Call Caps Paused in Pullback (6/6 Lights)'),
         findsOneWidget,
       );
-      expect(find.text('HARD FROZEN (DD > 5%)'), findsOneWidget);
-      expect(find.textContaining('100% QQQ'), findsWidgets);
+      expect(find.byKey(const ValueKey('crisis-slot-card-core')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-slot-card-slot1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-slot-card-slot2')), findsOneWidget);
 
-      // 2. Verify Six Crisis Signals Grid (6/6 ON) & AD Breadth Banner
-      expect(find.text('6 / 6 LIGHTS ON'), findsOneWidget);
-      expect(find.textContaining('5D Avg: 5.40'), findsOneWidget);
-      expect(find.textContaining('ATH <= 5%: -19.90%'), findsOneWidget);
-      expect(find.textContaining('VIX/VIX3M >= 1.10 TP: 1.160'), findsOneWidget);
+      await tapVisible(tester, find.byKey(const ValueKey('crisis-rules-toggle')));
+      expect(find.textContaining('Execution rules:'), findsOneWidget);
+
+      // 2. Minimalist Six Crisis Signals flat grid + AD Line footer
+      expect(find.text('6 / 6 Active'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('crisis-light-card-sig1_fed')),
         findsOneWidget,
@@ -128,74 +131,27 @@ void main() {
         findsOneWidget,
       );
 
-      // 3. Verify default U1 Pure Options KPI Strip ($1,454,618 End NAV, +$166,313 Alpha) & Chart Canvas
+      // 3. Hero Interactive Chart: exact U1 Pure Options metrics + crisis zoom + clean hover card
       expect(find.text('\$1,454,618'), findsOneWidget);
       expect(find.text('+\$166,313'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('crisis-strategy-pill-U4_DualEngine')),
-        findsNothing,
-      );
       expect(
         find.byKey(const ValueKey('crisis-observatory-canvas')),
         findsOneWidget,
       );
-      expect(
-        find.byKey(const ValueKey('crisis-zoom-range-slider')),
-        findsOneWidget,
-      );
 
-      // 4. Test Quick Period Preset (1Y) -> reveals dynamic zoomed-window stats bar & reset button
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-period-pill-1Y')),
-      );
-      expect(
-        find.byKey(const ValueKey('crisis-zoom-window-stats')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('crisis-zoom-reset-btn')),
-        findsOneWidget,
-      );
-      expect(find.textContaining('252D'), findsWidgets);
-
-      // 5. Test Interactive Zoom In (+) & Pan Left (←) & Rebased/USD Toggle
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-zoom-in-btn')),
-      );
-      expect(find.textContaining('Custom Range:'), findsOneWidget);
-
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-pan-left-btn')),
-      );
-      expect(
-        find.byKey(const ValueKey('crisis-zoom-window-stats')),
-        findsOneWidget,
-      );
-
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-rebased-toggle-btn')),
-      );
-      expect(find.textContaining('Absolute NAV'), findsOneWidget);
-
-      // 6. Zoom into 2025-04 Tariff Crash crisis pill -> snaps slider & rebases to 100.0
+      // Zoom into 2025 April Tariff Crash and hover 2025-04-07 1.10 Panic Harvest
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-zoom-pill-2025-04')),
       );
-      expect(find.textContaining('Rebased to 100.0'), findsOneWidget);
+      expect(find.text('2025 April Tariff Crash'), findsWidgets);
 
-      // 6b. Hover over the 2025-04-07 Panic TP marker on the chart canvas -> verifies floating tooltip + trade details!
       final canvasFinder = find.byKey(const ValueKey('crisis-observatory-canvas'));
       await tester.ensureVisible(canvasFinder);
       await tester.pumpAndSettle();
       final canvasRect = tester.getRect(canvasFinder);
-      // 2025-04-07 is at ~72% across the 2024-12-18 .. 2025-05-16 (102-day) window
       final hoverTarget = Offset(
-        canvasRect.left + 54.0 + (canvasRect.width - 68.0) * (73.0 / 101.0),
+        canvasRect.left + 52.0 + (canvasRect.width - 64.0) * (73.0 / 101.0),
         canvasRect.top + 120.0,
       );
       final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
@@ -218,7 +174,7 @@ void main() {
       expect(
         find.descendant(
           of: tooltipFinder,
-          matching: find.textContaining('◆ 1.10 PANIC TP'),
+          matching: find.textContaining('◆ 1.10 Panic Harvest'),
         ),
         findsOneWidget,
       );
@@ -229,15 +185,7 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(
-        find.descendant(
-          of: tooltipFinder,
-          matching: find.textContaining('VIX/3M'),
-        ),
-        findsOneWidget,
-      );
 
-      // Move pointer out -> tooltip dismisses cleanly
       await gesture.moveTo(Offset.zero);
       await tester.pumpAndSettle();
       expect(
@@ -245,24 +193,11 @@ void main() {
         findsNothing,
       );
 
-      // Zoom into 2026-11 LIVE Pure-Options Campaign
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-zoom-pill-2026-08_11_LIVE')),
-      );
-      expect(find.textContaining('2026-08 to 2026-11 LIVE'), findsWidgets);
-
-      // Reset back to full 2015-2026 range
+      // Reset zoom to All 12Y and switch strategy tab to Breadth Divergence (B1c)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-zoom-reset-btn')),
       );
-      expect(
-        find.byKey(const ValueKey('crisis-zoom-window-stats')),
-        findsNothing,
-      );
-
-      // Switch strategy to B1c Pure AD Line -> updates KPI to $1,453,136 / +$164,831
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-strategy-pill-B1c_PureAD')),
@@ -270,27 +205,40 @@ void main() {
       expect(find.text('\$1,453,136'), findsOneWidget);
       expect(find.text('+\$164,831'), findsOneWidget);
 
-      // Toggle full historical trade ledger & methodology accordion
+      // 4. Zoom into 2026 LIVE and expand a tranche row for 4-factor convexity
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-strategy-pill-U1_PureOptions')),
+      );
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-zoom-pill-2026-08_11_LIVE')),
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-tranche-row-34')),
+        findsOneWidget,
+      );
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-tranche-row-34')),
+      );
+      expect(find.textContaining('Vega'), findsWidgets);
+
+      // Toggle full 12-year chronological ledger
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-ledger-scope-toggle')),
       );
       expect(
-        find.textContaining('Full Historical Pure-Options Action Ledger'),
+        find.textContaining('All 12-Year Historical Operations'),
         findsOneWidget,
       );
-
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-methodology-toggle')),
-      );
-      expect(find.textContaining('Empirical OPRA Skew'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'Crisis Observatory renders full localized Chinese pure-options UI cleanly on both Desktop and 390x844 Mobile without overflow',
+    'Crisis Observatory renders calm localized Chinese UI cleanly on both Desktop (1440x1200) and Mobile (390x844) without overflow',
     (tester) async {
       final api = CrisisObservatoryFixtureApi();
 
@@ -319,15 +267,14 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('6 / 6 危机灯亮起'), findsOneWidget);
-        expect(find.textContaining('100% 满仓 QQQ'), findsWidgets);
-        expect(find.textContaining('美债慢熊盾'), findsNothing);
-        expect(find.textContaining('首仓 50% 裸 -10% Put'), findsWidgets);
-        expect(find.textContaining('次仓 50% 零成本 Collar'), findsWidgets);
         expect(
-          find.byKey(const ValueKey('crisis-zoom-range-slider')),
+          find.text('100% 持有 QQQ · 低位暂停新卖 Call（6/6 亮灯）'),
           findsOneWidget,
         );
+        expect(find.text('6 / 6 亮灯'), findsOneWidget);
+        expect(find.text('历史保护策略 vs 死拿 QQQ'), findsOneWidget);
+        expect(find.text('100% 满仓 QQQ'), findsOneWidget);
+        expect(find.textContaining('短债'), findsNothing);
         expect(tester.takeException(), isNull);
       }
 
