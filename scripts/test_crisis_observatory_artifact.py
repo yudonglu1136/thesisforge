@@ -54,7 +54,9 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
 
     doc = json.loads(raw)
     assert doc["as_of_date"] == "2026-11-20"
-    assert doc["default_strategy_id"] == "U4_DualEngine"
+    assert doc["default_strategy_id"] == "U1_PureOptions"
+    for forbidden in ("U4_DualEngine", "T-Bill", "slow_bear_shield", "慢熊盾", "美债慢熊盾", "短债"):
+        assert forbidden not in raw, f"Forbidden T-Bill/U4 term found in artifact: {forbidden}"
 
     snap = doc["live_market_snapshot"]
     assert snap["qqq_close"] == 608.45
@@ -77,20 +79,28 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     assert ad["days_below_50ma"] == 5
 
     sig = doc["live_signal_state"]
-    assert sig["regime_code"] == "SLOW_BEAR_SHIELD_ACTIVE"
+    assert sig["regime_code"] == "LOW_SPOT_FREEZE_NO_NEW_COLLAR"
+    assert sig["target_equity_pct"] == 100.0
+    assert sig["target_tbill_pct"] == 0.0
+    assert "slow_bear_shield" not in sig
     assert sig["slot1_naked_put"]["status"] == "MONETIZED_STANDBY"
     assert sig["slot2_collar"]["status"] == "FROZEN_BELOW_ATH5"
-    assert sig["slow_bear_shield"]["status"] == "ACTIVE_RELOAD_ARMED"
     assert len(sig["gate_checklist"]) == 5
+    assert all(g.get("reading") and g.get("current_value") for g in sig["gate_checklist"])
 
     smap = {s["id"]: s for s in doc["strategies_summary"]}
-    assert abs(smap["U4_DualEngine"]["end_nav"] - 1479142.71) <= 0.02
-    assert abs(smap["U4_DualEngine"]["net_alpha_usd"] - 190837.93) <= 0.02
-    assert smap["U4_DualEngine"]["cagr_pct"] == 18.34
-    assert smap["U4_DualEngine"]["max_dd_pct"] == -30.50
-    assert smap["U4_DualEngine"]["sharpe"] == 0.893
-    assert smap["U4_DualEngine"]["calmar"] == 0.601
+    assert "U4_DualEngine" not in smap
+    assert list(smap.keys()) == [
+        "U1_PureOptions",
+        "B1c_PureAD",
+        "D2_SixLights",
+        "H2_G4_PriceGate",
+        "BH_Pure_QQQ",
+    ]
     assert abs(smap["U1_PureOptions"]["end_nav"] - 1454617.86) <= 0.02
+    assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 166313.09) <= 0.02
+    assert smap["U1_PureOptions"]["cagr_pct"] == 18.17
+    assert smap["U1_PureOptions"]["sharpe"] == 0.810
     assert abs(smap["B1c_PureAD"]["end_nav"] - 1453135.67) <= 0.02
     assert abs(smap["D2_SixLights"]["end_nav"] - 1442693.31) <= 0.02
     assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1380701.67) <= 0.02
@@ -111,10 +121,11 @@ def test_crisis_windows_and_4factor_convexity_identity():
     ]
     live_win = doc["crisis_windows"][-1]
     assert live_win["is_live"] is True
-    assert live_win["u4_mdd"] == -13.30
+    assert live_win["u1_mdd"] == -17.54
     assert live_win["qqq_mdd"] == -19.90
-    assert abs(live_win["harvested_usd"] - 34563.97) <= 0.05
+    assert abs(live_win["harvested_usd"] - 35737.07) <= 0.05
     assert abs(live_win["harvested_usd_u1"] - 35737.07) <= 0.05
+    assert doc["shield_events"] == []
 
     for sid, ledger in doc["trade_ledgers_by_strategy"].items():
         assert len(ledger) > 0, sid

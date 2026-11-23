@@ -1096,14 +1096,12 @@ def build_ad_line_signal(rows: list[dict[str, Any]], idx: int) -> dict[str, Any]
 
 def build_live_signal_state(
     row: dict[str, Any],
-    u4_sim: dict[str, Any],
     u1_sim: dict[str, Any],
 ) -> dict[str, Any]:
     cl = float(row["close"])
     dd_pct = float(row["dd_from_ath"]) * 100.0
     ma200 = float(row["qqq_ma200"])
     vxn = float(row["vxn"])
-    vix = float(row["vix"])
     vr = float(row["vix_ratio"])
     sc = int(row["score"])
     sc5 = float(row["score_5d"])
@@ -1114,59 +1112,64 @@ def build_live_signal_state(
     lights_ok = sc >= 4
     tp_ok = vr >= 1.10
 
-    active_tr = u4_sim["active_tranches_eod"]
-    pend_sig = u4_sim["pending_sig_eod"]
-    in_shield = bool(u4_sim["in_slow_bear_eod"])
-    pend_bear = u4_sim["pending_bear_change_eod"]
+    active_tr = u1_sim["active_tranches_eod"]
+    pend_sig = u1_sim["pending_sig_eod"]
 
     s1_open = next((t for t in active_tr if t["slot_num"] == 1), None)
     s2_open = next((t for t in active_tr if t["slot_num"] == 2), None)
 
     u1_led = u1_sim["ledger"]
-    u4_led = u4_sim["ledger"]
     last_s1_u1 = next((x for x in reversed(u1_led) if x["slot_num"] == 1), None)
     last_s2_u1 = next((x for x in reversed(u1_led) if x["slot_num"] == 2), None)
-    last_s1_u4 = next((x for x in reversed(u4_led) if x["slot_num"] == 1), None)
-    last_s2_u4 = next((x for x in reversed(u4_led) if x["slot_num"] == 2), None)
-    last_shield_enter = next(
-        (e for e in reversed(u4_sim["shield_events"]) if e["event_type"] == "shield_enter"),
-        None,
-    )
+
+    cur_dt = _parse_iso(row["date"])
+    recent_tp_tranches = [
+        t
+        for t in (last_s1_u1, last_s2_u1)
+        if t is not None
+        and "tp" in str(t.get("exit_reason") or "")
+        and (cur_dt - _parse_iso(t["exit_date"])).days <= 30
+    ]
 
     if any(t.get("pending_tp") for t in active_tr):
         regime_code = "VIX110_TP_TRIGGERED"
         title_en = "VIX/VIX3M >= 1.10 PANIC TAKE-PROFIT ARMED (MONETIZE & ADD QQQ AT NEXT OPEN)"
         title_zh = "VIX/VIX3M >= 1.10 恐慌倒挂止盈触发（次日开盘全额变现低位加仓 QQQ）"
-    elif in_shield:
-        regime_code = "SLOW_BEAR_SHIELD_ACTIVE"
-        if pend_bear == "exit_def":
-            title_en = "SLOW-BEAR 50% T-BILL SHIELD ACTIVE · PANIC RELOAD SIGNAL AT CLOSE (VIX>=34 / VIX3M>=1.10)"
-            title_zh = "五灯破年线 50% 美债慢熊盾运行中 · 收盘触发恐慌极值回补信号（次日开盘回满 QQQ）"
-        else:
-            title_en = "SLOW-BEAR 50% T-BILL SHIELD ACTIVE · OPTIONS HARVESTED & NEW COLLAR FROZEN BELOW ATH -5%"
-            title_zh = "五灯破年线 50% 美债慢熊盾激活中 · 前期双槽 Put 已止盈落袋 · 低位严禁新开 Collar"
     elif s1_open and s2_open:
         regime_code = "DUAL_SLOT_FULL_SHIELD"
-        title_en = "SLOT 1 NAKED PUT + SLOT 2 ZERO-COST COLLAR FULL HEDGE ACTIVE"
-        title_zh = "首仓裸 Put + 次仓零成本 Collar 双槽满盾保护中"
+        title_en = "SLOT 1 NAKED PUT + SLOT 2 ZERO-COST COLLAR FULL HEDGE ACTIVE (100% QQQ)"
+        title_zh = "首仓裸 Put + 次仓零成本 Collar 双槽满盾保护中（100% 满仓 QQQ）"
     elif s1_open:
         regime_code = "SLOT1_NAKED_PUT_ACTIVE"
-        title_en = "SLOT 1 (50% NAKED -10% PUT) ACTIVE · UNLIMITED UPSIDE RETAINED"
-        title_zh = "首仓 50% 裸 -10% Put 持盾中 · 保留 100% 向上冲顶收益"
+        title_en = "SLOT 1 (50% NAKED -10% PUT) ACTIVE · 100% QQQ UNLIMITED UPSIDE RETAINED"
+        title_zh = "首仓 50% 裸 -10% Put 持盾中 · 100% QQQ 保留完整向上冲顶收益"
     elif pend_sig is not None:
         regime_code = "SLOT1_NAKED_PUT_ARMED"
         title_en = "TOP-DIVERGENCE / 4-LIGHT GATE FIRED · OPEN SLOT 1 50% NAKED PUT AT NEXT OPEN"
         title_zh = "高位顶背离 / 四灯门控触发 · 次日开盘买入首仓 50% 裸 -10% Put"
     elif not ath_ok:
         regime_code = "LOW_SPOT_FREEZE_NO_NEW_COLLAR"
-        title_en = "DRAWDOWN > 5% OFF ATH · HARD FREEZE ON NEW COLLARS (100% QQQ REBOUND CAPTURE)"
-        title_zh = "距历史前高回撤超 5% · 严禁低位新开或续作 Collar（保留 100% 反弹斜率）"
+        if recent_tp_tranches:
+            tp_usd = sum(float(t["net_pnl_usd"]) for t in recent_tp_tranches)
+            tp_sh = sum(float(t["shares_added"]) for t in recent_tp_tranches)
+            tp_date = max(t["exit_date"] for t in recent_tp_tranches)
+            title_en = (
+                f"100% QQQ HELD · NEW COLLARS HARD FROZEN BELOW ATH -5% "
+                f"(BOTH SLOTS HARVESTED +${tp_usd:,.0f} / +{tp_sh:.2f} SH ON {tp_date})"
+            )
+            title_zh = (
+                f"100% 满仓 QQQ 持筹待弹 · 跌离前高超 5% 严禁低位新开 Collar"
+                f"（双槽已于 {tp_date} 1.10止盈落袋 +${tp_usd:,.0f} / +{tp_sh:.2f} 股）"
+            )
+        else:
+            title_en = "DRAWDOWN > 5% OFF ATH · HARD FREEZE ON NEW COLLARS (100% QQQ REBOUND CAPTURE)"
+            title_zh = "距历史前高回撤超 5% · 严禁低位新开或续作 Collar（100% QQQ 保留完整反弹斜率）"
     else:
         regime_code = "CRUISE_UNHEDGED"
         title_en = "BULL CRUISE UNHEDGED (100% QQQ · ZERO CALL DRAG)"
         title_zh = "顺风巡航零期权拖累（100% 满仓 QQQ 复利）"
 
-    def _fmt_last_action(tr_u1: dict[str, Any] | None, tr_u4: dict[str, Any] | None) -> dict[str, Any]:
+    def _fmt_last_action(tr_u1: dict[str, Any] | None) -> dict[str, Any]:
         if tr_u1 is None:
             return {"summary_en": "No prior trade", "summary_zh": "暂无历史交易"}
         is_nk = tr_u1["tranche_type"] == "naked_put"
@@ -1177,8 +1180,6 @@ def build_live_signal_state(
         )
         ex_tag = "TP" if "tp" in tr_u1["exit_reason"] else "Exp"
         ex_tag_zh = "1.10止盈" if "tp" in tr_u1["exit_reason"] else "到期"
-        u4_pnl = tr_u4["net_pnl_usd"] if tr_u4 else tr_u1["net_pnl_usd"]
-        u4_sh = tr_u4["shares_added"] if tr_u4 else tr_u1["shares_added"]
         return {
             "entry_date": tr_u1["entry_date"],
             "entry_spot": tr_u1["entry_spot"],
@@ -1189,8 +1190,6 @@ def build_live_signal_state(
             "exit_reason": tr_u1["exit_reason"],
             "u1_net_pnl_usd": tr_u1["net_pnl_usd"],
             "u1_shares_added": tr_u1["shares_added"],
-            "u4_net_pnl_usd": u4_pnl,
-            "u4_shares_added": u4_sh,
             "summary_en": (
                 f"{tr_u1['entry_date']} Open @${tr_u1['entry_spot']:.2f} {strike_str} -> "
                 f"{tr_u1['exit_date']} {ex_tag} @${tr_u1['exit_spot']:.2f} "
@@ -1213,27 +1212,6 @@ def build_live_signal_state(
         if s2_open
         else ("FROZEN_BELOW_ATH5" if not ath_ok else "STANDBY_WAIT_30D")
     )
-    sh_status = (
-        "ACTIVE_RELOAD_ARMED"
-        if (in_shield and pend_bear == "exit_def")
-        else ("ACTIVE" if in_shield else ("ARMED_NEXT_OPEN" if pend_bear == "enter_def" else "STANDBY"))
-    )
-
-    shield_latest_en = (
-        f"{last_shield_enter['date']} Open @${last_shield_enter['spot']:.2f}: Shifted 50% QQQ -> 3M T-Bill "
-        f"(5D Smooth Lights {last_shield_enter['smooth_lights']:.1f} & QQQ < 200DMA ${last_shield_enter['qqq_ma200']:.2f})"
-        if last_shield_enter
-        else "Standby"
-    )
-    shield_latest_zh = (
-        f"{last_shield_enter['date']} 开盘 @${last_shield_enter['spot']:.2f} 减半仓转 3M 美债"
-        f"（前收盘5日均灯 {last_shield_enter['smooth_lights']:.1f} 且跌破200DMA ${last_shield_enter['qqq_ma200']:.2f}）"
-        if last_shield_enter
-        else "待命"
-    )
-    if in_shield and pend_bear == "exit_def":
-        shield_latest_en += f" -> {row['date']} EOD VIX {vix:.2f}>=34 & Ratio {vr:.3f}>=1.10 arms T+1 Open reload to 100% QQQ!"
-        shield_latest_zh += f" -> {row['date']} 收盘 VIX {vix:.2f}>=34 且倒挂 {vr:.3f}>=1.10，触发次日开盘回满 100% QQQ！"
 
     return {
         "regime_code": regime_code,
@@ -1241,14 +1219,14 @@ def build_live_signal_state(
         "regime_title_zh": title_zh,
         "regime_subtitle_en": (
             f"QQQ ${cl:.2f} ({dd_pct:.2f}% vs ATH, {(cl / ma200 - 1.0) * 100.0:.2f}% vs 200DMA) · "
-            f"6/6 Crisis Lights ON (5D avg {sc5:.1f}) · VIX/VIX3M {vr:.3f}"
+            f"{sc}/6 Crisis Lights ON (5D avg {sc5:.1f}) · VIX/VIX3M {vr:.3f} · 100% QQQ Pure Options"
         ),
         "regime_subtitle_zh": (
             f"QQQ 现价 ${cl:.2f}（距前高 {dd_pct:.2f}%，偏离年线 {(cl / ma200 - 1.0) * 100.0:.2f}%）· "
-            f"危机灯 {sc}/6 全亮（5日均值 {sc5:.1f}）· VIX/VIX3M {vr:.3f}"
+            f"危机灯 {sc}/6 全亮（5日均值 {sc5:.1f}）· VIX/VIX3M {vr:.3f} · 100% 满仓 QQQ 纯期权"
         ),
-        "target_equity_pct": 50.0 if in_shield else 100.0,
-        "target_tbill_pct": 50.0 if in_shield else 0.0,
+        "target_equity_pct": 100.0,
+        "target_tbill_pct": 0.0,
         "active_option_slots": len(active_tr),
         "slot1_naked_put": {
             "slot_id": "slot1_naked_put",
@@ -1264,7 +1242,7 @@ def build_live_signal_state(
             "rule_en": "ATH <= 5% & VXN <= 22 & (AD Line < 50DMA OR Crisis Lights >= 4) -> Buy 50% 90-DTE -10% Put (NO Call cap)",
             "rule_zh": "距ATH <= 5% 且 VXN <= 22 且（AD < 50DMA 顶背离 或 危机灯 >= 4）-> 买 50% 裸 -10% Put（不卖 Call 保留冲顶斜率）",
             "open_position": s1_open,
-            "latest_action": _fmt_last_action(last_s1_u1, last_s1_u4),
+            "latest_action": _fmt_last_action(last_s1_u1),
         },
         "slot2_collar": {
             "slot_id": "slot2_collar",
@@ -1284,41 +1262,7 @@ def build_live_signal_state(
             "rule_en": ">= 30 cal days after Slot 1 & entry gates still ON -> Open 50% Zero-Cost Collar (-10% Put / +OTM Call); strictly forbidden below ATH -5%",
             "rule_zh": "首仓满 30 自然日且门控仍亮灯 -> 开启剩余 50% 零成本 Collar；跌离前高超 5% 严禁新开或续作 Collar",
             "open_position": s2_open,
-            "latest_action": _fmt_last_action(last_s2_u1, last_s2_u4),
-        },
-        "slow_bear_shield": {
-            "slot_id": "slow_bear_shield",
-            "title_en": "Slow-Bear Shield · U4 5-Light <200DMA 50% T-Bill Defense",
-            "title_zh": "慢熊防御盾 · U4 五灯破年线 50% 美债避险引擎",
-            "status": sh_status,
-            "status_label_en": (
-                "ACTIVE (T+1 RELOAD ARMED)"
-                if sh_status == "ACTIVE_RELOAD_ARMED"
-                else ("ACTIVE (50% T-BILL)" if in_shield else "STANDBY (100% QQQ)")
-            ),
-            "status_label_zh": (
-                "激活避险中（收盘已触发回补信号）"
-                if sh_status == "ACTIVE_RELOAD_ARMED"
-                else ("激活避险中（50% 短债）" if in_shield else "未激活（100% 现货）")
-            ),
-            "rule_en": "Enter 50% 3M T-Bill when 5D Smooth Lights >= 4.8 & QQQ < 200DMA; reload 100% QQQ when Lights <= 3, QQQ > 200DMA+1%, VIX >= 34, or VIX/3M >= 1.10",
-            "rule_zh": "5日均灯 >= 4.8 且 QQQ < 200DMA 时减半仓转3M美债；当均灯 <= 3、重上200DMA+1%、VIX >= 34 或 VIX/3M >= 1.10 时全额回补 QQQ",
-            "defensive_allocation_en": (
-                f"50% QQQ + 50% 3M T-Bill ({float(row['r']) * 100.0:.2f}% yield)"
-                + (" · T+1 Open Reload to 100% QQQ Armed" if (in_shield and pend_bear == "exit_def") else "")
-                if in_shield
-                else "100% QQQ Core Equity (0% Cash Drag)"
-            ),
-            "defensive_allocation_zh": (
-                f"50% QQQ 现货 + 50% 3M 美债（年化 {float(row['r']) * 100.0:.2f}%）"
-                + (" · 已触发次日开盘回满 100% QQQ" if (in_shield and pend_bear == "exit_def") else "")
-                if in_shield
-                else "100% QQQ 核心底仓（0% 现金拖累）"
-            ),
-            "latest_action": {
-                "summary_en": shield_latest_en,
-                "summary_zh": shield_latest_zh,
-            },
+            "latest_action": _fmt_last_action(last_s2_u1),
         },
         "gate_checklist": [
             {
@@ -1328,6 +1272,7 @@ def build_live_signal_state(
                 "role": "ENTRY_PREREQ",
                 "passed": ath_ok,
                 "current_value": f"{dd_pct:.2f}%",
+                "reading": f"{dd_pct:.2f}%",
                 "threshold": ">= -5.00%",
                 "note_en": "Prevents selling upside Calls in a hole" if not ath_ok else "Near highs: cheap hedging window open",
                 "note_zh": "深跌区硬锁死，防止低位卖 Call 被逼空踏空" if not ath_ok else "处于前高 5% 内低成本上盾区",
@@ -1339,6 +1284,7 @@ def build_live_signal_state(
                 "role": "ENTRY_PREREQ",
                 "passed": vxn_ok,
                 "current_value": f"{vxn:.2f}",
+                "reading": f"{vxn:.2f}",
                 "threshold": "<= 22.00",
                 "note_en": "Blocks overpaying bloated panic IV" if not vxn_ok else "Implied vol cheap enough for 90-DTE Put",
                 "note_zh": "拒绝在恐慌高波时买天价期权当冤大头" if not vxn_ok else "隐含波动率低廉，适合建仓 90D Put",
@@ -1350,6 +1296,7 @@ def build_live_signal_state(
                 "role": "ENTRY_TRIGGER",
                 "passed": ad_below,
                 "current_value": f"{float(row['ad_line']) - float(row['ad_sma50']):+,.0f}",
+                "reading": f"{float(row['ad_line']) - float(row['ad_sma50']):+,.0f}",
                 "threshold": "< 0",
                 "note_en": "Internal market breadth below 50DMA" if ad_below else "Broad participation intact",
                 "note_zh": "全美腾落线跌破 50DMA（内部宽度恶化）" if ad_below else "市场内部腾落线位于 50DMA 上方",
@@ -1361,6 +1308,7 @@ def build_live_signal_state(
                 "role": "ENTRY_TRIGGER",
                 "passed": lights_ok,
                 "current_value": f"{sc} / 6",
+                "reading": f"{sc} / 6",
                 "threshold": ">= 4 / 6",
                 "note_en": f"{sc}/6 Druckenmiller macro reversal lights ON" if lights_ok else f"Only {sc}/6 lights ON",
                 "note_zh": f"德鲁肯米勒六大危机灯亮起 {sc}/6 盏" if lights_ok else f"仅亮 {sc}/6 盏，未达宏观警戒线",
@@ -1372,6 +1320,7 @@ def build_live_signal_state(
                 "role": "EXIT_TRIGGER",
                 "passed": tp_ok,
                 "current_value": f"{vr:.3f}",
+                "reading": f"{vr:.3f}",
                 "threshold": ">= 1.100",
                 "note_en": "Panic backwardation active: monetize puts & reload!" if tp_ok else "Term structure below 1.10 panic threshold",
                 "note_zh": "恐慌期限倒挂极值触发：收割凸性暴利抄底正股！" if tp_ok else "未达 1.10 恐慌倒挂收割阈值",
@@ -1422,12 +1371,12 @@ def build_crisis_windows(
             "is_live": False,
             "narrative_en": (
                 "4/6 Crisis Lights fired 47 trading days before the top (Slot 1 Naked Put 6/25, Slot 2 Collar 7/26, "
-                "refreshed Collar 10/05 @$182.36). First wave monetized on 10/11 (VIX/3M 1.109, +$5,545 / +32.4 sh), "
-                "and U4's 6/6 Slow-Bear Shield shifted 50% to T-Bills on 10/25 & 11/12, cutting -22.69% MDD to -17.78% (+4.92% excess)."
+                "refreshed Collar 10/05 @$182.36). On 10/11 when VIX/VIX3M inverted to 1.109, the option sleeve monetized "
+                "for +$5,847 (+34.18 QQQ shares), reducing QQQ's -22.69% drawdown to -21.28% (+1.41% excess) while holding 100% QQQ."
             ),
             "narrative_zh": (
-                "四灯在见顶前 47 个交易日提前亮起，10/05 在 $182.36 高位补齐 Collar，10/11 首波倒挂 1.109 止盈 +$5,545（+32.4股）；"
-                "随后 6/6 灯全亮破年线，U4 慢熊盾于 10/25 与 11/12 减半仓避险，将 QQQ -22.69% 回撤压至 -17.78%（超额 +4.92%）！"
+                "四灯在见顶前 47 个交易日提前亮起，10/05 在 $182.36 高位补齐 Collar；"
+                "10/11 首波恐慌倒挂 1.109 止盈落袋 +$5,847（增持 +34.18 股 QQQ），全程 100% 持仓 QQQ 将回撤从 -22.69% 压至 -21.28%（超额 +1.41%）。"
             ),
         },
         {
@@ -1443,12 +1392,12 @@ def build_crisis_windows(
             "is_live": False,
             "narrative_en": (
                 "Honest out-of-sample disclosure: because COVID-19 was an exogenous biological shock while pre-peak macro "
-                "lights were 2/6 and AD Line hit new highs, AD/4-Light switches held 0 pre-peak puts (zero Call cap drag in 2019's +39% melt-up), "
-                "while U4's 5/6 Slow-Bear + VIX>=34 rapid reload rules preserved 100% of the April V-bottom rebound (+0.38% excess)."
+                "lights were 2/6 and AD Line hit new highs, U1 held 0 pre-peak puts (zero Call cap drag in 2019's +39% melt-up) "
+                "and stayed strictly 100% QQQ with ATH<=5% freeze, capturing 100% of the April V-bottom rebound (0.00% excess)."
             ),
             "narrative_zh": (
                 "零前视客观披露：2020年2月见顶前宏观基本面仅亮 2/6 灯且全美 AD 创历史新高，纯内生宽度/宏观开关未提前挂 Put（也因此零损耗吃满 2019 年 +39% 主升浪）；"
-                "3月破年线升至 5 灯后，U4 凭借 VIX>=34 / 1.10 极值秒回补机制丝毫未踏空 3/23 V 型反转（区间超额 +0.38%）。"
+                "下跌超 5% 后触发低位铁律冻结，100% 满仓 QQQ 完整吃下 3/23 后的 V 型暴涨（区间超额 0.00%）。"
             ),
         },
         {
@@ -1463,13 +1412,13 @@ def build_crisis_windows(
             "crash_end_date": "2022-12-28",
             "is_live": False,
             "narrative_en": (
-                "In 2022's frog-boiling grind, VIX/VIX3M peaked at just 1.022 (<1.10), starving pure option strategies of panic Vega spikes. "
-                "This is why U4's Slow-Bear Shield exists: 5-6/6 Crisis Lights + QQQ < 200DMA shifted 50% into 3M T-Bills on 2022-01-31 @$353.20 "
-                "across 5 defensive waves, slashing max drawdown from -35.12% to -30.50% (+4.56% excess return)!"
+                "Honest pure-options disclosure: in 2022's frog-boiling grind, VIX/VIX3M peaked at just 1.022 (<1.10), "
+                "so panic Vega take-profit never fired. Crucially, the ATH<=5% hard freeze blocked selling low-spot Collars "
+                "throughout the drawdown (-0.44% window drag only from early peak premium), preserving 100% QQQ upside for 2023-2024!"
             ),
             "narrative_zh": (
-                "2022 温水煮青蛙阴跌中 VIX/VIX3M 全年最高仅 1.022（未达 1.10），纯期权难以触发恐慌爆波收割。"
-                "U4 慢熊盾精准补位：2022-01-31 在 $353.20 因五灯破年线果断减半仓转美债，全年五轮防御将最大回撤从 -35.12% 大砍至 -30.50%（超额 +4.56%）！"
+                "纯期权客观复盘：2022 温水煮青蛙阴跌中 VIX/VIX3M 全年最高仅 1.022（未达 1.10 恐慌止盈线），未能收割爆波暴利；"
+                "但「距前高超 5% 硬冻结 Collar」铁律彻底避免了在半山腰卖 Call 被逼空，全年仅损耗前期保费 -0.44%，100% 满仓正股吃满 2023-2024 主升浪！"
             ),
         },
         {
@@ -1484,13 +1433,13 @@ def build_crisis_windows(
             "crash_end_date": "2024-08-07",
             "is_live": False,
             "narrative_en": (
-                "4/6 Crisis Lights + AD divergence opened two 50% Collars right into the summer peak ($455.50 on 5/30 and "
-                "$497.62 on 7/16). When the Nikkei/Yen carry shock pushed VIX/VIX3M to 1.144 on 2024-08-05, both slots "
-                "monetized at $437.23 Open on 8/06 for +$30,832 in U4 / +$31,945 in U1 (+70.5 to +73.1 QQQ shares), cutting DD to -8.05%!"
+                "4/6 Crisis Lights + AD divergence opened two 50% option slots right into the summer peak ($455.50 on 5/30 and "
+                "$497.62 on 7/16). When the Yen carry unwind pushed VIX/VIX3M to 1.144 on 2024-08-05, both slots "
+                "monetized at $437.23 Open on 8/06 for +$31,878 (+72.89 QQQ shares), slashing DD from -13.56% to -8.05% (+5.51% excess)!"
             ),
             "narrative_zh": (
                 "4/6 危机灯与 AD 顶背离在 $455.50（5/30）与见顶处 $497.62（7/16）精准挂满双槽保护；"
-                "8/05 日元闪崩引爆 VIX/VIX3M 至 1.144，8/06 开盘 @$437.23 双槽止盈落袋 +$30.8K 至 +$31.9K（低位白捡 +70.5 至 +73.1 股 QQQ），回撤压至仅 -8.05%！"
+                "8/05 日元闪崩引爆 VIX/VIX3M 至 1.144，8/06 开盘 @$437.23 双槽止盈落袋 +$31,878（低位白捡 +72.89 股 QQQ），回撤从 -13.56% 大砍至 -8.05%（超额 +5.51%）！"
             ),
         },
         {
@@ -1507,19 +1456,19 @@ def build_crisis_windows(
             "narrative_en": (
                 "Even with macro lights at only 2/6, US Liquid AD Line < 50DMA top-divergence caught the $539.52 top "
                 "and opened a 50% Collar on 2025-02-24 @$527.88 (K_P=$475.09). On 2025-04-07 Open @$408.66 (VIX/3M 1.234), "
-                "that single tranche harvested +$67,287 in U4 / +$69,572 in U1 (+164.6 to +170.2 shares at the exact bottom!), beating QQQ by +6.41%!"
+                "that single tranche harvested +$69,571 (+170.19 QQQ shares at the exact bottom!), slashing DD to -16.36% (+6.41% excess)!"
             ),
             "narrative_zh": (
                 "即便宏观灯仅亮 2 盏，全美 AD Line < 50DMA 顶背离依然死死咬住 $539.52 大顶，于 2/24 @$527.88 开启 50% 保护（K_P=$475.09）；"
-                "4/07 关税恐慌极值（倒挂 1.234）在 $408.66 铁底单笔暴赚 +$67.3K 至 +$69.6K，一把抄底 +164.6 至 +170.2 股 QQQ，区间超额高达 +6.41%！"
+                "4/07 关税恐慌极值（倒挂 1.234）在 $408.66 铁底单笔暴赚 +$69,571，一把抄底 +170.19 股 QQQ，回撤压至 -16.36%（超额高达 +6.41%）！"
             ),
         },
         {
             "id": "2026-08_11_LIVE",
             "pill_en": "2026-11 LIVE",
             "pill_zh": "2026-11 实盘 LIVE",
-            "title_en": "2026-08 to 2026-11 LIVE Dual-Engine Campaign (-19.9% QQQ vs -13.3% U4)",
-            "title_zh": "2026-08 至 2026-11 实盘 LIVE 双引擎教科书战役",
+            "title_en": "2026-08 to 2026-11 LIVE Pure-Options Campaign (-19.9% QQQ vs -17.5% U1)",
+            "title_zh": "2026-08 至 2026-11 实盘 LIVE 纯期权双槽战役（QQQ -19.9% vs U1 -17.5%）",
             "start_date": "2026-08-24",
             "end_date": rows_eval[-1]["date"],
             "crash_start_date": "2026-10-06",
@@ -1527,20 +1476,19 @@ def build_crisis_windows(
             "is_live": True,
             "narrative_en": (
                 "1) 8/31 Slot 1 Naked Put @$715.17 (AD divergence, NO Call cap -> captured 100% of the rally to $759.66 ATH!). "
-                "2) 10/05 Slot 2 Collar @$749.35 (3 Lights + AD, 1 day before peak!). "
-                "3) 11/06 VIX/3M 1.103 TP @$658.35 harvested +$34,564 / +53.37 sh in U4 (+$35,737 / +55.18 sh in U1). "
-                "4) 11/19 U4 Slow-Bear Shield shifted 50% to T-Bills @$671.09, dodging the plunge to $608.45 (-13.30% DD vs -19.90% QQQ, +6.60% excess)!"
+                "2) 10/05 Slot 2 Zero-Cost Collar @$749.35 (3 Lights + AD, 1 day before peak!). "
+                "3) 11/06 VIX/3M 1.103 TP @$658.35 monetized both slots for +$35,737 (+55.18 extra QQQ shares!), cutting drawdown "
+                "from -19.90% to -17.54% (+2.36% excess) while holding 100% QQQ uncapped below ATH -5% for full rebound convexity!"
             ),
             "narrative_zh": (
-                "① 8/31 AD 背离开启首仓裸 Put @$715.17（无 Call 帽 100% 吃满冲顶至 $759.66 历史最高点！）；"
-                "② 10/05 见顶前一日 @$749.35 精准补齐次仓 Collar；③ 11/06 倒挂 1.103 在 @$658.35 双槽止盈落袋 +$34.6K/+53.4股（U1 +$35.7K/+55.2股）；"
-                "④ 11/19 五灯破年线在 @$671.09 切入半仓美债盾，完美躲过跌向 $608.45 的主跌浪，回撤从 -19.90% 砍至 -13.30%（超额 +6.60%）！"
+                "① 8/31 AD 背离开启首仓 50% 裸 Put @$715.17（无卖 Call 封顶，100% 吃满冲顶至 $759.66 历史最高点！）；"
+                "② 10/05 见顶前一日 @$749.35 精准补齐次仓 50% 零成本 Collar；③ 11/06 倒挂 1.103 在 @$658.35 双槽止盈落袋 +$35,737（低位增持 +55.18 股 QQQ）；"
+                "④ 跌离前高超 5% 严禁低位新开 Collar，100% 满仓 QQQ 带着多出的 55.18 股完整待弹（回撤 -17.54% vs QQQ -19.90%，超额 +2.36%）！"
             ),
         },
     ]
 
     strat_keys = [
-        "U4_DualEngine",
         "U1_PureOptions",
         "B1c_PureAD",
         "D2_SixLights",
@@ -1599,9 +1547,6 @@ def build_crisis_windows(
 
         peak_vr = max(float(rows_eval[j]["vix_ratio"]) for j in range(c0, c1 + 1))
         peak_lights = max(int(rows_eval[j]["score"]) for j in range(c0, c1 + 1))
-        z0 = date_to_idx[z0_date]
-        z1 = date_to_idx[z1_date]
-        shield_days = sum(1 for j in range(z0, z1 + 1) if sims["U4_DualEngine"]["shield_active"][j])
 
         linked_ids = [
             ev["event_id"]
@@ -1614,22 +1559,18 @@ def build_crisis_windows(
                 **sp,
                 "qqq_ret_pct": round(q_ret, 2),
                 "qqq_mdd": round(q_mdd, 2),
-                "u4_mdd": ep_stats["U4_DualEngine"]["mdd_pct"],
                 "u1_mdd": ep_stats["U1_PureOptions"]["mdd_pct"],
                 "b1c_mdd": ep_stats["B1c_PureAD"]["mdd_pct"],
                 "d2_mdd": ep_stats["D2_SixLights"]["mdd_pct"],
                 "h2_mdd": ep_stats["H2_G4_PriceGate"]["mdd_pct"],
-                "excess_ret_u4": ep_stats["U4_DualEngine"]["excess_ret_pct"],
                 "excess_ret_u1": ep_stats["U1_PureOptions"]["excess_ret_pct"],
-                "dd_cushion_u4": ep_stats["U4_DualEngine"]["dd_cushion_pct"],
                 "dd_cushion_u1": ep_stats["U1_PureOptions"]["dd_cushion_pct"],
                 "peak_vix_ratio": round(peak_vr, 3),
                 "peak_lights": peak_lights,
-                "harvested_usd": ep_stats["U4_DualEngine"]["harvested_tp_usd"],
+                "harvested_usd": ep_stats["U1_PureOptions"]["harvested_tp_usd"],
                 "harvested_usd_u1": ep_stats["U1_PureOptions"]["harvested_tp_usd"],
-                "shares_added": ep_stats["U4_DualEngine"]["shares_added_tp"],
+                "shares_added": ep_stats["U1_PureOptions"]["shares_added_tp"],
                 "shares_added_u1": ep_stats["U1_PureOptions"]["shares_added_tp"],
-                "shield_days": shield_days,
                 "strategy_stats": ep_stats,
                 "linked_event_ids": linked_ids,
             }
@@ -1775,29 +1716,6 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
 
     strategy_defs = [
         (
-            "U4_DualEngine",
-            {
-                "arch": "hybrid_campaign_first",
-                "max_slots": 2,
-                "slot_coverage": 0.50,
-                "gate_key": "sw_u1",
-                "vix_ratio_tp": 1.10,
-                "slow_bear_overlay": True,
-            },
-            {
-                "code_name": "U4_DualEngine_U1_H2_plus_6LightsSlowBear",
-                "name_en": "U4 Ultimate Dual-Engine (AD/4-Light Naked->Collar + 5-Light Slow-Bear Shield)",
-                "name_zh": "U4 终极双引擎旗舰（AD背离/四灯首裸领口 + 五灯破年线慢熊盾）",
-                "short_en": "U4 Dual-Engine",
-                "short_zh": "U4 终极双引擎",
-                "badge_en": "FLAGSHIP #1 · ALL-WEATHER",
-                "badge_zh": "全天候总冠军 · 双引擎",
-                "color_hex": "#80C6A8",
-                "rule_summary_en": "Slot 1 50% Naked -10% Put on (AD<50DMA or >=4 Lights) near ATH<=5% & VXN<=22 -> Slot 2 50% Collar after 30D -> VIX/3M>=1.10 TP + 5-Light <200DMA 50% T-Bill Shield.",
-                "rule_summary_zh": "ATH<=5% 且 VXN<=22 时凭「AD<50DMA 顶背离 或 >=4盏灯」开首仓50%裸Put -> 满30天补次仓50%零成本Collar -> VIX/3M>=1.10 恐慌止盈抄底 + 五灯破200DMA半仓美债慢熊盾。",
-            },
-        ),
-        (
             "U1_PureOptions",
             {
                 "arch": "hybrid_campaign_first",
@@ -1813,11 +1731,11 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
                 "name_zh": "U1 纯期权总冠军（100% 满仓 QQQ + AD背离/四灯 首裸次领口）",
                 "short_en": "U1 Pure Options",
                 "short_zh": "U1 纯期权冠军",
-                "badge_en": "100% EQUITY · NEVER SELLS QQQ",
-                "badge_zh": "永不减持正股 · 纯期权",
-                "color_hex": "#7DB8F0",
-                "rule_summary_en": "100% QQQ core forever; opens 50% Naked -10% Put + 50% 30D-stepped Collar on (AD<50DMA or >=4 Lights) & VXN<=22, monetizing on VIX/VIX3M >= 1.10.",
-                "rule_summary_zh": "底仓 100% QQQ 永不卖股择时；仅凭 AD 顶背离或 >=4 盏危机灯在低波高位开启首裸次领口保护，VIX/VIX3M >= 1.10 止盈低位复投 QQQ 份额。",
+                "badge_en": "FLAGSHIP #1 · 100% QQQ PURE OPTIONS",
+                "badge_zh": "纯期权总冠军 · 永不卖股",
+                "color_hex": "#80C6A8",
+                "rule_summary_en": "100% QQQ core forever; opens Slot 1 50% Naked -10% Put + Slot 2 50% 30D-stepped Collar on (AD<50DMA or >=4 Lights) & ATH<=5% & VXN<=22, monetizing into QQQ shares on VIX/VIX3M >= 1.10.",
+                "rule_summary_zh": "底仓 100% QQQ 永不卖股择时；在 ATH<=5% 且 VXN<=22 时凭 AD 顶背离或 >=4 盏危机灯开首仓 50% 裸 Put、满30天补次仓 50% 零成本 Collar，VIX/VIX3M >= 1.10 恐慌止盈复投 QQQ 份额。",
             },
         ),
         (
@@ -1838,7 +1756,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
                 "short_zh": "B1c 纯 AD 背离",
                 "badge_en": "HIGHEST EFFICIENCY · 31% HEDGED",
                 "badge_zh": "极简高效率 · 仅31%持盾",
-                "color_hex": "#F2BC60",
+                "color_hex": "#7DB8F0",
                 "rule_summary_en": "Fires strictly when QQQ is within 5% of ATH, VXN<=22, and US Liquid Common-Stock AD Line < 50DMA (only 23 tranches in 11.9 years, +$178 alpha per hedged day).",
                 "rule_summary_zh": "仅在 QQQ 距前高<=5%、VXN<=22 且全美 AD Line 跌破 50DMA 形成顶背离时上盾；11.9 年仅出手 23 笔，单持盾日创造 +$178 净超额。",
             },
@@ -1926,7 +1844,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         strategies_summary.append(merged_summary)
         if sid != "BH_Pure_QQQ":
             trade_ledgers_by_strategy[sid] = res["ledger"]
-            events_by_strategy[sid] = build_unified_events(sid, res["ledger"], res["shield_events"])
+            events_by_strategy[sid] = build_unified_events(sid, res["ledger"], [])
 
     last_row = rows_eval[-1]
     as_of_date = last_row["date"]
@@ -1948,7 +1866,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         "vix_backwardation": bool(float(last_row["vix_ratio"]) >= 1.0),
         "vix_tp_triggered": bool(float(last_row["vix_ratio"]) >= 1.10),
         "vxn": round(float(last_row["vxn"]), 2),
-        "tbill_3m_pct": round(float(last_row["r"]) * 100.0, 2),
+        "rf_3m_pct": round(float(last_row["r"]) * 100.0, 2),
         "ad_line": round(float(last_row["ad_line"]), 0),
         "ad_sma50": round(float(last_row["ad_sma50"]), 0),
         "ad_vs_50ma": round(float(last_row["ad_line"]) - float(last_row["ad_sma50"]), 0),
@@ -1957,11 +1875,12 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         ),
         "pct_above_200d": round(float(last_row["pct_200d"]) * 100.0, 1),
         "smooth_crisis_score_5d": round(float(last_row["score_5d"]), 2),
+        "smooth_5d_score": round(float(last_row["score_5d"]), 2),
         "raw_crisis_score": int(last_row["score"]),
         "total_crisis_lights": 6,
     }
 
-    live_signal_state = build_live_signal_state(last_row, sims["U4_DualEngine"], sims["U1_PureOptions"])
+    live_signal_state = build_live_signal_state(last_row, sims["U1_PureOptions"])
     six_crisis_lights = build_six_crisis_lights(last_row)
     ad_line_signal = build_ad_line_signal(rows_all, len(rows_all) - 1)
 
@@ -1983,7 +1902,6 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
                 "running_ath": round(float(r["running_ath"]), 2),
                 "dd_ath_pct": round(float(r["dd_from_ath"]) * 100.0, 2),
                 "nav_bh": round(sims["BH_Pure_QQQ"]["nav"][i], 2),
-                "nav_u4": round(sims["U4_DualEngine"]["nav"][i], 2),
                 "nav_u1": round(sims["U1_PureOptions"]["nav"][i], 2),
                 "nav_b1c": round(sims["B1c_PureAD"]["nav"][i], 2),
                 "nav_d2": round(sims["D2_SixLights"]["nav"][i], 2),
@@ -1999,13 +1917,12 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
                 "vix3m": round(float(r["vix3m"]), 2),
                 "vix_ratio": round(float(r["vix_ratio"]), 3),
                 "vxn": round(float(r["vxn"]), 2),
-                "shield_active": bool(sims["U4_DualEngine"]["shield_active"][i]),
-                "active_slots": int(sims["U4_DualEngine"]["active_slots"][i]),
-                "slot1_naked": bool(sims["U4_DualEngine"]["slot1_naked"][i]),
+                "active_slots": int(sims["U1_PureOptions"]["active_slots"][i]),
+                "slot1_naked": bool(sims["U1_PureOptions"]["slot1_naked"][i]),
             }
         )
 
-    default_events = events_by_strategy["U4_DualEngine"]
+    default_events = events_by_strategy["U1_PureOptions"]
     crisis_windows = build_crisis_windows(rows_eval, sims, default_events)
 
     return {
@@ -2022,7 +1939,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
             "execution_convention": "Strict Zero-Lookahead: EOD signal on day t -> executed at day t+1 Open",
             "pricing_calibration": "OPRA 53,347-print 90-DTE skew polynomial + 2.5% per-leg option slippage + 3 bps stock rebalance fee",
         },
-        "default_strategy_id": "U4_DualEngine",
+        "default_strategy_id": "U1_PureOptions",
         "strategy_order": [s["id"] for s in strategies_summary],
         "live_market_snapshot": live_market_snapshot,
         "live_signal_state": live_signal_state,
@@ -2032,9 +1949,9 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         "daily_series": daily_series,
         "events": default_events,
         "events_by_strategy": events_by_strategy,
-        "trade_ledger": trade_ledgers_by_strategy["U4_DualEngine"],
+        "trade_ledger": trade_ledgers_by_strategy["U1_PureOptions"],
         "trade_ledgers_by_strategy": trade_ledgers_by_strategy,
-        "shield_events": sims["U4_DualEngine"]["shield_events"],
+        "shield_events": [],
         "crisis_windows": crisis_windows,
     }
 
@@ -2043,11 +1960,25 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     raw_txt = json.dumps(doc, ensure_ascii=False)
     if chr(126) in raw_txt:
         raise AssertionError("Artifact contains forbidden ASCII tilde character!")
-    for banned in ("FactOS", "FACT OS", "fact_os", "DuckDB", "Sharadar", "SQLite"):
+    for banned in (
+        "FactOS",
+        "FACT OS",
+        "fact_os",
+        "DuckDB",
+        "Sharadar",
+        "SQLite",
+        "U4_DualEngine",
+        "T-Bill",
+        "slow_bear_shield",
+        "美债慢熊盾",
+        "慢熊盾",
+        "短债",
+    ):
         if banned in raw_txt:
-            raise AssertionError(f"Artifact contains forbidden internal identifier: {banned}")
+            raise AssertionError(f"Artifact contains forbidden identifier: {banned}")
 
     snap = doc["live_market_snapshot"]
+    assert doc["default_strategy_id"] == "U1_PureOptions", doc["default_strategy_id"]
     assert doc["as_of_date"] >= "2026-11-20"
     if doc["as_of_date"] == "2026-11-20":
         assert snap["qqq_close"] == 608.45, snap["qqq_close"]
@@ -2061,12 +1992,12 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         assert all(l["lit"] for l in doc["six_crisis_lights"]), "All 6 lights must be ON on 2026-11-20"
 
         smap = {s["id"]: s for s in doc["strategies_summary"]}
+        assert "U4_DualEngine" not in smap
         assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.77) <= 0.02, smap["BH_Pure_QQQ"]["end_nav"]
-        assert abs(smap["U4_DualEngine"]["end_nav"] - 1479142.71) <= 0.02, smap["U4_DualEngine"]["end_nav"]
-        assert abs(smap["U4_DualEngine"]["net_alpha_usd"] - 190837.93) <= 0.02, smap["U4_DualEngine"]["net_alpha_usd"]
-        assert smap["U4_DualEngine"]["max_dd_pct"] == -30.50, smap["U4_DualEngine"]["max_dd_pct"]
-        assert smap["U4_DualEngine"]["sharpe"] == 0.893, smap["U4_DualEngine"]["sharpe"]
         assert abs(smap["U1_PureOptions"]["end_nav"] - 1454617.86) <= 0.02, smap["U1_PureOptions"]["end_nav"]
+        assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 166313.09) <= 0.02, smap["U1_PureOptions"]["net_alpha_usd"]
+        assert smap["U1_PureOptions"]["cagr_pct"] == 18.17, smap["U1_PureOptions"]["cagr_pct"]
+        assert smap["U1_PureOptions"]["sharpe"] == 0.810, smap["U1_PureOptions"]["sharpe"]
         assert abs(smap["B1c_PureAD"]["end_nav"] - 1453135.67) <= 0.02, smap["B1c_PureAD"]["end_nav"]
         assert abs(smap["D2_SixLights"]["end_nav"] - 1442693.31) <= 0.02, smap["D2_SixLights"]["end_nav"]
         assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1380701.67) <= 0.02, smap["H2_G4_PriceGate"]["end_nav"]
@@ -2099,8 +2030,8 @@ def main() -> None:
     smap = {s["id"]: s for s in doc["strategies_summary"]}
     print(
         f"OK: verified {args.output} ({size_kb:.1f} KB) | as_of_date={doc['as_of_date']} | "
-        f"days={len(doc['daily_series'])} | U4=${smap['U4_DualEngine']['end_nav']:,.2f} "
-        f"(+${smap['U4_DualEngine']['net_alpha_usd']:,.2f}) | U1=${smap['U1_PureOptions']['end_nav']:,.2f}"
+        f"days={len(doc['daily_series'])} | U1=${smap['U1_PureOptions']['end_nav']:,.2f} "
+        f"(+${smap['U1_PureOptions']['net_alpha_usd']:,.2f}) | BH=${smap['BH_Pure_QQQ']['end_nav']:,.2f}"
     )
 
 

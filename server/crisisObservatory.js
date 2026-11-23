@@ -3,9 +3,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-export const CRISIS_OBSERVATORY_VERSION = 'crisis-observatory-v1';
+export const CRISIS_OBSERVATORY_VERSION = 'crisis-observatory-v2';
 export const CRISIS_OBSERVATORY_STRATEGIES = Object.freeze([
-  'U4_DualEngine',
   'U1_PureOptions',
   'B1c_PureAD',
   'D2_SixLights',
@@ -14,12 +13,15 @@ export const CRISIS_OBSERVATORY_STRATEGIES = Object.freeze([
 ]);
 
 const STRATEGY_NAV_KEYS = Object.freeze({
-  U4_DualEngine: 'nav_u4',
   U1_PureOptions: 'nav_u1',
   B1c_PureAD: 'nav_b1c',
   D2_SixLights: 'nav_d2',
   H2_G4_PriceGate: 'nav_h2',
   BH_Pure_QQQ: 'nav_bh',
+});
+
+const LEGACY_STRATEGY_ALIASES = Object.freeze({
+  U4_DualEngine: 'U1_PureOptions',
 });
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -162,7 +164,7 @@ function maskLedgerAtCutoff(ledger, asOfDate) {
   return out;
 }
 
-function buildCutoffSignalState(lastBar, openU4Tranches, baseSignalState) {
+function buildCutoffSignalState(lastBar, openU1Tranches, baseSignalState) {
   const ddPct = Number(lastBar.dd_ath_pct);
   const vxn = Number(lastBar.vxn);
   const vr = Number(lastBar.vix_ratio);
@@ -175,43 +177,41 @@ function buildCutoffSignalState(lastBar, openU4Tranches, baseSignalState) {
   const vxnOk = vxn <= 22.0;
   const lightsOk = sc >= 4;
   const tpOk = vr >= 1.1;
-  const inShield = Boolean(lastBar.shield_active);
 
-  const s1Open = openU4Tranches.find(t => t.slot_num === 1) ?? null;
-  const s2Open = openU4Tranches.find(t => t.slot_num === 2) ?? null;
+  const s1Open = openU1Tranches.find(t => t.slot_num === 1) ?? null;
+  const s2Open = openU1Tranches.find(t => t.slot_num === 2) ?? null;
 
   let regimeCode = 'CRUISE_UNHEDGED';
   let titleEn = 'BULL CRUISE UNHEDGED (100% QQQ · ZERO CALL DRAG)';
   let titleZh = '顺风巡航零期权拖累（100% 满仓 QQQ 复利）';
-  if (inShield) {
-    regimeCode = 'SLOW_BEAR_SHIELD_ACTIVE';
-    titleEn = 'SLOW-BEAR 50% T-BILL SHIELD ACTIVE';
-    titleZh = '五灯破年线 50% 美债慢熊盾运行中';
-  } else if (s1Open && s2Open) {
+  if (s1Open && s2Open) {
     regimeCode = 'DUAL_SLOT_FULL_SHIELD';
-    titleEn = 'SLOT 1 NAKED PUT + SLOT 2 ZERO-COST COLLAR FULL HEDGE ACTIVE';
-    titleZh = '首仓裸 Put + 次仓零成本 Collar 双槽满盾保护中';
+    titleEn = 'SLOT 1 NAKED PUT + SLOT 2 ZERO-COST COLLAR FULL HEDGE ACTIVE (100% QQQ)';
+    titleZh = '首仓裸 Put + 次仓零成本 Collar 双槽满盾保护中（100% 满仓 QQQ）';
   } else if (s1Open) {
     regimeCode = 'SLOT1_NAKED_PUT_ACTIVE';
-    titleEn = 'SLOT 1 (50% NAKED -10% PUT) ACTIVE · UNLIMITED UPSIDE RETAINED';
-    titleZh = '首仓 50% 裸 -10% Put 持盾中 · 保留 100% 向上冲顶收益';
+    titleEn = 'SLOT 1 (50% NAKED -10% PUT) ACTIVE · 100% QQQ UNLIMITED UPSIDE RETAINED';
+    titleZh = '首仓 50% 裸 -10% Put 持盾中 · 100% QQQ 保留完整向上冲顶收益';
   } else if (!athOk) {
     regimeCode = 'LOW_SPOT_FREEZE_NO_NEW_COLLAR';
     titleEn = 'DRAWDOWN > 5% OFF ATH · HARD FREEZE ON NEW COLLARS (100% QQQ REBOUND CAPTURE)';
-    titleZh = '距历史前高回撤超 5% · 严禁低位新开或续作 Collar（保留 100% 反弹斜率）';
+    titleZh = '距历史前高回撤超 5% · 严禁低位新开或续作 Collar（100% QQQ 保留完整反弹斜率）';
   }
 
   const dev200 = ma200 > 0 ? ((cl / ma200 - 1) * 100).toFixed(2) : '0.00';
+  const adSpread = Math.round(Number(lastBar.ad_vs_50ma));
+  const adSpreadStr = `${adSpread >= 0 ? '+' : ''}${adSpread}`;
+
   return {
     ...baseSignalState,
     regime_code: regimeCode,
     regime_title_en: titleEn,
     regime_title_zh: titleZh,
-    regime_subtitle_en: `QQQ $${cl.toFixed(2)} (${ddPct.toFixed(2)}% vs ATH, ${dev200}% vs 200DMA) · ${sc}/6 Crisis Lights ON (5D avg ${sc5.toFixed(1)}) · VIX/VIX3M ${vr.toFixed(3)}`,
-    regime_subtitle_zh: `QQQ 现价 $${cl.toFixed(2)}（距前高 ${ddPct.toFixed(2)}%，偏离年线 ${dev200}%）· 危机灯 ${sc}/6 亮灯（5日均值 ${sc5.toFixed(1)}）· VIX/VIX3M ${vr.toFixed(3)}`,
-    target_equity_pct: inShield ? 50.0 : 100.0,
-    target_tbill_pct: inShield ? 50.0 : 0.0,
-    active_option_slots: openU4Tranches.length,
+    regime_subtitle_en: `QQQ $${cl.toFixed(2)} (${ddPct.toFixed(2)}% vs ATH, ${dev200}% vs 200DMA) · ${sc}/6 Crisis Lights ON (5D avg ${sc5.toFixed(1)}) · VIX/VIX3M ${vr.toFixed(3)} · 100% QQQ Pure Options`,
+    regime_subtitle_zh: `QQQ 现价 $${cl.toFixed(2)}（距前高 ${ddPct.toFixed(2)}%，偏离年线 ${dev200}%）· 危机灯 ${sc}/6 亮灯（5日均值 ${sc5.toFixed(1)}）· VIX/VIX3M ${vr.toFixed(3)} · 100% 满仓 QQQ 纯期权`,
+    target_equity_pct: 100.0,
+    target_tbill_pct: 0.0,
+    active_option_slots: openU1Tranches.length,
     slot1_naked_put: {
       ...baseSignalState.slot1_naked_put,
       status: s1Open ? 'ACTIVE_OPEN' : 'STANDBY',
@@ -226,46 +226,45 @@ function buildCutoffSignalState(lastBar, openU4Tranches, baseSignalState) {
       status_label_zh: s2Open ? '持盾保护中' : !athOk ? '低位铁律冻结（禁卖Call）' : '待命（距首仓满30日开启）',
       open_position: s2Open,
     },
-    slow_bear_shield: {
-      ...baseSignalState.slow_bear_shield,
-      status: inShield ? 'ACTIVE' : 'STANDBY',
-      status_label_en: inShield ? 'ACTIVE (50% T-BILL)' : 'STANDBY (100% QQQ)',
-      status_label_zh: inShield ? '激活避险中（50% 短债）' : '未激活（100% 现货）',
-    },
     gate_checklist: [
       {
-        key: 'ath_5pct',
+        key: 'ath_within_5pct',
         passed: athOk,
-        label_en: 'Near High (DD >= -5%)',
-        label_zh: '高位区 (距ATH <= 5%)',
+        label_en: 'ATH <= 5%',
+        label_zh: '距前高 <= 5%',
+        current_value: `${ddPct.toFixed(2)}%`,
         reading: `${ddPct.toFixed(2)}%`,
       },
       {
-        key: 'vxn_22',
+        key: 'vxn_le_22',
         passed: vxnOk,
-        label_en: 'Cheap Vol (VXN <= 22)',
-        label_zh: '低波区 (VXN <= 22)',
+        label_en: 'VXN <= 22',
+        label_zh: 'VXN <= 22 低波门控',
+        current_value: vxn.toFixed(2),
         reading: vxn.toFixed(2),
       },
       {
-        key: 'ad_50dma',
+        key: 'ad_below_50dma',
         passed: adBelow,
         label_en: 'AD Line < 50DMA',
-        label_zh: '腾落线 < 50DMA',
-        reading: `${Math.round(Number(lastBar.ad_vs_50ma))}`,
+        label_zh: 'AD Line < 50DMA',
+        current_value: adSpreadStr,
+        reading: adSpreadStr,
       },
       {
-        key: 'lights_4',
+        key: 'crisis_lights_ge_4',
         passed: lightsOk,
-        label_en: 'Crisis Lights >= 4/6',
-        label_zh: '危机灯 >= 4/6',
-        reading: `${sc}/6`,
+        label_en: 'Crisis Lights >= 4',
+        label_zh: '危机灯 >= 4 盏',
+        current_value: `${sc} / 6`,
+        reading: `${sc} / 6`,
       },
       {
-        key: 'vix_tp_110',
+        key: 'vix_ratio_ge_110_tp',
         passed: tpOk,
-        label_en: 'Panic TP (VIX/3M >= 1.10)',
-        label_zh: '恐慌止盈 (VIX/3M >= 1.10)',
+        label_en: 'VIX/VIX3M >= 1.10 TP',
+        label_zh: 'VIX/VIX3M >= 1.10 止盈',
+        current_value: vr.toFixed(3),
         reading: vr.toFixed(3),
       },
     ],
@@ -281,21 +280,9 @@ function extendLiveBars(baseData, extraDailyBars, requestedAsOf) {
   if (!fresh.length) return null;
 
   const series = baseSeries.slice();
-  let shieldActive = Boolean(lastBase.shield_active);
-  let pendingReload = baseData.live_signal_state?.slow_bear_shield?.status === 'ACTIVE_RELOAD_ARMED';
-  let pendingEnter = false;
-  const rDaily = ((Number(baseData.live_market_snapshot?.tbill_3m_pct ?? 4.25) / 100) / 252);
 
   for (const b of fresh) {
     const prev = series[series.length - 1];
-    if (pendingReload && shieldActive) {
-      shieldActive = false;
-      pendingReload = false;
-    } else if (pendingEnter && !shieldActive) {
-      shieldActive = true;
-      pendingEnter = false;
-    }
-
     const cl = Number(b.qqqClose);
     const prevCl = Number(prev.qqq_close);
     const qqqRet = prevCl > 0 ? cl / prevCl - 1 : 0;
@@ -309,7 +296,6 @@ function extendLiveBars(baseData, extraDailyBars, requestedAsOf) {
     const vr = vix3m > 0 ? vix / vix3m : Number(prev.vix_ratio);
     const vxn = Number.isFinite(b.vxnClose) && b.vxnClose > 0 ? Number(b.vxnClose) : Number(prev.vxn);
 
-    const u4Ret = shieldActive ? 0.5 * qqqRet + 0.5 * rDaily : qqqRet;
     const nextRow = {
       ...prev,
       date: b.date,
@@ -318,7 +304,6 @@ function extendLiveBars(baseData, extraDailyBars, requestedAsOf) {
       running_ath: r2(runAth),
       dd_ath_pct: r2(ddAthPct),
       nav_bh: r2(Number(prev.nav_bh) * (1 + qqqRet)),
-      nav_u4: r2(Number(prev.nav_u4) * (1 + u4Ret)),
       nav_u1: r2(Number(prev.nav_u1) * (1 + qqqRet)),
       nav_b1c: r2(Number(prev.nav_b1c) * (1 + qqqRet)),
       nav_d2: r2(Number(prev.nav_d2) * (1 + qqqRet)),
@@ -327,15 +312,8 @@ function extendLiveBars(baseData, extraDailyBars, requestedAsOf) {
       vix3m: r2(vix3m),
       vix_ratio: r3(vr),
       vxn: r2(vxn),
-      shield_active: shieldActive,
     };
     series.push(nextRow);
-
-    if (!shieldActive && Number(nextRow.smooth_lights) >= 4.8 && cl < ma200) {
-      pendingEnter = true;
-    } else if (shieldActive && (Number(nextRow.smooth_lights) <= 3.0 || cl > ma200 * 1.01 || vix >= 34 || vr >= 1.1)) {
-      pendingReload = true;
-    }
   }
   return series;
 }
@@ -352,9 +330,10 @@ export function loadCrisisObservatoryDashboard({
     fail('crisis_observatory_snapshot_changed', 409);
   }
 
-  const selectedStrategy = strategy
+  const rawStrategy = strategy
     ? String(strategy).trim()
-    : data.default_strategy_id ?? 'U4_DualEngine';
+    : data.default_strategy_id ?? 'U1_PureOptions';
+  const selectedStrategy = LEGACY_STRATEGY_ALIASES[rawStrategy] ?? rawStrategy;
   if (!CRISIS_OBSERVATORY_STRATEGIES.includes(selectedStrategy)) {
     fail('invalid_crisis_observatory_strategy', 400);
   }
@@ -369,7 +348,7 @@ export function loadCrisisObservatoryDashboard({
 
   // Fast path: exact audited snapshot when requestedAsOf >= artifact.as_of_date and no live tail
   if (!extendedSeries && requestedAsOf >= data.as_of_date) {
-    const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'U4_DualEngine' : selectedStrategy;
+    const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'U1_PureOptions' : selectedStrategy;
     return {
       ...data,
       version: CRISIS_OBSERVATORY_VERSION,
@@ -414,7 +393,7 @@ export function loadCrisisObservatoryDashboard({
     slicedEventsByStrategy[sid] = (evs ?? []).filter(e => e.date <= effDate);
   }
 
-  const openU4Tranches = (maskedLedgersByStrategy.U4_DualEngine ?? []).filter(t => t.exit_date === null);
+  const openU1Tranches = (maskedLedgersByStrategy.U1_PureOptions ?? []).filter(t => t.exit_date === null);
   const maskBits = Number(lastBar.lights_mask ?? 0);
   const lightsAtCutoff = data.six_crisis_lights.map((light, idx) => ({
     ...light,
@@ -471,10 +450,11 @@ export function loadCrisisObservatoryDashboard({
     vix_vix3m_ratio: lastBar.vix_ratio,
     vxn: lastBar.vxn,
     raw_crisis_score: lastBar.crisis_lights,
+    smooth_crisis_score_5d: lastBar.smooth_lights,
     smooth_5d_score: lastBar.smooth_lights,
   };
 
-  const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'U4_DualEngine' : selectedStrategy;
+  const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'U1_PureOptions' : selectedStrategy;
   const visibleWindows = data.crisis_windows.filter(w => w.start_date <= effDate);
 
   return {
@@ -493,7 +473,7 @@ export function loadCrisisObservatoryDashboard({
       trading_days: slicedSeries.length,
     },
     live_market_snapshot: liveSnap,
-    live_signal_state: buildCutoffSignalState(lastBar, openU4Tranches, data.live_signal_state),
+    live_signal_state: buildCutoffSignalState(lastBar, openU1Tranches, data.live_signal_state),
     six_crisis_lights: lightsAtCutoff,
     ad_line_signal: adSignal,
     strategies_summary: strategiesSummary,
@@ -502,7 +482,7 @@ export function loadCrisisObservatoryDashboard({
     events_by_strategy: slicedEventsByStrategy,
     trade_ledger: maskedLedgersByStrategy[ledgerStrategy] ?? [],
     trade_ledgers_by_strategy: maskedLedgersByStrategy,
-    shield_events: (data.shield_events ?? []).filter(e => e.date <= effDate),
+    shield_events: [],
     crisis_windows: visibleWindows,
   };
 }

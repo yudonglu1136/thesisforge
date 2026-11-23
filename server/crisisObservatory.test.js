@@ -9,11 +9,11 @@ import {
 } from './crisisObservatory.js';
 import { registerInvestmentRoutes } from './investmentRoutes.js';
 
-test('loads canonical 2026-11-20 Crisis Observatory payload with exact audited numbers', () => {
+test('loads canonical 2026-11-20 Crisis Observatory payload with pure-options U1 flagship and zero T-Bill shield', () => {
   const doc = loadCrisisObservatoryDashboard({ asOf: '2026-11-20' });
   assert.equal(doc.version, CRISIS_OBSERVATORY_VERSION);
   assert.equal(doc.as_of_date, '2026-11-20');
-  assert.equal(doc.selected_strategy_id, 'U4_DualEngine');
+  assert.equal(doc.selected_strategy_id, 'U1_PureOptions');
   assert.ok(doc.snapshotId && doc.snapshotId.length === 16);
 
   const snap = doc.live_market_snapshot;
@@ -32,18 +32,20 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with exact audited n
   assert.equal(doc.ad_line_signal.days_below_50ma, 5);
 
   const sig = doc.live_signal_state;
-  assert.equal(sig.regime_code, 'SLOW_BEAR_SHIELD_ACTIVE');
+  assert.equal(sig.regime_code, 'LOW_SPOT_FREEZE_NO_NEW_COLLAR');
+  assert.equal(sig.target_equity_pct, 100);
+  assert.equal(sig.target_tbill_pct, 0);
+  assert.equal(sig.slow_bear_shield, undefined);
   assert.equal(sig.slot1_naked_put.status, 'MONETIZED_STANDBY');
   assert.equal(sig.slot2_collar.status, 'FROZEN_BELOW_ATH5');
-  assert.equal(sig.slow_bear_shield.status, 'ACTIVE_RELOAD_ARMED');
   assert.equal(sig.gate_checklist.length, 5);
 
   const smap = Object.fromEntries(doc.strategies_summary.map(s => [s.id, s]));
-  assert.ok(Math.abs(smap.U4_DualEngine.end_nav - 1479142.71) <= 0.02);
-  assert.ok(Math.abs(smap.U4_DualEngine.net_alpha_usd - 190837.93) <= 0.02);
-  assert.equal(smap.U4_DualEngine.max_dd_pct, -30.5);
-  assert.equal(smap.U4_DualEngine.sharpe, 0.893);
+  assert.equal(smap.U4_DualEngine, undefined);
   assert.ok(Math.abs(smap.U1_PureOptions.end_nav - 1454617.86) <= 0.02);
+  assert.ok(Math.abs(smap.U1_PureOptions.net_alpha_usd - 166313.09) <= 0.02);
+  assert.equal(smap.U1_PureOptions.cagr_pct, 18.17);
+  assert.equal(smap.U1_PureOptions.sharpe, 0.81);
   assert.ok(Math.abs(smap.B1c_PureAD.end_nav - 1453135.67) <= 0.02);
   assert.ok(Math.abs(smap.D2_SixLights.end_nav - 1442693.31) <= 0.02);
   assert.ok(Math.abs(smap.H2_G4_PriceGate.end_nav - 1380701.67) <= 0.02);
@@ -52,6 +54,11 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with exact audited n
   assert.equal(doc.crisis_windows.length, 7);
   assert.equal(doc.crisis_windows.at(-1).id, '2026-08_11_LIVE');
   assert.equal(doc.daily_series.length, 2990);
+  assert.deepEqual(doc.shield_events, []);
+
+  // Legacy U4_DualEngine query alias maps cleanly to U1_PureOptions
+  const legacyAlias = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', strategy: 'U4_DualEngine' });
+  assert.equal(legacyAlias.selected_strategy_id, 'U1_PureOptions');
 });
 
 test('slices historical asOf cutoffs without lookahead and masks future tranche exits', async () => {
@@ -70,11 +77,13 @@ test('slices historical asOf cutoffs without lookahead and masks future tranche 
   assert.equal(openTranches.length, 2, 'Both Slot 1 Naked Put and Slot 2 Collar are active on 2026-10-15');
   assert.ok(openTranches.every(t => t.exit_reason === 'open_as_of_cutoff' && t.net_pnl_usd === null));
   assert.equal(midOct.live_signal_state.regime_code, 'DUAL_SLOT_FULL_SHIELD');
+  assert.equal(midOct.live_signal_state.target_equity_pct, 100);
+  assert.equal(midOct.live_signal_state.target_tbill_pct, 0);
 
-  // Live runtime forward extension onto 2026-11-23 executes pending T+1 capitulation reload to 100% QQQ
+  // Live runtime forward extension onto 2026-11-23 stays 100% QQQ pure options
   const liveExt = await loadCrisisObservatoryDashboardLive({
     asOf: '2026-11-23',
-    strategy: 'U4_DualEngine',
+    strategy: 'U1_PureOptions',
     fetchLiveBars: async () => [
       {
         date: '2026-11-20',
@@ -95,16 +104,12 @@ test('slices historical asOf cutoffs without lookahead and masks future tranche 
   assert.equal(liveExt.liveExtended, true);
   assert.equal(liveExt.as_of_date, '2026-11-23');
   assert.equal(liveExt.live_market_snapshot.qqq_close, 626.7);
-  assert.equal(
-    liveExt.daily_series.at(-1).shield_active,
-    false,
-    'Pending VIX>=34 & VIX/3M>=1.10 reload on 2026-11-20 restores 100% QQQ on 2026-11-23',
-  );
   assert.equal(liveExt.live_signal_state.target_equity_pct, 100);
+  assert.equal(liveExt.live_signal_state.target_tbill_pct, 0);
 });
 
 test('validates parameters and serves both /api/investment/crisis-observatory and /api/discover/crisis-observatory', async t => {
-  assert.equal(CRISIS_OBSERVATORY_STRATEGIES.length, 6);
+  assert.equal(CRISIS_OBSERVATORY_STRATEGIES.length, 5);
   assert.throws(() => loadCrisisObservatoryDashboard({ strategy: 'UNKNOWN' }), /invalid_crisis_observatory_strategy/);
   assert.throws(() => loadCrisisObservatoryDashboard({ asOf: '2012-01-01' }), /as_of_before_evaluation_window/);
   assert.throws(() => loadCrisisObservatoryDashboard({ asOf: 'not-a-date' }), /invalid_as_of_date/);
@@ -140,10 +145,10 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   // Authenticated -> 200 on both endpoints with identical data
   const authHeaders = { 'x-test-auth': '1' };
   const [resInv, resDisc] = await Promise.all([
-    fetch(`http://127.0.0.1:${port}/api/investment/crisis-observatory?strategy=U4_DualEngine&asOf=2026-11-20`, {
+    fetch(`http://127.0.0.1:${port}/api/investment/crisis-observatory?strategy=U1_PureOptions&asOf=2026-11-20`, {
       headers: authHeaders,
     }),
-    fetch(`http://127.0.0.1:${port}/api/discover/crisis-observatory?strategy=U4_DualEngine&asOf=2026-11-20`, {
+    fetch(`http://127.0.0.1:${port}/api/discover/crisis-observatory?strategy=U1_PureOptions&asOf=2026-11-20`, {
       headers: authHeaders,
     }),
   ]);
@@ -153,6 +158,7 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   const bodyDisc = await resDisc.json();
   assert.equal(bodyInv.as_of_date, '2026-11-20');
   assert.equal(bodyDisc.as_of_date, '2026-11-20');
+  assert.equal(bodyInv.selected_strategy_id, 'U1_PureOptions');
   assert.equal(bodyInv.snapshotId, bodyDisc.snapshotId);
   assert.equal(bodyDisc.live_market_snapshot.qqq_close, 608.45);
   assert.equal(bodyDisc.six_crisis_lights.length, 6);
