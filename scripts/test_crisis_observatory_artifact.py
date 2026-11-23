@@ -97,14 +97,15 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
         "H2_G4_PriceGate",
         "BH_Pure_QQQ",
     ]
-    assert abs(smap["U1_PureOptions"]["end_nav"] - 1454617.86) <= 0.02
-    assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 166313.09) <= 0.02
-    assert smap["U1_PureOptions"]["cagr_pct"] == 18.17
-    assert smap["U1_PureOptions"]["sharpe"] == 0.810
-    assert abs(smap["B1c_PureAD"]["end_nav"] - 1453135.67) <= 0.02
-    assert abs(smap["D2_SixLights"]["end_nav"] - 1442693.31) <= 0.02
+    assert abs(smap["U1_PureOptions"]["end_nav"] - 1604274.43) <= 0.02
+    assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 315969.65) <= 0.02
+    assert smap["U1_PureOptions"]["cagr_pct"] == 19.15
+    assert smap["U1_PureOptions"]["max_dd_pct"] == -31.52
+    assert smap["U1_PureOptions"]["sharpe"] == 0.844
+    assert abs(smap["B1c_PureAD"]["end_nav"] - 1508125.75) <= 0.02
+    assert abs(smap["D2_SixLights"]["end_nav"] - 1479351.46) <= 0.02
     assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1380701.67) <= 0.02
-    assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.77) <= 0.02
+    assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02
 
 
 def test_crisis_windows_and_4factor_convexity_identity():
@@ -119,12 +120,17 @@ def test_crisis_windows_and_4factor_convexity_identity():
         "2025-04",
         "2026-08_11_LIVE",
     ]
+    win_2022 = next(w for w in doc["crisis_windows"] if w["id"] == "2022")
+    assert win_2022["u1_mdd"] == -31.52
+    assert win_2022["qqq_mdd"] == -35.12
+    assert abs(win_2022["harvested_usd"] - 37679.90) <= 0.05
+
     live_win = doc["crisis_windows"][-1]
     assert live_win["is_live"] is True
     assert live_win["u1_mdd"] == -17.54
     assert live_win["qqq_mdd"] == -19.90
-    assert abs(live_win["harvested_usd"] - 35737.07) <= 0.05
-    assert abs(live_win["harvested_usd_u1"] - 35737.07) <= 0.05
+    assert abs(live_win["harvested_usd"] - 39413.84) <= 0.05
+    assert abs(live_win["harvested_usd_u1"] - 39413.84) <= 0.05
     assert doc["shield_events"] == []
 
     for sid, ledger in doc["trade_ledgers_by_strategy"].items():

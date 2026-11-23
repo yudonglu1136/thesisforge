@@ -131,13 +131,23 @@ void main() {
         findsOneWidget,
       );
 
-      // 3. Hero Interactive Chart: exact U1 Pure Options metrics + crisis zoom + clean hover card
-      expect(find.text('\$1,454,618'), findsOneWidget);
-      expect(find.text('+\$166,313'), findsOneWidget);
+      // 3. Hero Interactive Chart: exact U1 Dual-Track TP metrics + crisis zoom + clean hover card
+      expect(find.text('\$1,604,274'), findsOneWidget);
+      expect(find.text('+\$315,970'), findsOneWidget);
+      expect(find.text('-31.5%'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('crisis-observatory-canvas')),
         findsOneWidget,
       );
+
+      // Zoom into 2022 Slow Bear and verify Track-2 5x Slow-Bear Harvest (+$37,680 / -31.5% MDD)
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-zoom-pill-2022')),
+      );
+      expect(find.text('2022 Rate-Hike Grinding Bear Market'), findsWidgets);
+      expect(find.textContaining('5x Slow-Bear Harvest'), findsWidgets);
+      expect(find.textContaining('+\$37,680'), findsWidgets);
 
       // Zoom into 2025 April Tariff Crash and hover 2025-04-07 1.10 Panic Harvest
       await tapVisible(
@@ -181,7 +191,7 @@ void main() {
       expect(
         find.descendant(
           of: tooltipFinder,
-          matching: find.textContaining('+\$69,571'),
+          matching: find.textContaining('+\$76,729'),
         ),
         findsOneWidget,
       );
@@ -202,8 +212,8 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-strategy-pill-B1c_PureAD')),
       );
-      expect(find.text('\$1,453,136'), findsOneWidget);
-      expect(find.text('+\$164,831'), findsOneWidget);
+      expect(find.text('\$1,508,126'), findsOneWidget);
+      expect(find.text('+\$219,821'), findsOneWidget);
 
       // 4. Zoom into 2026 LIVE and expand a tranche row for 4-factor convexity
       await tapVisible(

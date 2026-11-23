@@ -42,14 +42,15 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with pure-options U1
 
   const smap = Object.fromEntries(doc.strategies_summary.map(s => [s.id, s]));
   assert.equal(smap.U4_DualEngine, undefined);
-  assert.ok(Math.abs(smap.U1_PureOptions.end_nav - 1454617.86) <= 0.02);
-  assert.ok(Math.abs(smap.U1_PureOptions.net_alpha_usd - 166313.09) <= 0.02);
-  assert.equal(smap.U1_PureOptions.cagr_pct, 18.17);
-  assert.equal(smap.U1_PureOptions.sharpe, 0.81);
-  assert.ok(Math.abs(smap.B1c_PureAD.end_nav - 1453135.67) <= 0.02);
-  assert.ok(Math.abs(smap.D2_SixLights.end_nav - 1442693.31) <= 0.02);
+  assert.ok(Math.abs(smap.U1_PureOptions.end_nav - 1604274.43) <= 0.02);
+  assert.ok(Math.abs(smap.U1_PureOptions.net_alpha_usd - 315969.65) <= 0.02);
+  assert.equal(smap.U1_PureOptions.cagr_pct, 19.15);
+  assert.equal(smap.U1_PureOptions.max_dd_pct, -31.52);
+  assert.equal(smap.U1_PureOptions.sharpe, 0.844);
+  assert.ok(Math.abs(smap.B1c_PureAD.end_nav - 1508125.75) <= 0.02);
+  assert.ok(Math.abs(smap.D2_SixLights.end_nav - 1479351.46) <= 0.02);
   assert.ok(Math.abs(smap.H2_G4_PriceGate.end_nav - 1380701.67) <= 0.02);
-  assert.ok(Math.abs(smap.BH_Pure_QQQ.end_nav - 1288304.77) <= 0.02);
+  assert.ok(Math.abs(smap.BH_Pure_QQQ.end_nav - 1288304.78) <= 0.02);
 
   assert.equal(doc.crisis_windows.length, 7);
   assert.equal(doc.crisis_windows.at(-1).id, '2026-08_11_LIVE');

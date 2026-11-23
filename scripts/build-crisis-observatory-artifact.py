@@ -316,6 +316,8 @@ def simulate_strategy(
     target_dte: int = 90,
     step_cal_days: int = 30,
     vix_ratio_tp: float | None = 1.10,
+    put_mult_tp: float | None = 5.0,
+    put_mult_max_dte: int = 45,
     slow_bear_overlay: bool = False,
     slip: float = DEFAULT_SLIPPAGE,
 ) -> dict[str, Any]:
@@ -751,19 +753,32 @@ def simulate_strategy(
                 put_mtm_tot += tr["hedged_shares"] * pm
                 call_mtm_tot -= tr["hedged_shares"] * cm
 
-                if rem_days >= 3 and vix_ratio_tp is not None and vix_r >= vix_ratio_tp:
-                    if tr["tranche_type"] == "collar":
-                        est_pnl = pm * (1.0 - slip) - cm * (1.0 + slip)
-                        if est_pnl > 0.0:
-                            tr["pending_tp"] = True
-                            tr["tp_trigger_ratio"] = vix_r
-                            tr["tp_reason"] = f"vix_inv_{vix_ratio_tp:.2f}_tp"
-                    else:
-                        est_bid = pm * (1.0 - slip)
-                        if est_bid > 0.02:
-                            tr["pending_tp"] = True
-                            tr["tp_trigger_ratio"] = vix_r
-                            tr["tp_reason"] = f"vix_inv_{vix_ratio_tp:.2f}_tp"
+                if rem_days >= 3:
+                    est_put_bid = pm * (1.0 - slip)
+                    est_call_ask = cm * (1.0 + slip) if tr["kc"] is not None else 0.0
+                    tp_reason: str | None = None
+                    # Track 1: Acute panic backwardation (VIX/VIX3M >= 1.10)
+                    if vix_ratio_tp is not None and vix_r >= vix_ratio_tp:
+                        tp_reason = f"vix_inv_{vix_ratio_tp:.2f}_tp"
+                    # Track 2: Second-half slow-bear 5x Put deep-ITM profit lock (DTE <= 45 & Put Bid >= 5x entry cost)
+                    elif (
+                        put_mult_tp is not None
+                        and rem_days <= put_mult_max_dte
+                        and est_put_bid >= put_mult_tp * tr["entry_put_ask"]
+                    ):
+                        tp_reason = f"put_{int(put_mult_tp)}x_dte{put_mult_max_dte}_tp"
+
+                    if tp_reason is not None:
+                        if tr["tranche_type"] == "collar":
+                            if est_put_bid - est_call_ask > 0.0:
+                                tr["pending_tp"] = True
+                                tr["tp_trigger_ratio"] = vix_r
+                                tr["tp_reason"] = tp_reason
+                        else:
+                            if est_put_bid > 0.02:
+                                tr["pending_tp"] = True
+                                tr["tp_trigger_ratio"] = vix_r
+                                tr["tp_reason"] = tp_reason
 
                 rem_after_exp.append(tr)
 
@@ -1404,21 +1419,21 @@ def build_crisis_windows(
             "id": "2022",
             "pill_en": "2022 Slow Bear",
             "pill_zh": "2022 加息慢熊",
-            "title_en": "2022 Inflation Hiking Grind (-35.1% · No VIX>=1.10)",
-            "title_zh": "2022 全年激进加息阴跌慢熊 (-35.1% · 无恐慌倒挂)",
+            "title_en": "2022 Inflation Hiking Grind (-35.1% QQQ vs -31.5% U1 · 5x Put Lock)",
+            "title_zh": "2022 加息慢熊（QQQ -35.1% vs U1 -31.5% · 后半程 5x 止盈锁利）",
             "start_date": "2021-11-15",
             "end_date": "2022-12-30",
             "crash_start_date": "2021-11-19",
             "crash_end_date": "2022-12-28",
             "is_live": False,
             "narrative_en": (
-                "Honest pure-options disclosure: in 2022's frog-boiling grind, VIX/VIX3M peaked at just 1.022 (<1.10), "
-                "so panic Vega take-profit never fired. Crucially, the ATH<=5% hard freeze blocked selling low-spot Collars "
-                "throughout the drawdown (-0.44% window drag only from early peak premium), preserving 100% QQQ upside for 2023-2024!"
+                "In 2022's frog-boiling grind, VIX/VIX3M peaked at just 1.022 (<1.10), so panic-inversion TP never fired. "
+                "Track-2 Dual-TP (DTE<=45 & Put>=5x) stepped in on 2022-02-24 Open @$318.84 (32 DTE left, 5x+ deep ITM), "
+                "harvesting +$37,680 (+121.86 extra QQQ shares!) right before March's dead-cat bounce, slashing 2022 MDD from -35.12% to -31.52% (+3.60% excess)!"
             ),
             "narrative_zh": (
-                "纯期权客观复盘：2022 温水煮青蛙阴跌中 VIX/VIX3M 全年最高仅 1.022（未达 1.10 恐慌止盈线），未能收割爆波暴利；"
-                "但「距前高超 5% 硬冻结 Collar」铁律彻底避免了在半山腰卖 Call 被逼空，全年仅损耗前期保费 -0.44%，100% 满仓正股吃满 2023-2024 主升浪！"
+                "2022 温水煮青蛙慢熊中 VIX/VIX3M 全年最高仅 1.022（未达 1.10 恐慌倒挂）；第二轨「后半程 DTE<=45 且 Put>=5x」精准补位："
+                "在 2022-02-24 早盘 @$318.84（距到期 32 天、深实值超 5 倍）果断兑现 +$37,680（低位抄底 +121.86 股 QQQ），完美避开 3 月底反弹归零，100% 满仓将 2022 回撤从 -35.12% 砍至 -31.52%（超额 +3.60%）！"
             ),
         },
         {
@@ -1435,11 +1450,11 @@ def build_crisis_windows(
             "narrative_en": (
                 "4/6 Crisis Lights + AD divergence opened two 50% option slots right into the summer peak ($455.50 on 5/30 and "
                 "$497.62 on 7/16). When the Yen carry unwind pushed VIX/VIX3M to 1.144 on 2024-08-05, both slots "
-                "monetized at $437.23 Open on 8/06 for +$31,878 (+72.89 QQQ shares), slashing DD from -13.56% to -8.05% (+5.51% excess)!"
+                "monetized at $437.23 Open on 8/06 for +$35,158 (+80.39 QQQ shares), slashing DD from -13.56% to -8.05% (+5.51% excess)!"
             ),
             "narrative_zh": (
                 "4/6 危机灯与 AD 顶背离在 $455.50（5/30）与见顶处 $497.62（7/16）精准挂满双槽保护；"
-                "8/05 日元闪崩引爆 VIX/VIX3M 至 1.144，8/06 开盘 @$437.23 双槽止盈落袋 +$31,878（低位白捡 +72.89 股 QQQ），回撤从 -13.56% 大砍至 -8.05%（超额 +5.51%）！"
+                "8/05 日元闪崩引爆 VIX/VIX3M 至 1.144，8/06 开盘 @$437.23 双槽止盈落袋 +$35,158（低位白捡 +80.39 股 QQQ），回撤从 -13.56% 大砍至 -8.05%（超额 +5.51%）！"
             ),
         },
         {
@@ -1456,11 +1471,11 @@ def build_crisis_windows(
             "narrative_en": (
                 "Even with macro lights at only 2/6, US Liquid AD Line < 50DMA top-divergence caught the $539.52 top "
                 "and opened a 50% Collar on 2025-02-24 @$527.88 (K_P=$475.09). On 2025-04-07 Open @$408.66 (VIX/3M 1.234), "
-                "that single tranche harvested +$69,571 (+170.19 QQQ shares at the exact bottom!), slashing DD to -16.36% (+6.41% excess)!"
+                "that single tranche harvested +$76,729 (+187.70 QQQ shares at the exact bottom!), slashing DD to -16.36% (+6.41% excess)!"
             ),
             "narrative_zh": (
                 "即便宏观灯仅亮 2 盏，全美 AD Line < 50DMA 顶背离依然死死咬住 $539.52 大顶，于 2/24 @$527.88 开启 50% 保护（K_P=$475.09）；"
-                "4/07 关税恐慌极值（倒挂 1.234）在 $408.66 铁底单笔暴赚 +$69,571，一把抄底 +170.19 股 QQQ，回撤压至 -16.36%（超额高达 +6.41%）！"
+                "4/07 关税恐慌极值（倒挂 1.234）在 $408.66 铁底单笔暴赚 +$76,729，一把抄底 +187.70 股 QQQ，回撤压至 -16.36%（超额高达 +6.41%）！"
             ),
         },
         {
@@ -1477,13 +1492,13 @@ def build_crisis_windows(
             "narrative_en": (
                 "1) 8/31 Slot 1 Naked Put @$715.17 (AD divergence, NO Call cap -> captured 100% of the rally to $759.66 ATH!). "
                 "2) 10/05 Slot 2 Zero-Cost Collar @$749.35 (3 Lights + AD, 1 day before peak!). "
-                "3) 11/06 VIX/3M 1.103 TP @$658.35 monetized both slots for +$35,737 (+55.18 extra QQQ shares!), cutting drawdown "
+                "3) 11/06 VIX/3M 1.103 TP @$658.35 monetized both slots for +$39,414 (+60.85 extra QQQ shares!), cutting drawdown "
                 "from -19.90% to -17.54% (+2.36% excess) while holding 100% QQQ uncapped below ATH -5% for full rebound convexity!"
             ),
             "narrative_zh": (
                 "① 8/31 AD 背离开启首仓 50% 裸 Put @$715.17（无卖 Call 封顶，100% 吃满冲顶至 $759.66 历史最高点！）；"
-                "② 10/05 见顶前一日 @$749.35 精准补齐次仓 50% 零成本 Collar；③ 11/06 倒挂 1.103 在 @$658.35 双槽止盈落袋 +$35,737（低位增持 +55.18 股 QQQ）；"
-                "④ 跌离前高超 5% 严禁低位新开 Collar，100% 满仓 QQQ 带着多出的 55.18 股完整待弹（回撤 -17.54% vs QQQ -19.90%，超额 +2.36%）！"
+                "② 10/05 见顶前一日 @$749.35 精准补齐次仓 50% 零成本 Collar；③ 11/06 倒挂 1.103 在 @$658.35 双槽止盈落袋 +$39,414（低位增持 +60.85 股 QQQ）；"
+                "④ 跌离前高超 5% 严禁低位新开 Collar，100% 满仓 QQQ 带着多出的 60.85 股完整待弹（回撤 -17.54% vs QQQ -19.90%，超额 +2.36%）！"
             ),
         },
     ]
@@ -1622,6 +1637,7 @@ def build_unified_events(
             }
         )
         is_tp = "tp" in tr["exit_reason"]
+        is_put5x = "put_5x" in tr["exit_reason"]
         events.append(
             {
                 "event_id": f"{strategy_id}_tr{tr['tranche_id']}_exit",
@@ -1629,7 +1645,7 @@ def build_unified_events(
                 "strategy_id": strategy_id,
                 "date": tr["exit_date"],
                 "signal_date": tr["signal_date"],
-                "event_type": "vix110_tp" if is_tp else "option_expiry",
+                "event_type": "put5x_dte45_tp" if is_put5x else ("vix110_tp" if is_tp else "option_expiry"),
                 "slot_num": tr["slot_num"],
                 "tranche_type": tr["tranche_type"],
                 "spot": tr["exit_spot"],
@@ -1645,14 +1661,22 @@ def build_unified_events(
                 "sig_score": tr["sig_score"],
                 "sig_ad_below50": tr["sig_ad_below50"],
                 "trigger_en": (
-                    f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 Panic TP"
-                    if is_tp
-                    else f"90-DTE Expiry ({tr['underlying_ret_pct']:+.1f}% spot)"
+                    f"5x Put Slow-Bear TP ({tr['rem_dte_at_exit']} DTE <= 45, Deep ITM Lock)"
+                    if is_put5x
+                    else (
+                        f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 Panic TP"
+                        if is_tp
+                        else f"90-DTE Expiry ({tr['underlying_ret_pct']:+.1f}% spot)"
+                    )
                 ),
                 "trigger_zh": (
-                    f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 恐慌止盈抄底"
-                    if is_tp
-                    else f"90-DTE 到期结算（期间正股 {tr['underlying_ret_pct']:+.1f}%）"
+                    f"后半程 Put >= 5x 慢熊止盈（剩余 {tr['rem_dte_at_exit']} 天 <= 45 · 深实值锁利）"
+                    if is_put5x
+                    else (
+                        f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 恐慌止盈抄底"
+                        if is_tp
+                        else f"90-DTE 到期结算（期间正股 {tr['underlying_ret_pct']:+.1f}%）"
+                    )
                 ),
                 "net_pnl_usd": tr["net_pnl_usd"],
                 "shares_added": tr["shares_added"],
@@ -1698,6 +1722,7 @@ def build_unified_events(
 
     order_rank = {
         "vix110_tp": 1,
+        "put5x_dte45_tp": 1,
         "option_expiry": 2,
         "shield_enter": 3,
         "shield_exit": 4,
@@ -1734,8 +1759,8 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
                 "badge_en": "FLAGSHIP #1 · 100% QQQ PURE OPTIONS",
                 "badge_zh": "纯期权总冠军 · 永不卖股",
                 "color_hex": "#80C6A8",
-                "rule_summary_en": "100% QQQ core forever; opens Slot 1 50% Naked -10% Put + Slot 2 50% 30D-stepped Collar on (AD<50DMA or >=4 Lights) & ATH<=5% & VXN<=22, monetizing into QQQ shares on VIX/VIX3M >= 1.10.",
-                "rule_summary_zh": "底仓 100% QQQ 永不卖股择时；在 ATH<=5% 且 VXN<=22 时凭 AD 顶背离或 >=4 盏危机灯开首仓 50% 裸 Put、满30天补次仓 50% 零成本 Collar，VIX/VIX3M >= 1.10 恐慌止盈复投 QQQ 份额。",
+                "rule_summary_en": "100% QQQ core forever; opens Slot 1 50% Naked -10% Put + Slot 2 50% 30D-stepped Collar on (AD<50DMA or >=4 Lights) & ATH<=5% & VXN<=22; Dual-Track TP monetizes into QQQ shares on VIX/VIX3M >= 1.10 OR (DTE <= 45 & Put Bid >= 5x entry cost).",
+                "rule_summary_zh": "底仓 100% QQQ 永不卖股择时；在 ATH<=5% 且 VXN<=22 时凭 AD 顶背离或 >=4 盏危机灯开首仓 50% 裸 Put、满30天补次仓 50% 零成本 Collar；双轨止盈（VIX/VIX3M >= 1.10 恐慌倒挂，或后半程 DTE <= 45 且 Put 涨超 5 倍）变现抄底复投 QQQ。",
             },
         ),
         (
@@ -1993,13 +2018,14 @@ def verify_artifact(doc: dict[str, Any]) -> None:
 
         smap = {s["id"]: s for s in doc["strategies_summary"]}
         assert "U4_DualEngine" not in smap
-        assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.77) <= 0.02, smap["BH_Pure_QQQ"]["end_nav"]
-        assert abs(smap["U1_PureOptions"]["end_nav"] - 1454617.86) <= 0.02, smap["U1_PureOptions"]["end_nav"]
-        assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 166313.09) <= 0.02, smap["U1_PureOptions"]["net_alpha_usd"]
-        assert smap["U1_PureOptions"]["cagr_pct"] == 18.17, smap["U1_PureOptions"]["cagr_pct"]
-        assert smap["U1_PureOptions"]["sharpe"] == 0.810, smap["U1_PureOptions"]["sharpe"]
-        assert abs(smap["B1c_PureAD"]["end_nav"] - 1453135.67) <= 0.02, smap["B1c_PureAD"]["end_nav"]
-        assert abs(smap["D2_SixLights"]["end_nav"] - 1442693.31) <= 0.02, smap["D2_SixLights"]["end_nav"]
+        assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02, smap["BH_Pure_QQQ"]["end_nav"]
+        assert abs(smap["U1_PureOptions"]["end_nav"] - 1604274.43) <= 0.02, smap["U1_PureOptions"]["end_nav"]
+        assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 315969.65) <= 0.02, smap["U1_PureOptions"]["net_alpha_usd"]
+        assert smap["U1_PureOptions"]["cagr_pct"] == 19.15, smap["U1_PureOptions"]["cagr_pct"]
+        assert smap["U1_PureOptions"]["max_dd_pct"] == -31.52, smap["U1_PureOptions"]["max_dd_pct"]
+        assert smap["U1_PureOptions"]["sharpe"] == 0.844, smap["U1_PureOptions"]["sharpe"]
+        assert abs(smap["B1c_PureAD"]["end_nav"] - 1508125.75) <= 0.02, smap["B1c_PureAD"]["end_nav"]
+        assert abs(smap["D2_SixLights"]["end_nav"] - 1479351.46) <= 0.02, smap["D2_SixLights"]["end_nav"]
         assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1380701.67) <= 0.02, smap["H2_G4_PriceGate"]["end_nav"]
 
     assert len(doc["six_crisis_lights"]) == 6

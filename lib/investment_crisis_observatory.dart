@@ -422,8 +422,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     } else if (regimeCode == 'DUAL_SLOT_FULL_SHIELD' ||
         regimeCode == 'SLOT1_NAKED_PUT_ACTIVE') {
       humanSummary = w(
-        'Protective puts are in place near market highs; hold 100% QQQ until VIX/VIX3M crosses 1.10 panic inversion to monetize into extra shares.',
-        '高位看跌保护已就位；底仓 100% 持有 QQQ，静待 VIX/VIX3M 突破 1.10 恐慌倒挂时止盈变现换股。',
+        'Protective puts are in place near market highs; hold 100% QQQ until VIX/VIX3M crosses 1.10 panic inversion or Put reaches 5x in the second half (DTE <= 45) to monetize into extra shares.',
+        '高位看跌保护已就位；底仓 100% 持有 QQQ，静待 VIX/VIX3M 突破 1.10 恐慌倒挂或后半程（DTE ≤ 45）Put 涨超 5 倍时止盈换股。',
       );
     } else {
       humanSummary = w(
@@ -433,7 +433,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     }
 
     // 3 plain-human pure-options status columns (Core QQQ + Slot 1 + Slot 2)
-    final extraShares = _numVal(stratSummary['extra_shares_vs_bh'], 273.34);
+    final extraShares = _numVal(stratSummary['extra_shares_vs_bh'], 519.30);
     final coreValue = w('100% QQQ Held', '100% 满仓 QQQ');
     final coreSub = w(
       'Never sells equity · +${extraShares.toStringAsFixed(1)} extra sh',
@@ -699,8 +699,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   const SizedBox(height: 10),
                   Text(
                     w(
-                      'Execution rules: 1) Hold 100% QQQ forever. 2) Within 5% of ATH with calm volatility (VXN <= 22) and either AD < 50DMA or >= 4 lights -> buy 50% 90-day -10% Put (no Call cap). 3) After 30 days if still active -> add 50% zero-cost Collar. 4) Monetize all puts when VIX/VIX3M >= 1.10 to buy extra QQQ shares at T+1 Open. 5) Never open new Collars below -5% drawdown.',
-                      '实战规则：① 底仓 100% 持有 QQQ 永不卖股；② 距高点 5% 内、波动率 VXN ≤ 22，且涨跌线跌破 50 日线或亮起 ≥ 4 盏灯 → 次日开盘买 50% 仓位 90 天 -10% 裸 Put（不卖封顶）；③ 满 30 天仍预警 → 补齐 50% 零成本领口；④ VIX/VIX3M ≥ 1.10 恐慌倒挂 → 次日开盘全额止盈换股抄底 QQQ；⑤ 跌离高点超 5% 严禁新卖 Call。',
+                      'Execution rules: 1) Hold 100% QQQ forever. 2) Within 5% of ATH with calm volatility (VXN <= 22) and either AD < 50DMA or >= 4 lights -> buy 50% 90-day -10% Put (no Call cap). 3) After 30 days if still active -> add 50% zero-cost Collar. 4) Dual-Track Take-Profit: monetize puts into extra QQQ shares at T+1 Open when VIX/VIX3M >= 1.10 panic inversion OR in the second half (DTE <= 45) once Put Bid >= 5x entry cost (locks slow-bear windfalls like 2022-02 before expiry rebounds). 5) Never open new Collars below -5% drawdown.',
+                      '实战规则：① 底仓 100% 持有 QQQ 永不卖股；② 距高点 5% 内、波动率 VXN ≤ 22，且涨跌线跌破 50 日线或亮起 ≥ 4 盏灯 → 次日开盘买 50% 仓位 90 天 -10% 裸 Put（不卖封顶）；③ 满 30 天仍预警 → 补齐 50% 零成本领口；④ 双轨止盈换股：触发 VIX/VIX3M ≥ 1.10 恐慌倒挂，或后半程（DTE ≤ 45）Put 暴涨 ≥ 5 倍成本时，次日开盘全额止盈抄底增持 QQQ（专治 2022 式无倒挂慢熊）；⑤ 跌离高点超 5% 严禁新卖 Call。',
                     ),
                     style: TextStyle(color: p.muted, fontSize: 12, height: 1.5),
                   ),
@@ -1319,7 +1319,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   _cleanMarkerLegend(
                     symbol: '◆',
                     color: _emerald,
-                    label: w('Panic Harvest', '恐慌止盈'),
+                    label: w('Dual TP Harvest', '双轨止盈'),
                   ),
                 ],
               ),
@@ -1529,18 +1529,26 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
     double netPnlSum = 0;
     double sharesSum = 0;
-    bool hasTp = false;
+    bool hasVixTp = false;
+    bool hasPut5xTp = false;
     bool hasOpen = false;
+    Map<String, dynamic>? firstOpenEv;
     for (final ev in hoverEvents) {
       final et = text(ev['event_type']);
-      if (et == 'vix110_tp') {
-        hasTp = true;
+      if (et == 'vix110_tp' || et == 'put5x_dte45_tp') {
+        if (et == 'put5x_dte45_tp') {
+          hasPut5xTp = true;
+        } else {
+          hasVixTp = true;
+        }
         netPnlSum += _numVal(ev['net_pnl_usd']);
         sharesSum += _numVal(ev['shares_added']);
       } else if (et.startsWith('slot')) {
         hasOpen = true;
+        firstOpenEv ??= ev;
       }
     }
+    final hasTp = hasVixTp || hasPut5xTp;
 
     return Positioned(
       left: clampedLeft.toDouble(),
@@ -1603,15 +1611,20 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 Container(height: 1, color: p.border),
                 const SizedBox(height: 6),
                 Text(
-                  hasTp
+                  hasPut5xTp
                       ? w(
-                          '◆ 1.10 Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
-                          '◆ 1.10 恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                          '◆ 5x Slow-Bear Harvest (DTE<=45) · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                          '◆ 5x 慢熊止盈（DTE≤45） · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
                         )
-                      : w(
-                          '▲ Opened Protective Option Hedge (${text(hoverEvents.first['date'])})',
-                          '▲ 开启高位看跌期权保护（${text(hoverEvents.first['date'])}）',
-                        ),
+                      : (hasVixTp
+                            ? w(
+                                '◆ 1.10 Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                                '◆ 1.10 恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                              )
+                            : w(
+                                '▲ ${text(firstOpenEv?['tranche_type']) == 'naked_put' ? 'Naked Put' : 'Collar'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)} (K=\$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)})',
+                                '▲ ${text(firstOpenEv?['tranche_type']) == 'naked_put' ? '首仓裸 Put' : '次仓领口'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)}（行权 \$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)}）',
+                              )),
                   style: TextStyle(
                     color: hasTp ? _emerald : _amber,
                     fontSize: 11.5,
@@ -1977,7 +1990,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 _heroStatMetric(
                   label: w('Option Profit Harvested', '期权止盈落袋'),
                   value: _fmtUsd(harvestedUsd, signed: harvestedUsd > 0),
-                  sub: w('Monetized on panic spike', '恐慌倒挂变现现金'),
+                  sub: w('Monetized via dual-track TP', '双轨止盈变现现金'),
                   color: harvestedUsd > 0 ? _emerald : p.text,
                 ),
                 _heroStatMetric(
@@ -2068,7 +2081,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final expanded = expandedTrancheIds.contains(trancheId);
     final isNaked = text(tr['tranche_type']) == 'naked_put';
     final isOpenCutoff = tr['exit_date'] == null;
-    final isTp = text(tr['exit_reason']).contains('tp');
+    final exitReason = text(tr['exit_reason']);
+    final isPut5xTp = exitReason.contains('put_5x');
+    final isTp = exitReason.contains('tp');
     final netPnl = _numVal(tr['net_pnl_usd']);
     final shAdded = _numVal(tr['shares_added']);
     final kp = _numVal(tr['kp']);
@@ -2084,6 +2099,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final exitShort = isOpenCutoff || text(tr['exit_date']).length < 10
         ? ''
         : text(tr['exit_date']).substring(5);
+    final tpLabelEn = isPut5xTp
+        ? '5x Slow-Bear Harvest'
+        : (isTp ? '1.10 Panic Harvest' : 'Expired');
+    final tpLabelZh = isPut5xTp
+        ? '5x 慢熊止盈'
+        : (isTp ? '恐慌止盈' : '到期结算');
 
     final String actionSentence;
     if (isNaked) {
@@ -2093,8 +2114,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               'QQQ \$$entrySpot 买入 90 天 \$${kp.toStringAsFixed(1)} 看跌保护（不卖封顶）· 持仓中',
             )
           : w(
-              'QQQ \$$entrySpot -> Bought \$${kp.toStringAsFixed(1)} Put (no cap) · ${isTp ? 'Harvested $exitShort @\$$exitSpot' : 'Expired $exitShort @\$$exitSpot'}',
-              'QQQ \$$entrySpot 买入 \$${kp.toStringAsFixed(1)} 看跌保护（不卖封顶） → $exitShort @\$$exitSpot ${isTp ? '恐慌止盈' : '到期结算'}',
+              'QQQ \$$entrySpot -> Bought \$${kp.toStringAsFixed(1)} Put (no cap) · $tpLabelEn $exitShort @\$$exitSpot',
+              'QQQ \$$entrySpot 买入 \$${kp.toStringAsFixed(1)} 看跌保护（不卖封顶） → $exitShort @\$$exitSpot $tpLabelZh',
             );
     } else {
       actionSentence = isOpenCutoff
@@ -2103,8 +2124,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               'QQQ \$$entrySpot 开启零成本领口（保护 \$${kp.toStringAsFixed(0)} / 封顶 \$${(kc ?? 0).toStringAsFixed(0)}）· 持仓中',
             )
           : w(
-              'QQQ \$$entrySpot -> Collar (\$${kp.toStringAsFixed(0)} Put / \$${(kc ?? 0).toStringAsFixed(0)} Call) · ${isTp ? 'Harvested $exitShort @\$$exitSpot' : 'Settled $exitShort @\$$exitSpot'}',
-              'QQQ \$$entrySpot 零成本领口（保护 \$${kp.toStringAsFixed(0)} / 封顶 \$${(kc ?? 0).toStringAsFixed(0)}） → $exitShort @\$$exitSpot ${isTp ? '恐慌止盈' : '到期结算'}',
+              'QQQ \$$entrySpot -> Collar (\$${kp.toStringAsFixed(0)} Put / \$${(kc ?? 0).toStringAsFixed(0)} Call) · ${isTp ? '$tpLabelEn $exitShort @\$$exitSpot' : 'Settled $exitShort @\$$exitSpot'}',
+              'QQQ \$$entrySpot 零成本领口（保护 \$${kp.toStringAsFixed(0)} / 封顶 \$${(kc ?? 0).toStringAsFixed(0)}） → $exitShort @\$$exitSpot $tpLabelZh',
             );
     }
 
@@ -2474,7 +2495,8 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
       final et = text(ev['event_type']);
       if (et == 'slot1_naked_put' ||
           et == 'slot2_collar' ||
-          et == 'slot1_collar') {
+          et == 'slot1_collar' ||
+          et == 'slot3_collar') {
         final r = rebasedMode ? 4.8 : 3.6;
         final tri = Path()
           ..moveTo(x, y - r)
@@ -2482,7 +2504,7 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
           ..lineTo(x + r * 0.85, y + r * 0.75)
           ..close();
         canvas.drawPath(tri, Paint()..color = _amber);
-      } else if (et == 'vix110_tp') {
+      } else if (et == 'vix110_tp' || et == 'put5x_dte45_tp') {
         final r = rebasedMode ? 5.2 : 4.0;
         final dia = Path()
           ..moveTo(x, y - r)
@@ -2491,6 +2513,15 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
           ..lineTo(x - r, y)
           ..close();
         canvas.drawPath(dia, Paint()..color = _emerald);
+        if (et == 'put5x_dte45_tp') {
+          canvas.drawPath(
+            dia,
+            Paint()
+              ..color = _amber
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1.1,
+          );
+        }
       }
     }
 
