@@ -112,6 +112,7 @@ const allowedOrigins = String(process.env.API_ALLOWED_ORIGINS || defaultAllowedO
 
 app.use("/api/portfolio", portfolioResponsePrivacy);
 app.use("/api/investment", portfolioResponsePrivacy);
+app.use("/api/discover", portfolioResponsePrivacy);
 app.use("/api/user", portfolioResponsePrivacy);
 app.use(cors({
   origin(origin, callback) {

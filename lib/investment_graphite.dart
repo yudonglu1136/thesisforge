@@ -2069,7 +2069,12 @@ extension _GraphiteWorkspace on _InvestmentWorkspaceState {
         aiInsightsSelection.remove('quarterPinned');
       }
       if (page == 'discover' &&
-          const {'aiinsights', 'copycat', 'cta_radar'}.contains(discoveryTab)) {
+          const {
+            'aiinsights',
+            'copycat',
+            'cta_radar',
+            'crisis_observatory',
+          }.contains(discoveryTab)) {
         home = null;
       } else {
         await loadHome();

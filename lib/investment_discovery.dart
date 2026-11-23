@@ -112,6 +112,7 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
           ('managers', 'Guru', '大师持仓'),
           ('copycat', 'Copycat Playbook', '大师作业'),
           ('cta_radar', 'CTA Flow Radar', 'CTA 资金流雷达'),
+          ('crisis_observatory', 'Crisis Observatory', '危机观测'),
           ('aiinsights', 'AI Insights', 'AI 洞察'),
         ];
         if (c.maxWidth < 650) {
@@ -179,55 +180,58 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
           decoration: BoxDecoration(
             border: Border(bottom: BorderSide(color: p.border)),
           ),
-          child: Row(
-            children: [
-              for (final tab in tabs)
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: InkWell(
-                    key: ValueKey('discover-tab-${tab.$1}'),
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(6),
-                    ),
-                    onTap: () {
-                      updateUI(() {
-                        discoveryTab = tab.$1;
-                        if (tab.$1 != 'managers') selectedGuru = null;
-                      });
-                      persistDiscover();
-                      if (tab.$1 == 'gurus' && institutional13f == null) {
-                        unawaited(load13FInsights());
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 9,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final tab in tabs)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: InkWell(
+                      key: ValueKey('discover-tab-${tab.$1}'),
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(6),
                       ),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color: discoveryTab == tab.$1
-                                ? p.accent
-                                : Colors.transparent,
-                            width: 2,
+                      onTap: () {
+                        updateUI(() {
+                          discoveryTab = tab.$1;
+                          if (tab.$1 != 'managers') selectedGuru = null;
+                        });
+                        persistDiscover();
+                        if (tab.$1 == 'gurus' && institutional13f == null) {
+                          unawaited(load13FInsights());
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 9,
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(
+                              color: discoveryTab == tab.$1
+                                  ? p.accent
+                                  : Colors.transparent,
+                              width: 2,
+                            ),
                           ),
                         ),
-                      ),
-                      child: Text(
-                        w(tab.$2, tab.$3),
-                        style: TextStyle(
-                          color: discoveryTab == tab.$1 ? p.text : p.muted,
-                          fontSize: 13.5,
-                          fontWeight: discoveryTab == tab.$1
-                              ? FontWeight.w700
-                              : FontWeight.w500,
+                        child: Text(
+                          w(tab.$2, tab.$3),
+                          style: TextStyle(
+                            color: discoveryTab == tab.$1 ? p.text : p.muted,
+                            fontSize: 13.5,
+                            fontWeight: discoveryTab == tab.$1
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -307,6 +311,27 @@ extension _InvestmentDiscovery on _InvestmentWorkspaceState {
             loadCompany(
               symbol,
               origin: 'cta_flow_radar',
+              initialSection: 'value',
+            ),
+          );
+        },
+      ),
+    if (discoveryTab == 'crisis_observatory')
+      CrisisObservatoryPanel(
+        api: widget.api,
+        palette: p,
+        asOf: asOf,
+        initialSelection: crisisObservatorySelection,
+        onSelection: (selection) {
+          crisisObservatorySelection = selection;
+          persistDiscover();
+        },
+        onCompany: (symbol) {
+          opportunityReturnDate = '';
+          unawaited(
+            loadCompany(
+              symbol,
+              origin: 'crisis_observatory',
               initialSection: 'value',
             ),
           );

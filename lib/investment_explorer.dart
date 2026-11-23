@@ -118,6 +118,7 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
             'fundamentals',
             'copycat',
             'cta_radar',
+            'crisis_observatory',
           }.contains(discoveryTab) &&
           (selectedGuru == null ||
               !{'gurus', 'managers'}.contains(discoveryTab));
@@ -220,6 +221,8 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
         'cc_$key': copycatSelection[key]?.toString(),
       for (final key in ['asset', 'horizon'])
         'cta_$key': ctaRadarSelection[key]?.toString(),
+      for (final key in ['strategy', 'window'])
+        'co_$key': crisisObservatorySelection[key]?.toString(),
       'guru': selectedGuru == null
           ? null
           : text(asMap(selectedGuru?['guru'])['id']),

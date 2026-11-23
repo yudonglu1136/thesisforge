@@ -71,7 +71,9 @@
     "build:copycat-playbook": ".venv-fact-os/bin/python scripts/build-guru-copycat-playbook-artifact.py",
     "test:copycat-playbook": "node --test server/guruCopycatPlaybook.test.js",
     "build:cta-flow-radar": ".venv-fact-os/bin/python scripts/build-cta-flow-radar-artifact.py",
-    "test:cta-flow-radar": "node --test server/ctaFlowRadar.test.js"
+    "test:cta-flow-radar": "node --test server/ctaFlowRadar.test.js",
+    "build:crisis-observatory": ".venv-fact-os/bin/python scripts/build-crisis-observatory-artifact.py",
+    "test:crisis-observatory": "node --test server/crisisObservatory.test.js"
   },
   "dependencies": {
     "concurrently": "^10.0.3",

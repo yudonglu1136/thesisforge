@@ -5,6 +5,7 @@ import 'investment_opportunities_test.dart' as opportunities;
 import 'investment_fundamentals_test.dart' as fundamentals;
 import 'investment_copycat_playbook_test.dart' as copycat;
 import 'investment_cta_flow_radar_test.dart' as cta_radar;
+import 'investment_crisis_observatory_test.dart' as crisis_obs;
 
 Map<String, dynamic> qualityFixture() => {
   'status': 'available',
@@ -493,6 +494,9 @@ class ExplorerApi extends opportunities.OpportunityApi {
     }
     if (path.contains('/cta-flow-radar')) {
       return cta_radar.CtaFlowRadarFixtureApi().getJson(path);
+    }
+    if (path.contains('/crisis-observatory')) {
+      return crisis_obs.CrisisObservatoryFixtureApi().getJson(path);
     }
     if (path.contains('/fundamentals?')) {
       return fundamentals.FundamentalApi().response(

@@ -64,6 +64,7 @@ part 'investment_fundamentals.dart';
 part 'investment_fundamental_rules.dart';
 part 'investment_copycat_playbook.dart';
 part 'investment_cta_flow_radar.dart';
+part 'investment_crisis_observatory.dart';
 part 'investment_hedge.dart';
 part 'investment_strategy_hedge.dart';
 

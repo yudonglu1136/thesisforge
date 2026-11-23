@@ -30,6 +30,10 @@ import {
   loadCtaFlowRadarDashboard,
   loadCtaFlowRadarDashboardLive,
 } from './ctaFlowRadar.js';
+import {
+  loadCrisisObservatoryDashboard,
+  loadCrisisObservatoryDashboardLive,
+} from './crisisObservatory.js';
 import { researchInsiders } from './researchInsiders.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
 import { factOsEnabled } from './factRepository.js';
@@ -147,6 +151,24 @@ export function registerInvestmentRoutes(app,service) {
     asset:r.query.asset??'SPY',
     horizon:r.query.horizon??'10D',
   }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
+  const readCrisisObservatory=(_,r)=>loadCrisisObservatoryDashboardLive({
+    asOf:service.date(r.query.asOf),
+    strategy:r.query.strategy??null,
+    snapshotId:r.query.snapshotId??null,
+  });
+  route('get','/crisis-observatory',readCrisisObservatory,
+    {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
+  app.get('/api/discover/crisis-observatory',async (req,res)=>{
+    res.setHeader('Cache-Control',service.source?.canonicalMarket
+      ?'private, no-cache':'private, max-age=300, stale-while-revalidate=3600');
+    if(!req.user?.id)return res.status(401).json({error:'unauthorized'});
+    try {
+      res.json(await withInvestmentMarketFacts(service,req.user.id,req,'/crisis-observatory',()=>readCrisisObservatory(req.user.id,req)));
+    } catch(e) {
+      res.setHeader('Cache-Control','private, no-store');
+      res.status(e.status??500).json({error:e.status?e.message:'investment_request_failed'});
+    }
+  });
   route('get','/companies',(_,r)=>researchCompanies(service.source,service.date(r.query.asOf),{
     search:r.query.search,limit:r.query.limit,
   }));
@@ -242,7 +264,10 @@ export function investmentProductionIdentity(req, res, next) {
 export function enableInvestmentPreview(app) {
   const config=resolveInvestmentRuntimeConfig();
   if(!config)return;
-  if(config.production)app.use('/api/investment',investmentProductionIdentity);
+  if(config.production){
+    app.use('/api/investment',investmentProductionIdentity);
+    app.use('/api/discover',investmentProductionIdentity);
+  }
   const source=new InvestmentSource(config.research,{insightsFile:config.insights,canonicalMarket:factOsEnabled()});
   let store;
   try {store=new InvestmentStore(config.investment,undefined,{verifiedOwnersOnly:config.production});}
@@ -284,6 +309,7 @@ export function enableInvestmentPreview(app) {
         try{loadBreakoutPullbackDashboard({asOf:today,mode:'flagship'});}catch{}
         try{loadGuruCopycatPlaybookDashboard({asOf:today,source});}catch{}
         try{loadCtaFlowRadarDashboard({asOf:today});}catch{}
+        try{loadCrisisObservatoryDashboard({asOf:today});}catch{}
         (async()=>{
           for(const d of warmDates){
             await researchCompanies(source,d).catch(()=>{});
