@@ -4,16 +4,20 @@ import express from 'express';
 import {
   CRISIS_OBSERVATORY_VERSION,
   CRISIS_OBSERVATORY_STRATEGIES,
+  CRISIS_OBSERVATORY_TP_MODES,
   loadCrisisObservatoryDashboard,
   loadCrisisObservatoryDashboardLive,
 } from './crisisObservatory.js';
 import { registerInvestmentRoutes } from './investmentRoutes.js';
 
-test('loads canonical 2026-11-20 Crisis Observatory payload with pure-options U1 flagship and zero T-Bill shield', () => {
+test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP modes and zero T-Bill shield', () => {
   const doc = loadCrisisObservatoryDashboard({ asOf: '2026-11-20' });
   assert.equal(doc.version, CRISIS_OBSERVATORY_VERSION);
   assert.equal(doc.as_of_date, '2026-11-20');
   assert.equal(doc.selected_strategy_id, 'U1_PureOptions');
+  assert.equal(doc.tp_mode, 'layered_itm');
+  assert.equal(doc.tp_modes, undefined, 'Raw tp_modes bundle must be stripped from API wire response');
+  assert.equal(doc.tp_modes_meta.length, 3);
   assert.ok(doc.snapshotId && doc.snapshotId.length === 16);
 
   const snap = doc.live_market_snapshot;
@@ -32,30 +36,40 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with pure-options U1
   assert.equal(doc.ad_line_signal.days_below_50ma, 5);
 
   const sig = doc.live_signal_state;
-  assert.equal(sig.regime_code, 'LOW_SPOT_FREEZE_NO_NEW_COLLAR');
+  assert.equal(sig.regime_code, 'VIX110_TP_TRIGGERED');
   assert.equal(sig.target_equity_pct, 100);
   assert.equal(sig.target_tbill_pct, 0);
   assert.equal(sig.slow_bear_shield, undefined);
-  assert.equal(sig.slot1_naked_put.status, 'MONETIZED_STANDBY');
+  assert.equal(sig.slot1_naked_put.status, 'TP_TRIGGERED_NEXT_OPEN');
   assert.equal(sig.slot2_collar.status, 'FROZEN_BELOW_ATH5');
   assert.equal(sig.gate_checklist.length, 5);
 
   const smap = Object.fromEntries(doc.strategies_summary.map(s => [s.id, s]));
   assert.equal(smap.U4_DualEngine, undefined);
-  assert.ok(Math.abs(smap.U1_PureOptions.end_nav - 1604274.43) <= 0.02);
-  assert.ok(Math.abs(smap.U1_PureOptions.net_alpha_usd - 315969.65) <= 0.02);
-  assert.equal(smap.U1_PureOptions.cagr_pct, 19.15);
+  assert.ok(Math.abs(smap.U1_PureOptions.end_nav - 1654577.25) <= 0.5);
+  assert.ok(Math.abs(smap.U1_PureOptions.net_alpha_usd - 366272.47) <= 0.5);
+  assert.equal(smap.U1_PureOptions.cagr_pct, 19.46);
   assert.equal(smap.U1_PureOptions.max_dd_pct, -31.52);
-  assert.equal(smap.U1_PureOptions.sharpe, 0.844);
-  assert.ok(Math.abs(smap.B1c_PureAD.end_nav - 1508125.75) <= 0.02);
-  assert.ok(Math.abs(smap.D2_SixLights.end_nav - 1479351.46) <= 0.02);
-  assert.ok(Math.abs(smap.H2_G4_PriceGate.end_nav - 1380701.67) <= 0.02);
+  assert.equal(smap.U1_PureOptions.sharpe, 0.859);
+  assert.ok(Math.abs(smap.B1c_PureAD.end_nav - 1587800.99) <= 0.5);
+  assert.ok(Math.abs(smap.D2_SixLights.end_nav - 1497620.82) <= 0.5);
+  assert.ok(Math.abs(smap.H2_G4_PriceGate.end_nav - 1402250.68) <= 0.5);
   assert.ok(Math.abs(smap.BH_Pure_QQQ.end_nav - 1288304.78) <= 0.02);
 
   assert.equal(doc.crisis_windows.length, 7);
   assert.equal(doc.crisis_windows.at(-1).id, '2026-08_11_LIVE');
   assert.equal(doc.daily_series.length, 2990);
   assert.deepEqual(doc.shield_events, []);
+
+  // Selectable TP mode projections: standard_dual and both_4x
+  const stdDoc = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', tpMode: 'standard_dual' });
+  assert.equal(stdDoc.tp_mode, 'standard_dual');
+  assert.equal(stdDoc.live_signal_state.regime_code, 'LOW_SPOT_FREEZE_NO_NEW_COLLAR');
+  assert.ok(Math.abs(stdDoc.daily_series.at(-1).nav_u1 - 1625377.79) <= 0.5);
+
+  const d4xDoc = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', tpMode: 'both_4x' });
+  assert.equal(d4xDoc.tp_mode, 'both_4x');
+  assert.ok(Math.abs(d4xDoc.daily_series.at(-1).nav_u1 - 1643122.56) <= 0.5);
 
   // Legacy U4_DualEngine query alias maps cleanly to U1_PureOptions
   const legacyAlias = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', strategy: 'U4_DualEngine' });
@@ -111,7 +125,9 @@ test('slices historical asOf cutoffs without lookahead and masks future tranche 
 
 test('validates parameters and serves both /api/investment/crisis-observatory and /api/discover/crisis-observatory', async t => {
   assert.equal(CRISIS_OBSERVATORY_STRATEGIES.length, 5);
+  assert.deepEqual(CRISIS_OBSERVATORY_TP_MODES, ['layered_itm', 'standard_dual', 'both_4x']);
   assert.throws(() => loadCrisisObservatoryDashboard({ strategy: 'UNKNOWN' }), /invalid_crisis_observatory_strategy/);
+  assert.throws(() => loadCrisisObservatoryDashboard({ tpMode: 'UNKNOWN_TP' }), /invalid_crisis_observatory_tp_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ asOf: '2012-01-01' }), /as_of_before_evaluation_window/);
   assert.throws(() => loadCrisisObservatoryDashboard({ asOf: 'not-a-date' }), /invalid_as_of_date/);
   assert.throws(

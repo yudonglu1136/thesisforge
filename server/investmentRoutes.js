@@ -154,6 +154,7 @@ export function registerInvestmentRoutes(app,service) {
   const readCrisisObservatory=(_,r)=>loadCrisisObservatoryDashboardLive({
     asOf:service.date(r.query.asOf),
     strategy:r.query.strategy??null,
+    tpMode:r.query.tpMode??r.query.tp_mode??null,
     snapshotId:r.query.snapshotId??null,
   });
   route('get','/crisis-observatory',readCrisisObservatory,

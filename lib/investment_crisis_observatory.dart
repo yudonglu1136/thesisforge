@@ -34,6 +34,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     'D2_SixLights',
   ];
 
+  static const List<String> _tpModeIds = [
+    'layered_itm',
+    'standard_dual',
+    'both_4x',
+  ];
+
   static const Map<String, String> _strategyNavKeys = {
     'U1_PureOptions': 'nav_u1',
     'B1c_PureAD': 'nav_b1c',
@@ -43,10 +49,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   };
 
   Map<String, dynamic>? data;
+  final Map<String, Map<String, dynamic>> _tpModeCache = {};
   bool loading = true;
+  bool switchingTpMode = false;
   String? error;
 
   String selectedStrategyId = 'U1_PureOptions';
+  String selectedTpMode = 'layered_itm';
   String selectedWindowId = 'ALL';
   String activeForensicWindowId = '2026-08_11_LIVE';
   bool useLogScale = true;
@@ -67,11 +76,18 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     return _strategyNavKeys.containsKey(raw) ? raw : 'U1_PureOptions';
   }
 
+  String _normalizeTpMode(String raw) {
+    return _tpModeIds.contains(raw) ? raw : 'layered_itm';
+  }
+
   @override
   void initState() {
     super.initState();
     selectedStrategyId = _normalizeStrategyId(
       text(widget.initialSelection['strategy']),
+    );
+    selectedTpMode = _normalizeTpMode(
+      text(widget.initialSelection['tpMode']),
     );
     final initWin = text(widget.initialSelection['window']);
     if (initWin.isNotEmpty) {
@@ -87,6 +103,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   void didUpdateWidget(covariant CrisisObservatoryPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.asOf != widget.asOf || oldWidget.api != widget.api) {
+      _tpModeCache.clear();
       unawaited(_loadObservatory());
     }
   }
@@ -95,13 +112,43 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     widget.onSelection?.call({
       'strategy': selectedStrategyId,
       'window': selectedWindowId,
+      'tpMode': selectedTpMode,
     });
   }
 
-  Future<void> _loadObservatory() async {
-    final serial = ++loadSerial;
+  void _selectTpMode(String modeId) {
+    final nextMode = _normalizeTpMode(modeId);
+    if (nextMode == selectedTpMode && data != null) return;
+    final cacheKey = '${widget.asOf}::$nextMode';
+    final cached = _tpModeCache[cacheKey];
+    if (cached != null) {
+      setState(() {
+        selectedTpMode = nextMode;
+        data = cached;
+        hoverIndex = -1;
+        switchingTpMode = false;
+      });
+      _emitSelection();
+      return;
+    }
     setState(() {
-      loading = true;
+      selectedTpMode = nextMode;
+      switchingTpMode = data != null;
+      hoverIndex = -1;
+    });
+    _emitSelection();
+    unawaited(_loadObservatory(isModeSwitch: data != null));
+  }
+
+  Future<void> _loadObservatory({bool isModeSwitch = false}) async {
+    final serial = ++loadSerial;
+    final targetMode = selectedTpMode;
+    setState(() {
+      if (!isModeSwitch) {
+        loading = true;
+      } else {
+        switchingTpMode = true;
+      }
       error = null;
     });
     try {
@@ -110,10 +157,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         queryParameters: {
           'asOf': widget.asOf,
           'strategy': selectedStrategyId,
+          'tpMode': targetMode,
         },
       );
       final res = await widget.api.getJson(uri.toString());
       if (!mounted || serial != loadSerial) return;
+      _tpModeCache['${widget.asOf}::$targetMode'] = res;
       final windows = asList(res['crisis_windows']);
       var nextForensic = activeForensicWindowId;
       if (windows.isNotEmpty &&
@@ -133,12 +182,14 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         selectedWindowId = nextWindow;
         hoverIndex = -1;
         loading = false;
+        switchingTpMode = false;
       });
     } catch (e) {
       if (!mounted || serial != loadSerial) return;
       setState(() {
         error = e.toString();
         loading = false;
+        switchingTpMode = false;
       });
     }
   }
@@ -176,6 +227,33 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       'H2_G4_PriceGate' => w('Price & Vol Gate', '价格低波门控'),
       'BH_Pure_QQQ' => w('Buy & Hold QQQ', '死拿 QQQ'),
       _ => w('Protected Strategy', '保护策略'),
+    };
+  }
+
+  String _humanTpModeLabel(String modeId) {
+    return switch (modeId) {
+      'layered_itm' => w('Layered ITM (Rec.)', '分层实值（推荐）'),
+      'standard_dual' => w('Standard 1.10', '标准 1.10'),
+      'both_4x' => w('Deep 4x Both', '两槽 4x 深度'),
+      _ => w('Layered ITM', '分层实值'),
+    };
+  }
+
+  String _humanTpModeHint(String modeId) {
+    return switch (modeId) {
+      'layered_itm' => w(
+        'Collar exits at VIX/3M >= 1.10 to unlock Call cap · Naked Put ignores shallow spikes until ITM (QQQ <= K_P) · +5x slow-bear lock (DTE <= 45)',
+        '次仓领口见 VIX/3M ≥ 1.10 即平解封卖 Call · 首仓裸 Put 浅跌无视倒挂，必须跌破行权价 (QQQ ≤ K_P) 进实值才平 · 叠加后半程 5x 慢熊锁利',
+      ),
+      'standard_dual' => w(
+        'Both slots exit immediately on VIX/3M >= 1.10 panic inversion · +5x slow-bear lock (DTE <= 45)',
+        '双槽统一：见 VIX/3M ≥ 1.10 恐慌倒挂即次日开盘止盈抄底 · 叠加后半程（DTE ≤ 45）Put ≥ 5x 慢熊锁利',
+      ),
+      'both_4x' => w(
+        'Both slots require VIX/3M >= 1.10 AND Put >= 4x entry cost (filters shallow spikes) · +5x slow-bear lock (DTE <= 45)',
+        '双槽统一：必须 VIX/3M ≥ 1.10 且 Put ≥ 4 倍成本才认恐慌止盈（过滤浅跌假倒挂） · 叠加后半程 5x 慢熊锁利',
+      ),
+      _ => '',
     };
   }
 
@@ -360,7 +438,11 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     required bool desktop,
   }) {
     final snap = asMap(doc['live_market_snapshot']);
-    final sig = asMap(doc['live_signal_state']);
+    final sigByStrat = asMap(doc['live_signal_states_by_strategy']);
+    final stratSig = asMap(sigByStrat[selectedStrategyId]);
+    final sig = stratSig.isNotEmpty
+        ? stratSig
+        : asMap(doc['live_signal_state']);
     final stratSummary = _findStrategySummary(doc, selectedStrategyId);
     final asOfDate = text(doc['as_of_date']).isEmpty
         ? widget.asOf
@@ -374,18 +456,29 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final regimeCode = text(sig['regime_code']);
     final slot1 = asMap(sig['slot1_naked_put']);
     final slot2 = asMap(sig['slot2_collar']);
+    final s1OpenMap = asMap(slot1['open_position']);
+    final s2OpenMap = asMap(slot2['open_position']);
     final s1Act = asMap(slot1['latest_action']);
     final s2Act = asMap(slot2['latest_action']);
     final gates = asList(sig['gate_checklist']);
 
-    final Color statusColor = rawLights >= 5
-        ? _coral
-        : (rawLights >= 3 || regimeCode.contains('ACTIVE') ? _amber : _emerald);
+    final s1Open = s1OpenMap.isNotEmpty;
+    final s1PendingTp = s1Open && s1OpenMap['pending_tp'] == true;
+    final s2Open = s2OpenMap.isNotEmpty;
+    final s2PendingTp = s2Open && s2OpenMap['pending_tp'] == true;
+
+    final Color statusColor = regimeCode == 'VIX110_TP_TRIGGERED'
+        ? _emerald
+        : (rawLights >= 5
+              ? _coral
+              : (rawLights >= 3 || regimeCode.contains('ACTIVE')
+                    ? _amber
+                    : _emerald));
 
     final String verdictHeadline = switch (regimeCode) {
       'VIX110_TP_TRIGGERED' => w(
-        'Panic Harvest Triggered · Monetize Hedges into QQQ',
-        '恐慌极值触发 · 期权保护次日止盈换股',
+        'Deep-ITM Panic Harvest Armed · Monetize Put Next Open ($rawLights/6 Lights)',
+        '深跌实值恐慌触发 · 期权次日开盘止盈换股（$rawLights/6 亮灯）',
       ),
       'DUAL_SLOT_FULL_SHIELD' => w(
         'Full Hedge Active · Naked Put + Collar On',
@@ -411,19 +504,34 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         _numVal(s1Act['u1_shares_added']) + _numVal(s2Act['u1_shares_added']);
     final lastExitDate = text(s2Act['exit_date']).length >= 10
         ? text(s2Act['exit_date']).substring(5)
-        : '';
+        : (text(s1Act['exit_date']).length >= 10
+              ? text(s1Act['exit_date']).substring(5)
+              : '');
 
     final String humanSummary;
-    if (regimeCode == 'LOW_SPOT_FREEZE_NO_NEW_COLLAR') {
+    if (regimeCode == 'VIX110_TP_TRIGGERED') {
+      final armedMap = s1PendingTp ? s1OpenMap : s2OpenMap;
+      final armedPnl = _numVal(armedMap['mtm_pnl_usd']);
+      final armedSh = _numVal(armedMap['est_shares_added']);
+      final armedKp = _numVal(armedMap['kp']);
+      final s2Pnl = _numVal(s2Act['u1_net_pnl_usd']);
+      final s2Date = text(s2Act['exit_date']).length >= 10
+          ? text(s2Act['exit_date']).substring(5)
+          : '';
       humanSummary = w(
-        '${lastExitDate.isNotEmpty ? 'Harvested ${_fmtUsd(totalLastHarvest, signed: true)} (+${totalLastShares.toStringAsFixed(1)} extra QQQ shares) on $lastExitDate panic spike; ' : ''}new Call caps stay paused below -5% drawdown while holding 100% QQQ for full rebound upside.',
-        '${lastExitDate.isNotEmpty ? '$lastExitDate 已在恐慌倒挂中止盈落袋 ${_fmtUsd(totalLastHarvest, signed: true)}（低位增持 +${totalLastShares.toStringAsFixed(1)} 股 QQQ）；' : ''}当前跌离高点超 5% 暂停新卖 Call，100% 满仓 QQQ 完整保留反弹空间。',
+        '${s2Pnl > 0 && s2Date.isNotEmpty ? 'Collar already banked ${_fmtUsd(s2Pnl, signed: true)} on $s2Date and freed the Call cap; ' : ''}active Put (K=\$${armedKp.toStringAsFixed(0)}) ignored the shallow inversion and is now deep ITM at \$${qqqClose.toStringAsFixed(0)} — armed to monetize ${_fmtUsd(armedPnl, signed: true)} (+${armedSh.toStringAsFixed(1)} QQQ sh) at next Open.',
+        '${s2Pnl > 0 && s2Date.isNotEmpty ? '$s2Date 次仓领口已先行落袋 ${_fmtUsd(s2Pnl, signed: true)} 并解除卖 Call 封顶；' : ''}持仓保护（行权 \$${armedKp.toStringAsFixed(0)}）无视前期浅倒挂，今日深跌实值至 \$${qqqClose.toStringAsFixed(0)} 触发止盈（浮盈 ${_fmtUsd(armedPnl, signed: true)} / +${armedSh.toStringAsFixed(1)} 股待次日开盘换股）。',
+      );
+    } else if (regimeCode == 'LOW_SPOT_FREEZE_NO_NEW_COLLAR') {
+      humanSummary = w(
+        '${lastExitDate.isNotEmpty && totalLastHarvest > 0 ? 'Harvested ${_fmtUsd(totalLastHarvest, signed: true)} (+${totalLastShares.toStringAsFixed(1)} extra QQQ shares) on $lastExitDate panic spike; ' : ''}new Call caps stay paused below -5% drawdown while holding 100% QQQ for full rebound upside.',
+        '${lastExitDate.isNotEmpty && totalLastHarvest > 0 ? '$lastExitDate 已在恐慌倒挂中止盈落袋 ${_fmtUsd(totalLastHarvest, signed: true)}（低位增持 +${totalLastShares.toStringAsFixed(1)} 股 QQQ）；' : ''}当前跌离高点超 5% 暂停新卖 Call，100% 满仓 QQQ 完整保留反弹空间。',
       );
     } else if (regimeCode == 'DUAL_SLOT_FULL_SHIELD' ||
         regimeCode == 'SLOT1_NAKED_PUT_ACTIVE') {
       humanSummary = w(
-        'Protective puts are in place near market highs; hold 100% QQQ until VIX/VIX3M crosses 1.10 panic inversion or Put reaches 5x in the second half (DTE <= 45) to monetize into extra shares.',
-        '高位看跌保护已就位；底仓 100% 持有 QQQ，静待 VIX/VIX3M 突破 1.10 恐慌倒挂或后半程（DTE ≤ 45）Put 涨超 5 倍时止盈换股。',
+        'Protective puts are in place near market highs; hold 100% QQQ until ${_humanTpModeLabel(selectedTpMode)} take-profit triggers to monetize into extra shares.',
+        '高位看跌保护已就位；底仓 100% 持有 QQQ，按当前「${_humanTpModeLabel(selectedTpMode)}」规则等待止盈触发并抄底增持正股。',
       );
     } else {
       humanSummary = w(
@@ -433,49 +541,67 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     }
 
     // 3 plain-human pure-options status columns (Core QQQ + Slot 1 + Slot 2)
-    final extraShares = _numVal(stratSummary['extra_shares_vs_bh'], 519.30);
+    final extraShares = _numVal(stratSummary['extra_shares_vs_bh'], 601.98);
     final coreValue = w('100% QQQ Held', '100% 满仓 QQQ');
     final coreSub = w(
       'Never sells equity · +${extraShares.toStringAsFixed(1)} extra sh',
       '永不卖股择时 · 累计多攒 +${extraShares.toStringAsFixed(1)} 股',
     );
 
-    final s1Open = slot1['open_position'] != null;
-    final s1Value = s1Open
-        ? w('Active Hedge', '保护运行中')
-        : (_numVal(s1Act['u1_net_pnl_usd']) > 0
-              ? w(
-                  'Harvested ${_fmtUsd(_numVal(s1Act['u1_net_pnl_usd']), signed: true)} · Standby',
-                  '已止盈 ${_fmtUsd(_numVal(s1Act['u1_net_pnl_usd']), signed: true)} · 待命',
-                )
-              : w('Standby', '待命'));
-    final s1Sub = text(s1Act['entry_date']).length >= 10 &&
-            text(s1Act['exit_date']).length >= 10
+    final s1Value = s1PendingTp
         ? w(
-            '${text(s1Act['entry_date']).substring(5)} @\$${_numVal(s1Act['entry_spot']).toStringAsFixed(0)} -> ${text(s1Act['exit_date']).substring(5)} @\$${_numVal(s1Act['exit_spot']).toStringAsFixed(0)} (+${_numVal(s1Act['u1_shares_added']).toStringAsFixed(1)} sh)',
-            '${text(s1Act['entry_date']).substring(5)} @\$${_numVal(s1Act['entry_spot']).toStringAsFixed(0)} 开 → ${text(s1Act['exit_date']).substring(5)} @\$${_numVal(s1Act['exit_spot']).toStringAsFixed(0)} 平（+${_numVal(s1Act['u1_shares_added']).toStringAsFixed(1)} 股）',
+            'TP Armed ${_fmtUsd(_numVal(s1OpenMap['mtm_pnl_usd']), signed: true)} · Next Open',
+            '实值止盈已触发 ${_fmtUsd(_numVal(s1OpenMap['mtm_pnl_usd']), signed: true)}',
           )
-        : w('50% size · No upside Call cap', '50% 仓位 · 不卖 Call 保留冲顶');
-
-    final s2Open = slot2['open_position'] != null;
-    final s2Frozen = text(slot2['status']).contains('FROZEN');
-    final s2Value = s2Open
-        ? w('Active Collar', '领口保护中')
-        : (s2Frozen
-              ? (_numVal(s2Act['u1_net_pnl_usd']) > 0
+        : (s1Open
+              ? w('Active Hedge', '保护运行中')
+              : (_numVal(s1Act['u1_net_pnl_usd']) > 0
                     ? w(
-                        'Harvested ${_fmtUsd(_numVal(s2Act['u1_net_pnl_usd']), signed: true)} · Paused',
-                        '已止盈 ${_fmtUsd(_numVal(s2Act['u1_net_pnl_usd']), signed: true)} · 低位暂停',
+                        'Harvested ${_fmtUsd(_numVal(s1Act['u1_net_pnl_usd']), signed: true)} · Standby',
+                        '已止盈 ${_fmtUsd(_numVal(s1Act['u1_net_pnl_usd']), signed: true)} · 待命',
                       )
-                    : w('Paused Below -5%', '低位暂停卖 Call'))
-              : w('Standby (30D Step)', '待命（满 30 天开启）'));
-    final s2Sub = text(s2Act['entry_date']).length >= 10 &&
-            text(s2Act['exit_date']).length >= 10
+                    : w('Standby', '待命')));
+    final s1Sub = s1Open
         ? w(
-            '${text(s2Act['entry_date']).substring(5)} @\$${_numVal(s2Act['entry_spot']).toStringAsFixed(0)} -> ${text(s2Act['exit_date']).substring(5)} @\$${_numVal(s2Act['exit_spot']).toStringAsFixed(0)} (+${_numVal(s2Act['u1_shares_added']).toStringAsFixed(1)} sh)',
-            '${text(s2Act['entry_date']).substring(5)} @\$${_numVal(s2Act['entry_spot']).toStringAsFixed(0)} 开 → ${text(s2Act['exit_date']).substring(5)} @\$${_numVal(s2Act['exit_spot']).toStringAsFixed(0)} 平（+${_numVal(s2Act['u1_shares_added']).toStringAsFixed(1)} 股）',
+            '${text(s1OpenMap['entry_date']).length >= 10 ? text(s1OpenMap['entry_date']).substring(5) : ''} @\$${_numVal(s1OpenMap['entry_spot']).toStringAsFixed(0)} (K=\$${_numVal(s1OpenMap['kp']).toStringAsFixed(0)}) · ${_numVal(s1OpenMap['rem_dte']).round()}D left · +${_numVal(s1OpenMap['est_shares_added']).toStringAsFixed(1)} sh',
+            '${text(s1OpenMap['entry_date']).length >= 10 ? text(s1OpenMap['entry_date']).substring(5) : ''} @\$${_numVal(s1OpenMap['entry_spot']).toStringAsFixed(0)} 开（行权 \$${_numVal(s1OpenMap['kp']).toStringAsFixed(0)}）· 剩 ${_numVal(s1OpenMap['rem_dte']).round()} 天 · +${_numVal(s1OpenMap['est_shares_added']).toStringAsFixed(1)} 股',
           )
-        : w('Zero-cost Put + Call collar', '零成本领口保护');
+        : (text(s1Act['entry_date']).length >= 10 &&
+                  text(s1Act['exit_date']).length >= 10
+              ? w(
+                  '${text(s1Act['entry_date']).substring(5)} @\$${_numVal(s1Act['entry_spot']).toStringAsFixed(0)} -> ${text(s1Act['exit_date']).substring(5)} @\$${_numVal(s1Act['exit_spot']).toStringAsFixed(0)} (+${_numVal(s1Act['u1_shares_added']).toStringAsFixed(1)} sh)',
+                  '${text(s1Act['entry_date']).substring(5)} @\$${_numVal(s1Act['entry_spot']).toStringAsFixed(0)} 开 → ${text(s1Act['exit_date']).substring(5)} @\$${_numVal(s1Act['exit_spot']).toStringAsFixed(0)} 平（+${_numVal(s1Act['u1_shares_added']).toStringAsFixed(1)} 股）',
+                )
+              : w('50% size · No upside Call cap', '50% 仓位 · 不卖 Call 保留冲顶'));
+
+    final s2Frozen = text(slot2['status']).contains('FROZEN');
+    final s2Value = s2PendingTp
+        ? w(
+            'TP Armed ${_fmtUsd(_numVal(s2OpenMap['mtm_pnl_usd']), signed: true)} · Next Open',
+            '止盈已触发 ${_fmtUsd(_numVal(s2OpenMap['mtm_pnl_usd']), signed: true)}',
+          )
+        : (s2Open
+              ? w('Active Collar', '领口保护中')
+              : (s2Frozen
+                    ? (_numVal(s2Act['u1_net_pnl_usd']) > 0
+                          ? w(
+                              'Harvested ${_fmtUsd(_numVal(s2Act['u1_net_pnl_usd']), signed: true)} · Paused',
+                              '已止盈 ${_fmtUsd(_numVal(s2Act['u1_net_pnl_usd']), signed: true)} · 低位暂停',
+                            )
+                          : w('Paused Below -5%', '低位暂停卖 Call'))
+                    : w('Standby (30D Step)', '待命（满 30 天开启）')));
+    final s2Sub = s2Open
+        ? w(
+            '${text(s2OpenMap['entry_date']).length >= 10 ? text(s2OpenMap['entry_date']).substring(5) : ''} @\$${_numVal(s2OpenMap['entry_spot']).toStringAsFixed(0)} (K=\$${_numVal(s2OpenMap['kp']).toStringAsFixed(0)}) · ${_numVal(s2OpenMap['rem_dte']).round()}D left',
+            '${text(s2OpenMap['entry_date']).length >= 10 ? text(s2OpenMap['entry_date']).substring(5) : ''} @\$${_numVal(s2OpenMap['entry_spot']).toStringAsFixed(0)} 开（行权 \$${_numVal(s2OpenMap['kp']).toStringAsFixed(0)}）· 剩 ${_numVal(s2OpenMap['rem_dte']).round()} 天',
+          )
+        : (text(s2Act['entry_date']).length >= 10 &&
+                  text(s2Act['exit_date']).length >= 10
+              ? w(
+                  '${text(s2Act['entry_date']).substring(5)} @\$${_numVal(s2Act['entry_spot']).toStringAsFixed(0)} -> ${text(s2Act['exit_date']).substring(5)} @\$${_numVal(s2Act['exit_spot']).toStringAsFixed(0)} (+${_numVal(s2Act['u1_shares_added']).toStringAsFixed(1)} sh)',
+                  '${text(s2Act['entry_date']).substring(5)} @\$${_numVal(s2Act['entry_spot']).toStringAsFixed(0)} 开 → ${text(s2Act['exit_date']).substring(5)} @\$${_numVal(s2Act['exit_spot']).toStringAsFixed(0)} 平（+${_numVal(s2Act['u1_shares_added']).toStringAsFixed(1)} 股）',
+                )
+              : w('Zero-cost Put + Call collar', '零成本领口保护'));
 
     return Container(
       key: const ValueKey('crisis-observatory-command-center'),
@@ -587,7 +713,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                       label: w('First-Half Naked Put (50%)', '首仓裸 Put（50%）'),
                       value: s1Value,
                       sub: s1Sub,
-                      accent: s1Open ? _amber : _emerald,
+                      accent: s1PendingTp ? _emerald : (s1Open ? _amber : _emerald),
                     ),
                   ),
                   Container(
@@ -601,7 +727,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                       label: w('Second-Half Collar (50%)', '次仓领口（50%）'),
                       value: s2Value,
                       sub: s2Sub,
-                      accent: s2Open ? _amber : (s2Frozen ? p.text : _emerald),
+                      accent: s2PendingTp
+                          ? _emerald
+                          : (s2Open ? _amber : (s2Frozen ? p.text : _emerald)),
                     ),
                   ),
                 ],
@@ -627,7 +755,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   label: w('First-Half Naked Put (50%)', '首仓裸 Put（50%）'),
                   value: s1Value,
                   sub: s1Sub,
-                  accent: s1Open ? _amber : _emerald,
+                  accent: s1PendingTp ? _emerald : (s1Open ? _amber : _emerald),
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 12),
@@ -638,45 +766,63 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   label: w('Second-Half Collar (50%)', '次仓领口（50%）'),
                   value: s2Value,
                   sub: s2Sub,
-                  accent: s2Open ? _amber : (s2Frozen ? p.text : _emerald),
+                  accent: s2PendingTp
+                      ? _emerald
+                      : (s2Open ? _amber : (s2Frozen ? p.text : _emerald)),
                 ),
               ],
             ),
           const SizedBox(height: 14),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: InkWell(
-              key: const ValueKey('crisis-rules-toggle'),
-              borderRadius: BorderRadius.circular(6),
-              onTap: () =>
-                  setState(() => showRulesDisclosure = !showRulesDisclosure),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      showRulesDisclosure
-                          ? w('Hide Trigger Rules', '收起触发条件')
-                          : w('View Trigger Rules', '查看触发条件'),
-                      style: TextStyle(
-                        color: p.muted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              InkWell(
+                key: const ValueKey('crisis-rules-toggle'),
+                borderRadius: BorderRadius.circular(6),
+                onTap: () =>
+                    setState(() => showRulesDisclosure = !showRulesDisclosure),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        showRulesDisclosure
+                            ? w('Hide Trigger Rules', '收起触发条件')
+                            : w('View Trigger Rules', '查看触发条件'),
+                        style: TextStyle(
+                          color: p.muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      showRulesDisclosure
-                          ? Icons.keyboard_arrow_up
-                          : Icons.keyboard_arrow_down,
-                      size: 16,
-                      color: p.muted,
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      Icon(
+                        showRulesDisclosure
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        size: 16,
+                        color: p.muted,
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
+              Text(
+                w(
+                  'Take-Profit: ${_humanTpModeLabel(selectedTpMode)}',
+                  '当前止盈模式：${_humanTpModeLabel(selectedTpMode)}',
+                ),
+                style: TextStyle(
+                  color: p.muted,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
           if (showRulesDisclosure) ...[
             const SizedBox(height: 10),
@@ -699,8 +845,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   const SizedBox(height: 10),
                   Text(
                     w(
-                      'Execution rules: 1) Hold 100% QQQ forever. 2) Within 5% of ATH with calm volatility (VXN <= 22) and either AD < 50DMA or >= 4 lights -> buy 50% 90-day -10% Put (no Call cap). 3) After 30 days if still active -> add 50% zero-cost Collar. 4) Dual-Track Take-Profit: monetize puts into extra QQQ shares at T+1 Open when VIX/VIX3M >= 1.10 panic inversion OR in the second half (DTE <= 45) once Put Bid >= 5x entry cost (locks slow-bear windfalls like 2022-02 before expiry rebounds). 5) Never open new Collars below -5% drawdown.',
-                      '实战规则：① 底仓 100% 持有 QQQ 永不卖股；② 距高点 5% 内、波动率 VXN ≤ 22，且涨跌线跌破 50 日线或亮起 ≥ 4 盏灯 → 次日开盘买 50% 仓位 90 天 -10% 裸 Put（不卖封顶）；③ 满 30 天仍预警 → 补齐 50% 零成本领口；④ 双轨止盈换股：触发 VIX/VIX3M ≥ 1.10 恐慌倒挂，或后半程（DTE ≤ 45）Put 暴涨 ≥ 5 倍成本时，次日开盘全额止盈抄底增持 QQQ（专治 2022 式无倒挂慢熊）；⑤ 跌离高点超 5% 严禁新卖 Call。',
+                      'Execution rules: 1) Hold 100% QQQ forever. 2) Within 5% of ATH with calm volatility (VXN <= 22) and either AD < 50DMA or >= 4 lights -> buy 50% 90-day -10% Put (no Call cap). 3) After 30 days if still active -> add 50% zero-cost Collar. 4) Selectable Take-Profit (${_humanTpModeLabel(selectedTpMode)}): ${_humanTpModeHint(selectedTpMode)}. 5) Never open new Collars below -5% drawdown.',
+                      '实战规则：① 底仓 100% 持有 QQQ 永不卖股；② 距高点 5% 内、波动率 VXN ≤ 22，且涨跌线跌破 50 日线或亮起 ≥ 4 盏灯 → 次日开盘买 50% 仓位 90 天 -10% 裸 Put（不卖封顶）；③ 满 30 天仍预警 → 补齐 50% 零成本领口；④ 可选止盈模式（${_humanTpModeLabel(selectedTpMode)}）：${_humanTpModeHint(selectedTpMode)}；⑤ 跌离高点超 5% 严禁新卖 Call。',
                     ),
                     style: TextStyle(color: p.muted, fontSize: 12, height: 1.5),
                   ),
@@ -1188,6 +1334,11 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             ],
           ),
           const SizedBox(height: 16),
+          if (switchingTpMode)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 10),
+              child: LinearProgressIndicator(minHeight: 2, color: _emerald),
+            ),
           Wrap(
             spacing: 10,
             runSpacing: 8,
@@ -1255,6 +1406,30 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   ),
                 ),
             ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            key: const ValueKey('crisis-tp-mode-bar'),
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                w('Take-Profit:', '止盈规则：'),
+                style: TextStyle(
+                  color: p.muted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              for (final mid in _tpModeIds) _buildCalmTpModeTab(mid),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _humanTpModeHint(selectedTpMode),
+            key: const ValueKey('crisis-tp-mode-hint'),
+            style: TextStyle(color: p.muted, fontSize: 11.5, height: 1.4),
           ),
           const SizedBox(height: 12),
           SingleChildScrollView(
@@ -1530,14 +1705,27 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     double netPnlSum = 0;
     double sharesSum = 0;
     bool hasVixTp = false;
+    bool hasItmTp = false;
+    bool has4xTp = false;
     bool hasPut5xTp = false;
+    bool hasLiveArmed = false;
     bool hasOpen = false;
     Map<String, dynamic>? firstOpenEv;
     for (final ev in hoverEvents) {
       final et = text(ev['event_type']);
-      if (et == 'vix110_tp' || et == 'put5x_dte45_tp') {
+      if (et == 'vix110_tp' ||
+          et == 'vix110_itm_tp' ||
+          et == 'vix110_4x_tp' ||
+          et == 'put5x_dte45_tp' ||
+          et == 'live_tp_armed') {
         if (et == 'put5x_dte45_tp') {
           hasPut5xTp = true;
+        } else if (et == 'live_tp_armed') {
+          hasLiveArmed = true;
+        } else if (et == 'vix110_itm_tp') {
+          hasItmTp = true;
+        } else if (et == 'vix110_4x_tp') {
+          has4xTp = true;
         } else {
           hasVixTp = true;
         }
@@ -1548,7 +1736,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         firstOpenEv ??= ev;
       }
     }
-    final hasTp = hasVixTp || hasPut5xTp;
+    final hasTp =
+        hasVixTp || hasItmTp || has4xTp || hasPut5xTp || hasLiveArmed;
 
     return Positioned(
       left: clampedLeft.toDouble(),
@@ -1611,20 +1800,35 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 Container(height: 1, color: p.border),
                 const SizedBox(height: 6),
                 Text(
-                  hasPut5xTp
+                  hasLiveArmed
                       ? w(
-                          '◆ 5x Slow-Bear Harvest (DTE<=45) · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
-                          '◆ 5x 慢熊止盈（DTE≤45） · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                          '◆ Deep-ITM Panic Armed (Next Open) · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                          '◆ 实值恐慌止盈触发（次日开盘） · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
                         )
-                      : (hasVixTp
+                      : (hasPut5xTp
                             ? w(
-                                '◆ 1.10 Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
-                                '◆ 1.10 恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                                '◆ 5x Slow-Bear Harvest (DTE<=45) · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                                '◆ 5x 慢熊止盈（DTE≤45） · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
                               )
-                            : w(
-                                '▲ ${text(firstOpenEv?['tranche_type']) == 'naked_put' ? 'Naked Put' : 'Collar'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)} (K=\$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)})',
-                                '▲ ${text(firstOpenEv?['tranche_type']) == 'naked_put' ? '首仓裸 Put' : '次仓领口'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)}（行权 \$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)}）',
-                              )),
+                            : (hasItmTp
+                                  ? w(
+                                      '◆ Deep-ITM Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                                      '◆ 实值恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                                    )
+                                  : (has4xTp
+                                        ? w(
+                                            '◆ 4x Deep Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                                            '◆ 4x 深度恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                                          )
+                                        : (hasVixTp
+                                              ? w(
+                                                  '◆ 1.10 Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                                                  '◆ 1.10 恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                                                )
+                                              : w(
+                                                  '▲ ${text(firstOpenEv?['tranche_type']) == 'naked_put' ? 'Naked Put' : 'Collar'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)} (K=\$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)})',
+                                                  '▲ ${text(firstOpenEv?['tranche_type']) == 'naked_put' ? '首仓裸 Put' : '次仓领口'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)}（行权 \$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)}）',
+                                                ))))),
                   style: TextStyle(
                     color: hasTp ? _emerald : _amber,
                     fontSize: 11.5,
@@ -1660,6 +1864,35 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         ),
         Text(sub, style: TextStyle(color: p.muted, fontSize: 11)),
       ],
+    );
+  }
+
+  Widget _buildCalmTpModeTab(String modeId) {
+    final active = selectedTpMode == modeId;
+    return InkWell(
+      key: ValueKey('crisis-tp-mode-pill-$modeId'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _selectTpMode(modeId),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5.5),
+        decoration: BoxDecoration(
+          color: active
+              ? _emerald.withValues(alpha: 0.14)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: active ? _emerald.withValues(alpha: 0.65) : p.border,
+          ),
+        ),
+        child: Text(
+          _humanTpModeLabel(modeId),
+          style: TextStyle(
+            color: active ? p.text : p.muted,
+            fontSize: 12,
+            fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+          ),
+        ),
+      ),
     );
   }
 
@@ -2080,10 +2313,14 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final trancheId = _numVal(tr['tranche_id']).round();
     final expanded = expandedTrancheIds.contains(trancheId);
     final isNaked = text(tr['tranche_type']) == 'naked_put';
-    final isOpenCutoff = tr['exit_date'] == null;
+    final isOpenLive = tr['is_open_live'] == true;
     final exitReason = text(tr['exit_reason']);
+    final isLiveArmed = exitReason == 'live_tp_armed_next_open';
+    final isOpenCutoff = tr['exit_date'] == null && !isOpenLive;
     final isPut5xTp = exitReason.contains('put_5x');
-    final isTp = exitReason.contains('tp');
+    final isItmTp = exitReason.contains('itm_tp');
+    final is4xTp = exitReason.contains('4x_tp');
+    final isTp = exitReason.contains('tp') && !isOpenLive;
     final netPnl = _numVal(tr['net_pnl_usd']);
     final shAdded = _numVal(tr['shares_added']);
     final kp = _numVal(tr['kp']);
@@ -2096,15 +2333,34 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
     final entrySpot = _numVal(tr['entry_spot']).toStringAsFixed(1);
     final exitSpot = _numVal(tr['exit_spot']).toStringAsFixed(1);
-    final exitShort = isOpenCutoff || text(tr['exit_date']).length < 10
+    final rawExitDate = isOpenLive
+        ? text(tr['mtm_date'])
+        : text(tr['exit_date']);
+    final exitShort = isOpenCutoff || rawExitDate.length < 10
         ? ''
-        : text(tr['exit_date']).substring(5);
-    final tpLabelEn = isPut5xTp
-        ? '5x Slow-Bear Harvest'
-        : (isTp ? '1.10 Panic Harvest' : 'Expired');
-    final tpLabelZh = isPut5xTp
-        ? '5x 慢熊止盈'
-        : (isTp ? '恐慌止盈' : '到期结算');
+        : rawExitDate.substring(5);
+    final tpLabelEn = isLiveArmed
+        ? 'Deep-ITM TP Armed (Next Open)'
+        : (isOpenLive
+              ? 'Open Live MTM'
+              : (isPut5xTp
+                    ? '5x Slow-Bear Harvest'
+                    : (isItmTp
+                          ? 'Deep-ITM Panic Harvest'
+                          : (is4xTp
+                                ? '4x Deep Panic Harvest'
+                                : (isTp ? '1.10 Panic Harvest' : 'Expired')))));
+    final tpLabelZh = isLiveArmed
+        ? '实值恐慌触发 · 待次日开盘止盈'
+        : (isOpenLive
+              ? '实盘持仓浮盈'
+              : (isPut5xTp
+                    ? '5x 慢熊止盈'
+                    : (isItmTp
+                          ? '实值恐慌止盈'
+                          : (is4xTp
+                                ? '4x 深度恐慌止盈'
+                                : (isTp ? '恐慌止盈' : '到期结算')))));
 
     final String actionSentence;
     if (isNaked) {
@@ -2124,7 +2380,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               'QQQ \$$entrySpot 开启零成本领口（保护 \$${kp.toStringAsFixed(0)} / 封顶 \$${(kc ?? 0).toStringAsFixed(0)}）· 持仓中',
             )
           : w(
-              'QQQ \$$entrySpot -> Collar (\$${kp.toStringAsFixed(0)} Put / \$${(kc ?? 0).toStringAsFixed(0)} Call) · ${isTp ? '$tpLabelEn $exitShort @\$$exitSpot' : 'Settled $exitShort @\$$exitSpot'}',
+              'QQQ \$$entrySpot -> Collar (\$${kp.toStringAsFixed(0)} Put / \$${(kc ?? 0).toStringAsFixed(0)} Call) · ${isTp || isOpenLive ? '$tpLabelEn $exitShort @\$$exitSpot' : 'Settled $exitShort @\$$exitSpot'}',
               'QQQ \$$entrySpot 零成本领口（保护 \$${kp.toStringAsFixed(0)} / 封顶 \$${(kc ?? 0).toStringAsFixed(0)}） → $exitShort @\$$exitSpot $tpLabelZh',
             );
     }
@@ -2504,7 +2760,11 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
           ..lineTo(x + r * 0.85, y + r * 0.75)
           ..close();
         canvas.drawPath(tri, Paint()..color = _amber);
-      } else if (et == 'vix110_tp' || et == 'put5x_dte45_tp') {
+      } else if (et == 'vix110_tp' ||
+          et == 'vix110_itm_tp' ||
+          et == 'vix110_4x_tp' ||
+          et == 'put5x_dte45_tp' ||
+          et == 'live_tp_armed') {
         final r = rebasedMode ? 5.2 : 4.0;
         final dia = Path()
           ..moveTo(x, y - r)
@@ -2513,13 +2773,13 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
           ..lineTo(x - r, y)
           ..close();
         canvas.drawPath(dia, Paint()..color = _emerald);
-        if (et == 'put5x_dte45_tp') {
+        if (et == 'put5x_dte45_tp' || et == 'live_tp_armed') {
           canvas.drawPath(
             dia,
             Paint()
-              ..color = _amber
+              ..color = et == 'live_tp_armed' ? Colors.white : _amber
               ..style = PaintingStyle.stroke
-              ..strokeWidth = 1.1,
+              ..strokeWidth = et == 'live_tp_armed' ? 1.4 : 1.1,
           );
         }
       }

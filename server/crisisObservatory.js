@@ -11,6 +11,11 @@ export const CRISIS_OBSERVATORY_STRATEGIES = Object.freeze([
   'H2_G4_PriceGate',
   'BH_Pure_QQQ',
 ]);
+export const CRISIS_OBSERVATORY_TP_MODES = Object.freeze([
+  'layered_itm',
+  'standard_dual',
+  'both_4x',
+]);
 
 const STRATEGY_NAV_KEYS = Object.freeze({
   U1_PureOptions: 'nav_u1',
@@ -28,6 +33,7 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const defaultFile = path.resolve(projectRoot, 'server/config/crisis-observatory-dashboard.json');
 
 let cachedArtifact = null;
+const projectedModeCache = new Map();
 const liveFeedCache = { fetchedAt: 0, bars: null };
 const LIVE_FEED_TTL_MS = 15 * 60 * 1000;
 
@@ -77,6 +83,7 @@ function readArtifact(file = defaultFile) {
     fail('crisis_observatory_invalid', 503);
   }
   const snapshotId = createHash('sha256').update(raw).digest('hex').slice(0, 16);
+  projectedModeCache.clear();
   cachedArtifact = {
     file,
     mtimeMs: stat.mtimeMs,
@@ -85,6 +92,57 @@ function readArtifact(file = defaultFile) {
     data: parsed,
   };
   return cachedArtifact;
+}
+
+function projectArtifactForTpMode(data, snapshotId, selectedTpMode) {
+  const cacheKey = `${snapshotId}:${selectedTpMode}`;
+  const hit = projectedModeCache.get(cacheKey);
+  if (hit) return hit;
+
+  const { tp_modes: tpModes, ...baseWithoutModes } = data;
+  const bundle = tpModes?.[selectedTpMode];
+  if (!bundle) {
+    const fallback = {
+      ...baseWithoutModes,
+      tp_mode: data.tp_mode ?? 'layered_itm',
+      default_tp_mode: data.default_tp_mode ?? 'layered_itm',
+    };
+    projectedModeCache.set(cacheKey, fallback);
+    return fallback;
+  }
+
+  const isDefaultMode = selectedTpMode === (data.default_tp_mode ?? 'layered_itm');
+  const projectedSeries = isDefaultMode
+    ? data.daily_series
+    : data.daily_series.map((row, idx) => ({
+        ...row,
+        nav_u1: bundle.nav_u1?.[idx] ?? row.nav_u1,
+        nav_b1c: bundle.nav_b1c?.[idx] ?? row.nav_b1c,
+        nav_d2: bundle.nav_d2?.[idx] ?? row.nav_d2,
+        nav_h2: bundle.nav_h2?.[idx] ?? row.nav_h2,
+        active_slots: bundle.active_slots?.[idx] ?? row.active_slots,
+        slot1_naked: bundle.slot1_naked?.[idx] ?? row.slot1_naked,
+      }));
+
+  const projected = {
+    ...baseWithoutModes,
+    tp_mode: selectedTpMode,
+    default_tp_mode: data.default_tp_mode ?? 'layered_itm',
+    tp_modes_meta: data.tp_modes_meta ?? [],
+    live_signal_state: bundle.live_signal_state ?? data.live_signal_state,
+    live_signal_states_by_strategy:
+      bundle.live_signal_states_by_strategy ?? data.live_signal_states_by_strategy ?? {},
+    strategies_summary: bundle.strategies_summary ?? data.strategies_summary,
+    daily_series: projectedSeries,
+    events: bundle.events_by_strategy?.U1_PureOptions ?? data.events,
+    events_by_strategy: bundle.events_by_strategy ?? data.events_by_strategy,
+    trade_ledger: bundle.trade_ledgers_by_strategy?.U1_PureOptions ?? data.trade_ledger,
+    trade_ledgers_by_strategy:
+      bundle.trade_ledgers_by_strategy ?? data.trade_ledgers_by_strategy,
+    crisis_windows: bundle.crisis_windows ?? data.crisis_windows,
+  };
+  projectedModeCache.set(cacheKey, projected);
+  return projected;
 }
 
 function computeSeriesMetrics(dailyRows, navKey, bhEndNav) {
@@ -134,7 +192,7 @@ function maskLedgerAtCutoff(ledger, asOfDate) {
   const out = [];
   for (const tr of ledger ?? []) {
     if (tr.entry_date > asOfDate) continue;
-    if (tr.exit_date && tr.exit_date <= asOfDate) {
+    if ((tr.exit_date && tr.exit_date <= asOfDate) || (tr.is_open_live && tr.mtm_date && tr.mtm_date <= asOfDate)) {
       out.push(tr);
     } else {
       out.push({
@@ -321,14 +379,21 @@ function extendLiveBars(baseData, extraDailyBars, requestedAsOf) {
 export function loadCrisisObservatoryDashboard({
   asOf = null,
   strategy = null,
+  tpMode = null,
   snapshotId: expectedSnapshotId = null,
   file = defaultFile,
   extraDailyBars = null,
 } = {}) {
-  const { data, snapshotId } = readArtifact(file);
+  const { data: rawData, snapshotId } = readArtifact(file);
   if (expectedSnapshotId && expectedSnapshotId !== snapshotId) {
     fail('crisis_observatory_snapshot_changed', 409);
   }
+
+  const rawTpMode = tpMode ? String(tpMode).trim() : rawData.default_tp_mode ?? 'layered_itm';
+  if (!CRISIS_OBSERVATORY_TP_MODES.includes(rawTpMode)) {
+    fail('invalid_crisis_observatory_tp_mode', 400);
+  }
+  const data = projectArtifactForTpMode(rawData, snapshotId, rawTpMode);
 
   const rawStrategy = strategy
     ? String(strategy).trim()
@@ -356,6 +421,9 @@ export function loadCrisisObservatoryDashboard({
       requestedAsOf,
       liveExtended: false,
       selected_strategy_id: selectedStrategy,
+      tp_mode: rawTpMode,
+      live_signal_state:
+        data.live_signal_states_by_strategy?.[ledgerStrategy] ?? data.live_signal_state,
       events: data.events_by_strategy?.[ledgerStrategy] ?? data.events,
       trade_ledger: data.trade_ledgers_by_strategy?.[ledgerStrategy] ?? data.trade_ledger,
     };
@@ -467,6 +535,7 @@ export function loadCrisisObservatoryDashboard({
     requestedAsOf,
     liveExtended: Boolean(extendedSeries),
     selected_strategy_id: selectedStrategy,
+    tp_mode: rawTpMode,
     evaluation_window: {
       ...data.evaluation_window,
       end: effDate,
@@ -545,6 +614,7 @@ async function getLiveRecentCrisisBars() {
 export async function loadCrisisObservatoryDashboardLive({
   asOf = null,
   strategy = null,
+  tpMode = null,
   snapshotId = null,
   file = defaultFile,
   fetchLiveBars = null,
@@ -565,6 +635,7 @@ export async function loadCrisisObservatoryDashboardLive({
   return loadCrisisObservatoryDashboard({
     asOf: requestedAsOf,
     strategy,
+    tpMode,
     snapshotId,
     file,
     extraDailyBars,

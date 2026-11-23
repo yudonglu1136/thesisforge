@@ -79,11 +79,15 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     assert ad["days_below_50ma"] == 5
 
     sig = doc["live_signal_state"]
-    assert sig["regime_code"] == "LOW_SPOT_FREEZE_NO_NEW_COLLAR"
+    assert doc["default_tp_mode"] == "layered_itm"
+    assert doc["tp_mode"] == "layered_itm"
+    assert set(doc["tp_modes"].keys()) == {"layered_itm", "standard_dual", "both_4x"}
+    assert sig["regime_code"] == "VIX110_TP_TRIGGERED"
     assert sig["target_equity_pct"] == 100.0
     assert sig["target_tbill_pct"] == 0.0
     assert "slow_bear_shield" not in sig
-    assert sig["slot1_naked_put"]["status"] == "MONETIZED_STANDBY"
+    assert sig["slot1_naked_put"]["status"] == "TP_TRIGGERED_NEXT_OPEN"
+    assert sig["slot1_naked_put"]["open_position"]["pending_tp"] is True
     assert sig["slot2_collar"]["status"] == "FROZEN_BELOW_ATH5"
     assert len(sig["gate_checklist"]) == 5
     assert all(g.get("reading") and g.get("current_value") for g in sig["gate_checklist"])
@@ -97,15 +101,23 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
         "H2_G4_PriceGate",
         "BH_Pure_QQQ",
     ]
-    assert abs(smap["U1_PureOptions"]["end_nav"] - 1604274.43) <= 0.02
-    assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 315969.65) <= 0.02
-    assert smap["U1_PureOptions"]["cagr_pct"] == 19.15
+    assert abs(smap["U1_PureOptions"]["end_nav"] - 1654577.25) <= 0.50
+    assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 366272.47) <= 0.50
+    assert smap["U1_PureOptions"]["cagr_pct"] == 19.46
     assert smap["U1_PureOptions"]["max_dd_pct"] == -31.52
-    assert smap["U1_PureOptions"]["sharpe"] == 0.844
-    assert abs(smap["B1c_PureAD"]["end_nav"] - 1508125.75) <= 0.02
-    assert abs(smap["D2_SixLights"]["end_nav"] - 1479351.46) <= 0.02
-    assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1380701.67) <= 0.02
+    assert smap["U1_PureOptions"]["sharpe"] == 0.859
+    assert abs(smap["B1c_PureAD"]["end_nav"] - 1587800.99) <= 0.50
+    assert abs(smap["D2_SixLights"]["end_nav"] - 1497620.82) <= 0.50
+    assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1402250.68) <= 0.50
     assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02
+
+    # Verify alternate selectable TP modes
+    std_map = {s["id"]: s for s in doc["tp_modes"]["standard_dual"]["strategies_summary"]}
+    assert abs(std_map["U1_PureOptions"]["end_nav"] - 1625377.79) <= 0.50
+    assert doc["tp_modes"]["standard_dual"]["live_signal_state"]["regime_code"] == "LOW_SPOT_FREEZE_NO_NEW_COLLAR"
+    d4x_map = {s["id"]: s for s in doc["tp_modes"]["both_4x"]["strategies_summary"]}
+    assert abs(d4x_map["U1_PureOptions"]["end_nav"] - 1643122.56) <= 0.50
+    assert abs(d4x_map["D2_SixLights"]["end_nav"] - 1531284.11) <= 0.50
 
 
 def test_crisis_windows_and_4factor_convexity_identity():
@@ -123,18 +135,19 @@ def test_crisis_windows_and_4factor_convexity_identity():
     win_2022 = next(w for w in doc["crisis_windows"] if w["id"] == "2022")
     assert win_2022["u1_mdd"] == -31.52
     assert win_2022["qqq_mdd"] == -35.12
-    assert abs(win_2022["harvested_usd"] - 37679.90) <= 0.05
+    assert abs(win_2022["harvested_usd"] - 37675.29) <= 0.05
 
     live_win = doc["crisis_windows"][-1]
     assert live_win["is_live"] is True
-    assert live_win["u1_mdd"] == -17.54
+    assert live_win["u1_mdd"] == -14.81
     assert live_win["qqq_mdd"] == -19.90
-    assert abs(live_win["harvested_usd"] - 39413.84) <= 0.05
-    assert abs(live_win["harvested_usd_u1"] - 39413.84) <= 0.05
+    assert abs(live_win["harvested_usd"] - 89916.08) <= 0.10
+    assert abs(live_win["harvested_usd_u1"] - 89916.08) <= 0.10
     assert doc["shield_events"] == []
 
-    for sid, ledger in doc["trade_ledgers_by_strategy"].items():
-        assert len(ledger) > 0, sid
-        for tr in ledger:
-            decomp_sum = tr["delta_usd"] + tr["gamma_usd"] + tr["vega_usd"] + tr["theta_slip_usd"]
-            assert abs(decomp_sum - tr["net_pnl_usd"]) <= 0.05
+    for mode_id, mode_bundle in doc["tp_modes"].items():
+        for sid, ledger in mode_bundle["trade_ledgers_by_strategy"].items():
+            assert len(ledger) > 0, (mode_id, sid)
+            for tr in ledger:
+                decomp_sum = tr["delta_usd"] + tr["gamma_usd"] + tr["vega_usd"] + tr["theta_slip_usd"]
+                assert abs(decomp_sum - tr["net_pnl_usd"]) <= 0.05

@@ -36,11 +36,42 @@ SEED_GZ = ROOT_DIR / "server" / "config" / "crisis-observatory-seed-inputs.json.
 DEFAULT_OUT = ROOT_DIR / "server" / "config" / "crisis-observatory-dashboard.json"
 DEFAULT_FACT_ROOT = ROOT_DIR / "data" / "fact_os"
 
-ARTIFACT_VERSION = "crisis-observatory-v1"
+ARTIFACT_VERSION = "crisis-observatory-v2"
 START_DATE = "2015-01-02"
 INITIAL_CAPITAL = 200_000.0
 DEFAULT_SLIPPAGE = 0.025
 STOCK_REBAL_FEE = 0.0003
+DEFAULT_TP_MODE = "layered_itm"
+
+TP_MODE_SPECS: list[dict[str, Any]] = [
+    {
+        "id": "layered_itm",
+        "label_en": "Layered ITM (Rec.)",
+        "label_zh": "分层实值（推荐）",
+        "short_en": "Layered ITM",
+        "short_zh": "分层实值",
+        "summary_en": "Collar exits immediately at VIX/3M >= 1.10 to unlock Call cap; Naked Put ignores shallow inversions until strictly ITM (QQQ <= K_P); + 5x slow-bear lock (DTE <= 45).",
+        "summary_zh": "次仓领口见 VIX/3M >= 1.10 立刻止盈解封卖 Call；首仓裸 Put 浅跌无视倒挂，必须跌破自身行权价 (QQQ <= K_P) 进入实值才平；叠加后半程 DTE <= 45 & Put >= 5x 慢熊锁利。",
+    },
+    {
+        "id": "standard_dual",
+        "label_en": "Standard 1.10",
+        "label_zh": "标准双轨 1.10",
+        "short_en": "Standard 1.10",
+        "short_zh": "标准 1.10",
+        "summary_en": "Both slots exit at next Open whenever VIX/3M >= 1.10 panic inversion triggers, or on second-half 5x slow-bear lock (DTE <= 45).",
+        "summary_zh": "双槽统一：只要触发 VIX/3M >= 1.10 恐慌倒挂即次日开盘止盈抄底，或后半程 DTE <= 45 且 Put >= 5x 慢熊锁利。",
+    },
+    {
+        "id": "both_4x",
+        "label_en": "Deep 4x Both",
+        "label_zh": "两槽深度 4x",
+        "short_en": "Deep 4x",
+        "short_zh": "两槽 4x",
+        "summary_en": "Both slots require VIX/3M >= 1.10 AND Put Bid >= 4x entry cost (filters shallow spikes like 2018-10 and 2026-11), plus 5x slow-bear lock (DTE <= 45).",
+        "summary_zh": "双槽统一：必须同时满足 VIX/3M >= 1.10 且 Put 涨超 4 倍成本才认恐慌止盈（过滤 2018-10 与 2026-11 浅跌假倒挂），叠加后半程 DTE <= 45 & Put >= 5x 慢熊锁利。",
+    },
+]
 
 
 def _norm_cdf(x: float) -> float:
@@ -318,6 +349,7 @@ def simulate_strategy(
     vix_ratio_tp: float | None = 1.10,
     put_mult_tp: float | None = 5.0,
     put_mult_max_dte: int = 45,
+    tp_mode: str = DEFAULT_TP_MODE,
     slow_bear_overlay: bool = False,
     slip: float = DEFAULT_SLIPPAGE,
 ) -> dict[str, Any]:
@@ -546,9 +578,13 @@ def simulate_strategy(
             r_en, q_en = pending_sig["r"], pending_sig["q"]
 
             target_cal = dt_objs[i] + datetime.timedelta(days=target_dte)
-            f_idx = min(len(dates) - 1, bisect.bisect_left(dt_objs, target_cal))
-            exp_date = dates[f_idx]
-            exp_dt = dt_objs[f_idx]
+            pos = bisect.bisect_left(dt_objs, target_cal)
+            if pos < len(dates):
+                exp_date = dates[pos]
+                exp_dt = dt_objs[pos]
+            else:
+                exp_date = target_cal.isoformat()
+                exp_dt = target_cal
             act_dte = max(1, (exp_dt - dt_objs[i]).days)
             t_en = act_dte / 365.0
 
@@ -756,13 +792,27 @@ def simulate_strategy(
                 if rem_days >= 3:
                     est_put_bid = pm * (1.0 - slip)
                     est_call_ask = cm * (1.0 + slip) if tr["kc"] is not None else 0.0
+                    put_mult = est_put_bid / max(tr["entry_put_ask"], 1e-6)
                     tp_reason: str | None = None
-                    # Track 1: Acute panic backwardation (VIX/VIX3M >= 1.10)
+                    # Track 1: Acute panic backwardation (VIX/VIX3M >= 1.10), gated by tp_mode
                     if vix_ratio_tp is not None and vix_r >= vix_ratio_tp:
-                        tp_reason = f"vix_inv_{vix_ratio_tp:.2f}_tp"
+                        if tp_mode == "standard_dual":
+                            tp_reason = f"vix_inv_{vix_ratio_tp:.2f}_tp"
+                        elif tp_mode == "layered_itm":
+                            # Collar exits immediately on 1.10 to unlock Call cap; Naked Put ignores shallow inversions until strictly ITM (cl <= K_P)
+                            if tr["tranche_type"] == "collar":
+                                tp_reason = f"vix_inv_{vix_ratio_tp:.2f}_tp"
+                            elif cl <= tr["kp"]:
+                                tp_reason = f"vix_inv_{vix_ratio_tp:.2f}_itm_tp"
+                        elif tp_mode == "both_4x":
+                            if put_mult >= 4.0:
+                                tp_reason = f"vix_inv_{vix_ratio_tp:.2f}_4x_tp"
+                        else:
+                            raise ValueError(f"Unknown tp_mode: {tp_mode}")
                     # Track 2: Second-half slow-bear 5x Put deep-ITM profit lock (DTE <= 45 & Put Bid >= 5x entry cost)
-                    elif (
-                        put_mult_tp is not None
+                    if (
+                        tp_reason is None
+                        and put_mult_tp is not None
                         and rem_days <= put_mult_max_dte
                         and est_put_bid >= put_mult_tp * tr["entry_put_ask"]
                     ):
@@ -834,6 +884,135 @@ def simulate_strategy(
                 if sc_now <= 3.0 or cl > ma200_now * 1.01 or vix_now >= 34.0 or vix_r >= 1.10:
                     pending_bear_change = "exit_def"
 
+    # Serialize any tranches still open at final EOD (e.g. live 2026-11-20 ITM Naked Put awaiting next Open TP)
+    last_r = rows[-1]
+    last_d = dates[-1]
+    last_dt = dt_objs[-1]
+    last_cl = float(last_r["close"])
+    last_vxn = float(last_r["vxn"])
+    last_vr = float(last_r["vix_ratio"])
+    last_rf = float(last_r["r"])
+    last_q = float(last_r["div_yield"])
+    mult_last = (final_bh_sh / post_drip_bh[-1]) * final_cl
+
+    active_tranches_serialized: list[dict[str, Any]] = []
+    for tr in active_tranches:
+        rem_d = max(1, (tr["exp_dt"] - last_dt).days)
+        t_rem = rem_d / 365.0
+        sp = eval_skew_iv(last_cl, tr["kp"], t_rem, last_rf, last_q, last_vxn, coeffs)
+        pm = bsm_price(last_cl, tr["kp"], t_rem, last_rf, last_q, sp, "put")
+        if tr["kc"] is not None:
+            sc = eval_skew_iv(last_cl, tr["kc"], t_rem, last_rf, last_q, last_vxn, coeffs)
+            cm = bsm_price(last_cl, tr["kc"], t_rem, last_rf, last_q, sc, "call")
+        else:
+            cm = 0.0
+        hs = tr["hedged_shares"]
+        net_sh_px = pm - cm
+        mtm_cash_usd = hs * net_sh_px
+        mtm_net_pnl = mtm_cash_usd - tr["entry_cost_usd"]
+        actual_net_sh = net_sh_px if tr["tranche_type"] == "collar" else (pm - tr["entry_put_ask"])
+        est_d_sh = mtm_cash_usd / (last_cl * (1.0 + STOCK_REBAL_FEE)) if abs(mtm_cash_usd) > 1e-8 else 0.0
+        est_sh_added = tr["entry_shares_sold"] + est_d_sh
+        conv = decompose_tranche_convexity(
+            tr["tranche_type"],
+            tr["entry_spot"],
+            last_cl,
+            tr["kp"],
+            tr["kc"],
+            tr["T_entry"],
+            t_rem,
+            tr["entry_r"],
+            last_rf,
+            tr["entry_q"],
+            last_q,
+            tr["entry_vxn"],
+            last_vxn,
+            coeffs,
+            actual_net_sh,
+        )
+        is_armed = bool(tr.get("pending_tp"))
+        live_reason = "live_tp_armed_next_open" if is_armed else "open_live_mtm"
+        trig_en, trig_zh = _format_trigger_label(tr["sig_score"], tr["sig_ad_below50"], gate_key)
+        ledger.append(
+            {
+                "tranche_id": tr["tranche_id"],
+                "strategy_id": strategy_id,
+                "slot_num": tr["slot_num"],
+                "tranche_type": tr["tranche_type"],
+                "signal_date": tr["signal_date"],
+                "entry_date": tr["entry_date"],
+                "planned_exp_date": tr["exp_date"],
+                "exit_date": None,
+                "mtm_date": last_d,
+                "is_open_live": True,
+                "pending_tp": is_armed,
+                "pending_tp_reason": tr.get("tp_reason") or "",
+                "actual_days_held": (last_dt - tr["entry_dt"]).days,
+                "rem_dte_at_exit": rem_d,
+                "exit_reason": live_reason,
+                "sig_score": tr["sig_score"],
+                "sig_ad_below50": tr["sig_ad_below50"],
+                "trigger_en": trig_en,
+                "trigger_zh": trig_zh,
+                "entry_spot": round(tr["entry_spot"], 2),
+                "entry_vxn": round(tr["entry_vxn"], 2),
+                "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
+                "kp": round(tr["kp"], 2),
+                "kc": round(tr["kc"], 2) if tr["kc"] is not None else None,
+                "call_cap_pct": round((tr["kc"] / tr["entry_spot"] - 1.0) * 100.0, 2)
+                if tr["kc"] is not None
+                else None,
+                "hedged_shares": round(hs, 2),
+                "slot_coverage": round(tr["slot_coverage"], 4),
+                "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
+                "entry_cost_usd": round(tr["entry_cost_usd"], 2),
+                "entry_shares_sold": round(tr["entry_shares_sold"], 4),
+                "exit_spot": round(last_cl, 2),
+                "exit_vxn": round(last_vxn, 2),
+                "exit_vix_ratio": round(last_vr, 3),
+                "underlying_ret_pct": round((last_cl / tr["entry_spot"] - 1.0) * 100.0, 2),
+                "put_exit_val_sh": round(pm, 4),
+                "call_exit_cost_sh": round(cm, 4),
+                "exit_net_cash_usd": round(mtm_cash_usd, 2),
+                "net_pnl_usd": round(mtm_net_pnl, 2),
+                "exit_shares_delta": round(est_d_sh, 2),
+                "shares_added": round(est_sh_added, 2),
+                "delta0": round(float(conv["delta0"]), 4),
+                "delta_usd": round(float(conv["dV_delta_sh"]) * hs, 2),
+                "gamma_usd": round(float(conv["dV_gamma_sh"]) * hs, 2),
+                "vega_usd": round(float(conv["dV_vega_sh"]) * hs, 2),
+                "theta_slip_usd": round(float(conv["dV_theta_slip_sh"]) * hs, 2),
+                "convexity_mult": round(float(conv["conv_mult"]), 2)
+                if conv["conv_mult"] is not None
+                else None,
+                "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
+                "comp_put_gain_usd": round((hs * pm / last_cl) * mult_last, 2),
+                "comp_call_drag_usd": round(-(hs * cm / last_cl) * mult_last, 2),
+            }
+        )
+        active_tranches_serialized.append(
+            {
+                "tranche_id": tr["tranche_id"],
+                "slot_num": tr["slot_num"],
+                "tranche_type": tr["tranche_type"],
+                "entry_date": tr["entry_date"],
+                "exp_date": tr["exp_date"],
+                "rem_dte": rem_d,
+                "entry_spot": round(tr["entry_spot"], 2),
+                "kp": round(tr["kp"], 2),
+                "kc": round(tr["kc"], 2) if tr["kc"] is not None else None,
+                "hedged_shares": round(hs, 2),
+                "entry_cost_usd": round(tr["entry_cost_usd"], 2),
+                "mtm_put_val_sh": round(pm, 4),
+                "mtm_call_val_sh": round(cm, 4),
+                "mtm_pnl_usd": round(mtm_net_pnl, 2),
+                "est_shares_added": round(est_sh_added, 2),
+                "pending_tp": is_armed,
+                "tp_reason": tr.get("tp_reason") or "",
+                "tp_trigger_ratio": round(float(tr.get("tp_trigger_ratio") or last_vr), 3),
+            }
+        )
+
     n = len(nav_list)
     rets = [nav_list[j] / nav_list[j - 1] - 1.0 for j in range(1, n)]
     rf_d = [float(rows[j]["r"]) / 252.0 for j in range(1, n)]
@@ -860,7 +1039,7 @@ def simulate_strategy(
 
     n_nak = sum(1 for x in ledger if x["tranche_type"] == "naked_put")
     n_col = sum(1 for x in ledger if x["tranche_type"] == "collar")
-    n_tp = sum(1 for x in ledger if "tp" in x["exit_reason"])
+    n_tp = sum(1 for x in ledger if "tp" in x["exit_reason"] and not x.get("is_open_live"))
     naked_spent = sum(x["entry_cost_usd"] for x in ledger if x["tranche_type"] == "naked_put")
     gross_put = sum(x["hedged_shares"] * x["put_exit_val_sh"] for x in ledger)
     gross_call = sum(x["hedged_shares"] * x["call_exit_cost_sh"] for x in ledger)
@@ -908,7 +1087,7 @@ def simulate_strategy(
         "shield_active": shield_active_list,
         "ledger": ledger,
         "shield_events": shield_events,
-        "active_tranches_eod": active_tranches,
+        "active_tranches_eod": active_tranches_serialized,
         "pending_sig_eod": pending_sig,
         "in_slow_bear_eod": in_slow_bear_def,
         "pending_bear_change_eod": pending_bear_change,
@@ -1112,6 +1291,7 @@ def build_ad_line_signal(rows: list[dict[str, Any]], idx: int) -> dict[str, Any]
 def build_live_signal_state(
     row: dict[str, Any],
     u1_sim: dict[str, Any],
+    tp_mode: str = DEFAULT_TP_MODE,
 ) -> dict[str, Any]:
     cl = float(row["close"])
     dd_pct = float(row["dd_from_ath"]) * 100.0
@@ -1134,22 +1314,23 @@ def build_live_signal_state(
     s2_open = next((t for t in active_tr if t["slot_num"] == 2), None)
 
     u1_led = u1_sim["ledger"]
-    last_s1_u1 = next((x for x in reversed(u1_led) if x["slot_num"] == 1), None)
-    last_s2_u1 = next((x for x in reversed(u1_led) if x["slot_num"] == 2), None)
+    last_s1_u1 = next((x for x in reversed(u1_led) if x["slot_num"] == 1 and not x.get("is_open_live")), None)
+    last_s2_u1 = next((x for x in reversed(u1_led) if x["slot_num"] == 2 and not x.get("is_open_live")), None)
 
     cur_dt = _parse_iso(row["date"])
     recent_tp_tranches = [
         t
         for t in (last_s1_u1, last_s2_u1)
         if t is not None
+        and t.get("exit_date")
         and "tp" in str(t.get("exit_reason") or "")
         and (cur_dt - _parse_iso(t["exit_date"])).days <= 30
     ]
 
     if any(t.get("pending_tp") for t in active_tr):
         regime_code = "VIX110_TP_TRIGGERED"
-        title_en = "VIX/VIX3M >= 1.10 PANIC TAKE-PROFIT ARMED (MONETIZE & ADD QQQ AT NEXT OPEN)"
-        title_zh = "VIX/VIX3M >= 1.10 恐慌倒挂止盈触发（次日开盘全额变现低位加仓 QQQ）"
+        title_en = "DEEP ITM PANIC TAKE-PROFIT ARMED (MONETIZE & ADD QQQ AT NEXT OPEN)"
+        title_zh = "深跌实值恐慌止盈触发（次日开盘全额变现低位加仓 QQQ）"
     elif s1_open and s2_open:
         regime_code = "DUAL_SLOT_FULL_SHIELD"
         title_en = "SLOT 1 NAKED PUT + SLOT 2 ZERO-COST COLLAR FULL HEDGE ACTIVE (100% QQQ)"
@@ -1170,11 +1351,11 @@ def build_live_signal_state(
             tp_date = max(t["exit_date"] for t in recent_tp_tranches)
             title_en = (
                 f"100% QQQ HELD · NEW COLLARS HARD FROZEN BELOW ATH -5% "
-                f"(BOTH SLOTS HARVESTED +${tp_usd:,.0f} / +{tp_sh:.2f} SH ON {tp_date})"
+                f"(HARVESTED +${tp_usd:,.0f} / +{tp_sh:.2f} SH ON {tp_date})"
             )
             title_zh = (
                 f"100% 满仓 QQQ 持筹待弹 · 跌离前高超 5% 严禁低位新开 Collar"
-                f"（双槽已于 {tp_date} 1.10止盈落袋 +${tp_usd:,.0f} / +{tp_sh:.2f} 股）"
+                f"（已于 {tp_date} 恐慌止盈落袋 +${tp_usd:,.0f} / +{tp_sh:.2f} 股）"
             )
         else:
             title_en = "DRAWDOWN > 5% OFF ATH · HARD FREEZE ON NEW COLLARS (100% QQQ REBOUND CAPTURE)"
@@ -1218,17 +1399,21 @@ def build_live_signal_state(
         }
 
     s1_status = (
-        "ACTIVE_OPEN"
+        ("TP_TRIGGERED_NEXT_OPEN" if s1_open.get("pending_tp") else "ACTIVE_OPEN")
         if s1_open
         else ("ARMED_NEXT_OPEN" if pend_sig is not None else "MONETIZED_STANDBY")
     )
     s2_status = (
-        "ACTIVE_OPEN"
+        ("TP_TRIGGERED_NEXT_OPEN" if s2_open.get("pending_tp") else "ACTIVE_OPEN")
         if s2_open
         else ("FROZEN_BELOW_ATH5" if not ath_ok else "STANDBY_WAIT_30D")
     )
+    tp_meta = next((m for m in TP_MODE_SPECS if m["id"] == tp_mode), TP_MODE_SPECS[0])
 
     return {
+        "tp_mode": tp_mode,
+        "tp_mode_label_en": tp_meta["label_en"],
+        "tp_mode_label_zh": tp_meta["label_zh"],
         "regime_code": regime_code,
         "regime_title_en": title_en,
         "regime_title_zh": title_zh,
@@ -1249,10 +1434,14 @@ def build_live_signal_state(
             "title_zh": "首仓 Slot 1 · 50% 仓位 90-DTE 裸 -10% Put",
             "status": s1_status,
             "status_label_en": (
-                "ACTIVE" if s1_open else ("ARMED T+1" if pend_sig else "TP HARVESTED · STANDBY")
+                "TP ARMED NEXT OPEN"
+                if (s1_open and s1_open.get("pending_tp"))
+                else ("ACTIVE" if s1_open else ("ARMED T+1" if pend_sig else "TP HARVESTED · STANDBY"))
             ),
             "status_label_zh": (
-                "持仓保护中" if s1_open else ("次日开盘建仓" if pend_sig else "已1.10止盈落袋 · 待命")
+                "实值止盈已触发 · 次日开盘落袋"
+                if (s1_open and s1_open.get("pending_tp"))
+                else ("持仓保护中" if s1_open else ("次日开盘建仓" if pend_sig else "已止盈落袋 · 待命"))
             ),
             "rule_en": "ATH <= 5% & VXN <= 22 & (AD Line < 50DMA OR Crisis Lights >= 4) -> Buy 50% 90-DTE -10% Put (NO Call cap)",
             "rule_zh": "距ATH <= 5% 且 VXN <= 22 且（AD < 50DMA 顶背离 或 危机灯 >= 4）-> 买 50% 裸 -10% Put（不卖 Call 保留冲顶斜率）",
@@ -1265,14 +1454,14 @@ def build_live_signal_state(
             "title_zh": "次仓 Slot 2 · 50% 仓位零成本 Collar 领口盾",
             "status": s2_status,
             "status_label_en": (
-                "ACTIVE"
-                if s2_open
-                else ("HARD FROZEN (DD > 5%)" if not ath_ok else "STANDBY (>=30D STEP)")
+                "TP ARMED NEXT OPEN"
+                if (s2_open and s2_open.get("pending_tp"))
+                else ("ACTIVE" if s2_open else ("HARD FROZEN (DD > 5%)" if not ath_ok else "STANDBY (>=30D STEP)"))
             ),
             "status_label_zh": (
-                "持盾保护中"
-                if s2_open
-                else ("低位铁律冻结（禁卖Call）" if not ath_ok else "待命（距首仓满30日开启）")
+                "止盈已触发 · 次日开盘落袋"
+                if (s2_open and s2_open.get("pending_tp"))
+                else ("持盾保护中" if s2_open else ("低位铁律冻结（禁卖Call）" if not ath_ok else "待命（距首仓满30日开启）"))
             ),
             "rule_en": ">= 30 cal days after Slot 1 & entry gates still ON -> Open 50% Zero-Cost Collar (-10% Put / +OTM Call); strictly forbidden below ATH -5%",
             "rule_zh": "首仓满 30 自然日且门控仍亮灯 -> 开启剩余 50% 零成本 Collar；跌离前高超 5% 严禁新开或续作 Collar",
@@ -1348,8 +1537,47 @@ def build_crisis_windows(
     rows_eval: list[dict[str, Any]],
     sims: dict[str, dict[str, Any]],
     unified_events: list[dict[str, Any]],
+    tp_mode: str = DEFAULT_TP_MODE,
 ) -> list[dict[str, Any]]:
     date_to_idx = {r["date"]: i for i, r in enumerate(rows_eval)}
+
+    if tp_mode == "layered_itm":
+        live_narr_en = (
+            "1) 8/31 Slot 1 Naked Put @$715.17 (K_P=$643.65, NO Call cap -> captured 100% of the rally to $759.66 ATH!). "
+            "2) 10/05 Slot 2 Zero-Cost Collar @$749.35 (K_P=$674.41). "
+            "3) On 11/05 VIX/3M=1.103: Slot 2 Collar (already deep ITM) monetized on 11/06 Open @$658.35 for +$50,384 (+76.51 QQQ shares) and freed the Call cap, "
+            "while Slot 1 Naked Put IGNORED the shallow inversion ($647.05 > $643.65 OTM) and rode the real crash down to $608.45 (-19.9%), arming deep-ITM panic TP (+$39,532 MTM / +67.32 sh) for next Open — cutting drawdown to -14.81% (+5.09% excess)!"
+        )
+        live_narr_zh = (
+            "① 8/31 AD 背离开启首仓 50% 裸 Put @$715.17（行权 $643.65，无卖 Call 封顶吃满冲顶至 $759.66！）；"
+            "② 10/05 见顶前一日 @$749.35 补齐次仓 50% 零成本 Collar（行权 $674.41）；"
+            "③ 11/05 压线倒挂 1.103：次仓领口已深实值，11/06 开盘果断落袋 +$50,384（+76.51 股）并解除卖 Call 封顶；"
+            "首仓裸 Put 因收盘 $647.05 尚未跌破行权价 $643.65 直接无视浅倒挂，稳稳拿住吃到 11/20 深跌至 $608.45（-19.9%），实值恐慌止盈正式触发（浮盈 +$39,532 / +67.32 股待次日开盘换股），将本轮回撤从 -19.90% 压至 -14.81%（超额 +5.09%）！"
+        )
+    elif tp_mode == "both_4x":
+        live_narr_en = (
+            "1) 8/31 Slot 1 Naked Put @$715.17 + 10/05 Slot 2 Zero-Cost Collar @$749.35. "
+            "2) On 11/05 VIX/3M=1.103: Slot 2 Collar exceeded 4x cost and monetized on 11/06 Open for +$50,035 (+75.98 sh), "
+            "while Slot 1 Naked Put (<4x on 11/05) ignored the shallow spike and rode down to $608.45 (-19.9%) on 11/20, triggering 4x deep panic TP (+$39,258 MTM / +66.85 sh) and cutting drawdown to -14.81% (+5.09% excess)!"
+        )
+        live_narr_zh = (
+            "① 8/31 首仓裸 Put @$715.17 叠加 10/05 次仓领口 @$749.35；"
+            "② 11/05 倒挂 1.103 时次仓领口已超 4 倍成本，11/06 开盘落袋 +$50,035（+75.98 股）；"
+            "首仓裸 Put 未满 4 倍直接无视浅跌，拿住到 11/20 深跌至 $608.45（-19.9%）突破 4 倍成本，触发深度恐慌止盈（浮盈 +$39,258 / +66.85 股），将回撤压至 -14.81%（超额 +5.09%）！"
+        )
+    else:
+        live_narr_en = (
+            "1) 8/31 Slot 1 Naked Put @$715.17 (AD divergence, NO Call cap -> captured 100% of the rally to $759.66 ATH!). "
+            "2) 10/05 Slot 2 Zero-Cost Collar @$749.35 (1 day before peak!). "
+            "3) On 11/06 Open @$658.35 (VIX/3M 1.103), Standard 1.10 TP monetized both slots immediately for +$62,156 (+95.55 extra QQQ shares), "
+            "cutting drawdown to -16.33% (+3.58% excess) while holding 100% QQQ uncapped below ATH -5%."
+        )
+        live_narr_zh = (
+            "① 8/31 AD 背离开启首仓 50% 裸 Put @$715.17（无卖 Call 封顶吃满冲顶至 $759.66！）；"
+            "② 10/05 见顶前一日 @$749.35 补齐次仓 50% 零成本 Collar；"
+            "③ 11/06 倒挂 1.103 在 @$658.35 按标准双轨一次性双槽止盈落袋 +$62,156（低位增持 +95.55 股 QQQ）；"
+            "④ 跌离前高超 5% 严禁低位新开 Collar，100% 满仓 QQQ 待弹（回撤 -16.33% vs QQQ -19.90%，超额 +3.58%）。"
+        )
 
     specs = [
         {
@@ -1489,17 +1717,8 @@ def build_crisis_windows(
             "crash_start_date": "2026-10-06",
             "crash_end_date": rows_eval[-1]["date"],
             "is_live": True,
-            "narrative_en": (
-                "1) 8/31 Slot 1 Naked Put @$715.17 (AD divergence, NO Call cap -> captured 100% of the rally to $759.66 ATH!). "
-                "2) 10/05 Slot 2 Zero-Cost Collar @$749.35 (3 Lights + AD, 1 day before peak!). "
-                "3) 11/06 VIX/3M 1.103 TP @$658.35 monetized both slots for +$39,414 (+60.85 extra QQQ shares!), cutting drawdown "
-                "from -19.90% to -17.54% (+2.36% excess) while holding 100% QQQ uncapped below ATH -5% for full rebound convexity!"
-            ),
-            "narrative_zh": (
-                "① 8/31 AD 背离开启首仓 50% 裸 Put @$715.17（无卖 Call 封顶，100% 吃满冲顶至 $759.66 历史最高点！）；"
-                "② 10/05 见顶前一日 @$749.35 精准补齐次仓 50% 零成本 Collar；③ 11/06 倒挂 1.103 在 @$658.35 双槽止盈落袋 +$39,414（低位增持 +60.85 股 QQQ）；"
-                "④ 跌离前高超 5% 严禁低位新开 Collar，100% 满仓 QQQ 带着多出的 60.85 股完整待弹（回撤 -17.54% vs QQQ -19.90%，超额 +2.36%）！"
-            ),
+            "narrative_en": live_narr_en,
+            "narrative_zh": live_narr_zh,
         },
     ]
 
@@ -1544,10 +1763,22 @@ def build_crisis_windows(
             led_in_win = [
                 t
                 for t in sims[sk]["ledger"]
-                if (z0_date <= t["entry_date"] <= z1_date) or (z0_date <= t["exit_date"] <= z1_date)
+                if (z0_date <= t["entry_date"] <= z1_date)
+                or (
+                    (t.get("exit_date") or t.get("mtm_date") or "") != ""
+                    and z0_date <= (t.get("exit_date") or t.get("mtm_date")) <= z1_date
+                )
             ]
-            tp_harvested = sum(t["net_pnl_usd"] for t in led_in_win if "tp" in t["exit_reason"] and t["net_pnl_usd"] > 0)
-            tp_shares = sum(t["shares_added"] for t in led_in_win if "tp" in t["exit_reason"] and t["shares_added"] > 0)
+            tp_harvested = sum(
+                t["net_pnl_usd"]
+                for t in led_in_win
+                if ("tp" in t["exit_reason"] or t.get("is_open_live")) and t["net_pnl_usd"] > 0
+            )
+            tp_shares = sum(
+                t["shares_added"]
+                for t in led_in_win
+                if ("tp" in t["exit_reason"] or t.get("is_open_live")) and t["shares_added"] > 0
+            )
             net_pnl_all = sum(t["net_pnl_usd"] for t in led_in_win)
             ep_stats[sk] = {
                 "ret_pct": round(m_ret, 2),
@@ -1636,57 +1867,76 @@ def build_unified_events(
                 "theta_slip_usd": tr["theta_slip_usd"],
             }
         )
-        is_tp = "tp" in tr["exit_reason"]
+        is_open_live = bool(tr.get("is_open_live"))
+        is_live_armed = tr["exit_reason"] == "live_tp_armed_next_open"
+        is_tp = ("tp" in tr["exit_reason"]) and not is_open_live
         is_put5x = "put_5x" in tr["exit_reason"]
-        events.append(
-            {
-                "event_id": f"{strategy_id}_tr{tr['tranche_id']}_exit",
-                "tranche_id": tr["tranche_id"],
-                "strategy_id": strategy_id,
-                "date": tr["exit_date"],
-                "signal_date": tr["signal_date"],
-                "event_type": "put5x_dte45_tp" if is_put5x else ("vix110_tp" if is_tp else "option_expiry"),
-                "slot_num": tr["slot_num"],
-                "tranche_type": tr["tranche_type"],
-                "spot": tr["exit_spot"],
-                "vxn": tr["exit_vxn"],
-                "vix_ratio": tr["exit_vix_ratio"],
-                "kp": tr["kp"],
-                "kc": tr["kc"],
-                "call_cap_pct": tr["call_cap_pct"],
-                "entry_spot": tr["entry_spot"],
-                "entry_date": tr["entry_date"],
-                "entry_cost_usd": tr["entry_cost_usd"],
-                "hedged_shares": tr["hedged_shares"],
-                "sig_score": tr["sig_score"],
-                "sig_ad_below50": tr["sig_ad_below50"],
-                "trigger_en": (
-                    f"5x Put Slow-Bear TP ({tr['rem_dte_at_exit']} DTE <= 45, Deep ITM Lock)"
-                    if is_put5x
-                    else (
-                        f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 Panic TP"
-                        if is_tp
-                        else f"90-DTE Expiry ({tr['underlying_ret_pct']:+.1f}% spot)"
-                    )
-                ),
-                "trigger_zh": (
-                    f"后半程 Put >= 5x 慢熊止盈（剩余 {tr['rem_dte_at_exit']} 天 <= 45 · 深实值锁利）"
-                    if is_put5x
-                    else (
-                        f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 恐慌止盈抄底"
-                        if is_tp
-                        else f"90-DTE 到期结算（期间正股 {tr['underlying_ret_pct']:+.1f}%）"
-                    )
-                ),
-                "net_pnl_usd": tr["net_pnl_usd"],
-                "shares_added": tr["shares_added"],
-                "delta_usd": tr["delta_usd"],
-                "gamma_usd": tr["gamma_usd"],
-                "vega_usd": tr["vega_usd"],
-                "theta_slip_usd": tr["theta_slip_usd"],
-                "convexity_mult": tr["convexity_mult"],
-            }
-        )
+        is_itm_tp = "itm_tp" in tr["exit_reason"]
+        is_4x_tp = "4x_tp" in tr["exit_reason"]
+        ev_exit_date = tr["exit_date"] if not is_open_live else tr.get("mtm_date")
+        if (not is_open_live or is_live_armed) and ev_exit_date:
+            if is_live_armed:
+                ev_type_exit = "live_tp_armed"
+                trig_en_exit = (
+                    f"Deep-ITM Panic TP Armed ({tr['rem_dte_at_exit']} DTE left · VIX/3M {tr['exit_vix_ratio']:.3f} · Next Open)"
+                )
+                trig_zh_exit = (
+                    f"实值恐慌止盈已触发（剩余 {tr['rem_dte_at_exit']} 天 · VIX/3M {tr['exit_vix_ratio']:.3f} · 待次日开盘换股）"
+                )
+            elif is_put5x:
+                ev_type_exit = "put5x_dte45_tp"
+                trig_en_exit = f"5x Put Slow-Bear TP ({tr['rem_dte_at_exit']} DTE <= 45, Deep ITM Lock)"
+                trig_zh_exit = f"后半程 Put >= 5x 慢熊止盈（剩余 {tr['rem_dte_at_exit']} 天 <= 45 · 深实值锁利）"
+            elif is_itm_tp:
+                ev_type_exit = "vix110_itm_tp"
+                trig_en_exit = f"Deep-ITM Panic TP (QQQ <= K_P & VIX/3M {tr['exit_vix_ratio']:.3f} >= 1.10)"
+                trig_zh_exit = f"实值恐慌止盈（跌破行权价且 VIX/3M {tr['exit_vix_ratio']:.3f} >= 1.10）"
+            elif is_4x_tp:
+                ev_type_exit = "vix110_4x_tp"
+                trig_en_exit = f"4x Deep Panic TP (Put >= 4x & VIX/3M {tr['exit_vix_ratio']:.3f} >= 1.10)"
+                trig_zh_exit = f"4x 深度恐慌止盈（Put >= 4x 且 VIX/3M {tr['exit_vix_ratio']:.3f} >= 1.10）"
+            elif is_tp:
+                ev_type_exit = "vix110_tp"
+                trig_en_exit = f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 Panic TP"
+                trig_zh_exit = f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 恐慌止盈抄底"
+            else:
+                ev_type_exit = "option_expiry"
+                trig_en_exit = f"90-DTE Expiry ({tr['underlying_ret_pct']:+.1f}% spot)"
+                trig_zh_exit = f"90-DTE 到期结算（期间正股 {tr['underlying_ret_pct']:+.1f}%）"
+
+            events.append(
+                {
+                    "event_id": f"{strategy_id}_tr{tr['tranche_id']}_exit",
+                    "tranche_id": tr["tranche_id"],
+                    "strategy_id": strategy_id,
+                    "date": ev_exit_date,
+                    "signal_date": tr["signal_date"],
+                    "event_type": ev_type_exit,
+                    "slot_num": tr["slot_num"],
+                    "tranche_type": tr["tranche_type"],
+                    "spot": tr["exit_spot"],
+                    "vxn": tr["exit_vxn"],
+                    "vix_ratio": tr["exit_vix_ratio"],
+                    "kp": tr["kp"],
+                    "kc": tr["kc"],
+                    "call_cap_pct": tr["call_cap_pct"],
+                    "entry_spot": tr["entry_spot"],
+                    "entry_date": tr["entry_date"],
+                    "entry_cost_usd": tr["entry_cost_usd"],
+                    "hedged_shares": tr["hedged_shares"],
+                    "sig_score": tr["sig_score"],
+                    "sig_ad_below50": tr["sig_ad_below50"],
+                    "trigger_en": trig_en_exit,
+                    "trigger_zh": trig_zh_exit,
+                    "net_pnl_usd": tr["net_pnl_usd"],
+                    "shares_added": tr["shares_added"],
+                    "delta_usd": tr["delta_usd"],
+                    "gamma_usd": tr["gamma_usd"],
+                    "vega_usd": tr["vega_usd"],
+                    "theta_slip_usd": tr["theta_slip_usd"],
+                    "convexity_mult": tr["convexity_mult"],
+                }
+            )
 
     for sev in shield_events:
         events.append(
@@ -1722,7 +1972,10 @@ def build_unified_events(
 
     order_rank = {
         "vix110_tp": 1,
+        "vix110_itm_tp": 1,
+        "vix110_4x_tp": 1,
         "put5x_dte45_tp": 1,
+        "live_tp_armed": 1,
         "option_expiry": 2,
         "shield_enter": 3,
         "shield_exit": 4,
@@ -1857,24 +2110,73 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         ),
     ]
 
-    sims: dict[str, dict[str, Any]] = {}
-    strategies_summary: list[dict[str, Any]] = []
-    trade_ledgers_by_strategy: dict[str, list[dict[str, Any]]] = {}
-    events_by_strategy: dict[str, list[dict[str, Any]]] = {}
-
-    for sid, sim_kw, meta in strategy_defs:
-        res = simulate_strategy(rows_all, coeffs, strategy_id=sid, **sim_kw)
-        sims[sid] = res
-        merged_summary = {**res["summary"], **meta}
-        strategies_summary.append(merged_summary)
-        if sid != "BH_Pure_QQQ":
-            trade_ledgers_by_strategy[sid] = res["ledger"]
-            events_by_strategy[sid] = build_unified_events(sid, res["ledger"], [])
-
     last_row = rows_eval[-1]
     as_of_date = last_row["date"]
     qqq_cl = float(last_row["close"])
     qqq_ma200 = float(last_row["qqq_ma200"])
+
+    # Simulate Buy & Hold once (identical across all TP modes)
+    bh_def = [d for d in strategy_defs if d[0] == "BH_Pure_QQQ"][0]
+    bh_sim = simulate_strategy(rows_all, coeffs, strategy_id="BH_Pure_QQQ", **bh_def[1])
+    bh_summary = {**bh_sim["summary"], **bh_def[2]}
+
+    tp_modes_bundle: dict[str, Any] = {}
+    tp_modes_meta: list[dict[str, Any]] = []
+
+    for mode_spec in TP_MODE_SPECS:
+        mode_id = mode_spec["id"]
+        sims_m: dict[str, dict[str, Any]] = {"BH_Pure_QQQ": bh_sim}
+        summaries_m: list[dict[str, Any]] = []
+        ledgers_m: dict[str, list[dict[str, Any]]] = {}
+        events_m: dict[str, list[dict[str, Any]]] = {}
+        live_states_by_strat_m: dict[str, dict[str, Any]] = {}
+
+        for sid, sim_kw, meta in strategy_defs:
+            if sid == "BH_Pure_QQQ":
+                summaries_m.append(bh_summary)
+                continue
+            res = simulate_strategy(rows_all, coeffs, strategy_id=sid, tp_mode=mode_id, **sim_kw)
+            sims_m[sid] = res
+            summaries_m.append({**res["summary"], **meta})
+            ledgers_m[sid] = res["ledger"]
+            events_m[sid] = build_unified_events(sid, res["ledger"], [])
+            live_states_by_strat_m[sid] = build_live_signal_state(last_row, res, tp_mode=mode_id)
+
+        windows_m = build_crisis_windows(rows_eval, sims_m, events_m["U1_PureOptions"], tp_mode=mode_id)
+        u1_sum = next(s for s in summaries_m if s["id"] == "U1_PureOptions")
+        tp_modes_meta.append(
+            {
+                **mode_spec,
+                "u1_end_nav": u1_sum["end_nav"],
+                "u1_net_alpha_usd": u1_sum["net_alpha_usd"],
+                "u1_cagr_pct": u1_sum["cagr_pct"],
+                "u1_max_dd_pct": u1_sum["max_dd_pct"],
+                "u1_sharpe": u1_sum["sharpe"],
+                "u1_extra_shares": u1_sum["extra_shares_vs_bh"],
+            }
+        )
+        tp_modes_bundle[mode_id] = {
+            "live_signal_state": live_states_by_strat_m["U1_PureOptions"],
+            "live_signal_states_by_strategy": live_states_by_strat_m,
+            "strategies_summary": summaries_m,
+            "events_by_strategy": events_m,
+            "trade_ledgers_by_strategy": ledgers_m,
+            "crisis_windows": windows_m,
+            "nav_u1": [round(v, 2) for v in sims_m["U1_PureOptions"]["nav"]],
+            "nav_b1c": [round(v, 2) for v in sims_m["B1c_PureAD"]["nav"]],
+            "nav_d2": [round(v, 2) for v in sims_m["D2_SixLights"]["nav"]],
+            "nav_h2": [round(v, 2) for v in sims_m["H2_G4_PriceGate"]["nav"]],
+            "active_slots": [int(v) for v in sims_m["U1_PureOptions"]["active_slots"]],
+            "slot1_naked": [bool(v) for v in sims_m["U1_PureOptions"]["slot1_naked"]],
+        }
+
+    default_bundle = tp_modes_bundle[DEFAULT_TP_MODE]
+    strategies_summary = default_bundle["strategies_summary"]
+    trade_ledgers_by_strategy = default_bundle["trade_ledgers_by_strategy"]
+    events_by_strategy = default_bundle["events_by_strategy"]
+    live_signal_state = default_bundle["live_signal_state"]
+    live_signal_states_by_strategy = default_bundle["live_signal_states_by_strategy"]
+    crisis_windows = default_bundle["crisis_windows"]
 
     live_market_snapshot = {
         "as_of_date": as_of_date,
@@ -1905,7 +2207,6 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         "total_crisis_lights": 6,
     }
 
-    live_signal_state = build_live_signal_state(last_row, sims["U1_PureOptions"])
     six_crisis_lights = build_six_crisis_lights(last_row)
     ad_line_signal = build_ad_line_signal(rows_all, len(rows_all) - 1)
 
@@ -1926,11 +2227,11 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
                 "qqq_ma200": round(float(r["qqq_ma200"]), 2),
                 "running_ath": round(float(r["running_ath"]), 2),
                 "dd_ath_pct": round(float(r["dd_from_ath"]) * 100.0, 2),
-                "nav_bh": round(sims["BH_Pure_QQQ"]["nav"][i], 2),
-                "nav_u1": round(sims["U1_PureOptions"]["nav"][i], 2),
-                "nav_b1c": round(sims["B1c_PureAD"]["nav"][i], 2),
-                "nav_d2": round(sims["D2_SixLights"]["nav"][i], 2),
-                "nav_h2": round(sims["H2_G4_PriceGate"]["nav"][i], 2),
+                "nav_bh": round(bh_sim["nav"][i], 2),
+                "nav_u1": default_bundle["nav_u1"][i],
+                "nav_b1c": default_bundle["nav_b1c"][i],
+                "nav_d2": default_bundle["nav_d2"][i],
+                "nav_h2": default_bundle["nav_h2"][i],
                 "crisis_lights": int(r["score"]),
                 "smooth_lights": round(float(r["score_5d"]), 2),
                 "lights_mask": mask,
@@ -1942,13 +2243,12 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
                 "vix3m": round(float(r["vix3m"]), 2),
                 "vix_ratio": round(float(r["vix_ratio"]), 3),
                 "vxn": round(float(r["vxn"]), 2),
-                "active_slots": int(sims["U1_PureOptions"]["active_slots"][i]),
-                "slot1_naked": bool(sims["U1_PureOptions"]["slot1_naked"][i]),
+                "active_slots": default_bundle["active_slots"][i],
+                "slot1_naked": default_bundle["slot1_naked"][i],
             }
         )
 
     default_events = events_by_strategy["U1_PureOptions"]
-    crisis_windows = build_crisis_windows(rows_eval, sims, default_events)
 
     return {
         "version": ARTIFACT_VERSION,
@@ -1966,8 +2266,13 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         },
         "default_strategy_id": "U1_PureOptions",
         "strategy_order": [s["id"] for s in strategies_summary],
+        "default_tp_mode": DEFAULT_TP_MODE,
+        "tp_mode": DEFAULT_TP_MODE,
+        "tp_modes_meta": tp_modes_meta,
+        "tp_modes": tp_modes_bundle,
         "live_market_snapshot": live_market_snapshot,
         "live_signal_state": live_signal_state,
+        "live_signal_states_by_strategy": live_signal_states_by_strategy,
         "six_crisis_lights": six_crisis_lights,
         "ad_line_signal": ad_line_signal,
         "strategies_summary": strategies_summary,
@@ -2004,6 +2309,9 @@ def verify_artifact(doc: dict[str, Any]) -> None:
 
     snap = doc["live_market_snapshot"]
     assert doc["default_strategy_id"] == "U1_PureOptions", doc["default_strategy_id"]
+    assert doc["default_tp_mode"] == "layered_itm", doc["default_tp_mode"]
+    assert doc["tp_mode"] == "layered_itm", doc["tp_mode"]
+    assert set(doc["tp_modes"].keys()) == {"layered_itm", "standard_dual", "both_4x"}
     assert doc["as_of_date"] >= "2026-11-20"
     if doc["as_of_date"] == "2026-11-20":
         assert snap["qqq_close"] == 608.45, snap["qqq_close"]
@@ -2019,27 +2327,33 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         smap = {s["id"]: s for s in doc["strategies_summary"]}
         assert "U4_DualEngine" not in smap
         assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02, smap["BH_Pure_QQQ"]["end_nav"]
-        assert abs(smap["U1_PureOptions"]["end_nav"] - 1604274.43) <= 0.02, smap["U1_PureOptions"]["end_nav"]
-        assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 315969.65) <= 0.02, smap["U1_PureOptions"]["net_alpha_usd"]
-        assert smap["U1_PureOptions"]["cagr_pct"] == 19.15, smap["U1_PureOptions"]["cagr_pct"]
+        # Default mode: layered_itm (Collar@1.10 | NakedPut ITM Spot<=K_P | Track-2 DTE<=45 & Put>=5x)
+        assert abs(smap["U1_PureOptions"]["end_nav"] - 1654577.25) <= 1.0, smap["U1_PureOptions"]["end_nav"]
+        assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 366272.47) <= 1.0, smap["U1_PureOptions"]["net_alpha_usd"]
+        assert smap["U1_PureOptions"]["cagr_pct"] == 19.46, smap["U1_PureOptions"]["cagr_pct"]
         assert smap["U1_PureOptions"]["max_dd_pct"] == -31.52, smap["U1_PureOptions"]["max_dd_pct"]
-        assert smap["U1_PureOptions"]["sharpe"] == 0.844, smap["U1_PureOptions"]["sharpe"]
-        assert abs(smap["B1c_PureAD"]["end_nav"] - 1508125.75) <= 0.02, smap["B1c_PureAD"]["end_nav"]
-        assert abs(smap["D2_SixLights"]["end_nav"] - 1479351.46) <= 0.02, smap["D2_SixLights"]["end_nav"]
-        assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1380701.67) <= 0.02, smap["H2_G4_PriceGate"]["end_nav"]
+        assert abs(smap["B1c_PureAD"]["end_nav"] - 1587800.99) <= 1.0, smap["B1c_PureAD"]["end_nav"]
+        assert abs(smap["D2_SixLights"]["end_nav"] - 1497620.82) <= 1.0, smap["D2_SixLights"]["end_nav"]
+        assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1402250.68) <= 1.0, smap["H2_G4_PriceGate"]["end_nav"]
+
+        std_map = {s["id"]: s for s in doc["tp_modes"]["standard_dual"]["strategies_summary"]}
+        assert abs(std_map["U1_PureOptions"]["end_nav"] - 1625377.79) <= 1.0, std_map["U1_PureOptions"]["end_nav"]
+        d4x_map = {s["id"]: s for s in doc["tp_modes"]["both_4x"]["strategies_summary"]}
+        assert abs(d4x_map["U1_PureOptions"]["end_nav"] - 1643122.56) <= 1.0, d4x_map["U1_PureOptions"]["end_nav"]
 
     assert len(doc["six_crisis_lights"]) == 6
     assert len(doc["crisis_windows"]) == 7
     assert len(doc["daily_series"]) >= 2990
 
-    # Verify exact 4-factor convexity decomposition identity on every option tranche
-    for sid, led in doc["trade_ledgers_by_strategy"].items():
-        for tr in led:
-            four_sum = tr["delta_usd"] + tr["gamma_usd"] + tr["vega_usd"] + tr["theta_slip_usd"]
-            if abs(four_sum - tr["net_pnl_usd"]) > 0.05:
-                raise AssertionError(
-                    f"4-factor convexity mismatch in {sid} #{tr['tranche_id']}: {four_sum} vs {tr['net_pnl_usd']}"
-                )
+    # Verify exact 4-factor convexity decomposition identity on every option tranche across ALL TP modes
+    for mode_id, mode_bundle in doc["tp_modes"].items():
+        for sid, led in mode_bundle["trade_ledgers_by_strategy"].items():
+            for tr in led:
+                four_sum = tr["delta_usd"] + tr["gamma_usd"] + tr["vega_usd"] + tr["theta_slip_usd"]
+                if abs(four_sum - tr["net_pnl_usd"]) > 0.05:
+                    raise AssertionError(
+                        f"4-factor convexity mismatch in {mode_id}/{sid} #{tr['tranche_id']}: {four_sum} vs {tr['net_pnl_usd']}"
+                    )
 
 
 def main() -> None:

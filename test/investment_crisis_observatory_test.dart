@@ -29,8 +29,33 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       final raw = Map<String, dynamic>.from(artifact);
       final qp = uri.queryParameters;
       final strat = qp['strategy'] ?? 'U1_PureOptions';
+      final tpMode = qp['tpMode'] ?? raw['default_tp_mode'] ?? 'layered_itm';
+      final tpModes = raw['tp_modes'] as Map<String, dynamic>?;
+      final bundle = tpModes?[tpMode] as Map<String, dynamic>?;
+      final baseSeries = raw['daily_series'] as List<dynamic>;
+      final projectedSeries = (bundle != null && tpMode != raw['default_tp_mode'])
+          ? List<Map<String, dynamic>>.generate(baseSeries.length, (i) {
+              final row = Map<String, dynamic>.from(baseSeries[i] as Map);
+              row['nav_u1'] = (bundle['nav_u1'] as List)[i];
+              row['nav_b1c'] = (bundle['nav_b1c'] as List)[i];
+              row['nav_d2'] = (bundle['nav_d2'] as List)[i];
+              row['nav_h2'] = (bundle['nav_h2'] as List)[i];
+              return row;
+            })
+          : baseSeries;
+      final out = Map<String, dynamic>.from(raw)..remove('tp_modes');
       return {
-        ...raw,
+        ...out,
+        if (bundle != null) ...{
+          'live_signal_state': bundle['live_signal_state'],
+          'live_signal_states_by_strategy': bundle['live_signal_states_by_strategy'],
+          'strategies_summary': bundle['strategies_summary'],
+          'events_by_strategy': bundle['events_by_strategy'],
+          'trade_ledgers_by_strategy': bundle['trade_ledgers_by_strategy'],
+          'crisis_windows': bundle['crisis_windows'],
+          'daily_series': projectedSeries,
+        },
+        'tp_mode': tpMode,
         'snapshotId': 'fixture-crisis-v2-minimal',
         'requestedAsOf': qp['asOf'] ?? raw['as_of_date'],
         'selected_strategy_id': strat,
@@ -106,7 +131,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.text('100% Hold QQQ · Call Caps Paused in Pullback (6/6 Lights)'),
+        find.text('Deep-ITM Panic Harvest Armed · Monetize Put Next Open (6/6 Lights)'),
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('crisis-slot-card-core')), findsOneWidget);
@@ -131,23 +156,50 @@ void main() {
         findsOneWidget,
       );
 
-      // 3. Hero Interactive Chart: exact U1 Dual-Track TP metrics + crisis zoom + clean hover card
-      expect(find.text('\$1,604,274'), findsOneWidget);
-      expect(find.text('+\$315,970'), findsOneWidget);
+      // 3. Hero Interactive Chart: exact U1 Layered ITM TP metrics + selectable TP mode bar
+      expect(find.text('\$1,654,577'), findsOneWidget);
+      expect(find.text('+\$366,272'), findsOneWidget);
       expect(find.text('-31.5%'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('crisis-tp-mode-bar')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('crisis-observatory-canvas')),
         findsOneWidget,
       );
 
-      // Zoom into 2022 Slow Bear and verify Track-2 5x Slow-Bear Harvest (+$37,680 / -31.5% MDD)
+      // Switch selectable Take-Profit modes live: Standard 1.10 -> Deep 4x Both -> back to Layered ITM
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-tp-mode-pill-standard_dual')),
+      );
+      expect(find.text('\$1,625,378'), findsOneWidget);
+      expect(find.text('+\$337,073'), findsOneWidget);
+      expect(
+        find.text('100% Hold QQQ · Call Caps Paused in Pullback (6/6 Lights)'),
+        findsOneWidget,
+      );
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-tp-mode-pill-both_4x')),
+      );
+      expect(find.text('\$1,643,123'), findsOneWidget);
+      expect(find.text('+\$354,818'), findsOneWidget);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-tp-mode-pill-layered_itm')),
+      );
+      expect(find.text('\$1,654,577'), findsOneWidget);
+
+      // Zoom into 2022 Slow Bear and verify Track-2 5x Slow-Bear Harvest (+$37,675 / -31.5% MDD)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-zoom-pill-2022')),
       );
       expect(find.text('2022 Rate-Hike Grinding Bear Market'), findsWidgets);
       expect(find.textContaining('5x Slow-Bear Harvest'), findsWidgets);
-      expect(find.textContaining('+\$37,680'), findsWidgets);
+      expect(find.textContaining('+\$37,675'), findsWidgets);
 
       // Zoom into 2025 April Tariff Crash and hover 2025-04-07 1.10 Panic Harvest
       await tapVisible(
@@ -191,7 +243,7 @@ void main() {
       expect(
         find.descendant(
           of: tooltipFinder,
-          matching: find.textContaining('+\$76,729'),
+          matching: find.textContaining('+\$76,719'),
         ),
         findsOneWidget,
       );
@@ -212,8 +264,8 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-strategy-pill-B1c_PureAD')),
       );
-      expect(find.text('\$1,508,126'), findsOneWidget);
-      expect(find.text('+\$219,821'), findsOneWidget);
+      expect(find.text('\$1,587,801'), findsOneWidget);
+      expect(find.text('+\$299,496'), findsOneWidget);
 
       // 4. Zoom into 2026 LIVE and expand a tranche row for 4-factor convexity
       await tapVisible(
@@ -278,9 +330,12 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(
-          find.text('100% 持有 QQQ · 低位暂停新卖 Call（6/6 亮灯）'),
+          find.text('深跌实值恐慌触发 · 期权次日开盘止盈换股（6/6 亮灯）'),
           findsOneWidget,
         );
+        expect(find.text('分层实值（推荐）'), findsOneWidget);
+        expect(find.text('标准 1.10'), findsOneWidget);
+        expect(find.text('两槽 4x 深度'), findsOneWidget);
         expect(find.text('6 / 6 亮灯'), findsOneWidget);
         expect(find.text('历史保护策略 vs 死拿 QQQ'), findsOneWidget);
         expect(find.text('100% 满仓 QQQ'), findsOneWidget);
