@@ -6,6 +6,7 @@ import {
   CRISIS_OBSERVATORY_STRATEGIES,
   CRISIS_OBSERVATORY_TP_MODES,
   CRISIS_OBSERVATORY_CC_MODES,
+  CRISIS_OBSERVATORY_SP_MODES,
   loadCrisisObservatoryDashboard,
   loadCrisisObservatoryDashboardLive,
 } from './crisisObservatory.js';
@@ -112,6 +113,75 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   // Legacy U4_DualEngine query alias maps cleanly to U1_PureOptions
   const legacyAlias = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', strategy: 'U4_DualEngine' });
   assert.equal(legacyAlias.selected_strategy_id, 'U1_PureOptions');
+  assert.equal(doc.sp_mode, 'sp_off');
+  assert.equal(doc.sp_modes_meta.length, 4);
+  assert.equal(doc.live_sp_state.position_state, 'disabled');
+
+  // 3rd Engine (Short-DTE Panic Put Wheel) exact penny-parity across all 3 active presets + standalone QQQ
+  const spCap10 = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    tpMode: 'layered_itm',
+    ccMode: 'cc_d12_d35',
+    spMode: 'sp_14d_cap10',
+  });
+  assert.equal(spCap10.sp_mode, 'sp_14d_cap10');
+  const cap10U1 = Object.fromEntries(spCap10.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
+  assert.ok(Math.abs(cap10U1.end_nav - 1779823.16) <= 0.1, `Expected $1,779,823.16, got ${cap10U1.end_nav}`);
+  assert.equal(cap10U1.max_dd_pct, -29.82);
+  assert.equal(cap10U1.calmar, 0.677);
+  assert.ok(Math.abs(cap10U1.margin_interest_usd - 816.85) <= 0.05);
+  assert.equal(cap10U1.max_gross_stock_lev, 1.133);
+  assert.equal(cap10U1.sp_trades_count, 46);
+  assert.equal(cap10U1.sp_assignments_count, 6);
+  assert.equal(cap10U1.wc_trades_count, 11);
+  assert.equal(cap10U1.wc_called_away_count, 5);
+  assert.equal(spCap10.live_sp_state.position_state, 'wheel_assigned_wc_armed');
+  assert.equal(spCap10.live_sp_state.backwardation_active, true);
+  assert.equal(spCap10.live_sp_state.vix_falling, false);
+  assert.ok(spCap10.sp_ledger.length > 50 && !Array.isArray(spCap10.sp_ledger._rows));
+  assert.ok(
+    spCap10.sp_ledger.some(r => r.leg_type === 'short_put') &&
+      spCap10.sp_ledger.some(r => r.leg_type === 'wheel_call'),
+  );
+  assert.ok(spCap10.crisis_windows[0].title_en && spCap10.crisis_windows[0].title_zh);
+
+  const spVixf = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    tpMode: 'layered_itm',
+    ccMode: 'cc_d12_d35',
+    spMode: 'sp_10d_vixf',
+  });
+  const vixfU1 = Object.fromEntries(spVixf.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
+  assert.ok(Math.abs(vixfU1.end_nav - 1786932.72) <= 0.1, `Expected $1,786,932.72, got ${vixfU1.end_nav}`);
+  assert.equal(vixfU1.max_dd_pct, -30.3);
+  assert.equal(vixfU1.calmar, 0.668);
+  assert.ok(Math.abs(vixfU1.margin_interest_usd - 504.61) <= 0.05);
+  assert.equal(vixfU1.sp_trades_count, 29);
+  assert.equal(vixfU1.sp_assignments_count, 4);
+  assert.equal(spVixf.live_sp_state.position_state, 'flat_standby');
+
+  const spUnf = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    tpMode: 'layered_itm',
+    ccMode: 'cc_d12_d35',
+    spMode: 'sp_14d_unf',
+  });
+  const unfU1 = Object.fromEntries(spUnf.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
+  assert.ok(Math.abs(unfU1.end_nav - 1846991.83) <= 0.1, `Expected $1,846,991.83, got ${unfU1.end_nav}`);
+  assert.ok(Math.abs(unfU1.extra_shares_pct - 43.37) <= 0.05);
+  assert.ok(Math.abs(unfU1.margin_interest_usd - 1667.62) <= 0.05);
+  assert.equal(unfU1.max_gross_stock_lev, 1.273);
+
+  // Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_14d_unf)
+  const spStandalone = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    strategy: 'NoPut_CallOnly',
+    tpMode: 'layered_itm',
+    ccMode: 'cc_off',
+    spMode: 'sp_14d_unf',
+  });
+  const standaloneNoPut = Object.fromEntries(spStandalone.strategies_summary.map(s => [s.id, s])).NoPut_CallOnly;
+  assert.ok(Math.abs(standaloneNoPut.end_nav - 1387278.02) <= 0.1, `Expected $1,387,278.02, got ${standaloneNoPut.end_nav}`);
 });
 
 test('slices historical asOf cutoffs without lookahead and masks future tranche exits', async () => {
@@ -167,6 +237,7 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.equal(CRISIS_OBSERVATORY_STRATEGIES.length, 6);
   assert.deepEqual(CRISIS_OBSERVATORY_TP_MODES, ['layered_itm', 'standard_dual', 'both_4x']);
   assert.deepEqual(CRISIS_OBSERVATORY_CC_MODES, ['cc_off', 'cc_d12_d35', 'cc_d12_r45', 'cc_d12_cr55']);
+  assert.deepEqual(CRISIS_OBSERVATORY_SP_MODES, ['sp_off', 'sp_14d_cap10', 'sp_10d_vixf', 'sp_14d_unf']);
 
   // Pure Call-only comparison strategy (NoPut_CallOnly)
   const callOnlyDoc = loadCrisisObservatoryDashboard({
@@ -179,6 +250,7 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.throws(() => loadCrisisObservatoryDashboard({ strategy: 'UNKNOWN' }), /invalid_crisis_observatory_strategy/);
   assert.throws(() => loadCrisisObservatoryDashboard({ tpMode: 'UNKNOWN_TP' }), /invalid_crisis_observatory_tp_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ ccMode: 'UNKNOWN_CC' }), /invalid_crisis_observatory_cc_mode/);
+  assert.throws(() => loadCrisisObservatoryDashboard({ spMode: 'UNKNOWN_SP' }), /invalid_crisis_observatory_sp_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ asOf: '2012-01-01' }), /as_of_before_evaluation_window/);
   assert.throws(() => loadCrisisObservatoryDashboard({ asOf: 'not-a-date' }), /invalid_as_of_date/);
   assert.throws(
@@ -230,4 +302,14 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.equal(bodyInv.snapshotId, bodyDisc.snapshotId);
   assert.equal(bodyDisc.live_market_snapshot.qqq_close, 608.45);
   assert.equal(bodyDisc.six_crisis_lights.length, 6);
+
+  const resSp = await fetch(
+    `http://127.0.0.1:${port}/api/investment/crisis-observatory?strategy=U1_PureOptions&tpMode=layered_itm&ccMode=cc_d12_d35&spMode=sp_14d_cap10&asOf=2026-11-20`,
+    { headers: authHeaders },
+  );
+  assert.equal(resSp.status, 200);
+  const bodySp = await resSp.json();
+  assert.equal(bodySp.sp_mode, 'sp_14d_cap10');
+  const httpU1 = Object.fromEntries(bodySp.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
+  assert.ok(Math.abs(httpU1.end_nav - 1779823.16) <= 0.1);
 });

@@ -221,7 +221,7 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
         'cc_$key': copycatSelection[key]?.toString(),
       for (final key in ['asset', 'horizon'])
         'cta_$key': ctaRadarSelection[key]?.toString(),
-      for (final key in ['strategy', 'window'])
+      for (final key in ['strategy', 'window', 'tpMode', 'ccMode', 'spMode'])
         'co_$key': crisisObservatorySelection[key]?.toString(),
       'guru': selectedGuru == null
           ? null

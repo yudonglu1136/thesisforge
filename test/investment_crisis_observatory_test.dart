@@ -20,6 +20,95 @@ class CrisisObservatoryFixtureApi extends ApiClient {
 
   final calls = <String>[];
 
+  static List<Map<String, dynamic>> _unpackTable(dynamic rawVal) {
+    if (rawVal is List) {
+      return rawVal
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    if (rawVal is Map &&
+        rawVal['_cols'] is List &&
+        rawVal['_rows'] is List) {
+      final cols = (rawVal['_cols'] as List).map((e) => e.toString()).toList();
+      final rows = rawVal['_rows'] as List;
+      return rows.map((row) {
+        final rList = row as List;
+        final obj = <String, dynamic>{};
+        for (var i = 0; i < cols.length; i++) {
+          obj[cols[i]] = i < rList.length ? rList[i] : null;
+        }
+        return obj;
+      }).toList();
+    }
+    return const [];
+  }
+
+  static Map<String, List<Map<String, dynamic>>> _unpackLedgerMap(
+    dynamic rawMap,
+  ) {
+    if (rawMap is! Map) return const {};
+    return {
+      for (final entry in rawMap.entries)
+        entry.key.toString(): _unpackTable(entry.value),
+    };
+  }
+
+  static List<Map<String, dynamic>> _synthesizeEvents(
+    String strategyId,
+    List<Map<String, dynamic>> ledger,
+  ) {
+    final events = <Map<String, dynamic>>[];
+    for (final tr in ledger) {
+      final isNk = tr['tranche_type'] == 'naked_put';
+      final evType = isNk ? 'slot1_naked_put' : 'slot${tr['slot_num']}_collar';
+      events.add({
+        'event_id': '${strategyId}_tr${tr['tranche_id']}_open',
+        'tranche_id': tr['tranche_id'],
+        'strategy_id': strategyId,
+        'date': tr['entry_date'],
+        'event_type': evType,
+        'tranche_type': tr['tranche_type'],
+        'spot': tr['entry_spot'],
+        'kp': tr['kp'],
+        'kc': tr['kc'],
+      });
+      final exitReason = (tr['exit_reason'] ?? '').toString();
+      final isOpenLive = tr['is_open_live'] == true;
+      final isLiveArmed = exitReason == 'live_tp_armed_next_open';
+      final evExitDate = !isOpenLive ? tr['exit_date'] : tr['mtm_date'];
+      if ((!isOpenLive || isLiveArmed) && evExitDate != null) {
+        final isPut5x = exitReason.contains('put_5x');
+        final isItmTp = exitReason.contains('itm_tp');
+        final is4xTp = exitReason.contains('4x_tp');
+        final isTp = exitReason.contains('tp') && !isOpenLive;
+        final evTypeExit = isLiveArmed
+            ? 'live_tp_armed'
+            : (isPut5x
+                  ? 'put5x_dte45_tp'
+                  : (isItmTp
+                        ? 'vix110_itm_tp'
+                        : (is4xTp
+                              ? 'vix110_4x_tp'
+                              : (isTp ? 'vix110_tp' : 'option_expiry'))));
+        events.add({
+          'event_id': '${strategyId}_tr${tr['tranche_id']}_exit',
+          'tranche_id': tr['tranche_id'],
+          'strategy_id': strategyId,
+          'date': evExitDate,
+          'event_type': evTypeExit,
+          'tranche_type': tr['tranche_type'],
+          'spot': tr['exit_spot'],
+          'kp': tr['kp'],
+          'kc': tr['kc'],
+          'net_pnl_usd': tr['net_pnl_usd'],
+          'shares_added': tr['shares_added'],
+        });
+      }
+    }
+    return events;
+  }
+
   @override
   Future<Map<String, dynamic>> getJson(String path) async {
     calls.add(path);
@@ -31,15 +120,26 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       final strat = qp['strategy'] ?? 'U1_PureOptions';
       final tpMode = qp['tpMode'] ?? raw['default_tp_mode'] ?? 'layered_itm';
       final ccMode = qp['ccMode'] ?? raw['default_cc_mode'] ?? 'cc_off';
+      final spMode = qp['spMode'] ?? raw['default_sp_mode'] ?? 'sp_off';
       final modeBundles = raw['mode_bundles'] as Map<String, dynamic>?;
       final tpModes = raw['tp_modes'] as Map<String, dynamic>?;
+      final bundleKey = spMode == 'sp_off'
+          ? '${tpMode}__$ccMode'
+          : '${tpMode}__${ccMode}__$spMode';
       final dynamic rawBundle =
-          (modeBundles != null ? modeBundles['${tpMode}__$ccMode'] : null) ??
-          (ccMode == 'cc_off' && tpModes != null ? tpModes[tpMode] : null);
+          (modeBundles != null
+              ? (modeBundles[bundleKey] ??
+                    modeBundles['${tpMode}__${ccMode}__$spMode'])
+              : null) ??
+          (ccMode == 'cc_off' && spMode == 'sp_off' && tpModes != null
+              ? tpModes[tpMode]
+              : null);
       final bundle = rawBundle as Map<String, dynamic>?;
       final baseSeries = raw['daily_series'] as List<dynamic>;
       final isDefault =
-          tpMode == raw['default_tp_mode'] && ccMode == raw['default_cc_mode'];
+          tpMode == raw['default_tp_mode'] &&
+          ccMode == raw['default_cc_mode'] &&
+          spMode == (raw['default_sp_mode'] ?? 'sp_off');
       final projectedSeries = (bundle != null && !isDefault)
           ? List<Map<String, dynamic>>.generate(baseSeries.length, (i) {
               final row = Map<String, dynamic>.from(baseSeries[i] as Map);
@@ -51,6 +151,35 @@ class CrisisObservatoryFixtureApi extends ApiClient {
               return row;
             })
           : baseSeries;
+      final baseWindows = (raw['crisis_windows'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      final baseWinById = {for (final w in baseWindows) w['id'].toString(): w};
+      final hydratedWindows = bundle != null && bundle['crisis_windows'] is List
+          ? (bundle['crisis_windows'] as List).map((wItem) {
+              final wMap = Map<String, dynamic>.from(wItem as Map);
+              final base = baseWinById[wMap['id']?.toString() ?? ''] ?? const {};
+              return {...base, ...wMap};
+            }).toList()
+          : baseWindows;
+
+      final tradeLedgers = bundle != null
+          ? _unpackLedgerMap(bundle['trade_ledgers_by_strategy'])
+          : _unpackLedgerMap(raw['trade_ledgers_by_strategy']);
+      final ccLedgers = bundle != null
+          ? _unpackLedgerMap(bundle['cc_ledgers_by_strategy'])
+          : _unpackLedgerMap(raw['cc_ledgers_by_strategy']);
+      final spLedgers = bundle != null
+          ? _unpackLedgerMap(bundle['sp_ledgers_by_strategy'])
+          : _unpackLedgerMap(raw['sp_ledgers_by_strategy']);
+      final eventsByStrat = bundle != null && bundle['events_by_strategy'] is Map
+          ? bundle['events_by_strategy']
+          : {
+              for (final e in tradeLedgers.entries)
+                e.key: _synthesizeEvents(e.key, e.value),
+            };
+      final ledgerStrat = strat == 'BH_Pure_QQQ' ? 'U1_PureOptions' : strat;
+
       final out = Map<String, dynamic>.from(raw)
         ..remove('tp_modes')
         ..remove('mode_bundles');
@@ -59,16 +188,21 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         if (bundle != null) ...{
           'live_signal_state': bundle['live_signal_state'],
           'live_signal_states_by_strategy': bundle['live_signal_states_by_strategy'],
+          'live_sp_state': bundle['live_sp_state'],
+          'live_sp_states_by_strategy': bundle['live_sp_states_by_strategy'],
           'strategies_summary': bundle['strategies_summary'],
-          'events_by_strategy': bundle['events_by_strategy'],
-          'trade_ledgers_by_strategy': bundle['trade_ledgers_by_strategy'],
-          'cc_ledgers_by_strategy': bundle['cc_ledgers_by_strategy'],
-          'crisis_windows': bundle['crisis_windows'],
+          'events_by_strategy': eventsByStrat,
+          'trade_ledgers_by_strategy': tradeLedgers,
+          'cc_ledgers_by_strategy': ccLedgers,
+          'sp_ledgers_by_strategy': spLedgers,
+          'sp_ledger': spLedgers[ledgerStrat] ?? const <dynamic>[],
+          'crisis_windows': hydratedWindows,
           'daily_series': projectedSeries,
         },
         'tp_mode': tpMode,
         'cc_mode': ccMode,
-        'snapshotId': 'fixture-crisis-v2-minimal',
+        'sp_mode': spMode,
+        'snapshotId': 'fixture-crisis-v3-three-engine',
         'requestedAsOf': qp['asOf'] ?? raw['as_of_date'],
         'selected_strategy_id': strat,
         'liveExtended': false,
@@ -149,6 +283,8 @@ void main() {
       expect(find.byKey(const ValueKey('crisis-slot-card-core')), findsOneWidget);
       expect(find.byKey(const ValueKey('crisis-slot-card-slot1')), findsOneWidget);
       expect(find.byKey(const ValueKey('crisis-slot-card-slot2')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-sp-live-badge')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-sp-mode-bar')), findsOneWidget);
 
       await tapVisible(tester, find.byKey(const ValueKey('crisis-rules-toggle')));
       expect(find.textContaining('Execution rules:'), findsOneWidget);
@@ -202,6 +338,64 @@ void main() {
         find.byKey(const ValueKey('crisis-cc-ledger-toggle')),
       );
       expect(find.textContaining('Sold K='), findsWidgets);
+
+      // Switch 3rd Engine (Panic Put Wheel) presets on Dual (U1 + layered_itm + cc_d12_d35):
+      // 14D 10% Cap ($1,779,823 · Calmar 0.677 · $816.85) -> 10D VIX Falling ($1,786,933 · $504.61) -> 14D Unfiltered ($1,846,992 · +43.4%) -> Off
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_cap10')),
+      );
+      expect(find.text('\$1,779,823'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.677'), findsWidgets);
+      expect(find.textContaining('\$816.85'), findsWidgets);
+      expect(find.text('Sell Panic Put'), findsOneWidget);
+      expect(find.text('Wheel Assigned'), findsOneWidget);
+      expect(find.text('Wheel Call Exit'), findsOneWidget);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-sp-ledger-toggle')),
+      );
+      expect(find.text('Wheel Call'), findsWidgets);
+
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-sp-mode-pill-sp_10d_vixf')),
+      );
+      expect(find.text('\$1,786,933'), findsOneWidget);
+      expect(find.textContaining('\$504.61'), findsWidgets);
+
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_unf')),
+      );
+      expect(find.text('\$1,846,992'), findsOneWidget);
+      expect(find.textContaining('+43.4%'), findsWidgets);
+
+      // Verify Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_14d_unf -> $1,387,278)
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_off')),
+      );
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-strategy-pill-NoPut_CallOnly')),
+      );
+      expect(find.text('\$1,387,278'), findsOneWidget);
+
+      // Restore U1 + cc_d12_d35 + sp_off so existing 2D assertions proceed unchanged
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-strategy-pill-U1_PureOptions')),
+      );
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_d12_d35')),
+      );
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-sp-mode-pill-sp_off')),
+      );
+      expect(find.text('\$1,714,947'), findsOneWidget);
 
       await tapVisible(
         tester,
@@ -405,6 +599,10 @@ void main() {
         expect(find.text('不买 Put（仅卖 Call）'), findsOneWidget);
         expect(find.text('Put 止盈规则：'), findsOneWidget);
         expect(find.text('叠加平时卖 Call：'), findsOneWidget);
+        expect(find.text('恐慌卖 Put Wheel：'), findsOneWidget);
+        expect(find.text('14D 10%帽（Calmar冠军 · 推荐）'), findsOneWidget);
+        expect(find.text('10D VIX回落（20%帽）'), findsOneWidget);
+        expect(find.text('14D 无过滤（20%帽 · 收益冠军）'), findsOneWidget);
         expect(find.text('分层实值（推荐）'), findsOneWidget);
         expect(find.text('标准 1.10'), findsOneWidget);
         expect(find.text('两槽 4x 深度'), findsOneWidget);
@@ -418,7 +616,23 @@ void main() {
         expect(find.text('总股数 · 多买比例'), findsOneWidget);
         expect(find.textContaining('+28.4%'), findsWidgets);
         expect(find.textContaining('短债'), findsNothing);
+
+        // Activate 14D 10% Cap on Chinese Desktop & Mobile (390x844) and expand Wheel Ledger to verify zero overflow
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_cap10')),
+        );
+        expect(find.textContaining('已接货进 Wheel'), findsOneWidget);
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('crisis-sp-ledger-toggle')),
+        );
+        expect(find.textContaining('恐慌卖 Put Wheel 实战明细'), findsOneWidget);
         expect(tester.takeException(), isNull);
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('crisis-sp-mode-pill-sp_off')),
+        );
       }
 
       addTearDown(tester.view.resetPhysicalSize);

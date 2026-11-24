@@ -23,6 +23,19 @@ export const CRISIS_OBSERVATORY_CC_MODES = Object.freeze([
   'cc_d12_r45',
   'cc_d12_cr55',
 ]);
+export const CRISIS_OBSERVATORY_SP_MODES = Object.freeze([
+  'sp_off',
+  'sp_14d_cap10',
+  'sp_10d_vixf',
+  'sp_14d_unf',
+]);
+
+const LEGACY_SP_MODE_ALIASES = Object.freeze({
+  off: 'sp_off',
+  cap10: 'sp_14d_cap10',
+  vixf: 'sp_10d_vixf',
+  unf: 'sp_14d_unf',
+});
 
 const LEGACY_CC_MODE_ALIASES = Object.freeze({
   cc_high_vol: 'cc_d12_d35',
@@ -112,15 +125,199 @@ function readArtifact(file = defaultFile) {
   return cachedArtifact;
 }
 
-function projectArtifactForModes(data, snapshotId, selectedTpMode, selectedCcMode) {
-  const cacheKey = `${snapshotId}:${selectedTpMode}:${selectedCcMode}`;
+function unpackTable(val) {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  if (Array.isArray(val._cols) && Array.isArray(val._rows)) {
+    const cols = val._cols;
+    return val._rows.map(row => {
+      const obj = {};
+      for (let i = 0; i < cols.length; i += 1) {
+        obj[cols[i]] = row[i] ?? null;
+      }
+      return obj;
+    });
+  }
+  return [];
+}
+
+function unpackLedgerMap(rawMap) {
+  if (!rawMap || typeof rawMap !== 'object') return {};
+  const out = {};
+  for (const [sid, val] of Object.entries(rawMap)) {
+    out[sid] = unpackTable(val);
+  }
+  return out;
+}
+
+const EVENT_ORDER_RANK = Object.freeze({
+  vix110_tp: 1,
+  vix110_itm_tp: 1,
+  vix110_4x_tp: 1,
+  put5x_dte45_tp: 1,
+  live_tp_armed: 1,
+  option_expiry: 2,
+  shield_enter: 3,
+  shield_exit: 4,
+  slot1_naked_put: 5,
+  slot1_collar: 6,
+  slot2_collar: 7,
+  slot3_collar: 8,
+});
+
+function synthesizeUnifiedEvents(strategyId, ledger) {
+  const events = [];
+  for (const tr of ledger ?? []) {
+    const isNk = tr.tranche_type === 'naked_put';
+    const evType = isNk ? 'slot1_naked_put' : `slot${tr.slot_num}_collar`;
+    events.push({
+      event_id: `${strategyId}_tr${tr.tranche_id}_open`,
+      tranche_id: tr.tranche_id,
+      strategy_id: strategyId,
+      date: tr.entry_date,
+      signal_date: tr.signal_date,
+      event_type: evType,
+      slot_num: tr.slot_num,
+      tranche_type: tr.tranche_type,
+      spot: tr.entry_spot,
+      vxn: tr.entry_vxn,
+      vix_ratio: tr.entry_vix_ratio,
+      kp: tr.kp,
+      kc: tr.kc,
+      call_cap_pct: tr.call_cap_pct,
+      entry_cost_usd: tr.entry_cost_usd,
+      hedged_shares: tr.hedged_shares,
+      sig_score: tr.sig_score,
+      sig_ad_below50: tr.sig_ad_below50,
+      trigger_en: tr.trigger_en,
+      trigger_zh: tr.trigger_zh,
+      linked_exit_date: tr.exit_date,
+      linked_exit_spot: tr.exit_spot,
+      linked_exit_reason: tr.exit_reason,
+      net_pnl_usd: tr.net_pnl_usd,
+      shares_added: tr.shares_added,
+      delta_usd: tr.delta_usd,
+      gamma_usd: tr.gamma_usd,
+      vega_usd: tr.vega_usd,
+      theta_slip_usd: tr.theta_slip_usd,
+    });
+
+    const exitReason = String(tr.exit_reason ?? '');
+    const isOpenLive = Boolean(tr.is_open_live);
+    const isLiveArmed = exitReason === 'live_tp_armed_next_open';
+    const isTp = exitReason.includes('tp') && !isOpenLive;
+    const isPut5x = exitReason.includes('put_5x');
+    const isItmTp = exitReason.includes('itm_tp');
+    const is4xTp = exitReason.includes('4x_tp');
+    const evExitDate = !isOpenLive ? tr.exit_date : tr.mtm_date;
+
+    if ((!isOpenLive || isLiveArmed) && evExitDate) {
+      const vrStr = Number(tr.exit_vix_ratio ?? 0).toFixed(3);
+      const retPct = Number(tr.underlying_ret_pct ?? 0);
+      const retStr = `${retPct >= 0 ? '+' : ''}${retPct.toFixed(1)}%`;
+      let evTypeExit;
+      let trigEnExit;
+      let trigZhExit;
+      if (isLiveArmed) {
+        evTypeExit = 'live_tp_armed';
+        trigEnExit = `Deep-ITM Panic TP Armed (${tr.rem_dte_at_exit} DTE left · VIX/3M ${vrStr} · Next Open)`;
+        trigZhExit = `实值恐慌止盈已触发（剩余 ${tr.rem_dte_at_exit} 天 · VIX/3M ${vrStr} · 待次日开盘换股）`;
+      } else if (isPut5x) {
+        evTypeExit = 'put5x_dte45_tp';
+        trigEnExit = `5x Put Slow-Bear TP (${tr.rem_dte_at_exit} DTE <= 45, Deep ITM Lock)`;
+        trigZhExit = `后半程 Put >= 5x 慢熊止盈（剩余 ${tr.rem_dte_at_exit} 天 <= 45 · 深实值锁利）`;
+      } else if (isItmTp) {
+        evTypeExit = 'vix110_itm_tp';
+        trigEnExit = `Deep-ITM Panic TP (QQQ <= K_P & VIX/3M ${vrStr} >= 1.10)`;
+        trigZhExit = `实值恐慌止盈（跌破行权价且 VIX/3M ${vrStr} >= 1.10）`;
+      } else if (is4xTp) {
+        evTypeExit = 'vix110_4x_tp';
+        trigEnExit = `4x Deep Panic TP (Put >= 4x & VIX/3M ${vrStr} >= 1.10)`;
+        trigZhExit = `4x 深度恐慌止盈（Put >= 4x 且 VIX/3M ${vrStr} >= 1.10）`;
+      } else if (isTp) {
+        evTypeExit = 'vix110_tp';
+        trigEnExit = `VIX/VIX3M ${vrStr} >= 1.10 Panic TP`;
+        trigZhExit = `VIX/VIX3M ${vrStr} >= 1.10 恐慌止盈抄底`;
+      } else {
+        evTypeExit = 'option_expiry';
+        trigEnExit = `90-DTE Expiry (${retStr} spot)`;
+        trigZhExit = `90-DTE 到期结算（期间正股 ${retStr}）`;
+      }
+
+      events.push({
+        event_id: `${strategyId}_tr${tr.tranche_id}_exit`,
+        tranche_id: tr.tranche_id,
+        strategy_id: strategyId,
+        date: evExitDate,
+        signal_date: tr.signal_date,
+        event_type: evTypeExit,
+        slot_num: tr.slot_num,
+        tranche_type: tr.tranche_type,
+        spot: tr.exit_spot,
+        vxn: tr.exit_vxn,
+        vix_ratio: tr.exit_vix_ratio,
+        kp: tr.kp,
+        kc: tr.kc,
+        call_cap_pct: tr.call_cap_pct,
+        entry_spot: tr.entry_spot,
+        entry_date: tr.entry_date,
+        entry_cost_usd: tr.entry_cost_usd,
+        hedged_shares: tr.hedged_shares,
+        sig_score: tr.sig_score,
+        sig_ad_below50: tr.sig_ad_below50,
+        trigger_en: trigEnExit,
+        trigger_zh: trigZhExit,
+        net_pnl_usd: tr.net_pnl_usd,
+        shares_added: tr.shares_added,
+        delta_usd: tr.delta_usd,
+        gamma_usd: tr.gamma_usd,
+        vega_usd: tr.vega_usd,
+        theta_slip_usd: tr.theta_slip_usd,
+        convexity_mult: tr.convexity_mult,
+      });
+    }
+  }
+  events.sort((a, b) => {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return (EVENT_ORDER_RANK[a.event_type] ?? 99) - (EVENT_ORDER_RANK[b.event_type] ?? 99);
+  });
+  return events;
+}
+
+function hydrateCrisisWindows(baseWindows, bundleWindows) {
+  if (!Array.isArray(bundleWindows) || !bundleWindows.length) return baseWindows ?? [];
+  const baseById = new Map((baseWindows ?? []).map(w => [w.id, w]));
+  return bundleWindows.map(w => ({
+    ...(baseById.get(w.id) ?? {}),
+    ...w,
+  }));
+}
+
+function projectArtifactForModes(
+  data,
+  snapshotId,
+  selectedTpMode,
+  selectedCcMode,
+  selectedSpMode = 'sp_off',
+) {
+  const cacheKey = `${snapshotId}:${selectedTpMode}:${selectedCcMode}:${selectedSpMode}`;
   const hit = projectedModeCache.get(cacheKey);
   if (hit) return hit;
 
-  const { tp_modes: tpModes, mode_bundles: modeBundles, ...baseWithoutModes } = data;
-  const bundleKey = `${selectedTpMode}__${selectedCcMode}`;
+  const {
+    tp_modes: tpModes,
+    mode_bundles: modeBundles,
+    tp_slot_series: tpSlotSeries,
+    ...baseWithoutModes
+  } = data;
+  const bundleKey =
+    selectedSpMode === 'sp_off'
+      ? `${selectedTpMode}__${selectedCcMode}`
+      : `${selectedTpMode}__${selectedCcMode}__${selectedSpMode}`;
   const bundle =
-    modeBundles?.[bundleKey] ?? (selectedCcMode === 'cc_off' ? tpModes?.[selectedTpMode] : null);
+    modeBundles?.[bundleKey] ??
+    modeBundles?.[`${selectedTpMode}__${selectedCcMode}__${selectedSpMode}`] ??
+    (selectedCcMode === 'cc_off' && selectedSpMode === 'sp_off' ? tpModes?.[selectedTpMode] : null);
   if (!bundle) {
     const fallback = {
       ...baseWithoutModes,
@@ -128,6 +325,8 @@ function projectArtifactForModes(data, snapshotId, selectedTpMode, selectedCcMod
       default_tp_mode: data.default_tp_mode ?? 'layered_itm',
       cc_mode: data.cc_mode ?? 'cc_off',
       default_cc_mode: data.default_cc_mode ?? 'cc_off',
+      sp_mode: data.sp_mode ?? 'sp_off',
+      default_sp_mode: data.default_sp_mode ?? 'sp_off',
     };
     projectedModeCache.set(cacheKey, fallback);
     return fallback;
@@ -135,7 +334,10 @@ function projectArtifactForModes(data, snapshotId, selectedTpMode, selectedCcMod
 
   const isDefaultCombo =
     selectedTpMode === (data.default_tp_mode ?? 'layered_itm') &&
-    selectedCcMode === (data.default_cc_mode ?? 'cc_off');
+    selectedCcMode === (data.default_cc_mode ?? 'cc_off') &&
+    selectedSpMode === (data.default_sp_mode ?? 'sp_off');
+  const activeSlotsArr = bundle.active_slots ?? tpSlotSeries?.[selectedTpMode]?.active_slots;
+  const slot1NakedArr = bundle.slot1_naked ?? tpSlotSeries?.[selectedTpMode]?.slot1_naked;
   const projectedSeries = isDefaultCombo
     ? data.daily_series
     : data.daily_series.map((row, idx) => ({
@@ -145,9 +347,27 @@ function projectArtifactForModes(data, snapshotId, selectedTpMode, selectedCcMod
         nav_d2: bundle.nav_d2?.[idx] ?? row.nav_d2,
         nav_h2: bundle.nav_h2?.[idx] ?? row.nav_h2,
         nav_cc: bundle.nav_cc?.[idx] ?? row.nav_cc,
-        active_slots: bundle.active_slots?.[idx] ?? row.active_slots,
-        slot1_naked: bundle.slot1_naked?.[idx] ?? row.slot1_naked,
+        active_slots: activeSlotsArr?.[idx] ?? row.active_slots,
+        slot1_naked: slot1NakedArr?.[idx] ?? row.slot1_naked,
       }));
+
+  const unpackedTradeLedgers = bundle.trade_ledgers_by_strategy
+    ? unpackLedgerMap(bundle.trade_ledgers_by_strategy)
+    : data.trade_ledgers_by_strategy ?? {};
+  const unpackedCcLedgers = bundle.cc_ledgers_by_strategy
+    ? unpackLedgerMap(bundle.cc_ledgers_by_strategy)
+    : data.cc_ledgers_by_strategy ?? {};
+  const unpackedSpLedgers = bundle.sp_ledgers_by_strategy
+    ? unpackLedgerMap(bundle.sp_ledgers_by_strategy)
+    : data.sp_ledgers_by_strategy ?? {};
+
+  const eventsByStrategy = {};
+  for (const [sid, led] of Object.entries(unpackedTradeLedgers)) {
+    eventsByStrategy[sid] =
+      bundle.events_by_strategy?.[sid] ?? synthesizeUnifiedEvents(sid, led);
+  }
+
+  const hydratedWindows = hydrateCrisisWindows(data.crisis_windows, bundle.crisis_windows);
 
   const projected = {
     ...baseWithoutModes,
@@ -157,19 +377,25 @@ function projectArtifactForModes(data, snapshotId, selectedTpMode, selectedCcMod
     cc_mode: selectedCcMode,
     default_cc_mode: data.default_cc_mode ?? 'cc_off',
     cc_modes_meta: data.cc_modes_meta ?? [],
+    sp_mode: selectedSpMode,
+    default_sp_mode: data.default_sp_mode ?? 'sp_off',
+    sp_modes_meta: data.sp_modes_meta ?? [],
     live_signal_state: bundle.live_signal_state ?? data.live_signal_state,
     live_signal_states_by_strategy:
       bundle.live_signal_states_by_strategy ?? data.live_signal_states_by_strategy ?? {},
+    live_sp_state: bundle.live_sp_state ?? data.live_sp_state ?? null,
+    live_sp_states_by_strategy:
+      bundle.live_sp_states_by_strategy ?? data.live_sp_states_by_strategy ?? {},
     strategies_summary: bundle.strategies_summary ?? data.strategies_summary,
     daily_series: projectedSeries,
-    events: bundle.events_by_strategy?.U1_PureOptions ?? data.events,
-    events_by_strategy: bundle.events_by_strategy ?? data.events_by_strategy,
-    trade_ledger: bundle.trade_ledgers_by_strategy?.U1_PureOptions ?? data.trade_ledger,
-    trade_ledgers_by_strategy:
-      bundle.trade_ledgers_by_strategy ?? data.trade_ledgers_by_strategy,
-    cc_ledgers_by_strategy:
-      bundle.cc_ledgers_by_strategy ?? data.cc_ledgers_by_strategy ?? {},
-    crisis_windows: bundle.crisis_windows ?? data.crisis_windows,
+    events: eventsByStrategy.U1_PureOptions ?? data.events,
+    events_by_strategy: eventsByStrategy,
+    trade_ledger: unpackedTradeLedgers.U1_PureOptions ?? data.trade_ledger,
+    trade_ledgers_by_strategy: unpackedTradeLedgers,
+    cc_ledgers_by_strategy: unpackedCcLedgers,
+    sp_ledger: unpackedSpLedgers.U1_PureOptions ?? [],
+    sp_ledgers_by_strategy: unpackedSpLedgers,
+    crisis_windows: hydratedWindows,
   };
   projectedModeCache.set(cacheKey, projected);
   return projected;
@@ -414,11 +640,127 @@ function extendLiveBars(baseData, extraDailyBars, requestedAsOf) {
   return series;
 }
 
+function maskSimpleOptionLedgerAtCutoff(ledger, asOfDate) {
+  const out = [];
+  for (const leg of ledger ?? []) {
+    if (leg.entry_date > asOfDate) continue;
+    if (leg.exit_date && leg.exit_date <= asOfDate && !leg.is_open_live) {
+      out.push(leg);
+    } else {
+      out.push({
+        ...leg,
+        exit_date: null,
+        exit_spot: null,
+        exit_cost_usd: null,
+        net_pnl_usd: null,
+        stock_gain_usd: null,
+        is_open_live: true,
+        exit_reason: 'open_as_of_cutoff',
+      });
+    }
+  }
+  return out;
+}
+
+function buildCutoffSpState(slicedSeries, spMode, maskedSpLedger, baseSpState) {
+  const lastBar = slicedSeries[slicedSeries.length - 1];
+  const prevBar = slicedSeries.length >= 2 ? slicedSeries[slicedSeries.length - 2] : lastBar;
+  const vix = Number(lastBar.vix ?? 0);
+  const prevVix = Number(prevBar.vix ?? vix);
+  const vixChg = vix - prevVix;
+  const vixFalling = slicedSeries.length >= 2 && vix < prevVix;
+  const vix3m = Number(lastBar.vix3m ?? 0);
+  const vr = Number(lastBar.vix_ratio ?? 0);
+  const invOn = vr >= 1.0;
+  const unfGate = invOn;
+  const vixfGate = Boolean(invOn && vixFalling);
+  const enabled = spMode !== 'sp_off';
+  const reqFall = spMode === 'sp_10d_vixf';
+  const modeGate = reqFall ? vixfGate : unfGate;
+  const dteLbl = spMode === 'sp_10d_vixf' ? '10D' : '14D';
+  const capPct = spMode === 'sp_14d_cap10' ? 10 : 20;
+
+  const openSpLeg =
+    enabled
+      ? (maskedSpLedger ?? []).find(
+          x => x.leg_type === 'short_put' && x.exit_reason === 'open_as_of_cutoff',
+        ) ?? null
+      : null;
+  const openWcLeg =
+    enabled
+      ? (maskedSpLedger ?? []).find(
+          x => x.leg_type === 'wheel_call' && x.exit_reason === 'open_as_of_cutoff',
+        ) ?? null
+      : null;
+
+  const chgStr = `${vixChg >= 0 ? '+' : ''}${vixChg.toFixed(2)}`;
+  let positionState = 'disabled';
+  let statusTone = 'neutral';
+  let badgeEn;
+  let badgeZh;
+  if (!enabled) {
+    const invZh = invOn ? '倒挂满足 >=1.00' : '未倒挂 <1.00';
+    const invEn = invOn ? 'Inverted >=1.00' : 'Contango <1.00';
+    const dirZh = vixFalling ? `回落 ${chgStr}` : `冲高 ${chgStr}`;
+    const dirEn = vixFalling ? `Falling ${chgStr}` : `Rising ${chgStr}`;
+    badgeZh = `第三引擎已关闭 · 0 杠杆（VIX/3M ${vr.toFixed(3)} ${invZh} · VIX ${vix.toFixed(2)} ${dirZh}）`;
+    badgeEn = `Engine 3 Off · 0 Leverage (VIX/3M ${vr.toFixed(3)} ${invEn} · VIX ${vix.toFixed(2)} ${dirEn})`;
+  } else if (openWcLeg) {
+    positionState = 'wheel_call_open';
+    statusTone = 'wheel';
+    badgeZh = `反向 Wheel 持仓中（${Math.round(Number(openWcLeg.shares))}股）· 已卖 ${dteLbl} Call K=$${Number(openWcLeg.strike).toFixed(2)}`;
+    badgeEn = `Wheel Call Active (${Math.round(Number(openWcLeg.shares))} sh) · Short ${dteLbl} Call K=$${Number(openWcLeg.strike).toFixed(2)}`;
+  } else if (openSpLeg) {
+    positionState = 'short_put_open';
+    statusTone = 'active';
+    badgeZh = `持仓 ${dteLbl} 恐慌卖 Put（K=$${Number(openSpLeg.strike).toFixed(2)} · ${Math.round(Number(openSpLeg.shares))}股）`;
+    badgeEn = `Live ${dteLbl} Short Put Open (K=$${Number(openSpLeg.strike).toFixed(2)} · ${Math.round(Number(openSpLeg.shares))} sh)`;
+  } else if (modeGate) {
+    positionState = 'entry_armed_next_open';
+    statusTone = 'armed';
+    badgeZh = `信号触发 -> 次日开盘卖 ${dteLbl} 5% OTM Put（名义帽 <= ${capPct}% · VIX/3M ${vr.toFixed(3)}）`;
+    badgeEn = `Signal Triggered -> Sell ${dteLbl} 5% OTM Put Next Open (<= ${capPct}% Cap · VIX/3M ${vr.toFixed(3)})`;
+  } else {
+    positionState = 'flat_standby';
+    statusTone = 'neutral';
+    badgeZh =
+      invOn && reqFall && !vixFalling
+        ? `空仓等待恐慌拐点 · VIX/3M ${vr.toFixed(3)} 已倒挂但 VIX ${chgStr} 未回落`
+        : `空仓待命 · 0 持仓 0 利息（VIX/3M ${vr.toFixed(3)} 未倒挂）`;
+    badgeEn =
+      invOn && reqFall && !vixFalling
+        ? `Flat · Waiting for VIX Crest (VIX/3M ${vr.toFixed(3)} >= 1.00, VIX ${chgStr} Rising)`
+        : `Flat Standby · 0 Margin Debt (VIX/3M ${vr.toFixed(3)} < 1.00)`;
+  }
+
+  return {
+    ...(baseSpState ?? {}),
+    as_of_date: lastBar.date,
+    sp_mode: spMode,
+    enabled,
+    vix: r2(vix),
+    prev_vix: r2(prevVix),
+    vix_change: r2(vixChg),
+    vix_falling: vixFalling,
+    vix3m: r2(vix3m),
+    vix_vix3m_ratio: r3(vr),
+    backwardation_active: invOn,
+    unfiltered_signal_on: unfGate,
+    vix_falling_signal_on: vixfGate,
+    mode_entry_gate_met: modeGate,
+    position_state: positionState,
+    status_tone: statusTone,
+    badge_en: badgeEn,
+    badge_zh: badgeZh,
+  };
+}
+
 export function loadCrisisObservatoryDashboard({
   asOf = null,
   strategy = null,
   tpMode = null,
   ccMode = null,
+  spMode = null,
   snapshotId: expectedSnapshotId = null,
   file = defaultFile,
   extraDailyBars = null,
@@ -437,7 +779,12 @@ export function loadCrisisObservatoryDashboard({
   if (!CRISIS_OBSERVATORY_CC_MODES.includes(rawCcMode)) {
     fail('invalid_crisis_observatory_cc_mode', 400);
   }
-  const data = projectArtifactForModes(rawData, snapshotId, rawTpMode, rawCcMode);
+  const requestedSpMode = spMode ? String(spMode).trim() : rawData.default_sp_mode ?? 'sp_off';
+  const rawSpMode = LEGACY_SP_MODE_ALIASES[requestedSpMode] ?? requestedSpMode;
+  if (!CRISIS_OBSERVATORY_SP_MODES.includes(rawSpMode)) {
+    fail('invalid_crisis_observatory_sp_mode', 400);
+  }
+  const data = projectArtifactForModes(rawData, snapshotId, rawTpMode, rawCcMode, rawSpMode);
 
   const rawStrategy = strategy
     ? String(strategy).trim()
@@ -467,10 +814,14 @@ export function loadCrisisObservatoryDashboard({
       selected_strategy_id: selectedStrategy,
       tp_mode: rawTpMode,
       cc_mode: rawCcMode,
+      sp_mode: rawSpMode,
       live_signal_state:
         data.live_signal_states_by_strategy?.[ledgerStrategy] ?? data.live_signal_state,
+      live_sp_state:
+        data.live_sp_states_by_strategy?.[ledgerStrategy] ?? data.live_sp_state ?? null,
       events: data.events_by_strategy?.[ledgerStrategy] ?? data.events,
       trade_ledger: data.trade_ledgers_by_strategy?.[ledgerStrategy] ?? data.trade_ledger,
+      sp_ledger: data.sp_ledgers_by_strategy?.[ledgerStrategy] ?? [],
     };
   }
 
@@ -482,6 +833,7 @@ export function loadCrisisObservatoryDashboard({
 
   const effDate = slicedSeries[slicedSeries.length - 1].date;
   const lastBar = slicedSeries[slicedSeries.length - 1];
+  const prevBar = slicedSeries.length >= 2 ? slicedSeries[slicedSeries.length - 2] : lastBar;
   const bhEndNav = Number(lastBar.nav_bh);
 
   const strategiesSummary = data.strategies_summary.map(item => {
@@ -501,6 +853,16 @@ export function loadCrisisObservatoryDashboard({
     maskedLedgersByStrategy[sid] = maskLedgerAtCutoff(led, effDate);
   }
 
+  const maskedCcLedgersByStrategy = {};
+  for (const [sid, led] of Object.entries(data.cc_ledgers_by_strategy ?? {})) {
+    maskedCcLedgersByStrategy[sid] = maskSimpleOptionLedgerAtCutoff(led, effDate);
+  }
+
+  const maskedSpLedgersByStrategy = {};
+  for (const [sid, led] of Object.entries(data.sp_ledgers_by_strategy ?? {})) {
+    maskedSpLedgersByStrategy[sid] = maskSimpleOptionLedgerAtCutoff(led, effDate);
+  }
+
   const slicedEventsByStrategy = {};
   for (const [sid, evs] of Object.entries(data.events_by_strategy ?? {})) {
     slicedEventsByStrategy[sid] = (evs ?? []).filter(e => e.date <= effDate);
@@ -512,9 +874,17 @@ export function loadCrisisObservatoryDashboard({
       t => t.exit_date === null && !(isPostArtifactLive && t.is_open_live && t.pending_tp),
     );
   const cutoffStatesByStrategy = {};
+  const cutoffSpStatesByStrategy = {};
   for (const sid of Object.keys(maskedLedgersByStrategy)) {
     const baseSt = data.live_signal_states_by_strategy?.[sid] ?? data.live_signal_state;
     cutoffStatesByStrategy[sid] = buildCutoffSignalState(lastBar, openTranchesForStrat(sid), baseSt);
+    const baseSpSt = data.live_sp_states_by_strategy?.[sid] ?? data.live_sp_state;
+    cutoffSpStatesByStrategy[sid] = buildCutoffSpState(
+      slicedSeries,
+      rawSpMode,
+      maskedSpLedgersByStrategy[sid] ?? [],
+      baseSpSt,
+    );
   }
   const openU1Tranches = openTranchesForStrat('U1_PureOptions');
   const maskBits = Number(lastBar.lights_mask ?? 0);
@@ -557,6 +927,8 @@ export function loadCrisisObservatoryDashboard({
                 : '市场宽度健康（AD 站上 50DMA）',
         };
 
+  const vixNow = Number(lastBar.vix ?? 0);
+  const vixPrev = Number(prevBar.vix ?? vixNow);
   const liveSnap = {
     ...data.live_market_snapshot,
     as_of_date: effDate,
@@ -569,6 +941,9 @@ export function loadCrisisObservatoryDashboard({
         ? r2((Number(lastBar.qqq_close) / Number(lastBar.qqq_ma200) - 1) * 100)
         : 0,
     vix: lastBar.vix,
+    prev_vix: r2(vixPrev),
+    vix_change: r2(vixNow - vixPrev),
+    vix_falling: slicedSeries.length >= 2 && vixNow < vixPrev,
     vix3m: lastBar.vix3m,
     vix_vix3m_ratio: lastBar.vix_ratio,
     vxn: lastBar.vxn,
@@ -592,6 +967,7 @@ export function loadCrisisObservatoryDashboard({
     selected_strategy_id: selectedStrategy,
     tp_mode: rawTpMode,
     cc_mode: rawCcMode,
+    sp_mode: rawSpMode,
     evaluation_window: {
       ...data.evaluation_window,
       end: effDate,
@@ -602,6 +978,10 @@ export function loadCrisisObservatoryDashboard({
       cutoffStatesByStrategy[ledgerStrategy] ??
       buildCutoffSignalState(lastBar, openU1Tranches, data.live_signal_state),
     live_signal_states_by_strategy: cutoffStatesByStrategy,
+    live_sp_state:
+      cutoffSpStatesByStrategy[ledgerStrategy] ??
+      buildCutoffSpState(slicedSeries, rawSpMode, maskedSpLedgersByStrategy[ledgerStrategy] ?? [], data.live_sp_state),
+    live_sp_states_by_strategy: cutoffSpStatesByStrategy,
     six_crisis_lights: lightsAtCutoff,
     ad_line_signal: adSignal,
     strategies_summary: strategiesSummary,
@@ -610,6 +990,9 @@ export function loadCrisisObservatoryDashboard({
     events_by_strategy: slicedEventsByStrategy,
     trade_ledger: maskedLedgersByStrategy[ledgerStrategy] ?? [],
     trade_ledgers_by_strategy: maskedLedgersByStrategy,
+    cc_ledgers_by_strategy: maskedCcLedgersByStrategy,
+    sp_ledger: maskedSpLedgersByStrategy[ledgerStrategy] ?? [],
+    sp_ledgers_by_strategy: maskedSpLedgersByStrategy,
     shield_events: [],
     crisis_windows: visibleWindows,
   };
@@ -675,6 +1058,7 @@ export async function loadCrisisObservatoryDashboardLive({
   strategy = null,
   tpMode = null,
   ccMode = null,
+  spMode = null,
   snapshotId = null,
   file = defaultFile,
   fetchLiveBars = null,
@@ -697,6 +1081,7 @@ export async function loadCrisisObservatoryDashboardLive({
     strategy,
     tpMode,
     ccMode,
+    spMode,
     snapshotId,
     file,
     extraDailyBars,

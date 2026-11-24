@@ -115,8 +115,8 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1402250.68) <= 0.50
     assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02
 
-    # Verify alternate selectable TP & Covered-Call modes (12 mode bundles: 3 TP x 4 CC)
-    assert len(doc["mode_bundles"]) == 12
+    # Verify alternate selectable TP, Covered-Call & Panic Put Wheel modes (48 mode bundles: 3 TP x 4 CC x 4 SP)
+    assert len(doc["mode_bundles"]) == 48
     std_map = {s["id"]: s for s in doc["mode_bundles"]["standard_dual__cc_off"]["strategies_summary"]}
     assert abs(std_map["U1_PureOptions"]["end_nav"] - 1625377.79) <= 0.50
     assert doc["mode_bundles"]["standard_dual__cc_off"]["live_signal_state"]["regime_code"] == "LOW_SPOT_FREEZE_NO_NEW_COLLAR"
@@ -150,6 +150,67 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
         assert cr55_map[sid]["end_nav"] > smap[sid]["end_nav"], sid
 
 
+def _unpack_rows(val):
+    if isinstance(val, list):
+        return val
+    if isinstance(val, dict) and "_cols" in val and "_rows" in val:
+        cols = val["_cols"]
+        return [dict(zip(cols, r)) for r in val["_rows"]]
+    return []
+
+
+def test_third_engine_panic_put_wheel_3d_matrix():
+    doc = json.loads(ARTIFACT_PATH.read_text(encoding="utf-8"))
+    assert doc["default_sp_mode"] == "sp_off"
+    assert doc["sp_mode"] == "sp_off"
+    assert [m["id"] for m in doc["sp_modes_meta"]] == [
+        "sp_off",
+        "sp_14d_cap10",
+        "sp_10d_vixf",
+        "sp_14d_unf",
+    ]
+    assert len(doc["mode_bundles"]) == 48
+
+    # 1. Calmar #1 (14D 10% Cap on Dual U1 + layered_itm + cc_d12_d35)
+    cap10_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10"]
+    cap10_u1 = next(s for s in cap10_b["strategies_summary"] if s["id"] == "U1_PureOptions")
+    assert abs(cap10_u1["end_nav"] - 1779823.16) <= 0.05
+    assert cap10_u1["max_dd_pct"] == -29.82
+    assert cap10_u1["calmar"] == 0.677
+    assert cap10_u1["sp_trades_count"] == 46
+    assert cap10_u1["sp_win_rate_pct"] == 89.1
+    assert cap10_u1["sp_assignments_count"] == 6
+    assert cap10_u1["wc_trades_count"] == 11
+    assert cap10_u1["wc_called_away_count"] == 5
+    assert abs(cap10_u1["margin_interest_usd"] - 816.85) <= 0.05
+    assert cap10_b["live_sp_state"]["position_state"] == "wheel_assigned_wc_armed"
+    assert len(_unpack_rows(cap10_b["sp_ledgers_by_strategy"]["U1_PureOptions"])) == 57
+
+    # 2. Ultra-Low Interest (10D VIX Falling 20% Cap on Dual)
+    vixf_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf"]
+    vixf_u1 = next(s for s in vixf_b["strategies_summary"] if s["id"] == "U1_PureOptions")
+    assert abs(vixf_u1["end_nav"] - 1786932.72) <= 0.05
+    assert vixf_u1["max_dd_pct"] == -30.30
+    assert vixf_u1["calmar"] == 0.668
+    assert vixf_u1["sp_trades_count"] == 29
+    assert vixf_u1["sp_assignments_count"] == 4
+    assert abs(vixf_u1["margin_interest_usd"] - 504.61) <= 0.05
+    assert vixf_b["live_sp_state"]["position_state"] == "flat_standby"
+    assert vixf_b["live_sp_state"]["vix_falling_signal_on"] is False
+
+    # 3. Terminal NAV #1 (14D Unfiltered 20% Cap on Dual)
+    unf_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf"]
+    unf_u1 = next(s for s in unf_b["strategies_summary"] if s["id"] == "U1_PureOptions")
+    assert abs(unf_u1["end_nav"] - 1846991.83) <= 0.05
+    assert unf_u1["extra_shares_pct"] == 43.37
+    assert abs(unf_u1["margin_interest_usd"] - 1667.62) <= 0.05
+
+    # 4. Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_mode)
+    bh_unf_b = doc["mode_bundles"]["layered_itm__cc_off__sp_14d_unf"]
+    bh_unf_s = next(s for s in bh_unf_b["strategies_summary"] if s["id"] == "NoPut_CallOnly")
+    assert abs(bh_unf_s["end_nav"] - 1387278.02) <= 0.05
+
+
 def test_crisis_windows_and_4factor_convexity_identity():
     doc = json.loads(ARTIFACT_PATH.read_text(encoding="utf-8"))
     win_ids = [w["id"] for w in doc["crisis_windows"]]
@@ -175,12 +236,13 @@ def test_crisis_windows_and_4factor_convexity_identity():
     assert abs(live_win["harvested_usd_u1"] - 89916.08) <= 0.10
     assert doc["shield_events"] == []
 
-    for mode_id, mode_bundle in doc["tp_modes"].items():
-        for sid, ledger in mode_bundle["trade_ledgers_by_strategy"].items():
+    for mode_key, mode_bundle in doc["mode_bundles"].items():
+        for sid, raw_ledger in mode_bundle["trade_ledgers_by_strategy"].items():
+            ledger = _unpack_rows(raw_ledger)
             if sid == "NoPut_CallOnly":
-                assert len(ledger) == 0, (mode_id, sid)
+                assert len(ledger) == 0, (mode_key, sid)
                 continue
-            assert len(ledger) > 0, (mode_id, sid)
+            assert len(ledger) > 0, (mode_key, sid)
             for tr in ledger:
                 decomp_sum = tr["delta_usd"] + tr["gamma_usd"] + tr["vega_usd"] + tr["theta_slip_usd"]
                 assert abs(decomp_sum - tr["net_pnl_usd"]) <= 0.05
