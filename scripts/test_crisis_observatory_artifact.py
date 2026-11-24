@@ -115,8 +115,8 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1402250.68) <= 0.50
     assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02
 
-    # Verify alternate selectable TP, Covered-Call & Panic Put Wheel modes (48 mode bundles: 3 TP x 4 CC x 4 SP)
-    assert len(doc["mode_bundles"]) == 48
+    # Verify alternate selectable TP, Covered-Call, Panic Put Wheel & Wheel Call modes (84 mode bundles: 3*4*(1+3*2))
+    assert len(doc["mode_bundles"]) == 84
     std_map = {s["id"]: s for s in doc["mode_bundles"]["standard_dual__cc_off"]["strategies_summary"]}
     assert abs(std_map["U1_PureOptions"]["end_nav"] - 1625377.79) <= 0.50
     assert doc["mode_bundles"]["standard_dual__cc_off"]["live_signal_state"]["regime_code"] == "LOW_SPOT_FREEZE_NO_NEW_COLLAR"
@@ -163,52 +163,114 @@ def test_third_engine_panic_put_wheel_3d_matrix():
     doc = json.loads(ARTIFACT_PATH.read_text(encoding="utf-8"))
     assert doc["default_sp_mode"] == "sp_off"
     assert doc["sp_mode"] == "sp_off"
+    assert doc["default_wc_mode"] == "wc_30d_c5s5"
+    assert doc["wc_mode"] == "wc_30d_c5s5"
     assert [m["id"] for m in doc["sp_modes_meta"]] == [
         "sp_off",
         "sp_14d_cap10",
         "sp_10d_vixf",
         "sp_14d_unf",
     ]
-    assert len(doc["mode_bundles"]) == 48
+    assert [m["id"] for m in doc["wc_modes_meta"]] == [
+        "wc_30d_c5s5",
+        "wc_14d_c0s2",
+    ]
+    assert len(doc["mode_bundles"]) == 84
 
-    # 1. Calmar #1 (14D 10% Cap on Dual U1 + layered_itm + cc_d12_d35)
+    # 1. NEW DEFAULT wc_30d_c5s5 (30D + max(1.05*K, 1.05*S)) — Calmar #1 (14D 10% Cap on Dual U1 + layered_itm + cc_d12_d35)
     cap10_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10"]
     cap10_u1 = next(s for s in cap10_b["strategies_summary"] if s["id"] == "U1_PureOptions")
-    assert abs(cap10_u1["end_nav"] - 1779823.16) <= 0.05
+    assert cap10_b["wc_mode"] == "wc_30d_c5s5"
+    assert abs(cap10_u1["end_nav"] - 1819738.31) <= 0.05
+    assert cap10_u1["cagr_pct"] == 20.42
     assert cap10_u1["max_dd_pct"] == -29.82
-    assert cap10_u1["calmar"] == 0.677
-    assert cap10_u1["sp_trades_count"] == 46
-    assert cap10_u1["sp_win_rate_pct"] == 89.1
+    assert cap10_u1["sharpe"] == 0.890
+    assert cap10_u1["calmar"] == 0.685
+    assert cap10_u1["sp_trades_count"] == 44
     assert cap10_u1["sp_assignments_count"] == 6
-    assert cap10_u1["wc_trades_count"] == 11
+    assert cap10_u1["wc_trades_count"] == 10
     assert cap10_u1["wc_called_away_count"] == 5
-    assert abs(cap10_u1["margin_interest_usd"] - 816.85) <= 0.05
+    assert abs(cap10_u1["wc_gross_prem_usd"] - 5041.32) <= 0.05
+    assert abs(cap10_u1["margin_interest_usd"] - 1481.18) <= 0.05
+    assert cap10_u1["days_levered_stock"] == 221
+    assert cap10_u1["max_wheel_cycle_days"] == 111
+    assert cap10_u1["max_gross_stock_lev"] == 1.134
+    assert abs(cap10_u1["end_assigned_shares"] - 309.91) <= 0.05
     assert cap10_b["live_sp_state"]["position_state"] == "wheel_assigned_wc_armed"
-    assert len(_unpack_rows(cap10_b["sp_ledgers_by_strategy"]["U1_PureOptions"])) == 57
+    assert cap10_b["live_sp_state"]["min_next_wc_strike"] == 656.70
+    assert "30D Wheel Call（K >= $656.70，max(1.05×成本, 1.05×现价)）" in cap10_b["live_sp_state"]["badge_zh"]
+    assert len(_unpack_rows(cap10_b["sp_ledgers_by_strategy"]["U1_PureOptions"])) == 54
 
-    # 2. Ultra-Low Interest (10D VIX Falling 20% Cap on Dual)
+    # 2. NEW DEFAULT wc_30d_c5s5 — 10D VIX Falling 20% Cap on Dual
     vixf_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf"]
     vixf_u1 = next(s for s in vixf_b["strategies_summary"] if s["id"] == "U1_PureOptions")
-    assert abs(vixf_u1["end_nav"] - 1786932.72) <= 0.05
-    assert vixf_u1["max_dd_pct"] == -30.30
-    assert vixf_u1["calmar"] == 0.668
-    assert vixf_u1["sp_trades_count"] == 29
-    assert vixf_u1["sp_assignments_count"] == 4
-    assert abs(vixf_u1["margin_interest_usd"] - 504.61) <= 0.05
+    assert abs(vixf_u1["end_nav"] - 1831562.63) <= 0.05
+    assert vixf_u1["cagr_pct"] == 20.49
+    assert vixf_u1["max_dd_pct"] == -30.27
+    assert vixf_u1["sharpe"] == 0.884
+    assert vixf_u1["calmar"] == 0.677
+    assert vixf_u1["sp_trades_count"] == 27
+    assert vixf_u1["sp_assignments_count"] == 3
+    assert vixf_u1["wc_trades_count"] == 6
+    assert vixf_u1["wc_called_away_count"] == 3
+    assert abs(vixf_u1["wc_gross_prem_usd"] - 6383.86) <= 0.05
+    assert abs(vixf_u1["margin_interest_usd"] - 1257.35) <= 0.05
+    assert vixf_u1["days_levered_stock"] == 132
+    assert vixf_u1["max_wheel_cycle_days"] == 107
+    assert vixf_u1["max_gross_stock_lev"] == 1.250
+    assert vixf_u1["end_assigned_shares"] == 0.0
     assert vixf_b["live_sp_state"]["position_state"] == "flat_standby"
     assert vixf_b["live_sp_state"]["vix_falling_signal_on"] is False
 
-    # 3. Terminal NAV #1 (14D Unfiltered 20% Cap on Dual)
+    # 3. NEW DEFAULT wc_30d_c5s5 — Terminal NAV #1 (14D Unfiltered 20% Cap on Dual)
     unf_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf"]
     unf_u1 = next(s for s in unf_b["strategies_summary"] if s["id"] == "U1_PureOptions")
-    assert abs(unf_u1["end_nav"] - 1846991.83) <= 0.05
-    assert unf_u1["extra_shares_pct"] == 43.37
-    assert abs(unf_u1["margin_interest_usd"] - 1667.62) <= 0.05
+    assert abs(unf_u1["end_nav"] - 1930238.95) <= 0.05
+    assert unf_u1["cagr_pct"] == 21.02
+    assert unf_u1["max_dd_pct"] == -31.63
+    assert unf_u1["sharpe"] == 0.889
+    assert unf_u1["calmar"] == 0.665
+    assert abs(unf_u1["wc_gross_prem_usd"] - 10407.12) <= 0.05
+    assert abs(unf_u1["margin_interest_usd"] - 3062.70) <= 0.05
+    assert unf_u1["days_levered_stock"] == 221
+    assert unf_u1["max_wheel_cycle_days"] == 111
+    assert unf_u1["max_gross_stock_lev"] == 1.274
+    assert abs(unf_u1["end_assigned_shares"] - 658.56) <= 0.05
 
-    # 4. Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_mode)
-    bh_unf_b = doc["mode_bundles"]["layered_itm__cc_off__sp_14d_unf"]
-    bh_unf_s = next(s for s in bh_unf_b["strategies_summary"] if s["id"] == "NoPut_CallOnly")
-    assert abs(bh_unf_s["end_nav"] - 1387278.02) <= 0.05
+    # 4. LEGACY wc_14d_c0s2 (14D + max(K, 1.02*S)) 100% penny parity with 2f28247
+    cap10_leg = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10__wc_14d_c0s2"]
+    cap10_leg_u1 = next(s for s in cap10_leg["strategies_summary"] if s["id"] == "U1_PureOptions")
+    assert cap10_leg["wc_mode"] == "wc_14d_c0s2"
+    assert abs(cap10_leg_u1["end_nav"] - 1779823.16) <= 0.05
+    assert cap10_leg_u1["calmar"] == 0.677
+    assert abs(cap10_leg_u1["margin_interest_usd"] - 816.85) <= 0.05
+    assert cap10_leg["live_sp_state"]["min_next_wc_strike"] == 625.43
+    assert "14D Wheel Call（K >= $625.43，max(成本, 1.02×现价)）" in cap10_leg["live_sp_state"]["badge_zh"]
+
+    vixf_leg = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf__wc_14d_c0s2"]
+    vixf_leg_u1 = next(s for s in vixf_leg["strategies_summary"] if s["id"] == "U1_PureOptions")
+    assert abs(vixf_leg_u1["end_nav"] - 1786932.72) <= 0.05
+    assert abs(vixf_leg_u1["margin_interest_usd"] - 504.61) <= 0.05
+
+    unf_leg = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf__wc_14d_c0s2"]
+    unf_leg_u1 = next(s for s in unf_leg["strategies_summary"] if s["id"] == "U1_PureOptions")
+    assert abs(unf_leg_u1["end_nav"] - 1846991.83) <= 0.05
+    assert unf_leg_u1["extra_shares_pct"] == 43.37
+    assert abs(unf_leg_u1["margin_interest_usd"] - 1667.62) <= 0.05
+
+    # 5. Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_mode)
+    bh_unf_30d = next(
+        s
+        for s in doc["mode_bundles"]["layered_itm__cc_off__sp_14d_unf"]["strategies_summary"]
+        if s["id"] == "NoPut_CallOnly"
+    )
+    assert abs(bh_unf_30d["end_nav"] - 1449831.69) <= 0.05
+    bh_unf_leg = next(
+        s
+        for s in doc["mode_bundles"]["layered_itm__cc_off__sp_14d_unf__wc_14d_c0s2"]["strategies_summary"]
+        if s["id"] == "NoPut_CallOnly"
+    )
+    assert abs(bh_unf_leg["end_nav"] - 1387278.02) <= 0.05
 
 
 def test_crisis_windows_and_4factor_convexity_identity():

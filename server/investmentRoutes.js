@@ -157,6 +157,7 @@ export function registerInvestmentRoutes(app,service) {
     tpMode:r.query.tpMode??r.query.tp_mode??null,
     ccMode:r.query.ccMode??r.query.cc_mode??null,
     spMode:r.query.spMode??r.query.sp_mode??null,
+    wcMode:r.query.wcMode??r.query.wc_mode??null,
     snapshotId:r.query.snapshotId??null,
   });
   route('get','/crisis-observatory',readCrisisObservatory,

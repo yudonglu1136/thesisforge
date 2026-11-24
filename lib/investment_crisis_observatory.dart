@@ -57,6 +57,11 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     'sp_14d_unf',
   ];
 
+  static const List<String> _wcModeIds = [
+    'wc_30d_c5s5',
+    'wc_14d_c0s2',
+  ];
+
   static const Map<String, String> _strategyNavKeys = {
     'U1_PureOptions': 'nav_u1',
     'B1c_PureAD': 'nav_b1c',
@@ -76,6 +81,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String selectedTpMode = 'layered_itm';
   String selectedCcMode = 'cc_off';
   String selectedSpMode = 'sp_off';
+  String selectedWcMode = 'wc_30d_c5s5';
   String selectedWindowId = 'ALL';
   String activeForensicWindowId = '2026-08_11_LIVE';
   bool useLogScale = true;
@@ -122,6 +128,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     return _spModeIds.contains(mapped) ? mapped : 'sp_off';
   }
 
+  String _normalizeWcMode(String raw) {
+    final mapped = switch (raw) {
+      '30d' || '30d_c5s5' || 'c5s5' || 'rec' || 'default' => 'wc_30d_c5s5',
+      '14d' || '14d_c0s2' || 'c0s2' || 'legacy' || 'breakeven' => 'wc_14d_c0s2',
+      _ => raw,
+    };
+    return _wcModeIds.contains(mapped) ? mapped : 'wc_30d_c5s5';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -136,6 +151,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     );
     selectedSpMode = _normalizeSpMode(
       text(widget.initialSelection['spMode']),
+    );
+    selectedWcMode = _normalizeWcMode(
+      text(widget.initialSelection['wcMode']),
     );
     final initWin = text(widget.initialSelection['window']);
     if (initWin.isNotEmpty) {
@@ -163,26 +181,36 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       'tpMode': selectedTpMode,
       'ccMode': selectedCcMode,
       'spMode': selectedSpMode,
+      if (selectedSpMode != 'sp_off') 'wcMode': selectedWcMode,
     });
   }
 
-  void _selectModes({String? tpMode, String? ccMode, String? spMode}) {
+  void _selectModes({
+    String? tpMode,
+    String? ccMode,
+    String? spMode,
+    String? wcMode,
+  }) {
     final nextTp = tpMode != null ? _normalizeTpMode(tpMode) : selectedTpMode;
     final nextCc = ccMode != null ? _normalizeCcMode(ccMode) : selectedCcMode;
     final nextSp = spMode != null ? _normalizeSpMode(spMode) : selectedSpMode;
+    final nextWc = wcMode != null ? _normalizeWcMode(wcMode) : selectedWcMode;
     if (nextTp == selectedTpMode &&
         nextCc == selectedCcMode &&
         nextSp == selectedSpMode &&
+        nextWc == selectedWcMode &&
         data != null) {
       return;
     }
-    final cacheKey = '${widget.asOf}::$nextTp::$nextCc::$nextSp';
+    final effectiveWc = nextSp == 'sp_off' ? 'wc_30d_c5s5' : nextWc;
+    final cacheKey = '${widget.asOf}::$nextTp::$nextCc::$nextSp::$effectiveWc';
     final cached = _tpModeCache[cacheKey];
     if (cached != null) {
       setState(() {
         selectedTpMode = nextTp;
         selectedCcMode = nextCc;
         selectedSpMode = nextSp;
+        selectedWcMode = nextWc;
         data = cached;
         hoverIndex = -1;
         switchingTpMode = false;
@@ -194,6 +222,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       selectedTpMode = nextTp;
       selectedCcMode = nextCc;
       selectedSpMode = nextSp;
+      selectedWcMode = nextWc;
       switchingTpMode = data != null;
       hoverIndex = -1;
     });
@@ -207,11 +236,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   void _selectSpMode(String modeId) => _selectModes(spMode: modeId);
 
+  void _selectWcMode(String modeId) => _selectModes(wcMode: modeId);
+
   Future<void> _loadObservatory({bool isModeSwitch = false}) async {
     final serial = ++loadSerial;
     final targetTp = selectedTpMode;
     final targetCc = selectedCcMode;
     final targetSp = selectedSpMode;
+    final targetWc = selectedWcMode;
+    final effectiveWc = targetSp == 'sp_off' ? 'wc_30d_c5s5' : targetWc;
     setState(() {
       if (!isModeSwitch) {
         loading = true;
@@ -229,11 +262,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           'tpMode': targetTp,
           'ccMode': targetCc,
           'spMode': targetSp,
+          if (targetSp != 'sp_off') 'wcMode': targetWc,
         },
       );
       final res = await widget.api.getJson(uri.toString());
       if (!mounted || serial != loadSerial) return;
-      _tpModeCache['${widget.asOf}::$targetTp::$targetCc::$targetSp'] = res;
+      _tpModeCache['${widget.asOf}::$targetTp::$targetCc::$targetSp::$effectiveWc'] =
+          res;
       final windows = asList(res['crisis_windows']);
       var nextForensic = activeForensicWindowId;
       if (windows.isNotEmpty &&
@@ -332,8 +367,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final putPart = _humanStrategyLabel(selectedStrategyId);
     final callPart = _humanCcModeLabel(selectedCcMode);
     final spPart = _humanSpModeLabel(selectedSpMode);
+    final wcShort = _humanWcModeShort(selectedWcMode);
     final hasCall = selectedCcMode != 'cc_off';
     final hasSp = selectedSpMode != 'sp_off';
+    final spWithWc = '$spPart · $wcShort';
     if (selectedStrategyId == 'NoPut_CallOnly') {
       if (!hasCall && !hasSp) {
         return w(
@@ -343,8 +380,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       }
       if (!hasCall && hasSp) {
         return w(
-          'Active Combo: Pure QQQ + Standalone Panic Put Wheel ($spPart)',
-          '当前组合：纯持有 QQQ + 单独叠加「$spPart」',
+          'Active Combo: Pure QQQ + Standalone Panic Put Wheel ($spWithWc)',
+          '当前组合：纯持有 QQQ + 单独叠加「$spWithWc」',
         );
       }
       if (hasCall && !hasSp) {
@@ -354,8 +391,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         );
       }
       return w(
-        'Active Combo: No Crisis Put · $callPart + Wheel ($spPart)',
-        '当前组合：不买危机 Put · 叠加「$callPart」 + 「$spPart」',
+        'Active Combo: No Crisis Put · $callPart + Wheel ($spWithWc)',
+        '当前组合：不买危机 Put · 叠加「$callPart」 + 「$spWithWc」',
       );
     }
     final tpPart = _humanTpModeLabel(selectedTpMode);
@@ -373,13 +410,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     }
     if (!hasCall && hasSp) {
       return w(
-        'Active Combo: $putPart ($tpPart) + Panic Wheel ($spPart)',
-        '当前组合：$putPart（$tpPart） + 恐慌卖 Put Wheel「$spPart」',
+        'Active Combo: $putPart ($tpPart) + Panic Wheel ($spWithWc)',
+        '当前组合：$putPart（$tpPart） + 恐慌卖 Put Wheel「$spWithWc」',
       );
     }
     return w(
-      'Active 3-Engine Combo: $putPart ($tpPart) + $callPart + Wheel ($spPart)',
-      '当前三引擎组合：$putPart（$tpPart） + 「$callPart」 + 「$spPart」',
+      'Active 3-Engine Combo: $putPart ($tpPart) + $callPart + Wheel ($spWithWc)',
+      '当前三引擎组合：$putPart（$tpPart） + 「$callPart」 + 「$spWithWc」',
     );
   }
 
@@ -570,6 +607,48 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     };
   }
 
+  String _humanWcModeLabel(String modeId) {
+    return switch (modeId) {
+      'wc_30d_c5s5' => w(
+        '30D +5% Cost/Spot (Rec.)',
+        '30D 双+5%（推荐）',
+      ),
+      'wc_14d_c0s2' => w(
+        '14D Breakeven+2% (Legacy)',
+        '14D 保本+2%（原基准）',
+      ),
+      _ => w('30D +5% Cost/Spot (Rec.)', '30D 双+5%（推荐）'),
+    };
+  }
+
+  String _humanWcModeShort(String modeId) {
+    return switch (modeId) {
+      'wc_30d_c5s5' => w('30D +5% WC', '30D 双+5% Call'),
+      'wc_14d_c0s2' => w('14D BE+2% WC', '14D 保本+2% Call'),
+      _ => w('30D +5% WC', '30D 双+5% Call'),
+    };
+  }
+
+  String _humanWcModeFormulaHint(
+    String modeId,
+    Map<String, dynamic> stratSummary,
+  ) {
+    final maxCyc = _numVal(stratSummary['max_wheel_cycle_days']).round();
+    final cycEn = maxCyc > 0 ? ' · max cycle ${maxCyc}d' : '';
+    final cycZh = maxCyc > 0 ? ' · 最长清债周期 $maxCyc 天' : '';
+    return switch (modeId) {
+      'wc_30d_c5s5' => w(
+        'Strike = max(1.05x Cost, 1.05x Spot) · Captures +5% rebound & richer 30D Call rent$cycEn',
+        '行权价 = max(1.05×成本, 1.05×现价) · 留足 +5% 反弹空间并多收 30D 权利金$cycZh',
+      ),
+      'wc_14d_c0s2' => w(
+        'Strike = max(Cost, 1.02x Spot) · Fast breakeven call-away de-leveraging$cycEn',
+        '行权价 = max(成本, 1.02×现价) · 快速保本去杠杆$cycZh',
+      ),
+      _ => '',
+    };
+  }
+
   String _humanSpModeHint(String modeId, Map<String, dynamic> stratSummary) {
     final spN = _numVal(stratSummary['sp_trades_count']).round();
     final winPct = _numVal(stratSummary['sp_win_rate_pct']);
@@ -581,22 +660,29 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final marginInt = _numVal(stratSummary['margin_interest_usd']);
     final maxLev = _numVal(stratSummary['max_gross_stock_lev'], 1.0);
     final calmar = _numVal(stratSummary['calmar']);
+    final is30d = selectedWcMode != 'wc_14d_c0s2';
+    final wcRuleEn = is30d
+        ? '30D +5% Wheel Call max(1.05*K_assign, 1.05*S)'
+        : '${modeId == 'sp_10d_vixf' ? '10D' : '14D'} Breakeven+2% Wheel Call max(K_assign, 1.02*S)';
+    final wcRuleZh = is30d
+        ? '接货反向卖 30D 双+5% Call 去杠杆'
+        : '接货反向卖 ${modeId == 'sp_10d_vixf' ? '10D' : '14D'} 保本+2% Call 去杠杆';
     return switch (modeId) {
       'sp_off' => w(
         'Engine 3 OFF · 0 margin debt, max stock exposure strictly 1.00x',
         '第三引擎关闭 · 0 融资负债、0 利息，股票总敞口严格 1.00x',
       ),
       'sp_14d_cap10' => w(
-        'VIX/3M >= 1.00 sells 14D 5% OTM Put (<= 10% equity cap) + Reverse Wheel Call max(K_assign, 1.02*S) -> $spN puts (${winPct.toStringAsFixed(1)}% win, $spAsgn assigned), $wcN wheel calls ($wcCalled called away), prem ${_fmtUsd(spPrem + wcPrem, signed: true)}, 12Y IBKR interest ${_fmtUsdCents(marginInt)}, max stock lev ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
-        'VIX/3M ≥ 1.00 卖 14D 5% OTM Put（名义严控 ≤ 10% 净值）+ 接货反向卖 14D 保本 Call 去杠杆：共 $spN 笔卖 Put（胜率 ${winPct.toStringAsFixed(1)}% · 接货 $spAsgn 次）+ $wcN 笔 Wheel Call（被 Call 走 $wcCalled 次），收租 ${_fmtUsd(spPrem + wcPrem, signed: true)} · 12 年 IBKR 融资总利息仅 ${_fmtUsdCents(marginInt)} · 峰值股票敞口 ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
+        'VIX/3M >= 1.00 sells 14D 5% OTM Put (<= 10% equity cap) + $wcRuleEn -> $spN puts (${winPct.toStringAsFixed(1)}% win, $spAsgn assigned), $wcN wheel calls ($wcCalled called away), prem ${_fmtUsd(spPrem + wcPrem, signed: true)}, 12Y IBKR interest ${_fmtUsdCents(marginInt)}, max stock lev ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
+        'VIX/3M ≥ 1.00 卖 14D 5% OTM Put（名义严控 ≤ 10% 净值）+ $wcRuleZh：共 $spN 笔卖 Put（胜率 ${winPct.toStringAsFixed(1)}% · 接货 $spAsgn 次）+ $wcN 笔 Wheel Call（被 Call 走 $wcCalled 次），收租 ${_fmtUsd(spPrem + wcPrem, signed: true)} · 12 年 IBKR 融资总利息仅 ${_fmtUsdCents(marginInt)} · 峰值股票敞口 ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
       ),
       'sp_10d_vixf' => w(
-        'Requires VIX/3M >= 1.00 AND daily VIX falling (panic cresting) -> sells 10D 5% OTM Put (<= 20% cap) + Reverse Wheel -> $spN puts (${winPct.toStringAsFixed(1)}% win, $spAsgn assigned), $wcN wheel calls ($wcCalled called away), prem ${_fmtUsd(spPrem + wcPrem, signed: true)}, 12Y IBKR interest ${_fmtUsdCents(marginInt)}, max stock lev ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
-        '要求 VIX/3M ≥ 1.00 且当日 VIX 较前日回落（恐慌见顶拐头）才卖 10D 5% OTM Put（≤ 20% 帽）+ 接货反向 Wheel：共 $spN 笔卖 Put（胜率 ${winPct.toStringAsFixed(1)}% · 接货 $spAsgn 次）+ $wcN 笔 Wheel Call（被 Call 走 $wcCalled 次），收租 ${_fmtUsd(spPrem + wcPrem, signed: true)} · 12 年总利息仅 ${_fmtUsdCents(marginInt)} · 峰值敞口 ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
+        'Requires VIX/3M >= 1.00 AND daily VIX falling (panic cresting) -> sells 10D 5% OTM Put (<= 20% cap) + $wcRuleEn -> $spN puts (${winPct.toStringAsFixed(1)}% win, $spAsgn assigned), $wcN wheel calls ($wcCalled called away), prem ${_fmtUsd(spPrem + wcPrem, signed: true)}, 12Y IBKR interest ${_fmtUsdCents(marginInt)}, max stock lev ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
+        '要求 VIX/3M ≥ 1.00 且当日 VIX 较前日回落（恐慌见顶拐头）才卖 10D 5% OTM Put（≤ 20% 帽）+ $wcRuleZh：共 $spN 笔卖 Put（胜率 ${winPct.toStringAsFixed(1)}% · 接货 $spAsgn 次）+ $wcN 笔 Wheel Call（被 Call 走 $wcCalled 次），收租 ${_fmtUsd(spPrem + wcPrem, signed: true)} · 12 年总利息仅 ${_fmtUsdCents(marginInt)} · 峰值敞口 ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
       ),
       'sp_14d_unf' => w(
-        'Sells 14D 5% OTM Put whenever VIX/3M >= 1.00 (<= 20% equity cap) + Reverse Wheel -> $spN puts (${winPct.toStringAsFixed(1)}% win, $spAsgn assigned), $wcN wheel calls ($wcCalled called away), prem ${_fmtUsd(spPrem + wcPrem, signed: true)}, 12Y IBKR interest ${_fmtUsdCents(marginInt)}, max stock lev ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
-        '只要 VIX/3M ≥ 1.00 即卖 14D 5% OTM Put（≤ 20% 名义帽）+ 接货反向 Wheel：共 $spN 笔卖 Put（胜率 ${winPct.toStringAsFixed(1)}% · 接货 $spAsgn 次）+ $wcN 笔 Wheel Call（被 Call 走 $wcCalled 次），收租 ${_fmtUsd(spPrem + wcPrem, signed: true)} · 12 年总利息 ${_fmtUsdCents(marginInt)} · 峰值敞口 ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
+        'Sells 14D 5% OTM Put whenever VIX/3M >= 1.00 (<= 20% equity cap) + $wcRuleEn -> $spN puts (${winPct.toStringAsFixed(1)}% win, $spAsgn assigned), $wcN wheel calls ($wcCalled called away), prem ${_fmtUsd(spPrem + wcPrem, signed: true)}, 12Y IBKR interest ${_fmtUsdCents(marginInt)}, max stock lev ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
+        '只要 VIX/3M ≥ 1.00 即卖 14D 5% OTM Put（≤ 20% 名义帽）+ $wcRuleZh：共 $spN 笔卖 Put（胜率 ${winPct.toStringAsFixed(1)}% · 接货 $spAsgn 次）+ $wcN 笔 Wheel Call（被 Call 走 $wcCalled 次），收租 ${_fmtUsd(spPrem + wcPrem, signed: true)} · 12 年总利息 ${_fmtUsdCents(marginInt)} · 峰值敞口 ${maxLev.toStringAsFixed(2)}x · Calmar ${calmar.toStringAsFixed(3)}',
       ),
       _ => '',
     };
@@ -1264,8 +1350,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               ),
               Text(
                 w(
-                  'Take-Profit: ${_humanTpModeLabel(selectedTpMode)}${selectedCcMode != 'cc_off' ? ' · CC: ${_humanCcModeLabel(selectedCcMode)}' : ''}${selectedSpMode != 'sp_off' ? ' · Wheel: ${_humanSpModeLabel(selectedSpMode)}' : ''}',
-                  '止盈：${_humanTpModeLabel(selectedTpMode)}${selectedCcMode != 'cc_off' ? ' · 卖 Call：${_humanCcModeLabel(selectedCcMode)}' : ''}${selectedSpMode != 'sp_off' ? ' · 卖 Put Wheel：${_humanSpModeLabel(selectedSpMode)}' : ''}',
+                  'Take-Profit: ${_humanTpModeLabel(selectedTpMode)}${selectedCcMode != 'cc_off' ? ' · CC: ${_humanCcModeLabel(selectedCcMode)}' : ''}${selectedSpMode != 'sp_off' ? ' · Wheel: ${_humanSpModeLabel(selectedSpMode)} (${_humanWcModeShort(selectedWcMode)})' : ''}',
+                  '止盈：${_humanTpModeLabel(selectedTpMode)}${selectedCcMode != 'cc_off' ? ' · 卖 Call：${_humanCcModeLabel(selectedCcMode)}' : ''}${selectedSpMode != 'sp_off' ? ' · 卖 Put Wheel：${_humanSpModeLabel(selectedSpMode)}（${_humanWcModeShort(selectedWcMode)}）' : ''}',
                 ),
                 style: TextStyle(
                   color: p.muted,
@@ -1390,8 +1476,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     child: Text(
                       enabled
                           ? w(
-                              'Engine 3 Live (${_humanSpModeLabel(selectedSpMode)}): $badgeText',
-                              '第三引擎实盘状态（${_humanSpModeLabel(selectedSpMode)}）：$badgeText',
+                              'Engine 3 Live (${_humanSpModeLabel(selectedSpMode)} · ${_humanWcModeShort(selectedWcMode)}): $badgeText',
+                              '第三引擎实盘状态（${_humanSpModeLabel(selectedSpMode)} · ${_humanWcModeShort(selectedWcMode)}）：$badgeText',
                             )
                           : badgeText,
                       style: TextStyle(
@@ -2094,6 +2180,31 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               for (final sid in _spModeIds) _buildCalmSpModeTab(sid),
             ],
           ),
+          if (selectedSpMode != 'sp_off') ...[
+            const SizedBox(height: 8),
+            Wrap(
+              key: const ValueKey('crisis-wc-mode-bar'),
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  w('Wheel Call:', 'Wheel Call 出场：'),
+                  style: TextStyle(
+                    color: p.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                for (final wid in _wcModeIds) _buildCalmWcModeTab(wid),
+                Text(
+                  _humanWcModeFormulaHint(selectedWcMode, stratSummary),
+                  key: const ValueKey('crisis-wc-mode-hint'),
+                  style: TextStyle(color: p.muted, fontSize: 11.5, height: 1.35),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 6),
           Text(
             _humanSpModeHint(selectedSpMode, stratSummary),
@@ -2821,6 +2932,35 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         ),
         child: Text(
           _humanSpModeLabel(modeId),
+          style: TextStyle(
+            color: active ? p.text : p.muted,
+            fontSize: 12,
+            fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalmWcModeTab(String modeId) {
+    final active = selectedWcMode == modeId;
+    return InkWell(
+      key: ValueKey('crisis-wc-mode-pill-$modeId'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _selectWcMode(modeId),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5.5),
+        decoration: BoxDecoration(
+          color: active
+              ? _emerald.withValues(alpha: 0.14)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: active ? _emerald.withValues(alpha: 0.65) : p.border,
+          ),
+        ),
+        child: Text(
+          _humanWcModeLabel(modeId),
           style: TextStyle(
             color: active ? p.text : p.muted,
             fontSize: 12,

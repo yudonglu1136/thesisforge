@@ -121,14 +121,19 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       final tpMode = qp['tpMode'] ?? raw['default_tp_mode'] ?? 'layered_itm';
       final ccMode = qp['ccMode'] ?? raw['default_cc_mode'] ?? 'cc_off';
       final spMode = qp['spMode'] ?? raw['default_sp_mode'] ?? 'sp_off';
+      final defaultWc = (raw['default_wc_mode'] ?? 'wc_30d_c5s5').toString();
+      final wcMode = (qp['wcMode'] ?? defaultWc).toString();
       final modeBundles = raw['mode_bundles'] as Map<String, dynamic>?;
       final tpModes = raw['tp_modes'] as Map<String, dynamic>?;
       final bundleKey = spMode == 'sp_off'
           ? '${tpMode}__$ccMode'
-          : '${tpMode}__${ccMode}__$spMode';
+          : (wcMode == defaultWc
+                ? '${tpMode}__${ccMode}__$spMode'
+                : '${tpMode}__${ccMode}__${spMode}__$wcMode');
       final dynamic rawBundle =
           (modeBundles != null
               ? (modeBundles[bundleKey] ??
+                    modeBundles['${tpMode}__${ccMode}__${spMode}__$wcMode'] ??
                     modeBundles['${tpMode}__${ccMode}__$spMode'])
               : null) ??
           (ccMode == 'cc_off' && spMode == 'sp_off' && tpModes != null
@@ -202,6 +207,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         'tp_mode': tpMode,
         'cc_mode': ccMode,
         'sp_mode': spMode,
+        'wc_mode': spMode == 'sp_off' ? defaultWc : wcMode,
         'snapshotId': 'fixture-crisis-v3-three-engine',
         'requestedAsOf': qp['asOf'] ?? raw['as_of_date'],
         'selected_strategy_id': strat,
@@ -285,6 +291,8 @@ void main() {
       expect(find.byKey(const ValueKey('crisis-slot-card-slot2')), findsOneWidget);
       expect(find.byKey(const ValueKey('crisis-sp-live-badge')), findsOneWidget);
       expect(find.byKey(const ValueKey('crisis-sp-mode-bar')), findsOneWidget);
+      // Wheel Call selector stays hidden when Engine 3 is OFF
+      expect(find.byKey(const ValueKey('crisis-wc-mode-bar')), findsNothing);
 
       await tapVisible(tester, find.byKey(const ValueKey('crisis-rules-toggle')));
       expect(find.textContaining('Execution rules:'), findsOneWidget);
@@ -340,14 +348,21 @@ void main() {
       expect(find.textContaining('Sold K='), findsWidgets);
 
       // Switch 3rd Engine (Panic Put Wheel) presets on Dual (U1 + layered_itm + cc_d12_d35):
-      // 14D 10% Cap ($1,779,823 · Calmar 0.677 · $816.85) -> 10D VIX Falling ($1,786,933 · $504.61) -> 14D Unfiltered ($1,846,992 · +43.4%) -> Off
+      // Default Wheel Call is now 30D +5% Cost/Spot (wc_30d_c5s5):
+      // - 14D 10% Cap + wc_30d_c5s5 ($1,819,738 · Calmar 0.685 · $1,481.18 · K >= $656.70)
+      // - Compare toggle to 14D Breakeven+2% (wc_14d_c0s2 -> $1,779,823 · Calmar 0.677 · $816.85 · K >= $625.43)
+      // - Switch back to wc_30d_c5s5 -> 10D VIX Falling ($1,831,563 · $1,257.35) -> 14D Unfiltered ($1,930,239 · +49.9%) -> Off
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_cap10')),
       );
-      expect(find.text('\$1,779,823'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.677'), findsWidgets);
-      expect(find.textContaining('\$816.85'), findsWidgets);
+      expect(find.byKey(const ValueKey('crisis-wc-mode-bar')), findsOneWidget);
+      expect(find.text('30D +5% Cost/Spot (Rec.)'), findsOneWidget);
+      expect(find.text('14D Breakeven+2% (Legacy)'), findsOneWidget);
+      expect(find.text('\$1,819,738'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.685'), findsWidgets);
+      expect(find.textContaining('\$1,481.18'), findsWidgets);
+      expect(find.textContaining('K >= \$656.70'), findsOneWidget);
       expect(find.text('Sell Panic Put'), findsOneWidget);
       expect(find.text('Wheel Assigned'), findsOneWidget);
       expect(find.text('Wheel Call Exit'), findsOneWidget);
@@ -357,21 +372,37 @@ void main() {
       );
       expect(find.text('Wheel Call'), findsWidgets);
 
+      // Toggle Wheel Call comparison to Legacy 14D Breakeven+2% (wc_14d_c0s2) and back
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-wc-mode-pill-wc_14d_c0s2')),
+      );
+      expect(find.text('\$1,779,823'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.677'), findsWidgets);
+      expect(find.textContaining('\$816.85'), findsWidgets);
+      expect(find.textContaining('K >= \$625.43'), findsOneWidget);
+
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-wc-mode-pill-wc_30d_c5s5')),
+      );
+      expect(find.text('\$1,819,738'), findsOneWidget);
+
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-sp-mode-pill-sp_10d_vixf')),
       );
-      expect(find.text('\$1,786,933'), findsOneWidget);
-      expect(find.textContaining('\$504.61'), findsWidgets);
+      expect(find.text('\$1,831,563'), findsOneWidget);
+      expect(find.textContaining('\$1,257.35'), findsWidgets);
 
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_unf')),
       );
-      expect(find.text('\$1,846,992'), findsOneWidget);
-      expect(find.textContaining('+43.4%'), findsWidgets);
+      expect(find.text('\$1,930,239'), findsOneWidget);
+      expect(find.textContaining('+49.8%'), findsWidgets);
 
-      // Verify Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_14d_unf -> $1,387,278)
+      // Verify Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_14d_unf -> $1,449,832 on wc_30d_c5s5, $1,387,278 on wc_14d_c0s2)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-cc-mode-pill-cc_off')),
@@ -380,7 +411,16 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-strategy-pill-NoPut_CallOnly')),
       );
+      expect(find.text('\$1,449,832'), findsOneWidget);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-wc-mode-pill-wc_14d_c0s2')),
+      );
       expect(find.text('\$1,387,278'), findsOneWidget);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-wc-mode-pill-wc_30d_c5s5')),
+      );
 
       // Restore U1 + cc_d12_d35 + sp_off so existing 2D assertions proceed unchanged
       await tapVisible(
@@ -395,6 +435,7 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-sp-mode-pill-sp_off')),
       );
+      expect(find.byKey(const ValueKey('crisis-wc-mode-bar')), findsNothing);
       expect(find.text('\$1,714,947'), findsOneWidget);
 
       await tapVisible(
@@ -617,12 +658,24 @@ void main() {
         expect(find.textContaining('+28.4%'), findsWidgets);
         expect(find.textContaining('短债'), findsNothing);
 
-        // Activate 14D 10% Cap on Chinese Desktop & Mobile (390x844) and expand Wheel Ledger to verify zero overflow
+        // Activate 14D 10% Cap on Chinese Desktop & Mobile (390x844), toggle 30D +5% <-> 14D Breakeven+2%, and expand Wheel Ledger to verify zero overflow
         await tapVisible(
           tester,
           find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_cap10')),
         );
+        expect(find.text('30D 双+5%（推荐）'), findsOneWidget);
+        expect(find.text('14D 保本+2%（原基准）'), findsOneWidget);
         expect(find.textContaining('已接货进 Wheel'), findsOneWidget);
+        expect(find.textContaining('K >= \$656.70'), findsOneWidget);
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('crisis-wc-mode-pill-wc_14d_c0s2')),
+        );
+        expect(find.textContaining('K >= \$625.43'), findsOneWidget);
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('crisis-wc-mode-pill-wc_30d_c5s5')),
+        );
         await tapVisible(
           tester,
           find.byKey(const ValueKey('crisis-sp-ledger-toggle')),
@@ -637,6 +690,65 @@ void main() {
 
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
+    },
+  );
+
+  testWidgets(
+    'Crisis Observatory honors co_wcMode deep-link initialization and emits wcMode in onSelection when Engine 3 is active',
+    (tester) async {
+      tester.view.physicalSize = const Size(1440, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final api = CrisisObservatoryFixtureApi();
+      Map<String, dynamic> latestSelection = const {};
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LanguageScope(
+            language: AppLanguage.en,
+            child: Scaffold(
+              body: SingleChildScrollView(
+                child: CrisisObservatoryPanel(
+                  api: api,
+                  palette: Palette(false),
+                  asOf: '2026-11-20',
+                  onCompany: (_) {},
+                  initialSelection: const {
+                    'strategy': 'U1_PureOptions',
+                    'tpMode': 'layered_itm',
+                    'ccMode': 'cc_d12_d35',
+                    'spMode': 'sp_14d_cap10',
+                    'wcMode': 'wc_14d_c0s2',
+                  },
+                  onSelection: (sel) => latestSelection = sel,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('\$1,779,823'), findsOneWidget);
+      expect(find.textContaining('K >= \$625.43'), findsOneWidget);
+
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-wc-mode-pill-wc_30d_c5s5')),
+      );
+      expect(find.text('\$1,819,738'), findsOneWidget);
+      expect(find.textContaining('K >= \$656.70'), findsOneWidget);
+      expect(latestSelection['spMode'], 'sp_14d_cap10');
+      expect(latestSelection['wcMode'], 'wc_30d_c5s5');
+
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-sp-mode-pill-sp_off')),
+      );
+      expect(latestSelection['spMode'], 'sp_off');
+      expect(latestSelection.containsKey('wcMode'), isFalse);
     },
   );
 }

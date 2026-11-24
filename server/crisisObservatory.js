@@ -29,12 +29,25 @@ export const CRISIS_OBSERVATORY_SP_MODES = Object.freeze([
   'sp_10d_vixf',
   'sp_14d_unf',
 ]);
+export const CRISIS_OBSERVATORY_WC_MODES = Object.freeze([
+  'wc_30d_c5s5',
+  'wc_14d_c0s2',
+]);
 
 const LEGACY_SP_MODE_ALIASES = Object.freeze({
   off: 'sp_off',
   cap10: 'sp_14d_cap10',
   vixf: 'sp_10d_vixf',
   unf: 'sp_14d_unf',
+});
+
+const LEGACY_WC_MODE_ALIASES = Object.freeze({
+  '30d': 'wc_30d_c5s5',
+  c5s5: 'wc_30d_c5s5',
+  default: 'wc_30d_c5s5',
+  '14d': 'wc_14d_c0s2',
+  c0s2: 'wc_14d_c0s2',
+  legacy: 'wc_14d_c0s2',
 });
 
 const LEGACY_CC_MODE_ALIASES = Object.freeze({
@@ -299,8 +312,11 @@ function projectArtifactForModes(
   selectedTpMode,
   selectedCcMode,
   selectedSpMode = 'sp_off',
+  selectedWcMode = 'wc_30d_c5s5',
 ) {
-  const cacheKey = `${snapshotId}:${selectedTpMode}:${selectedCcMode}:${selectedSpMode}`;
+  const effectiveWcMode = selectedWcMode || 'wc_30d_c5s5';
+  const cacheWcKey = selectedSpMode === 'sp_off' ? 'wc_30d_c5s5' : effectiveWcMode;
+  const cacheKey = `${snapshotId}:${selectedTpMode}:${selectedCcMode}:${selectedSpMode}:${cacheWcKey}`;
   const hit = projectedModeCache.get(cacheKey);
   if (hit) return hit;
 
@@ -313,7 +329,9 @@ function projectArtifactForModes(
   const bundleKey =
     selectedSpMode === 'sp_off'
       ? `${selectedTpMode}__${selectedCcMode}`
-      : `${selectedTpMode}__${selectedCcMode}__${selectedSpMode}`;
+      : effectiveWcMode === 'wc_30d_c5s5'
+        ? `${selectedTpMode}__${selectedCcMode}__${selectedSpMode}`
+        : `${selectedTpMode}__${selectedCcMode}__${selectedSpMode}__${effectiveWcMode}`;
   const bundle =
     modeBundles?.[bundleKey] ??
     modeBundles?.[`${selectedTpMode}__${selectedCcMode}__${selectedSpMode}`] ??
@@ -327,6 +345,8 @@ function projectArtifactForModes(
       default_cc_mode: data.default_cc_mode ?? 'cc_off',
       sp_mode: data.sp_mode ?? 'sp_off',
       default_sp_mode: data.default_sp_mode ?? 'sp_off',
+      wc_mode: effectiveWcMode,
+      default_wc_mode: data.default_wc_mode ?? 'wc_30d_c5s5',
     };
     projectedModeCache.set(cacheKey, fallback);
     return fallback;
@@ -380,6 +400,9 @@ function projectArtifactForModes(
     sp_mode: selectedSpMode,
     default_sp_mode: data.default_sp_mode ?? 'sp_off',
     sp_modes_meta: data.sp_modes_meta ?? [],
+    wc_mode: effectiveWcMode,
+    default_wc_mode: data.default_wc_mode ?? 'wc_30d_c5s5',
+    wc_modes_meta: data.wc_modes_meta ?? [],
     live_signal_state: bundle.live_signal_state ?? data.live_signal_state,
     live_signal_states_by_strategy:
       bundle.live_signal_states_by_strategy ?? data.live_signal_states_by_strategy ?? {},
@@ -662,9 +685,18 @@ function maskSimpleOptionLedgerAtCutoff(ledger, asOfDate) {
   return out;
 }
 
-function buildCutoffSpState(slicedSeries, spMode, maskedSpLedger, baseSpState) {
+function buildCutoffSpState(
+  slicedSeries,
+  spMode,
+  wcMode,
+  maskedSpLedger,
+  baseSpState,
+  artifactAsOfDate = null,
+) {
   const lastBar = slicedSeries[slicedSeries.length - 1];
   const prevBar = slicedSeries.length >= 2 ? slicedSeries[slicedSeries.length - 2] : lastBar;
+  const effDate = lastBar.date;
+  const spotCl = Number(lastBar.qqq_close ?? 0);
   const vix = Number(lastBar.vix ?? 0);
   const prevVix = Number(prevBar.vix ?? vix);
   const vixChg = vix - prevVix;
@@ -678,6 +710,12 @@ function buildCutoffSpState(slicedSeries, spMode, maskedSpLedger, baseSpState) {
   const reqFall = spMode === 'sp_10d_vixf';
   const modeGate = reqFall ? vixfGate : unfGate;
   const dteLbl = spMode === 'sp_10d_vixf' ? '10D' : '14D';
+  const effWcMode = wcMode || 'wc_30d_c5s5';
+  const wcDteLbl = effWcMode === 'wc_30d_c5s5' ? '30D' : dteLbl;
+  const wcFormulaZh =
+    effWcMode === 'wc_30d_c5s5' ? 'max(1.05×成本, 1.05×现价)' : 'max(成本, 1.02×现价)';
+  const wcFormulaEn =
+    effWcMode === 'wc_30d_c5s5' ? 'max(1.05x Cost, 1.05x Spot)' : 'max(Cost, 1.02x Spot)';
   const capPct = spMode === 'sp_14d_cap10' ? 10 : 20;
 
   const openSpLeg =
@@ -693,9 +731,31 @@ function buildCutoffSpState(slicedSeries, spMode, maskedSpLedger, baseSpState) {
         ) ?? null
       : null;
 
+  let unclosedAssignLeg = null;
+  if (enabled && !openSpLeg && !openWcLeg) {
+    const calledAwayCycles = new Set(
+      (maskedSpLedger ?? [])
+        .filter(
+          x => x.leg_type === 'wheel_call' && x.exit_reason === 'called_away' && x.exit_date <= effDate,
+        )
+        .map(x => x.cycle_id),
+    );
+    const assigns = (maskedSpLedger ?? []).filter(
+      x =>
+        x.leg_type === 'short_put' &&
+        x.exit_reason === 'assigned_wheel' &&
+        x.exit_date <= effDate &&
+        !calledAwayCycles.has(x.cycle_id),
+    );
+    if (assigns.length > 0) {
+      unclosedAssignLeg = assigns[assigns.length - 1];
+    }
+  }
+
   const chgStr = `${vixChg >= 0 ? '+' : ''}${vixChg.toFixed(2)}`;
   let positionState = 'disabled';
   let statusTone = 'neutral';
+  let minNextWcStrike = null;
   let badgeEn;
   let badgeZh;
   if (!enabled) {
@@ -708,8 +768,36 @@ function buildCutoffSpState(slicedSeries, spMode, maskedSpLedger, baseSpState) {
   } else if (openWcLeg) {
     positionState = 'wheel_call_open';
     statusTone = 'wheel';
-    badgeZh = `反向 Wheel 持仓中（${Math.round(Number(openWcLeg.shares))}股）· 已卖 ${dteLbl} Call K=$${Number(openWcLeg.strike).toFixed(2)}`;
-    badgeEn = `Wheel Call Active (${Math.round(Number(openWcLeg.shares))} sh) · Short ${dteLbl} Call K=$${Number(openWcLeg.strike).toFixed(2)}`;
+    badgeZh = `反向 Wheel 持仓中（${Math.round(Number(openWcLeg.shares))}股）· 已卖 ${wcDteLbl} Call K=$${Number(openWcLeg.strike).toFixed(2)}`;
+    badgeEn = `Wheel Call Active (${Math.round(Number(openWcLeg.shares))} sh) · Short ${wcDteLbl} Call K=$${Number(openWcLeg.strike).toFixed(2)}`;
+  } else if (unclosedAssignLeg) {
+    const asgnSh = Number(unclosedAssignLeg.shares ?? 0);
+    const asgnK = Number(unclosedAssignLeg.strike ?? 0);
+    const isPostLive = artifactAsOfDate && effDate > artifactAsOfDate && effDate > unclosedAssignLeg.exit_date;
+    if (isPostLive) {
+      const firstPostBar =
+        slicedSeries.find(b => b.date > unclosedAssignLeg.exit_date) ?? lastBar;
+      const openPxEst = Number(firstPostBar.qqq_close ?? spotCl);
+      const estKc =
+        effWcMode === 'wc_30d_c5s5'
+          ? Math.max(asgnK * 1.05, openPxEst * 1.05)
+          : Math.max(asgnK, openPxEst * 1.02);
+      positionState = 'wheel_call_open';
+      statusTone = 'wheel';
+      minNextWcStrike = r2(estKc);
+      badgeZh = `反向 Wheel 持仓中（${Math.round(asgnSh)}股 @ $${asgnK.toFixed(2)}）· 已卖 ${wcDteLbl} Call K=$${estKc.toFixed(2)}（${wcFormulaZh}）`;
+      badgeEn = `Wheel Call Active (${Math.round(asgnSh)} sh @ $${asgnK.toFixed(2)}) · Short ${wcDteLbl} Call K=$${estKc.toFixed(2)} (${wcFormulaEn})`;
+    } else {
+      const minKc =
+        effWcMode === 'wc_30d_c5s5'
+          ? Math.max(asgnK * 1.05, spotCl * 1.05)
+          : Math.max(asgnK, spotCl * 1.02);
+      positionState = 'wheel_assigned_wc_armed';
+      statusTone = 'wheel';
+      minNextWcStrike = r2(minKc);
+      badgeZh = `已接货进 Wheel（${Math.round(asgnSh)}股 @ $${asgnK.toFixed(2)}） -> 次日开盘卖 ${wcDteLbl} Wheel Call（K >= $${minKc.toFixed(2)}，${wcFormulaZh}）`;
+      badgeEn = `Assigned into Wheel (${Math.round(asgnSh)} sh @ $${asgnK.toFixed(2)}) -> Next Open Sell ${wcDteLbl} Wheel Call (K >= $${minKc.toFixed(2)}, ${wcFormulaEn})`;
+    }
   } else if (openSpLeg) {
     positionState = 'short_put_open';
     statusTone = 'active';
@@ -737,6 +825,7 @@ function buildCutoffSpState(slicedSeries, spMode, maskedSpLedger, baseSpState) {
     ...(baseSpState ?? {}),
     as_of_date: lastBar.date,
     sp_mode: spMode,
+    wc_mode: effWcMode,
     enabled,
     vix: r2(vix),
     prev_vix: r2(prevVix),
@@ -750,6 +839,7 @@ function buildCutoffSpState(slicedSeries, spMode, maskedSpLedger, baseSpState) {
     mode_entry_gate_met: modeGate,
     position_state: positionState,
     status_tone: statusTone,
+    min_next_wc_strike: minNextWcStrike,
     badge_en: badgeEn,
     badge_zh: badgeZh,
   };
@@ -761,6 +851,7 @@ export function loadCrisisObservatoryDashboard({
   tpMode = null,
   ccMode = null,
   spMode = null,
+  wcMode = null,
   snapshotId: expectedSnapshotId = null,
   file = defaultFile,
   extraDailyBars = null,
@@ -784,7 +875,19 @@ export function loadCrisisObservatoryDashboard({
   if (!CRISIS_OBSERVATORY_SP_MODES.includes(rawSpMode)) {
     fail('invalid_crisis_observatory_sp_mode', 400);
   }
-  const data = projectArtifactForModes(rawData, snapshotId, rawTpMode, rawCcMode, rawSpMode);
+  const requestedWcMode = wcMode ? String(wcMode).trim() : rawData.default_wc_mode ?? 'wc_30d_c5s5';
+  const rawWcMode = LEGACY_WC_MODE_ALIASES[requestedWcMode] ?? requestedWcMode;
+  if (!CRISIS_OBSERVATORY_WC_MODES.includes(rawWcMode)) {
+    fail('invalid_crisis_observatory_wc_mode', 400);
+  }
+  const data = projectArtifactForModes(
+    rawData,
+    snapshotId,
+    rawTpMode,
+    rawCcMode,
+    rawSpMode,
+    rawWcMode,
+  );
 
   const rawStrategy = strategy
     ? String(strategy).trim()
@@ -815,6 +918,7 @@ export function loadCrisisObservatoryDashboard({
       tp_mode: rawTpMode,
       cc_mode: rawCcMode,
       sp_mode: rawSpMode,
+      wc_mode: rawWcMode,
       live_signal_state:
         data.live_signal_states_by_strategy?.[ledgerStrategy] ?? data.live_signal_state,
       live_sp_state:
@@ -882,8 +986,10 @@ export function loadCrisisObservatoryDashboard({
     cutoffSpStatesByStrategy[sid] = buildCutoffSpState(
       slicedSeries,
       rawSpMode,
+      rawWcMode,
       maskedSpLedgersByStrategy[sid] ?? [],
       baseSpSt,
+      data.as_of_date,
     );
   }
   const openU1Tranches = openTranchesForStrat('U1_PureOptions');
@@ -968,6 +1074,7 @@ export function loadCrisisObservatoryDashboard({
     tp_mode: rawTpMode,
     cc_mode: rawCcMode,
     sp_mode: rawSpMode,
+    wc_mode: rawWcMode,
     evaluation_window: {
       ...data.evaluation_window,
       end: effDate,
@@ -980,7 +1087,14 @@ export function loadCrisisObservatoryDashboard({
     live_signal_states_by_strategy: cutoffStatesByStrategy,
     live_sp_state:
       cutoffSpStatesByStrategy[ledgerStrategy] ??
-      buildCutoffSpState(slicedSeries, rawSpMode, maskedSpLedgersByStrategy[ledgerStrategy] ?? [], data.live_sp_state),
+      buildCutoffSpState(
+        slicedSeries,
+        rawSpMode,
+        rawWcMode,
+        maskedSpLedgersByStrategy[ledgerStrategy] ?? [],
+        data.live_sp_state,
+        data.as_of_date,
+      ),
     live_sp_states_by_strategy: cutoffSpStatesByStrategy,
     six_crisis_lights: lightsAtCutoff,
     ad_line_signal: adSignal,
@@ -1059,6 +1173,7 @@ export async function loadCrisisObservatoryDashboardLive({
   tpMode = null,
   ccMode = null,
   spMode = null,
+  wcMode = null,
   snapshotId = null,
   file = defaultFile,
   fetchLiveBars = null,
@@ -1082,6 +1197,7 @@ export async function loadCrisisObservatoryDashboardLive({
     tpMode,
     ccMode,
     spMode,
+    wcMode,
     snapshotId,
     file,
     extraDailyBars,

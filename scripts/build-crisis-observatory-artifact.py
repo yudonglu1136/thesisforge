@@ -44,9 +44,35 @@ STOCK_REBAL_FEE = 0.0003
 DEFAULT_TP_MODE = "layered_itm"
 DEFAULT_CC_MODE = "cc_off"
 DEFAULT_SP_MODE = "sp_off"
+DEFAULT_WC_MODE = "wc_30d_c5s5"
 MARGIN_SPREAD = 0.015
 OPT_COMM_PER_SH = 0.0065
 MIN_OPT_BID = 0.05
+
+WC_MODE_SPECS: list[dict[str, Any]] = [
+    {
+        "id": "wc_30d_c5s5",
+        "label_en": "30D +5% Cost/Spot (Rec)",
+        "label_zh": "30D 双+5%（推荐）",
+        "short_en": "30D +5% Cost/Spot",
+        "short_zh": "30D 双+5%",
+        "formula_en": "max(1.05x Cost, 1.05x Spot)",
+        "formula_zh": "max(1.05×成本, 1.05×现价)",
+        "summary_en": "When assigned, sells 30D Reverse Wheel Call at max(1.05*K_assign, 1.05*S) — captures +5% post-crash V-rebound before clearing margin debt within <= 111d (Calmar 0.685 on 10% Cap, $1,930,239 on 20% Cap).",
+        "summary_zh": "接货后卖 30D 反向 Wheel Call，行权价 max(1.05×成本, 1.05×现价)——锁住灾后 +5% V 反利润且最长 111 天清债去杠杆（10%帽 Calmar 升至 0.685，20%帽终值达 $1,930,239）。",
+    },
+    {
+        "id": "wc_14d_c0s2",
+        "label_en": "14D Breakeven+2% (Legacy)",
+        "label_zh": "14D 保本+2%（原基准）",
+        "short_en": "14D Breakeven+2%",
+        "short_zh": "14D 保本+2%",
+        "formula_en": "max(Cost, 1.02x Spot)",
+        "formula_zh": "max(成本, 1.02×现价)",
+        "summary_en": "Legacy fast-turnover exit: sells 14D (or 10D) Wheel Call at max(K_assign, 1.02*S) for fastest debt clearance ($817 12-yr interest on 10% Cap).",
+        "summary_zh": "原快周转基准：按 max(成本, 1.02×现价) 卖 14D（或 10D）保本上移 Call，清债最快（10%帽 12 年总利息仅 $817）。",
+    },
+]
 
 SP_MODE_SPECS: list[dict[str, Any]] = [
     {
@@ -64,8 +90,8 @@ SP_MODE_SPECS: list[dict[str, Any]] = [
         "label_zh": "14D 10%帽（Calmar冠军 · 推荐）",
         "short_en": "14D 10% Cap (Calmar #1)",
         "short_zh": "14D 10%帽（Calmar冠军）",
-        "summary_en": "Sells 14D 5% OTM Put on VIX/VIX3M >= 1.00 capped at <= 10% equity; if assigned, sells 14D Wheel Call at max(K_assign, 1.02*S) until called away -> Calmar 0.677, MaxDD -29.82%, $817 12-yr interest.",
-        "summary_zh": "VIX/VIX3M >= 1.00 卖 14D 5% OTM Put（名义严控 <= 10% 净值）；若接货立即按 max(接货价, 现价+2%) 卖 14D Wheel Call 直至被 Call 走去杠杆——Calmar 升至 0.677 全场第一、最大回撤压至 -29.82%、12 年融资利息仅 $817。",
+        "summary_en": "Sells 14D 5% OTM Put on VIX/VIX3M >= 1.00 capped at <= 10% equity; if assigned, sells 30D Wheel Call at max(1.05*K_assign, 1.05*S) until called away -> $1,819,738 NAV, Calmar 0.685, MaxDD -29.82%, $1,481 12-yr interest.",
+        "summary_zh": "VIX/VIX3M >= 1.00 卖 14D 5% OTM Put（名义严控 <= 10% 净值）；若接货默认按 max(1.05×成本, 1.05×现价) 卖 30D Wheel Call 直至被 Call 走清债——终值 $1,819,738、Calmar 0.685 全场第一、最大回撤 -29.82%。",
     },
     {
         "id": "sp_10d_vixf",
@@ -73,8 +99,8 @@ SP_MODE_SPECS: list[dict[str, Any]] = [
         "label_zh": "10D VIX回落（20%帽）",
         "short_en": "10D VIX Falling (20%)",
         "short_zh": "10D VIX回落（20%帽）",
-        "summary_en": "Requires VIX/VIX3M >= 1.00 AND VIX[t] < VIX[t-1] (panic cresting) before selling 10D 5% OTM Put (<= 20% cap) + Reverse Wheel -> 29 trades, 4 assignments, only $505 12-yr interest.",
-        "summary_zh": "要求 VIX/VIX3M >= 1.00 且当日 VIX 回落（VIX[t] < VIX[t-1] 恐慌见顶拐头）才卖 10D 5% OTM Put（<= 20% 名义帽）+ 接货反向 Wheel——12 年仅 29 笔、4 次接货、总融资利息仅 $505。",
+        "summary_en": "Requires VIX/VIX3M >= 1.00 AND VIX[t] < VIX[t-1] (panic cresting) before selling 10D 5% OTM Put (<= 20% cap) + Reverse Wheel -> $1,831,563 NAV, 27 trades, 3 assignments, $1,257 12-yr interest.",
+        "summary_zh": "要求 VIX/VIX3M >= 1.00 且当日 VIX 回落（VIX[t] < VIX[t-1] 恐慌见顶拐头）才卖 10D 5% OTM Put（<= 20% 名义帽）+ 反向 Wheel——终值 $1,831,563，12 年仅 27 笔、3 次接货。",
     },
     {
         "id": "sp_14d_unf",
@@ -82,8 +108,8 @@ SP_MODE_SPECS: list[dict[str, Any]] = [
         "label_zh": "14D 无过滤（20%帽 · 收益冠军）",
         "short_en": "14D Unfiltered (20%)",
         "short_zh": "14D 无过滤（20%帽）",
-        "summary_en": "Sells 14D 5% OTM Put whenever VIX/VIX3M >= 1.00 capped at <= 20% equity + Reverse Wheel -> $1,846,992 terminal NAV (+43.37% extra QQQ shares), 89.1% win rate.",
-        "summary_zh": "只要 VIX/VIX3M >= 1.00 即卖 14D 5% OTM Put（<= 20% 名义帽）+ 接货反向 Wheel——终值达 $1,846,992 全场最高（多攒 +43.37% QQQ 份额），46 笔胜率 89.1%。",
+        "summary_en": "Sells 14D 5% OTM Put whenever VIX/VIX3M >= 1.00 capped at <= 20% equity + 30D +5% Reverse Wheel -> $1,930,239 terminal NAV (+49.83% extra QQQ shares), 21.02% CAGR.",
+        "summary_zh": "只要 VIX/VIX3M >= 1.00 即卖 14D 5% OTM Put（<= 20% 名义帽）+ 30D 双+5% 反向 Wheel——终值达 $1,930,239 全场最高（多攒 +49.83% QQQ 份额），年化 21.02%。",
     },
 ]
 
@@ -545,6 +571,7 @@ def simulate_strategy(
     tp_mode: str = DEFAULT_TP_MODE,
     cc_mode: str = DEFAULT_CC_MODE,
     sp_mode: str = DEFAULT_SP_MODE,
+    wc_mode: str = DEFAULT_WC_MODE,
     slow_bear_overlay: bool = False,
     slip: float = DEFAULT_SLIPPAGE,
 ) -> dict[str, Any]:
@@ -628,7 +655,9 @@ def simulate_strategy(
     days_short_put_open = 0
     max_gross_stock_lev = 1.0
     max_notional_lev = 1.0
+    max_wheel_cycle_days = 0
     cur_cycle_id = 0
+    cur_cycle_start_dt: datetime.date | None = None
 
     def _sweep_sp_cash_to_core(px: float) -> None:
         nonlocal core_shares, sp_cash
@@ -1137,9 +1166,21 @@ def simulate_strategy(
             pw = pending_wc
             pending_wc = None
             vxn_wc = max(10.0, pw["vxn"] - 0.45 * (op / pw["close"] - 1.0) * 100.0)
-            exp_date_wc, exp_dt_wc, act_dte_wc = _pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
+            if wc_mode == "wc_30d_c5s5":
+                target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
+                pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
+                if pos_wc < len(dates):
+                    exp_date_wc, exp_dt_wc = dates[pos_wc], dt_objs[pos_wc]
+                else:
+                    exp_date_wc, exp_dt_wc = target_wc_dt.isoformat(), target_wc_dt
+                act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
+                kc_wc = max(assigned_cost_k * 1.05, op * 1.05)
+            elif wc_mode == "wc_14d_c0s2":
+                exp_date_wc, exp_dt_wc, act_dte_wc = _pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
+                kc_wc = max(assigned_cost_k, op * 1.02)
+            else:
+                raise ValueError(f"Unknown wc_mode: {wc_mode}")
             t_wc = act_dte_wc / 365.0
-            kc_wc = max(assigned_cost_k, op * 1.02)
             c_bid_wc, _ = _opt_exec_price_sp(op, kc_wc, t_wc, pw["r"], pw["q"], vxn_wc, coeffs, "call", "sell", slip)
             if c_bid_wc >= MIN_OPT_BID:
                 prem_wc = assigned_shares * c_bid_wc
@@ -1178,6 +1219,7 @@ def simulate_strategy(
                 sp_cash += prem_sp
                 sp_tid += 1
                 cur_cycle_id = sp_tid
+                cur_cycle_start_dt = dt_objs[i]
                 active_sp = {
                     "sp_id": sp_tid,
                     "cycle_id": cur_cycle_id,
@@ -1451,6 +1493,7 @@ def simulate_strategy(
                     )
                     active_sp = None
                     if assigned_shares <= 1e-6:
+                        cur_cycle_start_dt = None
                         _sweep_sp_cash_to_core(cl)
                 else:
                     assigned_shares = active_sp["shares"]
@@ -1523,6 +1566,9 @@ def simulate_strategy(
                     assigned_cost_k = 0.0
                     assigned_entry_date = ""
                     active_wc = None
+                    if cur_cycle_start_dt is not None:
+                        max_wheel_cycle_days = max(max_wheel_cycle_days, (dt_objs[i] - cur_cycle_start_dt).days)
+                        cur_cycle_start_dt = None
                     _sweep_sp_cash_to_core(cl)
                 else:
                     wc_closed_ledger.append(
@@ -1997,6 +2043,7 @@ def simulate_strategy(
     summary.update(
         {
             "sp_mode": sp_mode,
+            "wc_mode": wc_mode if sp_enabled else DEFAULT_WC_MODE,
             "sp_trades_count": len(sp_closed_ledger),
             "sp_win_rate_pct": round(sp_win_rate, 1),
             "sp_assignments_count": sp_assign_count,
@@ -2008,6 +2055,7 @@ def simulate_strategy(
             "sp_comm_usd": round(sp_comm_total, 2),
             "days_short_put_open": days_short_put_open,
             "days_levered_stock": days_levered,
+            "max_wheel_cycle_days": max_wheel_cycle_days,
             "max_gross_stock_lev": round(max_gross_stock_lev, 3),
             "max_notional_lev": round(max_notional_lev, 3),
             "end_assigned_shares": round(assigned_shares, 2),
@@ -2035,6 +2083,7 @@ def simulate_strategy(
         "sp_live_eod": {
             "enabled": sp_enabled,
             "sp_mode": sp_mode,
+            "wc_mode": wc_mode if sp_enabled else DEFAULT_WC_MODE,
             "sp_dte": sp_dte,
             "sp_max_lev": sp_max_lev,
             "require_vix_falling": sp_require_vix_falling,
@@ -3100,6 +3149,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
     def _build_live_sp_state(row: dict[str, Any], prev_row: dict[str, Any], sim_res: dict[str, Any]) -> dict[str, Any]:
         sp_eod = sim_res["sp_live_eod"]
         sp_id = str(sp_eod["sp_mode"])
+        wc_id = str(sp_eod.get("wc_mode") or DEFAULT_WC_MODE)
         enabled = bool(sp_eod["enabled"])
         vix_now = float(row["vix"])
         vix_prev = float(prev_row["vix"])
@@ -3113,12 +3163,21 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         req_fall = bool(sp_eod["require_vix_falling"])
         mode_gate = vixf_gate if req_fall else unf_gate
         dte_lbl = f"{int(sp_eod['sp_dte'])}D"
+        wc_dte_lbl = "30D" if wc_id == "wc_30d_c5s5" else dte_lbl
+        wc_formula_zh = "max(1.05×成本, 1.05×现价)" if wc_id == "wc_30d_c5s5" else "max(成本, 1.02×现价)"
+        wc_formula_en = "max(1.05x Cost, 1.05x Spot)" if wc_id == "wc_30d_c5s5" else "max(Cost, 1.02x Spot)"
         cap_pct = round(float(sp_eod["sp_max_lev"]) * 100.0)
         asgn_sh = float(sp_eod["assigned_shares"])
         asgn_k = float(sp_eod["assigned_cost_k"])
         open_sp = sp_eod["open_short_put"]
         open_wc = sp_eod["open_wheel_call"]
         lev_x = float(sp_eod["gross_stock_lev"])
+        spot_cl = float(row["close"])
+        min_kc = (
+            max(asgn_k * 1.05, spot_cl * 1.05)
+            if wc_id == "wc_30d_c5s5"
+            else max(asgn_k, spot_cl * 1.02)
+        ) if asgn_sh > 1e-6 else 0.0
 
         if not enabled:
             pos_state = "disabled"
@@ -3136,28 +3195,27 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
             tone = "wheel"
             badge_zh = (
                 f"反向 Wheel 持仓中（{asgn_sh:.0f}股 @ ${asgn_k:.2f} · 敞口 {lev_x:.2f}x）"
-                f" · 已卖 {dte_lbl} Call K=${open_wc['kc']:.2f}（剩 {open_wc['rem_dte']} 天）"
+                f" · 已卖 {wc_dte_lbl} Call K=${open_wc['kc']:.2f}（剩 {open_wc['rem_dte']} 天）"
             )
             badge_en = (
                 f"Wheel Call Active ({asgn_sh:.0f} sh @ ${asgn_k:.2f} · {lev_x:.2f}x Lev)"
-                f" · Short {dte_lbl} Call K=${open_wc['kc']:.2f} ({open_wc['rem_dte']}D left)"
+                f" · Short {wc_dte_lbl} Call K=${open_wc['kc']:.2f} ({open_wc['rem_dte']}D left)"
             )
             detail_zh = f"到期若 QQQ 高于 ${open_wc['kc']:.2f} 即自动被 Call 走清零融资负债，净盈利沉淀为永久 QQQ 份额。"
             detail_en = f"If QQQ closes above ${open_wc['kc']:.2f} at expiry, assigned stock is called away, clearing margin debt into permanent QQQ shares."
         elif asgn_sh > 1e-6:
             pos_state = "wheel_assigned_wc_armed"
             tone = "wheel"
-            min_kc = max(asgn_k, float(row["close"]) * 1.02)
             badge_zh = (
                 f"已接货进 Wheel（{asgn_sh:.0f}股 @ ${asgn_k:.2f} · 股票敞口 {lev_x:.2f}x）"
-                f" -> 次日开盘卖 {dte_lbl} Wheel Call（K >= ${min_kc:.2f}）"
+                f" -> 次日开盘卖 {wc_dte_lbl} Wheel Call（K >= ${min_kc:.2f}，{wc_formula_zh}）"
             )
             badge_en = (
                 f"Assigned into Wheel ({asgn_sh:.0f} sh @ ${asgn_k:.2f} · {lev_x:.2f}x Stock Lev)"
-                f" -> Armed: Sell {dte_lbl} Wheel Call (K >= ${min_kc:.2f}) Next Open"
+                f" -> Next Open Sell {wc_dte_lbl} Wheel Call (K >= ${min_kc:.2f}, {wc_formula_en})"
             )
-            detail_zh = f"接货期间严禁再卖新 Put（杜绝滚雪球加杠杆），按 IBKR 基准利率 +1.50% 计息并持续卖 {dte_lbl} 保本上移 Call 直至去杠杆。"
-            detail_en = f"New short puts are hard-frozen while holding assigned stock; accrues IBKR rf + 1.50% margin and sells {dte_lbl} calls at max(cost, 1.02*S) until called away."
+            detail_zh = f"接货期间严禁再卖新 Put（杜绝滚雪球加杠杆），按 IBKR 基准利率 +1.50% 计息并持续卖 {wc_dte_lbl} Wheel Call（{wc_formula_zh}）直至被 Call 走清债。"
+            detail_en = f"New short puts are hard-frozen while holding assigned stock; accrues IBKR rf + 1.50% margin and sells {wc_dte_lbl} Wheel Calls at {wc_formula_en} until called away."
         elif open_sp is not None:
             pos_state = "short_put_open"
             tone = "active"
@@ -3205,6 +3263,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         return {
             "as_of_date": row["date"],
             "sp_mode": sp_id,
+            "wc_mode": wc_id,
             "enabled": enabled,
             "vix": round(vix_now, 2),
             "prev_vix": round(vix_prev, 2),
@@ -3220,6 +3279,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
             "status_tone": tone,
             "assigned_shares": round(asgn_sh, 2),
             "assigned_cost_k": round(asgn_k, 2),
+            "min_next_wc_strike": round(min_kc, 2) if asgn_sh > 1e-6 else None,
             "sp_cash_usd": round(float(sp_eod["sp_cash_usd"]), 2),
             "gross_stock_lev": round(lev_x, 3),
             "notional_lev": round(float(sp_eod["notional_lev"]), 3),
@@ -3231,7 +3291,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
             "detail_zh": detail_zh,
         }
 
-    # Simulate Buy & Hold once (identical across all TP, CC & SP modes)
+    # Simulate Buy & Hold once (identical across all TP, CC, SP & WC modes)
     bh_def = [d for d in strategy_defs if d[0] == "BH_Pure_QQQ"][0]
     bh_sim = simulate_strategy(rows_all, coeffs, strategy_id="BH_Pure_QQQ", **bh_def[1])
     bh_summary = {**bh_sim["summary"], **bh_def[2]}
@@ -3242,6 +3302,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
     tp_modes_meta: list[dict[str, Any]] = []
     cc_modes_meta: list[dict[str, Any]] = []
     sp_modes_meta_by_id: dict[str, dict[str, Any]] = {}
+    wc_modes_meta_by_id: dict[str, dict[str, Any]] = {}
 
     static_win_keys = {
         "episode_num",
@@ -3275,153 +3336,185 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
             cc_id = cc_spec["id"]
             for sp_spec in SP_MODE_SPECS:
                 sp_id = sp_spec["id"]
-                is_default_combo = (
-                    mode_id == DEFAULT_TP_MODE
-                    and cc_id == DEFAULT_CC_MODE
-                    and sp_id == DEFAULT_SP_MODE
-                )
-                sims_m: dict[str, dict[str, Any]] = {"BH_Pure_QQQ": bh_sim}
-                summaries_m: list[dict[str, Any]] = []
-                ledgers_m: dict[str, list[dict[str, Any]]] = {}
-                cc_ledgers_m: dict[str, list[dict[str, Any]]] = {}
-                sp_ledgers_m: dict[str, list[dict[str, Any]]] = {}
-                events_m: dict[str, list[dict[str, Any]]] = {}
-                live_states_by_strat_m: dict[str, dict[str, Any]] = {}
-                live_sp_states_by_strat_m: dict[str, dict[str, Any]] = {}
-
-                for sid, sim_kw, meta in strategy_defs:
-                    if sid == "BH_Pure_QQQ":
-                        summaries_m.append(bh_summary)
-                        continue
-                    res = simulate_strategy(
-                        rows_all,
-                        coeffs,
-                        strategy_id=sid,
-                        tp_mode=mode_id,
-                        cc_mode=cc_id,
-                        sp_mode=sp_id,
-                        **sim_kw,
+                wc_specs_for_sp = [WC_MODE_SPECS[0]] if sp_id == DEFAULT_SP_MODE else WC_MODE_SPECS
+                for wc_spec in wc_specs_for_sp:
+                    wc_id = wc_spec["id"]
+                    is_default_combo = (
+                        mode_id == DEFAULT_TP_MODE
+                        and cc_id == DEFAULT_CC_MODE
+                        and sp_id == DEFAULT_SP_MODE
+                        and wc_id == DEFAULT_WC_MODE
                     )
-                    sims_m[sid] = res
-                    summaries_m.append({**res["summary"], **meta})
-                    ledgers_m[sid] = res["ledger"] if is_default_combo else _pack_ledger_rows(res["ledger"])
-                    if cc_id != DEFAULT_CC_MODE:
-                        cc_ledgers_m[sid] = _pack_ledger_rows(res["cc_ledger"])
-                    elif is_default_combo:
-                        cc_ledgers_m[sid] = []
-                    if sp_id != DEFAULT_SP_MODE:
-                        sp_ledgers_m[sid] = _pack_ledger_rows(res["sp_ledger"])
-                    elif is_default_combo:
-                        sp_ledgers_m[sid] = []
-                    if is_default_combo or sid == "U1_PureOptions":
-                        events_m[sid] = build_unified_events(sid, res["ledger"], [])
-                    live_states_by_strat_m[sid] = build_live_signal_state(last_row, res, tp_mode=mode_id)
-                    live_sp_states_by_strat_m[sid] = _build_live_sp_state(last_row, prev_eval_row, res)
+                    sims_m: dict[str, dict[str, Any]] = {"BH_Pure_QQQ": bh_sim}
+                    summaries_m: list[dict[str, Any]] = []
+                    ledgers_m: dict[str, list[dict[str, Any]]] = {}
+                    cc_ledgers_m: dict[str, list[dict[str, Any]]] = {}
+                    sp_ledgers_m: dict[str, list[dict[str, Any]]] = {}
+                    events_m: dict[str, list[dict[str, Any]]] = {}
+                    live_states_by_strat_m: dict[str, dict[str, Any]] = {}
+                    live_sp_states_by_strat_m: dict[str, dict[str, Any]] = {}
 
-                windows_full = build_crisis_windows(rows_eval, sims_m, events_m["U1_PureOptions"], tp_mode=mode_id)
-                if is_default_combo:
-                    windows_m = windows_full
-                else:
-                    windows_m = [
-                        {k: v for k, v in w.items() if k not in static_win_keys}
-                        for w in windows_full
-                    ]
+                    for sid, sim_kw, meta in strategy_defs:
+                        if sid == "BH_Pure_QQQ":
+                            summaries_m.append(bh_summary)
+                            continue
+                        res = simulate_strategy(
+                            rows_all,
+                            coeffs,
+                            strategy_id=sid,
+                            tp_mode=mode_id,
+                            cc_mode=cc_id,
+                            sp_mode=sp_id,
+                            wc_mode=wc_id,
+                            **sim_kw,
+                        )
+                        sims_m[sid] = res
+                        summaries_m.append({**res["summary"], **meta})
+                        ledgers_m[sid] = res["ledger"] if is_default_combo else _pack_ledger_rows(res["ledger"])
+                        if cc_id != DEFAULT_CC_MODE:
+                            cc_ledgers_m[sid] = _pack_ledger_rows(res["cc_ledger"])
+                        elif is_default_combo:
+                            cc_ledgers_m[sid] = []
+                        if sp_id != DEFAULT_SP_MODE:
+                            sp_ledgers_m[sid] = _pack_ledger_rows(res["sp_ledger"])
+                        elif is_default_combo:
+                            sp_ledgers_m[sid] = []
+                        if is_default_combo or sid == "U1_PureOptions":
+                            events_m[sid] = build_unified_events(sid, res["ledger"], [])
+                        live_states_by_strat_m[sid] = build_live_signal_state(last_row, res, tp_mode=mode_id)
+                        live_sp_states_by_strat_m[sid] = _build_live_sp_state(last_row, prev_eval_row, res)
 
-                u1_sum = next(s for s in summaries_m if s["id"] == "U1_PureOptions")
-                if cc_id == DEFAULT_CC_MODE and sp_id == DEFAULT_SP_MODE:
-                    tp_slot_series[mode_id] = {
-                        "active_slots": [int(v) for v in sims_m["U1_PureOptions"]["active_slots"]],
-                        "slot1_naked": [bool(v) for v in sims_m["U1_PureOptions"]["slot1_naked"]],
-                    }
-                    tp_modes_meta.append(
-                        {
-                            **mode_spec,
-                            "u1_end_nav": u1_sum["end_nav"],
-                            "u1_net_alpha_usd": u1_sum["net_alpha_usd"],
-                            "u1_cagr_pct": u1_sum["cagr_pct"],
-                            "u1_max_dd_pct": u1_sum["max_dd_pct"],
-                            "u1_sharpe": u1_sum["sharpe"],
-                            "u1_final_shares": u1_sum["final_shares"],
-                            "u1_extra_shares": u1_sum["extra_shares_vs_bh"],
-                            "u1_extra_shares_pct": u1_sum["extra_shares_pct"],
+                    windows_full = build_crisis_windows(rows_eval, sims_m, events_m["U1_PureOptions"], tp_mode=mode_id)
+                    if is_default_combo:
+                        windows_m = windows_full
+                    else:
+                        windows_m = [
+                            {k: v for k, v in w.items() if k not in static_win_keys}
+                            for w in windows_full
+                        ]
+
+                    u1_sum = next(s for s in summaries_m if s["id"] == "U1_PureOptions")
+                    if cc_id == DEFAULT_CC_MODE and sp_id == DEFAULT_SP_MODE:
+                        tp_slot_series[mode_id] = {
+                            "active_slots": [int(v) for v in sims_m["U1_PureOptions"]["active_slots"]],
+                            "slot1_naked": [bool(v) for v in sims_m["U1_PureOptions"]["slot1_naked"]],
                         }
-                    )
-                    tp_modes_bundle[mode_id] = {
+                        tp_modes_meta.append(
+                            {
+                                **mode_spec,
+                                "u1_end_nav": u1_sum["end_nav"],
+                                "u1_net_alpha_usd": u1_sum["net_alpha_usd"],
+                                "u1_cagr_pct": u1_sum["cagr_pct"],
+                                "u1_max_dd_pct": u1_sum["max_dd_pct"],
+                                "u1_sharpe": u1_sum["sharpe"],
+                                "u1_final_shares": u1_sum["final_shares"],
+                                "u1_extra_shares": u1_sum["extra_shares_vs_bh"],
+                                "u1_extra_shares_pct": u1_sum["extra_shares_pct"],
+                            }
+                        )
+                        tp_modes_bundle[mode_id] = {
+                            "tp_mode": mode_id,
+                            "strategies_summary": summaries_m,
+                        }
+
+                    if mode_id == DEFAULT_TP_MODE and sp_id == DEFAULT_SP_MODE:
+                        cc_modes_meta.append(
+                            {
+                                **cc_spec,
+                                "u1_end_nav": u1_sum["end_nav"],
+                                "u1_net_alpha_usd": u1_sum["net_alpha_usd"],
+                                "u1_cagr_pct": u1_sum["cagr_pct"],
+                                "u1_max_dd_pct": u1_sum["max_dd_pct"],
+                                "u1_sharpe": u1_sum["sharpe"],
+                                "u1_final_shares": u1_sum["final_shares"],
+                                "u1_extra_shares": u1_sum["extra_shares_vs_bh"],
+                                "u1_extra_shares_pct": u1_sum["extra_shares_pct"],
+                                "u1_cc_trades_count": u1_sum["cc_trades_count"],
+                                "u1_cc_assigned_count": u1_sum["cc_assigned_count"],
+                                "u1_cc_gross_prem_usd": u1_sum["cc_gross_prem_usd"],
+                                "u1_cc_gross_loss_usd": u1_sum["cc_gross_loss_usd"],
+                                "u1_cc_funded_puts_usd": u1_sum["cc_funded_puts_usd"],
+                            }
+                        )
+
+                    if mode_id == DEFAULT_TP_MODE and cc_id == "cc_d12_d35" and (
+                        sp_id == DEFAULT_SP_MODE or wc_id == DEFAULT_WC_MODE
+                    ):
+                        sp_modes_meta_by_id[sp_id] = {
+                            **sp_spec,
+                            "wc_mode": wc_id,
+                            "dual_end_nav": u1_sum["end_nav"],
+                            "dual_net_alpha_usd": u1_sum["net_alpha_usd"],
+                            "dual_cagr_pct": u1_sum["cagr_pct"],
+                            "dual_max_dd_pct": u1_sum["max_dd_pct"],
+                            "dual_sharpe": u1_sum["sharpe"],
+                            "dual_calmar": u1_sum["calmar"],
+                            "dual_extra_shares_pct": u1_sum["extra_shares_pct"],
+                            "sp_trades_count": u1_sum["sp_trades_count"],
+                            "sp_win_rate_pct": u1_sum["sp_win_rate_pct"],
+                            "sp_assignments_count": u1_sum["sp_assignments_count"],
+                            "wc_trades_count": u1_sum["wc_trades_count"],
+                            "wc_called_away_count": u1_sum["wc_called_away_count"],
+                            "wc_gross_prem_usd": u1_sum["wc_gross_prem_usd"],
+                            "margin_interest_usd": u1_sum["margin_interest_usd"],
+                            "days_levered_stock": u1_sum["days_levered_stock"],
+                            "max_wheel_cycle_days": u1_sum["max_wheel_cycle_days"],
+                            "max_gross_stock_lev": u1_sum["max_gross_stock_lev"],
+                        }
+
+                    if mode_id == DEFAULT_TP_MODE and cc_id == "cc_d12_d35" and sp_id == "sp_14d_cap10":
+                        wc_modes_meta_by_id[wc_id] = {
+                            **wc_spec,
+                            "cap10_end_nav": u1_sum["end_nav"],
+                            "cap10_net_alpha_usd": u1_sum["net_alpha_usd"],
+                            "cap10_cagr_pct": u1_sum["cagr_pct"],
+                            "cap10_max_dd_pct": u1_sum["max_dd_pct"],
+                            "cap10_sharpe": u1_sum["sharpe"],
+                            "cap10_calmar": u1_sum["calmar"],
+                            "cap10_wc_trades_count": u1_sum["wc_trades_count"],
+                            "cap10_wc_called_away_count": u1_sum["wc_called_away_count"],
+                            "cap10_wc_gross_prem_usd": u1_sum["wc_gross_prem_usd"],
+                            "cap10_margin_interest_usd": u1_sum["margin_interest_usd"],
+                            "cap10_days_levered_stock": u1_sum["days_levered_stock"],
+                            "cap10_max_wheel_cycle_days": u1_sum["max_wheel_cycle_days"],
+                            "cap10_end_assigned_shares": u1_sum["end_assigned_shares"],
+                        }
+
+                    bundle_obj: dict[str, Any] = {
                         "tp_mode": mode_id,
+                        "cc_mode": cc_id,
+                        "sp_mode": sp_id,
+                        "wc_mode": wc_id,
+                        "live_signal_state": live_states_by_strat_m["U1_PureOptions"],
+                        "live_signal_states_by_strategy": live_states_by_strat_m,
+                        "live_sp_state": live_sp_states_by_strat_m["U1_PureOptions"],
+                        "live_sp_states_by_strategy": live_sp_states_by_strat_m,
                         "strategies_summary": summaries_m,
+                        "trade_ledgers_by_strategy": ledgers_m,
+                        "cc_ledgers_by_strategy": cc_ledgers_m,
+                        "sp_ledgers_by_strategy": sp_ledgers_m,
+                        "crisis_windows": windows_m,
+                        "nav_u1": [round(v, 2) for v in sims_m["U1_PureOptions"]["nav"]],
+                        "nav_b1c": [round(v, 2) for v in sims_m["B1c_PureAD"]["nav"]],
+                        "nav_d2": [round(v, 2) for v in sims_m["D2_SixLights"]["nav"]],
+                        "nav_h2": [round(v, 2) for v in sims_m["H2_G4_PriceGate"]["nav"]],
+                        "nav_cc": [round(v, 2) for v in sims_m["NoPut_CallOnly"]["nav"]],
                     }
+                    if is_default_combo:
+                        bundle_obj["events_by_strategy"] = events_m
+                        bundle_obj["active_slots"] = tp_slot_series[mode_id]["active_slots"]
+                        bundle_obj["slot1_naked"] = tp_slot_series[mode_id]["slot1_naked"]
 
-                if mode_id == DEFAULT_TP_MODE and sp_id == DEFAULT_SP_MODE:
-                    cc_modes_meta.append(
-                        {
-                            **cc_spec,
-                            "u1_end_nav": u1_sum["end_nav"],
-                            "u1_net_alpha_usd": u1_sum["net_alpha_usd"],
-                            "u1_cagr_pct": u1_sum["cagr_pct"],
-                            "u1_max_dd_pct": u1_sum["max_dd_pct"],
-                            "u1_sharpe": u1_sum["sharpe"],
-                            "u1_final_shares": u1_sum["final_shares"],
-                            "u1_extra_shares": u1_sum["extra_shares_vs_bh"],
-                            "u1_extra_shares_pct": u1_sum["extra_shares_pct"],
-                            "u1_cc_trades_count": u1_sum["cc_trades_count"],
-                            "u1_cc_assigned_count": u1_sum["cc_assigned_count"],
-                            "u1_cc_gross_prem_usd": u1_sum["cc_gross_prem_usd"],
-                            "u1_cc_gross_loss_usd": u1_sum["cc_gross_loss_usd"],
-                            "u1_cc_funded_puts_usd": u1_sum["cc_funded_puts_usd"],
-                        }
-                    )
-
-                if mode_id == DEFAULT_TP_MODE and cc_id == "cc_d12_d35":
-                    sp_modes_meta_by_id[sp_id] = {
-                        **sp_spec,
-                        "dual_end_nav": u1_sum["end_nav"],
-                        "dual_net_alpha_usd": u1_sum["net_alpha_usd"],
-                        "dual_cagr_pct": u1_sum["cagr_pct"],
-                        "dual_max_dd_pct": u1_sum["max_dd_pct"],
-                        "dual_sharpe": u1_sum["sharpe"],
-                        "dual_calmar": u1_sum["calmar"],
-                        "dual_extra_shares_pct": u1_sum["extra_shares_pct"],
-                        "sp_trades_count": u1_sum["sp_trades_count"],
-                        "sp_win_rate_pct": u1_sum["sp_win_rate_pct"],
-                        "sp_assignments_count": u1_sum["sp_assignments_count"],
-                        "wc_trades_count": u1_sum["wc_trades_count"],
-                        "wc_called_away_count": u1_sum["wc_called_away_count"],
-                        "margin_interest_usd": u1_sum["margin_interest_usd"],
-                        "max_gross_stock_lev": u1_sum["max_gross_stock_lev"],
-                    }
-
-                bundle_obj: dict[str, Any] = {
-                    "tp_mode": mode_id,
-                    "cc_mode": cc_id,
-                    "sp_mode": sp_id,
-                    "live_signal_state": live_states_by_strat_m["U1_PureOptions"],
-                    "live_signal_states_by_strategy": live_states_by_strat_m,
-                    "live_sp_state": live_sp_states_by_strat_m["U1_PureOptions"],
-                    "live_sp_states_by_strategy": live_sp_states_by_strat_m,
-                    "strategies_summary": summaries_m,
-                    "trade_ledgers_by_strategy": ledgers_m,
-                    "cc_ledgers_by_strategy": cc_ledgers_m,
-                    "sp_ledgers_by_strategy": sp_ledgers_m,
-                    "crisis_windows": windows_m,
-                    "nav_u1": [round(v, 2) for v in sims_m["U1_PureOptions"]["nav"]],
-                    "nav_b1c": [round(v, 2) for v in sims_m["B1c_PureAD"]["nav"]],
-                    "nav_d2": [round(v, 2) for v in sims_m["D2_SixLights"]["nav"]],
-                    "nav_h2": [round(v, 2) for v in sims_m["H2_G4_PriceGate"]["nav"]],
-                    "nav_cc": [round(v, 2) for v in sims_m["NoPut_CallOnly"]["nav"]],
-                }
-                if is_default_combo:
-                    bundle_obj["events_by_strategy"] = events_m
-                    bundle_obj["active_slots"] = tp_slot_series[mode_id]["active_slots"]
-                    bundle_obj["slot1_naked"] = tp_slot_series[mode_id]["slot1_naked"]
-
-                b_key = (
-                    f"{mode_id}__{cc_id}"
-                    if sp_id == DEFAULT_SP_MODE
-                    else f"{mode_id}__{cc_id}__{sp_id}"
-                )
-                mode_bundles[b_key] = bundle_obj
+                    if sp_id == DEFAULT_SP_MODE:
+                        b_key = f"{mode_id}__{cc_id}"
+                    elif wc_id == DEFAULT_WC_MODE:
+                        b_key = f"{mode_id}__{cc_id}__{sp_id}"
+                    else:
+                        b_key = f"{mode_id}__{cc_id}__{sp_id}__{wc_id}"
+                    mode_bundles[b_key] = bundle_obj
 
     sp_modes_meta = [sp_modes_meta_by_id[s["id"]] for s in SP_MODE_SPECS]
+    wc_modes_meta = [wc_modes_meta_by_id[w["id"]] for w in WC_MODE_SPECS]
 
     default_bundle = mode_bundles[f"{DEFAULT_TP_MODE}__{DEFAULT_CC_MODE}"]
     strategies_summary = default_bundle["strategies_summary"]
@@ -3538,6 +3631,9 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         "default_sp_mode": DEFAULT_SP_MODE,
         "sp_mode": DEFAULT_SP_MODE,
         "sp_modes_meta": sp_modes_meta,
+        "default_wc_mode": DEFAULT_WC_MODE,
+        "wc_mode": DEFAULT_WC_MODE,
+        "wc_modes_meta": wc_modes_meta,
         "tp_slot_series": tp_slot_series,
         "tp_modes": tp_modes_bundle,
         "mode_bundles": mode_bundles,
@@ -3590,14 +3686,20 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     assert doc["cc_mode"] == "cc_off", doc["cc_mode"]
     assert doc["default_sp_mode"] == "sp_off", doc["default_sp_mode"]
     assert doc["sp_mode"] == "sp_off", doc["sp_mode"]
+    assert doc["default_wc_mode"] == "wc_30d_c5s5", doc["default_wc_mode"]
+    assert doc["wc_mode"] == "wc_30d_c5s5", doc["wc_mode"]
     assert [m["id"] for m in doc["sp_modes_meta"]] == [
         "sp_off",
         "sp_14d_cap10",
         "sp_10d_vixf",
         "sp_14d_unf",
     ]
+    assert [m["id"] for m in doc["wc_modes_meta"]] == [
+        "wc_30d_c5s5",
+        "wc_14d_c0s2",
+    ]
     assert set(doc["tp_modes"].keys()) == {"layered_itm", "standard_dual", "both_4x"}
-    assert len(doc["mode_bundles"]) == 48, len(doc["mode_bundles"])
+    assert len(doc["mode_bundles"]) == 84, len(doc["mode_bundles"])
     assert doc["as_of_date"] >= "2026-11-20"
     if doc["as_of_date"] == "2026-11-20":
         assert snap["qqq_close"] == 608.45, snap["qqq_close"]
@@ -3640,10 +3742,80 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         assert cr55_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "Delta 0.55 credit roll must beat baseline"
         assert cr55_map["U1_PureOptions"]["cc_active_years"] >= 11
 
-        # Exact penny-level assertions on 3D Dual + Short-DTE Panic Put Wheel modes
-        cap10_map = {
+        # Exact penny-level assertions on NEW DEFAULT wc_30d_c5s5 (30D + max(1.05*K, 1.05*S))
+        cap10_30d = {
             s["id"]: s
             for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10"]["strategies_summary"]
+        }
+        assert abs(cap10_30d["U1_PureOptions"]["end_nav"] - 1819738.31) <= 0.05, cap10_30d["U1_PureOptions"]["end_nav"]
+        assert cap10_30d["U1_PureOptions"]["cagr_pct"] == 20.42
+        assert cap10_30d["U1_PureOptions"]["max_dd_pct"] == -29.82
+        assert cap10_30d["U1_PureOptions"]["sharpe"] == 0.890
+        assert cap10_30d["U1_PureOptions"]["calmar"] == 0.685
+        assert cap10_30d["U1_PureOptions"]["sp_trades_count"] == 44
+        assert cap10_30d["U1_PureOptions"]["sp_assignments_count"] == 6
+        assert cap10_30d["U1_PureOptions"]["wc_trades_count"] == 10
+        assert cap10_30d["U1_PureOptions"]["wc_called_away_count"] == 5
+        assert abs(cap10_30d["U1_PureOptions"]["wc_gross_prem_usd"] - 5041.32) <= 0.05
+        assert abs(cap10_30d["U1_PureOptions"]["margin_interest_usd"] - 1481.18) <= 0.05
+        assert cap10_30d["U1_PureOptions"]["days_levered_stock"] == 221
+        assert cap10_30d["U1_PureOptions"]["max_wheel_cycle_days"] == 111
+        assert cap10_30d["U1_PureOptions"]["max_gross_stock_lev"] == 1.134
+        assert abs(cap10_30d["U1_PureOptions"]["end_assigned_shares"] - 309.91) <= 0.05
+
+        vixf_30d = {
+            s["id"]: s
+            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf"]["strategies_summary"]
+        }
+        assert abs(vixf_30d["U1_PureOptions"]["end_nav"] - 1831562.63) <= 0.05, vixf_30d["U1_PureOptions"]["end_nav"]
+        assert vixf_30d["U1_PureOptions"]["cagr_pct"] == 20.49
+        assert vixf_30d["U1_PureOptions"]["max_dd_pct"] == -30.27
+        assert vixf_30d["U1_PureOptions"]["sharpe"] == 0.884
+        assert vixf_30d["U1_PureOptions"]["calmar"] == 0.677
+        assert vixf_30d["U1_PureOptions"]["sp_trades_count"] == 27
+        assert vixf_30d["U1_PureOptions"]["sp_assignments_count"] == 3
+        assert vixf_30d["U1_PureOptions"]["wc_trades_count"] == 6
+        assert vixf_30d["U1_PureOptions"]["wc_called_away_count"] == 3
+        assert abs(vixf_30d["U1_PureOptions"]["wc_gross_prem_usd"] - 6383.86) <= 0.05
+        assert abs(vixf_30d["U1_PureOptions"]["margin_interest_usd"] - 1257.35) <= 0.05
+        assert vixf_30d["U1_PureOptions"]["days_levered_stock"] == 132
+        assert vixf_30d["U1_PureOptions"]["max_wheel_cycle_days"] == 107
+        assert vixf_30d["U1_PureOptions"]["max_gross_stock_lev"] == 1.250
+        assert vixf_30d["U1_PureOptions"]["end_assigned_shares"] == 0.0
+
+        unf_30d = {
+            s["id"]: s
+            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf"]["strategies_summary"]
+        }
+        assert abs(unf_30d["U1_PureOptions"]["end_nav"] - 1930238.95) <= 0.05, unf_30d["U1_PureOptions"]["end_nav"]
+        assert unf_30d["U1_PureOptions"]["cagr_pct"] == 21.02
+        assert unf_30d["U1_PureOptions"]["max_dd_pct"] == -31.63
+        assert unf_30d["U1_PureOptions"]["sharpe"] == 0.889
+        assert unf_30d["U1_PureOptions"]["calmar"] == 0.665
+        assert unf_30d["U1_PureOptions"]["wc_trades_count"] == 10
+        assert unf_30d["U1_PureOptions"]["wc_called_away_count"] == 5
+        assert abs(unf_30d["U1_PureOptions"]["wc_gross_prem_usd"] - 10407.12) <= 0.05
+        assert abs(unf_30d["U1_PureOptions"]["margin_interest_usd"] - 3062.70) <= 0.05
+        assert unf_30d["U1_PureOptions"]["days_levered_stock"] == 221
+        assert unf_30d["U1_PureOptions"]["max_wheel_cycle_days"] == 111
+        assert unf_30d["U1_PureOptions"]["max_gross_stock_lev"] == 1.274
+        assert abs(unf_30d["U1_PureOptions"]["end_assigned_shares"] - 658.56) <= 0.05
+
+        # Live 2026-11-20 assigned state verification on wc_30d_c5s5 vs wc_14d_c0s2
+        sp_live_30d = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10"]["live_sp_state"]
+        assert sp_live_30d["wc_mode"] == "wc_30d_c5s5"
+        assert sp_live_30d["min_next_wc_strike"] == 656.70
+        assert "30D Wheel Call（K >= $656.70，max(1.05×成本, 1.05×现价)）" in sp_live_30d["badge_zh"]
+
+        sp_live_14d = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10__wc_14d_c0s2"]["live_sp_state"]
+        assert sp_live_14d["wc_mode"] == "wc_14d_c0s2"
+        assert sp_live_14d["min_next_wc_strike"] == 625.43
+        assert "14D Wheel Call（K >= $625.43，max(成本, 1.02×现价)）" in sp_live_14d["badge_zh"]
+
+        # Exact penny-level parity assertions on LEGACY wc_14d_c0s2 (14D + max(K, 1.02*S))
+        cap10_map = {
+            s["id"]: s
+            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10__wc_14d_c0s2"]["strategies_summary"]
         }
         assert abs(cap10_map["U1_PureOptions"]["end_nav"] - 1779823.16) <= 0.05, cap10_map["U1_PureOptions"]["end_nav"]
         assert cap10_map["U1_PureOptions"]["max_dd_pct"] == -29.82
@@ -3652,7 +3824,7 @@ def verify_artifact(doc: dict[str, Any]) -> None:
 
         vixf_map = {
             s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf"]["strategies_summary"]
+            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf__wc_14d_c0s2"]["strategies_summary"]
         }
         assert abs(vixf_map["U1_PureOptions"]["end_nav"] - 1786932.72) <= 0.05, vixf_map["U1_PureOptions"]["end_nav"]
         assert vixf_map["U1_PureOptions"]["max_dd_pct"] == -30.30
@@ -3661,21 +3833,21 @@ def verify_artifact(doc: dict[str, Any]) -> None:
 
         unf_map = {
             s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf"]["strategies_summary"]
+            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf__wc_14d_c0s2"]["strategies_summary"]
         }
         assert abs(unf_map["U1_PureOptions"]["end_nav"] - 1846991.83) <= 0.05, unf_map["U1_PureOptions"]["end_nav"]
         assert unf_map["U1_PureOptions"]["extra_shares_pct"] == 43.37
         assert abs(unf_map["U1_PureOptions"]["margin_interest_usd"] - 1667.62) <= 0.05
 
-        # Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_mode)
+        # Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_mode + wc_14d_c0s2)
         bh_unf_map = {
             s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_off__sp_14d_unf"]["strategies_summary"]
+            for s in doc["mode_bundles"]["layered_itm__cc_off__sp_14d_unf__wc_14d_c0s2"]["strategies_summary"]
         }
         assert abs(bh_unf_map["NoPut_CallOnly"]["end_nav"] - 1387278.02) <= 0.05
         bh_vixf_map = {
             s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_off__sp_10d_vixf"]["strategies_summary"]
+            for s in doc["mode_bundles"]["layered_itm__cc_off__sp_10d_vixf__wc_14d_c0s2"]["strategies_summary"]
         }
         assert abs(bh_vixf_map["NoPut_CallOnly"]["end_nav"] - 1342427.05) <= 0.05
 

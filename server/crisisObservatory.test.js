@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import zlib from 'node:zlib';
 import express from 'express';
 import {
   CRISIS_OBSERVATORY_VERSION,
@@ -7,6 +8,7 @@ import {
   CRISIS_OBSERVATORY_TP_MODES,
   CRISIS_OBSERVATORY_CC_MODES,
   CRISIS_OBSERVATORY_SP_MODES,
+  CRISIS_OBSERVATORY_WC_MODES,
   loadCrisisObservatoryDashboard,
   loadCrisisObservatoryDashboardLive,
 } from './crisisObservatory.js';
@@ -114,10 +116,12 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   const legacyAlias = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', strategy: 'U4_DualEngine' });
   assert.equal(legacyAlias.selected_strategy_id, 'U1_PureOptions');
   assert.equal(doc.sp_mode, 'sp_off');
+  assert.equal(doc.wc_mode, 'wc_30d_c5s5');
   assert.equal(doc.sp_modes_meta.length, 4);
+  assert.equal(doc.wc_modes_meta.length, 2);
   assert.equal(doc.live_sp_state.position_state, 'disabled');
 
-  // 3rd Engine (Short-DTE Panic Put Wheel) exact penny-parity across all 3 active presets + standalone QQQ
+  // 3rd Engine (Short-DTE Panic Put Wheel) — NEW DEFAULT wc_30d_c5s5 (30D + max(1.05*K, 1.05*S))
   const spCap10 = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
     tpMode: 'layered_itm',
@@ -125,25 +129,35 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
     spMode: 'sp_14d_cap10',
   });
   assert.equal(spCap10.sp_mode, 'sp_14d_cap10');
+  assert.equal(spCap10.wc_mode, 'wc_30d_c5s5');
   const cap10U1 = Object.fromEntries(spCap10.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
-  assert.ok(Math.abs(cap10U1.end_nav - 1779823.16) <= 0.1, `Expected $1,779,823.16, got ${cap10U1.end_nav}`);
+  assert.ok(Math.abs(cap10U1.end_nav - 1819738.31) <= 0.1, `Expected $1,819,738.31, got ${cap10U1.end_nav}`);
+  assert.equal(cap10U1.cagr_pct, 20.42);
   assert.equal(cap10U1.max_dd_pct, -29.82);
-  assert.equal(cap10U1.calmar, 0.677);
-  assert.ok(Math.abs(cap10U1.margin_interest_usd - 816.85) <= 0.05);
-  assert.equal(cap10U1.max_gross_stock_lev, 1.133);
-  assert.equal(cap10U1.sp_trades_count, 46);
+  assert.equal(cap10U1.sharpe, 0.89);
+  assert.equal(cap10U1.calmar, 0.685);
+  assert.ok(Math.abs(cap10U1.margin_interest_usd - 1481.18) <= 0.05);
+  assert.ok(Math.abs(cap10U1.wc_gross_prem_usd - 5041.32) <= 0.05);
+  assert.equal(cap10U1.days_levered_stock, 221);
+  assert.equal(cap10U1.max_wheel_cycle_days, 111);
+  assert.equal(cap10U1.max_gross_stock_lev, 1.134);
+  assert.equal(cap10U1.sp_trades_count, 44);
   assert.equal(cap10U1.sp_assignments_count, 6);
-  assert.equal(cap10U1.wc_trades_count, 11);
+  assert.equal(cap10U1.wc_trades_count, 10);
   assert.equal(cap10U1.wc_called_away_count, 5);
   assert.equal(spCap10.live_sp_state.position_state, 'wheel_assigned_wc_armed');
+  assert.equal(spCap10.live_sp_state.min_next_wc_strike, 656.7);
+  assert.ok(spCap10.live_sp_state.badge_zh.includes('30D Wheel Call（K >= $656.70，max(1.05×成本, 1.05×现价)）'));
   assert.equal(spCap10.live_sp_state.backwardation_active, true);
   assert.equal(spCap10.live_sp_state.vix_falling, false);
-  assert.ok(spCap10.sp_ledger.length > 50 && !Array.isArray(spCap10.sp_ledger._rows));
+  assert.ok(spCap10.sp_ledger.length === 54 && !Array.isArray(spCap10.sp_ledger._rows));
   assert.ok(
     spCap10.sp_ledger.some(r => r.leg_type === 'short_put') &&
       spCap10.sp_ledger.some(r => r.leg_type === 'wheel_call'),
   );
   assert.ok(spCap10.crisis_windows[0].title_en && spCap10.crisis_windows[0].title_zh);
+  const gzBytes = zlib.gzipSync(JSON.stringify(spCap10)).length;
+  assert.ok(gzBytes < 420 * 1024, `Projected single-mode gzipped payload must stay compact (<420 KB), got ${gzBytes}`);
 
   const spVixf = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
@@ -152,12 +166,14 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
     spMode: 'sp_10d_vixf',
   });
   const vixfU1 = Object.fromEntries(spVixf.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
-  assert.ok(Math.abs(vixfU1.end_nav - 1786932.72) <= 0.1, `Expected $1,786,932.72, got ${vixfU1.end_nav}`);
-  assert.equal(vixfU1.max_dd_pct, -30.3);
-  assert.equal(vixfU1.calmar, 0.668);
-  assert.ok(Math.abs(vixfU1.margin_interest_usd - 504.61) <= 0.05);
-  assert.equal(vixfU1.sp_trades_count, 29);
-  assert.equal(vixfU1.sp_assignments_count, 4);
+  assert.ok(Math.abs(vixfU1.end_nav - 1831562.63) <= 0.1, `Expected $1,831,562.63, got ${vixfU1.end_nav}`);
+  assert.equal(vixfU1.max_dd_pct, -30.27);
+  assert.equal(vixfU1.calmar, 0.677);
+  assert.ok(Math.abs(vixfU1.margin_interest_usd - 1257.35) <= 0.05);
+  assert.equal(vixfU1.sp_trades_count, 27);
+  assert.equal(vixfU1.sp_assignments_count, 3);
+  assert.equal(vixfU1.wc_trades_count, 6);
+  assert.equal(vixfU1.wc_called_away_count, 3);
   assert.equal(spVixf.live_sp_state.position_state, 'flat_standby');
 
   const spUnf = loadCrisisObservatoryDashboard({
@@ -167,20 +183,57 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
     spMode: 'sp_14d_unf',
   });
   const unfU1 = Object.fromEntries(spUnf.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
-  assert.ok(Math.abs(unfU1.end_nav - 1846991.83) <= 0.1, `Expected $1,846,991.83, got ${unfU1.end_nav}`);
-  assert.ok(Math.abs(unfU1.extra_shares_pct - 43.37) <= 0.05);
-  assert.ok(Math.abs(unfU1.margin_interest_usd - 1667.62) <= 0.05);
-  assert.equal(unfU1.max_gross_stock_lev, 1.273);
+  assert.ok(Math.abs(unfU1.end_nav - 1930238.95) <= 0.1, `Expected $1,930,238.95, got ${unfU1.end_nav}`);
+  assert.equal(unfU1.cagr_pct, 21.02);
+  assert.ok(Math.abs(unfU1.margin_interest_usd - 3062.7) <= 0.05);
+  assert.equal(unfU1.max_gross_stock_lev, 1.274);
+
+  // LEGACY COMPARE TOGGLE: wc_14d_c0s2 (14D + max(Cost, 1.02*Spot)) preserves 100% penny parity with 2f28247
+  const spCap10Legacy = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    tpMode: 'layered_itm',
+    ccMode: 'cc_d12_d35',
+    spMode: 'sp_14d_cap10',
+    wcMode: 'wc_14d_c0s2',
+  });
+  assert.equal(spCap10Legacy.wc_mode, 'wc_14d_c0s2');
+  const cap10LegacyU1 = Object.fromEntries(spCap10Legacy.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
+  assert.ok(Math.abs(cap10LegacyU1.end_nav - 1779823.16) <= 0.1);
+  assert.equal(cap10LegacyU1.calmar, 0.677);
+  assert.ok(Math.abs(cap10LegacyU1.margin_interest_usd - 816.85) <= 0.05);
+  assert.equal(spCap10Legacy.live_sp_state.min_next_wc_strike, 625.43);
+  assert.ok(spCap10Legacy.live_sp_state.badge_zh.includes('14D Wheel Call（K >= $625.43，max(成本, 1.02×现价)）'));
+
+  const spUnfLegacy = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    tpMode: 'layered_itm',
+    ccMode: 'cc_d12_d35',
+    spMode: 'sp_14d_unf',
+    wcMode: 'wc_14d_c0s2',
+  });
+  const unfLegacyU1 = Object.fromEntries(spUnfLegacy.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
+  assert.ok(Math.abs(unfLegacyU1.end_nav - 1846991.83) <= 0.1);
 
   // Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_14d_unf)
-  const spStandalone = loadCrisisObservatoryDashboard({
+  const spStandalone30d = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
     strategy: 'NoPut_CallOnly',
     tpMode: 'layered_itm',
     ccMode: 'cc_off',
     spMode: 'sp_14d_unf',
   });
-  const standaloneNoPut = Object.fromEntries(spStandalone.strategies_summary.map(s => [s.id, s])).NoPut_CallOnly;
+  const standalone30dNoPut = Object.fromEntries(spStandalone30d.strategies_summary.map(s => [s.id, s])).NoPut_CallOnly;
+  assert.ok(Math.abs(standalone30dNoPut.end_nav - 1449831.69) <= 0.1);
+
+  const spStandaloneLegacy = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    strategy: 'NoPut_CallOnly',
+    tpMode: 'layered_itm',
+    ccMode: 'cc_off',
+    spMode: 'sp_14d_unf',
+    wcMode: 'wc_14d_c0s2',
+  });
+  const standaloneNoPut = Object.fromEntries(spStandaloneLegacy.strategies_summary.map(s => [s.id, s])).NoPut_CallOnly;
   assert.ok(Math.abs(standaloneNoPut.end_nav - 1387278.02) <= 0.1, `Expected $1,387,278.02, got ${standaloneNoPut.end_nav}`);
 });
 
@@ -238,6 +291,7 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.deepEqual(CRISIS_OBSERVATORY_TP_MODES, ['layered_itm', 'standard_dual', 'both_4x']);
   assert.deepEqual(CRISIS_OBSERVATORY_CC_MODES, ['cc_off', 'cc_d12_d35', 'cc_d12_r45', 'cc_d12_cr55']);
   assert.deepEqual(CRISIS_OBSERVATORY_SP_MODES, ['sp_off', 'sp_14d_cap10', 'sp_10d_vixf', 'sp_14d_unf']);
+  assert.deepEqual(CRISIS_OBSERVATORY_WC_MODES, ['wc_30d_c5s5', 'wc_14d_c0s2']);
 
   // Pure Call-only comparison strategy (NoPut_CallOnly)
   const callOnlyDoc = loadCrisisObservatoryDashboard({
@@ -251,6 +305,7 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.throws(() => loadCrisisObservatoryDashboard({ tpMode: 'UNKNOWN_TP' }), /invalid_crisis_observatory_tp_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ ccMode: 'UNKNOWN_CC' }), /invalid_crisis_observatory_cc_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ spMode: 'UNKNOWN_SP' }), /invalid_crisis_observatory_sp_mode/);
+  assert.throws(() => loadCrisisObservatoryDashboard({ wcMode: 'UNKNOWN_WC' }), /invalid_crisis_observatory_wc_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ asOf: '2012-01-01' }), /as_of_before_evaluation_window/);
   assert.throws(() => loadCrisisObservatoryDashboard({ asOf: 'not-a-date' }), /invalid_as_of_date/);
   assert.throws(
@@ -310,6 +365,17 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.equal(resSp.status, 200);
   const bodySp = await resSp.json();
   assert.equal(bodySp.sp_mode, 'sp_14d_cap10');
+  assert.equal(bodySp.wc_mode, 'wc_30d_c5s5');
   const httpU1 = Object.fromEntries(bodySp.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
-  assert.ok(Math.abs(httpU1.end_nav - 1779823.16) <= 0.1);
+  assert.ok(Math.abs(httpU1.end_nav - 1819738.31) <= 0.1);
+
+  const resSpLegacy = await fetch(
+    `http://127.0.0.1:${port}/api/discover/crisis-observatory?strategy=U1_PureOptions&tpMode=layered_itm&ccMode=cc_d12_d35&spMode=sp_14d_cap10&wcMode=wc_14d_c0s2&asOf=2026-11-20`,
+    { headers: authHeaders },
+  );
+  assert.equal(resSpLegacy.status, 200);
+  const bodySpLegacy = await resSpLegacy.json();
+  assert.equal(bodySpLegacy.wc_mode, 'wc_14d_c0s2');
+  const httpLegacyU1 = Object.fromEntries(bodySpLegacy.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
+  assert.ok(Math.abs(httpLegacyU1.end_nav - 1779823.16) <= 0.1);
 });
