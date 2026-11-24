@@ -2488,6 +2488,29 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
             },
         ),
         (
+            "NoPut_CallOnly",
+            {
+                "arch": "cc_only",
+                "max_slots": 0,
+                "slot_coverage": 0.0,
+                "gate_key": None,
+                "vix_ratio_tp": None,
+                "slow_bear_overlay": False,
+            },
+            {
+                "code_name": "NoPut_CallOnly",
+                "name_en": "No Crisis Put (Pure Normal-Time Covered Call Comparison)",
+                "name_zh": "不买 Put（纯平时卖 Call 对照组）",
+                "short_en": "No Put (Call Only)",
+                "short_zh": "不买 Put（仅卖 Call）",
+                "badge_en": "CALL-ONLY CONTROL · ZERO PUT",
+                "badge_zh": "纯卖 Call 对照 · 无危机 Put",
+                "color_hex": "#7DB8F0",
+                "rule_summary_en": "Zero crisis Puts or Collars; holds 100% QQQ and runs ONLY the selected normal-time 25D 12-Delta Covered Call overlay (equals Buy & Hold when Call is Off).",
+                "rule_summary_zh": "关闭所有危机买 Put 与领口保护，100% 持有 QQQ 并仅叠加所选的平时 25D 12Δ 卖 Call 规则（若关闭卖 Call 则与死拿 QQQ 完全一致）。",
+            },
+        ),
+        (
             "BH_Pure_QQQ",
             {
                 "arch": "pure_qqq",
@@ -2607,6 +2630,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
                 "nav_b1c": [round(v, 2) for v in sims_m["B1c_PureAD"]["nav"]],
                 "nav_d2": [round(v, 2) for v in sims_m["D2_SixLights"]["nav"]],
                 "nav_h2": [round(v, 2) for v in sims_m["H2_G4_PriceGate"]["nav"]],
+                "nav_cc": [round(v, 2) for v in sims_m["NoPut_CallOnly"]["nav"]],
                 "active_slots": [int(v) for v in sims_m["U1_PureOptions"]["active_slots"]],
                 "slot1_naked": [bool(v) for v in sims_m["U1_PureOptions"]["slot1_naked"]],
             }
@@ -2677,6 +2701,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
                 "nav_b1c": default_bundle["nav_b1c"][i],
                 "nav_d2": default_bundle["nav_d2"][i],
                 "nav_h2": default_bundle["nav_h2"][i],
+                "nav_cc": default_bundle["nav_cc"][i],
                 "crisis_lights": int(r["score"]),
                 "smooth_lights": round(float(r["score_5d"]), 2),
                 "lights_mask": mask,

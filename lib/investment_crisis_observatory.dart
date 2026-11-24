@@ -23,15 +23,18 @@ class CrisisObservatoryPanel extends StatefulWidget {
 }
 
 class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
-  // Strictly 3 calm semantic accents; everything else uses native Palette tokens.
+  // Calm institutional Dark-Obsidian semantic accents; everything else uses native Palette tokens.
   static const Color _emerald = Color(0xFF5EC49E);
   static const Color _amber = Color(0xFFE5B45B);
   static const Color _coral = Color(0xFFE47F8B);
+  static const Color _sky = Color(0xFF7DB8F0);
+  static const Color _lilac = Color(0xFFB8A1EA);
 
   static const List<String> _primaryStrategies = [
     'U1_PureOptions',
     'B1c_PureAD',
     'D2_SixLights',
+    'NoPut_CallOnly',
   ];
 
   static const List<String> _tpModeIds = [
@@ -52,6 +55,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     'B1c_PureAD': 'nav_b1c',
     'D2_SixLights': 'nav_d2',
     'H2_G4_PriceGate': 'nav_h2',
+    'NoPut_CallOnly': 'nav_cc',
     'BH_Pure_QQQ': 'nav_bh',
   };
 
@@ -266,13 +270,112 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   String _humanStrategyLabel(String id) {
     return switch (id) {
-      'U1_PureOptions' => w('Naked Put + Collar', '纯期权双槽（推荐）'),
-      'B1c_PureAD' => w('Breadth Divergence', '纯宽度背离'),
-      'D2_SixLights' => w('Six-Lights Collar', '纯六灯领口'),
+      'U1_PureOptions' => w('U1 Dual-Slot Put+Collar (Rec.)', 'U1 双槽买 Put+领口（推荐）'),
+      'B1c_PureAD' => w('B1c AD Breadth Put', 'B1c 宽度背离买 Put'),
+      'D2_SixLights' => w('D2 6-Light Collar', 'D2 六灯领口（零保费）'),
+      'NoPut_CallOnly' => w('No Put (Call Only)', '不买 Put（仅卖 Call）'),
       'H2_G4_PriceGate' => w('Price & Vol Gate', '价格低波门控'),
       'BH_Pure_QQQ' => w('Buy & Hold QQQ', '死拿 QQQ'),
       _ => w('Protected Strategy', '保护策略'),
     };
+  }
+
+  String _activeComboBadgeText() {
+    final putPart = _humanStrategyLabel(selectedStrategyId);
+    final callPart = _humanCcModeLabel(selectedCcMode);
+    if (selectedStrategyId == 'NoPut_CallOnly') {
+      return selectedCcMode == 'cc_off'
+          ? w(
+              'Active Combo: Buy & Hold QQQ (No Put · No Call)',
+              '当前组合：不买 Put · 不卖 Call（等效死拿 QQQ）',
+            )
+          : w(
+              'Active Combo: No Crisis Put · Overlay $callPart',
+              '当前组合：不买危机 Put · 纯叠加「$callPart」',
+            );
+    }
+    final tpPart = _humanTpModeLabel(selectedTpMode);
+    return selectedCcMode == 'cc_off'
+        ? w(
+            'Active Combo: $putPart ($tpPart) · No Normal-Time Call',
+            '当前组合：$putPart（$tpPart）· 不叠加平时卖 Call',
+          )
+        : w(
+            'Active Combo: $putPart ($tpPart) + $callPart',
+            '当前组合：$putPart（$tpPart） + 叠加「$callPart」',
+          );
+  }
+
+  List<Map<String, dynamic>> _buildCcChartEvents(
+    List<Map<String, dynamic>> ccLedger,
+    String visibleStart,
+    String visibleEnd,
+  ) {
+    if (ccLedger.isEmpty || visibleStart.isEmpty || visibleEnd.isEmpty) {
+      return const [];
+    }
+    final rollLegByDateAndGen = <String, Map<String, dynamic>>{};
+    for (final cc in ccLedger) {
+      final rg = _numVal(cc['roll_gen']).round();
+      if (rg > 0) {
+        rollLegByDateAndGen['${text(cc['entry_date'])}#$rg'] = cc;
+      }
+    }
+    final out = <Map<String, dynamic>>[];
+    for (final cc in ccLedger) {
+      final entryDate = text(cc['entry_date']);
+      final exitDate = text(cc['exit_date']);
+      final rollGen = _numVal(cc['roll_gen']).round();
+      final exitReason = text(cc['exit_reason']);
+      final entrySpot = _numVal(cc['entry_spot']);
+      final kc = _numVal(cc['kc']);
+      final otmPct = entrySpot > 0 ? (kc / entrySpot - 1.0) * 100.0 : 0.0;
+
+      if (rollGen == 0 &&
+          entryDate.compareTo(visibleStart) >= 0 &&
+          entryDate.compareTo(visibleEnd) <= 0) {
+        out.add({
+          'date': entryDate,
+          'event_type': 'cc_open',
+          'spot': entrySpot,
+          'kc': kc,
+          'otm_pct': otmPct,
+          'prem_usd': _numVal(cc['prem_usd']),
+          'entry_vxn': _numVal(cc['entry_vxn']),
+        });
+      }
+
+      if (exitDate.isNotEmpty &&
+          exitDate.compareTo(visibleStart) >= 0 &&
+          exitDate.compareTo(visibleEnd) <= 0) {
+        if (exitReason == 'delta_roll_up' || exitReason == 'delta_credit_roll') {
+          final succ = rollLegByDateAndGen['$exitDate#${rollGen + 1}'];
+          out.add({
+            'date': exitDate,
+            'event_type': exitReason == 'delta_credit_roll'
+                ? 'cc_credit_roll'
+                : 'cc_roll_up',
+            'spot': _numVal(cc['exit_spot']),
+            'old_kc': kc,
+            'new_kc': succ != null ? _numVal(succ['kc']) : null,
+            'loss_usd': _numVal(cc['loss_usd']),
+            'new_prem_usd': succ != null ? _numVal(succ['prem_usd']) : 0.0,
+            'net_pnl_usd': _numVal(cc['net_pnl_usd']),
+          });
+        } else if (exitReason == 'delta_stop') {
+          out.add({
+            'date': exitDate,
+            'event_type': 'cc_delta_stop',
+            'spot': _numVal(cc['exit_spot']),
+            'kc': kc,
+            'prem_usd': _numVal(cc['prem_usd']),
+            'loss_usd': _numVal(cc['loss_usd']),
+            'net_pnl_usd': _numVal(cc['net_pnl_usd']),
+          });
+        }
+      }
+    }
+    return out;
   }
 
   String _humanTpModeLabel(String modeId) {
@@ -1328,6 +1431,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final navKey = _strategyNavKeys[selectedStrategyId] ?? 'nav_u1';
 
     final allEvents = _currentEventsForStrategy(doc);
+    final ccLedgerForStrat = _currentCcLedgerForStrategy(doc);
     final visibleStart = visibleDaily.isNotEmpty
         ? text(visibleDaily.first['date'])
         : '';
@@ -1341,6 +1445,18 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             return dt.compareTo(visibleStart) >= 0 &&
                 dt.compareTo(visibleEnd) <= 0;
           }).toList();
+    final ccChartEvents = selectedCcMode == 'cc_off'
+        ? const <Map<String, dynamic>>[]
+        : _buildCcChartEvents(ccLedgerForStrat, visibleStart, visibleEnd);
+    final combinedVisibleEvents = <Map<String, dynamic>>[
+      ...visibleEvents,
+      ...ccChartEvents,
+    ];
+    final hasPutLayer = selectedStrategyId != 'NoPut_CallOnly';
+    final hasCallLayer = selectedCcMode != 'cc_off';
+    final hasRollLayer =
+        selectedCcMode == 'cc_d12_r45' || selectedCcMode == 'cc_d12_cr55';
+    final hasStopLayer = selectedCcMode == 'cc_d12_d35';
 
     final isHoverActive = hoverIndex >= 0 && hoverIndex < visibleDaily.length;
     final hoveredRow = isHoverActive
@@ -1500,22 +1616,27 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               child: LinearProgressIndicator(minHeight: 2, color: _emerald),
             ),
           Wrap(
-            spacing: 10,
+            key: const ValueKey('crisis-put-strategy-bar'),
+            spacing: 8,
             runSpacing: 8,
             alignment: WrapAlignment.spaceBetween,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final sid in strategyTabs)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: _buildCalmStrategyTab(sid),
-                      ),
-                  ],
-                ),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    w('Crisis Put Strategy:', '危机 Put 策略：'),
+                    style: TextStyle(
+                      color: p.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  for (final sid in strategyTabs) _buildCalmStrategyTab(sid),
+                ],
               ),
               if (!rebasedMode)
                 InkWell(
@@ -1567,30 +1688,32 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 ),
             ],
           ),
-          const SizedBox(height: 10),
-          Wrap(
-            key: const ValueKey('crisis-tp-mode-bar'),
-            spacing: 8,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Text(
-                w('Take-Profit:', '止盈规则：'),
-                style: TextStyle(
-                  color: p.muted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
+          if (hasPutLayer) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              key: const ValueKey('crisis-tp-mode-bar'),
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  w('Put Take-Profit:', 'Put 止盈规则：'),
+                  style: TextStyle(
+                    color: p.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-              for (final mid in _tpModeIds) _buildCalmTpModeTab(mid),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            _humanTpModeHint(selectedTpMode),
-            key: const ValueKey('crisis-tp-mode-hint'),
-            style: TextStyle(color: p.muted, fontSize: 11.5, height: 1.4),
-          ),
+                for (final mid in _tpModeIds) _buildCalmTpModeTab(mid),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _humanTpModeHint(selectedTpMode),
+              key: const ValueKey('crisis-tp-mode-hint'),
+              style: TextStyle(color: p.muted, fontSize: 11.5, height: 1.4),
+            ),
+          ],
           const SizedBox(height: 10),
           Wrap(
             key: const ValueKey('crisis-cc-mode-bar'),
@@ -1599,7 +1722,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(
-                w('Normal-Time Call:', '平时卖 Call 攒现金：'),
+                w('Overlay Short Call:', '叠加平时卖 Call：'),
                 style: TextStyle(
                   color: p.muted,
                   fontSize: 12,
@@ -1614,6 +1737,24 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             _humanCcModeHint(selectedCcMode, stratSummary),
             key: const ValueKey('crisis-cc-mode-hint'),
             style: TextStyle(color: p.muted, fontSize: 11.5, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            key: const ValueKey('crisis-active-combo-badge'),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: p.text.withValues(alpha: 0.035),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: p.border),
+            ),
+            child: Text(
+              _activeComboBadgeText(),
+              style: TextStyle(
+                color: p.text,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           SingleChildScrollView(
@@ -1656,8 +1797,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Wrap(
+                key: const ValueKey('crisis-chart-legend'),
                 spacing: 14,
-                runSpacing: 4,
+                runSpacing: 6,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   _cleanLegendItem(
@@ -1670,16 +1812,31 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     dashed: true,
                     label: w('Buy & Hold QQQ', '死拿 QQQ'),
                   ),
-                  _cleanMarkerLegend(
-                    symbol: '▲',
-                    color: _amber,
-                    label: w('Open Hedge', '买保护'),
-                  ),
-                  _cleanMarkerLegend(
-                    symbol: '◆',
-                    color: _emerald,
-                    label: w('Dual TP Harvest', '双轨止盈'),
-                  ),
+                  if (hasPutLayer) ...[
+                    _cleanVectorMarkerLegend(
+                      kind: _CrisisMarkerKind.putOpen,
+                      label: w('Buy Put / Collar', '买 Put / 领口'),
+                    ),
+                    _cleanVectorMarkerLegend(
+                      kind: _CrisisMarkerKind.putTp,
+                      label: w('Put TP Harvest', 'Put 止盈换股'),
+                    ),
+                  ],
+                  if (hasCallLayer)
+                    _cleanVectorMarkerLegend(
+                      kind: _CrisisMarkerKind.ccOpen,
+                      label: w('Sell Call (▲ Up)', '卖 Call 开仓'),
+                    ),
+                  if (hasRollLayer)
+                    _cleanVectorMarkerLegend(
+                      kind: _CrisisMarkerKind.ccRoll,
+                      label: w('Call Roll Up', 'Call 展期 Roll'),
+                    ),
+                  if (hasStopLayer)
+                    _cleanVectorMarkerLegend(
+                      kind: _CrisisMarkerKind.ccStop,
+                      label: w('Call Δ0.35 Stop', 'Call Δ0.35 止损'),
+                    ),
                 ],
               ),
               if (hoveredRow.isNotEmpty)
@@ -1706,7 +1863,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               final hoverEvents = isHoverActive
                   ? _eventsNearHoverIndex(
                       visibleDaily: visibleDaily,
-                      visibleEvents: visibleEvents,
+                      visibleEvents: combinedVisibleEvents,
                       hoverIdx: hoverIndex,
                       chartWidth: chartWidth,
                     )
@@ -1748,7 +1905,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                             size: Size(chartWidth, totalHeight),
                             painter: _CrisisObservatoryChartPainter(
                               rows: visibleDaily,
-                              events: visibleEvents,
+                              events: combinedVisibleEvents,
                               navKey: navKey,
                               rebasedMode: rebasedMode,
                               useLogScale: !rebasedMode && useLogScale,
@@ -1895,6 +2052,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     bool hasLiveArmed = false;
     bool hasOpen = false;
     Map<String, dynamic>? firstOpenEv;
+    Map<String, dynamic>? firstCcOpenEv;
+    Map<String, dynamic>? firstCcRollEv;
+    Map<String, dynamic>? firstCcStopEv;
     for (final ev in hoverEvents) {
       final et = text(ev['event_type']);
       if (et == 'vix110_tp' ||
@@ -1918,10 +2078,22 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       } else if (et.startsWith('slot')) {
         hasOpen = true;
         firstOpenEv ??= ev;
+      } else if (et == 'cc_open') {
+        firstCcOpenEv ??= ev;
+      } else if (et == 'cc_roll_up' || et == 'cc_credit_roll') {
+        firstCcRollEv ??= ev;
+      } else if (et == 'cc_delta_stop') {
+        firstCcStopEv ??= ev;
       }
     }
     final hasTp =
         hasVixTp || hasItmTp || has4xTp || hasPut5xTp || hasLiveArmed;
+    final hasAnyMarkerEvent =
+        hasTp ||
+        hasOpen ||
+        firstCcOpenEv != null ||
+        firstCcRollEv != null ||
+        firstCcStopEv != null;
 
     return Positioned(
       left: clampedLeft.toDouble(),
@@ -1996,46 +2168,120 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 ),
                 style: TextStyle(color: p.muted, fontSize: 11),
               ),
-              if (hasTp || hasOpen) ...[
+              if (hasAnyMarkerEvent) ...[
                 const SizedBox(height: 6),
                 Container(height: 1, color: p.border),
                 const SizedBox(height: 6),
-                Text(
-                  hasLiveArmed
-                      ? w(
-                          '◆ Deep-ITM Panic Armed (Next Open) · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
-                          '◆ 实值恐慌止盈触发（次日开盘） · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
-                        )
-                      : (hasPut5xTp
-                            ? w(
-                                '◆ 5x Slow-Bear Harvest (DTE<=45) · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
-                                '◆ 5x 慢熊止盈（DTE≤45） · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
-                              )
-                            : (hasItmTp
-                                  ? w(
-                                      '◆ Deep-ITM Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
-                                      '◆ 实值恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
-                                    )
-                                  : (has4xTp
-                                        ? w(
-                                            '◆ 4x Deep Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
-                                            '◆ 4x 深度恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
-                                          )
-                                        : (hasVixTp
-                                              ? w(
-                                                  '◆ 1.10 Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
-                                                  '◆ 1.10 恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
-                                                )
-                                              : w(
-                                                  '▲ ${text(firstOpenEv?['tranche_type']) == 'naked_put' ? 'Naked Put' : 'Collar'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)} (K=\$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)})',
-                                                  '▲ ${text(firstOpenEv?['tranche_type']) == 'naked_put' ? '首仓裸 Put' : '次仓领口'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)}（行权 \$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)}）',
-                                                ))))),
-                  style: TextStyle(
-                    color: hasTp ? _emerald : _amber,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w600,
+                if (hasTp || hasOpen)
+                  Text(
+                    hasLiveArmed
+                        ? w(
+                            '◆ Deep-ITM Panic Armed (Next Open) · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                            '◆ 实值恐慌止盈触发（次日开盘） · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                          )
+                        : (hasPut5xTp
+                              ? w(
+                                  '◆ 5x Slow-Bear Harvest (DTE<=45) · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                                  '◆ 5x 慢熊止盈（DTE≤45） · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                                )
+                              : (hasItmTp
+                                    ? w(
+                                        '◆ Deep-ITM Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                                        '◆ 实值恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                                      )
+                                    : (has4xTp
+                                          ? w(
+                                              '◆ 4x Deep Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                                              '◆ 4x 深度恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                                            )
+                                          : (hasVixTp
+                                                ? w(
+                                                    '◆ 1.10 Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                                                    '◆ 1.10 恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                                                  )
+                                                : w(
+                                                    '▼ Buy ${text(firstOpenEv?['tranche_type']) == 'naked_put' ? 'Naked Put' : 'Collar'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)} (K=\$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)})',
+                                                    '▼ 买${text(firstOpenEv?['tranche_type']) == 'naked_put' ? '首仓裸 Put' : '次仓领口'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)}（行权 \$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)}）',
+                                                  ))))),
+                    style: TextStyle(
+                      color: hasTp ? _emerald : _amber,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
+                if (firstCcOpenEv != null) ...[
+                  if (hasTp || hasOpen) const SizedBox(height: 4),
+                  Text(
+                    w(
+                      '▲ Sell 25D 12Δ Call · K=\$${_numVal(firstCcOpenEv['kc']).toStringAsFixed(0)} (+${_numVal(firstCcOpenEv['otm_pct']).toStringAsFixed(1)}%) · Prem ${_fmtUsd(_numVal(firstCcOpenEv['prem_usd']), signed: true)}',
+                      '▲ 卖 25D 12Δ Call · 行权 \$${_numVal(firstCcOpenEv['kc']).toStringAsFixed(0)}（+${_numVal(firstCcOpenEv['otm_pct']).toStringAsFixed(1)}%）· 收租 ${_fmtUsd(_numVal(firstCcOpenEv['prem_usd']), signed: true)}',
+                    ),
+                    style: const TextStyle(
+                      color: _sky,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                if (firstCcRollEv != null) ...[
+                  if (hasTp || hasOpen || firstCcOpenEv != null)
+                    const SizedBox(height: 4),
+                  Builder(
+                    builder: (_) {
+                      final isCredit =
+                          text(firstCcRollEv!['event_type']) ==
+                          'cc_credit_roll';
+                      final oldK = _numVal(firstCcRollEv['old_kc']);
+                      final newK = firstCcRollEv['new_kc'] is num
+                          ? (firstCcRollEv['new_kc'] as num).toDouble()
+                          : null;
+                      final net = _numVal(firstCcRollEv['net_pnl_usd']);
+                      final moveTxt = newK != null
+                          ? w(
+                              '\$${oldK.toStringAsFixed(0)} -> \$${newK.toStringAsFixed(0)}',
+                              '\$${oldK.toStringAsFixed(0)} → \$${newK.toStringAsFixed(0)}',
+                            )
+                          : w(
+                              'Closed K=\$${oldK.toStringAsFixed(0)}',
+                              '平旧 \$${oldK.toStringAsFixed(0)}（无虚值可展）',
+                            );
+                      return Text(
+                        isCredit
+                            ? w(
+                                '↻ Δ0.55 Credit Roll 45D · $moveTxt (${_fmtUsd(net, signed: true)})',
+                                '↻ Δ0.55 零成本 Roll 45D · $moveTxt（旧腿 ${_fmtUsd(net, signed: true)}）',
+                              )
+                            : w(
+                                '↻ Δ0.45 Roll Up 30D · $moveTxt (${_fmtUsd(net, signed: true)})',
+                                '↻ Δ0.45 展期 Roll 30D · $moveTxt（旧腿 ${_fmtUsd(net, signed: true)}）',
+                              ),
+                        style: const TextStyle(
+                          color: _lilac,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      );
+                    },
+                  ),
+                ],
+                if (firstCcStopEv != null) ...[
+                  if (hasTp ||
+                      hasOpen ||
+                      firstCcOpenEv != null ||
+                      firstCcRollEv != null)
+                    const SizedBox(height: 4),
+                  Text(
+                    w(
+                      '✕ Δ0.35 Call Stop Buyback · K=\$${_numVal(firstCcStopEv['kc']).toStringAsFixed(0)} (${_fmtUsd(_numVal(firstCcStopEv['net_pnl_usd']), signed: true)})',
+                      '✕ Δ0.35 卖 Call 止损平仓 · 原行权 \$${_numVal(firstCcStopEv['kc']).toStringAsFixed(0)}（净盈亏 ${_fmtUsd(_numVal(firstCcStopEv['net_pnl_usd']), signed: true)}）',
+                    ),
+                    style: const TextStyle(
+                      color: _coral,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ],
             ],
           ),
@@ -2136,6 +2382,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         setState(() {
           selectedStrategyId = sid;
         });
+        if (sid == 'NoPut_CallOnly' && selectedCcMode == 'cc_off') {
+          _selectCcMode('cc_d12_d35');
+          return;
+        }
         _emitSelection();
       },
       child: Container(
@@ -2243,19 +2493,19 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     );
   }
 
-  Widget _cleanMarkerLegend({
-    required String symbol,
-    required Color color,
+  Widget _cleanVectorMarkerLegend({
+    required _CrisisMarkerKind kind,
     required String label,
   }) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          symbol,
-          style: TextStyle(color: color, fontSize: 10, height: 1),
+        SizedBox(
+          width: 14,
+          height: 14,
+          child: CustomPaint(painter: _CrisisMarkerGlyphPainter(kind: kind)),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 5),
         Text(label, style: TextStyle(color: p.muted, fontSize: 12)),
       ],
     );
@@ -3056,50 +3306,88 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
         ..strokeWidth = 2.2,
     );
 
-    // 4. Clean entry (▲ Amber) and panic harvest (◆ Emerald) markers
+    // 4. Distinct vector markers:
+    //    - ▼ Amber downward triangle = Buy Put / Collar
+    //    - ◆ Emerald diamond         = Crisis Put TP Harvest
+    //    - ▲ Sky Blue UPWARD equilateral triangle = Sell Call Open
+    //    - ↻ Lilac circular-arrow Roll logo       = Call Roll Up / Credit Roll
+    //    - ✕ Coral stop-badge                     = Call Δ0.35 Stop Buyback
     final idxByDate = <String, int>{
       for (var i = 0; i < n; i++) text(rows[i]['date']): i,
     };
+    final baseR = rebasedMode ? 5.2 : 4.0;
+    // Draw Sell Call ▲ slightly above the curve first, then Put/TP, then Roll/Stop on top so critical actions never get buried.
     for (final ev in events) {
+      final et = text(ev['event_type']);
+      if (et != 'cc_open') continue;
+      final idx = idxByDate[text(ev['date'])];
+      if (idx == null) continue;
+      final x = xAt(idx);
+      final y = (yMain(stratVals[idx]) - (rebasedMode ? 7.5 : 5.5)).clamp(
+        mainTop + 5.0,
+        mainBot - 5.0,
+      );
+      _paintCrisisMarkerGlyph(
+        canvas,
+        Offset(x, y),
+        rebasedMode ? 4.8 : 3.6,
+        _CrisisMarkerKind.ccOpen,
+      );
+    }
+    for (final ev in events) {
+      final et = text(ev['event_type']);
       final idx = idxByDate[text(ev['date'])];
       if (idx == null) continue;
       final x = xAt(idx);
       final y = yMain(stratVals[idx]);
-      final et = text(ev['event_type']);
       if (et == 'slot1_naked_put' ||
           et == 'slot2_collar' ||
           et == 'slot1_collar' ||
           et == 'slot3_collar') {
-        final r = rebasedMode ? 4.8 : 3.6;
-        final tri = Path()
-          ..moveTo(x, y - r)
-          ..lineTo(x - r * 0.85, y + r * 0.75)
-          ..lineTo(x + r * 0.85, y + r * 0.75)
-          ..close();
-        canvas.drawPath(tri, Paint()..color = _amber);
+        _paintCrisisMarkerGlyph(
+          canvas,
+          Offset(x, (y + (rebasedMode ? 4.5 : 3.0)).clamp(mainTop + 5.0, mainBot - 5.0)),
+          baseR,
+          _CrisisMarkerKind.putOpen,
+        );
       } else if (et == 'vix110_tp' ||
           et == 'vix110_itm_tp' ||
           et == 'vix110_4x_tp' ||
           et == 'put5x_dte45_tp' ||
           et == 'live_tp_armed') {
-        final r = rebasedMode ? 5.2 : 4.0;
-        final dia = Path()
-          ..moveTo(x, y - r)
-          ..lineTo(x + r, y)
-          ..lineTo(x, y + r)
-          ..lineTo(x - r, y)
-          ..close();
-        canvas.drawPath(dia, Paint()..color = _emerald);
-        if (et == 'put5x_dte45_tp' || et == 'live_tp_armed') {
-          canvas.drawPath(
-            dia,
-            Paint()
-              ..color = et == 'live_tp_armed' ? Colors.white : _amber
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = et == 'live_tp_armed' ? 1.4 : 1.1,
-          );
-        }
+        _paintCrisisMarkerGlyph(
+          canvas,
+          Offset(x, y),
+          rebasedMode ? 5.4 : 4.2,
+          _CrisisMarkerKind.putTp,
+          rimColor: et == 'live_tp_armed'
+              ? Colors.white
+              : (et == 'put5x_dte45_tp' ? _amber : null),
+        );
       }
+    }
+    for (final ev in events) {
+      final et = text(ev['event_type']);
+      if (et != 'cc_roll_up' &&
+          et != 'cc_credit_roll' &&
+          et != 'cc_delta_stop') {
+        continue;
+      }
+      final idx = idxByDate[text(ev['date'])];
+      if (idx == null) continue;
+      final x = xAt(idx);
+      final y = (yMain(stratVals[idx]) - (rebasedMode ? 9.0 : 6.5)).clamp(
+        mainTop + 7.0,
+        mainBot - 7.0,
+      );
+      _paintCrisisMarkerGlyph(
+        canvas,
+        Offset(x, y),
+        rebasedMode ? 6.2 : 5.0,
+        et == 'cc_delta_stop'
+            ? _CrisisMarkerKind.ccStop
+            : _CrisisMarkerKind.ccRoll,
+      );
     }
 
     // 5. Optional compact sub-track (Crisis Lights + VIX/3M 1.10 threshold)
@@ -3242,4 +3530,154 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
         oldDelegate.hoverIndex != hoverIndex ||
         oldDelegate.borderColor != borderColor;
   }
+}
+
+enum _CrisisMarkerKind { putOpen, putTp, ccOpen, ccRoll, ccStop }
+
+void _paintCrisisMarkerGlyph(
+  Canvas canvas,
+  Offset c,
+  double r,
+  _CrisisMarkerKind kind, {
+  Color? rimColor,
+}) {
+  const obsidian = Color(0xFF0A0E14);
+  const emerald = Color(0xFF5EC49E);
+  const amber = Color(0xFFE5B45B);
+  const coral = Color(0xFFE47F8B);
+  const sky = Color(0xFF7DB8F0);
+  const lilac = Color(0xFFB8A1EA);
+
+  switch (kind) {
+    case _CrisisMarkerKind.ccOpen:
+      // Equilateral triangle pointing UP (正三角形向上 = 卖 Call)
+      final h = r * 1.12;
+      final halfW = r * 0.98;
+      final tri = Path()
+        ..moveTo(c.dx, c.dy - h)
+        ..lineTo(c.dx - halfW, c.dy + h * 0.68)
+        ..lineTo(c.dx + halfW, c.dy + h * 0.68)
+        ..close();
+      canvas.drawPath(tri, Paint()..color = sky);
+      canvas.drawPath(
+        tri,
+        Paint()
+          ..color = obsidian.withValues(alpha: 0.9)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.9,
+      );
+      break;
+
+    case _CrisisMarkerKind.putOpen:
+      // Equilateral triangle pointing DOWN (倒三角形向下 = 买 Put 防下跌)
+      final h = r * 1.08;
+      final halfW = r * 0.94;
+      final tri = Path()
+        ..moveTo(c.dx, c.dy + h)
+        ..lineTo(c.dx - halfW, c.dy - h * 0.66)
+        ..lineTo(c.dx + halfW, c.dy - h * 0.66)
+        ..close();
+      canvas.drawPath(tri, Paint()..color = amber);
+      canvas.drawPath(
+        tri,
+        Paint()
+          ..color = obsidian.withValues(alpha: 0.85)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.9,
+      );
+      break;
+
+    case _CrisisMarkerKind.putTp:
+      // Diamond (◆ 危机 Put 止盈换股)
+      final dia = Path()
+        ..moveTo(c.dx, c.dy - r)
+        ..lineTo(c.dx + r, c.dy)
+        ..lineTo(c.dx, c.dy + r)
+        ..lineTo(c.dx - r, c.dy)
+        ..close();
+      canvas.drawPath(dia, Paint()..color = emerald);
+      canvas.drawPath(
+        dia,
+        Paint()
+          ..color = rimColor ?? obsidian.withValues(alpha: 0.85)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = rimColor != null ? 1.3 : 0.9,
+      );
+      break;
+
+    case _CrisisMarkerKind.ccRoll:
+      // Distinct Roll Logo: dark halo badge + bright Lilac 270° circular arc + crisp arrowhead (↻)
+      canvas.drawCircle(c, r, Paint()..color = obsidian.withValues(alpha: 0.94));
+      canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..color = lilac.withValues(alpha: 0.35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.9,
+      );
+      final arcR = r * 0.62;
+      canvas.drawArc(
+        Rect.fromCircle(center: c, radius: arcR),
+        -math.pi * 0.2,
+        math.pi * 1.48,
+        false,
+        Paint()
+          ..color = lilac
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(1.25, r * 0.24)
+          ..strokeCap = StrokeCap.round,
+      );
+      // Arrowhead at the top-right end of the clockwise roll arc
+      final tipAngle = -math.pi * 0.2;
+      final tip = Offset(
+        c.dx + arcR * math.cos(tipAngle),
+        c.dy + arcR * math.sin(tipAngle),
+      );
+      final ah = math.max(2.1, r * 0.42);
+      final arrow = Path()
+        ..moveTo(tip.dx + ah * 0.35, tip.dy + ah * 0.15)
+        ..lineTo(tip.dx - ah * 0.72, tip.dy - ah * 0.65)
+        ..lineTo(tip.dx + ah * 0.42, tip.dy - ah * 0.82)
+        ..close();
+      canvas.drawPath(arrow, Paint()..color = lilac);
+      break;
+
+    case _CrisisMarkerKind.ccStop:
+      // Distinct Stop Badge: dark halo badge + Coral ring + crisp ✕
+      canvas.drawCircle(c, r * 0.92, Paint()..color = obsidian.withValues(alpha: 0.94));
+      canvas.drawCircle(
+        c,
+        r * 0.92,
+        Paint()
+          ..color = coral
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.15,
+      );
+      final cr = r * 0.44;
+      final xPaint = Paint()
+        ..color = coral
+        ..strokeWidth = math.max(1.2, r * 0.24)
+        ..strokeCap = StrokeCap.round;
+      canvas.drawLine(Offset(c.dx - cr, c.dy - cr), Offset(c.dx + cr, c.dy + cr), xPaint);
+      canvas.drawLine(Offset(c.dx + cr, c.dy - cr), Offset(c.dx - cr, c.dy + cr), xPaint);
+      break;
+  }
+}
+
+class _CrisisMarkerGlyphPainter extends CustomPainter {
+  const _CrisisMarkerGlyphPainter({required this.kind});
+
+  final _CrisisMarkerKind kind;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(size.width / 2, size.height / 2);
+    final r = math.min(size.width, size.height) * 0.42;
+    _paintCrisisMarkerGlyph(canvas, c, r, kind);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CrisisMarkerGlyphPainter oldDelegate) =>
+      oldDelegate.kind != kind;
 }

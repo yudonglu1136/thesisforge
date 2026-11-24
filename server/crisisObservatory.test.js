@@ -164,9 +164,18 @@ test('slices historical asOf cutoffs without lookahead and masks future tranche 
 });
 
 test('validates parameters and serves both /api/investment/crisis-observatory and /api/discover/crisis-observatory', async t => {
-  assert.equal(CRISIS_OBSERVATORY_STRATEGIES.length, 5);
+  assert.equal(CRISIS_OBSERVATORY_STRATEGIES.length, 6);
   assert.deepEqual(CRISIS_OBSERVATORY_TP_MODES, ['layered_itm', 'standard_dual', 'both_4x']);
   assert.deepEqual(CRISIS_OBSERVATORY_CC_MODES, ['cc_off', 'cc_d12_d35', 'cc_d12_r45', 'cc_d12_cr55']);
+
+  // Pure Call-only comparison strategy (NoPut_CallOnly)
+  const callOnlyDoc = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    strategy: 'NoPut_CallOnly',
+    ccMode: 'cc_d12_d35',
+  });
+  assert.equal(callOnlyDoc.selected_strategy_id, 'NoPut_CallOnly');
+  assert.ok(Math.abs(callOnlyDoc.daily_series.at(-1).nav_cc - 1364435.75) <= 2.0);
   assert.throws(() => loadCrisisObservatoryDashboard({ strategy: 'UNKNOWN' }), /invalid_crisis_observatory_strategy/);
   assert.throws(() => loadCrisisObservatoryDashboard({ tpMode: 'UNKNOWN_TP' }), /invalid_crisis_observatory_tp_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ ccMode: 'UNKNOWN_CC' }), /invalid_crisis_observatory_cc_mode/);

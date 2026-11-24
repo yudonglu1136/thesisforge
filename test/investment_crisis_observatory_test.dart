@@ -47,6 +47,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
               row['nav_b1c'] = (bundle['nav_b1c'] as List)[i];
               row['nav_d2'] = (bundle['nav_d2'] as List)[i];
               row['nav_h2'] = (bundle['nav_h2'] as List)[i];
+              row['nav_cc'] = (bundle['nav_cc'] as List)[i];
               return row;
             })
           : baseSeries;
@@ -186,7 +187,7 @@ void main() {
         findsOneWidget,
       );
 
-      // Switch selectable 4-way Normal-Time 25D 12Δ Covered Call modes live: Δ0.35 Stop -> Δ0.45 Roll -> Δ0.55 Credit Roll -> Off
+      // Switch selectable 4-way Normal-Time 25D 12Δ Covered Call modes live: Δ0.35 Stop -> Δ0.45 Roll -> Δ0.55 Credit Roll -> NoPut Call-Only -> Off
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-cc-mode-pill-cc_d12_d35')),
@@ -194,6 +195,8 @@ void main() {
       expect(find.text('\$1,714,947'), findsOneWidget);
       expect(find.text('2,818.6 sh'), findsOneWidget);
       expect(find.textContaining('+33.1%'), findsWidgets);
+      expect(find.text('Sell Call (▲ Up)'), findsOneWidget);
+      expect(find.text('Call Δ0.35 Stop'), findsOneWidget);
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-cc-ledger-toggle')),
@@ -207,6 +210,7 @@ void main() {
       expect(find.text('\$1,704,612'), findsOneWidget);
       expect(find.text('2,801.6 sh'), findsOneWidget);
       expect(find.textContaining('+32.3%'), findsWidgets);
+      expect(find.text('Call Roll Up'), findsOneWidget);
 
       await tapVisible(
         tester,
@@ -215,6 +219,17 @@ void main() {
       expect(find.text('\$1,688,797'), findsOneWidget);
       expect(find.text('2,775.6 sh'), findsOneWidget);
       expect(find.textContaining('+31.1%'), findsWidgets);
+
+      // Switch Put Strategy to NoPut_CallOnly (Call-only comparison) and back to U1
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-strategy-pill-NoPut_CallOnly')),
+      );
+      expect(find.text('\$1,327,646'), findsOneWidget);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-strategy-pill-U1_PureOptions')),
+      );
 
       await tapVisible(
         tester,
@@ -386,12 +401,17 @@ void main() {
           find.text('深跌实值恐慌触发 · 期权次日开盘止盈换股（6/6 亮灯）'),
           findsOneWidget,
         );
+        expect(find.text('危机 Put 策略：'), findsOneWidget);
+        expect(find.text('不买 Put（仅卖 Call）'), findsOneWidget);
+        expect(find.text('Put 止盈规则：'), findsOneWidget);
+        expect(find.text('叠加平时卖 Call：'), findsOneWidget);
         expect(find.text('分层实值（推荐）'), findsOneWidget);
         expect(find.text('标准 1.10'), findsOneWidget);
         expect(find.text('两槽 4x 深度'), findsOneWidget);
         expect(find.text('全天候 12Δ · Delta 0.35 止损（推荐 · 0穿最稳）'), findsOneWidget);
         expect(find.text('全天候 12Δ · Delta 0.45 展期 Roll（30D 上移）'), findsOneWidget);
         expect(find.text('全天候 12Δ · Delta 0.55 零成本 Roll（45D）'), findsOneWidget);
+        expect(find.byKey(const ValueKey('crisis-active-combo-badge')), findsOneWidget);
         expect(find.text('6 / 6 亮灯'), findsOneWidget);
         expect(find.text('历史保护策略 vs 死拿 QQQ'), findsOneWidget);
         expect(find.text('100% 满仓 QQQ · 2,719.3 股'), findsOneWidget);

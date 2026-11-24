@@ -99,6 +99,7 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
         "B1c_PureAD",
         "D2_SixLights",
         "H2_G4_PriceGate",
+        "NoPut_CallOnly",
         "BH_Pure_QQQ",
     ]
     assert abs(smap["U1_PureOptions"]["end_nav"] - 1654577.25) <= 0.50
@@ -143,7 +144,7 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     assert cr55_map["U1_PureOptions"]["cc_trades_count"] == 71
     assert cr55_map["U1_PureOptions"]["cc_active_years"] == 11
 
-    for sid in ("U1_PureOptions", "B1c_PureAD", "D2_SixLights", "H2_G4_PriceGate"):
+    for sid in ("U1_PureOptions", "B1c_PureAD", "D2_SixLights", "H2_G4_PriceGate", "NoPut_CallOnly"):
         assert d35_map[sid]["end_nav"] > smap[sid]["end_nav"], sid
         assert r45_map[sid]["end_nav"] > smap[sid]["end_nav"], sid
         assert cr55_map[sid]["end_nav"] > smap[sid]["end_nav"], sid
@@ -176,6 +177,9 @@ def test_crisis_windows_and_4factor_convexity_identity():
 
     for mode_id, mode_bundle in doc["tp_modes"].items():
         for sid, ledger in mode_bundle["trade_ledgers_by_strategy"].items():
+            if sid == "NoPut_CallOnly":
+                assert len(ledger) == 0, (mode_id, sid)
+                continue
             assert len(ledger) > 0, (mode_id, sid)
             for tr in ledger:
                 decomp_sum = tr["delta_usd"] + tr["gamma_usd"] + tr["vega_usd"] + tr["theta_slip_usd"]

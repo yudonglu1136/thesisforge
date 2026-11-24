@@ -9,6 +9,7 @@ export const CRISIS_OBSERVATORY_STRATEGIES = Object.freeze([
   'B1c_PureAD',
   'D2_SixLights',
   'H2_G4_PriceGate',
+  'NoPut_CallOnly',
   'BH_Pure_QQQ',
 ]);
 export const CRISIS_OBSERVATORY_TP_MODES = Object.freeze([
@@ -38,6 +39,7 @@ const STRATEGY_NAV_KEYS = Object.freeze({
   B1c_PureAD: 'nav_b1c',
   D2_SixLights: 'nav_d2',
   H2_G4_PriceGate: 'nav_h2',
+  NoPut_CallOnly: 'nav_cc',
   BH_Pure_QQQ: 'nav_bh',
 });
 
@@ -142,6 +144,7 @@ function projectArtifactForModes(data, snapshotId, selectedTpMode, selectedCcMod
         nav_b1c: bundle.nav_b1c?.[idx] ?? row.nav_b1c,
         nav_d2: bundle.nav_d2?.[idx] ?? row.nav_d2,
         nav_h2: bundle.nav_h2?.[idx] ?? row.nav_h2,
+        nav_cc: bundle.nav_cc?.[idx] ?? row.nav_cc,
         active_slots: bundle.active_slots?.[idx] ?? row.active_slots,
         slot1_naked: bundle.slot1_naked?.[idx] ?? row.slot1_naked,
       }));
@@ -400,6 +403,7 @@ function extendLiveBars(baseData, extraDailyBars, requestedAsOf) {
       nav_b1c: r2(Number(prev.nav_b1c) * (1 + qqqRet)),
       nav_d2: r2(Number(prev.nav_d2) * (1 + qqqRet)),
       nav_h2: r2(Number(prev.nav_h2) * (1 + qqqRet)),
+      nav_cc: r2(Number(prev.nav_cc ?? prev.nav_bh) * (1 + qqqRet)),
       vix: r2(vix),
       vix3m: r2(vix3m),
       vix_ratio: r3(vr),
