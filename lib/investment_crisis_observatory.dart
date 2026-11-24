@@ -90,6 +90,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   bool showFullLedger = false;
   bool showCcLedger = false;
   bool showSpLedger = false;
+  bool showEngineAttribution = true;
   final Set<int> expandedTrancheIds = <int>{};
   int hoverIndex = -1;
   int loadSerial = 0;
@@ -330,6 +331,14 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       buf.write(intPart[i]);
     }
     return '$sign\$$buf.${parts[1]}';
+  }
+
+  String _fmtUsdCompact(double v, {bool signed = false}) {
+    final sign = v < 0 ? '-' : (signed && v > 0 ? '+' : '');
+    final a = v.abs();
+    if (a >= 1000000) return '$sign\$${(a / 1000000).toStringAsFixed(2)}M';
+    if (a >= 1000) return '$sign\$${(a / 1000).toStringAsFixed(1)}K';
+    return '$sign\$${a.round()}';
   }
 
   String _fmtPct(double v, {int digits = 1, bool signed = true}) {
@@ -2039,195 +2048,23 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               padding: EdgeInsets.only(bottom: 10),
               child: LinearProgressIndicator(minHeight: 2, color: _emerald),
             ),
-          Wrap(
-            key: const ValueKey('crisis-put-strategy-bar'),
-            spacing: 8,
-            runSpacing: 8,
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(
-                    w('Crisis Put Strategy:', '危机 Put 策略：'),
-                    style: TextStyle(
-                      color: p.muted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  for (final sid in strategyTabs) _buildCalmStrategyTab(sid),
-                ],
-              ),
-              if (!rebasedMode)
-                InkWell(
-                  key: const ValueKey('crisis-scale-toggle'),
-                  borderRadius: BorderRadius.circular(6),
-                  onTap: () => setState(() => useLogScale = !useLogScale),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    child: Text(
-                      useLogScale
-                          ? w('Scale: Log', '坐标：对数')
-                          : w('Scale: Linear', '坐标：线性'),
-                      style: TextStyle(
-                        color: p.muted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                )
-              else
-                InkWell(
-                  key: const ValueKey('crisis-zoom-reset-btn'),
-                  borderRadius: BorderRadius.circular(6),
-                  onTap: () {
-                    setState(() {
-                      selectedWindowId = 'ALL';
-                      hoverIndex = -1;
-                    });
-                    _emitSelection();
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    child: Text(
-                      w('Reset to All 12Y', '返回全部 12 年'),
-                      style: const TextStyle(
-                        color: _emerald,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
+          _buildThreeEngineWorkbench(
+            doc,
+            stratSummary: stratSummary,
+            bhSummary: bhSummary,
+            strategyTabs: strategyTabs,
+            hasPutLayer: hasPutLayer,
+            rebasedMode: rebasedMode,
+            compact: compact,
+            desktop: desktop,
           ),
-          if (hasPutLayer) ...[
-            const SizedBox(height: 10),
-            Wrap(
-              key: const ValueKey('crisis-tp-mode-bar'),
-              spacing: 8,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text(
-                  w('Put Take-Profit:', 'Put 止盈规则：'),
-                  style: TextStyle(
-                    color: p.muted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                for (final mid in _tpModeIds) _buildCalmTpModeTab(mid),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _humanTpModeHint(selectedTpMode),
-              key: const ValueKey('crisis-tp-mode-hint'),
-              style: TextStyle(color: p.muted, fontSize: 11.5, height: 1.4),
-            ),
-          ],
-          const SizedBox(height: 10),
-          Wrap(
-            key: const ValueKey('crisis-cc-mode-bar'),
-            spacing: 8,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Text(
-                w('Overlay Short Call:', '叠加平时卖 Call：'),
-                style: TextStyle(
-                  color: p.muted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              for (final cid in _ccModeIds) _buildCalmCcModeTab(cid),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            _humanCcModeHint(selectedCcMode, stratSummary),
-            key: const ValueKey('crisis-cc-mode-hint'),
-            style: TextStyle(color: p.muted, fontSize: 11.5, height: 1.4),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            key: const ValueKey('crisis-sp-mode-bar'),
-            spacing: 8,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              Text(
-                w('Panic Put Wheel:', '恐慌卖 Put Wheel：'),
-                style: TextStyle(
-                  color: p.muted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              for (final sid in _spModeIds) _buildCalmSpModeTab(sid),
-            ],
-          ),
-          if (selectedSpMode != 'sp_off') ...[
-            const SizedBox(height: 8),
-            Wrap(
-              key: const ValueKey('crisis-wc-mode-bar'),
-              spacing: 8,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text(
-                  w('Wheel Call:', 'Wheel Call 出场：'),
-                  style: TextStyle(
-                    color: p.muted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                for (final wid in _wcModeIds) _buildCalmWcModeTab(wid),
-                Text(
-                  _humanWcModeFormulaHint(selectedWcMode, stratSummary),
-                  key: const ValueKey('crisis-wc-mode-hint'),
-                  style: TextStyle(color: p.muted, fontSize: 11.5, height: 1.35),
-                ),
-              ],
-            ),
-          ],
-          const SizedBox(height: 6),
-          Text(
-            _humanSpModeHint(selectedSpMode, stratSummary),
-            key: const ValueKey('crisis-sp-mode-hint'),
-            style: TextStyle(color: p.muted, fontSize: 11.5, height: 1.4),
-          ),
-          const SizedBox(height: 10),
-          Container(
-            key: const ValueKey('crisis-active-combo-badge'),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: p.text.withValues(alpha: 0.035),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: p.border),
-            ),
-            child: Text(
-              _activeComboBadgeText(),
-              style: TextStyle(
-                color: p.text,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+          const SizedBox(height: 12),
+          _buildEngineAttributionPanel(
+            doc,
+            stratSummary: stratSummary,
+            bhSummary: bhSummary,
+            compact: compact,
+            desktop: desktop,
           ),
           const SizedBox(height: 12),
           SingleChildScrollView(
@@ -2855,28 +2692,1426 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     );
   }
 
+  Map<String, dynamic> _resolveEngineAttribution(
+    Map<String, dynamic> doc,
+    Map<String, dynamic> stratSummary,
+    Map<String, dynamic> bhSummary,
+  ) {
+    final byStrat = asMap(doc['engine_attribution_by_strategy']);
+    final found = asMap(byStrat[selectedStrategyId]);
+    if (found.isNotEmpty) return found;
+    final bhNav = _numVal(bhSummary['end_nav']);
+    final bhSh = _numVal(bhSummary['final_shares']);
+    final totNav = _numVal(stratSummary['end_nav'], bhNav);
+    final totSh = _numVal(stratSummary['final_shares'], bhSh);
+    final totAlpha = totNav - bhNav;
+    final hasE1 =
+        selectedStrategyId != 'NoPut_CallOnly' &&
+        selectedStrategyId != 'BH_Pure_QQQ';
+    final hasE2 = selectedCcMode != 'cc_off';
+    final hasE3 = selectedSpMode != 'sp_off';
+    final activeCnt = (hasE1 ? 1 : 0) + (hasE2 ? 1 : 0) + (hasE3 ? 1 : 0);
+    return {
+      'base_end_nav': bhNav,
+      'base_shares': bhSh,
+      'base_cagr_pct': _numVal(bhSummary['cagr_pct']),
+      'base_max_dd_pct': _numVal(bhSummary['max_dd_pct']),
+      'base_calmar': _numVal(bhSummary['calmar']),
+      'total_end_nav': totNav,
+      'total_alpha_usd': totAlpha,
+      'total_extra_shares': totSh - bhSh,
+      'total_extra_shares_pct': bhSh > 0 ? ((totSh - bhSh) / bhSh) * 100 : 0.0,
+      'active_engines_count': activeCnt,
+      'correlations': const <String, dynamic>{},
+      'engine1': {
+        'active': hasE1,
+        'delta_usd': hasE1 && !hasE2 && !hasE3 ? totAlpha : 0.0,
+        'standalone_alpha_usd': hasE1 && !hasE2 && !hasE3 ? totAlpha : 0.0,
+        'share_of_alpha_pct': hasE1 && !hasE2 && !hasE3 ? 100.0 : 0.0,
+        'delta_shares': hasE1 && !hasE2 && !hasE3 ? (totSh - bhSh) : 0.0,
+        'delta_extra_pct': hasE1 && !hasE2 && !hasE3 && bhSh > 0
+            ? ((totSh - bhSh) / bhSh) * 100
+            : 0.0,
+        'delta_cagr_pp': hasE1 && !hasE2 && !hasE3
+            ? _numVal(stratSummary['cagr_pct']) - _numVal(bhSummary['cagr_pct'])
+            : 0.0,
+        'delta_mdd_pp': hasE1 && !hasE2 && !hasE3
+            ? _numVal(stratSummary['max_dd_pct']) -
+                  _numVal(bhSummary['max_dd_pct'])
+            : 0.0,
+        'delta_calmar': hasE1 && !hasE2 && !hasE3
+            ? _numVal(stratSummary['calmar']) - _numVal(bhSummary['calmar'])
+            : 0.0,
+        'tranches_total': _numVal(stratSummary['tranches_total']).round(),
+        'tp_count': _numVal(stratSummary['tp_count']).round(),
+        'naked_prem_spent_usd': _numVal(stratSummary['naked_prem_spent_usd']),
+        'gross_put_monetized_usd': _numVal(
+          stratSummary['gross_put_monetized_usd'],
+        ),
+        'pct_days_hedged': _numVal(stratSummary['pct_days_hedged']),
+      },
+      'engine2': {
+        'active': hasE2,
+        'delta_usd': !hasE1 && hasE2 && !hasE3 ? totAlpha : 0.0,
+        'standalone_alpha_usd': !hasE1 && hasE2 && !hasE3 ? totAlpha : 0.0,
+        'share_of_alpha_pct': !hasE1 && hasE2 && !hasE3 ? 100.0 : 0.0,
+        'delta_shares': !hasE1 && hasE2 && !hasE3 ? (totSh - bhSh) : 0.0,
+        'delta_extra_pct': !hasE1 && hasE2 && !hasE3 && bhSh > 0
+            ? ((totSh - bhSh) / bhSh) * 100
+            : 0.0,
+        'delta_cagr_pp': 0.0,
+        'delta_mdd_pp': 0.0,
+        'delta_calmar': 0.0,
+        'trades_count': _numVal(stratSummary['cc_trades_count']).round(),
+        'active_years': _numVal(stratSummary['cc_active_years']).round(),
+        'stop_count': _numVal(stratSummary['cc_stop_count']).round(),
+        'roll_count': _numVal(stratSummary['cc_roll_count']).round(),
+        'assigned_count': _numVal(stratSummary['cc_assigned_count']).round(),
+        'gross_prem_usd': _numVal(stratSummary['cc_gross_prem_usd']),
+        'gross_loss_usd': _numVal(stratSummary['cc_gross_loss_usd']),
+        'funded_puts_usd': _numVal(stratSummary['cc_funded_puts_usd']),
+      },
+      'engine3': {
+        'active': hasE3,
+        'delta_usd': !hasE1 && !hasE2 && hasE3 ? totAlpha : 0.0,
+        'standalone_alpha_usd': !hasE1 && !hasE2 && hasE3 ? totAlpha : 0.0,
+        'share_of_alpha_pct': !hasE1 && !hasE2 && hasE3 ? 100.0 : 0.0,
+        'delta_shares': !hasE1 && !hasE2 && hasE3 ? (totSh - bhSh) : 0.0,
+        'delta_extra_pct': !hasE1 && !hasE2 && hasE3 && bhSh > 0
+            ? ((totSh - bhSh) / bhSh) * 100
+            : 0.0,
+        'delta_cagr_pp': 0.0,
+        'delta_mdd_pp': 0.0,
+        'delta_calmar': 0.0,
+        'sp_trades_count': _numVal(stratSummary['sp_trades_count']).round(),
+        'sp_win_rate_pct': _numVal(stratSummary['sp_win_rate_pct']),
+        'sp_assignments_count': _numVal(
+          stratSummary['sp_assignments_count'],
+        ).round(),
+        'wc_trades_count': _numVal(stratSummary['wc_trades_count']).round(),
+        'wc_called_away_count': _numVal(
+          stratSummary['wc_called_away_count'],
+        ).round(),
+        'gross_prem_usd':
+            _numVal(stratSummary['sp_gross_prem_usd']) +
+            _numVal(stratSummary['wc_gross_prem_usd']),
+        'margin_interest_usd': _numVal(stratSummary['margin_interest_usd']),
+        'days_levered_stock': _numVal(
+          stratSummary['days_levered_stock'],
+        ).round(),
+        'max_wheel_cycle_days': _numVal(
+          stratSummary['max_wheel_cycle_days'],
+        ).round(),
+        'max_gross_stock_lev': _numVal(
+          stratSummary['max_gross_stock_lev'],
+          1.0,
+        ),
+      },
+    };
+  }
+
+  Widget _buildThreeEngineWorkbench(
+    Map<String, dynamic> doc, {
+    required Map<String, dynamic> stratSummary,
+    required Map<String, dynamic> bhSummary,
+    required List<String> strategyTabs,
+    required bool hasPutLayer,
+    required bool rebasedMode,
+    required bool compact,
+    required bool desktop,
+  }) {
+    final attr = _resolveEngineAttribution(doc, stratSummary, bhSummary);
+    final e1 = asMap(attr['engine1']);
+    final e2 = asMap(attr['engine2']);
+    final e3 = asMap(attr['engine3']);
+    final corrs = asMap(attr['correlations']);
+    final activeCount = _numVal(attr['active_engines_count']).round();
+    final e1Active = e1['active'] == true;
+    final e2Active = e2['active'] == true;
+    final e3Active = e3['active'] == true;
+
+    final corrTags = <String>[];
+    if (corrs['e1_e2'] is num) {
+      corrTags.add(
+        'E1×E2 r=${(corrs['e1_e2'] as num).toDouble().toStringAsFixed(2)}',
+      );
+    }
+    if (corrs['e1_e3'] is num) {
+      corrTags.add(
+        'E1×E3 r=${(corrs['e1_e3'] as num).toDouble().toStringAsFixed(2)}',
+      );
+    }
+    if (corrs['e2_e3'] is num) {
+      corrTags.add(
+        'E2×E3 r=${(corrs['e2_e3'] as num).toDouble().toStringAsFixed(2)}',
+      );
+    }
+
+    final card1 = _buildOrthogonalModuleCard(
+      keyId: 'e1',
+      indexTag: '01',
+      title: w('Crisis Long Put Shield', '危机买 Put 保护'),
+      regimeTag: w(
+        'Top warning · Left-tail convexity insurance',
+        '高位预警 · 左尾防暴跌凸性保险',
+      ),
+      accent: _emerald,
+      active: e1Active,
+      deltaUsd: _numVal(e1['delta_usd']),
+      sharePct: _numVal(e1['share_of_alpha_pct']),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            key: const ValueKey('crisis-put-strategy-bar'),
+            spacing: 5,
+            runSpacing: 5,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                w('Crisis Put Strategy:', '危机 Put 策略：'),
+                style: TextStyle(
+                  color: p.muted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              for (final sid in strategyTabs) _buildCalmStrategyTab(sid),
+            ],
+          ),
+          if (hasPutLayer) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              key: const ValueKey('crisis-tp-mode-bar'),
+              spacing: 5,
+              runSpacing: 5,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  w('Put Take-Profit:', 'Put 止盈规则：'),
+                  style: TextStyle(
+                    color: p.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                for (final mid in _tpModeIds) _buildCalmTpModeTab(mid),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _humanTpModeHint(selectedTpMode),
+              key: const ValueKey('crisis-tp-mode-hint'),
+              style: TextStyle(color: p.muted, fontSize: 11, height: 1.38),
+            ),
+          ] else ...[
+            const SizedBox(height: 6),
+            Text(
+              w(
+                'Crisis Put layer OFF · Pure equity + selected overlay sleeves only.',
+                '危机 Put 保护关闭 · 仅保留现货底仓与已开启的卖权叠加模块。',
+              ),
+              style: TextStyle(color: p.muted, fontSize: 11, height: 1.38),
+            ),
+          ],
+        ],
+      ),
+    );
+
+    final card2 = _buildOrthogonalModuleCard(
+      keyId: 'e2',
+      indexTag: '02',
+      title: w('Calm-Regime Short Call', '平时卖 Call 收租'),
+      regimeTag: w(
+        'Within 3% of ATH · Self-funding VRP rent',
+        '距前高 ≤ 3% 平静牛市 · 免费抵保费',
+      ),
+      accent: _sky,
+      active: e2Active,
+      deltaUsd: _numVal(e2['delta_usd']),
+      sharePct: _numVal(e2['share_of_alpha_pct']),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            key: const ValueKey('crisis-cc-mode-bar'),
+            spacing: 5,
+            runSpacing: 5,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                w('Overlay Short Call:', '叠加平时卖 Call：'),
+                style: TextStyle(
+                  color: p.muted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              for (final cid in _ccModeIds) _buildCalmCcModeTab(cid),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _humanCcModeHint(selectedCcMode, stratSummary),
+            key: const ValueKey('crisis-cc-mode-hint'),
+            style: TextStyle(color: p.muted, fontSize: 11, height: 1.38),
+          ),
+        ],
+      ),
+    );
+
+    final card3 = _buildOrthogonalModuleCard(
+      keyId: 'e3',
+      indexTag: '03',
+      title: w('Panic Put Reverse Wheel', '恐慌卖 Put Wheel'),
+      regimeTag: w(
+        'VIX/3M >= 1.00 inversion · Controlled dip harvest',
+        'VIX/3M ≥ 1.00 倒挂抄底 · 反向 30D Call',
+      ),
+      accent: _amber,
+      active: e3Active,
+      deltaUsd: _numVal(e3['delta_usd']),
+      sharePct: _numVal(e3['share_of_alpha_pct']),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            key: const ValueKey('crisis-sp-mode-bar'),
+            spacing: 5,
+            runSpacing: 5,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                w('Panic Put Wheel:', '恐慌卖 Put Wheel：'),
+                style: TextStyle(
+                  color: p.muted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              for (final sid in _spModeIds) _buildCalmSpModeTab(sid),
+            ],
+          ),
+          if (selectedSpMode != 'sp_off') ...[
+            const SizedBox(height: 7),
+            Wrap(
+              key: const ValueKey('crisis-wc-mode-bar'),
+              spacing: 5,
+              runSpacing: 5,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  w('Wheel Call:', 'Wheel Call 出场：'),
+                  style: TextStyle(
+                    color: p.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                for (final wid in _wcModeIds) _buildCalmWcModeTab(wid),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _humanWcModeFormulaHint(selectedWcMode, stratSummary),
+              key: const ValueKey('crisis-wc-mode-hint'),
+              style: TextStyle(color: _amber, fontSize: 11, height: 1.35),
+            ),
+          ],
+          const SizedBox(height: 6),
+          Text(
+            _humanSpModeHint(selectedSpMode, stratSummary),
+            key: const ValueKey('crisis-sp-mode-hint'),
+            style: TextStyle(color: p.muted, fontSize: 11, height: 1.38),
+          ),
+        ],
+      ),
+    );
+
+    return Column(
+      key: const ValueKey('crisis-three-engine-grid'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 10,
+          runSpacing: 6,
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  w(
+                    'Three Orthogonal Option Engines',
+                    '三大正交期权引擎 · 模块化独立组合',
+                  ),
+                  style: TextStyle(
+                    color: p.text,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _emerald.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: _emerald.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: Text(
+                    w('$activeCount / 3 Active', '$activeCount / 3 运行中'),
+                    style: const TextStyle(
+                      color: _emerald,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (corrTags.isNotEmpty)
+                  Container(
+                    key: const ValueKey('crisis-engine-corr-pill'),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2.5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: p.text.withValues(alpha: 0.035),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: p.border),
+                    ),
+                    child: Text(
+                      w(
+                        'Daily Alpha Corr: ${corrTags.join(' · ')}',
+                        '正交日度 Alpha 相关：${corrTags.join(' · ')}',
+                      ),
+                      style: TextStyle(
+                        color: p.muted,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            if (!rebasedMode)
+              InkWell(
+                key: const ValueKey('crisis-scale-toggle'),
+                borderRadius: BorderRadius.circular(6),
+                onTap: () => setState(() => useLogScale = !useLogScale),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: Text(
+                    useLogScale
+                        ? w('Scale: Log', '坐标：对数')
+                        : w('Scale: Linear', '坐标：线性'),
+                    style: TextStyle(
+                      color: p.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              )
+            else
+              InkWell(
+                key: const ValueKey('crisis-zoom-reset-btn'),
+                borderRadius: BorderRadius.circular(6),
+                onTap: () {
+                  setState(() {
+                    selectedWindowId = 'ALL';
+                    hoverIndex = -1;
+                  });
+                  _emitSelection();
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: Text(
+                    w('Reset to All 12Y', '返回全部 12 年'),
+                    style: const TextStyle(
+                      color: _emerald,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (desktop)
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: card1),
+                _buildOrthogonalJoiner(),
+                Expanded(child: card2),
+                _buildOrthogonalJoiner(),
+                Expanded(child: card3),
+              ],
+            ),
+          )
+        else
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              card1,
+              const SizedBox(height: 8),
+              card2,
+              const SizedBox(height: 8),
+              card3,
+            ],
+          ),
+      ],
+    );
+  }
+
+  Widget _buildOrthogonalJoiner() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      child: Center(
+        child: Container(
+          width: 22,
+          height: 22,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: p.text.withValues(alpha: 0.04),
+            shape: BoxShape.circle,
+            border: Border.all(color: p.border),
+          ),
+          child: Text(
+            '⊕',
+            style: TextStyle(
+              color: p.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              height: 1.0,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrthogonalModuleCard({
+    required String keyId,
+    required String indexTag,
+    required String title,
+    required String regimeTag,
+    required Color accent,
+    required bool active,
+    required double deltaUsd,
+    required double sharePct,
+    required Widget body,
+  }) {
+    final borderCol = active ? accent.withValues(alpha: 0.42) : p.border;
+    final bgCol = active
+        ? accent.withValues(alpha: 0.045)
+        : p.text.withValues(alpha: 0.018);
+    final statusBadge = active
+        ? '${_fmtUsdCompact(deltaUsd, signed: true)} · ${sharePct.toStringAsFixed(0)}%'
+        : w('Off', '已关闭');
+
+    return Container(
+      key: ValueKey('crisis-engine-card-$keyId'),
+      decoration: BoxDecoration(
+        color: bgCol,
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: borderCol, width: 1),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              height: 2.5,
+              color: active ? accent : p.border.withValues(alpha: 0.6),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 11),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5.5,
+                          vertical: 1.5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: (active ? accent : p.muted).withValues(
+                            alpha: 0.16,
+                          ),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          indexTag,
+                          style: TextStyle(
+                            color: active ? accent : p.muted,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: active ? p.text : p.muted,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6.5,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: active
+                              ? accent.withValues(alpha: 0.14)
+                              : p.text.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          statusBadge,
+                          style: TextStyle(
+                            color: active
+                                ? (deltaUsd < 0 ? _coral : accent)
+                                : p.muted,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    regimeTag,
+                    style: TextStyle(
+                      color: p.muted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(height: 1, color: p.border.withValues(alpha: 0.65)),
+                  const SizedBox(height: 8),
+                  body,
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEngineAttributionPanel(
+    Map<String, dynamic> doc, {
+    required Map<String, dynamic> stratSummary,
+    required Map<String, dynamic> bhSummary,
+    required bool compact,
+    required bool desktop,
+  }) {
+    final attr = _resolveEngineAttribution(doc, stratSummary, bhSummary);
+    final e1 = asMap(attr['engine1']);
+    final e2 = asMap(attr['engine2']);
+    final e3 = asMap(attr['engine3']);
+    final corrs = asMap(attr['correlations']);
+
+    final baseNav = _numVal(attr['base_end_nav']);
+    final totNav = _numVal(attr['total_end_nav']);
+    final totAlpha = _numVal(attr['total_alpha_usd']);
+    final d1 = _numVal(e1['delta_usd']);
+    final d2 = _numVal(e2['delta_usd']);
+    final d3 = _numVal(e3['delta_usd']);
+    final s1Pct = _numVal(e1['share_of_alpha_pct']);
+    final s2Pct = _numVal(e2['share_of_alpha_pct']);
+    final s3Pct = _numVal(e3['share_of_alpha_pct']);
+
+    final attrCard1 = _buildEngineAttributionCard(
+      keyId: 'e1',
+      indexTag: '01',
+      title: w('Engine 1 · Crisis Put Shield', '模块 01 · 危机买 Put 保护'),
+      regimeRole: w(
+        'Active in top warning & crash left tail',
+        '分工体制：高位预警与暴跌左尾护盘',
+      ),
+      accent: _emerald,
+      active: e1['active'] == true,
+      deltaUsd: d1,
+      standaloneUsd: _numVal(e1['standalone_alpha_usd']),
+      sharePct: s1Pct,
+      deltaShares: _numVal(e1['delta_shares']),
+      deltaExtraPct: _numVal(e1['delta_extra_pct']),
+      deltaCagrPp: _numVal(e1['delta_cagr_pp']),
+      deltaMddPp: _numVal(e1['delta_mdd_pp']),
+      deltaCalmar: _numVal(e1['delta_calmar']),
+      telemetry: e1['active'] == true
+          ? w(
+              '${_numVal(e1['tranches_total']).round()} tranches · ${_numVal(e1['tp_count']).round()} TP harvests · Put spend ${_fmtUsdCompact(_numVal(e1['naked_prem_spent_usd']))} · Gross monetized ${_fmtUsdCompact(_numVal(e1['gross_put_monetized_usd']))} · Hedged ${_numVal(e1['pct_days_hedged']).toStringAsFixed(1)}% days',
+              '共 ${_numVal(e1['tranches_total']).round()} 笔保护 · ${_numVal(e1['tp_count']).round()} 次止盈换股 · 裸 Put 保费 ${_fmtUsdCompact(_numVal(e1['naked_prem_spent_usd']))} · 累计毛赔付 ${_fmtUsdCompact(_numVal(e1['gross_put_monetized_usd']))} · 持盾天数 ${_numVal(e1['pct_days_hedged']).toStringAsFixed(1)}%',
+            )
+          : w(
+              'Disabled · Select U1 / B1c / D2 above to enable left-tail crisis protection.',
+              '未启用 · 在上方选择 U1 / B1c / D2 开启左尾暴跌保险。',
+            ),
+    );
+
+    final attrCard2 = _buildEngineAttributionCard(
+      keyId: 'e2',
+      indexTag: '02',
+      title: w('Engine 2 · Calm Short Call', '模块 02 · 平时卖 Call 收租'),
+      regimeRole: w(
+        'Active in calm bull trends (ATH <= 3%)',
+        '分工体制：平静牛市收租 · 免费抵 Put 保费',
+      ),
+      accent: _sky,
+      active: e2['active'] == true,
+      deltaUsd: d2,
+      standaloneUsd: _numVal(e2['standalone_alpha_usd']),
+      sharePct: s2Pct,
+      deltaShares: _numVal(e2['delta_shares']),
+      deltaExtraPct: _numVal(e2['delta_extra_pct']),
+      deltaCagrPp: _numVal(e2['delta_cagr_pp']),
+      deltaMddPp: _numVal(e2['delta_mdd_pp']),
+      deltaCalmar: _numVal(e2['delta_calmar']),
+      telemetry: e2['active'] == true
+          ? w(
+              '${_numVal(e2['trades_count']).round()} trades / ${_numVal(e2['active_years']).round()} yrs · ${_numVal(e2['assigned_count']).round()} breached · ${_numVal(e2['stop_count']).round() + _numVal(e2['roll_count']).round()} stops/rolls · Gross rent ${_fmtUsdCompact(_numVal(e2['gross_prem_usd']))} · Put cost funded ${_fmtUsdCompact(_numVal(e2['funded_puts_usd']))}',
+              '覆盖 ${_numVal(e2['active_years']).round()} 年共 ${_numVal(e2['trades_count']).round()} 笔 · 穿价 ${_numVal(e2['assigned_count']).round()} 次 · 止损/Roll ${_numVal(e2['stop_count']).round() + _numVal(e2['roll_count']).round()} 次 · 毛收租 ${_fmtUsdCompact(_numVal(e2['gross_prem_usd']))} · 抵 Put 保费 ${_fmtUsdCompact(_numVal(e2['funded_puts_usd']))}',
+            )
+          : w(
+              'Disabled · Select 12Δ Short Call above to monetize calm upside VRP.',
+              '未启用 · 在上方开启平时 12Δ 卖 Call 收割牛市右翼 VRP。',
+            ),
+    );
+
+    final attrCard3 = _buildEngineAttributionCard(
+      keyId: 'e3',
+      indexTag: '03',
+      title: w('Engine 3 · Panic Put Wheel', '模块 03 · 恐慌卖 Put Wheel'),
+      regimeRole: w(
+        'Active in VIX/3M >= 1.00 inversion rebounds',
+        '分工体制：VIX 倒挂期卖恐慌保费与反弹接货',
+      ),
+      accent: _amber,
+      active: e3['active'] == true,
+      deltaUsd: d3,
+      standaloneUsd: _numVal(e3['standalone_alpha_usd']),
+      sharePct: s3Pct,
+      deltaShares: _numVal(e3['delta_shares']),
+      deltaExtraPct: _numVal(e3['delta_extra_pct']),
+      deltaCagrPp: _numVal(e3['delta_cagr_pp']),
+      deltaMddPp: _numVal(e3['delta_mdd_pp']),
+      deltaCalmar: _numVal(e3['delta_calmar']),
+      telemetry: e3['active'] == true
+          ? w(
+              '${_numVal(e3['sp_trades_count']).round()} puts (${_numVal(e3['sp_win_rate_pct']).toStringAsFixed(1)}% win, ${_numVal(e3['sp_assignments_count']).round()} asgn) · ${_numVal(e3['wc_trades_count']).round()} WC (${_numVal(e3['wc_called_away_count']).round()} cleared) · Prem ${_fmtUsdCompact(_numVal(e3['gross_prem_usd']))} · Interest ${_fmtUsdCompact(_numVal(e3['margin_interest_usd']))} · ${_numVal(e3['days_levered_stock']).round()}d lev (max ${_numVal(e3['max_gross_stock_lev'], 1.0).toStringAsFixed(2)}x)',
+              '${_numVal(e3['sp_trades_count']).round()} 笔 Put（胜率 ${_numVal(e3['sp_win_rate_pct']).toStringAsFixed(1)}% · 接货 ${_numVal(e3['sp_assignments_count']).round()} 次）· ${_numVal(e3['wc_trades_count']).round()} 笔 Wheel Call（清债 ${_numVal(e3['wc_called_away_count']).round()} 次）· 总租 ${_fmtUsdCompact(_numVal(e3['gross_prem_usd']))} · 12年息 ${_fmtUsdCompact(_numVal(e3['margin_interest_usd']))} · 杠杆 ${_numVal(e3['days_levered_stock']).round()} 天（峰值 ${_numVal(e3['max_gross_stock_lev'], 1.0).toStringAsFixed(2)}x）',
+            )
+          : w(
+              'Disabled · Strictly 0 margin debt & 1.00x max stock exposure.',
+              '未启用 · 严格 0 融资负债、0 利息、股票峰值敞口 1.00x。',
+            ),
+    );
+
+    return Container(
+      key: const ValueKey('crisis-engine-attribution-panel'),
+      padding: EdgeInsets.all(compact ? 11 : 14),
+      decoration: BoxDecoration(
+        color: p.text.withValues(alpha: 0.025),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: p.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (!compact)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _activeComboBadgeText(),
+                        key: const ValueKey('crisis-active-combo-badge'),
+                        style: TextStyle(
+                          color: p.text,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          _bridgeEquationPill(
+                            label: w('QQQ B&H', '死拿基准'),
+                            value: _fmtUsdCompact(baseNav),
+                            color: p.muted,
+                          ),
+                          Text('+', style: TextStyle(color: p.muted, fontSize: 11)),
+                          _bridgeEquationPill(
+                            label: w('E1 Put', '引擎1'),
+                            value: e1['active'] == true
+                                ? _fmtUsdCompact(d1, signed: true)
+                                : w('Off', '关'),
+                            color: e1['active'] == true ? _emerald : p.muted,
+                          ),
+                          Text('+', style: TextStyle(color: p.muted, fontSize: 11)),
+                          _bridgeEquationPill(
+                            label: w('E2 Call', '引擎2'),
+                            value: e2['active'] == true
+                                ? _fmtUsdCompact(d2, signed: true)
+                                : w('Off', '关'),
+                            color: e2['active'] == true ? _sky : p.muted,
+                          ),
+                          Text('+', style: TextStyle(color: p.muted, fontSize: 11)),
+                          _bridgeEquationPill(
+                            label: w('E3 Wheel', '引擎3'),
+                            value: e3['active'] == true
+                                ? _fmtUsdCompact(d3, signed: true)
+                                : w('Off', '关'),
+                            color: e3['active'] == true ? _amber : p.muted,
+                          ),
+                          Text('=', style: TextStyle(color: p.muted, fontSize: 11)),
+                          _bridgeEquationPill(
+                            label: w('Total', '总终值'),
+                            value: _fmtUsdCompact(totNav),
+                            color: p.text,
+                            bold: true,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                _buildAttributionToggleButton(),
+              ],
+            )
+          else ...[
+            Text(
+              _activeComboBadgeText(),
+              key: const ValueKey('crisis-active-combo-badge'),
+              style: TextStyle(
+                color: p.text,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 5,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _bridgeEquationPill(
+                  label: w('QQQ B&H', '死拿基准'),
+                  value: _fmtUsdCompact(baseNav),
+                  color: p.muted,
+                ),
+                Text('+', style: TextStyle(color: p.muted, fontSize: 11)),
+                _bridgeEquationPill(
+                  label: w('E1', '引擎1'),
+                  value: e1['active'] == true
+                      ? _fmtUsdCompact(d1, signed: true)
+                      : w('Off', '关'),
+                  color: e1['active'] == true ? _emerald : p.muted,
+                ),
+                Text('+', style: TextStyle(color: p.muted, fontSize: 11)),
+                _bridgeEquationPill(
+                  label: w('E2', '引擎2'),
+                  value: e2['active'] == true
+                      ? _fmtUsdCompact(d2, signed: true)
+                      : w('Off', '关'),
+                  color: e2['active'] == true ? _sky : p.muted,
+                ),
+                Text('+', style: TextStyle(color: p.muted, fontSize: 11)),
+                _bridgeEquationPill(
+                  label: w('E3', '引擎3'),
+                  value: e3['active'] == true
+                      ? _fmtUsdCompact(d3, signed: true)
+                      : w('Off', '关'),
+                  color: e3['active'] == true ? _amber : p.muted,
+                ),
+                Text('=', style: TextStyle(color: p.muted, fontSize: 11)),
+                _bridgeEquationPill(
+                  label: w('Total', '总终值'),
+                  value: _fmtUsdCompact(totNav),
+                  color: p.text,
+                  bold: true,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: _buildAttributionToggleButton(),
+            ),
+          ],
+          const SizedBox(height: 10),
+          _buildStackedAlphaShareBar(
+            totAlpha: totAlpha,
+            d1: d1,
+            d2: d2,
+            d3: d3,
+            s1Pct: s1Pct,
+            s2Pct: s2Pct,
+            s3Pct: s3Pct,
+            e1Active: e1['active'] == true,
+            e2Active: e2['active'] == true,
+            e3Active: e3['active'] == true,
+          ),
+          if (showEngineAttribution) ...[
+            const SizedBox(height: 12),
+            if (desktop)
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: attrCard1),
+                    const SizedBox(width: 10),
+                    Expanded(child: attrCard2),
+                    const SizedBox(width: 10),
+                    Expanded(child: attrCard3),
+                  ],
+                ),
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  attrCard1,
+                  const SizedBox(height: 8),
+                  attrCard2,
+                  const SizedBox(height: 8),
+                  attrCard3,
+                ],
+              ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 12,
+              runSpacing: 4,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  w(
+                    'Orthogonal Regime Split: E1 guards crash left tail (long convexity) · E2 harvests calm bull VRP · E3 monetizes inversion rebounds (marginal step-up from QQQ B&H).',
+                    '三大正交模块分工：引擎 1 守暴跌左尾买凸性 · 引擎 2 收牛市平静租抵保费 · 引擎 3 吃倒挂恐慌反弹（均为基于死拿 QQQ 递进叠加的精确边际归因）。',
+                  ),
+                  style: TextStyle(color: p.muted, fontSize: 11),
+                ),
+                if (corrs['e1_e3'] is num || corrs['e2_e3'] is num)
+                  Text(
+                    w(
+                      'Note: Negative E1×E3 corr reflects left-tail convexity offset vs rebound beta (cap <= 10% preserves shield).',
+                      '风控提示：E1×E3 负相关含暴跌日凸性对抵效应，建议锁死 10% 杠杆帽保护左尾。',
+                    ),
+                    style: TextStyle(
+                      color: _amber.withValues(alpha: 0.9),
+                      fontSize: 10.8,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAttributionToggleButton() {
+    return InkWell(
+      key: const ValueKey('crisis-engine-attribution-toggle'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => setState(
+        () => showEngineAttribution = !showEngineAttribution,
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: p.text.withValues(alpha: 0.045),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: p.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              showEngineAttribution
+                  ? w('Hide 3-Engine Breakdown', '收起三大块分部贡献')
+                  : w('Expand 3-Engine Breakdown', '展开三大块分部贡献'),
+              style: TextStyle(
+                color: p.text,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(
+              showEngineAttribution
+                  ? Icons.keyboard_arrow_up
+                  : Icons.keyboard_arrow_down,
+              size: 16,
+              color: p.muted,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _bridgeEquationPill({
+    required String label,
+    required String value,
+    required Color color,
+    bool bold = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: bold ? 0.12 : 0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: color.withValues(alpha: bold ? 0.35 : 0.25),
+        ),
+      ),
+      child: RichText(
+        text: TextSpan(
+          style: TextStyle(fontSize: 11, color: p.muted),
+          children: [
+            TextSpan(text: '$label '),
+            TextSpan(
+              text: value,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStackedAlphaShareBar({
+    required double totAlpha,
+    required double d1,
+    required double d2,
+    required double d3,
+    required double s1Pct,
+    required double s2Pct,
+    required double s3Pct,
+    required bool e1Active,
+    required bool e2Active,
+    required bool e3Active,
+  }) {
+    final pos1 = e1Active && d1 > 0 ? d1 : 0.0;
+    final pos2 = e2Active && d2 > 0 ? d2 : 0.0;
+    final pos3 = e3Active && d3 > 0 ? d3 : 0.0;
+    final sumPos = pos1 + pos2 + pos3;
+
+    final flex1 = sumPos > 0 ? (pos1 / sumPos * 1000).round() : 0;
+    final flex2 = sumPos > 0 ? (pos2 / sumPos * 1000).round() : 0;
+    final flex3 = sumPos > 0 ? (pos3 / sumPos * 1000).round() : 0;
+
+    return Column(
+      key: const ValueKey('crisis-engine-alpha-bar'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: SizedBox(
+            height: 8,
+            child: sumPos <= 0
+                ? Container(color: p.border)
+                : Row(
+                    children: [
+                      if (flex1 > 0)
+                        Expanded(
+                          flex: flex1,
+                          child: Container(color: _emerald),
+                        ),
+                      if (flex2 > 0) ...[
+                        if (flex1 > 0) const SizedBox(width: 2),
+                        Expanded(flex: flex2, child: Container(color: _sky)),
+                      ],
+                      if (flex3 > 0) ...[
+                        if (flex1 > 0 || flex2 > 0) const SizedBox(width: 2),
+                        Expanded(flex: flex3, child: Container(color: _amber)),
+                      ],
+                    ],
+                  ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 14,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _alphaLegendDot(
+              color: _emerald,
+              active: e1Active,
+              textStr: e1Active
+                  ? w(
+                      'E1 Crisis Put: ${s1Pct.toStringAsFixed(1)}% (${_fmtUsdCompact(d1, signed: true)})',
+                      '引擎 1 危机买 Put：${s1Pct.toStringAsFixed(1)}%（${_fmtUsdCompact(d1, signed: true)}）',
+                    )
+                  : w('E1 Crisis Put: Off', '引擎 1 危机买 Put：关闭'),
+            ),
+            _alphaLegendDot(
+              color: _sky,
+              active: e2Active,
+              textStr: e2Active
+                  ? w(
+                      'E2 Short Call: ${s2Pct.toStringAsFixed(1)}% (${_fmtUsdCompact(d2, signed: true)})',
+                      '引擎 2 平时卖 Call：${s2Pct.toStringAsFixed(1)}%（${_fmtUsdCompact(d2, signed: true)}）',
+                    )
+                  : w('E2 Short Call: Off', '引擎 2 平时卖 Call：关闭'),
+            ),
+            _alphaLegendDot(
+              color: _amber,
+              active: e3Active,
+              textStr: e3Active
+                  ? w(
+                      'E3 Put Wheel: ${s3Pct.toStringAsFixed(1)}% (${_fmtUsdCompact(d3, signed: true)})',
+                      '引擎 3 恐慌 Wheel：${s3Pct.toStringAsFixed(1)}%（${_fmtUsdCompact(d3, signed: true)}）',
+                    )
+                  : w('E3 Put Wheel: Off', '引擎 3 恐慌 Wheel：关闭'),
+            ),
+            Text(
+              w(
+                'Total Net Alpha ${_fmtUsdCompact(totAlpha, signed: true)}',
+                '合计超额 ${_fmtUsdCompact(totAlpha, signed: true)}',
+              ),
+              style: TextStyle(
+                color: p.muted,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _alphaLegendDot({
+    required Color color,
+    required bool active,
+    required String textStr,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: active ? color : p.muted.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(
+            textStr,
+            style: TextStyle(
+              color: active ? p.text : p.muted,
+              fontSize: 11,
+              fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEngineAttributionCard({
+    required String keyId,
+    required String indexTag,
+    required String title,
+    required String regimeRole,
+    required Color accent,
+    required bool active,
+    required double deltaUsd,
+    required double standaloneUsd,
+    required double sharePct,
+    required double deltaShares,
+    required double deltaExtraPct,
+    required double deltaCagrPp,
+    required double deltaMddPp,
+    required double deltaCalmar,
+    required String telemetry,
+  }) {
+    final shareFrac = active ? (sharePct.clamp(0.0, 100.0) / 100.0) : 0.0;
+    final mddColor = !active
+        ? p.muted
+        : (deltaMddPp > 0.05
+              ? _emerald
+              : (deltaMddPp < -0.05 ? _coral : p.text));
+    final mddStr = !active
+        ? '—'
+        : (deltaMddPp >= 0
+              ? w(
+                  'MDD +${deltaMddPp.toStringAsFixed(1)}pp (Less DD)',
+                  '回撤改善 +${deltaMddPp.toStringAsFixed(1)}%',
+                )
+              : w(
+                  'MDD ${deltaMddPp.toStringAsFixed(1)}pp (Wider DD)',
+                  '回撤扩大 ${deltaMddPp.toStringAsFixed(1)}%',
+                ));
+    final calmarStr = !active
+        ? '—'
+        : w(
+            'Calmar ${deltaCalmar >= 0 ? '+' : ''}${deltaCalmar.toStringAsFixed(3)}',
+            '卡玛 ${deltaCalmar >= 0 ? '+' : ''}${deltaCalmar.toStringAsFixed(3)}',
+          );
+
+    return Container(
+      key: ValueKey('crisis-attr-card-$keyId'),
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: active
+            ? p.card.withValues(alpha: 0.9)
+            : p.text.withValues(alpha: 0.015),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: active ? accent.withValues(alpha: 0.32) : p.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 3,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: active ? accent : p.muted.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: active ? p.text : p.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                active
+                    ? w(
+                        '${sharePct.toStringAsFixed(1)}% share',
+                        '占超额 ${sharePct.toStringAsFixed(1)}%',
+                      )
+                    : w('Inactive', '未启用'),
+                style: TextStyle(
+                  color: active ? accent : p.muted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          Text(
+            regimeRole,
+            style: TextStyle(color: p.muted, fontSize: 10.5),
+          ),
+          const SizedBox(height: 7),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: shareFrac,
+              minHeight: 4,
+              backgroundColor: p.border.withValues(alpha: 0.55),
+              color: active ? accent : p.muted.withValues(alpha: 0.3),
+            ),
+          ),
+          const SizedBox(height: 9),
+          Row(
+            children: [
+              Expanded(
+                child: _buildAttributionMetricCell(
+                  label: w('Marginal Alpha', '边际增量 Alpha'),
+                  value: active
+                      ? w(
+                          'Delta ${_fmtUsd(deltaUsd, signed: true)}',
+                          '增量 ${_fmtUsd(deltaUsd, signed: true)}',
+                        )
+                      : '—',
+                  sub: active
+                      ? w(
+                          'Solo ${_fmtUsdCompact(standaloneUsd, signed: true)}',
+                          '独立运行 ${_fmtUsdCompact(standaloneUsd, signed: true)}',
+                        )
+                      : w('Turn on above', '上方开启生效'),
+                  valueColor: active
+                      ? (deltaUsd < 0 ? _coral : accent)
+                      : p.muted,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildAttributionMetricCell(
+                  label: w('Extra QQQ Shares', '多买 QQQ 股数'),
+                  value: active
+                      ? w(
+                          '${_fmtShares(deltaShares, signed: true)} sh',
+                          '${_fmtShares(deltaShares, signed: true)} 股',
+                        )
+                      : '—',
+                  sub: active
+                      ? w(
+                          '${_fmtPct(deltaExtraPct)} vs BH',
+                          '较死拿 ${_fmtPct(deltaExtraPct)}',
+                        )
+                      : '—',
+                  valueColor: active ? p.text : p.muted,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: _buildAttributionMetricCell(
+                  label: w('CAGR Lift', '年化 CAGR 贡献'),
+                  value: active
+                      ? '${deltaCagrPp >= 0 ? '+' : ''}${deltaCagrPp.toStringAsFixed(2)}%'
+                      : '—',
+                  sub: calmarStr,
+                  valueColor: active
+                      ? (deltaCagrPp < 0 ? _coral : p.text)
+                      : p.muted,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildAttributionMetricCell(
+                  label: w('Drawdown Impact', '最大回撤影响'),
+                  value: mddStr,
+                  sub: active
+                      ? (deltaMddPp >= 0
+                            ? w('Risk-reducing sleeve', '降低组合波动回撤')
+                            : w('Leverage risk trade-off', '轻杠杆收益换回撤'))
+                      : '—',
+                  valueColor: mddColor,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(height: 1, color: p.border.withValues(alpha: 0.6)),
+          const SizedBox(height: 6),
+          Text(
+            telemetry,
+            style: TextStyle(color: p.muted, fontSize: 10.5, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAttributionMetricCell({
+    required String label,
+    required String value,
+    required String sub,
+    required Color valueColor,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: p.muted, fontSize: 10.2)),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: valueColor,
+            fontSize: 12.2,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        Text(
+          sub,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: p.muted, fontSize: 10.2),
+        ),
+      ],
+    );
+  }
+
   Widget _buildCalmCcModeTab(String modeId) {
     final active = selectedCcMode == modeId;
+    final isOff = modeId == 'cc_off';
+    final accent = isOff ? p.muted : _sky;
     return InkWell(
       key: ValueKey('crisis-cc-mode-pill-$modeId'),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(7),
       onTap: () => _selectCcMode(modeId),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5.5),
+        padding: const EdgeInsets.symmetric(horizontal: 8.5, vertical: 4.5),
         decoration: BoxDecoration(
           color: active
-              ? _emerald.withValues(alpha: 0.14)
+              ? accent.withValues(alpha: isOff ? 0.12 : 0.16)
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(7),
           border: Border.all(
-            color: active ? _emerald.withValues(alpha: 0.65) : p.border,
+            color: active
+                ? accent.withValues(alpha: isOff ? 0.45 : 0.72)
+                : p.border,
           ),
         ),
         child: Text(
           _humanCcModeLabel(modeId),
           style: TextStyle(
             color: active ? p.text : p.muted,
-            fontSize: 12,
+            fontSize: 11.2,
             fontWeight: active ? FontWeight.w600 : FontWeight.w500,
           ),
         ),
@@ -2888,24 +4123,24 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final active = selectedTpMode == modeId;
     return InkWell(
       key: ValueKey('crisis-tp-mode-pill-$modeId'),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(7),
       onTap: () => _selectTpMode(modeId),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5.5),
+        padding: const EdgeInsets.symmetric(horizontal: 8.5, vertical: 4.5),
         decoration: BoxDecoration(
           color: active
-              ? _emerald.withValues(alpha: 0.14)
+              ? _emerald.withValues(alpha: 0.16)
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(7),
           border: Border.all(
-            color: active ? _emerald.withValues(alpha: 0.65) : p.border,
+            color: active ? _emerald.withValues(alpha: 0.72) : p.border,
           ),
         ),
         child: Text(
           _humanTpModeLabel(modeId),
           style: TextStyle(
             color: active ? p.text : p.muted,
-            fontSize: 12,
+            fontSize: 11.2,
             fontWeight: active ? FontWeight.w600 : FontWeight.w500,
           ),
         ),
@@ -2915,26 +4150,30 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   Widget _buildCalmSpModeTab(String modeId) {
     final active = selectedSpMode == modeId;
+    final isOff = modeId == 'sp_off';
+    final accent = isOff ? p.muted : _amber;
     return InkWell(
       key: ValueKey('crisis-sp-mode-pill-$modeId'),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(7),
       onTap: () => _selectSpMode(modeId),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5.5),
+        padding: const EdgeInsets.symmetric(horizontal: 8.5, vertical: 4.5),
         decoration: BoxDecoration(
           color: active
-              ? _emerald.withValues(alpha: 0.14)
+              ? accent.withValues(alpha: isOff ? 0.12 : 0.16)
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(7),
           border: Border.all(
-            color: active ? _emerald.withValues(alpha: 0.65) : p.border,
+            color: active
+                ? accent.withValues(alpha: isOff ? 0.45 : 0.72)
+                : p.border,
           ),
         ),
         child: Text(
           _humanSpModeLabel(modeId),
           style: TextStyle(
             color: active ? p.text : p.muted,
-            fontSize: 12,
+            fontSize: 11.2,
             fontWeight: active ? FontWeight.w600 : FontWeight.w500,
           ),
         ),
@@ -2946,24 +4185,24 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final active = selectedWcMode == modeId;
     return InkWell(
       key: ValueKey('crisis-wc-mode-pill-$modeId'),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(7),
       onTap: () => _selectWcMode(modeId),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5.5),
+        padding: const EdgeInsets.symmetric(horizontal: 8.5, vertical: 4.5),
         decoration: BoxDecoration(
           color: active
-              ? _emerald.withValues(alpha: 0.14)
+              ? _amber.withValues(alpha: 0.16)
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(7),
           border: Border.all(
-            color: active ? _emerald.withValues(alpha: 0.65) : p.border,
+            color: active ? _amber.withValues(alpha: 0.72) : p.border,
           ),
         ),
         child: Text(
           _humanWcModeLabel(modeId),
           style: TextStyle(
             color: active ? p.text : p.muted,
-            fontSize: 12,
+            fontSize: 11.2,
             fontWeight: active ? FontWeight.w600 : FontWeight.w500,
           ),
         ),
@@ -2973,9 +4212,11 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   Widget _buildCalmStrategyTab(String sid) {
     final active = selectedStrategyId == sid;
+    final isOff = sid == 'NoPut_CallOnly';
+    final accent = isOff ? p.muted : _emerald;
     return InkWell(
       key: ValueKey('crisis-strategy-pill-$sid'),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(7),
       onTap: () {
         if (selectedStrategyId == sid) return;
         setState(() {
@@ -2990,19 +4231,23 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         _emitSelection();
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 8.5, vertical: 4.5),
         decoration: BoxDecoration(
-          color: active ? p.text.withValues(alpha: 0.08) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
+          color: active
+              ? accent.withValues(alpha: isOff ? 0.12 : 0.16)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(7),
           border: Border.all(
-            color: active ? p.text.withValues(alpha: 0.28) : p.border,
+            color: active
+                ? accent.withValues(alpha: isOff ? 0.45 : 0.72)
+                : p.border,
           ),
         ),
         child: Text(
           _humanStrategyLabel(sid),
           style: TextStyle(
             color: active ? p.text : p.muted,
-            fontSize: 12.5,
+            fontSize: 11.2,
             fontWeight: active ? FontWeight.w600 : FontWeight.w500,
           ),
         ),

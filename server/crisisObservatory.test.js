@@ -156,6 +156,35 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
       spCap10.sp_ledger.some(r => r.leg_type === 'wheel_call'),
   );
   assert.ok(spCap10.crisis_windows[0].title_en && spCap10.crisis_windows[0].title_zh);
+
+  // Orthogonal 3-engine attribution breakdown: exact additive identity & real correlations
+  const attrCap10 = spCap10.engine_attribution_by_strategy?.U1_PureOptions;
+  assert.ok(attrCap10, 'engine_attribution_by_strategy must be populated');
+  assert.equal(attrCap10.active_engines_count, 3);
+  assert.ok(Math.abs(attrCap10.engine1.delta_usd - 366272.47) <= 0.5);
+  assert.ok(Math.abs(attrCap10.engine2.delta_usd - 60369.63) <= 0.5);
+  assert.ok(Math.abs(attrCap10.engine3.delta_usd - 104791.43) <= 0.5);
+  assert.ok(
+    Math.abs(
+      attrCap10.base_end_nav +
+        attrCap10.engine1.delta_usd +
+        attrCap10.engine2.delta_usd +
+        attrCap10.engine3.delta_usd -
+        attrCap10.total_end_nav,
+    ) <= 0.05,
+    'Base + E1 + E2 + E3 must reconcile to total_end_nav to the penny',
+  );
+  assert.ok(
+    Math.abs(
+      attrCap10.engine1.share_of_alpha_pct +
+        attrCap10.engine2.share_of_alpha_pct +
+        attrCap10.engine3.share_of_alpha_pct -
+        100.0,
+    ) <= 0.2,
+  );
+  assert.ok(Number.isFinite(attrCap10.correlations.e1_e2));
+  assert.ok(attrCap10.correlations.e1_e3 < 0 && attrCap10.correlations.e2_e3 < 0);
+
   const gzBytes = zlib.gzipSync(JSON.stringify(spCap10)).length;
   assert.ok(gzBytes < 420 * 1024, `Projected single-mode gzipped payload must stay compact (<420 KB), got ${gzBytes}`);
 

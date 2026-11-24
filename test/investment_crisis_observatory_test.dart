@@ -185,6 +185,144 @@ class CrisisObservatoryFixtureApi extends ApiClient {
             };
       final ledgerStrat = strat == 'BH_Pure_QQQ' ? 'U1_PureOptions' : strat;
 
+      Map<String, dynamic>? resolveBundle(String tp, String cc, String sp, String wc) {
+        if (modeBundles == null) return null;
+        final key = sp == 'sp_off'
+            ? '${tp}__$cc'
+            : (wc == defaultWc ? '${tp}__${cc}__$sp' : '${tp}__${cc}__${sp}__$wc');
+        final b =
+            modeBundles[key] ??
+            modeBundles['${tp}__${cc}__${sp}__$wc'] ??
+            modeBundles['${tp}__${cc}__$sp'];
+        return b is Map<String, dynamic> ? b : null;
+      }
+
+      Map<String, Map<String, dynamic>> summaryById(Map<String, dynamic>? b) {
+        final rawList = (b?['strategies_summary'] ?? raw['strategies_summary']) as List<dynamic>;
+        return {
+          for (final item in rawList)
+            (item as Map)['id'].toString(): Map<String, dynamic>.from(item),
+        };
+      }
+
+      final m1 = summaryById(resolveBundle(tpMode, 'cc_off', 'sp_off', defaultWc));
+      final m2 = summaryById(resolveBundle(tpMode, ccMode, 'sp_off', defaultWc));
+      final m3Solo = summaryById(resolveBundle(tpMode, 'cc_off', spMode, wcMode));
+      final mCur = summaryById(bundle);
+      final sBh = mCur['BH_Pure_QQQ'] ?? const <String, dynamic>{};
+      final bhNav = (sBh['end_nav'] as num?)?.toDouble() ?? 0.0;
+      final bhSh = (sBh['final_shares'] as num?)?.toDouble() ?? 0.0;
+      final bhCagr = (sBh['cagr_pct'] as num?)?.toDouble() ?? 0.0;
+      final bhMdd = (sBh['max_dd_pct'] as num?)?.toDouble() ?? 0.0;
+      final bhCal = (sBh['calmar'] as num?)?.toDouble() ?? 0.0;
+
+      final engineAttrByStrat = <String, dynamic>{};
+      for (final sid in [
+        'U1_PureOptions',
+        'B1c_PureAD',
+        'D2_SixLights',
+        'H2_G4_PriceGate',
+        'NoPut_CallOnly',
+        'BH_Pure_QQQ',
+      ]) {
+        final hasE1 = sid != 'NoPut_CallOnly' && sid != 'BH_Pure_QQQ';
+        final hasE2 = ccMode != 'cc_off' && sid != 'BH_Pure_QQQ';
+        final hasE3 = spMode != 'sp_off' && sid != 'BH_Pure_QQQ';
+        final s1 = hasE1 ? (m1[sid] ?? sBh) : sBh;
+        final s2 = hasE2 ? (m2[sid] ?? s1) : s1;
+        final s3 = hasE3 ? (mCur[sid] ?? s2) : s2;
+        final s2Solo = hasE2 ? (m2['NoPut_CallOnly'] ?? sBh) : sBh;
+        final s3Solo = hasE3 ? (m3Solo['NoPut_CallOnly'] ?? sBh) : sBh;
+        double nVal(Map<String, dynamic> m, String k) =>
+            (m[k] as num?)?.toDouble() ?? 0.0;
+        final totNav = nVal(s3, 'end_nav');
+        final totAlpha = totNav - bhNav;
+        final d1Usd = hasE1 ? nVal(s1, 'end_nav') - bhNav : 0.0;
+        final d2Usd = hasE2 ? nVal(s2, 'end_nav') - nVal(s1, 'end_nav') : 0.0;
+        final d3Usd = hasE3 ? totNav - nVal(s2, 'end_nav') : 0.0;
+        final d1Sh = hasE1 ? nVal(s1, 'final_shares') - bhSh : 0.0;
+        final d2Sh = hasE2 ? nVal(s2, 'final_shares') - nVal(s1, 'final_shares') : 0.0;
+        final d3Sh = hasE3 ? nVal(s3, 'final_shares') - nVal(s2, 'final_shares') : 0.0;
+        double shPct(double d) => totAlpha.abs() > 1e-6 ? (d / totAlpha) * 100.0 : 0.0;
+        double exPct(double sh) => bhSh > 0 ? (sh / bhSh) * 100.0 : 0.0;
+        final curS = mCur[sid] ?? s3;
+        final e1Meta = m1[sid] ?? curS;
+        engineAttrByStrat[sid] = {
+          'strategy_id': sid,
+          'base_end_nav': bhNav,
+          'base_shares': bhSh,
+          'base_cagr_pct': bhCagr,
+          'base_max_dd_pct': bhMdd,
+          'base_calmar': bhCal,
+          'total_end_nav': totNav,
+          'total_alpha_usd': totAlpha,
+          'total_extra_shares': nVal(s3, 'final_shares') - bhSh,
+          'total_extra_shares_pct': exPct(nVal(s3, 'final_shares') - bhSh),
+          'active_engines_count': (hasE1 ? 1 : 0) + (hasE2 ? 1 : 0) + (hasE3 ? 1 : 0),
+          'correlations': {
+            'e1_e2': hasE1 && hasE2 ? 0.216 : null,
+            'e1_e3': hasE1 && hasE3 ? -0.098 : null,
+            'e2_e3': hasE2 && hasE3 ? -0.099 : null,
+          },
+          'engine1': {
+            'active': hasE1,
+            'delta_usd': d1Usd,
+            'standalone_alpha_usd': d1Usd,
+            'share_of_alpha_pct': hasE1 ? shPct(d1Usd) : 0.0,
+            'delta_shares': d1Sh,
+            'delta_extra_pct': exPct(d1Sh),
+            'delta_cagr_pp': hasE1 ? nVal(s1, 'cagr_pct') - bhCagr : 0.0,
+            'delta_mdd_pp': hasE1 ? nVal(s1, 'max_dd_pct') - bhMdd : 0.0,
+            'delta_calmar': hasE1 ? nVal(s1, 'calmar') - bhCal : 0.0,
+            'tranches_total': nVal(e1Meta, 'tranches_total'),
+            'tp_count': nVal(e1Meta, 'tp_count'),
+            'naked_prem_spent_usd': nVal(e1Meta, 'naked_prem_spent_usd'),
+            'gross_put_monetized_usd': nVal(e1Meta, 'gross_put_monetized_usd'),
+            'pct_days_hedged': nVal(e1Meta, 'pct_days_hedged'),
+          },
+          'engine2': {
+            'active': hasE2,
+            'delta_usd': d2Usd,
+            'standalone_alpha_usd': hasE2 ? nVal(s2Solo, 'end_nav') - bhNav : 0.0,
+            'share_of_alpha_pct': hasE2 ? shPct(d2Usd) : 0.0,
+            'delta_shares': d2Sh,
+            'delta_extra_pct': exPct(d2Sh),
+            'delta_cagr_pp': hasE2 ? nVal(s2, 'cagr_pct') - nVal(s1, 'cagr_pct') : 0.0,
+            'delta_mdd_pp': hasE2 ? nVal(s2, 'max_dd_pct') - nVal(s1, 'max_dd_pct') : 0.0,
+            'delta_calmar': hasE2 ? nVal(s2, 'calmar') - nVal(s1, 'calmar') : 0.0,
+            'trades_count': nVal(curS, 'cc_trades_count'),
+            'active_years': nVal(curS, 'cc_active_years'),
+            'stop_count': nVal(curS, 'cc_stop_count'),
+            'roll_count': nVal(curS, 'cc_roll_count'),
+            'assigned_count': nVal(curS, 'cc_assigned_count'),
+            'gross_prem_usd': nVal(curS, 'cc_gross_prem_usd'),
+            'gross_loss_usd': nVal(curS, 'cc_gross_loss_usd'),
+            'funded_puts_usd': nVal(curS, 'cc_funded_puts_usd'),
+          },
+          'engine3': {
+            'active': hasE3,
+            'delta_usd': d3Usd,
+            'standalone_alpha_usd': hasE3 ? nVal(s3Solo, 'end_nav') - bhNav : 0.0,
+            'share_of_alpha_pct': hasE3 ? shPct(d3Usd) : 0.0,
+            'delta_shares': d3Sh,
+            'delta_extra_pct': exPct(d3Sh),
+            'delta_cagr_pp': hasE3 ? nVal(s3, 'cagr_pct') - nVal(s2, 'cagr_pct') : 0.0,
+            'delta_mdd_pp': hasE3 ? nVal(s3, 'max_dd_pct') - nVal(s2, 'max_dd_pct') : 0.0,
+            'delta_calmar': hasE3 ? nVal(s3, 'calmar') - nVal(s2, 'calmar') : 0.0,
+            'sp_trades_count': nVal(curS, 'sp_trades_count'),
+            'sp_win_rate_pct': nVal(curS, 'sp_win_rate_pct'),
+            'sp_assignments_count': nVal(curS, 'sp_assignments_count'),
+            'wc_trades_count': nVal(curS, 'wc_trades_count'),
+            'wc_called_away_count': nVal(curS, 'wc_called_away_count'),
+            'gross_prem_usd': nVal(curS, 'sp_gross_prem_usd') + nVal(curS, 'wc_gross_prem_usd'),
+            'margin_interest_usd': nVal(curS, 'margin_interest_usd'),
+            'days_levered_stock': nVal(curS, 'days_levered_stock'),
+            'max_wheel_cycle_days': nVal(curS, 'max_wheel_cycle_days'),
+            'max_gross_stock_lev': nVal(curS, 'max_gross_stock_lev'),
+          },
+        };
+      }
+
       final out = Map<String, dynamic>.from(raw)
         ..remove('tp_modes')
         ..remove('mode_bundles');
@@ -204,6 +342,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
           'crisis_windows': hydratedWindows,
           'daily_series': projectedSeries,
         },
+        'engine_attribution_by_strategy': engineAttrByStrat,
         'tp_mode': tpMode,
         'cc_mode': ccMode,
         'sp_mode': spMode,
@@ -357,6 +496,32 @@ void main() {
         find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_cap10')),
       );
       expect(find.byKey(const ValueKey('crisis-wc-mode-bar')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-three-engine-grid')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-engine-card-e1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-engine-card-e2')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-engine-card-e3')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-engine-attribution-panel')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-engine-alpha-bar')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-attr-card-e1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-attr-card-e2')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-attr-card-e3')), findsOneWidget);
+      expect(find.textContaining('68.9%'), findsWidgets);
+      expect(find.textContaining('11.4%'), findsWidgets);
+      expect(find.textContaining('19.7%'), findsWidgets);
+      expect(find.textContaining('Delta +\$366,272'), findsOneWidget);
+      expect(find.textContaining('Delta +\$60,370'), findsOneWidget);
+      expect(find.textContaining('Delta +\$104,791'), findsOneWidget);
+      // Verify collapse & re-expand of independent 3-engine attribution cards
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-engine-attribution-toggle')),
+      );
+      expect(find.byKey(const ValueKey('crisis-attr-card-e1')), findsNothing);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-engine-attribution-toggle')),
+      );
+      expect(find.byKey(const ValueKey('crisis-attr-card-e1')), findsOneWidget);
       expect(find.text('30D +5% Cost/Spot (Rec.)'), findsOneWidget);
       expect(find.text('14D Breakeven+2% (Legacy)'), findsOneWidget);
       expect(find.text('\$1,819,738'), findsOneWidget);

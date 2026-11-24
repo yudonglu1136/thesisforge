@@ -306,6 +306,286 @@ function hydrateCrisisWindows(baseWindows, bundleWindows) {
   }));
 }
 
+function resolveModeBundle(rawData, tpMode, ccMode, spMode = 'sp_off', wcMode = 'wc_30d_c5s5') {
+  const modeBundles = rawData.mode_bundles;
+  const tpModes = rawData.tp_modes;
+  const effWc = wcMode || rawData.default_wc_mode || 'wc_30d_c5s5';
+  const defaultWc = rawData.default_wc_mode || 'wc_30d_c5s5';
+  const bundleKey =
+    spMode === 'sp_off'
+      ? `${tpMode}__${ccMode}`
+      : effWc === defaultWc
+        ? `${tpMode}__${ccMode}__${spMode}`
+        : `${tpMode}__${ccMode}__${spMode}__${effWc}`;
+  return (
+    modeBundles?.[bundleKey] ??
+    modeBundles?.[`${tpMode}__${ccMode}__${spMode}__${effWc}`] ??
+    modeBundles?.[`${tpMode}__${ccMode}__${spMode}`] ??
+    (ccMode === 'cc_off' && spMode === 'sp_off' ? tpModes?.[tpMode] : null) ??
+    null
+  );
+}
+
+function getBundleNavArray(rawData, bundle, navKey) {
+  if (bundle && Array.isArray(bundle[navKey])) return bundle[navKey];
+  return (rawData.daily_series ?? []).map(row => Number(row[navKey] ?? row.nav_bh ?? 0));
+}
+
+function computeDailyExcessReturns(navArr, bhArr, maxLen = null) {
+  const n = Math.min(navArr.length, bhArr.length, maxLen ?? navArr.length);
+  if (n < 3) return [];
+  const out = new Array(n - 1);
+  for (let i = 1; i < n; i += 1) {
+    const pNav = Number(navArr[i - 1]);
+    const cNav = Number(navArr[i]);
+    const pBh = Number(bhArr[i - 1]);
+    const cBh = Number(bhArr[i]);
+    const rStrat = pNav > 0 ? cNav / pNav - 1 : 0;
+    const rBh = pBh > 0 ? cBh / pBh - 1 : 0;
+    out[i - 1] = rStrat - rBh;
+  }
+  return out;
+}
+
+function pearsonCorr(xs, ys) {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 5) return null;
+  let sx = 0;
+  let sy = 0;
+  for (let i = 0; i < n; i += 1) {
+    sx += xs[i];
+    sy += ys[i];
+  }
+  const mx = sx / n;
+  const my = sy / n;
+  let num = 0;
+  let vx = 0;
+  let vy = 0;
+  for (let i = 0; i < n; i += 1) {
+    const dx = xs[i] - mx;
+    const dy = ys[i] - my;
+    num += dx * dy;
+    vx += dx * dx;
+    vy += dy * dy;
+  }
+  if (vx <= 1e-18 || vy <= 1e-18) return null;
+  return r3(num / Math.sqrt(vx * vy));
+}
+
+function computeSeriesMetricsFromArray(dailyRows, navArr, bhEndNav) {
+  const n = Math.min(dailyRows.length, navArr.length);
+  if (n < 2) return null;
+  const startNav = Number(navArr[0]);
+  const endNav = Number(navArr[n - 1]);
+  const startMs = Date.parse(`${dailyRows[0].date}T00:00:00Z`);
+  const endMs = Date.parse(`${dailyRows[n - 1].date}T00:00:00Z`);
+  const years = Math.max((endMs - startMs) / (365.25 * 86400 * 1000), 1 / 252);
+  const cagr = startNav > 0 ? (Math.pow(endNav / startNav, 1 / years) - 1) * 100 : 0;
+  let peak = startNav;
+  let maxDd = 0;
+  for (let i = 0; i < n; i += 1) {
+    const v = Number(navArr[i]);
+    if (v > peak) peak = v;
+    const dd = peak > 0 ? (v / peak - 1) * 100 : 0;
+    if (dd < maxDd) maxDd = dd;
+  }
+  const calmar = maxDd < -1e-6 ? cagr / Math.abs(maxDd) : 0;
+  const lastClose = Number(dailyRows[n - 1].qqq_close);
+  const finalSh = lastClose > 0 ? endNav / lastClose : 0;
+  const bhSh = lastClose > 0 ? bhEndNav / lastClose : 0;
+  return {
+    end_nav: r2(endNav),
+    cagr_pct: r2(cagr),
+    max_dd_pct: r2(maxDd),
+    calmar: r3(calmar),
+    final_shares: r2(finalSh),
+    bh_final_shares: r2(bhSh),
+  };
+}
+
+function buildEngineAttributionByStrategy(
+  rawData,
+  selectedTpMode,
+  selectedCcMode,
+  selectedSpMode,
+  selectedWcMode,
+  { cutoffSeries = null, liveScale = 1.0 } = {},
+) {
+  const bE1 = resolveModeBundle(rawData, selectedTpMode, 'cc_off', 'sp_off', 'wc_30d_c5s5');
+  const bE2 = resolveModeBundle(rawData, selectedTpMode, selectedCcMode, 'sp_off', 'wc_30d_c5s5');
+  const bE3Standalone = resolveModeBundle(
+    rawData,
+    selectedTpMode,
+    'cc_off',
+    selectedSpMode,
+    selectedWcMode,
+  );
+  const bCur = resolveModeBundle(
+    rawData,
+    selectedTpMode,
+    selectedCcMode,
+    selectedSpMode,
+    selectedWcMode,
+  );
+
+  const summaryMap = bundle => {
+    const list = bundle?.strategies_summary ?? rawData.strategies_summary ?? [];
+    return Object.fromEntries(list.map(s => [s.id, s]));
+  };
+  const m1 = summaryMap(bE1);
+  const m2 = summaryMap(bE2);
+  const m3Solo = summaryMap(bE3Standalone);
+  const mCur = summaryMap(bCur);
+
+  const baseSeries = rawData.daily_series ?? [];
+  const bhArr = baseSeries.map(r => Number(r.nav_bh ?? 0));
+  const useCutoffSlice = Array.isArray(cutoffSeries) && cutoffSeries.length > 0 && cutoffSeries.length < baseSeries.length;
+  const effLen = useCutoffSlice ? cutoffSeries.length : baseSeries.length;
+  const bhEndCutoff = useCutoffSlice ? Number(cutoffSeries[cutoffSeries.length - 1].nav_bh ?? 0) : null;
+
+  const navE2SoloArr = getBundleNavArray(rawData, bE2, 'nav_cc');
+  const navE3SoloArr = getBundleNavArray(rawData, bE3Standalone, 'nav_cc');
+  const exE2Solo = selectedCcMode !== 'cc_off' ? computeDailyExcessReturns(navE2SoloArr, bhArr, effLen) : [];
+  const exE3Solo = selectedSpMode !== 'sp_off' ? computeDailyExcessReturns(navE3SoloArr, bhArr, effLen) : [];
+  const corrE2E3 = exE2Solo.length && exE3Solo.length ? pearsonCorr(exE2Solo, exE3Solo) : null;
+
+  const metricFor = (bundle, sMap, sid) => {
+    const rawS = sMap[sid] ?? mCur[sid] ?? mCur.BH_Pure_QQQ ?? {};
+    const navKey = STRATEGY_NAV_KEYS[sid] ?? 'nav_bh';
+    if (useCutoffSlice) {
+      const arr = getBundleNavArray(rawData, bundle, navKey).slice(0, effLen);
+      const sliced = computeSeriesMetricsFromArray(cutoffSeries, arr, bhEndCutoff);
+      return { ...rawS, ...(sliced ?? {}) };
+    }
+    if (liveScale !== 1.0 && Number.isFinite(liveScale) && liveScale > 0) {
+      const endNav = r2(Number(rawS.end_nav ?? 0) * liveScale);
+      return { ...rawS, end_nav: endNav };
+    }
+    return rawS;
+  };
+
+  const sBh = metricFor(bCur, mCur, 'BH_Pure_QQQ');
+  const out = {};
+
+  for (const sid of CRISIS_OBSERVATORY_STRATEGIES) {
+    const hasE1 = sid !== 'NoPut_CallOnly' && sid !== 'BH_Pure_QQQ';
+    const hasE2 = selectedCcMode !== 'cc_off' && sid !== 'BH_Pure_QQQ';
+    const hasE3 = selectedSpMode !== 'sp_off' && sid !== 'BH_Pure_QQQ';
+
+    const s1 = hasE1 ? metricFor(bE1, m1, sid) : sBh;
+    const s2 = hasE2 ? metricFor(bE2, m2, sid) : s1;
+    const s3 = hasE3 ? metricFor(bCur, mCur, sid) : s2;
+    const s2Solo = hasE2 ? metricFor(bE2, m2, 'NoPut_CallOnly') : sBh;
+    const s3Solo = hasE3 ? metricFor(bE3Standalone, m3Solo, 'NoPut_CallOnly') : sBh;
+
+    const bhNav = Number(sBh.end_nav ?? 0);
+    const bhSh = Number(sBh.final_shares ?? 0);
+    const totNav = Number(s3.end_nav ?? bhNav);
+    const totAlpha = r2(totNav - bhNav);
+    const totExtraSh = r2(Number(s3.final_shares ?? bhSh) - bhSh);
+
+    const d1Usd = hasE1 ? r2(Number(s1.end_nav ?? bhNav) - bhNav) : 0;
+    const d2Usd = hasE2 ? r2(Number(s2.end_nav ?? s1.end_nav) - Number(s1.end_nav ?? bhNav)) : 0;
+    const d3Usd = hasE3 ? r2(totNav - Number(s2.end_nav ?? s1.end_nav)) : 0;
+
+    const d1Sh = hasE1 ? r2(Number(s1.final_shares ?? bhSh) - bhSh) : 0;
+    const d2Sh = hasE2 ? r2(Number(s2.final_shares ?? s1.final_shares) - Number(s1.final_shares ?? bhSh)) : 0;
+    const d3Sh = hasE3 ? r2(Number(s3.final_shares ?? s2.final_shares) - Number(s2.final_shares ?? bhSh)) : 0;
+
+    const sharePct = delta =>
+      Math.abs(totAlpha) > 1e-6 ? Math.round((delta / totAlpha) * 1000) / 10 : 0;
+    const extraShPct = dSh => (bhSh > 0 ? r2((dSh / bhSh) * 100) : 0);
+
+    const navKey = STRATEGY_NAV_KEYS[sid] ?? 'nav_u1';
+    const exE1 = hasE1 ? computeDailyExcessReturns(getBundleNavArray(rawData, bE1, navKey), bhArr, effLen) : [];
+    const corrE1E2 = hasE1 && hasE2 ? pearsonCorr(exE1, exE2Solo) : null;
+    const corrE1E3 = hasE1 && hasE3 ? pearsonCorr(exE1, exE3Solo) : null;
+
+    const curSummary = mCur[sid] ?? s3;
+    const e1Meta = m1[sid] ?? curSummary;
+
+    out[sid] = {
+      strategy_id: sid,
+      base_end_nav: r2(bhNav),
+      base_shares: r2(bhSh),
+      base_cagr_pct: r2(Number(sBh.cagr_pct ?? 0)),
+      base_max_dd_pct: r2(Number(sBh.max_dd_pct ?? 0)),
+      base_calmar: r3(Number(sBh.calmar ?? 0)),
+      total_end_nav: r2(totNav),
+      total_alpha_usd: totAlpha,
+      total_extra_shares: totExtraSh,
+      total_extra_shares_pct: extraShPct(totExtraSh),
+      active_engines_count: (hasE1 ? 1 : 0) + (hasE2 ? 1 : 0) + (hasE3 ? 1 : 0),
+      correlations: {
+        e1_e2: corrE1E2,
+        e1_e3: corrE1E3,
+        e2_e3: hasE2 && hasE3 ? corrE2E3 : null,
+      },
+      engine1: {
+        active: hasE1,
+        mode_id: hasE1 ? `${sid}::${selectedTpMode}` : 'off',
+        delta_usd: d1Usd,
+        standalone_alpha_usd: d1Usd,
+        share_of_alpha_pct: hasE1 ? sharePct(d1Usd) : 0,
+        delta_shares: d1Sh,
+        delta_extra_pct: extraShPct(d1Sh),
+        delta_cagr_pp: hasE1 ? r2(Number(s1.cagr_pct ?? 0) - Number(sBh.cagr_pct ?? 0)) : 0,
+        delta_mdd_pp: hasE1 ? r2(Number(s1.max_dd_pct ?? 0) - Number(sBh.max_dd_pct ?? 0)) : 0,
+        delta_calmar: hasE1 ? r3(Number(s1.calmar ?? 0) - Number(sBh.calmar ?? 0)) : 0,
+        tranches_total: Number(e1Meta.tranches_total ?? 0),
+        tp_count: Number(e1Meta.tp_count ?? 0),
+        naked_prem_spent_usd: r2(Number(e1Meta.naked_prem_spent_usd ?? 0)),
+        gross_put_monetized_usd: r2(Number(e1Meta.gross_put_monetized_usd ?? 0)),
+        pct_days_hedged: r2(Number(e1Meta.pct_days_hedged ?? 0)),
+      },
+      engine2: {
+        active: hasE2,
+        mode_id: selectedCcMode,
+        delta_usd: d2Usd,
+        standalone_alpha_usd: hasE2 ? r2(Number(s2Solo.end_nav ?? bhNav) - bhNav) : 0,
+        share_of_alpha_pct: hasE2 ? sharePct(d2Usd) : 0,
+        delta_shares: d2Sh,
+        delta_extra_pct: extraShPct(d2Sh),
+        delta_cagr_pp: hasE2 ? r2(Number(s2.cagr_pct ?? 0) - Number(s1.cagr_pct ?? 0)) : 0,
+        delta_mdd_pp: hasE2 ? r2(Number(s2.max_dd_pct ?? 0) - Number(s1.max_dd_pct ?? 0)) : 0,
+        delta_calmar: hasE2 ? r3(Number(s2.calmar ?? 0) - Number(s1.calmar ?? 0)) : 0,
+        trades_count: Number(curSummary.cc_trades_count ?? 0),
+        active_years: Number(curSummary.cc_active_years ?? 0),
+        stop_count: Number(curSummary.cc_stop_count ?? 0),
+        roll_count: Number(curSummary.cc_roll_count ?? 0),
+        assigned_count: Number(curSummary.cc_assigned_count ?? 0),
+        gross_prem_usd: r2(Number(curSummary.cc_gross_prem_usd ?? 0)),
+        gross_loss_usd: r2(Number(curSummary.cc_gross_loss_usd ?? 0)),
+        funded_puts_usd: r2(Number(curSummary.cc_funded_puts_usd ?? 0)),
+      },
+      engine3: {
+        active: hasE3,
+        mode_id: selectedSpMode,
+        wc_mode: selectedWcMode,
+        delta_usd: d3Usd,
+        standalone_alpha_usd: hasE3 ? r2(Number(s3Solo.end_nav ?? bhNav) - bhNav) : 0,
+        share_of_alpha_pct: hasE3 ? sharePct(d3Usd) : 0,
+        delta_shares: d3Sh,
+        delta_extra_pct: extraShPct(d3Sh),
+        delta_cagr_pp: hasE3 ? r2(Number(s3.cagr_pct ?? 0) - Number(s2.cagr_pct ?? 0)) : 0,
+        delta_mdd_pp: hasE3 ? r2(Number(s3.max_dd_pct ?? 0) - Number(s2.max_dd_pct ?? 0)) : 0,
+        delta_calmar: hasE3 ? r3(Number(s3.calmar ?? 0) - Number(s2.calmar ?? 0)) : 0,
+        sp_trades_count: Number(curSummary.sp_trades_count ?? 0),
+        sp_win_rate_pct: r2(Number(curSummary.sp_win_rate_pct ?? 0)),
+        sp_assignments_count: Number(curSummary.sp_assignments_count ?? 0),
+        wc_trades_count: Number(curSummary.wc_trades_count ?? 0),
+        wc_called_away_count: Number(curSummary.wc_called_away_count ?? 0),
+        gross_prem_usd: r2(Number(curSummary.sp_gross_prem_usd ?? 0) + Number(curSummary.wc_gross_prem_usd ?? 0)),
+        margin_interest_usd: r2(Number(curSummary.margin_interest_usd ?? 0)),
+        days_levered_stock: Number(curSummary.days_levered_stock ?? 0),
+        max_wheel_cycle_days: Number(curSummary.max_wheel_cycle_days ?? 0),
+        max_gross_stock_lev: r3(Number(curSummary.max_gross_stock_lev ?? 1.0)),
+      },
+    };
+  }
+  return out;
+}
+
 function projectArtifactForModes(
   data,
   snapshotId,
@@ -388,6 +668,13 @@ function projectArtifactForModes(
   }
 
   const hydratedWindows = hydrateCrisisWindows(data.crisis_windows, bundle.crisis_windows);
+  const engineAttributionByStrategy = buildEngineAttributionByStrategy(
+    data,
+    selectedTpMode,
+    selectedCcMode,
+    selectedSpMode,
+    effectiveWcMode,
+  );
 
   const projected = {
     ...baseWithoutModes,
@@ -410,6 +697,7 @@ function projectArtifactForModes(
     live_sp_states_by_strategy:
       bundle.live_sp_states_by_strategy ?? data.live_sp_states_by_strategy ?? {},
     strategies_summary: bundle.strategies_summary ?? data.strategies_summary,
+    engine_attribution_by_strategy: engineAttributionByStrategy,
     daily_series: projectedSeries,
     events: eventsByStrategy.U1_PureOptions ?? data.events,
     events_by_strategy: eventsByStrategy,
@@ -1060,6 +1348,17 @@ export function loadCrisisObservatoryDashboard({
 
   const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'U1_PureOptions' : selectedStrategy;
   const visibleWindows = data.crisis_windows.filter(w => w.start_date <= effDate);
+  const artifactLastBh = Number(rawData.daily_series?.[rawData.daily_series.length - 1]?.nav_bh ?? 0);
+  const liveScale =
+    isPostArtifactLive && artifactLastBh > 0 ? Number(lastBar.nav_bh) / artifactLastBh : 1.0;
+  const cutoffEngineAttribution = buildEngineAttributionByStrategy(
+    rawData,
+    rawTpMode,
+    rawCcMode,
+    rawSpMode,
+    rawWcMode,
+    isPostArtifactLive ? { liveScale } : { cutoffSeries: slicedSeries },
+  );
 
   return {
     ...data,
@@ -1099,6 +1398,7 @@ export function loadCrisisObservatoryDashboard({
     six_crisis_lights: lightsAtCutoff,
     ad_line_signal: adSignal,
     strategies_summary: strategiesSummary,
+    engine_attribution_by_strategy: cutoffEngineAttribution,
     daily_series: slicedSeries,
     events: slicedEventsByStrategy[ledgerStrategy] ?? [],
     events_by_strategy: slicedEventsByStrategy,
