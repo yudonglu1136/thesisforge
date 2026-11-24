@@ -42,9 +42,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   static const List<String> _ccModeIds = [
     'cc_off',
-    'cc_hv_8',
-    'cc_hv_9',
-    'cc_always_8',
+    'cc_d12_d35',
+    'cc_d12_r45',
+    'cc_d12_cr55',
   ];
 
   static const Map<String, String> _strategyNavKeys = {
@@ -91,8 +91,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   String _normalizeCcMode(String raw) {
     final mapped = switch (raw) {
-      'cc_high_vol' => 'cc_hv_8',
-      'cc_always' => 'cc_always_8',
+      'cc_high_vol' || 'cc_hv_8' || 'cc_hv_9' || 'cc_d12_3x' => 'cc_d12_d35',
+      'cc_always' || 'cc_always_8' || 'cc_otm8_3x' => 'cc_d12_r45',
       _ => raw,
     };
     return _ccModeIds.contains(mapped) ? mapped : 'cc_off';
@@ -305,9 +305,18 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String _humanCcModeLabel(String modeId) {
     return switch (modeId) {
       'cc_off' => w('Off', '关闭'),
-      'cc_hv_8' => w('High-IV 25D +8% (Rec.)', '高波 25D +8%（推荐）'),
-      'cc_hv_9' => w('High-IV 25D +9% (Ultra-Safe)', '高波 25D +9%（零穿最稳）'),
-      'cc_always_8' => w('Always 25D +8%', '全天候 25D +8%'),
+      'cc_d12_d35' => w(
+        '12Δ · Delta 0.35 Stop (Rec. · 0 Breach)',
+        '全天候 12Δ · Delta 0.35 止损（推荐 · 0穿最稳）',
+      ),
+      'cc_d12_r45' => w(
+        '12Δ · Delta 0.45 Roll (30D Up)',
+        '全天候 12Δ · Delta 0.45 展期 Roll（30D 上移）',
+      ),
+      'cc_d12_cr55' => w(
+        '12Δ · Delta 0.55 Credit Roll (45D)',
+        '全天候 12Δ · Delta 0.55 零成本 Roll（45D）',
+      ),
       _ => w('Off', '关闭'),
     };
   }
@@ -315,6 +324,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String _humanCcModeHint(String modeId, Map<String, dynamic> stratSummary) {
     final ccN = _numVal(stratSummary['cc_trades_count']).round();
     final ccAsgn = _numVal(stratSummary['cc_assigned_count']).round();
+    final ccStop = _numVal(stratSummary['cc_stop_count']).round();
+    final ccRoll = _numVal(stratSummary['cc_roll_count']).round();
+    final ccYrs = _numVal(stratSummary['cc_active_years']).round();
     final ccPrem = _numVal(stratSummary['cc_gross_prem_usd']);
     final ccLoss = _numVal(stratSummary['cc_gross_loss_usd']);
     final ccPutFund = _numVal(stratSummary['cc_funded_puts_usd']);
@@ -323,19 +335,32 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         'Normal-time covered calls OFF · 100% uncapped upside during bull trends',
         '平时不卖 Call · 牛市主升浪 100% 零封顶损耗',
       ),
-      'cc_hv_8' => w(
-        '25D +8% OTM Call when ATH <= 3% & VXN >= 25 (uncollared shares) -> $ccN trades ($ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} cash (funded ${_fmtUsd(ccPutFund)} of Put cost, early close ${_fmtUsd(-ccLoss)})',
-        '距前高 ≤ 3% 且 VXN ≥ 25 时卖 25 天 +8% OTM Call 攒现金（非领口仓位）：共 $ccN 次（被穿 $ccAsgn 次），收现金 ${_fmtUsd(ccPrem, signed: true)}（免费付 Put 保费 ${_fmtUsd(ccPutFund)} · 提前平仓 ${_fmtUsd(-ccLoss)}）',
+      'cc_d12_d35' => w(
+        '25D 12-Delta (min +5% OTM) whenever ATH <= 3% + Delta >= 0.35 stop buyback -> $ccN trades across $ccYrs yrs ($ccStop stops, $ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} (funded ${_fmtUsd(ccPutFund)} Put cost, stop/close ${_fmtUsd(-ccLoss)})',
+        '距前高 ≤ 3% 全天候卖 25D 12Δ（保底 +5% OTM）Call，Delta ≥ 0.35 即止损平仓：覆盖 $ccYrs 年共 $ccN 笔（止损 $ccStop 次 · 穿价 $ccAsgn 次），收租 ${_fmtUsd(ccPrem, signed: true)}（免费抵 Put 保费 ${_fmtUsd(ccPutFund)} · 止损/平仓 ${_fmtUsd(-ccLoss)}）',
       ),
-      'cc_hv_9' => w(
-        '25D +9% OTM Call when ATH <= 3% & VXN >= 25 (0 breaches even on Fri expiries) -> $ccN trades ($ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} cash (funded ${_fmtUsd(ccPutFund)} of Put cost, early close ${_fmtUsd(-ccLoss)})',
-        '距前高 ≤ 3% 且 VXN ≥ 25 时卖 25 天 +9% OTM Call 攒现金（连实盘周五到期也零击穿）：共 $ccN 次（被穿 $ccAsgn 次），收现金 ${_fmtUsd(ccPrem, signed: true)}（免费付 Put 保费 ${_fmtUsd(ccPutFund)} · 提前平仓 ${_fmtUsd(-ccLoss)}）',
+      'cc_d12_r45' => w(
+        '25D 12-Delta whenever ATH <= 3% + Delta >= 0.45 roll out 30D to fresh higher 12-Delta strike -> $ccN trades across $ccYrs yrs ($ccRoll rolls, $ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} (funded ${_fmtUsd(ccPutFund)} Put cost, close ${_fmtUsd(-ccLoss)})',
+        '距前高 ≤ 3% 全天候卖 25D 12Δ Call，Delta ≥ 0.45 同步展期 30 天上移至新 12Δ 高行权价：覆盖 $ccYrs 年共 $ccN 笔（展期上移 $ccRoll 次 · 穿价 $ccAsgn 次），收租 ${_fmtUsd(ccPrem, signed: true)}（免费抵 Put 保费 ${_fmtUsd(ccPutFund)} · 平旧仓 ${_fmtUsd(-ccLoss)}）',
       ),
-      'cc_always_8' => w(
-        '25D +8% OTM Call whenever ATH <= 3% (any VXN) -> $ccN trades ($ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} cash vs ${_fmtUsd(-ccLoss)} breakout breach drag (2026-05)',
-        '距前高 ≤ 3% 全天候卖 25 天 +8% OTM Call 攒现金（不限 VXN）：共 $ccN 次（被穿 $ccAsgn 次），收现金 ${_fmtUsd(ccPrem, signed: true)}，但低波主升浪击穿成本 ${_fmtUsd(-ccLoss)}（2026-05）',
+      'cc_d12_cr55' => w(
+        '25D 12-Delta whenever ATH <= 3% + Delta >= 0.55 zero-cost credit roll 45D (or close if no OTM credit) -> $ccN trades across $ccYrs yrs ($ccRoll rolls, $ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} (funded ${_fmtUsd(ccPutFund)} Put cost, close ${_fmtUsd(-ccLoss)})',
+        '距前高 ≤ 3% 全天候卖 25D 12Δ Call，Delta ≥ 0.55 尝试向后 45 天做零成本上移 Roll（无虚值零成本可展则平仓）：覆盖 $ccYrs 年共 $ccN 笔（零成本展期 $ccRoll 次 · 穿价 $ccAsgn 次），收租 ${_fmtUsd(ccPrem, signed: true)}（免费抵 Put 保费 ${_fmtUsd(ccPutFund)} · 平旧仓 ${_fmtUsd(-ccLoss)}）',
       ),
       _ => '',
+    };
+  }
+
+  String _ccExitReasonTag(String reason) {
+    return switch (reason) {
+      'delta_stop' => w('Δ0.35 Stop', 'Δ0.35止损'),
+      'delta_roll_up' => w('Δ0.45 Roll Up', 'Δ0.45展期上移'),
+      'delta_credit_roll' => w('Δ0.55 Credit Roll', 'Δ0.55零成本Roll'),
+      'stop_3x_cap' => w('3x Stop', '3×止损'),
+      'assigned_breach' => w('Breached', '穿价'),
+      'closed_for_collar' => w('For Collar', '让位领口'),
+      'panic_close_uncap' => w('Panic Uncap', '恐慌解封'),
+      _ => w('Expired \$0', '到期归零'),
     };
   }
 
@@ -2528,8 +2553,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                           children: [
                             Text(
                               w(
-                                'Normal-Time 25D ${selectedCcMode == 'cc_hv_9' ? '+9%' : '+8%'} OTM Covered Call Cash Ledger (${ccList.length} trades)',
-                                '平时卖 25D ${selectedCcMode == 'cc_hv_9' ? '+9%' : '+8%'} OTM Call 攒现金明细（共 ${ccList.length} 笔）',
+                                'Normal-Time 25D 12Δ Covered Call Cash Ledger (${ccList.length} trades)',
+                                '平时卖 25D 12Δ Call 攒现金明细（共 ${ccList.length} 笔）',
                               ),
                               style: TextStyle(
                                 color: p.text,
@@ -2573,8 +2598,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                               ),
                               Text(
                                 w(
-                                  'Prem ${_fmtUsd(_numVal(cc['prem_usd']), signed: true)} · Net ${_fmtUsd(_numVal(cc['net_pnl_usd']), signed: true)}',
-                                  '收租 ${_fmtUsd(_numVal(cc['prem_usd']), signed: true)} · 净盈亏 ${_fmtUsd(_numVal(cc['net_pnl_usd']), signed: true)}',
+                                  'Prem ${_fmtUsd(_numVal(cc['prem_usd']), signed: true)} · Net ${_fmtUsd(_numVal(cc['net_pnl_usd']), signed: true)} · ${_ccExitReasonTag(text(cc['exit_reason']))}',
+                                  '收租 ${_fmtUsd(_numVal(cc['prem_usd']), signed: true)} · 净盈亏 ${_fmtUsd(_numVal(cc['net_pnl_usd']), signed: true)} · ${_ccExitReasonTag(text(cc['exit_reason']))}',
                                 ),
                                 style: TextStyle(
                                   color: _numVal(cc['net_pnl_usd']) >= 0

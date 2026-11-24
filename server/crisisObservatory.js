@@ -18,14 +18,19 @@ export const CRISIS_OBSERVATORY_TP_MODES = Object.freeze([
 ]);
 export const CRISIS_OBSERVATORY_CC_MODES = Object.freeze([
   'cc_off',
-  'cc_hv_8',
-  'cc_hv_9',
-  'cc_always_8',
+  'cc_d12_d35',
+  'cc_d12_r45',
+  'cc_d12_cr55',
 ]);
 
 const LEGACY_CC_MODE_ALIASES = Object.freeze({
-  cc_high_vol: 'cc_hv_8',
-  cc_always: 'cc_always_8',
+  cc_high_vol: 'cc_d12_d35',
+  cc_hv_8: 'cc_d12_d35',
+  cc_hv_9: 'cc_d12_d35',
+  cc_d12_3x: 'cc_d12_d35',
+  cc_always: 'cc_d12_r45',
+  cc_always_8: 'cc_d12_r45',
+  cc_otm8_3x: 'cc_d12_r45',
 });
 
 const STRATEGY_NAV_KEYS = Object.freeze({

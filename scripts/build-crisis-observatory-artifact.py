@@ -55,31 +55,31 @@ CC_MODE_SPECS: list[dict[str, Any]] = [
         "summary_zh": "平时不卖 Call，牛市主升浪 100% 零封顶损耗，仅在危机信号触发时开启保护。",
     },
     {
-        "id": "cc_hv_8",
-        "label_en": "High-IV 25D +8% (Rec.)",
-        "label_zh": "高波 25D +8%（推荐）",
-        "short_en": "High-IV 25D +8%",
-        "short_zh": "高波 25D +8%",
-        "summary_en": "When within 3% of ATH and VXN >= 25 (rich vol), sell 25D +8% OTM Calls on uncollared shares -> 0 breaches in 12y, highest cash war chest (+$44.8K) funding Naked Puts first & buying dips on VIX/3M >= 1.10.",
-        "summary_zh": "距前高 ≤ 3% 且隐波肥厚（VXN ≥ 25）时，对非领口仓位卖 25 天 +8% 虚值 Call 攒现金——12 年零击穿、收现最肥（+$44.8K），优先免费付首仓裸 Put 保费，余钱留到 VIX/3M ≥ 1.10 恐慌抄底 QQQ。",
+        "id": "cc_d12_d35",
+        "label_en": "12Δ · Delta 0.35 Stop (Rec. · 0 Breach)",
+        "label_zh": "全天候 12Δ · Delta 0.35 止损（推荐 · 0穿最稳）",
+        "short_en": "12Δ · Δ0.35 Stop",
+        "short_zh": "12Δ · Delta 0.35 止损",
+        "summary_en": "Whenever within 3% of ATH (any VXN), sells 25D 12-Delta (min +5% OTM) Calls and exits early at Delta >= 0.35 before Gamma explodes -> 0 expiry breaches in 12 years, active 11/12 years, highest real-Friday stability.",
+        "summary_zh": "距前高 ≤ 3%（不限 VXN）持续卖 25D 12Δ（保底 +5% OTM）Call，在 Call Delta 升至 0.35（仍在虚值、Gamma 未爆前）即次日开盘止损平仓——11 年常卖、12 年 0 穿价、实盘周五到期表现最稳。",
     },
     {
-        "id": "cc_hv_9",
-        "label_en": "High-IV 25D +9% (Ultra-Safe)",
-        "label_zh": "高波 25D +9%（零穿最稳）",
-        "short_en": "High-IV 25D +9%",
-        "short_zh": "高波 25D +9%",
-        "summary_en": "When within 3% of ATH and VXN >= 25, sell 25D +9% OTM Calls on uncollared shares -> 0 breaches across both fixed 25D and standard Friday expiries, collecting +$31.2K cash to fund Naked Puts.",
-        "summary_zh": "距前高 ≤ 3% 且 VXN ≥ 25 时卖 25 天 +9% 虚值 Call 攒现金——连实盘美股周五到期也保持 12 年零击穿，稳收 +$31.2K 现金抵付裸 Put 保费。",
+        "id": "cc_d12_r45",
+        "label_en": "12Δ · Delta 0.45 Roll Up (30D)",
+        "label_zh": "全天候 12Δ · Delta 0.45 展期 Roll（30D 上移）",
+        "short_en": "12Δ · Δ0.45 Roll",
+        "short_zh": "12Δ · Delta 0.45 展期 Roll",
+        "summary_en": "Whenever within 3% of ATH, sells 25D 12-Delta Calls; when Delta >= 0.45, buys back and immediately rolls out +30D to a fresh higher 12-Delta strike -> positive across all 21D-30D & Friday tenors, 11y active.",
+        "summary_zh": "距前高 ≤ 3% 全天候卖 25D 12Δ Call；当 Delta 升至 0.45 时立刻平旧仓并同步展期 30 天上移至新 12Δ 高行权价——认小亏拉大安全垫，21D–30D 与实盘周五全期限稳正。",
     },
     {
-        "id": "cc_always_8",
-        "label_en": "Always 25D +8% (ATH<=3%)",
-        "label_zh": "全天候 25D +8%（ATH≤3%）",
-        "short_en": "Always 25D +8%",
-        "short_zh": "全天候 25D +8%",
-        "summary_en": "Unconditionally sells 25D +8% OTM Calls whenever within 3% of ATH (any VXN) to accumulate cash — transparent comparison showing low-IV breakout breach drag (2026-05).",
-        "summary_zh": "只要距前高 ≤ 3%（不限 VXN）即持续卖 25 天 +8% 虚值 Call 攒现金——直观对比不设 VXN 门控在 2026-05 低波主升浪被穿价的真实代价。",
+        "id": "cc_d12_cr55",
+        "label_en": "12Δ · Delta 0.55 Credit Roll (45D)",
+        "label_zh": "全天候 12Δ · Delta 0.55 零成本 Roll（45D）",
+        "short_en": "12Δ · Δ0.55 Credit Roll",
+        "short_zh": "12Δ · Delta 0.55 零成本 Roll",
+        "summary_en": "Whenever within 3% of ATH, sells 25D 12-Delta Calls; when Delta >= 0.55, attempts a zero-cost credit roll out +45D to the highest OTM strike covering the buyback (closes cleanly if no OTM credit roll exists) -> highest 25D upside.",
+        "summary_zh": "距前高 ≤ 3% 全天候卖 25D 12Δ Call；当 Delta 升至 0.55 时尝试向后展期 45 天做零成本上移 Roll（若已无虚值零成本可展则直接平仓不硬扛）——25D 账面弹性最高、最大回撤压至 -29.9%。",
     },
 ]
 
@@ -194,6 +194,66 @@ def solve_zero_cost_call_strike(
         else:
             hi = mid
     return 0.5 * (lo + hi)
+
+
+def solve_call_strike_for_delta(
+    S: float,
+    T: float,
+    r: float,
+    q: float,
+    vxn_pct: float,
+    poly_coeffs: list[float],
+    target_delta: float,
+) -> float:
+    lo, hi = S * 1.02, S * 1.30
+    sqrt_t = math.sqrt(max(T, 1e-6))
+    disc_q = math.exp(-q * T)
+    for _ in range(30):
+        mid = 0.5 * (lo + hi)
+        sig = eval_skew_iv(S, mid, T, r, q, vxn_pct, poly_coeffs)
+        d1 = (math.log(S / mid) + (r - q + 0.5 * sig * sig) * T) / (sig * sqrt_t)
+        delta = disc_q * _norm_cdf(d1)
+        if delta > target_delta:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def bsm_call_delta(S: float, K: float, T: float, r: float, q: float, sigma: float) -> float:
+    if T <= 1e-8 or sigma <= 1e-8:
+        return 1.0 if S > K else 0.0
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+    return math.exp(-q * T) * _norm_cdf(d1)
+
+
+def solve_call_strike_for_bid(
+    S: float,
+    T: float,
+    r: float,
+    q: float,
+    vxn_pct: float,
+    poly_coeffs: list[float],
+    target_bid: float,
+    slip: float = DEFAULT_SLIPPAGE,
+) -> float | None:
+    if target_bid < 0.05:
+        return None
+    lo, hi = S * 1.01, S * 1.40
+
+    def bid_at(k_c: float) -> float:
+        sig = eval_skew_iv(S, k_c, T, r, q, vxn_pct, poly_coeffs)
+        return bsm_price(S, k_c, T, r, q, sig, "call") * (1.0 - slip)
+
+    if bid_at(lo) < target_bid:
+        return None
+    for _ in range(30):
+        mid = 0.5 * (lo + hi)
+        if bid_at(mid) >= target_bid:
+            lo = mid
+        else:
+            hi = mid
+    return lo
 
 
 def decompose_tranche_convexity(
@@ -408,17 +468,26 @@ def simulate_strategy(
     in_slow_bear_def = False
     pending_bear_change: str | None = None
 
-    cc_cfg_map = {
-        "cc_hv_8": (25.0, 0.08),
-        "cc_hv_9": (25.0, 0.09),
-        "cc_always_8": (0.0, 0.08),
-        "cc_high_vol": (25.0, 0.08),
-        "cc_always": (0.0, 0.08),
+    # (min_vxn, target_delta, min_otm_floor, stop_delta, roll_mode)
+    cc_cfg_map: dict[str, tuple[float, float, float, float | None, str | None]] = {
+        "cc_d12_d35": (0.0, 0.12, 0.05, 0.35, None),
+        "cc_d12_r45": (0.0, 0.12, 0.05, 0.45, "fresh_30d"),
+        "cc_d12_cr55": (0.0, 0.12, 0.05, 0.55, "credit_45d"),
+        # Legacy aliases
+        "cc_high_vol": (0.0, 0.12, 0.05, 0.35, None),
+        "cc_hv_8": (0.0, 0.12, 0.05, 0.35, None),
+        "cc_d12_3x": (0.0, 0.12, 0.05, 0.35, None),
+        "cc_always": (0.0, 0.12, 0.05, 0.45, "fresh_30d"),
+        "cc_always_8": (0.0, 0.12, 0.05, 0.45, "fresh_30d"),
+        "cc_otm8_3x": (0.0, 0.12, 0.05, 0.45, "fresh_30d"),
     }
     cc_enabled = cc_mode in cc_cfg_map and arch != "pure_qqq"
-    cc_min_vxn, cc_otm_pct = cc_cfg_map.get(cc_mode, (0.0, 0.08))
+    cc_min_vxn, cc_target_delta, cc_min_otm, cc_stop_delta, cc_roll_mode = cc_cfg_map.get(
+        cc_mode, (0.0, 0.12, 0.05, None, None)
+    )
     cc_ath_limit = 0.03
     cc_dte = 25
+    cc_max_rolls = 3
 
     active_tranches: list[dict[str, Any]] = []
     pending_sig: dict[str, Any] | None = None
@@ -469,7 +538,7 @@ def simulate_strategy(
             cc_cash = 0.0
             pending_cc_deploy = False
 
-        # A0b. Close active Covered Call early on VIX/3M >= 1.10 panic to keep rebound uncapped
+        # A0b. Close or Roll active Covered Call early on VIX/3M >= 1.10 panic or Delta stop/roll trigger
         if i > 0 and active_cc is not None and active_cc.get("pending_close"):
             prev_vxn = float(rows[i - 1]["vxn"])
             prev_cl = float(rows[i - 1]["close"])
@@ -485,6 +554,9 @@ def simulate_strategy(
             else:
                 core_shares -= (cost_cl - cc_cash) / (op * (1.0 - STOCK_REBAL_FEE))
                 cc_cash = 0.0
+            close_reason = active_cc.get("close_reason") or "panic_close_uncap"
+            old_rolls = int(active_cc.get("roll_count", 0))
+            old_sh = active_cc["shares"]
             cc_ledger.append(
                 {
                     "cc_id": active_cc["cc_id"],
@@ -494,14 +566,62 @@ def simulate_strategy(
                     "kc": round(active_cc["kc"], 2),
                     "exit_spot": round(op, 2),
                     "entry_vxn": round(active_cc["entry_vxn"], 2),
-                    "shares": round(active_cc["shares"], 2),
+                    "shares": round(old_sh, 2),
                     "prem_usd": round(active_cc["prem_usd"], 2),
                     "loss_usd": round(cost_cl, 2),
                     "net_pnl_usd": round(active_cc["prem_usd"] - cost_cl, 2),
-                    "exit_reason": "panic_close_uncap",
+                    "exit_reason": close_reason,
+                    "roll_gen": old_rolls,
                 }
             )
             active_cc = None
+
+            # Simultaneous Roll-Out-and-Up if triggered by Delta Roll (not panic) and no active crisis Collar
+            has_collar_r = any(t["tranche_type"] == "collar" for t in active_tranches)
+            if (
+                close_reason in ("delta_roll_up", "delta_credit_roll")
+                and cc_roll_mode is not None
+                and old_rolls < cc_max_rolls
+                and not has_collar_r
+            ):
+                roll_days = 45 if cc_roll_mode == "credit_45d" else 30
+                target_r = dt_objs[i] + datetime.timedelta(days=roll_days)
+                pos_r = bisect.bisect_left(dt_objs, target_r)
+                if pos_r < len(dates):
+                    exp_date_r, exp_dt_r = dates[pos_r], dt_objs[pos_r]
+                else:
+                    exp_date_r, exp_dt_r = target_r.isoformat(), target_r
+                t_r = max(1, (exp_dt_r - dt_objs[i]).days) / 365.0
+                kc_new: float | None = None
+                if cc_roll_mode == "credit_45d":
+                    kc_new = solve_call_strike_for_bid(op, t_r, r_cur, q_cur, vxn_op, coeffs, c_ask_ex, slip)
+                elif cc_roll_mode == "fresh_30d":
+                    kc_new = max(
+                        op * (1.0 + cc_min_otm),
+                        solve_call_strike_for_delta(op, t_r, r_cur, q_cur, vxn_op, coeffs, cc_target_delta),
+                    )
+                if kc_new is not None and kc_new > op * 1.01:
+                    sc_r = eval_skew_iv(op, kc_new, t_r, r_cur, q_cur, vxn_op, coeffs)
+                    c_bid_r = bsm_price(op, kc_new, t_r, r_cur, q_cur, sc_r, "call") * (1.0 - slip)
+                    if c_bid_r >= 0.05:
+                        prem_r = old_sh * c_bid_r
+                        cc_tid += 1
+                        cc_gross_prem += prem_r
+                        cc_cash += prem_r
+                        active_cc = {
+                            "cc_id": cc_tid,
+                            "entry_date": d,
+                            "entry_dt": dt_objs[i],
+                            "exp_date": exp_date_r,
+                            "exp_dt": exp_dt_r,
+                            "entry_spot": op,
+                            "entry_vxn": vxn_op,
+                            "kc": kc_new,
+                            "shares": old_sh,
+                            "prem_usd": prem_r,
+                            "pending_close": False,
+                            "roll_count": old_rolls + 1,
+                        }
 
         if i > 0 and slow_bear_overlay and pending_bear_change is not None:
             prev_r = rows[i - 1]
@@ -749,6 +869,7 @@ def simulate_strategy(
                                 "loss_usd": round(cost_cl, 2),
                                 "net_pnl_usd": round(active_cc["prem_usd"] - cost_cl, 2),
                                 "exit_reason": "closed_for_collar",
+                                "roll_gen": int(active_cc.get("roll_count", 0)),
                             }
                         )
                         active_cc = None
@@ -824,7 +945,10 @@ def simulate_strategy(
                     else:
                         exp_date_cc, exp_dt_cc = target_cc.isoformat(), target_cc
                     t_cc = max(1, (exp_dt_cc - dt_objs[i]).days) / 365.0
-                    kc_cc = op * (1.0 + cc_otm_pct)
+                    kc_cc = max(
+                        op * (1.0 + cc_min_otm),
+                        solve_call_strike_for_delta(op, t_cc, r_cc, q_cc, vxn_cc, coeffs, cc_target_delta),
+                    )
                     sc_cc = eval_skew_iv(op, kc_cc, t_cc, r_cc, q_cc, vxn_cc, coeffs)
                     c_bid_cc = bsm_price(op, kc_cc, t_cc, r_cc, q_cc, sc_cc, "call") * (1.0 - slip)
                     if c_bid_cc >= 0.05:
@@ -844,6 +968,7 @@ def simulate_strategy(
                             "shares": cc_sh,
                             "prem_usd": prem_usd,
                             "pending_close": False,
+                            "roll_count": 0,
                         }
             pending_cc = None
 
@@ -1049,6 +1174,7 @@ def simulate_strategy(
                         "loss_usd": round(loss_cc, 2),
                         "net_pnl_usd": round(active_cc["prem_usd"] - loss_cc, 2),
                         "exit_reason": "assigned_breach" if pay_cc > 0.0 else "expired_worthless",
+                        "roll_gen": int(active_cc.get("roll_count", 0)),
                     }
                 )
                 active_cc = None
@@ -1058,8 +1184,18 @@ def simulate_strategy(
                 sc_cc = eval_skew_iv(cl, active_cc["kc"], t_cc, r_cur, q_cur, vxn_cl, coeffs)
                 cm_cc = bsm_price(cl, active_cc["kc"], t_cc, r_cur, q_cur, sc_cc, "call")
                 cc_mtm = -active_cc["shares"] * cm_cc
+                cur_delta = bsm_call_delta(cl, active_cc["kc"], t_cc, r_cur, q_cur, sc_cc)
                 if rem_cc >= 3 and vix_r >= 1.10:
                     active_cc["pending_close"] = True
+                    active_cc["close_reason"] = "panic_close_uncap"
+                elif cc_stop_delta is not None and cur_delta >= cc_stop_delta:
+                    active_cc["pending_close"] = True
+                    if cc_roll_mode == "fresh_30d":
+                        active_cc["close_reason"] = "delta_roll_up"
+                    elif cc_roll_mode == "credit_45d":
+                        active_cc["close_reason"] = "delta_credit_roll"
+                    else:
+                        active_cc["close_reason"] = "delta_stop"
 
         tot_mtm = put_mtm_tot + call_mtm_tot + cc_mtm
         nav = core_shares * cl + tbill_cash + cc_cash + tot_mtm
@@ -1330,6 +1466,11 @@ def simulate_strategy(
         "cc_mode": cc_mode,
         "cc_trades_count": len(cc_ledger),
         "cc_assigned_count": cc_assigned_cnt,
+        "cc_stop_count": sum(
+            1 for x in cc_ledger if x["exit_reason"] in ("delta_stop", "delta_roll_up", "delta_credit_roll")
+        ),
+        "cc_roll_count": sum(1 for x in cc_ledger if int(x.get("roll_gen", 0)) > 0),
+        "cc_active_years": len({x["entry_date"][:4] for x in cc_ledger}),
         "cc_gross_prem_usd": round(cc_gross_prem, 2),
         "cc_gross_loss_usd": round(cc_gross_loss, 2),
         "cc_net_pnl_usd": round(cc_gross_prem - cc_gross_loss, 2),
@@ -2654,14 +2795,16 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         d4x_map = {s["id"]: s for s in doc["tp_modes"]["both_4x"]["strategies_summary"]}
         assert abs(d4x_map["U1_PureOptions"]["end_nav"] - 1643122.56) <= 1.0, d4x_map["U1_PureOptions"]["end_nav"]
 
-        hv8_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_hv_8"]["strategies_summary"]}
-        assert hv8_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "High-IV 25D +8% CC must beat no-CC baseline"
-        assert hv8_map["U1_PureOptions"]["cc_assigned_count"] == 0, hv8_map["U1_PureOptions"]["cc_assigned_count"]
-        hv9_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_hv_9"]["strategies_summary"]}
-        assert hv9_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "High-IV 25D +9% CC must beat no-CC baseline"
-        assert hv9_map["U1_PureOptions"]["cc_assigned_count"] == 0, hv9_map["U1_PureOptions"]["cc_assigned_count"]
-        al8_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_always_8"]["strategies_summary"]}
-        assert al8_map["U1_PureOptions"]["cc_trades_count"] >= 45
+        d35_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_d12_d35"]["strategies_summary"]}
+        assert d35_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "Delta 0.35 stop must beat baseline"
+        assert d35_map["U1_PureOptions"]["cc_assigned_count"] == 0, d35_map["U1_PureOptions"]["cc_assigned_count"]
+        assert d35_map["U1_PureOptions"]["cc_active_years"] >= 11
+        r45_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_d12_r45"]["strategies_summary"]}
+        assert r45_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "Delta 0.45 roll must beat baseline"
+        assert r45_map["U1_PureOptions"]["cc_active_years"] >= 11
+        cr55_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_d12_cr55"]["strategies_summary"]}
+        assert cr55_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "Delta 0.55 credit roll must beat baseline"
+        assert cr55_map["U1_PureOptions"]["cc_active_years"] >= 11
 
     assert len(doc["six_crisis_lights"]) == 6
     assert len(doc["crisis_windows"]) == 7

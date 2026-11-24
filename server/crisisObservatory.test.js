@@ -75,37 +75,39 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   assert.equal(d4xDoc.tp_mode, 'both_4x');
   assert.ok(Math.abs(d4xDoc.daily_series.at(-1).nav_u1 - 1643122.56) <= 0.5);
 
-  // Selectable 4-way 25D Covered-Call overlays: cc_hv_8, cc_hv_9, cc_always_8 (+ legacy aliases)
-  const hv8Doc = loadCrisisObservatoryDashboard({
+  // Selectable 4-way 25D 12Δ Covered-Call overlays: cc_d12_d35, cc_d12_r45, cc_d12_cr55 (+ legacy aliases)
+  const d35Doc = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
     tpMode: 'layered_itm',
-    ccMode: 'cc_hv_8',
+    ccMode: 'cc_d12_d35',
   });
-  assert.equal(hv8Doc.cc_mode, 'cc_hv_8');
-  assert.ok(Math.abs(hv8Doc.daily_series.at(-1).nav_u1 - 1708351.0) <= 1.0);
-  assert.equal(hv8Doc.cc_ledgers_by_strategy.U1_PureOptions.length, 14);
+  assert.equal(d35Doc.cc_mode, 'cc_d12_d35');
+  assert.ok(Math.abs(d35Doc.daily_series.at(-1).nav_u1 - 1714946.88) <= 2.0);
+  assert.equal(d35Doc.cc_ledgers_by_strategy.U1_PureOptions.length, 75);
 
-  const hv9Doc = loadCrisisObservatoryDashboard({
+  const r45Doc = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
     tpMode: 'layered_itm',
-    ccMode: 'cc_hv_9',
+    ccMode: 'cc_d12_r45',
   });
-  assert.equal(hv9Doc.cc_mode, 'cc_hv_9');
-  assert.ok(Math.abs(hv9Doc.daily_series.at(-1).nav_u1 - 1693978.0) <= 1.0);
-  assert.equal(hv9Doc.cc_ledgers_by_strategy.U1_PureOptions.length, 14);
+  assert.equal(r45Doc.cc_mode, 'cc_d12_r45');
+  assert.ok(Math.abs(r45Doc.daily_series.at(-1).nav_u1 - 1704612.32) <= 2.0);
+  assert.equal(r45Doc.cc_ledgers_by_strategy.U1_PureOptions.length, 71);
 
-  const al8Doc = loadCrisisObservatoryDashboard({
+  const cr55Doc = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
     tpMode: 'layered_itm',
-    ccMode: 'cc_always_8',
+    ccMode: 'cc_d12_cr55',
   });
-  assert.equal(al8Doc.cc_mode, 'cc_always_8');
-  assert.ok(Math.abs(al8Doc.daily_series.at(-1).nav_u1 - 1643395.0) <= 1.0);
-  assert.equal(al8Doc.cc_ledgers_by_strategy.U1_PureOptions.length, 51);
+  assert.equal(cr55Doc.cc_mode, 'cc_d12_cr55');
+  assert.ok(Math.abs(cr55Doc.daily_series.at(-1).nav_u1 - 1688796.56) <= 2.0);
+  assert.equal(cr55Doc.cc_ledgers_by_strategy.U1_PureOptions.length, 71);
 
   // Legacy cc_high_vol / cc_always aliases map cleanly
   const legacyCcAlias = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', ccMode: 'cc_high_vol' });
-  assert.equal(legacyCcAlias.cc_mode, 'cc_hv_8');
+  assert.equal(legacyCcAlias.cc_mode, 'cc_d12_d35');
+  const legacyAlwaysAlias = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', ccMode: 'cc_always_8' });
+  assert.equal(legacyAlwaysAlias.cc_mode, 'cc_d12_r45');
 
   // Legacy U4_DualEngine query alias maps cleanly to U1_PureOptions
   const legacyAlias = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', strategy: 'U4_DualEngine' });
@@ -164,7 +166,7 @@ test('slices historical asOf cutoffs without lookahead and masks future tranche 
 test('validates parameters and serves both /api/investment/crisis-observatory and /api/discover/crisis-observatory', async t => {
   assert.equal(CRISIS_OBSERVATORY_STRATEGIES.length, 5);
   assert.deepEqual(CRISIS_OBSERVATORY_TP_MODES, ['layered_itm', 'standard_dual', 'both_4x']);
-  assert.deepEqual(CRISIS_OBSERVATORY_CC_MODES, ['cc_off', 'cc_hv_8', 'cc_hv_9', 'cc_always_8']);
+  assert.deepEqual(CRISIS_OBSERVATORY_CC_MODES, ['cc_off', 'cc_d12_d35', 'cc_d12_r45', 'cc_d12_cr55']);
   assert.throws(() => loadCrisisObservatoryDashboard({ strategy: 'UNKNOWN' }), /invalid_crisis_observatory_strategy/);
   assert.throws(() => loadCrisisObservatoryDashboard({ tpMode: 'UNKNOWN_TP' }), /invalid_crisis_observatory_tp_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ ccMode: 'UNKNOWN_CC' }), /invalid_crisis_observatory_cc_mode/);
