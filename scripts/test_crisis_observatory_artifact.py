@@ -124,15 +124,17 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     assert abs(d4x_map["D2_SixLights"]["end_nav"] - 1531284.11) <= 0.50
 
     hv_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_high_vol"]["strategies_summary"]}
-    assert abs(hv_map["U1_PureOptions"]["end_nav"] - 1678264.92) <= 1.0
-    assert abs(hv_map["U1_PureOptions"]["extra_shares_pct"] - 30.27) <= 0.05
-    assert hv_map["U1_PureOptions"]["cc_trades_count"] == 10
+    assert abs(hv_map["U1_PureOptions"]["end_nav"] - 1683324.68) <= 1.0
+    assert abs(hv_map["U1_PureOptions"]["extra_shares_pct"] - 30.66) <= 0.05
+    assert hv_map["U1_PureOptions"]["cc_trades_count"] == 14
+    assert hv_map["U1_PureOptions"]["cc_assigned_count"] == 0
     for sid in ("U1_PureOptions", "B1c_PureAD", "D2_SixLights", "H2_G4_PriceGate"):
         assert hv_map[sid]["end_nav"] > smap[sid]["end_nav"], sid
 
     al_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_always"]["strategies_summary"]}
-    assert abs(al_map["U1_PureOptions"]["end_nav"] - 1581978.52) <= 1.0
-    assert al_map["U1_PureOptions"]["cc_trades_count"] == 41
+    assert abs(al_map["U1_PureOptions"]["end_nav"] - 1619515.10) <= 1.0
+    assert al_map["U1_PureOptions"]["cc_trades_count"] == 35
+    assert al_map["U1_PureOptions"]["cc_assigned_count"] == 1
 
 
 def test_crisis_windows_and_4factor_convexity_identity():

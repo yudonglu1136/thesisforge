@@ -75,15 +75,15 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   assert.equal(d4xDoc.tp_mode, 'both_4x');
   assert.ok(Math.abs(d4xDoc.daily_series.at(-1).nav_u1 - 1643122.56) <= 0.5);
 
-  // Selectable Covered-Call cash-accumulation overlays: cc_high_vol and cc_always
+  // Selectable Covered-Call cash-accumulation overlays (25D / 20-30 DTE): cc_high_vol and cc_always
   const hvDoc = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
     tpMode: 'layered_itm',
     ccMode: 'cc_high_vol',
   });
   assert.equal(hvDoc.cc_mode, 'cc_high_vol');
-  assert.ok(Math.abs(hvDoc.daily_series.at(-1).nav_u1 - 1678264.92) <= 1.0);
-  assert.equal(hvDoc.cc_ledgers_by_strategy.U1_PureOptions.length, 10);
+  assert.ok(Math.abs(hvDoc.daily_series.at(-1).nav_u1 - 1683324.68) <= 1.0);
+  assert.equal(hvDoc.cc_ledgers_by_strategy.U1_PureOptions.length, 14);
 
   const alDoc = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
@@ -91,8 +91,8 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
     ccMode: 'cc_always',
   });
   assert.equal(alDoc.cc_mode, 'cc_always');
-  assert.ok(Math.abs(alDoc.daily_series.at(-1).nav_u1 - 1581978.52) <= 1.0);
-  assert.equal(alDoc.cc_ledgers_by_strategy.U1_PureOptions.length, 41);
+  assert.ok(Math.abs(alDoc.daily_series.at(-1).nav_u1 - 1619515.10) <= 1.0);
+  assert.equal(alDoc.cc_ledgers_by_strategy.U1_PureOptions.length, 35);
 
   // Legacy U4_DualEngine query alias maps cleanly to U1_PureOptions
   const legacyAlias = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', strategy: 'U4_DualEngine' });
