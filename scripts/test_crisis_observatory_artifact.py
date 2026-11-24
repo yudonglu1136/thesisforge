@@ -103,6 +103,9 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     ]
     assert abs(smap["U1_PureOptions"]["end_nav"] - 1654577.25) <= 0.50
     assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 366272.47) <= 0.50
+    assert abs(smap["U1_PureOptions"]["final_shares"] - 2719.33) <= 0.10
+    assert abs(smap["U1_PureOptions"]["bh_final_shares"] - 2117.35) <= 0.10
+    assert abs(smap["U1_PureOptions"]["extra_shares_pct"] - 28.43) <= 0.05
     assert smap["U1_PureOptions"]["cagr_pct"] == 19.46
     assert smap["U1_PureOptions"]["max_dd_pct"] == -31.52
     assert smap["U1_PureOptions"]["sharpe"] == 0.859
@@ -111,13 +114,25 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1402250.68) <= 0.50
     assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02
 
-    # Verify alternate selectable TP modes
-    std_map = {s["id"]: s for s in doc["tp_modes"]["standard_dual"]["strategies_summary"]}
+    # Verify alternate selectable TP & Covered-Call modes (9 mode bundles)
+    assert len(doc["mode_bundles"]) == 9
+    std_map = {s["id"]: s for s in doc["mode_bundles"]["standard_dual__cc_off"]["strategies_summary"]}
     assert abs(std_map["U1_PureOptions"]["end_nav"] - 1625377.79) <= 0.50
-    assert doc["tp_modes"]["standard_dual"]["live_signal_state"]["regime_code"] == "LOW_SPOT_FREEZE_NO_NEW_COLLAR"
-    d4x_map = {s["id"]: s for s in doc["tp_modes"]["both_4x"]["strategies_summary"]}
+    assert doc["mode_bundles"]["standard_dual__cc_off"]["live_signal_state"]["regime_code"] == "LOW_SPOT_FREEZE_NO_NEW_COLLAR"
+    d4x_map = {s["id"]: s for s in doc["mode_bundles"]["both_4x__cc_off"]["strategies_summary"]}
     assert abs(d4x_map["U1_PureOptions"]["end_nav"] - 1643122.56) <= 0.50
     assert abs(d4x_map["D2_SixLights"]["end_nav"] - 1531284.11) <= 0.50
+
+    hv_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_high_vol"]["strategies_summary"]}
+    assert abs(hv_map["U1_PureOptions"]["end_nav"] - 1678264.92) <= 1.0
+    assert abs(hv_map["U1_PureOptions"]["extra_shares_pct"] - 30.27) <= 0.05
+    assert hv_map["U1_PureOptions"]["cc_trades_count"] == 10
+    for sid in ("U1_PureOptions", "B1c_PureAD", "D2_SixLights", "H2_G4_PriceGate"):
+        assert hv_map[sid]["end_nav"] > smap[sid]["end_nav"], sid
+
+    al_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_always"]["strategies_summary"]}
+    assert abs(al_map["U1_PureOptions"]["end_nav"] - 1581978.52) <= 1.0
+    assert al_map["U1_PureOptions"]["cc_trades_count"] == 41
 
 
 def test_crisis_windows_and_4factor_convexity_identity():

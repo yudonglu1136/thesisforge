@@ -5,6 +5,7 @@ import {
   CRISIS_OBSERVATORY_VERSION,
   CRISIS_OBSERVATORY_STRATEGIES,
   CRISIS_OBSERVATORY_TP_MODES,
+  CRISIS_OBSERVATORY_CC_MODES,
   loadCrisisObservatoryDashboard,
   loadCrisisObservatoryDashboardLive,
 } from './crisisObservatory.js';
@@ -16,8 +17,11 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   assert.equal(doc.as_of_date, '2026-11-20');
   assert.equal(doc.selected_strategy_id, 'U1_PureOptions');
   assert.equal(doc.tp_mode, 'layered_itm');
+  assert.equal(doc.cc_mode, 'cc_off');
   assert.equal(doc.tp_modes, undefined, 'Raw tp_modes bundle must be stripped from API wire response');
+  assert.equal(doc.mode_bundles, undefined, 'Raw mode_bundles must be stripped from API wire response');
   assert.equal(doc.tp_modes_meta.length, 3);
+  assert.equal(doc.cc_modes_meta.length, 3);
   assert.ok(doc.snapshotId && doc.snapshotId.length === 16);
 
   const snap = doc.live_market_snapshot;
@@ -71,6 +75,25 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   assert.equal(d4xDoc.tp_mode, 'both_4x');
   assert.ok(Math.abs(d4xDoc.daily_series.at(-1).nav_u1 - 1643122.56) <= 0.5);
 
+  // Selectable Covered-Call cash-accumulation overlays: cc_high_vol and cc_always
+  const hvDoc = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    tpMode: 'layered_itm',
+    ccMode: 'cc_high_vol',
+  });
+  assert.equal(hvDoc.cc_mode, 'cc_high_vol');
+  assert.ok(Math.abs(hvDoc.daily_series.at(-1).nav_u1 - 1678264.92) <= 1.0);
+  assert.equal(hvDoc.cc_ledgers_by_strategy.U1_PureOptions.length, 10);
+
+  const alDoc = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    tpMode: 'layered_itm',
+    ccMode: 'cc_always',
+  });
+  assert.equal(alDoc.cc_mode, 'cc_always');
+  assert.ok(Math.abs(alDoc.daily_series.at(-1).nav_u1 - 1581978.52) <= 1.0);
+  assert.equal(alDoc.cc_ledgers_by_strategy.U1_PureOptions.length, 41);
+
   // Legacy U4_DualEngine query alias maps cleanly to U1_PureOptions
   const legacyAlias = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', strategy: 'U4_DualEngine' });
   assert.equal(legacyAlias.selected_strategy_id, 'U1_PureOptions');
@@ -119,6 +142,8 @@ test('slices historical asOf cutoffs without lookahead and masks future tranche 
   assert.equal(liveExt.liveExtended, true);
   assert.equal(liveExt.as_of_date, '2026-11-23');
   assert.equal(liveExt.live_market_snapshot.qqq_close, 626.7);
+  assert.equal(liveExt.live_signal_state.regime_code, 'LOW_SPOT_FREEZE_NO_NEW_COLLAR');
+  assert.equal(liveExt.live_signal_states_by_strategy.U1_PureOptions.regime_code, 'LOW_SPOT_FREEZE_NO_NEW_COLLAR');
   assert.equal(liveExt.live_signal_state.target_equity_pct, 100);
   assert.equal(liveExt.live_signal_state.target_tbill_pct, 0);
 });
@@ -126,8 +151,10 @@ test('slices historical asOf cutoffs without lookahead and masks future tranche 
 test('validates parameters and serves both /api/investment/crisis-observatory and /api/discover/crisis-observatory', async t => {
   assert.equal(CRISIS_OBSERVATORY_STRATEGIES.length, 5);
   assert.deepEqual(CRISIS_OBSERVATORY_TP_MODES, ['layered_itm', 'standard_dual', 'both_4x']);
+  assert.deepEqual(CRISIS_OBSERVATORY_CC_MODES, ['cc_off', 'cc_high_vol', 'cc_always']);
   assert.throws(() => loadCrisisObservatoryDashboard({ strategy: 'UNKNOWN' }), /invalid_crisis_observatory_strategy/);
   assert.throws(() => loadCrisisObservatoryDashboard({ tpMode: 'UNKNOWN_TP' }), /invalid_crisis_observatory_tp_mode/);
+  assert.throws(() => loadCrisisObservatoryDashboard({ ccMode: 'UNKNOWN_CC' }), /invalid_crisis_observatory_cc_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ asOf: '2012-01-01' }), /as_of_before_evaluation_window/);
   assert.throws(() => loadCrisisObservatoryDashboard({ asOf: 'not-a-date' }), /invalid_as_of_date/);
   assert.throws(

@@ -42,6 +42,37 @@ INITIAL_CAPITAL = 200_000.0
 DEFAULT_SLIPPAGE = 0.025
 STOCK_REBAL_FEE = 0.0003
 DEFAULT_TP_MODE = "layered_itm"
+DEFAULT_CC_MODE = "cc_off"
+
+CC_MODE_SPECS: list[dict[str, Any]] = [
+    {
+        "id": "cc_off",
+        "label_en": "Off (Pure Crisis)",
+        "label_zh": "关闭（纯危机对冲）",
+        "short_en": "Off",
+        "short_zh": "关闭",
+        "summary_en": "Zero normal-time covered calls; 100% uncapped upside during bull melt-ups.",
+        "summary_zh": "平时不卖 Call，牛市主升浪 100% 零封顶损耗，仅在危机信号触发时开启保护。",
+    },
+    {
+        "id": "cc_high_vol",
+        "label_en": "+10% OTM · High IV (VXN>=25)",
+        "label_zh": "高波卖 Call（推荐 · VXN≥25）",
+        "short_en": "High-IV CC",
+        "short_zh": "高波卖 Call",
+        "summary_en": "When within 3% of ATH and VXN >= 25 (rich vol), sell 45D +10% OTM Calls on uncollared shares to build cash -> funds Naked Puts first & buys dips on VIX/3M >= 1.10.",
+        "summary_zh": "距前高 ≤ 3% 且隐波肥厚（VXN ≥ 25）时，对非领口仓位卖 45 天 +10% 虚值 Call 攒现金，优先免费付首仓裸 Put 保费，余钱留到 VIX/3M ≥ 1.10 恐慌抄底 QQQ。",
+    },
+    {
+        "id": "cc_always",
+        "label_en": "+10% OTM · Always (ATH<=3%)",
+        "label_zh": "全天候卖 Call（ATH≤3%）",
+        "short_en": "Always CC",
+        "short_zh": "全天候卖 Call",
+        "summary_en": "Unconditionally sells 45D +10% OTM Calls whenever within 3% of ATH (any VXN) to accumulate cash — transparent comparison showing low-IV melt-up assignment drag (2020-08 & 2026-05).",
+        "summary_zh": "只要距前高 ≤ 3%（不限 VXN）即持续卖 45 天 +10% 虚值 Call 攒现金——直观对比低波卖飞的真实代价（2020-08 与 2026-05 主升浪击穿行权价）。",
+    },
+]
 
 TP_MODE_SPECS: list[dict[str, Any]] = [
     {
@@ -350,6 +381,7 @@ def simulate_strategy(
     put_mult_tp: float | None = 5.0,
     put_mult_max_dte: int = 45,
     tp_mode: str = DEFAULT_TP_MODE,
+    cc_mode: str = DEFAULT_CC_MODE,
     slow_bear_overlay: bool = False,
     slip: float = DEFAULT_SLIPPAGE,
 ) -> dict[str, Any]:
@@ -363,14 +395,30 @@ def simulate_strategy(
 
     core_shares = INITIAL_CAPITAL / float(rows[0]["close"])
     tbill_cash = 0.0
+    cc_cash = 0.0
     in_slow_bear_def = False
     pending_bear_change: str | None = None
 
+    cc_enabled = cc_mode in ("cc_high_vol", "cc_always") and arch != "pure_qqq"
+    cc_min_vxn = 25.0 if cc_mode == "cc_high_vol" else 0.0
+    cc_ath_limit = 0.03
+    cc_otm_pct = 0.10
+    cc_dte = 45
+
     active_tranches: list[dict[str, Any]] = []
     pending_sig: dict[str, Any] | None = None
+    active_cc: dict[str, Any] | None = None
+    pending_cc: dict[str, Any] | None = None
+    pending_cc_deploy = False
     ledger: list[dict[str, Any]] = []
+    cc_ledger: list[dict[str, Any]] = []
     shield_events: list[dict[str, Any]] = []
     tid = 0
+    cc_tid = 0
+    cc_gross_prem = 0.0
+    cc_gross_loss = 0.0
+    cc_assigned_cnt = 0
+    cc_funded_puts = 0.0
 
     nav_list: list[float] = []
     equiv_sh_list: list[float] = []
@@ -388,6 +436,7 @@ def simulate_strategy(
         vix_r = float(row["vix_ratio"])
         r_cur = float(row["r"])
         q_cur = float(row["div_yield"])
+        dd_cur = float(row["dd_from_ath"])
 
         mult_morning = (final_bh_sh / pre_drip_bh[i]) * final_cl
         mult_eod = (final_bh_sh / post_drip_bh[i]) * final_cl
@@ -395,6 +444,49 @@ def simulate_strategy(
         if i > 0 and tbill_cash > 0.0:
             dt_yr = max(1, (dt_objs[i] - dt_objs[i - 1]).days) / 365.0
             tbill_cash *= 1.0 + float(rows[i - 1]["r"]) * dt_yr
+        if i > 0 and cc_cash > 0.0:
+            dt_yr = max(1, (dt_objs[i] - dt_objs[i - 1]).days) / 365.0
+            cc_cash *= 1.0 + float(rows[i - 1]["r"]) * dt_yr
+
+        # A0. Deploy accumulated Covered-Call cash war chest on panic dip at T+1 Open
+        if i > 0 and pending_cc_deploy and cc_cash > 1.0:
+            core_shares += cc_cash / (op * (1.0 + STOCK_REBAL_FEE))
+            cc_cash = 0.0
+            pending_cc_deploy = False
+
+        # A0b. Close active Covered Call early on VIX/3M >= 1.10 panic to keep rebound uncapped
+        if i > 0 and active_cc is not None and active_cc.get("pending_close"):
+            prev_vxn = float(rows[i - 1]["vxn"])
+            prev_cl = float(rows[i - 1]["close"])
+            vxn_op = max(10.0, prev_vxn - 0.45 * (op / prev_cl - 1.0) * 100.0)
+            rem_cc = max(0, (active_cc["exp_dt"] - dt_objs[i]).days)
+            t_cc = rem_cc / 365.0
+            sc_ex = eval_skew_iv(op, active_cc["kc"], t_cc, r_cur, q_cur, vxn_op, coeffs)
+            c_ask_ex = bsm_price(op, active_cc["kc"], t_cc, r_cur, q_cur, sc_ex, "call") * (1.0 + slip)
+            cost_cl = active_cc["shares"] * c_ask_ex
+            cc_gross_loss += cost_cl
+            if cc_cash >= cost_cl:
+                cc_cash -= cost_cl
+            else:
+                core_shares -= (cost_cl - cc_cash) / (op * (1.0 - STOCK_REBAL_FEE))
+                cc_cash = 0.0
+            cc_ledger.append(
+                {
+                    "cc_id": active_cc["cc_id"],
+                    "entry_date": active_cc["entry_date"],
+                    "exit_date": d,
+                    "entry_spot": round(active_cc["entry_spot"], 2),
+                    "kc": round(active_cc["kc"], 2),
+                    "exit_spot": round(op, 2),
+                    "entry_vxn": round(active_cc["entry_vxn"], 2),
+                    "shares": round(active_cc["shares"], 2),
+                    "prem_usd": round(active_cc["prem_usd"], 2),
+                    "loss_usd": round(cost_cl, 2),
+                    "net_pnl_usd": round(active_cc["prem_usd"] - cost_cl, 2),
+                    "exit_reason": "panic_close_uncap",
+                }
+            )
+            active_cc = None
 
         if i > 0 and slow_bear_overlay and pending_bear_change is not None:
             prev_r = rows[i - 1]
@@ -615,14 +707,54 @@ def simulate_strategy(
 
             if hedged_sh > 1e-6:
                 if t_type == "collar":
+                    # Buy back any overlapping normal-time Covered Call before opening a Collar
+                    if active_cc is not None:
+                        rem_cc = max(0, (active_cc["exp_dt"] - dt_objs[i]).days)
+                        t_cc = rem_cc / 365.0
+                        sc_ex = eval_skew_iv(op, active_cc["kc"], t_cc, r_en, q_en, vxn_en, coeffs)
+                        c_ask_ex = bsm_price(op, active_cc["kc"], t_cc, r_en, q_en, sc_ex, "call") * (1.0 + slip)
+                        cost_cl = active_cc["shares"] * c_ask_ex
+                        cc_gross_loss += cost_cl
+                        if cc_cash >= cost_cl:
+                            cc_cash -= cost_cl
+                        else:
+                            core_shares -= (cost_cl - cc_cash) / (op * (1.0 - STOCK_REBAL_FEE))
+                            cc_cash = 0.0
+                        cc_ledger.append(
+                            {
+                                "cc_id": active_cc["cc_id"],
+                                "entry_date": active_cc["entry_date"],
+                                "exit_date": d,
+                                "entry_spot": round(active_cc["entry_spot"], 2),
+                                "kc": round(active_cc["kc"], 2),
+                                "exit_spot": round(op, 2),
+                                "entry_vxn": round(active_cc["entry_vxn"], 2),
+                                "shares": round(active_cc["shares"], 2),
+                                "prem_usd": round(active_cc["prem_usd"], 2),
+                                "loss_usd": round(cost_cl, 2),
+                                "net_pnl_usd": round(active_cc["prem_usd"] - cost_cl, 2),
+                                "exit_reason": "closed_for_collar",
+                            }
+                        )
+                        active_cc = None
                     kc = solve_zero_cost_call_strike(op, kp, t_en, r_en, q_en, vxn_en, coeffs, slip)
                     entry_cost_usd = 0.0
                     d_sh_entry = 0.0
                 else:
                     kc = None
                     entry_cost_usd = hedged_sh * put_ask_en
-                    d_sh_entry = -entry_cost_usd / (op * (1.0 - STOCK_REBAL_FEE))
-                    core_shares += d_sh_entry
+                    # Fund Naked Put from Covered-Call cash war chest first (zero QQQ share sale while cash lasts!)
+                    if cc_cash >= entry_cost_usd:
+                        cc_cash -= entry_cost_usd
+                        cc_funded_puts += entry_cost_usd
+                        d_sh_entry = 0.0
+                    else:
+                        paid_cc = cc_cash
+                        cc_funded_puts += paid_cc
+                        rem_cost = entry_cost_usd - paid_cc
+                        cc_cash = 0.0
+                        d_sh_entry = -rem_cost / (op * (1.0 - STOCK_REBAL_FEE))
+                        core_shares += d_sh_entry
 
                 tid += 1
                 used_slots = {t["slot_num"] for t in active_tranches}
@@ -659,6 +791,46 @@ def simulate_strategy(
                     }
                 )
             pending_sig = None
+
+        # B2. Execute pending normal-time OTM +10% Covered Call sale at t+1 Open (only on uncollared shares)
+        if i > 0 and cc_enabled and pending_cc is not None and active_cc is None:
+            has_collar = any(t["tranche_type"] == "collar" for t in active_tranches)
+            if not has_collar:
+                prev_vxn_cc = pending_cc["vxn"]
+                prev_cl_cc = pending_cc["close"]
+                vxn_cc = max(10.0, prev_vxn_cc - 0.45 * (op / prev_cl_cc - 1.0) * 100.0)
+                r_cc, q_cc = pending_cc["r"], pending_cc["q"]
+                cc_sh = max(0.0, core_shares)
+                if cc_sh > 1e-6:
+                    target_cc = dt_objs[i] + datetime.timedelta(days=cc_dte)
+                    pos_cc = bisect.bisect_left(dt_objs, target_cc)
+                    if pos_cc < len(dates):
+                        exp_date_cc, exp_dt_cc = dates[pos_cc], dt_objs[pos_cc]
+                    else:
+                        exp_date_cc, exp_dt_cc = target_cc.isoformat(), target_cc
+                    t_cc = max(1, (exp_dt_cc - dt_objs[i]).days) / 365.0
+                    kc_cc = op * (1.0 + cc_otm_pct)
+                    sc_cc = eval_skew_iv(op, kc_cc, t_cc, r_cc, q_cc, vxn_cc, coeffs)
+                    c_bid_cc = bsm_price(op, kc_cc, t_cc, r_cc, q_cc, sc_cc, "call") * (1.0 - slip)
+                    if c_bid_cc >= 0.05:
+                        prem_usd = cc_sh * c_bid_cc
+                        cc_tid += 1
+                        cc_gross_prem += prem_usd
+                        cc_cash += prem_usd
+                        active_cc = {
+                            "cc_id": cc_tid,
+                            "entry_date": d,
+                            "entry_dt": dt_objs[i],
+                            "exp_date": exp_date_cc,
+                            "exp_dt": exp_dt_cc,
+                            "entry_spot": op,
+                            "entry_vxn": vxn_cc,
+                            "kc": kc_cc,
+                            "shares": cc_sh,
+                            "prem_usd": prem_usd,
+                            "pending_close": False,
+                        }
+            pending_cc = None
 
         # C. Dividends DRIP at EOD Close
         if i > 0 and div > 0.0:
@@ -833,8 +1005,49 @@ def simulate_strategy(
                 rem_after_exp.append(tr)
 
         active_tranches = rem_after_exp
-        tot_mtm = put_mtm_tot + call_mtm_tot
-        nav = core_shares * cl + tbill_cash + tot_mtm
+
+        # D2. Normal-time Covered Call expiry settlement or EOD MTM
+        cc_mtm = 0.0
+        if active_cc is not None:
+            if d == active_cc["exp_date"]:
+                pay_cc = max(0.0, cl - active_cc["kc"])
+                loss_cc = active_cc["shares"] * pay_cc
+                if pay_cc > 0.0:
+                    cc_assigned_cnt += 1
+                    cc_gross_loss += loss_cc
+                    if cc_cash >= loss_cc:
+                        cc_cash -= loss_cc
+                    else:
+                        core_shares -= (loss_cc - cc_cash) / (cl * (1.0 - STOCK_REBAL_FEE))
+                        cc_cash = 0.0
+                cc_ledger.append(
+                    {
+                        "cc_id": active_cc["cc_id"],
+                        "entry_date": active_cc["entry_date"],
+                        "exit_date": d,
+                        "entry_spot": round(active_cc["entry_spot"], 2),
+                        "kc": round(active_cc["kc"], 2),
+                        "exit_spot": round(cl, 2),
+                        "entry_vxn": round(active_cc["entry_vxn"], 2),
+                        "shares": round(active_cc["shares"], 2),
+                        "prem_usd": round(active_cc["prem_usd"], 2),
+                        "loss_usd": round(loss_cc, 2),
+                        "net_pnl_usd": round(active_cc["prem_usd"] - loss_cc, 2),
+                        "exit_reason": "assigned_breach" if pay_cc > 0.0 else "expired_worthless",
+                    }
+                )
+                active_cc = None
+            else:
+                rem_cc = max(1, (active_cc["exp_dt"] - dt_objs[i]).days)
+                t_cc = rem_cc / 365.0
+                sc_cc = eval_skew_iv(cl, active_cc["kc"], t_cc, r_cur, q_cur, vxn_cl, coeffs)
+                cm_cc = bsm_price(cl, active_cc["kc"], t_cc, r_cur, q_cur, sc_cc, "call")
+                cc_mtm = -active_cc["shares"] * cm_cc
+                if rem_cc >= 3 and vix_r >= 1.10:
+                    active_cc["pending_close"] = True
+
+        tot_mtm = put_mtm_tot + call_mtm_tot + cc_mtm
+        nav = core_shares * cl + tbill_cash + cc_cash + tot_mtm
 
         nav_list.append(nav)
         equiv_sh_list.append(nav / cl)
@@ -871,6 +1084,23 @@ def simulate_strategy(
                     "sig_score": int(row["score"]),
                     "sig_ad_below50": bool(float(row["ad_line"]) < float(row["ad_sma50"])),
                 }
+
+        # E2. Normal-time Covered Call entry & war-chest panic deployment check
+        if cc_enabled and i < len(dates) - 1:
+            if (
+                active_cc is None
+                and dd_cur >= -cc_ath_limit
+                and vxn_cl >= cc_min_vxn
+                and not any(t["tranche_type"] == "collar" for t in active_tranches)
+            ):
+                pending_cc = {
+                    "close": cl,
+                    "vxn": vxn_cl,
+                    "r": r_cur,
+                    "q": q_cur,
+                }
+            if cc_cash > 1.0 and vix_r >= 1.10:
+                pending_cc_deploy = True
 
         # F. Slow-Bear 6-Lights Regime Defense (also evaluate on latest day to surface next-open reload/enter status!)
         if slow_bear_overlay:
@@ -999,6 +1229,8 @@ def simulate_strategy(
                 "exp_date": tr["exp_date"],
                 "rem_dte": rem_d,
                 "entry_spot": round(tr["entry_spot"], 2),
+                "mtm_spot": round(last_cl, 2),
+                "mtm_date": last_d,
                 "kp": round(tr["kp"], 2),
                 "kc": round(tr["kc"], 2) if tr["kc"] is not None else None,
                 "hedged_shares": round(hs, 2),
@@ -1047,6 +1279,9 @@ def simulate_strategy(
     pct_active = (sum(any_active_list) / n) * 100.0
     active_days = max(1, sum(any_active_list))
 
+    extra_sh_vs_bh = equiv_sh_list[-1] - final_bh_sh
+    extra_sh_pct = (extra_sh_vs_bh / final_bh_sh) * 100.0 if final_bh_sh > 0 else 0.0
+
     summary = {
         "id": strategy_id,
         "arch": arch,
@@ -1061,7 +1296,9 @@ def simulate_strategy(
         "sortino": round(sortino, 3),
         "calmar": round(calmar, 3),
         "final_shares": round(equiv_sh_list[-1], 2),
-        "extra_shares_vs_bh": round(equiv_sh_list[-1] - final_bh_sh, 2),
+        "bh_final_shares": round(final_bh_sh, 2),
+        "extra_shares_vs_bh": round(extra_sh_vs_bh, 2),
+        "extra_shares_pct": round(extra_sh_pct, 2),
         "pct_days_hedged": round(pct_active, 1),
         "alpha_per_active_day_usd": round(net_alpha / active_days, 2) if arch != "pure_qqq" else 0.0,
         "tranches_total": len(ledger),
@@ -1075,6 +1312,14 @@ def simulate_strategy(
         "sum_gamma_usd": round(sum(x["gamma_usd"] for x in ledger), 2),
         "sum_vega_usd": round(sum(x["vega_usd"] for x in ledger), 2),
         "sum_theta_slip_usd": round(sum(x["theta_slip_usd"] for x in ledger), 2),
+        "cc_mode": cc_mode,
+        "cc_trades_count": len(cc_ledger),
+        "cc_assigned_count": cc_assigned_cnt,
+        "cc_gross_prem_usd": round(cc_gross_prem, 2),
+        "cc_gross_loss_usd": round(cc_gross_loss, 2),
+        "cc_net_pnl_usd": round(cc_gross_prem - cc_gross_loss, 2),
+        "cc_funded_puts_usd": round(cc_funded_puts, 2),
+        "cc_cash_end_usd": round(cc_cash, 2),
     }
 
     return {
@@ -1086,6 +1331,7 @@ def simulate_strategy(
         "slot1_naked": slot1_naked_list,
         "shield_active": shield_active_list,
         "ledger": ledger,
+        "cc_ledger": cc_ledger,
         "shield_events": shield_events,
         "active_tranches_eod": active_tranches_serialized,
         "pending_sig_eod": pending_sig,
@@ -2115,64 +2361,107 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
     qqq_cl = float(last_row["close"])
     qqq_ma200 = float(last_row["qqq_ma200"])
 
-    # Simulate Buy & Hold once (identical across all TP modes)
+    # Simulate Buy & Hold once (identical across all TP & CC modes)
     bh_def = [d for d in strategy_defs if d[0] == "BH_Pure_QQQ"][0]
     bh_sim = simulate_strategy(rows_all, coeffs, strategy_id="BH_Pure_QQQ", **bh_def[1])
     bh_summary = {**bh_sim["summary"], **bh_def[2]}
 
+    mode_bundles: dict[str, Any] = {}
     tp_modes_bundle: dict[str, Any] = {}
     tp_modes_meta: list[dict[str, Any]] = []
+    cc_modes_meta: list[dict[str, Any]] = []
 
     for mode_spec in TP_MODE_SPECS:
         mode_id = mode_spec["id"]
-        sims_m: dict[str, dict[str, Any]] = {"BH_Pure_QQQ": bh_sim}
-        summaries_m: list[dict[str, Any]] = []
-        ledgers_m: dict[str, list[dict[str, Any]]] = {}
-        events_m: dict[str, list[dict[str, Any]]] = {}
-        live_states_by_strat_m: dict[str, dict[str, Any]] = {}
+        for cc_spec in CC_MODE_SPECS:
+            cc_id = cc_spec["id"]
+            sims_m: dict[str, dict[str, Any]] = {"BH_Pure_QQQ": bh_sim}
+            summaries_m: list[dict[str, Any]] = []
+            ledgers_m: dict[str, list[dict[str, Any]]] = {}
+            cc_ledgers_m: dict[str, list[dict[str, Any]]] = {}
+            events_m: dict[str, list[dict[str, Any]]] = {}
+            live_states_by_strat_m: dict[str, dict[str, Any]] = {}
 
-        for sid, sim_kw, meta in strategy_defs:
-            if sid == "BH_Pure_QQQ":
-                summaries_m.append(bh_summary)
-                continue
-            res = simulate_strategy(rows_all, coeffs, strategy_id=sid, tp_mode=mode_id, **sim_kw)
-            sims_m[sid] = res
-            summaries_m.append({**res["summary"], **meta})
-            ledgers_m[sid] = res["ledger"]
-            events_m[sid] = build_unified_events(sid, res["ledger"], [])
-            live_states_by_strat_m[sid] = build_live_signal_state(last_row, res, tp_mode=mode_id)
+            for sid, sim_kw, meta in strategy_defs:
+                if sid == "BH_Pure_QQQ":
+                    summaries_m.append(bh_summary)
+                    continue
+                res = simulate_strategy(
+                    rows_all,
+                    coeffs,
+                    strategy_id=sid,
+                    tp_mode=mode_id,
+                    cc_mode=cc_id,
+                    **sim_kw,
+                )
+                sims_m[sid] = res
+                summaries_m.append({**res["summary"], **meta})
+                ledgers_m[sid] = res["ledger"]
+                cc_ledgers_m[sid] = res["cc_ledger"]
+                events_m[sid] = build_unified_events(sid, res["ledger"], [])
+                live_states_by_strat_m[sid] = build_live_signal_state(last_row, res, tp_mode=mode_id)
 
-        windows_m = build_crisis_windows(rows_eval, sims_m, events_m["U1_PureOptions"], tp_mode=mode_id)
-        u1_sum = next(s for s in summaries_m if s["id"] == "U1_PureOptions")
-        tp_modes_meta.append(
-            {
-                **mode_spec,
-                "u1_end_nav": u1_sum["end_nav"],
-                "u1_net_alpha_usd": u1_sum["net_alpha_usd"],
-                "u1_cagr_pct": u1_sum["cagr_pct"],
-                "u1_max_dd_pct": u1_sum["max_dd_pct"],
-                "u1_sharpe": u1_sum["sharpe"],
-                "u1_extra_shares": u1_sum["extra_shares_vs_bh"],
+            windows_m = build_crisis_windows(rows_eval, sims_m, events_m["U1_PureOptions"], tp_mode=mode_id)
+            u1_sum = next(s for s in summaries_m if s["id"] == "U1_PureOptions")
+            if cc_id == DEFAULT_CC_MODE:
+                tp_modes_meta.append(
+                    {
+                        **mode_spec,
+                        "u1_end_nav": u1_sum["end_nav"],
+                        "u1_net_alpha_usd": u1_sum["net_alpha_usd"],
+                        "u1_cagr_pct": u1_sum["cagr_pct"],
+                        "u1_max_dd_pct": u1_sum["max_dd_pct"],
+                        "u1_sharpe": u1_sum["sharpe"],
+                        "u1_final_shares": u1_sum["final_shares"],
+                        "u1_extra_shares": u1_sum["extra_shares_vs_bh"],
+                        "u1_extra_shares_pct": u1_sum["extra_shares_pct"],
+                    }
+                )
+            if mode_id == DEFAULT_TP_MODE:
+                cc_modes_meta.append(
+                    {
+                        **cc_spec,
+                        "u1_end_nav": u1_sum["end_nav"],
+                        "u1_net_alpha_usd": u1_sum["net_alpha_usd"],
+                        "u1_cagr_pct": u1_sum["cagr_pct"],
+                        "u1_max_dd_pct": u1_sum["max_dd_pct"],
+                        "u1_sharpe": u1_sum["sharpe"],
+                        "u1_final_shares": u1_sum["final_shares"],
+                        "u1_extra_shares": u1_sum["extra_shares_vs_bh"],
+                        "u1_extra_shares_pct": u1_sum["extra_shares_pct"],
+                        "u1_cc_trades_count": u1_sum["cc_trades_count"],
+                        "u1_cc_assigned_count": u1_sum["cc_assigned_count"],
+                        "u1_cc_gross_prem_usd": u1_sum["cc_gross_prem_usd"],
+                        "u1_cc_gross_loss_usd": u1_sum["cc_gross_loss_usd"],
+                        "u1_cc_funded_puts_usd": u1_sum["cc_funded_puts_usd"],
+                    }
+                )
+
+            bundle_obj = {
+                "tp_mode": mode_id,
+                "cc_mode": cc_id,
+                "live_signal_state": live_states_by_strat_m["U1_PureOptions"],
+                "live_signal_states_by_strategy": live_states_by_strat_m,
+                "strategies_summary": summaries_m,
+                "events_by_strategy": events_m,
+                "trade_ledgers_by_strategy": ledgers_m,
+                "cc_ledgers_by_strategy": cc_ledgers_m,
+                "crisis_windows": windows_m,
+                "nav_u1": [round(v, 2) for v in sims_m["U1_PureOptions"]["nav"]],
+                "nav_b1c": [round(v, 2) for v in sims_m["B1c_PureAD"]["nav"]],
+                "nav_d2": [round(v, 2) for v in sims_m["D2_SixLights"]["nav"]],
+                "nav_h2": [round(v, 2) for v in sims_m["H2_G4_PriceGate"]["nav"]],
+                "active_slots": [int(v) for v in sims_m["U1_PureOptions"]["active_slots"]],
+                "slot1_naked": [bool(v) for v in sims_m["U1_PureOptions"]["slot1_naked"]],
             }
-        )
-        tp_modes_bundle[mode_id] = {
-            "live_signal_state": live_states_by_strat_m["U1_PureOptions"],
-            "live_signal_states_by_strategy": live_states_by_strat_m,
-            "strategies_summary": summaries_m,
-            "events_by_strategy": events_m,
-            "trade_ledgers_by_strategy": ledgers_m,
-            "crisis_windows": windows_m,
-            "nav_u1": [round(v, 2) for v in sims_m["U1_PureOptions"]["nav"]],
-            "nav_b1c": [round(v, 2) for v in sims_m["B1c_PureAD"]["nav"]],
-            "nav_d2": [round(v, 2) for v in sims_m["D2_SixLights"]["nav"]],
-            "nav_h2": [round(v, 2) for v in sims_m["H2_G4_PriceGate"]["nav"]],
-            "active_slots": [int(v) for v in sims_m["U1_PureOptions"]["active_slots"]],
-            "slot1_naked": [bool(v) for v in sims_m["U1_PureOptions"]["slot1_naked"]],
-        }
+            mode_bundles[f"{mode_id}__{cc_id}"] = bundle_obj
+            if cc_id == DEFAULT_CC_MODE:
+                tp_modes_bundle[mode_id] = bundle_obj
 
-    default_bundle = tp_modes_bundle[DEFAULT_TP_MODE]
+    default_bundle = mode_bundles[f"{DEFAULT_TP_MODE}__{DEFAULT_CC_MODE}"]
     strategies_summary = default_bundle["strategies_summary"]
     trade_ledgers_by_strategy = default_bundle["trade_ledgers_by_strategy"]
+    cc_ledgers_by_strategy = default_bundle["cc_ledgers_by_strategy"]
     events_by_strategy = default_bundle["events_by_strategy"]
     live_signal_state = default_bundle["live_signal_state"]
     live_signal_states_by_strategy = default_bundle["live_signal_states_by_strategy"]
@@ -2269,7 +2558,11 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         "default_tp_mode": DEFAULT_TP_MODE,
         "tp_mode": DEFAULT_TP_MODE,
         "tp_modes_meta": tp_modes_meta,
+        "default_cc_mode": DEFAULT_CC_MODE,
+        "cc_mode": DEFAULT_CC_MODE,
+        "cc_modes_meta": cc_modes_meta,
         "tp_modes": tp_modes_bundle,
+        "mode_bundles": mode_bundles,
         "live_market_snapshot": live_market_snapshot,
         "live_signal_state": live_signal_state,
         "live_signal_states_by_strategy": live_signal_states_by_strategy,
@@ -2281,6 +2574,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         "events_by_strategy": events_by_strategy,
         "trade_ledger": trade_ledgers_by_strategy["U1_PureOptions"],
         "trade_ledgers_by_strategy": trade_ledgers_by_strategy,
+        "cc_ledgers_by_strategy": cc_ledgers_by_strategy,
         "shield_events": [],
         "crisis_windows": crisis_windows,
     }
@@ -2311,7 +2605,10 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     assert doc["default_strategy_id"] == "U1_PureOptions", doc["default_strategy_id"]
     assert doc["default_tp_mode"] == "layered_itm", doc["default_tp_mode"]
     assert doc["tp_mode"] == "layered_itm", doc["tp_mode"]
+    assert doc["default_cc_mode"] == "cc_off", doc["default_cc_mode"]
+    assert doc["cc_mode"] == "cc_off", doc["cc_mode"]
     assert set(doc["tp_modes"].keys()) == {"layered_itm", "standard_dual", "both_4x"}
+    assert len(doc["mode_bundles"]) == 9
     assert doc["as_of_date"] >= "2026-11-20"
     if doc["as_of_date"] == "2026-11-20":
         assert snap["qqq_close"] == 608.45, snap["qqq_close"]
@@ -2327,11 +2624,12 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         smap = {s["id"]: s for s in doc["strategies_summary"]}
         assert "U4_DualEngine" not in smap
         assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02, smap["BH_Pure_QQQ"]["end_nav"]
-        # Default mode: layered_itm (Collar@1.10 | NakedPut ITM Spot<=K_P | Track-2 DTE<=45 & Put>=5x)
+        # Default mode: layered_itm + cc_off
         assert abs(smap["U1_PureOptions"]["end_nav"] - 1654577.25) <= 1.0, smap["U1_PureOptions"]["end_nav"]
         assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 366272.47) <= 1.0, smap["U1_PureOptions"]["net_alpha_usd"]
         assert smap["U1_PureOptions"]["cagr_pct"] == 19.46, smap["U1_PureOptions"]["cagr_pct"]
         assert smap["U1_PureOptions"]["max_dd_pct"] == -31.52, smap["U1_PureOptions"]["max_dd_pct"]
+        assert abs(smap["U1_PureOptions"]["extra_shares_pct"] - 28.43) <= 0.05
         assert abs(smap["B1c_PureAD"]["end_nav"] - 1587800.99) <= 1.0, smap["B1c_PureAD"]["end_nav"]
         assert abs(smap["D2_SixLights"]["end_nav"] - 1497620.82) <= 1.0, smap["D2_SixLights"]["end_nav"]
         assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1402250.68) <= 1.0, smap["H2_G4_PriceGate"]["end_nav"]
@@ -2341,18 +2639,23 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         d4x_map = {s["id"]: s for s in doc["tp_modes"]["both_4x"]["strategies_summary"]}
         assert abs(d4x_map["U1_PureOptions"]["end_nav"] - 1643122.56) <= 1.0, d4x_map["U1_PureOptions"]["end_nav"]
 
+        hv_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_high_vol"]["strategies_summary"]}
+        assert hv_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "High-IV CC must beat no-CC baseline"
+        al_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_always"]["strategies_summary"]}
+        assert al_map["U1_PureOptions"]["cc_trades_count"] >= 30
+
     assert len(doc["six_crisis_lights"]) == 6
     assert len(doc["crisis_windows"]) == 7
     assert len(doc["daily_series"]) >= 2990
 
-    # Verify exact 4-factor convexity decomposition identity on every option tranche across ALL TP modes
-    for mode_id, mode_bundle in doc["tp_modes"].items():
+    # Verify exact 4-factor convexity decomposition identity on every option tranche across ALL 9 mode bundles
+    for mode_key, mode_bundle in doc["mode_bundles"].items():
         for sid, led in mode_bundle["trade_ledgers_by_strategy"].items():
             for tr in led:
                 four_sum = tr["delta_usd"] + tr["gamma_usd"] + tr["vega_usd"] + tr["theta_slip_usd"]
                 if abs(four_sum - tr["net_pnl_usd"]) > 0.05:
                     raise AssertionError(
-                        f"4-factor convexity mismatch in {mode_id}/{sid} #{tr['tranche_id']}: {four_sum} vs {tr['net_pnl_usd']}"
+                        f"4-factor convexity mismatch in {mode_key}/{sid} #{tr['tranche_id']}: {four_sum} vs {tr['net_pnl_usd']}"
                     )
 
 

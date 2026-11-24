@@ -16,6 +16,11 @@ export const CRISIS_OBSERVATORY_TP_MODES = Object.freeze([
   'standard_dual',
   'both_4x',
 ]);
+export const CRISIS_OBSERVATORY_CC_MODES = Object.freeze([
+  'cc_off',
+  'cc_high_vol',
+  'cc_always',
+]);
 
 const STRATEGY_NAV_KEYS = Object.freeze({
   U1_PureOptions: 'nav_u1',
@@ -94,25 +99,31 @@ function readArtifact(file = defaultFile) {
   return cachedArtifact;
 }
 
-function projectArtifactForTpMode(data, snapshotId, selectedTpMode) {
-  const cacheKey = `${snapshotId}:${selectedTpMode}`;
+function projectArtifactForModes(data, snapshotId, selectedTpMode, selectedCcMode) {
+  const cacheKey = `${snapshotId}:${selectedTpMode}:${selectedCcMode}`;
   const hit = projectedModeCache.get(cacheKey);
   if (hit) return hit;
 
-  const { tp_modes: tpModes, ...baseWithoutModes } = data;
-  const bundle = tpModes?.[selectedTpMode];
+  const { tp_modes: tpModes, mode_bundles: modeBundles, ...baseWithoutModes } = data;
+  const bundleKey = `${selectedTpMode}__${selectedCcMode}`;
+  const bundle =
+    modeBundles?.[bundleKey] ?? (selectedCcMode === 'cc_off' ? tpModes?.[selectedTpMode] : null);
   if (!bundle) {
     const fallback = {
       ...baseWithoutModes,
       tp_mode: data.tp_mode ?? 'layered_itm',
       default_tp_mode: data.default_tp_mode ?? 'layered_itm',
+      cc_mode: data.cc_mode ?? 'cc_off',
+      default_cc_mode: data.default_cc_mode ?? 'cc_off',
     };
     projectedModeCache.set(cacheKey, fallback);
     return fallback;
   }
 
-  const isDefaultMode = selectedTpMode === (data.default_tp_mode ?? 'layered_itm');
-  const projectedSeries = isDefaultMode
+  const isDefaultCombo =
+    selectedTpMode === (data.default_tp_mode ?? 'layered_itm') &&
+    selectedCcMode === (data.default_cc_mode ?? 'cc_off');
+  const projectedSeries = isDefaultCombo
     ? data.daily_series
     : data.daily_series.map((row, idx) => ({
         ...row,
@@ -129,6 +140,9 @@ function projectArtifactForTpMode(data, snapshotId, selectedTpMode) {
     tp_mode: selectedTpMode,
     default_tp_mode: data.default_tp_mode ?? 'layered_itm',
     tp_modes_meta: data.tp_modes_meta ?? [],
+    cc_mode: selectedCcMode,
+    default_cc_mode: data.default_cc_mode ?? 'cc_off',
+    cc_modes_meta: data.cc_modes_meta ?? [],
     live_signal_state: bundle.live_signal_state ?? data.live_signal_state,
     live_signal_states_by_strategy:
       bundle.live_signal_states_by_strategy ?? data.live_signal_states_by_strategy ?? {},
@@ -139,6 +153,8 @@ function projectArtifactForTpMode(data, snapshotId, selectedTpMode) {
     trade_ledger: bundle.trade_ledgers_by_strategy?.U1_PureOptions ?? data.trade_ledger,
     trade_ledgers_by_strategy:
       bundle.trade_ledgers_by_strategy ?? data.trade_ledgers_by_strategy,
+    cc_ledgers_by_strategy:
+      bundle.cc_ledgers_by_strategy ?? data.cc_ledgers_by_strategy ?? {},
     crisis_windows: bundle.crisis_windows ?? data.crisis_windows,
   };
   projectedModeCache.set(cacheKey, projected);
@@ -177,6 +193,10 @@ function computeSeriesMetrics(dailyRows, navKey, bhEndNav) {
   }
   const calmar = maxDd < -1e-6 ? cagr / Math.abs(maxDd) : 0;
   const lastClose = Number(dailyRows[dailyRows.length - 1].qqq_close);
+  const finalSh = lastClose > 0 ? endNav / lastClose : null;
+  const bhSh = lastClose > 0 ? bhEndNav / lastClose : null;
+  const extraSh = finalSh !== null && bhSh !== null ? finalSh - bhSh : null;
+  const extraPct = extraSh !== null && bhSh > 0 ? (extraSh / bhSh) * 100 : null;
   return {
     end_nav: r2(endNav),
     net_alpha_usd: r2(endNav - bhEndNav),
@@ -184,7 +204,10 @@ function computeSeriesMetrics(dailyRows, navKey, bhEndNav) {
     max_dd_pct: r2(maxDd),
     sharpe: r3(sharpe),
     calmar: r3(calmar),
-    final_shares: lastClose > 0 ? r2(endNav / lastClose) : null,
+    final_shares: finalSh !== null ? r2(finalSh) : null,
+    bh_final_shares: bhSh !== null ? r2(bhSh) : null,
+    extra_shares_vs_bh: extraSh !== null ? r2(extraSh) : null,
+    extra_shares_pct: extraPct !== null ? r2(extraPct) : null,
   };
 }
 
@@ -380,6 +403,7 @@ export function loadCrisisObservatoryDashboard({
   asOf = null,
   strategy = null,
   tpMode = null,
+  ccMode = null,
   snapshotId: expectedSnapshotId = null,
   file = defaultFile,
   extraDailyBars = null,
@@ -393,7 +417,11 @@ export function loadCrisisObservatoryDashboard({
   if (!CRISIS_OBSERVATORY_TP_MODES.includes(rawTpMode)) {
     fail('invalid_crisis_observatory_tp_mode', 400);
   }
-  const data = projectArtifactForTpMode(rawData, snapshotId, rawTpMode);
+  const rawCcMode = ccMode ? String(ccMode).trim() : rawData.default_cc_mode ?? 'cc_off';
+  if (!CRISIS_OBSERVATORY_CC_MODES.includes(rawCcMode)) {
+    fail('invalid_crisis_observatory_cc_mode', 400);
+  }
+  const data = projectArtifactForModes(rawData, snapshotId, rawTpMode, rawCcMode);
 
   const rawStrategy = strategy
     ? String(strategy).trim()
@@ -422,6 +450,7 @@ export function loadCrisisObservatoryDashboard({
       liveExtended: false,
       selected_strategy_id: selectedStrategy,
       tp_mode: rawTpMode,
+      cc_mode: rawCcMode,
       live_signal_state:
         data.live_signal_states_by_strategy?.[ledgerStrategy] ?? data.live_signal_state,
       events: data.events_by_strategy?.[ledgerStrategy] ?? data.events,
@@ -461,7 +490,17 @@ export function loadCrisisObservatoryDashboard({
     slicedEventsByStrategy[sid] = (evs ?? []).filter(e => e.date <= effDate);
   }
 
-  const openU1Tranches = (maskedLedgersByStrategy.U1_PureOptions ?? []).filter(t => t.exit_date === null);
+  const isPostArtifactLive = effDate > data.as_of_date;
+  const openTranchesForStrat = sid =>
+    (maskedLedgersByStrategy[sid] ?? []).filter(
+      t => t.exit_date === null && !(isPostArtifactLive && t.is_open_live && t.pending_tp),
+    );
+  const cutoffStatesByStrategy = {};
+  for (const sid of Object.keys(maskedLedgersByStrategy)) {
+    const baseSt = data.live_signal_states_by_strategy?.[sid] ?? data.live_signal_state;
+    cutoffStatesByStrategy[sid] = buildCutoffSignalState(lastBar, openTranchesForStrat(sid), baseSt);
+  }
+  const openU1Tranches = openTranchesForStrat('U1_PureOptions');
   const maskBits = Number(lastBar.lights_mask ?? 0);
   const lightsAtCutoff = data.six_crisis_lights.map((light, idx) => ({
     ...light,
@@ -536,13 +575,17 @@ export function loadCrisisObservatoryDashboard({
     liveExtended: Boolean(extendedSeries),
     selected_strategy_id: selectedStrategy,
     tp_mode: rawTpMode,
+    cc_mode: rawCcMode,
     evaluation_window: {
       ...data.evaluation_window,
       end: effDate,
       trading_days: slicedSeries.length,
     },
     live_market_snapshot: liveSnap,
-    live_signal_state: buildCutoffSignalState(lastBar, openU1Tranches, data.live_signal_state),
+    live_signal_state:
+      cutoffStatesByStrategy[ledgerStrategy] ??
+      buildCutoffSignalState(lastBar, openU1Tranches, data.live_signal_state),
+    live_signal_states_by_strategy: cutoffStatesByStrategy,
     six_crisis_lights: lightsAtCutoff,
     ad_line_signal: adSignal,
     strategies_summary: strategiesSummary,
@@ -615,6 +658,7 @@ export async function loadCrisisObservatoryDashboardLive({
   asOf = null,
   strategy = null,
   tpMode = null,
+  ccMode = null,
   snapshotId = null,
   file = defaultFile,
   fetchLiveBars = null,
@@ -636,6 +680,7 @@ export async function loadCrisisObservatoryDashboardLive({
     asOf: requestedAsOf,
     strategy,
     tpMode,
+    ccMode,
     snapshotId,
     file,
     extraDailyBars,

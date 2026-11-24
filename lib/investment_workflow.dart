@@ -360,7 +360,7 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         if (query['cta_$key'] != null) key: query['cta_$key'],
     };
     crisisObservatorySelection = {
-      for (final key in ['strategy', 'window', 'tpMode'])
+      for (final key in ['strategy', 'window', 'tpMode', 'ccMode'])
         if (query['co_$key'] != null) key: query['co_$key'],
     };
     final legacyAutoPinnedAi =

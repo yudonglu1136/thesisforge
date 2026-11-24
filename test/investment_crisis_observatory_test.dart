@@ -30,10 +30,17 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       final qp = uri.queryParameters;
       final strat = qp['strategy'] ?? 'U1_PureOptions';
       final tpMode = qp['tpMode'] ?? raw['default_tp_mode'] ?? 'layered_itm';
+      final ccMode = qp['ccMode'] ?? raw['default_cc_mode'] ?? 'cc_off';
+      final modeBundles = raw['mode_bundles'] as Map<String, dynamic>?;
       final tpModes = raw['tp_modes'] as Map<String, dynamic>?;
-      final bundle = tpModes?[tpMode] as Map<String, dynamic>?;
+      final dynamic rawBundle =
+          (modeBundles != null ? modeBundles['${tpMode}__$ccMode'] : null) ??
+          (ccMode == 'cc_off' && tpModes != null ? tpModes[tpMode] : null);
+      final bundle = rawBundle as Map<String, dynamic>?;
       final baseSeries = raw['daily_series'] as List<dynamic>;
-      final projectedSeries = (bundle != null && tpMode != raw['default_tp_mode'])
+      final isDefault =
+          tpMode == raw['default_tp_mode'] && ccMode == raw['default_cc_mode'];
+      final projectedSeries = (bundle != null && !isDefault)
           ? List<Map<String, dynamic>>.generate(baseSeries.length, (i) {
               final row = Map<String, dynamic>.from(baseSeries[i] as Map);
               row['nav_u1'] = (bundle['nav_u1'] as List)[i];
@@ -43,7 +50,9 @@ class CrisisObservatoryFixtureApi extends ApiClient {
               return row;
             })
           : baseSeries;
-      final out = Map<String, dynamic>.from(raw)..remove('tp_modes');
+      final out = Map<String, dynamic>.from(raw)
+        ..remove('tp_modes')
+        ..remove('mode_bundles');
       return {
         ...out,
         if (bundle != null) ...{
@@ -52,10 +61,12 @@ class CrisisObservatoryFixtureApi extends ApiClient {
           'strategies_summary': bundle['strategies_summary'],
           'events_by_strategy': bundle['events_by_strategy'],
           'trade_ledgers_by_strategy': bundle['trade_ledgers_by_strategy'],
+          'cc_ledgers_by_strategy': bundle['cc_ledgers_by_strategy'],
           'crisis_windows': bundle['crisis_windows'],
           'daily_series': projectedSeries,
         },
         'tp_mode': tpMode,
+        'cc_mode': ccMode,
         'snapshotId': 'fixture-crisis-v2-minimal',
         'requestedAsOf': qp['asOf'] ?? raw['as_of_date'],
         'selected_strategy_id': strat,
@@ -156,18 +167,52 @@ void main() {
         findsOneWidget,
       );
 
-      // 3. Hero Interactive Chart: exact U1 Layered ITM TP metrics + selectable TP mode bar
+      // 3. Hero Interactive Chart: exact U1 Layered ITM TP metrics + total shares & extra % + selectable TP & CC bars
       expect(find.text('\$1,654,577'), findsOneWidget);
       expect(find.text('+\$366,272'), findsOneWidget);
+      expect(find.text('2,719.3 sh'), findsOneWidget);
+      expect(find.textContaining('+28.4%'), findsWidgets);
       expect(find.text('-31.5%'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('crisis-tp-mode-bar')),
         findsOneWidget,
       );
       expect(
+        find.byKey(const ValueKey('crisis-cc-mode-bar')),
+        findsOneWidget,
+      );
+      expect(
         find.byKey(const ValueKey('crisis-observatory-canvas')),
         findsOneWidget,
       );
+
+      // Switch selectable Normal-Time +10% OTM Covered Call modes live
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_high_vol')),
+      );
+      expect(find.text('\$1,678,265'), findsOneWidget);
+      expect(find.text('2,758.3 sh'), findsOneWidget);
+      expect(find.textContaining('+30.3%'), findsWidgets);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-cc-ledger-toggle')),
+      );
+      expect(find.textContaining('Sold K='), findsWidgets);
+
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_always')),
+      );
+      expect(find.text('\$1,581,979'), findsOneWidget);
+      expect(find.text('2,600.0 sh'), findsOneWidget);
+      expect(find.textContaining('+22.8%'), findsWidgets);
+
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_off')),
+      );
+      expect(find.text('\$1,654,577'), findsOneWidget);
 
       // Switch selectable Take-Profit modes live: Standard 1.10 -> Deep 4x Both -> back to Layered ITM
       await tapVisible(
@@ -336,9 +381,13 @@ void main() {
         expect(find.text('分层实值（推荐）'), findsOneWidget);
         expect(find.text('标准 1.10'), findsOneWidget);
         expect(find.text('两槽 4x 深度'), findsOneWidget);
+        expect(find.text('高波卖 Call（推荐 · VXN≥25）'), findsOneWidget);
+        expect(find.text('全天候（ATH≤3% · +10% OTM）'), findsOneWidget);
         expect(find.text('6 / 6 亮灯'), findsOneWidget);
         expect(find.text('历史保护策略 vs 死拿 QQQ'), findsOneWidget);
-        expect(find.text('100% 满仓 QQQ'), findsOneWidget);
+        expect(find.text('100% 满仓 QQQ · 2,719.3 股'), findsOneWidget);
+        expect(find.text('总股数 · 多买比例'), findsOneWidget);
+        expect(find.textContaining('+28.4%'), findsWidgets);
         expect(find.textContaining('短债'), findsNothing);
         expect(tester.takeException(), isNull);
       }

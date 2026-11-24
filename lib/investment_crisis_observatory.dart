@@ -40,6 +40,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     'both_4x',
   ];
 
+  static const List<String> _ccModeIds = [
+    'cc_off',
+    'cc_high_vol',
+    'cc_always',
+  ];
+
   static const Map<String, String> _strategyNavKeys = {
     'U1_PureOptions': 'nav_u1',
     'B1c_PureAD': 'nav_b1c',
@@ -56,12 +62,14 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   String selectedStrategyId = 'U1_PureOptions';
   String selectedTpMode = 'layered_itm';
+  String selectedCcMode = 'cc_off';
   String selectedWindowId = 'ALL';
   String activeForensicWindowId = '2026-08_11_LIVE';
   bool useLogScale = true;
   bool showRulesDisclosure = false;
   bool showSignalSubTrack = false;
   bool showFullLedger = false;
+  bool showCcLedger = false;
   final Set<int> expandedTrancheIds = <int>{};
   int hoverIndex = -1;
   int loadSerial = 0;
@@ -80,6 +88,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     return _tpModeIds.contains(raw) ? raw : 'layered_itm';
   }
 
+  String _normalizeCcMode(String raw) {
+    return _ccModeIds.contains(raw) ? raw : 'cc_off';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -88,6 +100,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     );
     selectedTpMode = _normalizeTpMode(
       text(widget.initialSelection['tpMode']),
+    );
+    selectedCcMode = _normalizeCcMode(
+      text(widget.initialSelection['ccMode']),
     );
     final initWin = text(widget.initialSelection['window']);
     if (initWin.isNotEmpty) {
@@ -113,17 +128,22 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       'strategy': selectedStrategyId,
       'window': selectedWindowId,
       'tpMode': selectedTpMode,
+      'ccMode': selectedCcMode,
     });
   }
 
-  void _selectTpMode(String modeId) {
-    final nextMode = _normalizeTpMode(modeId);
-    if (nextMode == selectedTpMode && data != null) return;
-    final cacheKey = '${widget.asOf}::$nextMode';
+  void _selectModes({String? tpMode, String? ccMode}) {
+    final nextTp = tpMode != null ? _normalizeTpMode(tpMode) : selectedTpMode;
+    final nextCc = ccMode != null ? _normalizeCcMode(ccMode) : selectedCcMode;
+    if (nextTp == selectedTpMode && nextCc == selectedCcMode && data != null) {
+      return;
+    }
+    final cacheKey = '${widget.asOf}::$nextTp::$nextCc';
     final cached = _tpModeCache[cacheKey];
     if (cached != null) {
       setState(() {
-        selectedTpMode = nextMode;
+        selectedTpMode = nextTp;
+        selectedCcMode = nextCc;
         data = cached;
         hoverIndex = -1;
         switchingTpMode = false;
@@ -132,7 +152,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       return;
     }
     setState(() {
-      selectedTpMode = nextMode;
+      selectedTpMode = nextTp;
+      selectedCcMode = nextCc;
       switchingTpMode = data != null;
       hoverIndex = -1;
     });
@@ -140,9 +161,14 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     unawaited(_loadObservatory(isModeSwitch: data != null));
   }
 
+  void _selectTpMode(String modeId) => _selectModes(tpMode: modeId);
+
+  void _selectCcMode(String modeId) => _selectModes(ccMode: modeId);
+
   Future<void> _loadObservatory({bool isModeSwitch = false}) async {
     final serial = ++loadSerial;
-    final targetMode = selectedTpMode;
+    final targetTp = selectedTpMode;
+    final targetCc = selectedCcMode;
     setState(() {
       if (!isModeSwitch) {
         loading = true;
@@ -157,12 +183,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         queryParameters: {
           'asOf': widget.asOf,
           'strategy': selectedStrategyId,
-          'tpMode': targetMode,
+          'tpMode': targetTp,
+          'ccMode': targetCc,
         },
       );
       final res = await widget.api.getJson(uri.toString());
       if (!mounted || serial != loadSerial) return;
-      _tpModeCache['${widget.asOf}::$targetMode'] = res;
+      _tpModeCache['${widget.asOf}::$targetTp::$targetCc'] = res;
       final windows = asList(res['crisis_windows']);
       var nextForensic = activeForensicWindowId;
       if (windows.isNotEmpty &&
@@ -219,6 +246,18 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     return '$sign${v.toStringAsFixed(digits)}%';
   }
 
+  String _fmtShares(double v, {int digits = 1, bool signed = false}) {
+    final sign = v < 0 ? '-' : (signed && v > 0 ? '+' : '');
+    final parts = v.abs().toStringAsFixed(digits).split('.');
+    final intPart = parts[0];
+    final buf = StringBuffer();
+    for (var i = 0; i < intPart.length; i++) {
+      if (i > 0 && (intPart.length - i) % 3 == 0) buf.write(',');
+      buf.write(intPart[i]);
+    }
+    return digits > 0 ? '$sign$buf.${parts[1]}' : '$sign$buf';
+  }
+
   String _humanStrategyLabel(String id) {
     return switch (id) {
       'U1_PureOptions' => w('Naked Put + Collar', '纯期权双槽（推荐）'),
@@ -255,6 +294,45 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       ),
       _ => '',
     };
+  }
+
+  String _humanCcModeLabel(String modeId) {
+    return switch (modeId) {
+      'cc_off' => w('Off', '关闭'),
+      'cc_high_vol' => w('High-IV CC (Rec. · VXN>=25)', '高波卖 Call（推荐 · VXN≥25）'),
+      'cc_always' => w('Always CC (ATH<=3% · +10% OTM)', '全天候（ATH≤3% · +10% OTM）'),
+      _ => w('Off', '关闭'),
+    };
+  }
+
+  String _humanCcModeHint(String modeId, Map<String, dynamic> stratSummary) {
+    final ccN = _numVal(stratSummary['cc_trades_count']).round();
+    final ccAsgn = _numVal(stratSummary['cc_assigned_count']).round();
+    final ccPrem = _numVal(stratSummary['cc_gross_prem_usd']);
+    final ccLoss = _numVal(stratSummary['cc_gross_loss_usd']);
+    final ccPutFund = _numVal(stratSummary['cc_funded_puts_usd']);
+    return switch (modeId) {
+      'cc_off' => w(
+        'Normal-time covered calls OFF · 100% uncapped upside during bull trends',
+        '平时不卖 Call · 牛市主升浪 100% 零封顶损耗',
+      ),
+      'cc_high_vol' => w(
+        '45D +10% OTM Call when ATH <= 3% & VXN >= 25 (uncollared shares) -> $ccN trades ($ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} cash (funded ${_fmtUsd(ccPutFund)} of Put cost, breach ${_fmtUsd(-ccLoss)})',
+        '距前高 ≤ 3% 且 VXN ≥ 25 时卖 45 天 +10% OTM Call 攒现金（非领口仓位）：共 $ccN 次（被穿 $ccAsgn 次），收现金 ${_fmtUsd(ccPrem, signed: true)}（免费付 Put 保费 ${_fmtUsd(ccPutFund)} · 击穿成本 ${_fmtUsd(-ccLoss)}）',
+      ),
+      'cc_always' => w(
+        '45D +10% OTM Call whenever ATH <= 3% (any VXN) -> $ccN trades ($ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} cash vs ${_fmtUsd(-ccLoss)} breakout breach drag (2020-08 & 2026-05)',
+        '距前高 ≤ 3% 全天候卖 45 天 +10% OTM Call 攒现金（不限 VXN）：共 $ccN 次（被穿 $ccAsgn 次），收现金 ${_fmtUsd(ccPrem, signed: true)}，但主升浪击穿成本 ${_fmtUsd(-ccLoss)}（2020-08 与 2026-05）',
+      ),
+      _ => '',
+    };
+  }
+
+  List<Map<String, dynamic>> _currentCcLedgerForStrategy(
+    Map<String, dynamic> doc,
+  ) {
+    final byStrat = asMap(doc['cc_ledgers_by_strategy']);
+    return asList(byStrat[selectedStrategyId]);
   }
 
   String _humanWindowChipLabel(Map<String, dynamic> win) {
@@ -514,13 +592,14 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       final armedPnl = _numVal(armedMap['mtm_pnl_usd']);
       final armedSh = _numVal(armedMap['est_shares_added']);
       final armedKp = _numVal(armedMap['kp']);
+      final armedSpot = _numVal(armedMap['mtm_spot'], qqqClose);
       final s2Pnl = _numVal(s2Act['u1_net_pnl_usd']);
       final s2Date = text(s2Act['exit_date']).length >= 10
           ? text(s2Act['exit_date']).substring(5)
           : '';
       humanSummary = w(
-        '${s2Pnl > 0 && s2Date.isNotEmpty ? 'Collar already banked ${_fmtUsd(s2Pnl, signed: true)} on $s2Date and freed the Call cap; ' : ''}active Put (K=\$${armedKp.toStringAsFixed(0)}) ignored the shallow inversion and is now deep ITM at \$${qqqClose.toStringAsFixed(0)} — armed to monetize ${_fmtUsd(armedPnl, signed: true)} (+${armedSh.toStringAsFixed(1)} QQQ sh) at next Open.',
-        '${s2Pnl > 0 && s2Date.isNotEmpty ? '$s2Date 次仓领口已先行落袋 ${_fmtUsd(s2Pnl, signed: true)} 并解除卖 Call 封顶；' : ''}持仓保护（行权 \$${armedKp.toStringAsFixed(0)}）无视前期浅倒挂，今日深跌实值至 \$${qqqClose.toStringAsFixed(0)} 触发止盈（浮盈 ${_fmtUsd(armedPnl, signed: true)} / +${armedSh.toStringAsFixed(1)} 股待次日开盘换股）。',
+        '${s2Pnl > 0 && s2Date.isNotEmpty ? 'Collar already banked ${_fmtUsd(s2Pnl, signed: true)} on $s2Date and freed the Call cap; ' : ''}active Put (K=\$${armedKp.toStringAsFixed(0)}) ignored the shallow inversion and is now deep ITM at \$${armedSpot.toStringAsFixed(0)} — armed to monetize ${_fmtUsd(armedPnl, signed: true)} (+${armedSh.toStringAsFixed(1)} QQQ sh) at next Open.',
+        '${s2Pnl > 0 && s2Date.isNotEmpty ? '$s2Date 次仓领口已先行落袋 ${_fmtUsd(s2Pnl, signed: true)} 并解除卖 Call 封顶；' : ''}持仓保护（行权 \$${armedKp.toStringAsFixed(0)}）无视前期浅倒挂，今日深跌实值至 \$${armedSpot.toStringAsFixed(0)} 触发止盈（浮盈 ${_fmtUsd(armedPnl, signed: true)} / +${armedSh.toStringAsFixed(1)} 股待次日开盘换股）。',
       );
     } else if (regimeCode == 'LOW_SPOT_FREEZE_NO_NEW_COLLAR') {
       humanSummary = w(
@@ -541,11 +620,27 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     }
 
     // 3 plain-human pure-options status columns (Core QQQ + Slot 1 + Slot 2)
-    final extraShares = _numVal(stratSummary['extra_shares_vs_bh'], 601.98);
-    final coreValue = w('100% QQQ Held', '100% 满仓 QQQ');
+    final bhSummary = _findStrategySummary(doc, 'BH_Pure_QQQ');
+    final totalShares = _numVal(stratSummary['final_shares'], 2719.32);
+    final bhShares = _numVal(
+      stratSummary['bh_final_shares'],
+      _numVal(bhSummary['final_shares'], 2117.34),
+    );
+    final extraShares = _numVal(
+      stratSummary['extra_shares_vs_bh'],
+      totalShares - bhShares,
+    );
+    final extraSharesPct = _numVal(
+      stratSummary['extra_shares_pct'],
+      bhShares > 0 ? (extraShares / bhShares) * 100.0 : 0.0,
+    );
+    final coreValue = w(
+      '100% QQQ · ${_fmtShares(totalShares)} sh',
+      '100% 满仓 QQQ · ${_fmtShares(totalShares)} 股',
+    );
     final coreSub = w(
-      'Never sells equity · +${extraShares.toStringAsFixed(1)} extra sh',
-      '永不卖股择时 · 累计多攒 +${extraShares.toStringAsFixed(1)} 股',
+      'vs ${_fmtShares(bhShares)} sh BH · ${_fmtShares(extraShares, signed: true)} sh (${_fmtPct(extraSharesPct)})',
+      '基准 ${_fmtShares(bhShares)} 股 · 累计多买 ${_fmtShares(extraShares, signed: true)} 股（${_fmtPct(extraSharesPct)}）',
     );
 
     final s1Value = s1PendingTp
@@ -813,8 +908,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               ),
               Text(
                 w(
-                  'Take-Profit: ${_humanTpModeLabel(selectedTpMode)}',
-                  '当前止盈模式：${_humanTpModeLabel(selectedTpMode)}',
+                  'Take-Profit: ${_humanTpModeLabel(selectedTpMode)}${selectedCcMode != 'cc_off' ? ' · CC: ${_humanCcModeLabel(selectedCcMode)}' : ''}',
+                  '止盈：${_humanTpModeLabel(selectedTpMode)}${selectedCcMode != 'cc_off' ? ' · 卖 Call：${_humanCcModeLabel(selectedCcMode)}' : ''}',
                 ),
                 style: TextStyle(
                   color: p.muted,
@@ -1319,6 +1414,35 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     ),
                     color: _emerald,
                   ),
+                  Builder(
+                    builder: (_) {
+                      final totSh = _numVal(stratSummary['final_shares']);
+                      final bhSh = _numVal(
+                        stratSummary['bh_final_shares'],
+                        _numVal(bhSummary['final_shares'], 2117.34),
+                      );
+                      final exSh = _numVal(
+                        stratSummary['extra_shares_vs_bh'],
+                        totSh - bhSh,
+                      );
+                      final exPct = _numVal(
+                        stratSummary['extra_shares_pct'],
+                        bhSh > 0 ? (exSh / bhSh) * 100.0 : 0.0,
+                      );
+                      return _heroStatMetric(
+                        label: w('Total Shares · Extra %', '总股数 · 多买比例'),
+                        value: w(
+                          '${_fmtShares(totSh)} sh',
+                          '${_fmtShares(totSh)} 股',
+                        ),
+                        sub: w(
+                          '${_fmtShares(exSh, signed: true)} sh (${_fmtPct(exPct)})',
+                          '多买 ${_fmtShares(exSh, signed: true)} 股（${_fmtPct(exPct)}）',
+                        ),
+                        color: exPct >= 0 ? _emerald : p.text,
+                      );
+                    },
+                  ),
                   _heroStatMetric(
                     label: w('Max Drawdown', '最大回撤'),
                     value:
@@ -1429,6 +1553,30 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           Text(
             _humanTpModeHint(selectedTpMode),
             key: const ValueKey('crisis-tp-mode-hint'),
+            style: TextStyle(color: p.muted, fontSize: 11.5, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            key: const ValueKey('crisis-cc-mode-bar'),
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                w('Normal-Time Call:', '平时卖 Call 攒现金：'),
+                style: TextStyle(
+                  color: p.muted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              for (final cid in _ccModeIds) _buildCalmCcModeTab(cid),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _humanCcModeHint(selectedCcMode, stratSummary),
+            key: const ValueKey('crisis-cc-mode-hint'),
             style: TextStyle(color: p.muted, fontSize: 11.5, height: 1.4),
           ),
           const SizedBox(height: 12),
@@ -1788,6 +1936,23 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 ),
               ),
               const SizedBox(height: 3),
+              if (qqqClose > 0) ...[
+                Builder(
+                  builder: (_) {
+                    final eqSh = stratNav / qqqClose;
+                    final bhEqSh = bhNav / qqqClose;
+                    final exPct = bhEqSh > 0 ? (eqSh / bhEqSh - 1) * 100 : 0.0;
+                    return Text(
+                      w(
+                        'Equiv. ${_fmtShares(eqSh)} sh (${_fmtPct(exPct)} vs BH)',
+                        '等效持仓 ${_fmtShares(eqSh)} 股（较死拿 ${_fmtPct(exPct)}）',
+                      ),
+                      style: TextStyle(color: p.muted, fontSize: 11),
+                    );
+                  },
+                ),
+                const SizedBox(height: 2),
+              ],
               Text(
                 w(
                   'Crisis Lights: $lights / 6 active',
@@ -1864,6 +2029,35 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         ),
         Text(sub, style: TextStyle(color: p.muted, fontSize: 11)),
       ],
+    );
+  }
+
+  Widget _buildCalmCcModeTab(String modeId) {
+    final active = selectedCcMode == modeId;
+    return InkWell(
+      key: ValueKey('crisis-cc-mode-pill-$modeId'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _selectCcMode(modeId),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5.5),
+        decoration: BoxDecoration(
+          color: active
+              ? _emerald.withValues(alpha: 0.14)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: active ? _emerald.withValues(alpha: 0.65) : p.border,
+          ),
+        ),
+        child: Text(
+          _humanCcModeLabel(modeId),
+          style: TextStyle(
+            color: active ? p.text : p.muted,
+            fontSize: 12,
+            fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+          ),
+        ),
+      ),
     );
   }
 
@@ -2301,6 +2495,93 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           else
             for (final tr in filteredTranches)
               _buildCleanTimelineTrancheRow(tr, compact: compact),
+          if (selectedCcMode != 'cc_off') ...[
+            Builder(
+              builder: (_) {
+                final ccList = _currentCcLedgerForStrategy(doc);
+                if (ccList.isEmpty) return const SizedBox.shrink();
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 14),
+                    Container(height: 1, color: p.border),
+                    const SizedBox(height: 10),
+                    InkWell(
+                      key: const ValueKey('crisis-cc-ledger-toggle'),
+                      borderRadius: BorderRadius.circular(6),
+                      onTap: () => setState(() => showCcLedger = !showCcLedger),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              w(
+                                'Normal-Time +10% OTM Covered Call Cash Ledger (${ccList.length} trades)',
+                                '平时卖 +10% OTM Call 攒现金明细（共 ${ccList.length} 笔）',
+                              ),
+                              style: TextStyle(
+                                color: p.text,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Icon(
+                              showCcLedger
+                                  ? Icons.keyboard_arrow_up
+                                  : Icons.keyboard_arrow_down,
+                              size: 16,
+                              color: p.muted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (showCcLedger) ...[
+                      const SizedBox(height: 8),
+                      for (final cc in ccList.reversed)
+                        Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              top: BorderSide(color: p.border, width: 1),
+                            ),
+                          ),
+                          child: Wrap(
+                            spacing: 12,
+                            runSpacing: 4,
+                            alignment: WrapAlignment.spaceBetween,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Text(
+                                w(
+                                  '${text(cc['entry_date'])} -> ${text(cc['exit_date'])} · Sold K=\$${_numVal(cc['kc']).toStringAsFixed(0)} Call (VXN ${_numVal(cc['entry_vxn']).toStringAsFixed(1)}, Exit \$${_numVal(cc['exit_spot']).toStringAsFixed(0)})',
+                                  '${text(cc['entry_date'])} → ${text(cc['exit_date'])} · 卖 \$${_numVal(cc['kc']).toStringAsFixed(0)} Call（VXN ${_numVal(cc['entry_vxn']).toStringAsFixed(1)} · 收盘 \$${_numVal(cc['exit_spot']).toStringAsFixed(0)}）',
+                                ),
+                                style: TextStyle(color: p.muted, fontSize: 12),
+                              ),
+                              Text(
+                                w(
+                                  'Prem ${_fmtUsd(_numVal(cc['prem_usd']), signed: true)} · Net ${_fmtUsd(_numVal(cc['net_pnl_usd']), signed: true)}',
+                                  '收租 ${_fmtUsd(_numVal(cc['prem_usd']), signed: true)} · 净盈亏 ${_fmtUsd(_numVal(cc['net_pnl_usd']), signed: true)}',
+                                ),
+                                style: TextStyle(
+                                  color: _numVal(cc['net_pnl_usd']) >= 0
+                                      ? _emerald
+                                      : _coral,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ],
+                );
+              },
+            ),
+          ],
         ],
       ),
     );
