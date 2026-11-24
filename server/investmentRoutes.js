@@ -154,6 +154,10 @@ export function registerInvestmentRoutes(app,service) {
   const readCrisisObservatory=(_,r)=>loadCrisisObservatoryDashboardLive({
     asOf:service.date(r.query.asOf),
     strategy:r.query.strategy??null,
+    putOtm:r.query.putOtm??r.query.put_otm??r.query.otm??null,
+    m7TpMode:r.query.m7TpMode??r.query.m7_tp_mode??null,
+    rollMode:r.query.rollMode??r.query.roll_mode??null,
+    m0Enabled:r.query.m0Enabled??r.query.m0_enabled??r.query.m0??null,
     tpMode:r.query.tpMode??r.query.tp_mode??null,
     ccMode:r.query.ccMode??r.query.cc_mode??null,
     spMode:r.query.spMode??r.query.sp_mode??null,

@@ -5,6 +5,9 @@ import express from 'express';
 import {
   CRISIS_OBSERVATORY_VERSION,
   CRISIS_OBSERVATORY_STRATEGIES,
+  CRISIS_OBSERVATORY_PUT_OTMS,
+  CRISIS_OBSERVATORY_M7_TP_MODES,
+  CRISIS_OBSERVATORY_ROLL_MODES,
   CRISIS_OBSERVATORY_TP_MODES,
   CRISIS_OBSERVATORY_CC_MODES,
   CRISIS_OBSERVATORY_SP_MODES,
@@ -14,18 +17,49 @@ import {
 } from './crisisObservatory.js';
 import { registerInvestmentRoutes } from './investmentRoutes.js';
 
-test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP modes and zero T-Bill shield', () => {
+test('loads canonical 2026-11-20 M7-Graded Crisis Observatory payload with Tenor/Roll, OTM, TP, M0 & 3-Engine modes', () => {
   const doc = loadCrisisObservatoryDashboard({ asOf: '2026-11-20' });
   assert.equal(doc.version, CRISIS_OBSERVATORY_VERSION);
   assert.equal(doc.as_of_date, '2026-11-20');
-  assert.equal(doc.selected_strategy_id, 'U1_PureOptions');
+  assert.equal(doc.selected_strategy_id, 'M7G_Graded');
+  assert.equal(doc.put_otm, 'otm15');
+  assert.equal(doc.m7_tp_mode, 'standard');
+  assert.equal(doc.roll_mode, '90d_hold');
+  assert.equal(doc.m0_enabled, true);
   assert.equal(doc.tp_mode, 'layered_itm');
   assert.equal(doc.cc_mode, 'cc_off');
   assert.equal(doc.tp_modes, undefined, 'Raw tp_modes bundle must be stripped from API wire response');
   assert.equal(doc.mode_bundles, undefined, 'Raw mode_bundles must be stripped from API wire response');
+  assert.equal(doc.m7_bundles, undefined, 'Raw m7_bundles must be stripped from API wire response');
+  assert.equal(doc.m7_signals, undefined, 'Raw m7_signals must be stripped from API wire response');
+  assert.equal(doc.m7_feature_table, undefined, 'Raw m7_feature_table must be stripped from API wire response');
+  assert.equal(doc.m7_live_tail_state, undefined, 'Raw m7_live_tail_state must be stripped from API wire response');
+  assert.equal(doc.m7_eval_bars, undefined, 'Raw m7_eval_bars must be stripped from API wire response');
+  assert.equal(doc.put_otm_meta.length, 2);
+  assert.equal(doc.m7_tp_modes_meta.length, 2);
+  assert.equal(doc.m7_roll_modes_meta.length, 2);
   assert.equal(doc.tp_modes_meta.length, 3);
   assert.equal(doc.cc_modes_meta.length, 4);
   assert.ok(doc.snapshotId && doc.snapshotId.length === 16);
+
+  // Verify M7 Live Dashboard 3-Pillar + Sizing + TP Monitor
+  const m7Dash = doc.m7_live_dashboard;
+  assert.ok(m7Dash, 'm7_live_dashboard must be populated');
+  assert.equal(m7Dash.as_of_date, '2026-11-20');
+  assert.equal(m7Dash.strategy_id, 'M7G_Graded');
+  assert.equal(m7Dash.put_otm, 'otm15');
+  assert.equal(m7Dash.m7_tp_mode, 'standard');
+  assert.equal(m7Dash.roll_mode, '90d_hold');
+  assert.equal(m7Dash.m0_enabled, true);
+  assert.equal(m7Dash.pillars.length, 3);
+  assert.equal(m7Dash.pillars[0].modules.length, 2);
+  assert.equal(m7Dash.pillars[1].modules.length, 2);
+  assert.equal(m7Dash.pillars[2].modules.length, 2);
+  assert.equal(m7Dash.redline.blocked, true);
+  assert.equal(m7Dash.sizing_calculator.dte, 90);
+  assert.equal(m7Dash.sizing_calculator.skew_switch_threshold, 1.18);
+  assert.ok(m7Dash.sizing_calculator.sample_1000sh_budget_usd > 0);
+  assert.equal(m7Dash.tp_monitor.tp_code, 'STANDARD');
 
   const snap = doc.live_market_snapshot;
   assert.equal(snap.qqq_close, 608.45);
@@ -42,7 +76,9 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   assert.equal(doc.ad_line_signal.below_50ma, true);
   assert.equal(doc.ad_line_signal.days_below_50ma, 5);
 
-  const sig = doc.live_signal_state;
+  // Legacy U1 live signal state when U1_PureOptions is selected
+  const u1Doc = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', strategy: 'U1_PureOptions' });
+  const sig = u1Doc.live_signal_state;
   assert.equal(sig.regime_code, 'VIX110_TP_TRIGGERED');
   assert.equal(sig.target_equity_pct, 100);
   assert.equal(sig.target_tbill_pct, 0);
@@ -53,6 +89,12 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
 
   const smap = Object.fromEntries(doc.strategies_summary.map(s => [s.id, s]));
   assert.equal(smap.U4_DualEngine, undefined);
+  assert.ok(Math.abs(smap.M7G_Graded.end_nav - 1682250.03) <= 0.1);
+  assert.equal(smap.M7G_Graded.cagr_pct, 19.63);
+  assert.equal(smap.M7G_Graded.max_dd_pct, -28.02);
+  assert.equal(smap.M7G_Graded.calmar, 0.701);
+  assert.equal(smap.M7G_Graded.sharpe, 0.983);
+  assert.ok(Math.abs(smap.M7_Ensemble.end_nav - 1676747.11) <= 0.1);
   assert.ok(Math.abs(smap.U1_PureOptions.end_nav - 1654577.25) <= 0.5);
   assert.ok(Math.abs(smap.U1_PureOptions.net_alpha_usd - 366272.47) <= 0.5);
   assert.equal(smap.U1_PureOptions.cagr_pct, 19.46);
@@ -63,13 +105,92 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   assert.ok(Math.abs(smap.H2_G4_PriceGate.end_nav - 1402250.68) <= 0.5);
   assert.ok(Math.abs(smap.BH_Pure_QQQ.end_nav - 1288304.78) <= 0.02);
 
+  // Selectable M7 Tenor/Roll Mode (`120d_roll50`), Put OTM (`otm20`), TP (`itm_tp`), and M0 OFF
+  const m7Roll15 = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    rollMode: '120d_roll50',
+  });
+  assert.equal(m7Roll15.roll_mode, '120d_roll50');
+  assert.equal(m7Roll15.m7_live_dashboard.sizing_calculator.dte, 120);
+  assert.equal(m7Roll15.m7_live_dashboard.sizing_calculator.roll_dte, 50);
+  const m7Roll15S = Object.fromEntries(m7Roll15.strategies_summary.map(s => [s.id, s])).M7G_Graded;
+  assert.ok(Math.abs(m7Roll15S.end_nav - 1625935.17) <= 0.1);
+  assert.equal(m7Roll15S.cagr_pct, 19.29);
+  assert.equal(m7Roll15S.max_dd_pct, -28.43);
+  assert.equal(m7Roll15S.sharpe, 0.983);
+  assert.equal(m7Roll15S.roll_50d_count, 32);
+  assert.ok(Math.abs(m7Roll15S.avg_roll_salvage_pct - 37.6) <= 0.2);
+  assert.ok(m7Roll15.events.some(ev => ev.event_type === 'roll_50d'));
+
+  const m7Otm20Hold = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    putOtm: 'otm20',
+  });
+  const m7Otm20HoldS = Object.fromEntries(m7Otm20Hold.strategies_summary.map(s => [s.id, s])).M7G_Graded;
+  assert.ok(Math.abs(m7Otm20HoldS.end_nav - 1856309.08) <= 0.1);
+  assert.equal(m7Otm20HoldS.cagr_pct, 20.62);
+  assert.equal(m7Otm20HoldS.max_dd_pct, -27.98);
+  assert.equal(m7Otm20HoldS.sharpe, 1.029);
+
+  const m7Otm20Roll = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    putOtm: 'otm20',
+    rollMode: '120d_roll50',
+  });
+  const m7Otm20RollS = Object.fromEntries(m7Otm20Roll.strategies_summary.map(s => [s.id, s])).M7G_Graded;
+  assert.ok(Math.abs(m7Otm20RollS.end_nav - 1823635.0) <= 0.1);
+  assert.equal(m7Otm20RollS.sharpe, 1.038);
+  assert.equal(m7Otm20RollS.roll_50d_count, 32);
+
+  const m7ItmTp = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    m7TpMode: 'itm_tp',
+  });
+  const m7ItmS = Object.fromEntries(m7ItmTp.strategies_summary.map(s => [s.id, s])).M7G_Graded;
+  assert.ok(Math.abs(m7ItmS.end_nav - 1523801.1) <= 0.1);
+  assert.equal(m7ItmS.max_dd_pct, -24.44);
+  assert.equal(m7ItmS.calmar, 0.763);
+  assert.equal(m7ItmTp.m7_live_dashboard.active_slots, 1);
+
+  const m7NoM0 = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    m0Enabled: 'false',
+  });
+  assert.equal(m7NoM0.m0_enabled, false);
+  assert.equal(m7NoM0.m7_live_dashboard.pillars[0].modules[0].enabled, false);
+
+  // M7G_Graded + Engine 2 + Engine 3 dynamic pure-JS combo & additive 3-engine attribution
+  const m7Combo3 = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    strategy: 'M7G_Graded',
+    putOtm: 'otm15',
+    rollMode: '90d_hold',
+    ccMode: 'cc_d12_d35',
+    spMode: 'sp_14d_cap10',
+  });
+  const attrM7Combo = m7Combo3.engine_attribution_by_strategy?.M7G_Graded;
+  assert.ok(attrM7Combo);
+  assert.equal(attrM7Combo.active_engines_count, 3);
+  assert.ok(
+    Math.abs(
+      attrM7Combo.base_end_nav +
+        attrM7Combo.engine1.delta_usd +
+        attrM7Combo.engine2.delta_usd +
+        attrM7Combo.engine3.delta_usd -
+        attrM7Combo.total_end_nav,
+    ) <= 0.05,
+  );
+
   assert.equal(doc.crisis_windows.length, 7);
   assert.equal(doc.crisis_windows.at(-1).id, '2026-08_11_LIVE');
+  assert.ok(doc.crisis_windows[2].m7_narrative_zh.includes('2020-01-28'));
   assert.equal(doc.daily_series.length, 2990);
+  assert.ok(Number.isFinite(doc.daily_series.at(-1).nav_m7g));
+  assert.ok(Number.isFinite(doc.daily_series.at(-1).m7_prob));
   assert.deepEqual(doc.shield_events, []);
 
   // Selectable TP mode projections: standard_dual and both_4x
-  const stdDoc = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', tpMode: 'standard_dual' });
+  const stdDoc = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', strategy: 'U1_PureOptions', tpMode: 'standard_dual' });
   assert.equal(stdDoc.tp_mode, 'standard_dual');
   assert.equal(stdDoc.live_signal_state.regime_code, 'LOW_SPOT_FREEZE_NO_NEW_COLLAR');
   assert.ok(Math.abs(stdDoc.daily_series.at(-1).nav_u1 - 1625377.79) <= 0.5);
@@ -124,6 +245,7 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   // 3rd Engine (Short-DTE Panic Put Wheel) — NEW DEFAULT wc_reclaim_30d_d35 (Hold uncapped < K_assign, then 30D 0.35Δ Call)
   const spCap10 = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
+    strategy: 'U1_PureOptions',
     tpMode: 'layered_itm',
     ccMode: 'cc_d12_d35',
     spMode: 'sp_14d_cap10',
@@ -186,10 +308,11 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   assert.ok(attrCap10.correlations.e1_e3 < 0 && attrCap10.correlations.e2_e3 < 0);
 
   const gzBytes = zlib.gzipSync(JSON.stringify(spCap10)).length;
-  assert.ok(gzBytes < 420 * 1024, `Projected single-mode gzipped payload must stay compact (<420 KB), got ${gzBytes}`);
+  assert.ok(gzBytes < 480 * 1024, `Projected single-mode gzipped payload must stay compact (<480 KB), got ${gzBytes}`);
 
   const spVixf = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
+    strategy: 'U1_PureOptions',
     tpMode: 'layered_itm',
     ccMode: 'cc_d12_d35',
     spMode: 'sp_10d_vixf',
@@ -207,6 +330,7 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
 
   const spUnf = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
+    strategy: 'U1_PureOptions',
     tpMode: 'layered_itm',
     ccMode: 'cc_d12_d35',
     spMode: 'sp_14d_unf',
@@ -220,6 +344,7 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   // COMPARE TOGGLE: wc_30d_c5s5 (Immediate 30D + max(1.05*Cost, 1.05*Spot))
   const spCap10Immediate = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
+    strategy: 'U1_PureOptions',
     tpMode: 'layered_itm',
     ccMode: 'cc_d12_d35',
     spMode: 'sp_14d_cap10',
@@ -237,6 +362,7 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   // LEGACY COMPARE TOGGLE: wc_14d_c0s2 (14D + max(Cost, 1.02*Spot)) preserves 100% penny parity with 2f28247
   const spCap10Legacy = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
+    strategy: 'U1_PureOptions',
     tpMode: 'layered_itm',
     ccMode: 'cc_d12_d35',
     spMode: 'sp_14d_cap10',
@@ -252,6 +378,7 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
 
   const spUnfLegacy = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
+    strategy: 'U1_PureOptions',
     tpMode: 'layered_itm',
     ccMode: 'cc_d12_d35',
     spMode: 'sp_14d_unf',
@@ -294,9 +421,29 @@ test('loads canonical 2026-11-20 Crisis Observatory payload with selectable TP m
   assert.ok(Math.abs(standaloneNoPut.end_nav - 1387278.02) <= 0.1, `Expected $1,387,278.02, got ${standaloneNoPut.end_nav}`);
 });
 
-test('slices historical asOf cutoffs without lookahead and masks future tranche exits', async () => {
-  // On 2026-10-15, both Slot 1 (entered 2026-08-31) and Slot 2 (entered 2026-10-05) are OPEN;
-  // their eventual 2026-11-06 VIX/VIX3M>=1.10 take-profit must NOT leak into 2026-10-15!
+test('slices historical asOf cutoffs without lookahead and extends M7 causally on live EOD bars', async () => {
+  // Leak-free M7G_Graded cutoff on 2026-10-15: 35% score -> 1 graded Put slot (8/31), future 11/06 TP masked!
+  const midOctM7 = loadCrisisObservatoryDashboard({
+    asOf: '2026-10-15',
+    strategy: 'M7G_Graded',
+  });
+  assert.equal(midOctM7.as_of_date, '2026-10-15');
+  assert.equal(midOctM7.m7_live_dashboard.as_of_date, '2026-10-15');
+  assert.equal(midOctM7.m7_live_dashboard.active_slots, 1);
+  assert.ok(!midOctM7.events.some(ev => ev.date > '2026-10-15'));
+  const openM7 = midOctM7.trade_ledger.filter(t => t.exit_date === null);
+  assert.equal(openM7.length, 1);
+  assert.ok(openM7.every(t => t.exit_reason === 'open_as_of_cutoff' && t.net_pnl_usd === null && t.roi_mult === null));
+
+  // Meanwhile M7_Ensemble (>=35% -> 2 slots) has 2 open slots on 2026-10-15
+  const midOctEns = loadCrisisObservatoryDashboard({
+    asOf: '2026-10-15',
+    strategy: 'M7_Ensemble',
+  });
+  assert.equal(midOctEns.m7_live_dashboard.active_slots, 2);
+  assert.equal(midOctEns.trade_ledger.filter(t => t.exit_date === null).length, 2);
+
+  // On 2026-10-15, both Slot 1 (entered 2026-08-31) and Slot 2 (entered 2026-10-05) are OPEN on U1_PureOptions too
   const midOct = loadCrisisObservatoryDashboard({
     asOf: '2026-10-15',
     strategy: 'U1_PureOptions',
@@ -313,7 +460,36 @@ test('slices historical asOf cutoffs without lookahead and masks future tranche 
   assert.equal(midOct.live_signal_state.target_equity_pct, 100);
   assert.equal(midOct.live_signal_state.target_tbill_pct, 0);
 
-  // Live runtime forward extension onto 2026-11-23 stays 100% QQQ pure options
+  // Live runtime forward extension onto 2026-11-23 steps M7 causally and updates m7_live_dashboard
+  const liveExtM7 = await loadCrisisObservatoryDashboardLive({
+    asOf: '2026-11-23',
+    strategy: 'M7G_Graded',
+    rollMode: '120d_roll50',
+    fetchLiveBars: async () => [
+      {
+        date: '2026-11-20',
+        qqqClose: 608.45,
+        vixClose: 35.89,
+        vix3mClose: 30.94,
+        vxnClose: 45.25,
+      },
+      {
+        date: '2026-11-23',
+        qqqClose: 626.7,
+        vixClose: 27.4,
+        vix3mClose: 28.5,
+        vxnClose: 36.1,
+      },
+    ],
+  });
+  assert.equal(liveExtM7.liveExtended, true);
+  assert.equal(liveExtM7.as_of_date, '2026-11-23');
+  assert.equal(liveExtM7.m7_live_dashboard.as_of_date, '2026-11-23');
+  assert.equal(liveExtM7.m7_live_dashboard.roll_mode, '120d_roll50');
+  assert.equal(liveExtM7.m7_live_dashboard.sizing_calculator.qqq_spot, 626.7);
+  assert.equal(liveExtM7.m7_live_dashboard.redline.blocked, true, 'VXN 36.1 > 27 must trigger redline block');
+
+  // Live runtime forward extension onto 2026-11-23 stays 100% QQQ pure options on U1
   const liveExt = await loadCrisisObservatoryDashboardLive({
     asOf: '2026-11-23',
     strategy: 'U1_PureOptions',
@@ -362,7 +538,10 @@ test('slices historical asOf cutoffs without lookahead and masks future tranche 
 });
 
 test('validates parameters and serves both /api/investment/crisis-observatory and /api/discover/crisis-observatory', async t => {
-  assert.equal(CRISIS_OBSERVATORY_STRATEGIES.length, 6);
+  assert.equal(CRISIS_OBSERVATORY_STRATEGIES.length, 8);
+  assert.deepEqual(CRISIS_OBSERVATORY_PUT_OTMS, ['otm15', 'otm20']);
+  assert.deepEqual(CRISIS_OBSERVATORY_M7_TP_MODES, ['standard', 'itm_tp']);
+  assert.deepEqual(CRISIS_OBSERVATORY_ROLL_MODES, ['90d_hold', '120d_roll50']);
   assert.deepEqual(CRISIS_OBSERVATORY_TP_MODES, ['layered_itm', 'standard_dual', 'both_4x']);
   assert.deepEqual(CRISIS_OBSERVATORY_CC_MODES, ['cc_off', 'cc_d12_d35', 'cc_d12_r45', 'cc_d12_cr55']);
   assert.deepEqual(CRISIS_OBSERVATORY_SP_MODES, ['sp_off', 'sp_14d_cap10', 'sp_10d_vixf', 'sp_14d_unf']);
@@ -377,6 +556,10 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.equal(callOnlyDoc.selected_strategy_id, 'NoPut_CallOnly');
   assert.ok(Math.abs(callOnlyDoc.daily_series.at(-1).nav_cc - 1364435.75) <= 2.0);
   assert.throws(() => loadCrisisObservatoryDashboard({ strategy: 'UNKNOWN' }), /invalid_crisis_observatory_strategy/);
+  assert.throws(() => loadCrisisObservatoryDashboard({ putOtm: 'otm99' }), /invalid_crisis_observatory_put_otm/);
+  assert.throws(() => loadCrisisObservatoryDashboard({ m7TpMode: 'UNKNOWN_M7TP' }), /invalid_crisis_observatory_m7_tp_mode/);
+  assert.throws(() => loadCrisisObservatoryDashboard({ rollMode: 'UNKNOWN_ROLL' }), /invalid_crisis_observatory_roll_mode/);
+  assert.throws(() => loadCrisisObservatoryDashboard({ m0Enabled: 'maybe' }), /invalid_crisis_observatory_m0_enabled/);
   assert.throws(() => loadCrisisObservatoryDashboard({ tpMode: 'UNKNOWN_TP' }), /invalid_crisis_observatory_tp_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ ccMode: 'UNKNOWN_CC' }), /invalid_crisis_observatory_cc_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ spMode: 'UNKNOWN_SP' }), /invalid_crisis_observatory_sp_mode/);
@@ -412,8 +595,29 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   const unauthDisc = await fetch(`http://127.0.0.1:${port}/api/discover/crisis-observatory`);
   assert.equal(unauthDisc.status, 401);
 
-  // Authenticated -> 200 on both endpoints with identical data
+  // Authenticated -> 200 default M7G_Graded + rollMode=120d_roll50 + putOtm=otm20
   const authHeaders = { 'x-test-auth': '1' };
+  const [resM7Def, resM7Roll] = await Promise.all([
+    fetch(`http://127.0.0.1:${port}/api/investment/crisis-observatory?asOf=2026-11-20`, {
+      headers: authHeaders,
+    }),
+    fetch(
+      `http://127.0.0.1:${port}/api/discover/crisis-observatory?putOtm=otm20&rollMode=120d_roll50&m7TpMode=standard&m0Enabled=true&asOf=2026-11-20`,
+      { headers: authHeaders },
+    ),
+  ]);
+  assert.equal(resM7Def.status, 200);
+  assert.equal(resM7Roll.status, 200);
+  const bodyM7Def = await resM7Def.json();
+  const bodyM7Roll = await resM7Roll.json();
+  assert.equal(bodyM7Def.selected_strategy_id, 'M7G_Graded');
+  assert.equal(bodyM7Def.roll_mode, '90d_hold');
+  assert.equal(bodyM7Roll.put_otm, 'otm20');
+  assert.equal(bodyM7Roll.roll_mode, '120d_roll50');
+  const httpM7Roll = Object.fromEntries(bodyM7Roll.strategies_summary.map(s => [s.id, s])).M7G_Graded;
+  assert.ok(Math.abs(httpM7Roll.end_nav - 1823635.0) <= 0.1);
+  assert.equal(httpM7Roll.sharpe, 1.038);
+
   const [resInv, resDisc] = await Promise.all([
     fetch(`http://127.0.0.1:${port}/api/investment/crisis-observatory?strategy=U1_PureOptions&asOf=2026-11-20`, {
       headers: authHeaders,

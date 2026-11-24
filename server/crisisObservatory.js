@@ -2,9 +2,29 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import {
+  CRISIS_OBSERVATORY_PUT_OTMS,
+  CRISIS_OBSERVATORY_M7_TP_MODES,
+  CRISIS_OBSERVATORY_ROLL_MODES,
+  evalSkewIv,
+  bsmPrice,
+  simulateM7StrategyJS,
+  buildM7LiveDashboardJS,
+  extendM7LiveFromFeed,
+  getLiveM7MarketFeed,
+  normalizeLegacyExtraBarsToFeed,
+} from './crisisObservatoryM7.js';
 
-export const CRISIS_OBSERVATORY_VERSION = 'crisis-observatory-v2';
+export {
+  CRISIS_OBSERVATORY_PUT_OTMS,
+  CRISIS_OBSERVATORY_M7_TP_MODES,
+  CRISIS_OBSERVATORY_ROLL_MODES,
+};
+
+export const CRISIS_OBSERVATORY_VERSION = 'crisis-observatory-v3-m7';
 export const CRISIS_OBSERVATORY_STRATEGIES = Object.freeze([
+  'M7G_Graded',
+  'M7_Ensemble',
   'U1_PureOptions',
   'B1c_PureAD',
   'D2_SixLights',
@@ -34,6 +54,33 @@ export const CRISIS_OBSERVATORY_WC_MODES = Object.freeze([
   'wc_30d_c5s5',
   'wc_14d_c0s2',
 ]);
+
+const PUT_OTM_ALIASES = Object.freeze({
+  '15': 'otm15',
+  '-15': 'otm15',
+  '-15%': 'otm15',
+  '0.85': 'otm15',
+  '20': 'otm20',
+  '-20': 'otm20',
+  '-20%': 'otm20',
+  '0.80': 'otm20',
+});
+
+const M7_TP_ALIASES = Object.freeze({
+  std: 'standard',
+  STANDARD: 'standard',
+  itm: 'itm_tp',
+  ITM_TP: 'itm_tp',
+});
+
+const ROLL_MODE_ALIASES = Object.freeze({
+  '90d': '90d_hold',
+  hold: '90d_hold',
+  '120d': '120d_roll50',
+  roll50: '120d_roll50',
+  '50d': '120d_roll50',
+  '120d_50d': '120d_roll50',
+});
 
 const LEGACY_SP_MODE_ALIASES = Object.freeze({
   off: 'sp_off',
@@ -66,6 +113,8 @@ const LEGACY_CC_MODE_ALIASES = Object.freeze({
 });
 
 const STRATEGY_NAV_KEYS = Object.freeze({
+  M7G_Graded: 'nav_m7g',
+  M7_Ensemble: 'nav_m7',
   U1_PureOptions: 'nav_u1',
   B1c_PureAD: 'nav_b1c',
   D2_SixLights: 'nav_d2',
@@ -76,6 +125,8 @@ const STRATEGY_NAV_KEYS = Object.freeze({
 
 const LEGACY_STRATEGY_ALIASES = Object.freeze({
   U4_DualEngine: 'U1_PureOptions',
+  M7G: 'M7G_Graded',
+  M7: 'M7_Ensemble',
 });
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -83,8 +134,7 @@ const defaultFile = path.resolve(projectRoot, 'server/config/crisis-observatory-
 
 let cachedArtifact = null;
 const projectedModeCache = new Map();
-const liveFeedCache = { fetchedAt: 0, bars: null };
-const LIVE_FEED_TTL_MS = 15 * 60 * 1000;
+const m7SimComboCache = new Map();
 
 function fail(code, status = 503) {
   throw Object.assign(new Error(code), { status });
@@ -133,6 +183,7 @@ function readArtifact(file = defaultFile) {
   }
   const snapshotId = createHash('sha256').update(raw).digest('hex').slice(0, 16);
   projectedModeCache.clear();
+  m7SimComboCache.clear();
   cachedArtifact = {
     file,
     mtimeMs: stat.mtimeMs,
@@ -174,10 +225,14 @@ const EVENT_ORDER_RANK = Object.freeze({
   vix110_4x_tp: 1,
   put5x_dte45_tp: 1,
   live_tp_armed: 1,
+  live_roll50_armed: 1,
+  roll_50d: 2,
   option_expiry: 2,
   shield_enter: 3,
   shield_exit: 4,
   slot1_naked_put: 5,
+  slot2_naked_put: 6,
+  slot3_naked_put: 7,
   slot1_collar: 6,
   slot2_collar: 7,
   slot3_collar: 8,
@@ -187,15 +242,20 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
   const events = [];
   for (const tr of ledger ?? []) {
     const isNk = tr.tranche_type === 'naked_put';
-    const evType = isNk ? 'slot1_naked_put' : `slot${tr.slot_num}_collar`;
-    events.push({
+    const sNum = Number(tr.slot_num || 1);
+    const evType = isNk
+      ? sNum === 1
+        ? 'slot1_naked_put'
+        : `slot${sNum}_naked_put`
+      : `slot${sNum}_collar`;
+    const openEv = {
       event_id: `${strategyId}_tr${tr.tranche_id}_open`,
       tranche_id: tr.tranche_id,
       strategy_id: strategyId,
       date: tr.entry_date,
       signal_date: tr.signal_date,
       event_type: evType,
-      slot_num: tr.slot_num,
+      slot_num: sNum,
       tranche_type: tr.tranche_type,
       spot: tr.entry_spot,
       vxn: tr.entry_vxn,
@@ -218,11 +278,32 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
       gamma_usd: tr.gamma_usd,
       vega_usd: tr.vega_usd,
       theta_slip_usd: tr.theta_slip_usd,
-    });
+    };
+    if (tr.crisis_prob !== undefined && tr.crisis_prob !== null) {
+      Object.assign(openEv, {
+        crisis_prob: tr.crisis_prob,
+        p1: tr.p1,
+        p2: tr.p2,
+        p3: tr.p3,
+        triggered_modules: tr.triggered_modules,
+        trigger_code: tr.trigger_code,
+        tier: tr.tier,
+        max_slots: tr.max_slots,
+        put_otm_pct: tr.put_otm_pct,
+        contracts_est: tr.contracts_est,
+        roi_mult: tr.roi_mult,
+        tp_mode: tr.tp_mode,
+        roll_mode: tr.roll_mode,
+        target_dte: tr.target_dte,
+      });
+    }
+    events.push(openEv);
 
     const exitReason = String(tr.exit_reason ?? '');
     const isOpenLive = Boolean(tr.is_open_live);
-    const isLiveArmed = exitReason === 'live_tp_armed_next_open';
+    const isLiveRollArmed = exitReason === 'live_roll50_armed_next_open';
+    const isLiveArmed = exitReason === 'live_tp_armed_next_open' || isLiveRollArmed;
+    const isRoll50 = exitReason === 'roll_50d';
     const isTp = exitReason.includes('tp') && !isOpenLive;
     const isPut5x = exitReason.includes('put_5x');
     const isItmTp = exitReason.includes('itm_tp');
@@ -236,14 +317,24 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
       let evTypeExit;
       let trigEnExit;
       let trigZhExit;
-      if (isLiveArmed) {
+      if (isLiveRollArmed) {
+        evTypeExit = 'live_roll50_armed';
+        trigEnExit = `50-DTE Roll/Salvage Armed (${tr.rem_dte_at_exit} DTE left · Next Open)`;
+        trigZhExit = `50-DTE 残值滚仓已触发（剩 ${tr.rem_dte_at_exit} 天 · 待次日开盘执行）`;
+      } else if (isLiveArmed) {
         evTypeExit = 'live_tp_armed';
         trigEnExit = `Deep-ITM Panic TP Armed (${tr.rem_dte_at_exit} DTE left · VIX/3M ${vrStr} · Next Open)`;
         trigZhExit = `实值恐慌止盈已触发（剩余 ${tr.rem_dte_at_exit} 天 · VIX/3M ${vrStr} · 待次日开盘换股）`;
+      } else if (isRoll50) {
+        evTypeExit = 'roll_50d';
+        const salvPct = Math.round(Number(tr.roi_mult ?? 0) * 100);
+        trigEnExit = `50-DTE Residual Roll/Salvage (${tr.rem_dte_at_exit} DTE left · ${salvPct}% Value Saved)`;
+        trigZhExit = `50-DTE 剩余残值滚仓/回收（剩 ${tr.rem_dte_at_exit} 天 · 回收 ${salvPct}% 残值）`;
       } else if (isPut5x) {
+        const dteCapLbl = exitReason.includes('dte75') ? 75 : 45;
         evTypeExit = 'put5x_dte45_tp';
-        trigEnExit = `5x Put Slow-Bear TP (${tr.rem_dte_at_exit} DTE <= 45, Deep ITM Lock)`;
-        trigZhExit = `后半程 Put >= 5x 慢熊止盈（剩余 ${tr.rem_dte_at_exit} 天 <= 45 · 深实值锁利）`;
+        trigEnExit = `5x Put Slow-Bear TP (${tr.rem_dte_at_exit} DTE <= ${dteCapLbl}, Deep ITM Lock)`;
+        trigZhExit = `后半程 Put >= 5x 慢熊止盈（剩余 ${tr.rem_dte_at_exit} 天 <= ${dteCapLbl} · 深实值锁利）`;
       } else if (isItmTp) {
         evTypeExit = 'vix110_itm_tp';
         trigEnExit = `Deep-ITM Panic TP (QQQ <= K_P & VIX/3M ${vrStr} >= 1.10)`;
@@ -257,19 +348,20 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
         trigEnExit = `VIX/VIX3M ${vrStr} >= 1.10 Panic TP`;
         trigZhExit = `VIX/VIX3M ${vrStr} >= 1.10 恐慌止盈抄底`;
       } else {
+        const tenorExp = exitReason.includes('120dte') ? 120 : 90;
         evTypeExit = 'option_expiry';
-        trigEnExit = `90-DTE Expiry (${retStr} spot)`;
-        trigZhExit = `90-DTE 到期结算（期间正股 ${retStr}）`;
+        trigEnExit = `${tenorExp}-DTE Expiry (${retStr} spot)`;
+        trigZhExit = `${tenorExp}-DTE 到期结算（期间正股 ${retStr}）`;
       }
 
-      events.push({
+      const exitEv = {
         event_id: `${strategyId}_tr${tr.tranche_id}_exit`,
         tranche_id: tr.tranche_id,
         strategy_id: strategyId,
         date: evExitDate,
         signal_date: tr.signal_date,
         event_type: evTypeExit,
-        slot_num: tr.slot_num,
+        slot_num: sNum,
         tranche_type: tr.tranche_type,
         spot: tr.exit_spot,
         vxn: tr.exit_vxn,
@@ -292,7 +384,22 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
         vega_usd: tr.vega_usd,
         theta_slip_usd: tr.theta_slip_usd,
         convexity_mult: tr.convexity_mult,
-      });
+      };
+      if (tr.crisis_prob !== undefined && tr.crisis_prob !== null) {
+        Object.assign(exitEv, {
+          crisis_prob: tr.crisis_prob,
+          trigger_code: tr.trigger_code,
+          triggered_modules: tr.triggered_modules,
+          max_slots: tr.max_slots,
+          put_otm_pct: tr.put_otm_pct,
+          contracts_est: tr.contracts_est,
+          roi_mult: tr.roi_mult,
+          tp_mode: tr.tp_mode,
+          roll_mode: tr.roll_mode,
+          exit_reason: exitReason,
+        });
+      }
+      events.push(exitEv);
     }
   }
   events.sort((a, b) => {
@@ -302,13 +409,245 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
   return events;
 }
 
-function hydrateCrisisWindows(baseWindows, bundleWindows) {
-  if (!Array.isArray(bundleWindows) || !bundleWindows.length) return baseWindows ?? [];
+function getUnpackedM7Tables(rawData) {
+  if (cachedArtifact && cachedArtifact.data === rawData && cachedArtifact.unpackedM7) {
+    return cachedArtifact.unpackedM7;
+  }
+  const evalBars = unpackTable(rawData.m7_eval_bars);
+  const sigM0On = unpackTable(rawData.m7_signals?.m0on);
+  const sigM0Off = unpackTable(rawData.m7_signals?.m0off);
+  const featRows = unpackTable(rawData.m7_feature_table);
+  const dateToIdx = new Map(evalBars.map((r, idx) => [r.date, idx]));
+  const unpacked = {
+    evalBars,
+    sigM0On,
+    sigM0Off,
+    featRows,
+    dateToIdx,
+    coeffs: rawData.opra_90dte_poly3_coeffs_desc ?? [],
+  };
+  if (cachedArtifact && cachedArtifact.data === rawData) {
+    cachedArtifact.unpackedM7 = unpacked;
+  }
+  return unpacked;
+}
+
+function computeM7WinStatsJS(baseWindows, dateToIdx, navArr, ledger) {
+  return (baseWindows ?? []).map(w => {
+    const c0 = dateToIdx.get(w.crash_start_date);
+    const c1 = dateToIdx.get(w.crash_end_date);
+    if (c0 === undefined || c1 === undefined || c1 < c0) {
+      return w.strategy_stats?.M7G_Graded ?? {};
+    }
+    const z0 = w.start_date;
+    const z1 = w.end_date;
+    const qRet = Number(w.qqq_ret_pct ?? 0);
+    const qMdd = Number(w.qqq_mdd ?? 0);
+    const mSub = navArr.slice(c0, c1 + 1);
+    const mRet = mSub.length >= 2 && mSub[0] > 0 ? (mSub[mSub.length - 1] / mSub[0] - 1) * 100 : 0;
+    let mpk = mSub[0] ?? 0;
+    let mMdd = 0;
+    for (const v of mSub) {
+      if (v > mpk) mpk = v;
+      const dd = mpk > 0 ? (v / mpk - 1) * 100 : 0;
+      if (dd < mMdd) mMdd = dd;
+    }
+    const ledInWin = (ledger ?? []).filter(t => {
+      const exDt = t.exit_date || t.mtm_date || '';
+      return (t.entry_date >= z0 && t.entry_date <= z1) || (exDt && exDt >= z0 && exDt <= z1);
+    });
+    const tpHarv = ledInWin.reduce((acc, t) => {
+      const ex = String(t.exit_reason ?? '');
+      return (ex.includes('tp') || t.is_open_live) && Number(t.net_pnl_usd) > 0
+        ? acc + Number(t.net_pnl_usd)
+        : acc;
+    }, 0);
+    const tpSh = ledInWin.reduce((acc, t) => {
+      const ex = String(t.exit_reason ?? '');
+      return (ex.includes('tp') || t.is_open_live) && Number(t.shares_added) > 0
+        ? acc + Number(t.shares_added)
+        : acc;
+    }, 0);
+    const netAll = ledInWin.reduce((acc, t) => acc + Number(t.net_pnl_usd ?? 0), 0);
+    return {
+      ret_pct: r2(mRet),
+      mdd_pct: r2(mMdd),
+      dd_cushion_pct: r2(mMdd - qMdd),
+      excess_ret_pct: r2(mRet - qRet),
+      harvested_tp_usd: r2(tpHarv),
+      shares_added_tp: r2(tpSh),
+      net_option_pnl_usd: r2(netAll),
+      tranche_ids: ledInWin.map(t => t.tranche_id),
+    };
+  });
+}
+
+function resolveM7EffectiveBundle(
+  rawData,
+  snapshotId,
+  {
+    putOtm = 'otm15',
+    m7TpMode = 'standard',
+    rollMode = '90d_hold',
+    m0Enabled = true,
+    ccMode = 'cc_off',
+    spMode = 'sp_off',
+    wcMode = 'wc_reclaim_30d_d35',
+  } = {},
+) {
+  const m0Tag = m0Enabled ? 'm0on' : 'm0off';
+  const baseKey = `${putOtm}__${m7TpMode}__${rollMode}__${m0Tag}`;
+  const baseM7 = rawData.m7_bundles?.[baseKey];
+  const defaultWc = rawData.default_wc_mode || 'wc_reclaim_30d_d35';
+  const effWc = spMode === 'sp_off' ? defaultWc : wcMode || defaultWc;
+
+  if (ccMode === 'cc_off' && spMode === 'sp_off' && baseM7) {
+    return {
+      putOtm,
+      m7TpMode,
+      rollMode,
+      m0Enabled,
+      summaries: baseM7.summaries ?? {},
+      ledgers: unpackLedgerMap(baseM7.ledgers),
+      ccLedgers: { M7G_Graded: [], M7_Ensemble: [] },
+      spLedgers: { M7G_Graded: [], M7_Ensemble: [] },
+      events: baseM7.events ?? {},
+      m7LiveDashboards: baseM7.m7_live_dashboards ?? {},
+      liveSignalStates: baseM7.live_signal_states ?? {},
+      liveSpStates: baseM7.live_sp_states ?? {},
+      windowStats: baseM7.window_stats ?? {},
+      nav_m7g: baseM7.nav_m7g ?? [],
+      nav_m7: baseM7.nav_m7 ?? [],
+      m7g_active_slots: baseM7.m7g_active_slots ?? [],
+      m7_active_slots: baseM7.m7_active_slots ?? [],
+    };
+  }
+
+  const comboKey = `${snapshotId}:${baseKey}:${ccMode}:${spMode}:${effWc}`;
+  const cachedCombo = m7SimComboCache.get(comboKey);
+  if (cachedCombo) return cachedCombo;
+
+  const { evalBars, sigM0On, sigM0Off, featRows, dateToIdx, coeffs } = getUnpackedM7Tables(rawData);
+  const sigSeries = m0Enabled ? sigM0On : sigM0Off;
+  if (!evalBars.length || !sigSeries.length) return null;
+
+  const lastEval = evalBars[evalBars.length - 1];
+  const lastSig = sigSeries[sigSeries.length - 1];
+  const lastFeat = featRows[featRows.length - 1] ?? {};
+  const lastDailyBar = rawData.daily_series[rawData.daily_series.length - 1];
+
+  const summaries = {};
+  const ledgers = {};
+  const ccLedgers = {};
+  const spLedgers = {};
+  const events = {};
+  const m7LiveDashboards = {};
+  const liveSignalStates = {};
+  const liveSpStates = {};
+  const windowStats = {};
+  const sims = {};
+
+  for (const sid of ['M7G_Graded', 'M7_Ensemble']) {
+    const sim = simulateM7StrategyJS(evalBars, coeffs, sid, sigSeries, {
+      putOtm,
+      m7TpMode,
+      rollMode,
+      m0Enabled,
+      ccMode,
+      spMode,
+      wcMode: effWc,
+    });
+    sims[sid] = sim;
+    const metaRef = baseM7?.summaries?.[sid] ?? {};
+    summaries[sid] = {
+      ...metaRef,
+      ...sim.summary,
+    };
+    ledgers[sid] = sim.ledger;
+    ccLedgers[sid] = sim.cc_ledger;
+    spLedgers[sid] = sim.sp_ledger;
+    events[sid] = synthesizeUnifiedEvents(sid, sim.ledger);
+    m7LiveDashboards[sid] = buildM7LiveDashboardJS(lastEval, lastSig, lastFeat, sim, coeffs, {
+      putOtm,
+      m7TpMode,
+      rollMode,
+      m0Enabled,
+    });
+    const openTrs = sim.active_tranches_eod ?? [];
+    liveSignalStates[sid] = buildCutoffSignalState(
+      lastDailyBar,
+      openTrs,
+      baseM7?.live_signal_states?.[sid] ?? rawData.live_signal_state,
+    );
+    const maskedSp = maskSimpleOptionLedgerAtCutoff(sim.sp_ledger, rawData.as_of_date);
+    liveSpStates[sid] = buildCutoffSpState(
+      rawData.daily_series,
+      spMode,
+      effWc,
+      maskedSp,
+      baseM7?.live_sp_states?.[sid] ?? rawData.live_sp_state,
+      rawData.as_of_date,
+    );
+    windowStats[sid] = computeM7WinStatsJS(rawData.crisis_windows, dateToIdx, sim.nav, sim.ledger);
+  }
+
+  const computed = {
+    putOtm,
+    m7TpMode,
+    rollMode,
+    m0Enabled,
+    summaries,
+    ledgers,
+    ccLedgers,
+    spLedgers,
+    events,
+    m7LiveDashboards,
+    liveSignalStates,
+    liveSpStates,
+    windowStats,
+    nav_m7g: sims.M7G_Graded.nav.map(r2),
+    nav_m7: sims.M7_Ensemble.nav.map(r2),
+    m7g_active_slots: sims.M7G_Graded.active_slots,
+    m7_active_slots: sims.M7_Ensemble.active_slots,
+  };
+  if (m7SimComboCache.size >= 64) {
+    const oldest = m7SimComboCache.keys().next().value;
+    m7SimComboCache.delete(oldest);
+  }
+  m7SimComboCache.set(comboKey, computed);
+  return computed;
+}
+
+function hydrateCrisisWindows(baseWindows, bundleWindows, m7Bundle = null) {
   const baseById = new Map((baseWindows ?? []).map(w => [w.id, w]));
-  return bundleWindows.map(w => ({
-    ...(baseById.get(w.id) ?? {}),
-    ...w,
-  }));
+  const merged =
+    Array.isArray(bundleWindows) && bundleWindows.length
+      ? bundleWindows.map(w => ({
+          ...(baseById.get(w.id) ?? {}),
+          ...w,
+        }))
+      : (baseWindows ?? []).map(w => ({ ...w }));
+
+  if (!m7Bundle?.windowStats) return merged;
+  return merged.map((w, idx) => {
+    const m7gSt = m7Bundle.windowStats.M7G_Graded?.[idx];
+    const m7St = m7Bundle.windowStats.M7_Ensemble?.[idx];
+    if (!m7gSt && !m7St) return w;
+    return {
+      ...w,
+      strategy_stats: {
+        ...(w.strategy_stats ?? {}),
+        ...(m7gSt ? { M7G_Graded: m7gSt } : {}),
+        ...(m7St ? { M7_Ensemble: m7St } : {}),
+      },
+      m7g_mdd: m7gSt?.mdd_pct ?? w.m7g_mdd,
+      m7_mdd: m7St?.mdd_pct ?? w.m7_mdd,
+      excess_ret_m7g: m7gSt?.excess_ret_pct ?? w.excess_ret_m7g,
+      dd_cushion_m7g: m7gSt?.dd_cushion_pct ?? w.dd_cushion_m7g,
+      harvested_usd_m7g: m7gSt?.harvested_tp_usd ?? w.harvested_usd_m7g,
+      shares_added_m7g: m7gSt?.shares_added_tp ?? w.shares_added_m7g,
+    };
+  });
 }
 
 function resolveModeBundle(
@@ -416,11 +755,19 @@ function computeSeriesMetricsFromArray(dailyRows, navArr, bhEndNav) {
 
 function buildEngineAttributionByStrategy(
   rawData,
+  snapshotId,
   selectedTpMode,
   selectedCcMode,
   selectedSpMode,
   selectedWcMode,
-  { cutoffSeries = null, liveScale = 1.0 } = {},
+  {
+    putOtm = 'otm15',
+    m7TpMode = 'standard',
+    rollMode = '90d_hold',
+    m0Enabled = true,
+    cutoffSeries = null,
+    liveScale = 1.0,
+  } = {},
 ) {
   const defaultWc = rawData.default_wc_mode || 'wc_reclaim_30d_d35';
   const bE1 = resolveModeBundle(rawData, selectedTpMode, 'cc_off', 'sp_off', defaultWc);
@@ -440,18 +787,59 @@ function buildEngineAttributionByStrategy(
     selectedWcMode,
   );
 
-  const summaryMap = bundle => {
+  const m7E1 = resolveM7EffectiveBundle(rawData, snapshotId, {
+    putOtm,
+    m7TpMode,
+    rollMode,
+    m0Enabled,
+    ccMode: 'cc_off',
+    spMode: 'sp_off',
+    wcMode: defaultWc,
+  });
+  const m7E2 =
+    selectedCcMode === 'cc_off'
+      ? m7E1
+      : resolveM7EffectiveBundle(rawData, snapshotId, {
+          putOtm,
+          m7TpMode,
+          rollMode,
+          m0Enabled,
+          ccMode: selectedCcMode,
+          spMode: 'sp_off',
+          wcMode: defaultWc,
+        });
+  const m7Cur =
+    selectedSpMode === 'sp_off'
+      ? m7E2
+      : resolveM7EffectiveBundle(rawData, snapshotId, {
+          putOtm,
+          m7TpMode,
+          rollMode,
+          m0Enabled,
+          ccMode: selectedCcMode,
+          spMode: selectedSpMode,
+          wcMode: selectedWcMode,
+        });
+
+  const summaryMap = (bundle, m7B) => {
     const list = bundle?.strategies_summary ?? rawData.strategies_summary ?? [];
-    return Object.fromEntries(list.map(s => [s.id, s]));
+    const base = Object.fromEntries(list.map(s => [s.id, s]));
+    if (m7B?.summaries) {
+      Object.assign(base, m7B.summaries);
+    }
+    return base;
   };
-  const m1 = summaryMap(bE1);
-  const m2 = summaryMap(bE2);
-  const m3Solo = summaryMap(bE3Standalone);
-  const mCur = summaryMap(bCur);
+  const m1 = summaryMap(bE1, m7E1);
+  const m2 = summaryMap(bE2, m7E2);
+  const m3Solo = summaryMap(bE3Standalone, null);
+  const mCur = summaryMap(bCur, m7Cur);
 
   const baseSeries = rawData.daily_series ?? [];
   const bhArr = baseSeries.map(r => Number(r.nav_bh ?? 0));
-  const useCutoffSlice = Array.isArray(cutoffSeries) && cutoffSeries.length > 0 && cutoffSeries.length < baseSeries.length;
+  const useCutoffSlice =
+    Array.isArray(cutoffSeries) &&
+    cutoffSeries.length > 0 &&
+    cutoffSeries.length < baseSeries.length;
   const effLen = useCutoffSlice ? cutoffSeries.length : baseSeries.length;
   const bhEndCutoff = useCutoffSlice ? Number(cutoffSeries[cutoffSeries.length - 1].nav_bh ?? 0) : null;
 
@@ -461,11 +849,18 @@ function buildEngineAttributionByStrategy(
   const exE3Solo = selectedSpMode !== 'sp_off' ? computeDailyExcessReturns(navE3SoloArr, bhArr, effLen) : [];
   const corrE2E3 = exE2Solo.length && exE3Solo.length ? pearsonCorr(exE2Solo, exE3Solo) : null;
 
-  const metricFor = (bundle, sMap, sid) => {
-    const rawS = sMap[sid] ?? mCur[sid] ?? mCur.BH_Pure_QQQ ?? {};
+  const navArrayFor = (bundle, m7B, sid) => {
     const navKey = STRATEGY_NAV_KEYS[sid] ?? 'nav_bh';
+    if ((sid === 'M7G_Graded' || sid === 'M7_Ensemble') && m7B && Array.isArray(m7B[navKey]) && m7B[navKey].length) {
+      return m7B[navKey];
+    }
+    return getBundleNavArray(rawData, bundle, navKey);
+  };
+
+  const metricFor = (bundle, m7B, sMap, sid) => {
+    const rawS = sMap[sid] ?? mCur[sid] ?? mCur.BH_Pure_QQQ ?? {};
     if (useCutoffSlice) {
-      const arr = getBundleNavArray(rawData, bundle, navKey).slice(0, effLen);
+      const arr = navArrayFor(bundle, m7B, sid).slice(0, effLen);
       const sliced = computeSeriesMetricsFromArray(cutoffSeries, arr, bhEndCutoff);
       return { ...rawS, ...(sliced ?? {}) };
     }
@@ -476,22 +871,29 @@ function buildEngineAttributionByStrategy(
     return rawS;
   };
 
-  const sBh = metricFor(bCur, mCur, 'BH_Pure_QQQ');
+  const sBh = metricFor(bCur, m7Cur, mCur, 'BH_Pure_QQQ');
   const out = {};
 
   for (const sid of CRISIS_OBSERVATORY_STRATEGIES) {
+    const isM7Strat = sid === 'M7G_Graded' || sid === 'M7_Ensemble';
     const hasE1 = sid !== 'NoPut_CallOnly' && sid !== 'BH_Pure_QQQ';
     const hasE2 = selectedCcMode !== 'cc_off' && sid !== 'BH_Pure_QQQ';
     const hasE3 = selectedSpMode !== 'sp_off' && sid !== 'BH_Pure_QQQ';
 
-    const s1 = hasE1 ? metricFor(bE1, m1, sid) : sBh;
-    const s2 = hasE2 ? metricFor(bE2, m2, sid) : s1;
-    const s3 = hasE3 ? metricFor(bCur, mCur, sid) : s2;
-    const s2Solo = hasE2 ? metricFor(bE2, m2, 'NoPut_CallOnly') : sBh;
-    const s3Solo = hasE3 ? metricFor(bE3Standalone, m3Solo, 'NoPut_CallOnly') : sBh;
+    const s1 = hasE1 ? metricFor(bE1, m7E1, m1, sid) : sBh;
+    const s2 = hasE2 ? metricFor(bE2, m7E2, m2, sid) : s1;
+    const s3 = hasE3 ? metricFor(bCur, m7Cur, mCur, sid) : s2;
+    const s2Solo = hasE2 ? metricFor(bE2, null, m2, 'NoPut_CallOnly') : sBh;
+    const s3Solo = hasE3 ? metricFor(bE3Standalone, null, m3Solo, 'NoPut_CallOnly') : sBh;
 
-    const bhNav = Number(sBh.end_nav ?? 0);
-    const bhSh = Number(sBh.final_shares ?? 0);
+    const bhNav =
+      !useCutoffSlice && isM7Strat && Number.isFinite(Number(s3.bh_parity_end_nav))
+        ? r2(Number(s3.bh_parity_end_nav) * (liveScale !== 1.0 && Number.isFinite(liveScale) && liveScale > 0 ? liveScale : 1.0))
+        : Number(sBh.end_nav ?? 0);
+    const bhSh =
+      !useCutoffSlice && isM7Strat && Number.isFinite(Number(s3.bh_final_shares))
+        ? Number(s3.bh_final_shares)
+        : Number(sBh.final_shares ?? 0);
     const totNav = Number(s3.end_nav ?? bhNav);
     const totAlpha = r2(totNav - bhNav);
     const totExtraSh = r2(Number(s3.final_shares ?? bhSh) - bhSh);
@@ -508,13 +910,19 @@ function buildEngineAttributionByStrategy(
       Math.abs(totAlpha) > 1e-6 ? Math.round((delta / totAlpha) * 1000) / 10 : 0;
     const extraShPct = dSh => (bhSh > 0 ? r2((dSh / bhSh) * 100) : 0);
 
-    const navKey = STRATEGY_NAV_KEYS[sid] ?? 'nav_u1';
-    const exE1 = hasE1 ? computeDailyExcessReturns(getBundleNavArray(rawData, bE1, navKey), bhArr, effLen) : [];
+    const exE1 = hasE1
+      ? computeDailyExcessReturns(navArrayFor(bE1, m7E1, sid), bhArr, effLen)
+      : [];
     const corrE1E2 = hasE1 && hasE2 ? pearsonCorr(exE1, exE2Solo) : null;
     const corrE1E3 = hasE1 && hasE3 ? pearsonCorr(exE1, exE3Solo) : null;
 
     const curSummary = mCur[sid] ?? s3;
     const e1Meta = m1[sid] ?? curSummary;
+    const e1ModeId = !hasE1
+      ? 'off'
+      : isM7Strat
+        ? `${sid}::${putOtm}::${rollMode}::${m7TpMode}`
+        : `${sid}::${selectedTpMode}`;
 
     out[sid] = {
       strategy_id: sid,
@@ -535,7 +943,7 @@ function buildEngineAttributionByStrategy(
       },
       engine1: {
         active: hasE1,
-        mode_id: hasE1 ? `${sid}::${selectedTpMode}` : 'off',
+        mode_id: e1ModeId,
         delta_usd: d1Usd,
         standalone_alpha_usd: d1Usd,
         share_of_alpha_pct: hasE1 ? sharePct(d1Usd) : 0,
@@ -546,6 +954,8 @@ function buildEngineAttributionByStrategy(
         delta_calmar: hasE1 ? r3(Number(s1.calmar ?? 0) - Number(sBh.calmar ?? 0)) : 0,
         tranches_total: Number(e1Meta.tranches_total ?? 0),
         tp_count: Number(e1Meta.tp_count ?? 0),
+        roll_50d_count: Number(e1Meta.roll_50d_count ?? 0),
+        avg_roll_salvage_pct: r2(Number(e1Meta.avg_roll_salvage_pct ?? 0)),
         naked_prem_spent_usd: r2(Number(e1Meta.naked_prem_spent_usd ?? 0)),
         gross_put_monetized_usd: r2(Number(e1Meta.gross_put_monetized_usd ?? 0)),
         pct_days_hedged: r2(Number(e1Meta.pct_days_hedged ?? 0)),
@@ -605,11 +1015,16 @@ function projectArtifactForModes(
   selectedCcMode,
   selectedSpMode = 'sp_off',
   selectedWcMode = 'wc_reclaim_30d_d35',
+  selectedPutOtm = 'otm15',
+  selectedM7TpMode = 'standard',
+  selectedRollMode = '90d_hold',
+  selectedM0Enabled = true,
 ) {
   const defaultWcMode = data.default_wc_mode ?? 'wc_reclaim_30d_d35';
   const effectiveWcMode = selectedWcMode || defaultWcMode;
   const cacheWcKey = selectedSpMode === 'sp_off' ? defaultWcMode : effectiveWcMode;
-  const cacheKey = `${snapshotId}:${selectedTpMode}:${selectedCcMode}:${selectedSpMode}:${cacheWcKey}`;
+  const m0Tag = selectedM0Enabled ? 'm0on' : 'm0off';
+  const cacheKey = `${snapshotId}:${selectedPutOtm}:${selectedM7TpMode}:${selectedRollMode}:${m0Tag}:${selectedTpMode}:${selectedCcMode}:${selectedSpMode}:${cacheWcKey}`;
   const hit = projectedModeCache.get(cacheKey);
   if (hit) return hit;
 
@@ -617,8 +1032,15 @@ function projectArtifactForModes(
     tp_modes: tpModes,
     mode_bundles: modeBundles,
     tp_slot_series: tpSlotSeries,
+    m7_bundles: _m7Bundles,
+    m7_signals: _m7Signals,
+    m7_feature_table: _m7FeatureTable,
+    m7_live_tail_state: _m7LiveTailState,
+    m7_eval_bars: _m7EvalBars,
+    opra_90dte_poly3_coeffs_desc: _opraCoeffs,
     ...baseWithoutModes
   } = data;
+
   const bundleKey =
     selectedSpMode === 'sp_off'
       ? `${selectedTpMode}__${selectedCcMode}`
@@ -629,9 +1051,24 @@ function projectArtifactForModes(
     modeBundles?.[bundleKey] ??
     modeBundles?.[`${selectedTpMode}__${selectedCcMode}__${selectedSpMode}`] ??
     (selectedCcMode === 'cc_off' && selectedSpMode === 'sp_off' ? tpModes?.[selectedTpMode] : null);
-  if (!bundle) {
+
+  const m7Eff = resolveM7EffectiveBundle(data, snapshotId, {
+    putOtm: selectedPutOtm,
+    m7TpMode: selectedM7TpMode,
+    rollMode: selectedRollMode,
+    m0Enabled: selectedM0Enabled,
+    ccMode: selectedCcMode,
+    spMode: selectedSpMode,
+    wcMode: effectiveWcMode,
+  });
+
+  if (!bundle && !m7Eff) {
     const fallback = {
       ...baseWithoutModes,
+      put_otm: selectedPutOtm,
+      m7_tp_mode: selectedM7TpMode,
+      roll_mode: selectedRollMode,
+      m0_enabled: selectedM0Enabled,
       tp_mode: data.tp_mode ?? 'layered_itm',
       default_tp_mode: data.default_tp_mode ?? 'layered_itm',
       cc_mode: data.cc_mode ?? 'cc_off',
@@ -645,52 +1082,139 @@ function projectArtifactForModes(
     return fallback;
   }
 
-  const isDefaultCombo =
+  const isDefaultLegacy =
     selectedTpMode === (data.default_tp_mode ?? 'layered_itm') &&
     selectedCcMode === (data.default_cc_mode ?? 'cc_off') &&
     selectedSpMode === (data.default_sp_mode ?? 'sp_off');
-  const activeSlotsArr = bundle.active_slots ?? tpSlotSeries?.[selectedTpMode]?.active_slots;
-  const slot1NakedArr = bundle.slot1_naked ?? tpSlotSeries?.[selectedTpMode]?.slot1_naked;
-  const projectedSeries = isDefaultCombo
-    ? data.daily_series
-    : data.daily_series.map((row, idx) => ({
-        ...row,
-        nav_u1: bundle.nav_u1?.[idx] ?? row.nav_u1,
-        nav_b1c: bundle.nav_b1c?.[idx] ?? row.nav_b1c,
-        nav_d2: bundle.nav_d2?.[idx] ?? row.nav_d2,
-        nav_h2: bundle.nav_h2?.[idx] ?? row.nav_h2,
-        nav_cc: bundle.nav_cc?.[idx] ?? row.nav_cc,
-        active_slots: activeSlotsArr?.[idx] ?? row.active_slots,
-        slot1_naked: slot1NakedArr?.[idx] ?? row.slot1_naked,
-      }));
+  const isDefaultM7 =
+    selectedPutOtm === (data.default_put_otm ?? 'otm15') &&
+    selectedM7TpMode === (data.default_m7_tp_mode ?? 'standard') &&
+    selectedRollMode === (data.default_roll_mode ?? '90d_hold') &&
+    selectedM0Enabled === Boolean(data.default_m0_enabled ?? true) &&
+    selectedCcMode === (data.default_cc_mode ?? 'cc_off') &&
+    selectedSpMode === (data.default_sp_mode ?? 'sp_off');
 
-  const unpackedTradeLedgers = bundle.trade_ledgers_by_strategy
+  const activeSlotsArr = bundle?.active_slots ?? tpSlotSeries?.[selectedTpMode]?.active_slots;
+  const slot1NakedArr = bundle?.slot1_naked ?? tpSlotSeries?.[selectedTpMode]?.slot1_naked;
+  const sigAltSeries = !selectedM0Enabled ? getUnpackedM7Tables(data).sigM0Off : null;
+
+  const projectedSeries =
+    isDefaultLegacy && isDefaultM7
+      ? data.daily_series
+      : data.daily_series.map((row, idx) => {
+          const sdOff = sigAltSeries?.[idx];
+          return {
+            ...row,
+            nav_m7g: m7Eff?.nav_m7g?.[idx] ?? row.nav_m7g,
+            nav_m7: m7Eff?.nav_m7?.[idx] ?? row.nav_m7,
+            m7_prob: sdOff ? Math.round(Number(sdOff.crisis_prob ?? 0)) : row.m7_prob,
+            m7_p1: sdOff ? Math.round(Number(sdOff.p1 ?? 0)) : row.m7_p1,
+            m7_p2: sdOff ? Math.round(Number(sdOff.p2 ?? 0)) : row.m7_p2,
+            m7_p3: sdOff ? Math.round(Number(sdOff.p3 ?? 0)) : row.m7_p3,
+            m7_target_slots: sdOff ? Number(sdOff.target_slots_m7g ?? 0) : row.m7_target_slots,
+            m7_active_slots: m7Eff?.m7g_active_slots?.[idx] ?? row.m7_active_slots,
+            m7_mask: sdOff ? Number(sdOff.mask ?? 0) : row.m7_mask,
+            nav_u1: bundle?.nav_u1?.[idx] ?? row.nav_u1,
+            nav_b1c: bundle?.nav_b1c?.[idx] ?? row.nav_b1c,
+            nav_d2: bundle?.nav_d2?.[idx] ?? row.nav_d2,
+            nav_h2: bundle?.nav_h2?.[idx] ?? row.nav_h2,
+            nav_cc: bundle?.nav_cc?.[idx] ?? row.nav_cc,
+            active_slots: activeSlotsArr?.[idx] ?? row.active_slots,
+            slot1_naked: slot1NakedArr?.[idx] ?? row.slot1_naked,
+          };
+        });
+
+  const legacyTradeLedgers = bundle?.trade_ledgers_by_strategy
     ? unpackLedgerMap(bundle.trade_ledgers_by_strategy)
-    : data.trade_ledgers_by_strategy ?? {};
-  const unpackedCcLedgers = bundle.cc_ledgers_by_strategy
+    : unpackLedgerMap(data.trade_ledgers_by_strategy ?? {});
+  const unpackedTradeLedgers = {
+    ...(m7Eff?.ledgers ?? {}),
+    ...legacyTradeLedgers,
+    ...(m7Eff?.ledgers?.M7G_Graded ? { M7G_Graded: m7Eff.ledgers.M7G_Graded } : {}),
+    ...(m7Eff?.ledgers?.M7_Ensemble ? { M7_Ensemble: m7Eff.ledgers.M7_Ensemble } : {}),
+  };
+
+  const legacyCcLedgers = bundle?.cc_ledgers_by_strategy
     ? unpackLedgerMap(bundle.cc_ledgers_by_strategy)
-    : data.cc_ledgers_by_strategy ?? {};
-  const unpackedSpLedgers = bundle.sp_ledgers_by_strategy
+    : unpackLedgerMap(data.cc_ledgers_by_strategy ?? {});
+  const unpackedCcLedgers = {
+    ...legacyCcLedgers,
+    ...(m7Eff?.ccLedgers ?? {}),
+  };
+
+  const legacySpLedgers = bundle?.sp_ledgers_by_strategy
     ? unpackLedgerMap(bundle.sp_ledgers_by_strategy)
-    : data.sp_ledgers_by_strategy ?? {};
+    : unpackLedgerMap(data.sp_ledgers_by_strategy ?? {});
+  const unpackedSpLedgers = {
+    ...legacySpLedgers,
+    ...(m7Eff?.spLedgers ?? {}),
+  };
 
   const eventsByStrategy = {};
   for (const [sid, led] of Object.entries(unpackedTradeLedgers)) {
-    eventsByStrategy[sid] =
-      bundle.events_by_strategy?.[sid] ?? synthesizeUnifiedEvents(sid, led);
+    if (sid === 'M7G_Graded' || sid === 'M7_Ensemble') {
+      eventsByStrategy[sid] = m7Eff?.events?.[sid] ?? synthesizeUnifiedEvents(sid, led);
+    } else {
+      eventsByStrategy[sid] =
+        bundle?.events_by_strategy?.[sid] ?? synthesizeUnifiedEvents(sid, led);
+    }
   }
 
-  const hydratedWindows = hydrateCrisisWindows(data.crisis_windows, bundle.crisis_windows);
+  const legacySummaries = (bundle?.strategies_summary ?? data.strategies_summary ?? []).filter(
+    s => s.id !== 'M7G_Graded' && s.id !== 'M7_Ensemble',
+  );
+  const strategiesSummary = [
+    ...(m7Eff?.summaries?.M7G_Graded ? [m7Eff.summaries.M7G_Graded] : []),
+    ...(m7Eff?.summaries?.M7_Ensemble ? [m7Eff.summaries.M7_Ensemble] : []),
+    ...legacySummaries,
+  ];
+
+  const hydratedWindows = hydrateCrisisWindows(
+    data.crisis_windows,
+    bundle?.crisis_windows,
+    m7Eff,
+  );
   const engineAttributionByStrategy = buildEngineAttributionByStrategy(
     data,
+    snapshotId,
     selectedTpMode,
     selectedCcMode,
     selectedSpMode,
     effectiveWcMode,
+    {
+      putOtm: selectedPutOtm,
+      m7TpMode: selectedM7TpMode,
+      rollMode: selectedRollMode,
+      m0Enabled: selectedM0Enabled,
+    },
   );
+
+  const liveSignalStatesByStrategy = {
+    ...(data.live_signal_states_by_strategy ?? {}),
+    ...(bundle?.live_signal_states_by_strategy ?? {}),
+    ...(m7Eff?.liveSignalStates ?? {}),
+  };
+  const liveSpStatesByStrategy = {
+    ...(data.live_sp_states_by_strategy ?? {}),
+    ...(bundle?.live_sp_states_by_strategy ?? {}),
+    ...(m7Eff?.liveSpStates ?? {}),
+  };
+  const m7LiveDashboardsByStrategy =
+    m7Eff?.m7LiveDashboards ?? data.m7_live_dashboards_by_strategy ?? {};
 
   const projected = {
     ...baseWithoutModes,
+    put_otm: selectedPutOtm,
+    default_put_otm: data.default_put_otm ?? 'otm15',
+    put_otm_meta: data.put_otm_meta ?? [],
+    m7_tp_mode: selectedM7TpMode,
+    default_m7_tp_mode: data.default_m7_tp_mode ?? 'standard',
+    m7_tp_modes_meta: data.m7_tp_modes_meta ?? [],
+    roll_mode: selectedRollMode,
+    default_roll_mode: data.default_roll_mode ?? '90d_hold',
+    m7_roll_modes_meta: data.m7_roll_modes_meta ?? [],
+    m0_enabled: selectedM0Enabled,
+    default_m0_enabled: data.default_m0_enabled ?? true,
     tp_mode: selectedTpMode,
     default_tp_mode: data.default_tp_mode ?? 'layered_itm',
     tp_modes_meta: data.tp_modes_meta ?? [],
@@ -703,24 +1227,29 @@ function projectArtifactForModes(
     wc_mode: effectiveWcMode,
     default_wc_mode: defaultWcMode,
     wc_modes_meta: data.wc_modes_meta ?? [],
-    live_signal_state: bundle.live_signal_state ?? data.live_signal_state,
-    live_signal_states_by_strategy:
-      bundle.live_signal_states_by_strategy ?? data.live_signal_states_by_strategy ?? {},
-    live_sp_state: bundle.live_sp_state ?? data.live_sp_state ?? null,
-    live_sp_states_by_strategy:
-      bundle.live_sp_states_by_strategy ?? data.live_sp_states_by_strategy ?? {},
-    strategies_summary: bundle.strategies_summary ?? data.strategies_summary,
+    m7_live_dashboard:
+      m7LiveDashboardsByStrategy.M7G_Graded ?? data.m7_live_dashboard ?? null,
+    m7_live_dashboards_by_strategy: m7LiveDashboardsByStrategy,
+    live_signal_state: bundle?.live_signal_state ?? data.live_signal_state,
+    live_signal_states_by_strategy: liveSignalStatesByStrategy,
+    live_sp_state: bundle?.live_sp_state ?? data.live_sp_state ?? null,
+    live_sp_states_by_strategy: liveSpStatesByStrategy,
+    strategies_summary: strategiesSummary,
     engine_attribution_by_strategy: engineAttributionByStrategy,
     daily_series: projectedSeries,
-    events: eventsByStrategy.U1_PureOptions ?? data.events,
+    events: eventsByStrategy.M7G_Graded ?? data.events,
     events_by_strategy: eventsByStrategy,
-    trade_ledger: unpackedTradeLedgers.U1_PureOptions ?? data.trade_ledger,
+    trade_ledger: unpackedTradeLedgers.M7G_Graded ?? data.trade_ledger,
     trade_ledgers_by_strategy: unpackedTradeLedgers,
     cc_ledgers_by_strategy: unpackedCcLedgers,
-    sp_ledger: unpackedSpLedgers.U1_PureOptions ?? [],
+    sp_ledger: unpackedSpLedgers.M7G_Graded ?? [],
     sp_ledgers_by_strategy: unpackedSpLedgers,
     crisis_windows: hydratedWindows,
   };
+  if (projectedModeCache.size >= 64) {
+    const oldestKey = projectedModeCache.keys().next().value;
+    projectedModeCache.delete(oldestKey);
+  }
   projectedModeCache.set(cacheKey, projected);
   return projected;
 }
@@ -796,6 +1325,7 @@ function maskLedgerAtCutoff(ledger, asOfDate) {
         call_exit_cost_sh: null,
         exit_net_cash_usd: null,
         net_pnl_usd: null,
+        roi_mult: null,
         exit_shares_delta: null,
         shares_added: null,
         delta_usd: null,
@@ -803,6 +1333,8 @@ function maskLedgerAtCutoff(ledger, asOfDate) {
         vega_usd: null,
         theta_slip_usd: null,
         convexity_mult: null,
+        comp_put_gain_usd: null,
+        comp_call_drag_usd: null,
       });
     }
   }
@@ -948,6 +1480,8 @@ function extendLiveBars(baseData, extraDailyBars, requestedAsOf) {
       qqq_ma200: r2(ma200),
       running_ath: r2(runAth),
       dd_ath_pct: r2(ddAthPct),
+      nav_m7g: r2(Number(prev.nav_m7g ?? prev.nav_bh) * (1 + qqqRet)),
+      nav_m7: r2(Number(prev.nav_m7 ?? prev.nav_bh) * (1 + qqqRet)),
       nav_bh: r2(Number(prev.nav_bh) * (1 + qqqRet)),
       nav_u1: r2(Number(prev.nav_u1) * (1 + qqqRet)),
       nav_b1c: r2(Number(prev.nav_b1c) * (1 + qqqRet)),
@@ -962,6 +1496,34 @@ function extendLiveBars(baseData, extraDailyBars, requestedAsOf) {
     series.push(nextRow);
   }
   return series;
+}
+
+function extractExtraBarsFromFeed(liveM7Feed) {
+  const qqqMap = liveM7Feed?.yahoo?.QQQ;
+  if (!qqqMap || typeof qqqMap.keys !== 'function') return null;
+  const vixMap = liveM7Feed?.yahoo?.VIX;
+  const vix3mMap = liveM7Feed?.yahoo?.VIX3M;
+  const vxnMap = liveM7Feed?.yahoo?.VXN;
+  const dates = [...qqqMap.keys()].sort();
+  return dates.map(d => ({
+    date: d,
+    qqqOpen: qqqMap.get(d)?.open ?? qqqMap.get(d)?.close,
+    qqqClose: qqqMap.get(d)?.close,
+    vixClose: vixMap?.get(d)?.close ?? null,
+    vix3mClose: vix3mMap?.get(d)?.close ?? null,
+    vxnClose: vxnMap?.get(d)?.close ?? null,
+  }));
+}
+
+function parseM0EnabledParam(val, rawData) {
+  if (val === null || val === undefined || val === '') {
+    return Boolean(rawData.default_m0_enabled ?? true);
+  }
+  if (typeof val === 'boolean') return val;
+  const s = String(val).trim().toLowerCase();
+  if (['1', 'true', 'on', 'yes', 'm0on'].includes(s)) return true;
+  if (['0', 'false', 'off', 'no', 'm0off'].includes(s)) return false;
+  fail('invalid_crisis_observatory_m0_enabled', 400);
 }
 
 function maskSimpleOptionLedgerAtCutoff(ledger, asOfDate) {
@@ -1199,6 +1761,10 @@ function buildCutoffSpState(
 export function loadCrisisObservatoryDashboard({
   asOf = null,
   strategy = null,
+  putOtm = null,
+  m7TpMode = null,
+  rollMode = null,
+  m0Enabled = null,
   tpMode = null,
   ccMode = null,
   spMode = null,
@@ -1206,16 +1772,49 @@ export function loadCrisisObservatoryDashboard({
   snapshotId: expectedSnapshotId = null,
   file = defaultFile,
   extraDailyBars = null,
+  liveM7Feed = null,
 } = {}) {
   const { data: rawData, snapshotId } = readArtifact(file);
   if (expectedSnapshotId && expectedSnapshotId !== snapshotId) {
     fail('crisis_observatory_snapshot_changed', 409);
   }
 
-  const rawTpMode = tpMode ? String(tpMode).trim() : rawData.default_tp_mode ?? 'layered_itm';
-  if (!CRISIS_OBSERVATORY_TP_MODES.includes(rawTpMode)) {
-    fail('invalid_crisis_observatory_tp_mode', 400);
+  const requestedPutOtm = putOtm ? String(putOtm).trim() : rawData.default_put_otm ?? 'otm15';
+  const rawPutOtm = PUT_OTM_ALIASES[requestedPutOtm] ?? requestedPutOtm;
+  if (!CRISIS_OBSERVATORY_PUT_OTMS.includes(rawPutOtm)) {
+    fail('invalid_crisis_observatory_put_otm', 400);
   }
+
+  let rawTpMode = rawData.default_tp_mode ?? 'layered_itm';
+  let inferredM7TpFromTpMode = null;
+  if (tpMode) {
+    const trimmedTp = String(tpMode).trim();
+    const mappedM7Tp = M7_TP_ALIASES[trimmedTp] ?? trimmedTp;
+    if (CRISIS_OBSERVATORY_TP_MODES.includes(trimmedTp)) {
+      rawTpMode = trimmedTp;
+    } else if (!m7TpMode && CRISIS_OBSERVATORY_M7_TP_MODES.includes(mappedM7Tp)) {
+      inferredM7TpFromTpMode = mappedM7Tp;
+    } else {
+      fail('invalid_crisis_observatory_tp_mode', 400);
+    }
+  }
+
+  const requestedM7Tp = m7TpMode
+    ? String(m7TpMode).trim()
+    : inferredM7TpFromTpMode ?? rawData.default_m7_tp_mode ?? 'standard';
+  const rawM7TpMode = M7_TP_ALIASES[requestedM7Tp] ?? requestedM7Tp;
+  if (!CRISIS_OBSERVATORY_M7_TP_MODES.includes(rawM7TpMode)) {
+    fail('invalid_crisis_observatory_m7_tp_mode', 400);
+  }
+
+  const requestedRollMode = rollMode ? String(rollMode).trim() : rawData.default_roll_mode ?? '90d_hold';
+  const rawRollMode = ROLL_MODE_ALIASES[requestedRollMode] ?? requestedRollMode;
+  if (!CRISIS_OBSERVATORY_ROLL_MODES.includes(rawRollMode)) {
+    fail('invalid_crisis_observatory_roll_mode', 400);
+  }
+
+  const rawM0Enabled = parseM0EnabledParam(m0Enabled, rawData);
+
   const requestedCcMode = ccMode ? String(ccMode).trim() : rawData.default_cc_mode ?? 'cc_off';
   const rawCcMode = LEGACY_CC_MODE_ALIASES[requestedCcMode] ?? requestedCcMode;
   if (!CRISIS_OBSERVATORY_CC_MODES.includes(rawCcMode)) {
@@ -1231,6 +1830,7 @@ export function loadCrisisObservatoryDashboard({
   if (!CRISIS_OBSERVATORY_WC_MODES.includes(rawWcMode)) {
     fail('invalid_crisis_observatory_wc_mode', 400);
   }
+
   const data = projectArtifactForModes(
     rawData,
     snapshotId,
@@ -1238,11 +1838,15 @@ export function loadCrisisObservatoryDashboard({
     rawCcMode,
     rawSpMode,
     rawWcMode,
+    rawPutOtm,
+    rawM7TpMode,
+    rawRollMode,
+    rawM0Enabled,
   );
 
   const rawStrategy = strategy
     ? String(strategy).trim()
-    : data.default_strategy_id ?? 'U1_PureOptions';
+    : data.default_strategy_id ?? 'M7G_Graded';
   const selectedStrategy = LEGACY_STRATEGY_ALIASES[rawStrategy] ?? rawStrategy;
   if (!CRISIS_OBSERVATORY_STRATEGIES.includes(selectedStrategy)) {
     fail('invalid_crisis_observatory_strategy', 400);
@@ -1251,14 +1855,33 @@ export function loadCrisisObservatoryDashboard({
   const requestedAsOf = asOf ? String(asOf).trim() : data.as_of_date;
   if (!isIsoDate(requestedAsOf)) fail('invalid_as_of_date', 400);
 
+  const effectiveFeed =
+    liveM7Feed ??
+    (Array.isArray(extraDailyBars) && extraDailyBars.length > 0
+      ? normalizeLegacyExtraBarsToFeed(extraDailyBars)
+      : null);
+  const effectiveExtraBars =
+    Array.isArray(extraDailyBars) && extraDailyBars.length > 0
+      ? extraDailyBars
+      : effectiveFeed
+        ? extractExtraBarsFromFeed(effectiveFeed)
+        : null;
+
   const extendedSeries =
-    requestedAsOf > data.as_of_date && Array.isArray(extraDailyBars) && extraDailyBars.length > 0
-      ? extendLiveBars(data, extraDailyBars, requestedAsOf)
+    requestedAsOf > data.as_of_date && Array.isArray(effectiveExtraBars) && effectiveExtraBars.length > 0
+      ? extendLiveBars(data, effectiveExtraBars, requestedAsOf)
       : null;
 
+  const extendedM7 =
+    requestedAsOf > data.as_of_date && effectiveFeed
+      ? extendM7LiveFromFeed(rawData, effectiveFeed, requestedAsOf)
+      : null;
+
+  const m7TargetStrat = selectedStrategy === 'M7_Ensemble' ? 'M7_Ensemble' : 'M7G_Graded';
+
   // Fast path: exact audited snapshot when requestedAsOf >= artifact.as_of_date and no live tail
-  if (!extendedSeries && requestedAsOf >= data.as_of_date) {
-    const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'U1_PureOptions' : selectedStrategy;
+  if (!extendedSeries && !extendedM7 && requestedAsOf >= data.as_of_date) {
+    const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'M7G_Graded' : selectedStrategy;
     return {
       ...data,
       version: CRISIS_OBSERVATORY_VERSION,
@@ -1266,10 +1889,16 @@ export function loadCrisisObservatoryDashboard({
       requestedAsOf,
       liveExtended: false,
       selected_strategy_id: selectedStrategy,
+      put_otm: rawPutOtm,
+      m7_tp_mode: rawM7TpMode,
+      roll_mode: rawRollMode,
+      m0_enabled: rawM0Enabled,
       tp_mode: rawTpMode,
       cc_mode: rawCcMode,
       sp_mode: rawSpMode,
       wc_mode: rawWcMode,
+      m7_live_dashboard:
+        data.m7_live_dashboards_by_strategy?.[m7TargetStrat] ?? data.m7_live_dashboard ?? null,
       live_signal_state:
         data.live_signal_states_by_strategy?.[ledgerStrategy] ?? data.live_signal_state,
       live_sp_state:
@@ -1280,7 +1909,72 @@ export function loadCrisisObservatoryDashboard({
     };
   }
 
-  const sourceSeries = extendedSeries ?? data.daily_series;
+  let sourceSeries = extendedSeries ?? data.daily_series;
+  let liveM7SimOverrides = null;
+
+  if (extendedM7 && Array.isArray(sourceSeries) && sourceSeries.length > data.daily_series.length) {
+    const coeffs = rawData.opra_90dte_poly3_coeffs_desc ?? [];
+    const sigSeriesLive = rawM0Enabled ? extendedM7.sigM0On : extendedM7.sigM0Off;
+    const simM7g = simulateM7StrategyJS(extendedM7.evalBars, coeffs, 'M7G_Graded', sigSeriesLive, {
+      putOtm: rawPutOtm,
+      m7TpMode: rawM7TpMode,
+      rollMode: rawRollMode,
+      m0Enabled: rawM0Enabled,
+      ccMode: rawCcMode,
+      spMode: rawSpMode,
+      wcMode: rawWcMode,
+    });
+    const simM7 = simulateM7StrategyJS(extendedM7.evalBars, coeffs, 'M7_Ensemble', sigSeriesLive, {
+      putOtm: rawPutOtm,
+      m7TpMode: rawM7TpMode,
+      rollMode: rawRollMode,
+      m0Enabled: rawM0Enabled,
+      ccMode: rawCcMode,
+      spMode: rawSpMode,
+      wcMode: rawWcMode,
+    });
+    const lastEvalLive = extendedM7.evalBars[extendedM7.evalBars.length - 1];
+    const lastSigLive = sigSeriesLive[sigSeriesLive.length - 1];
+    const lastFeatLive = extendedM7.featRows[extendedM7.featRows.length - 1] ?? {};
+    const dashM7g = buildM7LiveDashboardJS(lastEvalLive, lastSigLive, lastFeatLive, simM7g, coeffs, {
+      putOtm: rawPutOtm,
+      m7TpMode: rawM7TpMode,
+      rollMode: rawRollMode,
+      m0Enabled: rawM0Enabled,
+    });
+    const dashM7 = buildM7LiveDashboardJS(lastEvalLive, lastSigLive, lastFeatLive, simM7, coeffs, {
+      putOtm: rawPutOtm,
+      m7TpMode: rawM7TpMode,
+      rollMode: rawRollMode,
+      m0Enabled: rawM0Enabled,
+    });
+
+    const sigByDate = new Map(sigSeriesLive.map((s, idx) => [s.date, { s, idx }]));
+    sourceSeries = sourceSeries.map(row => {
+      const hit = sigByDate.get(row.date);
+      if (!hit || row.date <= data.as_of_date) return row;
+      const { s, idx } = hit;
+      return {
+        ...row,
+        nav_m7g: r2(simM7g.nav[idx]),
+        nav_m7: r2(simM7.nav[idx]),
+        m7_prob: Math.round(Number(s.crisis_prob ?? 0)),
+        m7_p1: Math.round(Number(s.p1 ?? 0)),
+        m7_p2: Math.round(Number(s.p2 ?? 0)),
+        m7_p3: Math.round(Number(s.p3 ?? 0)),
+        m7_target_slots: Number(s.target_slots_m7g ?? 0),
+        m7_active_slots: Number(simM7g.active_slots[idx] ?? 0),
+        m7_mask: Number(s.mask ?? 0),
+        hmm_p: r3(Number(s.hmm_p ?? 0)),
+      };
+    });
+
+    liveM7SimOverrides = {
+      sims: { M7G_Graded: simM7g, M7_Ensemble: simM7 },
+      dashboards: { M7G_Graded: dashM7g, M7_Ensemble: dashM7 },
+    };
+  }
+
   const slicedSeries = sourceSeries.filter(row => row.date <= requestedAsOf);
   if (!slicedSeries.length) {
     fail('as_of_before_evaluation_window', 400);
@@ -1290,12 +1984,59 @@ export function loadCrisisObservatoryDashboard({
   const lastBar = slicedSeries[slicedSeries.length - 1];
   const prevBar = slicedSeries.length >= 2 ? slicedSeries[slicedSeries.length - 2] : lastBar;
   const bhEndNav = Number(lastBar.nav_bh);
+  const isPostArtifactLive = effDate > data.as_of_date;
+
+  const maskedLedgersByStrategy = {};
+  for (const [sid, led] of Object.entries(data.trade_ledgers_by_strategy ?? {})) {
+    if (liveM7SimOverrides?.sims?.[sid]) {
+      maskedLedgersByStrategy[sid] = liveM7SimOverrides.sims[sid].ledger;
+    } else {
+      maskedLedgersByStrategy[sid] = maskLedgerAtCutoff(led, effDate);
+    }
+  }
+
+  const maskedCcLedgersByStrategy = {};
+  for (const [sid, led] of Object.entries(data.cc_ledgers_by_strategy ?? {})) {
+    if (liveM7SimOverrides?.sims?.[sid]) {
+      maskedCcLedgersByStrategy[sid] = liveM7SimOverrides.sims[sid].cc_ledger;
+    } else {
+      maskedCcLedgersByStrategy[sid] = maskSimpleOptionLedgerAtCutoff(led, effDate);
+    }
+  }
+
+  const maskedSpLedgersByStrategy = {};
+  for (const [sid, led] of Object.entries(data.sp_ledgers_by_strategy ?? {})) {
+    if (liveM7SimOverrides?.sims?.[sid]) {
+      maskedSpLedgersByStrategy[sid] = maskSimpleOptionLedgerAtCutoff(
+        liveM7SimOverrides.sims[sid].sp_ledger,
+        effDate,
+      );
+    } else {
+      maskedSpLedgersByStrategy[sid] = maskSimpleOptionLedgerAtCutoff(led, effDate);
+    }
+  }
+
+  const slicedEventsByStrategy = {};
+  for (const [sid, evs] of Object.entries(data.events_by_strategy ?? {})) {
+    if (liveM7SimOverrides?.sims?.[sid]) {
+      slicedEventsByStrategy[sid] = synthesizeUnifiedEvents(sid, liveM7SimOverrides.sims[sid].ledger);
+    } else if (effDate < data.as_of_date && (sid === 'M7G_Graded' || sid === 'M7_Ensemble')) {
+      slicedEventsByStrategy[sid] = synthesizeUnifiedEvents(sid, maskedLedgersByStrategy[sid]);
+    } else {
+      slicedEventsByStrategy[sid] = (evs ?? []).filter(e => e.date <= effDate);
+    }
+  }
 
   const strategiesSummary = data.strategies_summary.map(item => {
+    if (liveM7SimOverrides?.sims?.[item.id]) {
+      return {
+        ...item,
+        ...liveM7SimOverrides.sims[item.id].summary,
+      };
+    }
     const navKey = STRATEGY_NAV_KEYS[item.id];
     const metrics = computeSeriesMetrics(slicedSeries, navKey, bhEndNav);
-    const rawLed = data.trade_ledgers_by_strategy?.[item.id] ?? [];
-    const maskedLed = maskLedgerAtCutoff(rawLed, effDate);
+    const maskedLed = maskedLedgersByStrategy[item.id] ?? [];
     return {
       ...item,
       ...(metrics ?? {}),
@@ -1303,31 +2044,50 @@ export function loadCrisisObservatoryDashboard({
     };
   });
 
-  const maskedLedgersByStrategy = {};
-  for (const [sid, led] of Object.entries(data.trade_ledgers_by_strategy ?? {})) {
-    maskedLedgersByStrategy[sid] = maskLedgerAtCutoff(led, effDate);
+  // Leak-free historical cutoff M7 live dashboard reconstruction when effDate < artifact.as_of_date
+  let cutoffM7Dashboards = liveM7SimOverrides?.dashboards ?? data.m7_live_dashboards_by_strategy ?? {};
+  if (!isPostArtifactLive && effDate < data.as_of_date) {
+    const { evalBars, sigM0On, sigM0Off, featRows, dateToIdx, coeffs } = getUnpackedM7Tables(rawData);
+    const cutIdx = dateToIdx.get(effDate);
+    if (cutIdx !== undefined && cutIdx >= 0) {
+      const subEval = evalBars.slice(0, cutIdx + 1);
+      const subSig = (rawM0Enabled ? sigM0On : sigM0Off).slice(0, cutIdx + 1);
+      const featAtCut = featRows[cutIdx] ?? {};
+      const rebuilt = {};
+      for (const sid of ['M7G_Graded', 'M7_Ensemble']) {
+        const subSim = simulateM7StrategyJS(subEval, coeffs, sid, subSig, {
+          putOtm: rawPutOtm,
+          m7TpMode: rawM7TpMode,
+          rollMode: rawRollMode,
+          m0Enabled: rawM0Enabled,
+          ccMode: rawCcMode,
+          spMode: rawSpMode,
+          wcMode: rawWcMode,
+        });
+        rebuilt[sid] = buildM7LiveDashboardJS(
+          subEval[cutIdx],
+          subSig[cutIdx],
+          featAtCut,
+          subSim,
+          coeffs,
+          {
+            putOtm: rawPutOtm,
+            m7TpMode: rawM7TpMode,
+            rollMode: rawRollMode,
+            m0Enabled: rawM0Enabled,
+          },
+        );
+      }
+      cutoffM7Dashboards = rebuilt;
+    }
   }
 
-  const maskedCcLedgersByStrategy = {};
-  for (const [sid, led] of Object.entries(data.cc_ledgers_by_strategy ?? {})) {
-    maskedCcLedgersByStrategy[sid] = maskSimpleOptionLedgerAtCutoff(led, effDate);
-  }
-
-  const maskedSpLedgersByStrategy = {};
-  for (const [sid, led] of Object.entries(data.sp_ledgers_by_strategy ?? {})) {
-    maskedSpLedgersByStrategy[sid] = maskSimpleOptionLedgerAtCutoff(led, effDate);
-  }
-
-  const slicedEventsByStrategy = {};
-  for (const [sid, evs] of Object.entries(data.events_by_strategy ?? {})) {
-    slicedEventsByStrategy[sid] = (evs ?? []).filter(e => e.date <= effDate);
-  }
-
-  const isPostArtifactLive = effDate > data.as_of_date;
   const openTranchesForStrat = sid =>
-    (maskedLedgersByStrategy[sid] ?? []).filter(
-      t => t.exit_date === null && !(isPostArtifactLive && t.is_open_live && t.pending_tp),
-    );
+    liveM7SimOverrides?.sims?.[sid]
+      ? liveM7SimOverrides.sims[sid].active_tranches_eod ?? []
+      : (maskedLedgersByStrategy[sid] ?? []).filter(
+          t => t.exit_date === null && !(isPostArtifactLive && t.is_open_live && t.pending_tp),
+        );
   const cutoffStatesByStrategy = {};
   const cutoffSpStatesByStrategy = {};
   for (const sid of Object.keys(maskedLedgersByStrategy)) {
@@ -1409,18 +2169,27 @@ export function loadCrisisObservatoryDashboard({
     smooth_5d_score: lastBar.smooth_lights,
   };
 
-  const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'U1_PureOptions' : selectedStrategy;
-  const visibleWindows = data.crisis_windows.filter(w => w.start_date <= effDate);
+  const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'M7G_Graded' : selectedStrategy;
+  const visibleWindows = data.crisis_windows
+    .filter(w => w.start_date <= effDate)
+    .map(w => (isPostArtifactLive && w.is_live ? { ...w, end_date: effDate } : w));
   const artifactLastBh = Number(rawData.daily_series?.[rawData.daily_series.length - 1]?.nav_bh ?? 0);
   const liveScale =
     isPostArtifactLive && artifactLastBh > 0 ? Number(lastBar.nav_bh) / artifactLastBh : 1.0;
   const cutoffEngineAttribution = buildEngineAttributionByStrategy(
     rawData,
+    snapshotId,
     rawTpMode,
     rawCcMode,
     rawSpMode,
     rawWcMode,
-    isPostArtifactLive ? { liveScale } : { cutoffSeries: slicedSeries },
+    {
+      putOtm: rawPutOtm,
+      m7TpMode: rawM7TpMode,
+      rollMode: rawRollMode,
+      m0Enabled: rawM0Enabled,
+      ...(isPostArtifactLive ? { liveScale } : { cutoffSeries: slicedSeries }),
+    },
   );
 
   return {
@@ -1431,8 +2200,12 @@ export function loadCrisisObservatoryDashboard({
     asOfDate: effDate,
     dataThrough: effDate,
     requestedAsOf,
-    liveExtended: Boolean(extendedSeries),
+    liveExtended: Boolean(extendedSeries || extendedM7),
     selected_strategy_id: selectedStrategy,
+    put_otm: rawPutOtm,
+    m7_tp_mode: rawM7TpMode,
+    roll_mode: rawRollMode,
+    m0_enabled: rawM0Enabled,
     tp_mode: rawTpMode,
     cc_mode: rawCcMode,
     sp_mode: rawSpMode,
@@ -1440,8 +2213,12 @@ export function loadCrisisObservatoryDashboard({
     evaluation_window: {
       ...data.evaluation_window,
       end: effDate,
+      end_date: effDate,
       trading_days: slicedSeries.length,
     },
+    m7_live_dashboard:
+      cutoffM7Dashboards[m7TargetStrat] ?? cutoffM7Dashboards.M7G_Graded ?? data.m7_live_dashboard ?? null,
+    m7_live_dashboards_by_strategy: cutoffM7Dashboards,
     live_market_snapshot: liveSnap,
     live_signal_state:
       cutoffStatesByStrategy[ledgerStrategy] ??
@@ -1475,64 +2252,13 @@ export function loadCrisisObservatoryDashboard({
   };
 }
 
-async function fetchYahooSymbol15d(symbol) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 6000);
-  try {
-    const enc = encodeURIComponent(symbol);
-    const resp = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${enc}?range=15d&interval=1d`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      signal: controller.signal,
-    });
-    if (!resp.ok) return null;
-    const json = await resp.json();
-    const res0 = json?.chart?.result?.[0];
-    const ts = res0?.timestamp ?? [];
-    const quote = res0?.indicators?.quote?.[0] ?? {};
-    const closes = quote.close ?? [];
-    const out = new Map();
-    for (let i = 0; i < ts.length; i += 1) {
-      const c = closes[i];
-      if (!Number.isFinite(c) || c <= 0) continue;
-      const dt = new Date(ts[i] * 1000).toISOString().slice(0, 10);
-      out.set(dt, c);
-    }
-    return out;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function getLiveRecentCrisisBars() {
-  const now = Date.now();
-  if (liveFeedCache.bars && now - liveFeedCache.fetchedAt < LIVE_FEED_TTL_MS) {
-    return liveFeedCache.bars;
-  }
-  const [qqq, vix, vix3m, vxn] = await Promise.all([
-    fetchYahooSymbol15d('QQQ'),
-    fetchYahooSymbol15d('^VIX'),
-    fetchYahooSymbol15d('^VIX3M'),
-    fetchYahooSymbol15d('^VXN'),
-  ]);
-  if (!qqq) return null;
-  const dates = [...qqq.keys()].sort();
-  const bars = dates.map(d => ({
-    date: d,
-    qqqClose: qqq.get(d),
-    vixClose: vix?.get(d) ?? null,
-    vix3mClose: vix3m?.get(d) ?? null,
-    vxnClose: vxn?.get(d) ?? null,
-  }));
-  liveFeedCache.fetchedAt = now;
-  liveFeedCache.bars = bars;
-  return bars;
-}
-
 export async function loadCrisisObservatoryDashboardLive({
   asOf = null,
   strategy = null,
+  putOtm = null,
+  m7TpMode = null,
+  rollMode = null,
+  m0Enabled = null,
   tpMode = null,
   ccMode = null,
   spMode = null,
@@ -1540,23 +2266,41 @@ export async function loadCrisisObservatoryDashboardLive({
   snapshotId = null,
   file = defaultFile,
   fetchLiveBars = null,
+  fetchLiveM7Feed = null,
 } = {}) {
   const { data } = readArtifact(file);
   const requestedAsOf = asOf ? String(asOf).trim() : new Date().toISOString().slice(0, 10);
   if (!isIsoDate(requestedAsOf)) fail('invalid_as_of_date', 400);
 
   let extraDailyBars = null;
-  const liveEnabled = process.env.LIVE_MARKET_TAIL_ENABLED === 'true' || typeof fetchLiveBars === 'function';
+  let liveM7Feed = null;
+  const liveEnabled =
+    process.env.LIVE_MARKET_TAIL_ENABLED === 'true' ||
+    typeof fetchLiveBars === 'function' ||
+    typeof fetchLiveM7Feed === 'function';
+
   if (liveEnabled && requestedAsOf > data.as_of_date) {
     try {
-      extraDailyBars = await (fetchLiveBars ? fetchLiveBars() : getLiveRecentCrisisBars());
+      if (typeof fetchLiveM7Feed === 'function') {
+        liveM7Feed = await fetchLiveM7Feed();
+      } else if (typeof fetchLiveBars === 'function') {
+        extraDailyBars = await fetchLiveBars();
+        liveM7Feed = normalizeLegacyExtraBarsToFeed(extraDailyBars);
+      } else {
+        liveM7Feed = await getLiveM7MarketFeed();
+      }
     } catch {
       extraDailyBars = null;
+      liveM7Feed = null;
     }
   }
   return loadCrisisObservatoryDashboard({
     asOf: requestedAsOf,
     strategy,
+    putOtm,
+    m7TpMode,
+    rollMode,
+    m0Enabled,
     tpMode,
     ccMode,
     spMode,
@@ -1564,5 +2308,6 @@ export async function loadCrisisObservatoryDashboardLive({
     snapshotId,
     file,
     extraDailyBars,
+    liveM7Feed,
   });
 }

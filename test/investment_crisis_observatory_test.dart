@@ -61,36 +61,50 @@ class CrisisObservatoryFixtureApi extends ApiClient {
     final events = <Map<String, dynamic>>[];
     for (final tr in ledger) {
       final isNk = tr['tranche_type'] == 'naked_put';
-      final evType = isNk ? 'slot1_naked_put' : 'slot${tr['slot_num']}_collar';
+      final sNum = (tr['slot_num'] as num?)?.round() ?? 1;
+      final evType = isNk
+          ? (sNum == 1 ? 'slot1_naked_put' : 'slot${sNum}_naked_put')
+          : 'slot${tr['slot_num']}_collar';
       events.add({
         'event_id': '${strategyId}_tr${tr['tranche_id']}_open',
         'tranche_id': tr['tranche_id'],
         'strategy_id': strategyId,
         'date': tr['entry_date'],
         'event_type': evType,
+        'slot_num': sNum,
         'tranche_type': tr['tranche_type'],
         'spot': tr['entry_spot'],
         'kp': tr['kp'],
         'kc': tr['kc'],
+        if (tr['crisis_prob'] != null) 'crisis_prob': tr['crisis_prob'],
       });
       final exitReason = (tr['exit_reason'] ?? '').toString();
       final isOpenLive = tr['is_open_live'] == true;
-      final isLiveArmed = exitReason == 'live_tp_armed_next_open';
+      final isLiveRollArmed = exitReason == 'live_roll50_armed_next_open';
+      final isLiveArmed =
+          exitReason == 'live_tp_armed_next_open' || isLiveRollArmed;
+      final isRoll50 = exitReason == 'roll_50d';
       final evExitDate = !isOpenLive ? tr['exit_date'] : tr['mtm_date'];
       if ((!isOpenLive || isLiveArmed) && evExitDate != null) {
         final isPut5x = exitReason.contains('put_5x');
         final isItmTp = exitReason.contains('itm_tp');
         final is4xTp = exitReason.contains('4x_tp');
         final isTp = exitReason.contains('tp') && !isOpenLive;
-        final evTypeExit = isLiveArmed
-            ? 'live_tp_armed'
-            : (isPut5x
-                  ? 'put5x_dte45_tp'
-                  : (isItmTp
-                        ? 'vix110_itm_tp'
-                        : (is4xTp
-                              ? 'vix110_4x_tp'
-                              : (isTp ? 'vix110_tp' : 'option_expiry'))));
+        final evTypeExit = isLiveRollArmed
+            ? 'live_roll50_armed'
+            : (isLiveArmed
+                  ? 'live_tp_armed'
+                  : (isRoll50
+                        ? 'roll_50d'
+                        : (isPut5x
+                              ? 'put5x_dte45_tp'
+                              : (isItmTp
+                                    ? 'vix110_itm_tp'
+                                    : (is4xTp
+                                          ? 'vix110_4x_tp'
+                                          : (isTp
+                                                ? 'vix110_tp'
+                                                : 'option_expiry'))))));
         events.add({
           'event_id': '${strategyId}_tr${tr['tranche_id']}_exit',
           'tranche_id': tr['tranche_id'],
@@ -101,6 +115,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
           'spot': tr['exit_spot'],
           'kp': tr['kp'],
           'kc': tr['kc'],
+          'exit_val_usd': tr['exit_val_usd'],
           'net_pnl_usd': tr['net_pnl_usd'],
           'shares_added': tr['shares_added'],
         });
@@ -117,12 +132,25 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         uri.path == '/api/discover/crisis-observatory') {
       final raw = Map<String, dynamic>.from(artifact);
       final qp = uri.queryParameters;
-      final strat = qp['strategy'] ?? 'U1_PureOptions';
+      final strat = qp['strategy'] ?? 'M7G_Graded';
+      final putOtm = qp['putOtm'] ?? raw['default_put_otm'] ?? 'otm15';
+      final m7TpMode = qp['m7TpMode'] ?? raw['default_m7_tp_mode'] ?? 'standard';
+      final rollMode = qp['rollMode'] ?? raw['default_roll_mode'] ?? '90d_hold';
+      final m0Enabled = (qp['m0Enabled'] ?? 'true') != 'false';
       final tpMode = qp['tpMode'] ?? raw['default_tp_mode'] ?? 'layered_itm';
       final ccMode = qp['ccMode'] ?? raw['default_cc_mode'] ?? 'cc_off';
       final spMode = qp['spMode'] ?? raw['default_sp_mode'] ?? 'sp_off';
-      final defaultWc = (raw['default_wc_mode'] ?? 'wc_reclaim_30d_d35').toString();
+      final defaultWc =
+          (raw['default_wc_mode'] ?? 'wc_reclaim_30d_d35').toString();
       final wcMode = (qp['wcMode'] ?? defaultWc).toString();
+
+      final m0Tag = m0Enabled ? 'm0on' : 'm0off';
+      final m7BaseKey = '${putOtm}__${m7TpMode}__${rollMode}__$m0Tag';
+      final m7Bundles = raw['m7_bundles'] as Map<String, dynamic>?;
+      final m7Base = m7Bundles != null
+          ? m7Bundles[m7BaseKey] as Map<String, dynamic>?
+          : null;
+
       final modeBundles = raw['mode_bundles'] as Map<String, dynamic>?;
       final tpModes = raw['tp_modes'] as Map<String, dynamic>?;
       final bundleKey = spMode == 'sp_off'
@@ -141,55 +169,106 @@ class CrisisObservatoryFixtureApi extends ApiClient {
               : null);
       final bundle = rawBundle as Map<String, dynamic>?;
       final baseSeries = raw['daily_series'] as List<dynamic>;
-      final isDefault =
-          tpMode == raw['default_tp_mode'] &&
-          ccMode == raw['default_cc_mode'] &&
-          spMode == (raw['default_sp_mode'] ?? 'sp_off');
-      final projectedSeries = (bundle != null && !isDefault)
-          ? List<Map<String, dynamic>>.generate(baseSeries.length, (i) {
-              final row = Map<String, dynamic>.from(baseSeries[i] as Map);
-              row['nav_u1'] = (bundle['nav_u1'] as List)[i];
-              row['nav_b1c'] = (bundle['nav_b1c'] as List)[i];
-              row['nav_d2'] = (bundle['nav_d2'] as List)[i];
-              row['nav_h2'] = (bundle['nav_h2'] as List)[i];
-              row['nav_cc'] = (bundle['nav_cc'] as List)[i];
-              return row;
-            })
-          : baseSeries;
+      final projectedSeries = List<Map<String, dynamic>>.generate(
+        baseSeries.length,
+        (i) {
+          final row = Map<String, dynamic>.from(baseSeries[i] as Map);
+          if (m7Base != null) {
+            final navM7g = m7Base['nav_m7g'] as List?;
+            final navM7 = m7Base['nav_m7'] as List?;
+            if (navM7g != null && i < navM7g.length) row['nav_m7g'] = navM7g[i];
+            if (navM7 != null && i < navM7.length) row['nav_m7'] = navM7[i];
+          }
+          if (bundle != null) {
+            row['nav_u1'] = (bundle['nav_u1'] as List)[i];
+            row['nav_b1c'] = (bundle['nav_b1c'] as List)[i];
+            row['nav_d2'] = (bundle['nav_d2'] as List)[i];
+            row['nav_h2'] = (bundle['nav_h2'] as List)[i];
+            row['nav_cc'] = (bundle['nav_cc'] as List)[i];
+          }
+          return row;
+        },
+      );
+
       final baseWindows = (raw['crisis_windows'] as List)
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList();
       final baseWinById = {for (final w in baseWindows) w['id'].toString(): w};
-      final hydratedWindows = bundle != null && bundle['crisis_windows'] is List
-          ? (bundle['crisis_windows'] as List).map((wItem) {
-              final wMap = Map<String, dynamic>.from(wItem as Map);
-              final base = baseWinById[wMap['id']?.toString() ?? ''] ?? const {};
-              return {...base, ...wMap};
-            }).toList()
-          : baseWindows;
+      final hydratedWindows =
+          (bundle != null && bundle['crisis_windows'] is List
+                  ? (bundle['crisis_windows'] as List).map((wItem) {
+                      final wMap = Map<String, dynamic>.from(wItem as Map);
+                      final base =
+                          baseWinById[wMap['id']?.toString() ?? ''] ?? const {};
+                      return {...base, ...wMap};
+                    }).toList()
+                  : baseWindows)
+              .map((wMap) {
+                final id = wMap['id']?.toString() ?? '';
+                final byStrat = Map<String, dynamic>.from(
+                  (wMap['strategy_stats'] as Map?) ?? const {},
+                );
+                if (m7Base != null && m7Base['window_stats'] is Map) {
+                  final ws = m7Base['window_stats'] as Map;
+                  for (final m7Sid in ['M7G_Graded', 'M7_Ensemble']) {
+                    final sidWs = ws[m7Sid];
+                    if (sidWs is Map && sidWs[id] is Map) {
+                      byStrat[m7Sid] = Map<String, dynamic>.from(
+                        sidWs[id] as Map,
+                      );
+                    }
+                  }
+                }
+                return {...wMap, 'strategy_stats': byStrat};
+              })
+              .toList();
 
-      final tradeLedgers = bundle != null
+      final legacyTradeLedgers = bundle != null
           ? _unpackLedgerMap(bundle['trade_ledgers_by_strategy'])
           : _unpackLedgerMap(raw['trade_ledgers_by_strategy']);
+      final m7TradeLedgers = m7Base != null
+          ? _unpackLedgerMap(m7Base['ledgers'])
+          : const <String, List<Map<String, dynamic>>>{};
+      final tradeLedgers = {
+        ...legacyTradeLedgers,
+        ...m7TradeLedgers,
+      };
       final ccLedgers = bundle != null
           ? _unpackLedgerMap(bundle['cc_ledgers_by_strategy'])
           : _unpackLedgerMap(raw['cc_ledgers_by_strategy']);
       final spLedgers = bundle != null
           ? _unpackLedgerMap(bundle['sp_ledgers_by_strategy'])
           : _unpackLedgerMap(raw['sp_ledgers_by_strategy']);
-      final eventsByStrat = bundle != null && bundle['events_by_strategy'] is Map
-          ? bundle['events_by_strategy']
-          : {
-              for (final e in tradeLedgers.entries)
-                e.key: _synthesizeEvents(e.key, e.value),
-            };
+
+      final eventsByStrat = <String, dynamic>{};
+      for (final e in tradeLedgers.entries) {
+        if ((e.key == 'M7G_Graded' || e.key == 'M7_Ensemble') &&
+            m7Base != null &&
+            m7Base['events'] is Map &&
+            (m7Base['events'] as Map)[e.key] is List) {
+          eventsByStrat[e.key] = (m7Base['events'] as Map)[e.key];
+        } else if (bundle != null &&
+            bundle['events_by_strategy'] is Map &&
+            (bundle['events_by_strategy'] as Map)[e.key] is List) {
+          eventsByStrat[e.key] = (bundle['events_by_strategy'] as Map)[e.key];
+        } else {
+          eventsByStrat[e.key] = _synthesizeEvents(e.key, e.value);
+        }
+      }
       final ledgerStrat = strat == 'BH_Pure_QQQ' ? 'U1_PureOptions' : strat;
 
-      Map<String, dynamic>? resolveBundle(String tp, String cc, String sp, String wc) {
+      Map<String, dynamic>? resolveBundle(
+        String tp,
+        String cc,
+        String sp,
+        String wc,
+      ) {
         if (modeBundles == null) return null;
         final key = sp == 'sp_off'
             ? '${tp}__$cc'
-            : (wc == defaultWc ? '${tp}__${cc}__$sp' : '${tp}__${cc}__${sp}__$wc');
+            : (wc == defaultWc
+                  ? '${tp}__${cc}__$sp'
+                  : '${tp}__${cc}__${sp}__$wc');
         final b =
             modeBundles[key] ??
             modeBundles['${tp}__${cc}__${sp}__$wc'] ??
@@ -198,11 +277,22 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       }
 
       Map<String, Map<String, dynamic>> summaryById(Map<String, dynamic>? b) {
-        final rawList = (b?['strategies_summary'] ?? raw['strategies_summary']) as List<dynamic>;
-        return {
+        final rawList =
+            (b?['strategies_summary'] ?? raw['strategies_summary'])
+                as List<dynamic>;
+        final baseMap = {
           for (final item in rawList)
             (item as Map)['id'].toString(): Map<String, dynamic>.from(item),
         };
+        if (m7Base != null && m7Base['summaries'] is Map) {
+          final m7Sums = m7Base['summaries'] as Map;
+          for (final sid in ['M7G_Graded', 'M7_Ensemble']) {
+            if (m7Sums[sid] is Map) {
+              baseMap[sid] = Map<String, dynamic>.from(m7Sums[sid] as Map);
+            }
+          }
+        }
+        return baseMap;
       }
 
       final m1 = summaryById(resolveBundle(tpMode, 'cc_off', 'sp_off', defaultWc));
@@ -218,6 +308,8 @@ class CrisisObservatoryFixtureApi extends ApiClient {
 
       final engineAttrByStrat = <String, dynamic>{};
       for (final sid in [
+        'M7G_Graded',
+        'M7_Ensemble',
         'U1_PureOptions',
         'B1c_PureAD',
         'D2_SixLights',
@@ -225,6 +317,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         'NoPut_CallOnly',
         'BH_Pure_QQQ',
       ]) {
+        final isM7Strat = sid == 'M7G_Graded' || sid == 'M7_Ensemble';
         final hasE1 = sid != 'NoPut_CallOnly' && sid != 'BH_Pure_QQQ';
         final hasE2 = ccMode != 'cc_off' && sid != 'BH_Pure_QQQ';
         final hasE3 = spMode != 'sp_off' && sid != 'BH_Pure_QQQ';
@@ -235,30 +328,42 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         final s3Solo = hasE3 ? (m3Solo['NoPut_CallOnly'] ?? sBh) : sBh;
         double nVal(Map<String, dynamic> m, String k) =>
             (m[k] as num?)?.toDouble() ?? 0.0;
+        final effBhNav = isM7Strat && s3['bh_parity_end_nav'] is num
+            ? nVal(s3, 'bh_parity_end_nav')
+            : bhNav;
+        final effBhSh = isM7Strat && s3['bh_final_shares'] is num
+            ? nVal(s3, 'bh_final_shares')
+            : bhSh;
         final totNav = nVal(s3, 'end_nav');
-        final totAlpha = totNav - bhNav;
-        final d1Usd = hasE1 ? nVal(s1, 'end_nav') - bhNav : 0.0;
+        final totAlpha = totNav - effBhNav;
+        final d1Usd = hasE1 ? nVal(s1, 'end_nav') - effBhNav : 0.0;
         final d2Usd = hasE2 ? nVal(s2, 'end_nav') - nVal(s1, 'end_nav') : 0.0;
         final d3Usd = hasE3 ? totNav - nVal(s2, 'end_nav') : 0.0;
-        final d1Sh = hasE1 ? nVal(s1, 'final_shares') - bhSh : 0.0;
-        final d2Sh = hasE2 ? nVal(s2, 'final_shares') - nVal(s1, 'final_shares') : 0.0;
-        final d3Sh = hasE3 ? nVal(s3, 'final_shares') - nVal(s2, 'final_shares') : 0.0;
-        double shPct(double d) => totAlpha.abs() > 1e-6 ? (d / totAlpha) * 100.0 : 0.0;
-        double exPct(double sh) => bhSh > 0 ? (sh / bhSh) * 100.0 : 0.0;
+        final d1Sh = hasE1 ? nVal(s1, 'final_shares') - effBhSh : 0.0;
+        final d2Sh = hasE2
+            ? nVal(s2, 'final_shares') - nVal(s1, 'final_shares')
+            : 0.0;
+        final d3Sh = hasE3
+            ? nVal(s3, 'final_shares') - nVal(s2, 'final_shares')
+            : 0.0;
+        double shPct(double d) =>
+            totAlpha.abs() > 1e-6 ? (d / totAlpha) * 100.0 : 0.0;
+        double exPct(double sh) => effBhSh > 0 ? (sh / effBhSh) * 100.0 : 0.0;
         final curS = mCur[sid] ?? s3;
         final e1Meta = m1[sid] ?? curS;
         engineAttrByStrat[sid] = {
           'strategy_id': sid,
-          'base_end_nav': bhNav,
-          'base_shares': bhSh,
+          'base_end_nav': effBhNav,
+          'base_shares': effBhSh,
           'base_cagr_pct': bhCagr,
           'base_max_dd_pct': bhMdd,
           'base_calmar': bhCal,
           'total_end_nav': totNav,
           'total_alpha_usd': totAlpha,
-          'total_extra_shares': nVal(s3, 'final_shares') - bhSh,
-          'total_extra_shares_pct': exPct(nVal(s3, 'final_shares') - bhSh),
-          'active_engines_count': (hasE1 ? 1 : 0) + (hasE2 ? 1 : 0) + (hasE3 ? 1 : 0),
+          'total_extra_shares': nVal(s3, 'final_shares') - effBhSh,
+          'total_extra_shares_pct': exPct(nVal(s3, 'final_shares') - effBhSh),
+          'active_engines_count':
+              (hasE1 ? 1 : 0) + (hasE2 ? 1 : 0) + (hasE3 ? 1 : 0),
           'correlations': {
             'e1_e2': hasE1 && hasE2 ? 0.216 : null,
             'e1_e3': hasE1 && hasE3 ? -0.098 : null,
@@ -283,13 +388,17 @@ class CrisisObservatoryFixtureApi extends ApiClient {
           'engine2': {
             'active': hasE2,
             'delta_usd': d2Usd,
-            'standalone_alpha_usd': hasE2 ? nVal(s2Solo, 'end_nav') - bhNav : 0.0,
+            'standalone_alpha_usd':
+                hasE2 ? nVal(s2Solo, 'end_nav') - bhNav : 0.0,
             'share_of_alpha_pct': hasE2 ? shPct(d2Usd) : 0.0,
             'delta_shares': d2Sh,
             'delta_extra_pct': exPct(d2Sh),
-            'delta_cagr_pp': hasE2 ? nVal(s2, 'cagr_pct') - nVal(s1, 'cagr_pct') : 0.0,
-            'delta_mdd_pp': hasE2 ? nVal(s2, 'max_dd_pct') - nVal(s1, 'max_dd_pct') : 0.0,
-            'delta_calmar': hasE2 ? nVal(s2, 'calmar') - nVal(s1, 'calmar') : 0.0,
+            'delta_cagr_pp':
+                hasE2 ? nVal(s2, 'cagr_pct') - nVal(s1, 'cagr_pct') : 0.0,
+            'delta_mdd_pp':
+                hasE2 ? nVal(s2, 'max_dd_pct') - nVal(s1, 'max_dd_pct') : 0.0,
+            'delta_calmar':
+                hasE2 ? nVal(s2, 'calmar') - nVal(s1, 'calmar') : 0.0,
             'trades_count': nVal(curS, 'cc_trades_count'),
             'active_years': nVal(curS, 'cc_active_years'),
             'stop_count': nVal(curS, 'cc_stop_count'),
@@ -302,19 +411,25 @@ class CrisisObservatoryFixtureApi extends ApiClient {
           'engine3': {
             'active': hasE3,
             'delta_usd': d3Usd,
-            'standalone_alpha_usd': hasE3 ? nVal(s3Solo, 'end_nav') - bhNav : 0.0,
+            'standalone_alpha_usd':
+                hasE3 ? nVal(s3Solo, 'end_nav') - bhNav : 0.0,
             'share_of_alpha_pct': hasE3 ? shPct(d3Usd) : 0.0,
             'delta_shares': d3Sh,
             'delta_extra_pct': exPct(d3Sh),
-            'delta_cagr_pp': hasE3 ? nVal(s3, 'cagr_pct') - nVal(s2, 'cagr_pct') : 0.0,
-            'delta_mdd_pp': hasE3 ? nVal(s3, 'max_dd_pct') - nVal(s2, 'max_dd_pct') : 0.0,
-            'delta_calmar': hasE3 ? nVal(s3, 'calmar') - nVal(s2, 'calmar') : 0.0,
+            'delta_cagr_pp':
+                hasE3 ? nVal(s3, 'cagr_pct') - nVal(s2, 'cagr_pct') : 0.0,
+            'delta_mdd_pp':
+                hasE3 ? nVal(s3, 'max_dd_pct') - nVal(s2, 'max_dd_pct') : 0.0,
+            'delta_calmar':
+                hasE3 ? nVal(s3, 'calmar') - nVal(s2, 'calmar') : 0.0,
             'sp_trades_count': nVal(curS, 'sp_trades_count'),
             'sp_win_rate_pct': nVal(curS, 'sp_win_rate_pct'),
             'sp_assignments_count': nVal(curS, 'sp_assignments_count'),
             'wc_trades_count': nVal(curS, 'wc_trades_count'),
             'wc_called_away_count': nVal(curS, 'wc_called_away_count'),
-            'gross_prem_usd': nVal(curS, 'sp_gross_prem_usd') + nVal(curS, 'wc_gross_prem_usd'),
+            'gross_prem_usd':
+                nVal(curS, 'sp_gross_prem_usd') +
+                nVal(curS, 'wc_gross_prem_usd'),
             'margin_interest_usd': nVal(curS, 'margin_interest_usd'),
             'days_levered_stock': nVal(curS, 'days_levered_stock'),
             'max_wheel_cycle_days': nVal(curS, 'max_wheel_cycle_days'),
@@ -323,31 +438,61 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         };
       }
 
+      final legacySummaries =
+          ((bundle?['strategies_summary'] ?? raw['strategies_summary']) as List)
+              .where((s) {
+                final id = (s as Map)['id']?.toString() ?? '';
+                return id != 'M7G_Graded' && id != 'M7_Ensemble';
+              })
+              .toList();
+      final m7Sums = m7Base?['summaries'] as Map?;
+      final mergedSummaries = <dynamic>[
+        if (m7Sums?['M7G_Graded'] != null) m7Sums!['M7G_Graded'],
+        if (m7Sums?['M7_Ensemble'] != null) m7Sums!['M7_Ensemble'],
+        ...legacySummaries,
+      ];
+
+      final m7LiveDashByStrat =
+          (m7Base?['m7_live_dashboards'] as Map<String, dynamic>?) ??
+          (raw['m7_live_dashboards_by_strategy'] as Map<String, dynamic>?) ??
+          const <String, dynamic>{};
+      final activeM7Dash = strat == 'M7_Ensemble'
+          ? (m7LiveDashByStrat['M7_Ensemble'] ?? raw['m7_live_dashboard'])
+          : (m7LiveDashByStrat['M7G_Graded'] ?? raw['m7_live_dashboard']);
+
       final out = Map<String, dynamic>.from(raw)
         ..remove('tp_modes')
-        ..remove('mode_bundles');
+        ..remove('mode_bundles')
+        ..remove('m7_bundles');
       return {
         ...out,
         if (bundle != null) ...{
           'live_signal_state': bundle['live_signal_state'],
-          'live_signal_states_by_strategy': bundle['live_signal_states_by_strategy'],
+          'live_signal_states_by_strategy':
+              bundle['live_signal_states_by_strategy'],
           'live_sp_state': bundle['live_sp_state'],
           'live_sp_states_by_strategy': bundle['live_sp_states_by_strategy'],
-          'strategies_summary': bundle['strategies_summary'],
-          'events_by_strategy': eventsByStrat,
-          'trade_ledgers_by_strategy': tradeLedgers,
-          'cc_ledgers_by_strategy': ccLedgers,
-          'sp_ledgers_by_strategy': spLedgers,
-          'sp_ledger': spLedgers[ledgerStrat] ?? const <dynamic>[],
-          'crisis_windows': hydratedWindows,
-          'daily_series': projectedSeries,
         },
+        'm7_live_dashboard': activeM7Dash,
+        'm7_live_dashboards_by_strategy': m7LiveDashByStrat,
+        'strategies_summary': mergedSummaries,
+        'events_by_strategy': eventsByStrat,
+        'trade_ledgers_by_strategy': tradeLedgers,
+        'cc_ledgers_by_strategy': ccLedgers,
+        'sp_ledgers_by_strategy': spLedgers,
+        'sp_ledger': spLedgers[ledgerStrat] ?? const <dynamic>[],
+        'crisis_windows': hydratedWindows,
+        'daily_series': projectedSeries,
         'engine_attribution_by_strategy': engineAttrByStrat,
+        'put_otm': putOtm,
+        'm7_tp_mode': m7TpMode,
+        'roll_mode': rollMode,
+        'm0_enabled': m0Enabled,
         'tp_mode': tpMode,
         'cc_mode': ccMode,
         'sp_mode': spMode,
         'wc_mode': spMode == 'sp_off' ? defaultWc : wcMode,
-        'snapshotId': 'fixture-crisis-v3-three-engine',
+        'snapshotId': 'fixture-crisis-v4-m7-graded',
         'requestedAsOf': qp['asOf'] ?? raw['as_of_date'],
         'selected_strategy_id': strat,
         'liveExtended': false,
@@ -370,7 +515,7 @@ Future<void> tapVisible(WidgetTester tester, Finder finder) async {
 
 void main() {
   testWidgets(
-    'Discover renders minimalist Crisis Observatory via ?discoverTab=crisis_observatory with plain human copy, 6 signals, interactive chart hover & expandable timeline',
+    'Discover renders M7-Graded Three-Pillar Crisis Observatory + 120D->50D Roll selector + interactive QQQ sizing + full 3-Engine compatibility',
     (tester) async {
       tester.view.physicalSize = const Size(1440, 1200);
       tester.view.devicePixelRatio = 1.0;
@@ -415,275 +560,176 @@ void main() {
       expect(find.textContaining('B1c_PureAD'), findsNothing);
       expect(find.textContaining('MONETIZED_STANDBY'), findsNothing);
       expect(find.textContaining('T-Bill'), findsNothing);
+      expect(find.textContaining('FactOS'), findsNothing);
 
-      // 1. Clean Verdict Header + 3-column pure-options hairline strip + expandable rules
+      // 1. Default flagship = M7G_Graded (otm15 + 90d_hold + standard + M0 ON)
       expect(
         find.byKey(const ValueKey('crisis-observatory-command-center')),
         findsOneWidget,
       );
       expect(
-        find.text('Deep-ITM Panic Harvest Armed · Monetize Put Next Open (6/6 Lights)'),
+        find.byKey(const ValueKey('crisis-m7-prob-card')),
         findsOneWidget,
       );
-      expect(find.byKey(const ValueKey('crisis-slot-card-core')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-slot-card-slot1')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-slot-card-slot2')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-sp-live-badge')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-sp-mode-bar')), findsOneWidget);
-      // Wheel Call selector stays hidden when Engine 3 is OFF
-      expect(find.byKey(const ValueKey('crisis-wc-mode-bar')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('crisis-m7-slots-card')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-m7-redline-card')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-m7-tp-card')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-m7-sizing-calculator')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-observatory-three-pillars')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('crisis-m7-pillar-P1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-m7-pillar-P2')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-m7-pillar-P3')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crisis-m0-toggle')), findsOneWidget);
 
-      await tapVisible(tester, find.byKey(const ValueKey('crisis-rules-toggle')));
-      expect(find.textContaining('Execution rules:'), findsOneWidget);
+      // Penny-exact M7G_Graded default metrics ($1,682,250 · +$404,543 · 2,764.8 sh · +31.7% · -28.0% MDD · Calmar 0.701)
+      expect(find.text('\$1,682,250'), findsOneWidget);
+      expect(find.text('+\$404,543'), findsWidgets);
+      expect(find.text('2,764.8 sh'), findsOneWidget);
+      expect(find.textContaining('+31.7%'), findsWidgets);
+      expect(find.text('-28.0%'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.701'), findsWidgets);
 
-      // 2. Minimalist Six Crisis Signals flat grid + AD Line footer
-      expect(find.text('6 / 6 Active'), findsOneWidget);
+      // Interactive QQQ Shares calculator updates per-slot budget live
+      final sharesField = find.byKey(const ValueKey('crisis-qqq-shares-input'));
+      await tester.ensureVisible(sharesField);
+      await tester.enterText(sharesField, '5000');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('ctr (90D K=\$'), findsOneWidget);
+
+      // Expand & collapse classic Six Crisis Lights reference panel
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-classic-lights-toggle')),
+      );
       expect(
         find.byKey(const ValueKey('crisis-light-card-sig1_fed')),
         findsOneWidget,
       );
-      expect(
-        find.byKey(const ValueKey('crisis-light-card-sig4_copper')),
-        findsOneWidget,
+
+      // Switch Tenor/Roll to 120D -> 50D Roll (120d_roll50 -> $1,625,935 · -28.4% MDD · 50D Roll / Salvage legend)
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-roll-pill-120d_roll50')),
       );
-      expect(
-        find.byKey(const ValueKey('crisis-observatory-ad-banner')),
-        findsOneWidget,
+      expect(find.text('\$1,625,935'), findsOneWidget);
+      expect(find.text('-28.4%'), findsOneWidget);
+      expect(find.text('50D Roll / Salvage'), findsOneWidget);
+
+      // Switch Strike to -20% OTM while on 120d_roll50 ($1,823,635)
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-otm-pill-otm20')),
+      );
+      expect(find.text('\$1,823,635'), findsOneWidget);
+
+      // Switch back to 90d_hold while on -20% OTM ($1,856,309 · +45.3% · Calmar 0.737)
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
+      );
+      expect(find.text('\$1,856,309'), findsOneWidget);
+      expect(find.textContaining('+45.3%'), findsWidgets);
+
+      // Switch back to -15% OTM and test ITM_TP ($1,523,801 · -24.4% MDD · Calmar 0.763)
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-otm-pill-otm15')),
+      );
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-m7-tp-pill-itm_tp')),
+      );
+      expect(find.text('\$1,523,801'), findsOneWidget);
+      expect(find.text('-24.4%'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.763'), findsWidgets);
+
+      // Restore standard TP and verify M7_Ensemble ($1,676,747) + M0 switch
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-m7-tp-pill-standard')),
+      );
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-strategy-pill-M7_Ensemble')),
+      );
+      expect(find.text('\$1,676,747'), findsOneWidget);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-m0-toggle')),
+      );
+      expect(find.text('M0: OFF (Pure 5-Mod)'), findsOneWidget);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-m0-toggle')),
       );
 
-      // 3. Hero Interactive Chart: exact U1 Layered ITM TP metrics + total shares & extra % + selectable TP & CC bars
+      // 2. Switch to Legacy U1_PureOptions and verify 100% compatibility with all 3 Orthogonal Engines
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-strategy-pill-U1_PureOptions')),
+      );
+      expect(
+        find.text(
+          'Deep-ITM Panic Harvest Armed · Monetize Put Next Open (6/6 Lights)',
+        ),
+        findsOneWidget,
+      );
       expect(find.text('\$1,654,577'), findsOneWidget);
       expect(find.text('+\$366,272'), findsOneWidget);
       expect(find.text('2,719.3 sh'), findsOneWidget);
-      expect(find.textContaining('+28.4%'), findsWidgets);
-      expect(find.text('-31.5%'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('crisis-tp-mode-bar')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('crisis-cc-mode-bar')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('crisis-observatory-canvas')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('crisis-tp-mode-bar')), findsOneWidget);
 
-      // Switch selectable 4-way Normal-Time 25D 12Δ Covered Call modes live: Δ0.35 Stop -> Δ0.45 Roll -> Δ0.55 Credit Roll -> NoPut Call-Only -> Off
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-cc-mode-pill-cc_d12_d35')),
       );
       expect(find.text('\$1,714,947'), findsOneWidget);
-      expect(find.text('2,818.6 sh'), findsOneWidget);
-      expect(find.textContaining('+33.1%'), findsWidgets);
-      expect(find.text('Sell Call (▲ Up)'), findsOneWidget);
-      expect(find.text('Call Δ0.35 Stop'), findsOneWidget);
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-cc-ledger-toggle')),
-      );
-      expect(find.textContaining('Sold K='), findsWidgets);
 
-      // Switch 3rd Engine (Panic Put Wheel) presets on Dual (U1 + layered_itm + cc_d12_d35):
-      // Default Wheel Call is now Reclaim K -> 30D 0.35Δ (wc_reclaim_30d_d35):
-      // - 14D 10% Cap + wc_reclaim_30d_d35 ($1,805,856 · Calmar 0.657 · $3,842.41 · Holding Uncapped until QQQ >= $625.43)
-      // - Compare toggle to Immediate 30D +5% (wc_30d_c5s5 -> $1,819,738 · Calmar 0.685 · $1,481.18 · K >= $656.70)
-      // - Compare toggle to Legacy 14D Breakeven+2% (wc_14d_c0s2 -> $1,779,823 · Calmar 0.677 · $816.85 · K >= $625.43)
-      // - Switch back to wc_reclaim_30d_d35 -> 10D VIX Falling ($1,838,505 · $1,250.65) -> 14D Unfiltered ($1,901,035 · +47.6%) -> Off
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_cap10')),
       );
       expect(find.byKey(const ValueKey('crisis-wc-mode-bar')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-three-engine-grid')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-engine-card-e1')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-engine-card-e2')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-engine-card-e3')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-engine-attribution-panel')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-engine-alpha-bar')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-attr-card-e1')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-attr-card-e2')), findsOneWidget);
-      expect(find.byKey(const ValueKey('crisis-attr-card-e3')), findsOneWidget);
-      expect(find.textContaining('70.8%'), findsWidgets);
-      expect(find.textContaining('11.7%'), findsWidgets);
-      expect(find.textContaining('17.6%'), findsWidgets);
-      expect(find.textContaining('Delta +\$366,272'), findsOneWidget);
-      expect(find.textContaining('Delta +\$60,370'), findsOneWidget);
-      expect(find.textContaining('Delta +\$90,909'), findsOneWidget);
-      // Verify collapse & re-expand of independent 3-engine attribution cards
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-engine-attribution-toggle')),
-      );
-      expect(find.byKey(const ValueKey('crisis-attr-card-e1')), findsNothing);
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-engine-attribution-toggle')),
-      );
-      expect(find.byKey(const ValueKey('crisis-attr-card-e1')), findsOneWidget);
-      expect(find.text('Reclaim K -> 30D 0.35Δ (Rec.)'), findsOneWidget);
-      expect(find.text('30D +5% Cost/Spot (Immediate)'), findsOneWidget);
-      expect(find.text('14D Breakeven+2% (Legacy)'), findsOneWidget);
       expect(find.text('\$1,805,856'), findsOneWidget);
       expect(find.textContaining('Calmar 0.657'), findsWidgets);
-      expect(find.textContaining('\$3,842.41'), findsWidgets);
-      expect(find.textContaining('Holding Uncapped until QQQ >= \$625.43'), findsOneWidget);
-      expect(find.text('Sell Panic Put'), findsOneWidget);
-      expect(find.text('Wheel Assigned'), findsOneWidget);
-      expect(find.text('Wheel Call Exit'), findsOneWidget);
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-sp-ledger-toggle')),
-      );
-      expect(find.text('Wheel Call'), findsWidgets);
 
-      // Toggle Wheel Call comparison across all 3 modes: Immediate 30D +5% -> Legacy 14D BE+2% -> back to Reclaim 30D 0.35Δ
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-wc-mode-pill-wc_30d_c5s5')),
       );
       expect(find.text('\$1,819,738'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.685'), findsWidgets);
-      expect(find.textContaining('\$1,481.18'), findsWidgets);
-      expect(find.textContaining('K >= \$656.70'), findsOneWidget);
-
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-wc-mode-pill-wc_14d_c0s2')),
       );
       expect(find.text('\$1,779,823'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.677'), findsWidgets);
-      expect(find.textContaining('\$816.85'), findsWidgets);
-      expect(find.textContaining('K >= \$625.43'), findsOneWidget);
-
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-wc-mode-pill-wc_reclaim_30d_d35')),
-      );
-      expect(find.text('\$1,805,856'), findsOneWidget);
-
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-sp-mode-pill-sp_10d_vixf')),
-      );
-      expect(find.text('\$1,838,505'), findsOneWidget);
-      expect(find.textContaining('\$1,250.65'), findsWidgets);
-
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_unf')),
-      );
-      expect(find.text('\$1,901,035'), findsOneWidget);
-      expect(find.textContaining('+47.6%'), findsWidgets);
-
-      // Verify Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_14d_unf -> $1,427,923 on wc_reclaim_30d_d35, $1,449,832 on wc_30d_c5s5, $1,387,278 on wc_14d_c0s2)
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_off')),
-      );
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-strategy-pill-NoPut_CallOnly')),
-      );
-      expect(find.text('\$1,427,923'), findsOneWidget);
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-wc-mode-pill-wc_30d_c5s5')),
-      );
-      expect(find.text('\$1,449,832'), findsOneWidget);
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-wc-mode-pill-wc_14d_c0s2')),
-      );
-      expect(find.text('\$1,387,278'), findsOneWidget);
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-wc-mode-pill-wc_reclaim_30d_d35')),
-      );
-
-      // Restore U1 + cc_d12_d35 + sp_off so existing 2D assertions proceed unchanged
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-strategy-pill-U1_PureOptions')),
-      );
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_d12_d35')),
       );
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-sp-mode-pill-sp_off')),
       );
-      expect(find.byKey(const ValueKey('crisis-wc-mode-bar')), findsNothing);
-      expect(find.text('\$1,714,947'), findsOneWidget);
-
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_d12_r45')),
-      );
-      expect(find.text('\$1,704,612'), findsOneWidget);
-      expect(find.text('2,801.6 sh'), findsOneWidget);
-      expect(find.textContaining('+32.3%'), findsWidgets);
-      expect(find.text('Call Roll Up'), findsOneWidget);
-
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_d12_cr55')),
-      );
-      expect(find.text('\$1,688,797'), findsOneWidget);
-      expect(find.text('2,775.6 sh'), findsOneWidget);
-      expect(find.textContaining('+31.1%'), findsWidgets);
-
-      // Switch Put Strategy to NoPut_CallOnly (Call-only comparison) and back to U1
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-strategy-pill-NoPut_CallOnly')),
-      );
-      expect(find.text('\$1,327,646'), findsOneWidget);
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-strategy-pill-U1_PureOptions')),
-      );
-
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-cc-mode-pill-cc_off')),
       );
-      expect(find.text('\$1,654,577'), findsOneWidget);
-
-      // Switch selectable Take-Profit modes live: Standard 1.10 -> Deep 4x Both -> back to Layered ITM
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-tp-mode-pill-standard_dual')),
-      );
-      expect(find.text('\$1,625,378'), findsOneWidget);
-      expect(find.text('+\$337,073'), findsOneWidget);
-      expect(
-        find.text('100% Hold QQQ · Call Caps Paused in Pullback (6/6 Lights)'),
-        findsOneWidget,
-      );
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-tp-mode-pill-both_4x')),
-      );
-      expect(find.text('\$1,643,123'), findsOneWidget);
-      expect(find.text('+\$354,818'), findsOneWidget);
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-tp-mode-pill-layered_itm')),
-      );
-      expect(find.text('\$1,654,577'), findsOneWidget);
-
-      // Zoom into 2022 Slow Bear and verify Track-2 5x Slow-Bear Harvest (+$37,675 / -31.5% MDD)
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-zoom-pill-2022')),
-      );
-      expect(find.text('2022 Rate-Hike Grinding Bear Market'), findsWidgets);
-      expect(find.textContaining('5x Slow-Bear Harvest'), findsWidgets);
-      expect(find.textContaining('+\$37,675'), findsWidgets);
 
       // Zoom into 2025 April Tariff Crash and hover 2025-04-07 1.10 Panic Harvest
       await tapVisible(
@@ -692,7 +738,9 @@ void main() {
       );
       expect(find.text('2025 April Tariff Crash'), findsWidgets);
 
-      final canvasFinder = find.byKey(const ValueKey('crisis-observatory-canvas'));
+      final canvasFinder = find.byKey(
+        const ValueKey('crisis-observatory-canvas'),
+      );
       await tester.ensureVisible(canvasFinder);
       await tester.pumpAndSettle();
       final canvasRect = tester.getRect(canvasFinder);
@@ -720,71 +768,19 @@ void main() {
       expect(
         find.descendant(
           of: tooltipFinder,
-          matching: find.textContaining('◆ 1.10 Panic Harvest'),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(
-          of: tooltipFinder,
-          matching: find.textContaining('+\$76,719'),
+          matching: find.textContaining('M7 Crisis Prob:'),
         ),
         findsOneWidget,
       );
 
       await gesture.moveTo(Offset.zero);
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('crisis-chart-hover-tooltip')),
-        findsNothing,
-      );
-
-      // Reset zoom to All 12Y and switch strategy tab to Breadth Divergence (B1c)
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-zoom-reset-btn')),
-      );
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-strategy-pill-B1c_PureAD')),
-      );
-      expect(find.text('\$1,587,801'), findsOneWidget);
-      expect(find.text('+\$299,496'), findsOneWidget);
-
-      // 4. Zoom into 2026 LIVE and expand a tranche row for 4-factor convexity
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-strategy-pill-U1_PureOptions')),
-      );
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-zoom-pill-2026-08_11_LIVE')),
-      );
-      expect(
-        find.byKey(const ValueKey('crisis-tranche-row-34')),
-        findsOneWidget,
-      );
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-tranche-row-34')),
-      );
-      expect(find.textContaining('Vega'), findsWidgets);
-
-      // Toggle full 12-year chronological ledger
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-ledger-scope-toggle')),
-      );
-      expect(
-        find.textContaining('All 12-Year Historical Operations'),
-        findsOneWidget,
-      );
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'Crisis Observatory renders calm localized Chinese UI cleanly on both Desktop (1440x1200) and Mobile (390x844) without overflow',
+    'Crisis Observatory renders calm localized Chinese M7-Graded UI cleanly on both Desktop (1440x1200) and Mobile (390x844) without overflow',
     (tester) async {
       final api = CrisisObservatoryFixtureApi();
 
@@ -814,64 +810,28 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(
-          find.text('深跌实值恐慌触发 · 期权次日开盘止盈换股（6/6 亮灯）'),
+          find.text('三支柱概率分层监控矩阵（M7-Graded · 六大子模块）'),
           findsOneWidget,
         );
-        expect(find.text('危机 Put 策略：'), findsOneWidget);
-        expect(find.text('不买 Put（仅卖 Call）'), findsOneWidget);
-        expect(find.text('Put 止盈规则：'), findsOneWidget);
-        expect(find.text('叠加平时卖 Call：'), findsOneWidget);
-        expect(find.text('恐慌卖 Put Wheel：'), findsOneWidget);
-        expect(find.text('14D 10%帽（Calmar冠军 · 推荐）'), findsOneWidget);
-        expect(find.text('10D VIX回落（20%帽）'), findsOneWidget);
-        expect(find.text('14D 无过滤（20%帽 · 收益冠军）'), findsOneWidget);
-        expect(find.text('分层实值（推荐）'), findsOneWidget);
-        expect(find.text('标准 1.10'), findsOneWidget);
-        expect(find.text('两槽 4x 深度'), findsOneWidget);
-        expect(find.text('全天候 12Δ · Delta 0.35 止损（推荐 · 0穿最稳）'), findsOneWidget);
-        expect(find.text('全天候 12Δ · Delta 0.45 展期 Roll（30D 上移）'), findsOneWidget);
-        expect(find.text('全天候 12Δ · Delta 0.55 零成本 Roll（45D）'), findsOneWidget);
-        expect(find.byKey(const ValueKey('crisis-active-combo-badge')), findsOneWidget);
-        expect(find.text('6 / 6 亮灯'), findsOneWidget);
+        expect(find.textContaining('单槽等金额预算：'), findsOneWidget);
+        expect(find.text('90D 持有到期（默认）'), findsOneWidget);
+        expect(find.text('120D 建仓 · 50D 剩余滚仓'), findsOneWidget);
+        expect(find.text('-15% OTM（默认）'), findsOneWidget);
+        expect(find.text('-20% OTM（高凸性）'), findsOneWidget);
         expect(find.text('历史保护策略 vs 死拿 QQQ'), findsOneWidget);
-        expect(find.text('100% 满仓 QQQ · 2,719.3 股'), findsOneWidget);
-        expect(find.text('总股数 · 多买比例'), findsOneWidget);
-        expect(find.textContaining('+28.4%'), findsWidgets);
+        expect(find.textContaining('+31.7%'), findsWidgets);
         expect(find.textContaining('短债'), findsNothing);
 
-        // Activate 14D 10% Cap on Chinese Desktop & Mobile (390x844), toggle all 3 Wheel Call modes, and expand Wheel Ledger to verify zero overflow
+        // Toggle 120D -> 50D Roll on Chinese Desktop & Mobile (390x844) and verify zero overflow
         await tapVisible(
           tester,
-          find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_cap10')),
+          find.byKey(const ValueKey('crisis-roll-pill-120d_roll50')),
         );
-        expect(find.text('涨回接货价卖 30D 0.35Δ（推荐）'), findsOneWidget);
-        expect(find.text('30D 双+5%（立即卖）'), findsOneWidget);
-        expect(find.text('14D 保本+2%（原基准）'), findsOneWidget);
-        expect(find.textContaining('已接货进 Wheel'), findsOneWidget);
-        expect(find.textContaining('水下暂不卖 Call，等涨回 >= \$625.43'), findsOneWidget);
-        await tapVisible(
-          tester,
-          find.byKey(const ValueKey('crisis-wc-mode-pill-wc_30d_c5s5')),
-        );
-        expect(find.textContaining('K >= \$656.70'), findsOneWidget);
-        await tapVisible(
-          tester,
-          find.byKey(const ValueKey('crisis-wc-mode-pill-wc_14d_c0s2')),
-        );
-        expect(find.textContaining('K >= \$625.43'), findsOneWidget);
-        await tapVisible(
-          tester,
-          find.byKey(const ValueKey('crisis-wc-mode-pill-wc_reclaim_30d_d35')),
-        );
-        await tapVisible(
-          tester,
-          find.byKey(const ValueKey('crisis-sp-ledger-toggle')),
-        );
-        expect(find.textContaining('恐慌卖 Put Wheel 实战明细'), findsOneWidget);
+        expect(find.text('50D 残值滚仓'), findsOneWidget);
         expect(tester.takeException(), isNull);
         await tapVisible(
           tester,
-          find.byKey(const ValueKey('crisis-sp-mode-pill-sp_off')),
+          find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
         );
       }
 
@@ -881,7 +841,7 @@ void main() {
   );
 
   testWidgets(
-    'Crisis Observatory honors co_wcMode deep-link initialization and emits wcMode in onSelection when Engine 3 is active',
+    'Crisis Observatory honors M7 rollMode/putOtm/m7TpMode and Engine 3 co_wcMode deep-link initialization and emits full state in onSelection',
     (tester) async {
       tester.view.physicalSize = const Size(1440, 1000);
       tester.view.devicePixelRatio = 1.0;
@@ -903,11 +863,11 @@ void main() {
                   asOf: '2026-11-20',
                   onCompany: (_) {},
                   initialSelection: const {
-                    'strategy': 'U1_PureOptions',
-                    'tpMode': 'layered_itm',
-                    'ccMode': 'cc_d12_d35',
-                    'spMode': 'sp_14d_cap10',
-                    'wcMode': 'wc_14d_c0s2',
+                    'strategy': 'M7G_Graded',
+                    'putOtm': 'otm20',
+                    'rollMode': '120d_roll50',
+                    'm7TpMode': 'standard',
+                    'm0Enabled': true,
                   },
                   onSelection: (sel) => latestSelection = sel,
                 ),
@@ -918,33 +878,19 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('\$1,779,823'), findsOneWidget);
-      expect(find.textContaining('K >= \$625.43'), findsOneWidget);
+      expect(find.text('\$1,823,635'), findsOneWidget);
+      expect(find.text('50D Roll / Salvage'), findsOneWidget);
 
       await tapVisible(
         tester,
-        find.byKey(const ValueKey('crisis-wc-mode-pill-wc_reclaim_30d_d35')),
+        find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
       );
-      expect(find.text('\$1,805,856'), findsOneWidget);
-      expect(find.textContaining('Holding Uncapped until QQQ >= \$625.43'), findsOneWidget);
-      expect(latestSelection['spMode'], 'sp_14d_cap10');
-      expect(latestSelection['wcMode'], 'wc_reclaim_30d_d35');
-
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-wc-mode-pill-wc_30d_c5s5')),
-      );
-      expect(find.text('\$1,819,738'), findsOneWidget);
-      expect(find.textContaining('K >= \$656.70'), findsOneWidget);
-      expect(latestSelection['spMode'], 'sp_14d_cap10');
-      expect(latestSelection['wcMode'], 'wc_30d_c5s5');
-
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-sp-mode-pill-sp_off')),
-      );
-      expect(latestSelection['spMode'], 'sp_off');
-      expect(latestSelection.containsKey('wcMode'), isFalse);
+      expect(find.text('\$1,856,309'), findsOneWidget);
+      expect(latestSelection['strategy'], 'M7G_Graded');
+      expect(latestSelection['putOtm'], 'otm20');
+      expect(latestSelection['rollMode'], '90d_hold');
+      expect(latestSelection['m7TpMode'], 'standard');
+      expect(latestSelection['m0Enabled'], 'true');
     },
   );
 }

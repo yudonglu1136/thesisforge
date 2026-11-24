@@ -54,7 +54,11 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
 
     doc = json.loads(raw)
     assert doc["as_of_date"] == "2026-11-20"
-    assert doc["default_strategy_id"] == "U1_PureOptions"
+    assert doc["default_strategy_id"] == "M7G_Graded"
+    assert doc["default_put_otm"] == "otm15"
+    assert doc["default_m7_tp_mode"] == "standard"
+    assert doc["default_roll_mode"] == "90d_hold"
+    assert doc["default_m0_enabled"] is True
     for forbidden in ("U4_DualEngine", "T-Bill", "slow_bear_shield", "慢熊盾", "美债慢熊盾", "短债"):
         assert forbidden not in raw, f"Forbidden T-Bill/U4 term found in artifact: {forbidden}"
 
@@ -95,6 +99,8 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     smap = {s["id"]: s for s in doc["strategies_summary"]}
     assert "U4_DualEngine" not in smap
     assert list(smap.keys()) == [
+        "M7G_Graded",
+        "M7_Ensemble",
         "U1_PureOptions",
         "B1c_PureAD",
         "D2_SixLights",
@@ -102,6 +108,22 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
         "NoPut_CallOnly",
         "BH_Pure_QQQ",
     ]
+    assert abs(smap["M7G_Graded"]["end_nav"] - 1682250.03) <= 0.05
+    assert smap["M7G_Graded"]["cagr_pct"] == 19.63
+    assert smap["M7G_Graded"]["max_dd_pct"] == -28.02
+    assert smap["M7G_Graded"]["calmar"] == 0.701
+    assert smap["M7G_Graded"]["sharpe"] == 0.983
+    assert abs(smap["M7_Ensemble"]["end_nav"] - 1676747.11) <= 0.05
+    assert len(doc["m7_bundles"]) == 16
+    assert abs(doc["m7_bundles"]["otm15__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1625935.17) <= 0.05
+    assert doc["m7_bundles"]["otm15__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]["roll_50d_count"] == 32
+    assert abs(doc["m7_bundles"]["otm20__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1856309.08) <= 0.05
+    assert abs(doc["m7_bundles"]["otm20__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1823635.00) <= 0.05
+    assert doc["m7_bundles"]["otm20__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]["sharpe"] == 1.038
+    assert abs(doc["m7_bundles"]["otm15__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1523801.10) <= 0.05
+    assert doc["m7_bundles"]["otm15__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["max_dd_pct"] == -24.44
+    assert doc["m7_bundles"]["otm15__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["calmar"] == 0.763
+    assert abs(doc["m7_bundles"]["otm20__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1511253.76) <= 0.05
     assert abs(smap["U1_PureOptions"]["end_nav"] - 1654577.25) <= 0.50
     assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 366272.47) <= 0.50
     assert abs(smap["U1_PureOptions"]["final_shares"] - 2719.33) <= 0.10

@@ -1,0 +1,2952 @@
+#!/usr/bin/env python3
+"""Zero-Lookahead Three-Pillar Probabilistic Put Overlay Engine (M7-Graded & M7 Ensemble).
+
+Pure Python stdlib implementation (zero numpy/pandas/scipy runtime dependency) matching
+run_8models_crisis_study.py bit-for-bit across all 2,990 evaluation days (max HMM diff < 1e-13,
+exact penny parity on all M7G & M7 backtest configurations).
+"""
+from __future__ import annotations
+
+import bisect
+import csv
+import datetime
+import gzip
+import io
+import json
+import math
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+DEFAULT_PUT_OTM = "otm15"
+DEFAULT_M7_TP_MODE = "standard"
+DEFAULT_ROLL_MODE = "90d_hold"
+DEFAULT_M0_ENABLED = True
+
+INITIAL_CAPITAL = 200_000.0
+STOCK_REBAL_FEE = 0.0003
+OPT_SLIP = 0.025
+OPT_COMM_PER_SH = 0.0065
+MARGIN_SPREAD = 0.015
+MIN_OPT_BID = 0.05
+
+YF_ETF_KEYS = ["QQQ", "SPY", "RSP", "IWM", "XLP", "XLU", "XLV", "XLK", "HYG", "LQD"]
+YF_IDX_KEYS = ["VXN", "VIX", "VIX3M", "VVIX", "SKEW"]
+YF_ALL_KEYS = YF_ETF_KEYS + YF_IDX_KEYS
+YF_TICKER_MAP = {k: (f"^{k}" if k in YF_IDX_KEYS else k) for k in YF_ALL_KEYS}
+FRED_LAGS = {"BAA10Y": 1, "DGS2": 1, "NFCI": 5}
+
+PUT_OTM_SPECS: list[dict[str, Any]] = [
+    {
+        "id": "otm15",
+        "moneyness": 0.85,
+        "otm_pct": 15,
+        "label_en": "-15% OTM (Default · Core Shield)",
+        "label_zh": "-15% OTM（默认主力 · 稳健均衡）",
+        "short_en": "-15% OTM",
+        "short_zh": "-15% OTM",
+        "summary_en": "Spends the 50% -10% OTM reference dollar budget on 90-DTE -15% OTM Puts ($1,682,250 NAV, -28.02% MDD, -24.44% 2022 Bear MDD, Calmar 0.701).",
+        "summary_zh": "以等金额预算（50% 仓位 90D -10% Put 基准保费）买入 90-DTE -15% OTM Put（终值 $1,682,250、最大回撤 -28.02%、2022 慢熊回撤 -24.44%、Calmar 0.701）。",
+    },
+    {
+        "id": "otm20",
+        "moneyness": 0.80,
+        "otm_pct": 20,
+        "label_en": "-20% OTM (High Convexity · NAV #1)",
+        "label_zh": "-20% OTM（高凸性进攻 · 终值冠军）",
+        "short_en": "-20% OTM",
+        "short_zh": "-20% OTM",
+        "summary_en": "Spends the exact same dollar budget on deeper 90-DTE -20% OTM Puts for higher crash convexity when tail skew IV(-20%)/IV(-10%) <= 1.18 ($1,856,309 NAV, 20.62% CAGR, Calmar 0.737).",
+        "summary_zh": "在同等美元保费预算下切换至更深虚值 90-DTE -20% OTM Put，在尾部偏度 IV(-20%)/IV(-10%) <= 1.18 时具备极佳赔率（终值 $1,856,309、年化 20.62%、Calmar 0.737）。",
+    },
+]
+
+M7_TP_MODE_SPECS: list[dict[str, Any]] = [
+    {
+        "id": "standard",
+        "code": "STANDARD",
+        "require_itm": False,
+        "label_en": "STANDARD (VIX/3M >= 1.10 · Default)",
+        "label_zh": "STANDARD 标准止盈（VIX/3M >= 1.10 · 默认）",
+        "short_en": "STANDARD",
+        "short_zh": "标准止盈",
+        "rule_en": "Exit at T+1 Open when EOD VIX/VIX3M >= 1.10 OR (DTE <= 45 AND Put Mid >= 5x Entry Cost).",
+        "rule_zh": "收盘触发 VIX/VIX3M >= 1.10 恐慌倒挂，或（DTE <= 45 且期权中间价 >= 5 倍建仓成本）时次日开盘止盈换股。",
+        "summary_en": "Unified fast monetization on panic term-structure inversion (VIX/VIX3M >= 1.10) plus 5x second-half slow-bear profit lock ($1,682,250 on -15% OTM).",
+        "summary_zh": "见 VIX/VIX3M >= 1.10 恐慌倒挂即刻次日开盘落袋抄底 QQQ，配合后半程 DTE<=45 & 5x 慢熊锁利（-15% OTM 终值 $1,682,250）。",
+    },
+    {
+        "id": "itm_tp",
+        "code": "ITM_TP",
+        "require_itm": True,
+        "label_en": "ITM_TP (QQQ <= Kp + VIX/3M >= 1.10)",
+        "label_zh": "ITM_TP 分层实值止盈（跌破 Kp 才平 · 低回撤）",
+        "short_en": "ITM_TP",
+        "short_zh": "分层实值 ITM",
+        "rule_en": "Exit at T+1 Open when EOD (VIX/VIX3M >= 1.10 AND QQQ <= Strike Kp) OR (DTE <= 45 AND Put Mid >= 5x Entry Cost).",
+        "rule_zh": "收盘同时满足（VIX/VIX3M >= 1.10 且 QQQ <= 行权价 Kp 进入实值），或（DTE <= 45 且中间价 >= 5 倍成本）才止盈。",
+        "summary_en": "Refuses premature exit on early panic spikes while Put is still OTM (e.g., 2020-02-27), slashing 2020 COVID MDD to -23.33% and full-cycle MDD to -24.44% (Calmar 0.763).",
+        "summary_zh": "过滤暴跌初期尚未跌破行权价 Kp 的早鸟倒挂（如 2020-02-27），死拿吃满主跌浪——将 2020 疫情回撤压至 -23.33%、全周期最大回撤压至 -24.44%（Calmar 0.763）。",
+    },
+]
+
+M7_ROLL_MODE_SPECS: list[dict[str, Any]] = [
+    {
+        "id": "90d_hold",
+        "target_dte": 90,
+        "ref_dte": 90,
+        "roll_dte": 0,
+        "five_x_max_dte": 45,
+        "label_en": "90D Hold-to-Expiry (Default)",
+        "label_zh": "90D 持有到期（默认基准）",
+        "short_en": "90D Hold",
+        "short_zh": "90D 持有到期",
+        "summary_en": "Buys 90-DTE OTM Puts sized to 90D -10% Put Ask and holds to panic TP or expiry ($1,682,250 on -15%, $1,856,309 on -20%, MDD -28.02%).",
+        "summary_zh": "按 90-DTE -10% Put 基准保费买入 90D Put，持有至恐慌止盈或到期（-15% 终值 $1,682,250、-20% 终值 $1,856,309、最大回撤 -28.02%）。",
+    },
+    {
+        "id": "120d_roll50",
+        "target_dte": 120,
+        "ref_dte": 120,
+        "roll_dte": 50,
+        "five_x_max_dte": 75,
+        "label_en": "120D Entry · 50D Roll/Salvage",
+        "label_zh": "120D 建仓 · 50D 剩余滚仓",
+        "short_en": "120D -> 50D Roll",
+        "short_zh": "120D · 50D滚仓",
+        "summary_en": "Buys 120-DTE Puts sized to 120D -10% Put Ask; at <= 50 DTE exits at bid to salvage approx. 32%-38% residual time value, auto-rolling into a fresh 120D Put if M7 stays active ($1,823,635 & Sharpe 1.038 on -20% OTM; +$63.4K over 90D under +3pt steep skew).",
+        "summary_zh": "按 120-DTE -10% Put 基准保费建仓 120D Put；剩 <=50 DTE 时在 Theta 悬崖前平仓回收约 32%–38% 残值，若 M7 信号仍亮同步滚入新 120D Put，熄灭则落袋归股（-20% OTM Sharpe 升至 1.038，陡偏度下反超 90D +$6.34万）。",
+    },
+]
+
+M7_MODULE_META: dict[str, dict[str, Any]] = {
+    "M0": {
+        "pillar": "P1",
+        "points": 35,
+        "name_en": "M0 Six Lights Baseline",
+        "name_zh": "M0 六灯基线开关",
+        "short_en": "M0 Six Lights",
+        "short_zh": "M0 六灯基线",
+    },
+    "M6": {
+        "pillar": "P1",
+        "points": 20,
+        "name_en": "M6 Breadth + Defensive Rotation",
+        "name_zh": "M6 宽度恶化 + 防御轮动",
+        "short_en": "M6 Breadth/Def",
+        "short_zh": "M6 宽度+防御",
+    },
+    "M2": {
+        "pillar": "P2",
+        "points": 20,
+        "name_en": "M2 Options Desk Warning",
+        "name_zh": "M2 期权台尾部预警",
+        "short_en": "M2 Vol Desk",
+        "short_zh": "M2 期权台预警",
+    },
+    "M5": {
+        "pillar": "P2",
+        "points": 20,
+        "name_en": "M5 Causal HMM Regime Transition",
+        "name_zh": "M5 因果 HMM 状态跃迁",
+        "short_en": "M5 Causal HMM",
+        "short_zh": "M5 因果HMM",
+    },
+    "M4": {
+        "pillar": "P3",
+        "points": 35,
+        "name_en": "M4 CTA Bear-Rally Complacency",
+        "name_zh": "M4 CTA 熊市反弹自满",
+        "short_en": "M4 Bear Rally",
+        "short_zh": "M4 熊市反弹自满",
+    },
+    "M3": {
+        "pillar": "P3",
+        "points": 20,
+        "name_en": "M3 Credit & Macro Stress",
+        "name_zh": "M3 信用利差与宏观压力",
+        "short_en": "M3 Credit/Macro",
+        "short_zh": "M3 信用宏观压力",
+    },
+}
+
+
+def quantile_linear(vals: list[float], q: float) -> float:
+    s = sorted(vals)
+    n = len(s)
+    if n == 0:
+        return float("nan")
+    if n == 1:
+        return s[0]
+    pos = (n - 1) * q
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return s[lo]
+    frac = pos - lo
+    return s[lo] * (1.0 - frac) + s[hi] * frac
+
+
+def rolling_mean(arr: list[float | None], win: int, min_p: int | None = None) -> list[float | None]:
+    mp = win if min_p is None else min_p
+    out: list[float | None] = [None] * len(arr)
+    for i in range(len(arr)):
+        w = [x for x in arr[max(0, i - win + 1) : i + 1] if x is not None and not math.isnan(x)]
+        if len(w) >= mp and (min_p is not None or len(w) == win):
+            out[i] = sum(w) / len(w)
+    return out
+
+
+def rolling_std_ddof1(arr: list[float | None], win: int, min_p: int | None = None) -> list[float | None]:
+    mp = win if min_p is None else min_p
+    out: list[float | None] = [None] * len(arr)
+    for i in range(len(arr)):
+        w = [x for x in arr[max(0, i - win + 1) : i + 1] if x is not None and not math.isnan(x)]
+        if len(w) >= max(2, mp) and (min_p is not None or len(w) == win):
+            mu = sum(w) / len(w)
+            var = sum((x - mu) ** 2 for x in w) / (len(w) - 1)
+            out[i] = math.sqrt(max(0.0, var))
+    return out
+
+
+def rolling_min(arr: list[float | None], win: int, min_p: int | None = None) -> list[float | None]:
+    mp = win if min_p is None else min_p
+    out: list[float | None] = [None] * len(arr)
+    for i in range(len(arr)):
+        w = [x for x in arr[max(0, i - win + 1) : i + 1] if x is not None and not math.isnan(x)]
+        if len(w) >= mp and (min_p is not None or len(w) == win):
+            out[i] = min(w)
+    return out
+
+
+def rolling_quantile(arr: list[float | None], win: int, q: float, min_p: int) -> list[float | None]:
+    out: list[float | None] = [None] * len(arr)
+    for i in range(len(arr)):
+        w = [x for x in arr[max(0, i - win + 1) : i + 1] if x is not None and not math.isnan(x)]
+        if len(w) >= min_p:
+            out[i] = quantile_linear(w, q)
+    return out
+
+
+def ewm_span_with_state(arr: list[float | None], span: int) -> tuple[list[float | None], float | None]:
+    alpha = 2.0 / (span + 1.0)
+    out: list[float | None] = [None] * len(arr)
+    cur: float | None = None
+    for i, x in enumerate(arr):
+        if x is None or math.isnan(x):
+            out[i] = cur
+            continue
+        cur = x if cur is None else ((1.0 - alpha) * cur + alpha * x)
+        out[i] = cur
+    return out, cur
+
+
+def fit_gaussian_hmm_em_stdlib(X: list[list[float]], n_iter: int = 35):
+    T = len(X)
+    D = len(X[0])
+    rv_col = [row[1] for row in X]
+    q = quantile_linear(rv_col, 0.72)
+    g0 = [row for row in X if row[1] < q]
+    g1 = [row for row in X if row[1] >= q]
+    means = [[0.0] * D for _ in range(2)]
+    vars_ = [[0.0] * D for _ in range(2)]
+    for k, grp in enumerate((g0, g1)):
+        ng = max(1, len(grp))
+        for d in range(D):
+            mu = sum(r[d] for r in grp) / ng
+            means[k][d] = mu
+            vars_[k][d] = sum((r[d] - mu) ** 2 for r in grp) / ng + 0.15
+
+    A = [[0.97, 0.03], [0.08, 0.92]]
+    pi = [0.80, 0.20]
+    two_pi = 2.0 * math.pi
+
+    for _ in range(n_iter):
+        v_eff = [[max(vars_[k][d], 0.08) for d in range(D)] for k in range(2)]
+        log_const = [-0.5 * sum(math.log(two_pi * v_eff[k][d]) for d in range(D)) for k in range(2)]
+        le = [[0.0, 0.0] for _ in range(T)]
+        for t in range(T):
+            xt = X[t]
+            for k in range(2):
+                mk = means[k]
+                vk = v_eff[k]
+                le[t][k] = log_const[k] - 0.5 * sum(((xt[d] - mk[d]) ** 2) / vk[d] for d in range(D))
+
+        alpha = [[0.0, 0.0] for _ in range(T)]
+        l0_0 = math.log(max(pi[0], 1e-12)) + le[0][0]
+        l0_1 = math.log(max(pi[1], 1e-12)) + le[0][1]
+        m0 = max(l0_0, l0_1)
+        a0_0 = math.exp(l0_0 - m0)
+        a0_1 = math.exp(l0_1 - m0)
+        s0 = a0_0 + a0_1
+        alpha[0][0] = a0_0 / s0
+        alpha[0][1] = a0_1 / s0
+
+        for t in range(1, T):
+            p0 = alpha[t - 1][0] * A[0][0] + alpha[t - 1][1] * A[1][0]
+            p1 = alpha[t - 1][0] * A[0][1] + alpha[t - 1][1] * A[1][1]
+            lt0 = math.log(max(p0, 1e-15)) + le[t][0]
+            lt1 = math.log(max(p1, 1e-15)) + le[t][1]
+            mt = max(lt0, lt1)
+            at0 = math.exp(lt0 - mt)
+            at1 = math.exp(lt1 - mt)
+            st = at0 + at1
+            alpha[t][0] = at0 / st
+            alpha[t][1] = at1 / st
+
+        beta = [[0.0, 0.0] for _ in range(T)]
+        beta[-1][0] = 1.0
+        beta[-1][1] = 1.0
+        e_next_cache = [[0.0, 0.0] for _ in range(T)]
+        for t in range(1, T):
+            mt = max(le[t][0], le[t][1])
+            e_next_cache[t][0] = math.exp(le[t][0] - mt)
+            e_next_cache[t][1] = math.exp(le[t][1] - mt)
+
+        for t in range(T - 2, -1, -1):
+            en0, en1 = e_next_cache[t + 1]
+            eb0 = en0 * beta[t + 1][0]
+            eb1 = en1 * beta[t + 1][1]
+            b0 = A[0][0] * eb0 + A[0][1] * eb1
+            b1 = A[1][0] * eb0 + A[1][1] * eb1
+            sb = max(b0 + b1, 1e-15)
+            beta[t][0] = b0 / sb
+            beta[t][1] = b1 / sb
+
+        gamma = [[0.0, 0.0] for _ in range(T)]
+        for t in range(T):
+            g0v = alpha[t][0] * beta[t][0]
+            g1v = alpha[t][1] * beta[t][1]
+            sg = max(g0v + g1v, 1e-15)
+            gamma[t][0] = g0v / sg
+            gamma[t][1] = g1v / sg
+
+        xi00 = xi01 = xi10 = xi11 = 0.0
+        for t in range(T - 1):
+            en0, en1 = e_next_cache[t + 1]
+            eb0 = en0 * beta[t + 1][0]
+            eb1 = en1 * beta[t + 1][1]
+            m00 = alpha[t][0] * eb0 * A[0][0]
+            m01 = alpha[t][0] * eb1 * A[0][1]
+            m10 = alpha[t][1] * eb0 * A[1][0]
+            m11 = alpha[t][1] * eb1 * A[1][1]
+            sm = m00 + m01 + m10 + m11
+            if sm > 1e-15:
+                xi00 += m00 / sm
+                xi01 += m01 / sm
+                xi10 += m10 / sm
+                xi11 += m11 / sm
+
+        pi0 = max(gamma[0][0], 1e-4)
+        pi1 = max(gamma[0][1], 1e-4)
+        spi = pi0 + pi1
+        pi = [pi0 / spi, pi1 / spi]
+
+        r00 = xi00 + 0.55
+        r01 = xi01 + 0.05
+        sr0 = r00 + r01
+        r10 = xi10 + 0.05
+        r11 = xi11 + 0.55
+        sr1 = r10 + r11
+        A = [[r00 / sr0, r01 / sr0], [r10 / sr1, r11 / sr1]]
+
+        for k in range(2):
+            sw = max(sum(gamma[t][k] for t in range(T)), 1e-4)
+            for d in range(D):
+                mu = sum(gamma[t][k] * X[t][d] for t in range(T)) / sw
+                means[k][d] = mu
+                vars_[k][d] = sum(gamma[t][k] * ((X[t][d] - mu) ** 2) for t in range(T)) / sw + 0.08
+
+    ranks = [means[k][1] + means[k][3] - 0.7 * means[k][0] + 0.6 * means[k][2] for k in range(2)]
+    order = [0, 1] if ranks[0] <= ranks[1] else [1, 0]
+    pi_o = [pi[order[0]], pi[order[1]]]
+    A_o = [
+        [A[order[0]][order[0]], A[order[0]][order[1]]],
+        [A[order[1]][order[0]], A[order[1]][order[1]]],
+    ]
+    means_o = [means[order[0]], means[order[1]]]
+    vars_o = [vars_[order[0]], vars_[order[1]]]
+    return pi_o, A_o, means_o, vars_o
+
+
+def hamilton_step(
+    state_p: list[float],
+    x_row: list[float],
+    A: list[list[float]],
+    means: list[list[float]],
+    vars_: list[list[float]],
+) -> list[float]:
+    two_pi = 2.0 * math.pi
+    le = [0.0, 0.0]
+    for k in range(2):
+        s = 0.0
+        for d in range(4):
+            vk = max(vars_[k][d], 0.08)
+            s += math.log(two_pi * vk) + ((x_row[d] - means[k][d]) ** 2) / vk
+        le[k] = -0.5 * s
+    ml = max(le[0], le[1])
+    e0 = math.exp(le[0] - ml)
+    e1 = math.exp(le[1] - ml)
+    pred0 = state_p[0] * A[0][0] + state_p[1] * A[1][0]
+    pred1 = state_p[0] * A[0][1] + state_p[1] * A[1][1]
+    post0 = pred0 * e0
+    post1 = pred1 * e1
+    sp = max(post0 + post1, 1e-15)
+    return [post0 / sp, post1 / sp]
+
+
+def _fetch_yahoo_chart_daily(ticker: str, timeout: int = 10) -> dict[str, dict[str, float]]:
+    enc = urllib.parse.quote(ticker, safe="")
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{enc}?range=3mo&interval=1d&events=div"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 ThesisForge/2.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    res = ((payload.get("chart") or {}).get("result") or [None])[0]
+    if not res:
+        return {}
+    ts_list = res.get("timestamp") or []
+    quote = ((res.get("indicators") or {}).get("quote") or [{}])[0]
+    adj_list = (((res.get("indicators") or {}).get("adjclose") or [{}])[0]).get("adjclose") or []
+    div_events = ((res.get("events") or {}).get("dividends") or {})
+    div_by_date: dict[str, float] = {}
+    for dv in div_events.values():
+        dts = dv.get("date")
+        amt = dv.get("amount")
+        if dts is not None and amt is not None:
+            iso = datetime.datetime.fromtimestamp(int(dts), tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+            div_by_date[iso] = float(amt)
+
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    closes = quote.get("close") or []
+    out: dict[str, dict[str, float]] = {}
+    for idx, ts in enumerate(ts_list):
+        cl = closes[idx] if idx < len(closes) else None
+        if cl is None:
+            continue
+        iso = datetime.datetime.fromtimestamp(int(ts), tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+        adj = adj_list[idx] if idx < len(adj_list) and adj_list[idx] is not None else cl
+        op = opens[idx] if idx < len(opens) and opens[idx] is not None else cl
+        hi = highs[idx] if idx < len(highs) and highs[idx] is not None else cl
+        lo = lows[idx] if idx < len(lows) and lows[idx] is not None else cl
+        out[iso] = {
+            "open": float(op),
+            "high": float(hi),
+            "low": float(lo),
+            "close": float(cl),
+            "adjclose": float(adj),
+            "div": float(div_by_date.get(iso, 0.0)),
+        }
+    return out
+
+
+def _fetch_fred_series(series_id: str, start_date: str = "2025-01-01", timeout: int = 10) -> dict[str, float]:
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd={start_date}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 ThesisForge/2.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        txt = resp.read().decode("utf-8")
+    out: dict[str, float] = {}
+    for row in csv.DictReader(io.StringIO(txt)):
+        d = (row.get("DATE") or row.get("observation_date") or row.get("date") or "")[:10]
+        v = row.get(series_id, "")
+        if d and v not in ("", "."):
+            try:
+                fv = float(v)
+                if not math.isnan(fv):
+                    out[d] = fv
+            except ValueError:
+                pass
+    return out
+
+
+def load_m7_seed_and_optional_live(
+    m7_seed_gz: Path,
+    rows_all: list[dict[str, Any]],
+    live_fetch: bool = False,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if not m7_seed_gz.exists():
+        raise FileNotFoundError(f"Missing M7 seed archive: {m7_seed_gz}")
+    with gzip.open(m7_seed_gz, "rb") as f:
+        seed = json.loads(f.read().decode("utf-8"))
+
+    yf_dates: list[str] = list(seed["yf_dates"])
+    yf_series: dict[str, list[float | None]] = {k: list(v) for k, v in seed["yf_series"].items()}
+    fred_raw: dict[str, dict[str, float]] = {k: dict(v) for k, v in seed["fred_raw"].items()}
+
+    # If rows_all already extended beyond yf_dates[-1] via local warehouse, or live_fetch=True:
+    if live_fetch:
+        try:
+            fetched_yf = {k: _fetch_yahoo_chart_daily(YF_TICKER_MAP[k]) for k in YF_ALL_KEYS}
+            for fid in FRED_LAGS:
+                try:
+                    fred_raw[fid].update(_fetch_fred_series(fid))
+                except Exception:
+                    pass
+            last_seed_dt = yf_dates[-1]
+            # Require complete US close on QQQ, SPY, VIX, VIX3M, VXN
+            cand_dates = sorted(
+                d
+                for d in fetched_yf["QQQ"].keys()
+                if d > last_seed_dt
+                and d in fetched_yf["SPY"]
+                and d in fetched_yf["VIX"]
+                and d in fetched_yf["VIX3M"]
+                and d in fetched_yf["VXN"]
+            )
+            if cand_dates:
+                anchor_dt = last_seed_dt
+                for new_d in cand_dates:
+                    yf_dates.append(new_d)
+                    for k in YF_ALL_KEYS:
+                        cur_map = fetched_yf.get(k) or {}
+                        prev_val = next((x for x in reversed(yf_series[k]) if x is not None), None)
+                        if new_d in cur_map and prev_val is not None:
+                            if k in YF_ETF_KEYS and anchor_dt in cur_map and cur_map[anchor_dt]["adjclose"] > 0:
+                                # Chain-link dividend-adjusted total return from previous trading date
+                                prev_d = yf_dates[-2]
+                                if prev_d in cur_map and cur_map[prev_d]["adjclose"] > 0:
+                                    val = prev_val * (cur_map[new_d]["adjclose"] / cur_map[prev_d]["adjclose"])
+                                else:
+                                    val = cur_map[new_d]["adjclose"]
+                            else:
+                                val = cur_map[new_d]["close"]
+                            yf_series[k].append(float(val))
+                        else:
+                            yf_series[k].append(prev_val)
+
+                # Also extend rows_all if newer than rows_all[-1]["date"]
+                existing_row_dates = {r["date"] for r in rows_all}
+                for new_d in cand_dates:
+                    if new_d in existing_row_dates:
+                        continue
+                    q_bar = fetched_yf["QQQ"][new_d]
+                    vix_c = fetched_yf["VIX"][new_d]["close"]
+                    vix3m_c = fetched_yf["VIX3M"][new_d]["close"]
+                    vxn_c = fetched_yf["VXN"][new_d]["close"]
+                    if vix3m_c <= 0:
+                        continue
+                    prev_r = rows_all[-1]
+                    cl_f = float(q_bar["close"])
+                    run_ath = max(float(prev_r["running_ath"]), cl_f)
+                    dd_ath = cl_f / run_ath - 1.0
+                    tail_closes = [float(x["close"]) for x in rows_all[-199:]] + [cl_f]
+                    ma200 = sum(tail_closes) / len(tail_closes)
+                    sc = int(prev_r["score"])
+                    sc5 = sum([int(x["score"]) for x in rows_all[-4:]] + [sc]) / 5.0
+                    prev_vix = float(prev_r["vix"])
+                    nr = dict(prev_r)
+                    nr.update(
+                        {
+                            "date": new_d,
+                            "open": round(float(q_bar["open"]), 6),
+                            "high": round(float(q_bar["high"]), 6),
+                            "low": round(float(q_bar["low"]), 6),
+                            "close": round(cl_f, 6),
+                            "dividends": round(float(q_bar["div"]), 6),
+                            "vix": round(float(vix_c), 4),
+                            "prev_vix": prev_vix,
+                            "vix_falling": bool(float(vix_c) < prev_vix),
+                            "vix3m": round(float(vix3m_c), 4),
+                            "vix_ratio": round(float(vix_c) / float(vix3m_c), 6),
+                            "vxn": round(float(vxn_c), 4),
+                            "running_ath": round(run_ath, 6),
+                            "dd_from_ath": round(dd_ath, 8),
+                            "qqq_ma200": round(ma200, 6),
+                            "score_5d": round(sc5, 4),
+                            "sw_u1": bool(
+                                dd_ath >= -0.05
+                                and (float(prev_r["ad_line"]) < float(prev_r["ad_sma50"]) or sc >= 4)
+                                and float(vxn_c) <= 22.0
+                            ),
+                            "sw_b1c": bool(
+                                dd_ath >= -0.05
+                                and float(prev_r["ad_line"]) < float(prev_r["ad_sma50"])
+                                and float(vxn_c) <= 22.0
+                            ),
+                            "sw_d2": bool(dd_ath >= -0.05 and sc >= 4),
+                            "sw_g4": False if dd_ath < -0.05 else bool(prev_r["gate_g4"]),
+                        }
+                    )
+                    rows_all.append(nr)
+        except Exception:
+            pass
+
+    # Ensure any warehouse-extended rows_all dates > yf_dates[-1] are also reflected in yf_dates via ffill + QQQ/VIX/VXN
+    yf_date_set = set(yf_dates)
+    for r in rows_all:
+        d = r["date"]
+        if d > yf_dates[-1] and d not in yf_date_set:
+            prev_qqq_cl = next((x["close"] for x in reversed(rows_all) if x["date"] == yf_dates[-1]), float(r["close"]))
+            ret_ratio = float(r["close"]) / max(float(prev_qqq_cl), 1e-6)
+            yf_dates.append(d)
+            yf_date_set.add(d)
+            for k in YF_ALL_KEYS:
+                last_v = next((x for x in reversed(yf_series[k]) if x is not None), 0.0)
+                if k == "QQQ":
+                    yf_series[k].append(last_v * ret_ratio)
+                elif k == "VXN":
+                    yf_series[k].append(float(r["vxn"]))
+                elif k == "VIX":
+                    yf_series[k].append(float(r["vix"]))
+                elif k == "VIX3M":
+                    yf_series[k].append(float(r["vix3m"]))
+                else:
+                    yf_series[k].append(last_v)
+
+    return {"yf_dates": yf_dates, "yf_series": yf_series, "fred_raw": fred_raw}, rows_all
+
+
+def compute_m7_signals_and_tail(
+    rows_all: list[dict[str, Any]],
+    m7_data: dict[str, Any],
+    start_eval_date: str = "2015-01-02",
+) -> dict[str, Any]:
+    cal: list[str] = list(m7_data["yf_dates"])
+    n = len(cal)
+    bco_map = {r["date"]: r for r in rows_all}
+
+    yf_ffill: dict[str, list[float]] = {k: [] for k in YF_ALL_KEYS}
+    last_v: dict[str, float] = {}
+    for i in range(n):
+        for k in YF_ALL_KEYS:
+            raw_v = m7_data["yf_series"][k][i]
+            if raw_v is not None and not math.isnan(float(raw_v)):
+                last_v[k] = float(raw_v)
+            yf_ffill[k].append(last_v[k])
+
+    def align_and_lag(src: dict[str, float], lag: int) -> list[float | None]:
+        union_dates = sorted(set(cal) | set(src.keys()))
+        ff_map: dict[str, float | None] = {}
+        cur: float | None = None
+        for d in union_dates:
+            if d in src:
+                cur = float(src[d])
+            ff_map[d] = cur
+        aligned = [ff_map[d] for d in cal]
+        return [None] * lag + aligned[:-lag]
+
+    baa_lag1 = align_and_lag(m7_data["fred_raw"]["BAA10Y"], 1)
+    dgs2_lag1 = align_and_lag(m7_data["fred_raw"]["DGS2"], 1)
+    nfci_lag5 = align_and_lag(m7_data["fred_raw"]["NFCI"], 5)
+
+    qqq_cl = [float(bco_map[d]["close"]) if d in bco_map else yf_ffill["QQQ"][i] for i, d in enumerate(cal)]
+    vix_r = [
+        float(bco_map[d]["vix_ratio"]) if d in bco_map else (yf_ffill["VIX"][i] / max(yf_ffill["VIX3M"][i], 1e-6))
+        for i, d in enumerate(cal)
+    ]
+    vxn_cl = [float(bco_map[d]["vxn"]) if d in bco_map else yf_ffill["VXN"][i] for i, d in enumerate(cal)]
+    vvix = yf_ffill["VVIX"]
+    skew10 = rolling_mean(yf_ffill["SKEW"], 10)
+    vvix_p75 = rolling_quantile(vvix, 252, 0.75, 126)
+    skew_p75 = rolling_quantile(skew10, 252, 0.75, 126)
+
+    hyg_lqd = [yf_ffill["HYG"][i] / max(yf_ffill["LQD"][i], 1e-8) for i in range(n)]
+    hyg_lqd_sma50 = rolling_mean(hyg_lqd, 50)
+    baa_min63 = rolling_min(baa_lag1, 63, 30)
+
+    sma200 = rolling_mean(qqq_cl, 200)
+    ema20, ema20_last = ewm_span_with_state(qqq_cl, 20)
+    qqq_diff = [None if i == 0 else (qqq_cl[i] - qqq_cl[i - 1]) for i in range(n)]
+    px_vol = rolling_std_ddof1(qqq_diff, 60)
+    e16, e16_last = ewm_span_with_state(qqq_cl, 16)
+    e32, e32_last = ewm_span_with_state(qqq_cl, 32)
+    e64, e64_last = ewm_span_with_state(qqq_cl, 64)
+    e128, e128_last = ewm_span_with_state(qqq_cl, 128)
+    e256, e256_last = ewm_span_with_state(qqq_cl, 256)
+
+    ewmac: list[float | None] = [None] * n
+    for i in range(n):
+        pv = px_vol[i]
+        if pv is not None and pv > 0:
+            ewmac[i] = (((e16[i] - e64[i]) / pv) + ((e32[i] - e128[i]) / pv) + ((e64[i] - e256[i]) / pv)) / 3.0
+
+    qqq_ret1 = [None if i == 0 else math.log(qqq_cl[i] / qqq_cl[i - 1]) for i in range(n)]
+    rv20_raw = rolling_std_ddof1(qqq_ret1, 20)
+    rv20_ann = [None if rv20_raw[i] is None else (rv20_raw[i] * math.sqrt(252.0)) for i in range(n)]
+
+    col_ret5 = [None if i < 5 else math.log(qqq_cl[i] / qqq_cl[i - 5]) for i in range(n)]
+    col_lrv = [None if rv20_ann[i] is None else math.log(max(rv20_ann[i], 0.05)) for i in range(n)]
+    col_cred = [None if i < 20 else -math.log(hyg_lqd[i] / hyg_lqd[i - 20]) for i in range(n)]
+    col_vr = [vix_r[i] for i in range(n)]
+    cols_4 = [col_ret5, col_lrv, col_cred, col_vr]
+
+    Z: list[list[float] | None] = [None] * n
+    cnt = [0, 0, 0, 0]
+    mean_acc = [0.0, 0.0, 0.0, 0.0]
+    m2_acc = [0.0, 0.0, 0.0, 0.0]
+
+    for i in range(n):
+        if all(cols_4[d][i] is not None and cnt[d] >= 200 for d in range(4)):
+            z_row: list[float] = []
+            ok = True
+            for d in range(4):
+                std_d = math.sqrt(m2_acc[d] / (cnt[d] - 1))
+                if std_d <= 0:
+                    ok = False
+                    break
+                zv = (float(cols_4[d][i]) - mean_acc[d]) / std_d
+                z_row.append(max(-4.5, min(4.5, zv)))
+            if ok:
+                Z[i] = z_row
+        for d in range(4):
+            v = cols_4[d][i]
+            if v is not None and not math.isnan(v):
+                cnt[d] += 1
+                delta = v - mean_acc[d]
+                mean_acc[d] += delta / cnt[d]
+                m2_acc[d] += delta * (v - mean_acc[d])
+
+    p_hmm: list[float | None] = [None] * n
+    latest_hmm: dict[str, Any] = {}
+    years = sorted({int(d[:4]) for d in cal if int(d[:4]) >= 2015})
+    for Y in years:
+        y_start = f"{Y}-01-01"
+        y_end = f"{Y + 1}-01-01"
+        train_idx = [i for i, d in enumerate(cal) if d < y_start and Z[i] is not None]
+        test_idx = [i for i, d in enumerate(cal) if y_start <= d < y_end and Z[i] is not None]
+        if len(train_idx) < 200 or not test_idx:
+            continue
+        X_train = [Z[i] for i in train_idx if Z[i] is not None]
+        pi, A, means, vars_ = fit_gaussian_hmm_em_stdlib(X_train, n_iter=35)
+        state_p = list(pi)
+        for row_x in X_train[-60:]:
+            state_p = hamilton_step(state_p, row_x, A, means, vars_)
+        for idx in test_idx:
+            z_cur = Z[idx]
+            assert z_cur is not None
+            state_p = hamilton_step(state_p, z_cur, A, means, vars_)
+            p_hmm[idx] = state_p[1]
+        latest_hmm = {
+            "year": Y,
+            "pi": [round(x, 10) for x in pi],
+            "A": [[round(x, 10) for x in row_a] for row_a in A],
+            "means": [[round(x, 10) for x in row_m] for row_m in means],
+            "vars": [[round(x, 10) for x in row_v] for row_v in vars_],
+            "state_p": [round(x, 10) for x in state_p],
+        }
+
+    rsp_spy = [yf_ffill["RSP"][i] / max(yf_ffill["SPY"][i], 1e-8) for i in range(n)]
+    iwm_qqq = [yf_ffill["IWM"][i] / max(yf_ffill["QQQ"][i], 1e-8) for i in range(n)]
+    rsp_sma50 = rolling_mean(rsp_spy, 50)
+    iwm_sma50 = rolling_mean(iwm_qqq, 50)
+    xlp0, xlu0, xlv0, xlk0 = yf_ffill["XLP"][0], yf_ffill["XLU"][0], yf_ffill["XLV"][0], yf_ffill["XLK"][0]
+    def_tech = [
+        (((yf_ffill["XLP"][i] / xlp0) + (yf_ffill["XLU"][i] / xlu0) + (yf_ffill["XLV"][i] / xlv0)) / 3.0)
+        / (yf_ffill["XLK"][i] / xlk0)
+        for i in range(n)
+    ]
+
+    cal_idx_by_date = {d: i for i, d in enumerate(cal)}
+    rows_eval = [r for r in rows_all if r["date"] >= start_eval_date]
+
+    signals_m0_on: list[dict[str, Any]] = []
+    signals_m0_off: list[dict[str, Any]] = []
+    feat_cols = [
+        "date",
+        "skew10",
+        "skew_p75",
+        "vvix",
+        "vvix_p75",
+        "vr_jump5",
+        "hmm_p",
+        "hmm_p5",
+        "ewmac",
+        "ema20",
+        "sma200",
+        "hyg_lqd",
+        "hyg_sma50",
+        "baa_lag1",
+        "baa_rise63",
+        "dgs2_lag1",
+        "dgs2_jump63",
+        "nfci_lag5",
+        "nfci_jump20",
+        "rsp_spy",
+        "rsp_sma50",
+        "iwm_qqq",
+        "iwm_sma50",
+        "def_ret20",
+    ]
+    feat_rows: list[list[Any]] = []
+
+    def _r4(v: float | None) -> float | None:
+        return None if (v is None or math.isnan(v)) else round(float(v), 5)
+
+    for b_row in rows_eval:
+        d = b_row["date"]
+        i = cal_idx_by_date[d]
+        vr = vix_r[i]
+        vx = vxn_cl[i]
+        vr_j5 = (vr - vix_r[i - 5]) if i >= 5 else 0.0
+
+        m2_a = bool(
+            skew10[i] is not None
+            and skew_p75[i] is not None
+            and vvix_p75[i] is not None
+            and skew10[i] >= skew_p75[i]
+            and vvix[i] >= vvix_p75[i]
+            and 0.85 <= vr <= 0.98
+        )
+        m2_b = bool((0.92 <= vr <= 1.02) and (vr_j5 >= 0.06) and (vvix[i] >= 100.0))
+        m2 = bool((m2_a or m2_b) and vx <= 24.0)
+
+        baa_r = (baa_lag1[i] - baa_min63[i]) if (baa_lag1[i] is not None and baa_min63[i] is not None) else -999.0
+        dgs2_j = (
+            (dgs2_lag1[i] - dgs2_lag1[i - 63])
+            if (i >= 63 and dgs2_lag1[i] is not None and dgs2_lag1[i - 63] is not None)
+            else -999.0
+        )
+        nfci_j = (
+            (nfci_lag5[i] - nfci_lag5[i - 20])
+            if (i >= 20 and nfci_lag5[i] is not None and nfci_lag5[i - 20] is not None)
+            else -999.0
+        )
+        m3 = bool(
+            hyg_lqd_sma50[i] is not None
+            and hyg_lqd[i] < hyg_lqd_sma50[i]
+            and (baa_r >= 0.15 or dgs2_j >= 0.40 or nfci_j >= 0.10)
+            and vx <= 26.0
+            and vr <= 0.92
+        )
+
+        m4 = bool(
+            sma200[i] is not None
+            and ewmac[i] is not None
+            and ema20[i] is not None
+            and qqq_cl[i] < sma200[i]
+            and ewmac[i] < 0.0
+            and qqq_cl[i] > ema20[i]
+            and vx <= 27.0
+            and vr <= 0.88
+        )
+
+        hp_cur = p_hmm[i]
+        hp_prev5 = p_hmm[i - 5] if i >= 5 else None
+        m5 = bool(
+            hp_cur is not None
+            and hp_prev5 is not None
+            and hp_cur >= 0.55
+            and hp_prev5 < 0.40
+            and vx <= 24.0
+            and vr < 1.02
+        )
+
+        ad_weak = bool(
+            b_row.get("ad_line") is not None
+            and b_row.get("ad_sma50") is not None
+            and float(b_row["ad_line"]) < float(b_row["ad_sma50"])
+        )
+        def_r20 = (def_tech[i] / def_tech[i - 20] - 1.0) if i >= 20 else 0.0
+        rsp_weak = bool(rsp_sma50[i] is not None and rsp_spy[i] < rsp_sma50[i])
+        iwm_weak = bool(iwm_sma50[i] is not None and iwm_qqq[i] < iwm_sma50[i])
+
+        m0_val = bool(b_row["sw_u1"])
+        m6_on = bool(rsp_weak and (iwm_weak or ad_weak) and def_r20 >= 0.025 and vx <= 25.0 and vr <= 0.92)
+        m6_off = bool(rsp_weak and iwm_weak and def_r20 >= 0.025 and vx <= 25.0 and vr <= 0.92)
+
+        for is_on, m0_b, m6_b, dest in (
+            (True, m0_val, m6_on, signals_m0_on),
+            (False, False, m6_off, signals_m0_off),
+        ):
+            p1 = min(45.0, (35.0 if m0_b else 0.0) + (20.0 if m6_b else 0.0))
+            p2 = min(40.0, (20.0 if m2 else 0.0) + (20.0 if m5 else 0.0))
+            p3 = min(45.0, (35.0 if m4 else 0.0) + (20.0 if m3 else 0.0))
+            prob = min(100.0, p1 + p2 + p3)
+            t_m7g = 3 if prob >= 65.0 else (2 if prob >= 45.0 else (1 if prob >= 35.0 else 0))
+            t_m7 = 2 if prob >= 35.0 else 0
+            mask = (
+                (1 if m0_b else 0)
+                | (2 if m6_b else 0)
+                | (4 if m2 else 0)
+                | (8 if m5 else 0)
+                | (16 if m4 else 0)
+                | (32 if m3 else 0)
+            )
+            dest.append(
+                {
+                    "date": d,
+                    "m0_enabled": is_on,
+                    "M0": m0_b,
+                    "M6": m6_b,
+                    "M2": m2,
+                    "M2_silent_tail": m2_a,
+                    "M2_term_inflection": m2_b,
+                    "M5": m5,
+                    "M4": m4,
+                    "M3": m3,
+                    "p1": p1,
+                    "p2": p2,
+                    "p3": p3,
+                    "crisis_prob": prob,
+                    "target_slots_m7g": t_m7g,
+                    "target_slots_m7": t_m7,
+                    "mask": mask,
+                    "redline_blocked": bool(vx > 27.0 or vr >= 1.02),
+                    "hmm_p": round(float(hp_cur), 4) if hp_cur is not None else 0.0,
+                }
+            )
+
+        feat_rows.append(
+            [
+                d,
+                _r4(skew10[i]),
+                _r4(skew_p75[i]),
+                _r4(vvix[i]),
+                _r4(vvix_p75[i]),
+                _r4(vr_j5),
+                _r4(hp_cur),
+                _r4(hp_prev5),
+                _r4(ewmac[i]),
+                _r4(ema20[i]),
+                _r4(sma200[i]),
+                _r4(hyg_lqd[i]),
+                _r4(hyg_lqd_sma50[i]),
+                _r4(baa_lag1[i]),
+                _r4(baa_r if baa_r > -900 else None),
+                _r4(dgs2_lag1[i]),
+                _r4(dgs2_j if dgs2_j > -900 else None),
+                _r4(nfci_lag5[i]),
+                _r4(nfci_j if nfci_j > -900 else None),
+                _r4(rsp_spy[i]),
+                _r4(rsp_sma50[i]),
+                _r4(iwm_qqq[i]),
+                _r4(iwm_sma50[i]),
+                _r4(def_r20),
+            ]
+        )
+
+    tail_len = min(265, n)
+    fred_cutoff_dt = cal[max(0, n - 120)]
+    fred_tail = {
+        fid: {d: round(float(v), 6) for d, v in m7_data["fred_raw"][fid].items() if d >= fred_cutoff_dt}
+        for fid in FRED_LAGS
+    }
+    live_tail_state = {
+        "tail_dates": cal[-tail_len:],
+        "yf_tail": {k: [round(float(x), 6) for x in yf_ffill[k][-tail_len:]] for k in YF_ALL_KEYS},
+        "fred_tail": fred_tail,
+        "base_2013": {
+            "XLP": round(xlp0, 8),
+            "XLU": round(xlu0, 8),
+            "XLV": round(xlv0, 8),
+            "XLK": round(xlk0, 8),
+        },
+        "ewm_state": {
+            "ema20": round(float(ema20_last or 0.0), 8),
+            "e16": round(float(e16_last or 0.0), 8),
+            "e32": round(float(e32_last or 0.0), 8),
+            "e64": round(float(e64_last or 0.0), 8),
+            "e128": round(float(e128_last or 0.0), 8),
+            "e256": round(float(e256_last or 0.0), 8),
+        },
+        "welford_4d": {
+            "count": list(cnt),
+            "mean": [round(x, 10) for x in mean_acc],
+            "m2": [round(x, 10) for x in m2_acc],
+        },
+        "hmm": latest_hmm,
+        "p_hmm_tail": [round(float(x or 0.0), 8) for x in p_hmm[-10:]],
+    }
+
+    return {
+        "signals_m0_on": signals_m0_on,
+        "signals_m0_off": signals_m0_off,
+        "feature_table": {"_cols": feat_cols, "_rows": feat_rows},
+        "live_tail_state": live_tail_state,
+    }
+
+
+def format_m7_trigger_labels(sig_day: dict[str, Any], max_slots: int) -> tuple[list[str], str, str, str]:
+    mods: list[str] = []
+    p1_parts: list[str] = []
+    p2_parts: list[str] = []
+    p3_parts: list[str] = []
+    if sig_day.get("M0"):
+        mods.append("M0")
+        p1_parts.append("M0(+35)")
+    if sig_day.get("M6"):
+        mods.append("M6")
+        p1_parts.append("M6(+20)")
+    if sig_day.get("M2"):
+        mods.append("M2")
+        p2_parts.append("M2(+20)")
+    if sig_day.get("M5"):
+        mods.append("M5")
+        p2_parts.append("M5(+20)")
+    if sig_day.get("M4"):
+        mods.append("M4")
+        p3_parts.append("M4(+35)")
+    if sig_day.get("M3"):
+        mods.append("M3")
+        p3_parts.append("M3(+20)")
+
+    pillar_tags: list[str] = []
+    if p1_parts:
+        pillar_tags.append("P1:" + "+".join(m.split("(")[0] for m in p1_parts))
+    if p2_parts:
+        pillar_tags.append("P2:" + "+".join(m.split("(")[0] for m in p2_parts))
+    if p3_parts:
+        pillar_tags.append("P3:" + "+".join(m.split("(")[0] for m in p3_parts))
+    code = " + ".join(pillar_tags) if pillar_tags else "M7"
+    prob = int(round(float(sig_day.get("crisis_prob") or 0.0)))
+    tslots = int(sig_day.get("target_slots_m7g" if max_slots == 3 else "target_slots_m7") or 1)
+    trig_en = f"{code} · Score {prob}% (Target {tslots}/{max_slots} Slots)"
+    trig_zh = f"{code} · 概率 {prob}%（目标 {tslots}/{max_slots} 槽）"
+    return mods, code, trig_en, trig_zh
+
+
+def compute_m7_bh_parity(rows_eval: list[dict[str, Any]]) -> dict[str, Any]:
+    op0 = float(rows_eval[0]["open"])
+    sh = INITIAL_CAPITAL / (op0 * (1.0 + STOCK_REBAL_FEE))
+    navs: list[float] = []
+    post_sh: list[float] = []
+    pre_sh: list[float] = []
+    for r in rows_eval:
+        pre_sh.append(sh)
+        div = float(r["dividends"])
+        cl = float(r["close"])
+        if div > 0.0:
+            sh += (sh * div) / (cl * (1.0 + STOCK_REBAL_FEE))
+        post_sh.append(sh)
+        navs.append(sh * cl)
+    return {
+        "nav": navs,
+        "end_nav": navs[-1],
+        "final_shares": sh,
+        "pre_sh": pre_sh,
+        "post_sh": post_sh,
+    }
+
+
+def simulate_m7_strategy(
+    rows_eval: list[dict[str, Any]],
+    coeffs: list[float],
+    bco_mod: Any,
+    strategy_id: str,
+    sig_series: list[dict[str, Any]],
+    put_otm: str = DEFAULT_PUT_OTM,
+    m7_tp_mode: str = DEFAULT_M7_TP_MODE,
+    roll_mode: str = DEFAULT_ROLL_MODE,
+    m0_enabled: bool = DEFAULT_M0_ENABLED,
+    cc_mode: str = "cc_off",
+    sp_mode: str = "sp_off",
+    wc_mode: str = "wc_reclaim_30d_d35",
+) -> dict[str, Any]:
+    """Simulate M7G_Graded (0-1-2-3 slots) or M7_Ensemble (2 slots) with penny parity to run_8models_crisis_study.py
+    and 120d_roll50 parity, plus full compatibility with Engine 2 Covered Call (cc_mode) and Engine 3 Wheel (sp_mode, wc_mode).
+    """
+    is_graded = strategy_id == "M7G_Graded"
+    max_slots = 3 if is_graded else 2
+    put_moneyness = 0.80 if put_otm == "otm20" else 0.85
+    otm_pct_int = 20 if put_otm == "otm20" else 15
+    require_itm_tp = m7_tp_mode == "itm_tp"
+    tp_code = "ITM_TP" if require_itm_tp else "STANDARD"
+    is_roll50 = roll_mode == "120d_roll50"
+
+    dates = [r["date"] for r in rows_eval]
+    dt_objs = [datetime.date.fromisoformat(d) for d in dates]
+    n_days = len(rows_eval)
+
+    bh_m7 = compute_m7_bh_parity(rows_eval)
+    final_bh_sh = bh_m7["final_shares"]
+    final_cl = float(rows_eval[-1]["close"])
+
+    init_op = float(rows_eval[0]["open"])
+    core_shares = INITIAL_CAPITAL / (init_op * (1.0 + STOCK_REBAL_FEE))
+
+    slot_coverage = 0.50
+    ref_moneyness = 0.90
+    ref_dte = 120 if is_roll50 else 90
+    target_dte = 120 if is_roll50 else 90
+    roll_dte_thr = 50 if is_roll50 else 0
+    step_cal_days = 30
+    escalate_min_days = 21
+    vix_ratio_tp = 1.10
+    put_mult_tp = 5.0
+    put_mult_max_dte = 75 if is_roll50 else 45
+
+    cc_cfg_map: dict[str, tuple[float, float, float, float | None, str | None]] = {
+        "cc_d12_d35": (0.0, 0.12, 0.05, 0.35, None),
+        "cc_d12_r45": (0.0, 0.12, 0.05, 0.45, "fresh_30d"),
+        "cc_d12_cr55": (0.0, 0.12, 0.05, 0.55, "credit_45d"),
+    }
+    cc_enabled = cc_mode in cc_cfg_map
+    cc_min_vxn, cc_target_delta, cc_min_otm, cc_stop_delta, cc_roll_mode = cc_cfg_map.get(
+        cc_mode, (0.0, 0.12, 0.05, None, None)
+    )
+    cc_ath_limit = 0.03
+    cc_dte = 25
+    cc_max_rolls = 3
+
+    sp_cfg_map: dict[str, tuple[int, float, float, float, bool]] = {
+        "sp_14d_cap10": (14, 0.05, 0.10, 1.00, False),
+        "sp_10d_vixf": (10, 0.05, 0.20, 1.00, True),
+        "sp_14d_unf": (14, 0.05, 0.20, 1.00, False),
+    }
+    sp_enabled = sp_mode in sp_cfg_map
+    sp_dte, sp_otm_pct, sp_max_lev, sp_vix_thr, sp_require_vix_falling = sp_cfg_map.get(
+        sp_mode, (14, 0.05, 0.0, 1.00, False)
+    )
+
+    active_tranches: list[dict[str, Any]] = []
+    pending_sig: dict[str, Any] | None = None
+    active_cc: dict[str, Any] | None = None
+    pending_cc: dict[str, Any] | None = None
+    pending_cc_deploy = False
+    cc_cash = 0.0
+    cc_gross_prem = 0.0
+    cc_gross_loss = 0.0
+    cc_assigned_cnt = 0
+    cc_funded_puts = 0.0
+    cc_tid = 0
+    cc_ledger: list[dict[str, Any]] = []
+
+    active_sp: dict[str, Any] | None = None
+    pending_sp: dict[str, Any] | None = None
+    active_wc: dict[str, Any] | None = None
+    pending_wc: dict[str, Any] | None = None
+    assigned_shares = 0.0
+    assigned_cost_k = 0.0
+    sp_cash = 0.0
+    sp_margin_interest_total = 0.0
+    sp_comm_total = 0.0
+    sp_assign_count = 0
+    days_levered = 0
+    days_short_put_open = 0
+    max_gross_stock_lev = 1.0
+    max_notional_lev = 1.0
+    max_wheel_cycle_days = 0
+    cur_cycle_id = 0
+    cur_cycle_start_dt: datetime.date | None = None
+    sp_tid = 0
+    wc_tid = 0
+    sp_closed_ledger: list[dict[str, Any]] = []
+    wc_closed_ledger: list[dict[str, Any]] = []
+
+    ledger: list[dict[str, Any]] = []
+    nav_list: list[float] = []
+    equiv_sh_list: list[float] = []
+    active_slots_list: list[int] = []
+    any_active_list: list[int] = []
+    tid = 0
+
+    def _sweep_sp_cash(px: float) -> None:
+        nonlocal core_shares, sp_cash
+        if abs(sp_cash) > 1e-8:
+            denom = px * (1.0 + (STOCK_REBAL_FEE if sp_cash > 0 else -STOCK_REBAL_FEE))
+            core_shares += sp_cash / denom
+            sp_cash = 0.0
+
+    def _estimate_nav_open(op_px: float, vxn_o: float, r_c: float, q_c: float, cur_dt: datetime.date) -> float:
+        mtm_p = 0.0
+        for tr_o in active_tranches:
+            rem_d_o = max(1, (tr_o["exp_dt"] - cur_dt).days)
+            t_r_o = rem_d_o / 365.0
+            sp_iv_o = bco_mod.eval_skew_iv(op_px, tr_o["kp"], t_r_o, r_c, q_c, vxn_o, coeffs)
+            mtm_p += tr_o["hedged_shares"] * bco_mod.bsm_price(op_px, tr_o["kp"], t_r_o, r_c, q_c, sp_iv_o, "put")
+        mtm_cc_o = 0.0
+        if active_cc is not None:
+            rem_c_o = max(1, (active_cc["exp_dt"] - cur_dt).days)
+            t_c_o = rem_c_o / 365.0
+            sc_iv_c = bco_mod.eval_skew_iv(op_px, active_cc["kc"], t_c_o, r_c, q_c, vxn_o, coeffs)
+            mtm_cc_o = -active_cc["shares"] * bco_mod.bsm_price(op_px, active_cc["kc"], t_c_o, r_c, q_c, sc_iv_c, "call")
+        return max(1.0, (core_shares + assigned_shares) * op_px + cc_cash + sp_cash + mtm_p + mtm_cc_o)
+
+    for i, d in enumerate(dates):
+        row = rows_eval[i]
+        sig_d = sig_series[i]
+        op = float(row["open"])
+        cl = float(row["close"])
+        div = float(row["dividends"])
+        vxn_cl = float(row["vxn"])
+        vix_r = float(row["vix_ratio"])
+        r_cur = float(row["r"])
+        q_cur = float(row["div_yield"])
+        dd_cur = float(row["dd_from_ath"])
+
+        mult_morning = (final_bh_sh / bh_m7["pre_sh"][i]) * final_cl
+        mult_eod = (final_bh_sh / bh_m7["post_sh"][i]) * final_cl
+
+        if i > 0:
+            dt_yr = max(1, (dt_objs[i] - dt_objs[i - 1]).days) / 365.0
+            r_prev = float(rows_eval[i - 1]["r"])
+            if cc_cash > 0.0:
+                cc_cash *= 1.0 + r_prev * dt_yr
+            if sp_cash > 0.0:
+                sp_cash *= 1.0 + r_prev * dt_yr
+            elif sp_cash < 0.0:
+                m_int = abs(sp_cash) * (r_prev + MARGIN_SPREAD) * dt_yr
+                sp_cash -= m_int
+                sp_margin_interest_total += m_int
+
+        if i > 0 and pending_cc_deploy and cc_cash > 1.0:
+            core_shares += cc_cash / (op * (1.0 + STOCK_REBAL_FEE))
+            cc_cash = 0.0
+            pending_cc_deploy = False
+
+        if i > 0 and active_cc is not None and active_cc.get("pending_close"):
+            prev_vxn = float(rows_eval[i - 1]["vxn"])
+            prev_cl = float(rows_eval[i - 1]["close"])
+            vxn_op_cc = max(10.0, prev_vxn - 0.45 * (op / prev_cl - 1.0) * 100.0)
+            rem_cc = max(0, (active_cc["exp_dt"] - dt_objs[i]).days)
+            t_cc = rem_cc / 365.0
+            sc_ex = bco_mod.eval_skew_iv(op, active_cc["kc"], t_cc, r_cur, q_cur, vxn_op_cc, coeffs)
+            c_ask_ex = bco_mod.bsm_price(op, active_cc["kc"], t_cc, r_cur, q_cur, sc_ex, "call") * (1.0 + OPT_SLIP)
+            cost_cl = active_cc["shares"] * c_ask_ex
+            cc_gross_loss += cost_cl
+            if cc_cash >= cost_cl:
+                cc_cash -= cost_cl
+            else:
+                core_shares -= (cost_cl - cc_cash) / (op * (1.0 - STOCK_REBAL_FEE))
+                cc_cash = 0.0
+            close_reason = active_cc.get("close_reason") or "panic_close_uncap"
+            old_rolls = int(active_cc.get("roll_count", 0))
+            old_sh = active_cc["shares"]
+            cc_ledger.append(
+                {
+                    "cc_id": active_cc["cc_id"],
+                    "entry_date": active_cc["entry_date"],
+                    "exit_date": d,
+                    "entry_spot": round(active_cc["entry_spot"], 2),
+                    "kc": round(active_cc["kc"], 2),
+                    "exit_spot": round(op, 2),
+                    "entry_vxn": round(active_cc["entry_vxn"], 2),
+                    "shares": round(old_sh, 2),
+                    "prem_usd": round(active_cc["prem_usd"], 2),
+                    "loss_usd": round(cost_cl, 2),
+                    "net_pnl_usd": round(active_cc["prem_usd"] - cost_cl, 2),
+                    "exit_reason": close_reason,
+                    "roll_gen": old_rolls,
+                }
+            )
+            active_cc = None
+            if close_reason in ("delta_roll_up", "delta_credit_roll") and cc_roll_mode is not None and old_rolls < cc_max_rolls:
+                roll_days = 45 if cc_roll_mode == "credit_45d" else 30
+                target_r = dt_objs[i] + datetime.timedelta(days=roll_days)
+                pos_r = bisect.bisect_left(dt_objs, target_r)
+                exp_date_r, exp_dt_r = (dates[pos_r], dt_objs[pos_r]) if pos_r < n_days else (target_r.isoformat(), target_r)
+                t_r = max(1, (exp_dt_r - dt_objs[i]).days) / 365.0
+                kc_new: float | None = None
+                if cc_roll_mode == "credit_45d":
+                    kc_new = bco_mod.solve_call_strike_for_bid(op, t_r, r_cur, q_cur, vxn_op_cc, coeffs, c_ask_ex, OPT_SLIP)
+                elif cc_roll_mode == "fresh_30d":
+                    kc_new = max(
+                        op * (1.0 + cc_min_otm),
+                        bco_mod.solve_call_strike_for_delta(op, t_r, r_cur, q_cur, vxn_op_cc, coeffs, cc_target_delta),
+                    )
+                if kc_new is not None and kc_new > op * 1.01:
+                    sc_r = bco_mod.eval_skew_iv(op, kc_new, t_r, r_cur, q_cur, vxn_op_cc, coeffs)
+                    c_bid_r = bco_mod.bsm_price(op, kc_new, t_r, r_cur, q_cur, sc_r, "call") * (1.0 - OPT_SLIP)
+                    if c_bid_r >= 0.05:
+                        prem_r = old_sh * c_bid_r
+                        cc_tid += 1
+                        cc_gross_prem += prem_r
+                        cc_cash += prem_r
+                        active_cc = {
+                            "cc_id": cc_tid,
+                            "entry_date": d,
+                            "entry_dt": dt_objs[i],
+                            "exp_date": exp_date_r,
+                            "exp_dt": exp_dt_r,
+                            "entry_spot": op,
+                            "entry_vxn": vxn_op_cc,
+                            "kc": kc_new,
+                            "shares": old_sh,
+                            "prem_usd": prem_r,
+                            "pending_close": False,
+                            "roll_count": old_rolls + 1,
+                        }
+
+        # 1. Pending M7 TP Exits at T+1 Open
+        if i > 0 and any(t.get("pending_tp") for t in active_tranches):
+            prev_vxn = float(rows_eval[i - 1]["vxn"])
+            prev_cl = float(rows_eval[i - 1]["close"])
+            vxn_op = max(10.0, prev_vxn - 0.45 * (op / prev_cl - 1.0) * 100.0)
+            still_open: list[dict[str, Any]] = []
+            for tr in active_tranches:
+                if not tr.get("pending_tp"):
+                    still_open.append(tr)
+                    continue
+                rem_days = max(0, (tr["exp_dt"] - dt_objs[i]).days)
+                t_rem = rem_days / 365.0
+                sig_ex = bco_mod.eval_skew_iv(op, tr["kp"], t_rem, r_cur, q_cur, vxn_op, coeffs)
+                put_bid = max(0.0, bco_mod.bsm_price(op, tr["kp"], t_rem, r_cur, q_cur, sig_ex, "put") * (1.0 - OPT_SLIP) - OPT_COMM_PER_SH)
+                exit_usd = tr["hedged_shares"] * put_bid
+                d_sh = 0.0
+                if abs(exit_usd) > 1e-10:
+                    denom = op * (1.0 + (STOCK_REBAL_FEE if exit_usd >= 0 else -STOCK_REBAL_FEE))
+                    d_sh = exit_usd / denom
+                    core_shares += d_sh
+                roi_mult = (exit_usd / tr["entry_cost_usd"]) if tr["entry_cost_usd"] > 1e-6 else 0.0
+                actual_net_sh = put_bid - tr["entry_put_ask"]
+                conv = bco_mod.decompose_tranche_convexity(
+                    "naked_put",
+                    tr["entry_spot"],
+                    op,
+                    tr["kp"],
+                    None,
+                    tr["T_entry"],
+                    t_rem,
+                    tr["entry_r"],
+                    r_cur,
+                    tr["entry_q"],
+                    q_cur,
+                    tr["entry_vxn"],
+                    vxn_op,
+                    coeffs,
+                    actual_net_sh,
+                )
+                hs = tr["hedged_shares"]
+                ledger.append(
+                    {
+                        "tranche_id": tr["tranche_id"],
+                        "strategy_id": strategy_id,
+                        "slot_num": tr["slot_num"],
+                        "tier": tr["tier"],
+                        "max_slots": max_slots,
+                        "tranche_type": "naked_put",
+                        "put_otm_pct": otm_pct_int,
+                        "tp_mode": tp_code,
+                        "roll_mode": roll_mode,
+                        "target_dte": target_dte,
+                        "signal_date": tr["signal_date"],
+                        "entry_date": tr["entry_date"],
+                        "planned_exp_date": tr["exp_date"],
+                        "exit_date": d,
+                        "actual_days_held": (dt_objs[i] - tr["entry_dt"]).days,
+                        "rem_dte_at_exit": rem_days,
+                        "exit_reason": tr["tp_reason"],
+                        "sig_score": tr["sig_score"],
+                        "sig_ad_below50": tr["sig_ad_below50"],
+                        "crisis_prob": tr["crisis_prob"],
+                        "p1": tr["p1"],
+                        "p2": tr["p2"],
+                        "p3": tr["p3"],
+                        "triggered_modules": tr["triggered_modules"],
+                        "trigger_code": tr["trigger_code"],
+                        "trigger_en": tr["trigger_en"],
+                        "trigger_zh": tr["trigger_zh"],
+                        "entry_spot": round(tr["entry_spot"], 2),
+                        "entry_vxn": round(tr["entry_vxn"], 2),
+                        "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
+                        "kp": round(tr["kp"], 2),
+                        "kc": None,
+                        "call_cap_pct": None,
+                        "hedged_shares": round(hs, 2),
+                        "contracts_est": round(hs / 100.0, 2),
+                        "slot_coverage": round(tr["hedged_ratio"], 4),
+                        "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
+                        "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
+                        "entry_cost_usd": round(tr["entry_cost_usd"], 2),
+                        "entry_shares_sold": round(tr["entry_shares_sold"], 4),
+                        "exit_spot": round(op, 2),
+                        "exit_vxn": round(vxn_op, 2),
+                        "exit_vix_ratio": round(tr["tp_trigger_ratio"], 3),
+                        "underlying_ret_pct": round((op / tr["entry_spot"] - 1.0) * 100.0, 2),
+                        "put_exit_val_sh": round(put_bid, 4),
+                        "call_exit_cost_sh": 0.0,
+                        "exit_net_cash_usd": round(exit_usd, 2),
+                        "net_pnl_usd": round(exit_usd - tr["entry_cost_usd"], 2),
+                        "roi_mult": round(roi_mult, 2),
+                        "exit_shares_delta": round(d_sh, 2),
+                        "shares_added": round(tr["entry_shares_sold"] + d_sh, 2),
+                        "delta0": round(float(conv["delta0"]), 4),
+                        "delta_usd": round(float(conv["dV_delta_sh"]) * hs, 2),
+                        "gamma_usd": round(float(conv["dV_gamma_sh"]) * hs, 2),
+                        "vega_usd": round(float(conv["dV_vega_sh"]) * hs, 2),
+                        "theta_slip_usd": round(
+                            round(exit_usd - tr["entry_cost_usd"], 2)
+                            - (
+                                round(float(conv["dV_delta_sh"]) * hs, 2)
+                                + round(float(conv["dV_gamma_sh"]) * hs, 2)
+                                + round(float(conv["dV_vega_sh"]) * hs, 2)
+                            ),
+                            2,
+                        ),
+                        "convexity_mult": round(float(conv["conv_mult"]), 2) if conv["conv_mult"] is not None else None,
+                        "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
+                        "comp_put_gain_usd": round(d_sh * mult_morning, 2),
+                        "comp_call_drag_usd": 0.0,
+                    }
+                )
+            active_tranches = still_open
+
+        # 2. Pending New M7 Tranche Entry at T+1 Open
+        if i > 0 and pending_sig is not None and len(active_tranches) < pending_sig["cap_slots"]:
+            vxn_en = max(10.0, pending_sig["vxn"] - 0.45 * (op / pending_sig["close"] - 1.0) * 100.0)
+            r_en, q_en = pending_sig["r"], pending_sig["q"]
+
+            ref_cal = dt_objs[i] + datetime.timedelta(days=ref_dte)
+            pos_ref = bisect.bisect_left(dt_objs, ref_cal)
+            exp_dt_ref = dt_objs[pos_ref] if pos_ref < n_days else ref_cal
+            t_ref = max(1, (exp_dt_ref - dt_objs[i]).days) / 365.0
+            kp_ref = op * ref_moneyness
+            sig_ref = bco_mod.eval_skew_iv(op, kp_ref, t_ref, r_en, q_en, vxn_en, coeffs)
+            put_ask_ref = bco_mod.bsm_price(op, kp_ref, t_ref, r_en, q_en, sig_ref, "put") * (1.0 + 0.025)
+
+            target_cal = dt_objs[i] + datetime.timedelta(days=target_dte)
+            pos = bisect.bisect_left(dt_objs, target_cal)
+            exp_date, exp_dt = (dates[pos], dt_objs[pos]) if pos < n_days else (target_cal.isoformat(), target_cal)
+            t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
+            kp = op * put_moneyness
+            sig_p_en = bco_mod.eval_skew_iv(op, kp, t_en, r_en, q_en, vxn_en, coeffs)
+            mid_en = bco_mod.bsm_price(op, kp, t_en, r_en, q_en, sig_p_en, "put")
+            put_ask_en = mid_en * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH
+
+            already_ref_cov = sum(t["ref_cov_sh"] for t in active_tranches)
+            cost_sh_frac_ref = put_ask_ref / (op * (1.0 - STOCK_REBAL_FEE))
+            max_cov = core_shares * (slot_coverage * max(2, pending_sig["cap_slots"]))
+            avail_sh_ref = max(0.0, max_cov - already_ref_cov)
+            ref_hedged_sh = min(core_shares * slot_coverage, avail_sh_ref / (1.0 + cost_sh_frac_ref))
+            ref_budget_usd = ref_hedged_sh * put_ask_ref
+
+            if put_ask_en >= 0.03 and ref_budget_usd > 1.0:
+                hedged_sh = ref_budget_usd / put_ask_en
+                entry_cost_usd = ref_budget_usd
+                if cc_enabled and cc_cash >= entry_cost_usd:
+                    cc_cash -= entry_cost_usd
+                    cc_funded_puts += entry_cost_usd
+                    d_sh_entry = 0.0
+                elif cc_enabled and cc_cash > 0.0:
+                    paid_cc = cc_cash
+                    cc_funded_puts += paid_cc
+                    rem_cost = entry_cost_usd - paid_cc
+                    cc_cash = 0.0
+                    d_sh_entry = -rem_cost / (op * (1.0 - STOCK_REBAL_FEE))
+                    core_shares += d_sh_entry
+                else:
+                    d_sh_entry = -entry_cost_usd / (op * (1.0 - STOCK_REBAL_FEE))
+                    core_shares += d_sh_entry
+
+                tid += 1
+                used_slots = {t["slot_num"] for t in active_tranches}
+                slot_num = min(s for s in range(1, max(max_slots, pending_sig["cap_slots"]) + 1) if s not in used_slots)
+                hr = hedged_sh / max(core_shares, 1e-6)
+                active_tranches.append(
+                    {
+                        "tranche_id": tid,
+                        "slot_num": slot_num,
+                        "tier": pending_sig["tier"],
+                        "signal_date": pending_sig["signal_date"],
+                        "sig_score": pending_sig["sig_score"],
+                        "sig_ad_below50": pending_sig["sig_ad_below50"],
+                        "crisis_prob": pending_sig["crisis_prob"],
+                        "p1": pending_sig["p1"],
+                        "p2": pending_sig["p2"],
+                        "p3": pending_sig["p3"],
+                        "triggered_modules": pending_sig["triggered_modules"],
+                        "trigger_code": pending_sig["trigger_code"],
+                        "trigger_en": pending_sig["trigger_en"],
+                        "trigger_zh": pending_sig["trigger_zh"],
+                        "entry_date": d,
+                        "entry_dt": dt_objs[i],
+                        "exp_date": exp_date,
+                        "exp_dt": exp_dt,
+                        "T_entry": t_en,
+                        "entry_spot": op,
+                        "entry_vxn": vxn_en,
+                        "entry_vix_ratio": pending_sig["vix_ratio"],
+                        "entry_r": r_en,
+                        "entry_q": q_en,
+                        "kp": kp,
+                        "hedged_shares": hedged_sh,
+                        "ref_cov_sh": ref_hedged_sh,
+                        "hedged_ratio": hr,
+                        "entry_put_ask": put_ask_en,
+                        "entry_cost_usd": entry_cost_usd,
+                        "entry_shares_sold": d_sh_entry,
+                        "comp_entry_cost_usd": d_sh_entry * mult_morning,
+                        "pending_tp": False,
+                        "tp_trigger_ratio": 0.0,
+                        "tp_reason": "",
+                    }
+                )
+            pending_sig = None
+
+        # 2b. Engine 2 Covered Call & Engine 3 Wheel T+1 Open executions
+        if i > 0 and cc_enabled and pending_cc is not None and active_cc is None:
+            vxn_cc = max(10.0, pending_cc["vxn"] - 0.45 * (op / pending_cc["close"] - 1.0) * 100.0)
+            r_cc, q_cc = pending_cc["r"], pending_cc["q"]
+            cc_sh = max(0.0, core_shares)
+            if cc_sh > 1e-6:
+                target_cc = dt_objs[i] + datetime.timedelta(days=cc_dte)
+                pos_cc = bisect.bisect_left(dt_objs, target_cc)
+                exp_date_cc, exp_dt_cc = (dates[pos_cc], dt_objs[pos_cc]) if pos_cc < n_days else (target_cc.isoformat(), target_cc)
+                t_cc = max(1, (exp_dt_cc - dt_objs[i]).days) / 365.0
+                kc_cc = max(
+                    op * (1.0 + cc_min_otm),
+                    bco_mod.solve_call_strike_for_delta(op, t_cc, r_cc, q_cc, vxn_cc, coeffs, cc_target_delta),
+                )
+                sc_cc = bco_mod.eval_skew_iv(op, kc_cc, t_cc, r_cc, q_cc, vxn_cc, coeffs)
+                c_bid_cc = bco_mod.bsm_price(op, kc_cc, t_cc, r_cc, q_cc, sc_cc, "call") * (1.0 - OPT_SLIP)
+                if c_bid_cc >= 0.05:
+                    prem_usd = cc_sh * c_bid_cc
+                    cc_tid += 1
+                    cc_gross_prem += prem_usd
+                    cc_cash += prem_usd
+                    active_cc = {
+                        "cc_id": cc_tid,
+                        "entry_date": d,
+                        "entry_dt": dt_objs[i],
+                        "exp_date": exp_date_cc,
+                        "exp_dt": exp_dt_cc,
+                        "entry_spot": op,
+                        "entry_vxn": vxn_cc,
+                        "kc": kc_cc,
+                        "shares": cc_sh,
+                        "prem_usd": prem_usd,
+                        "pending_close": False,
+                        "roll_count": 0,
+                    }
+            pending_cc = None
+
+        if i > 0 and sp_enabled and pending_wc is not None and assigned_shares > 1e-6 and active_wc is None:
+            pw = pending_wc
+            pending_wc = None
+            vxn_wc = max(10.0, pw["vxn"] - 0.45 * (op / pw["close"] - 1.0) * 100.0)
+            if wc_mode == "wc_reclaim_30d_d35":
+                target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
+                pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
+                exp_date_wc, exp_dt_wc = (dates[pos_wc], dt_objs[pos_wc]) if pos_wc < n_days else (target_wc_dt.isoformat(), target_wc_dt)
+                act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
+                k_d35 = bco_mod.solve_call_strike_for_delta(op, act_dte_wc / 365.0, pw["r"], pw["q"], vxn_wc, coeffs, 0.35)
+                kc_wc = max(assigned_cost_k, k_d35)
+            elif wc_mode == "wc_30d_c5s5":
+                target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
+                pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
+                exp_date_wc, exp_dt_wc = (dates[pos_wc], dt_objs[pos_wc]) if pos_wc < n_days else (target_wc_dt.isoformat(), target_wc_dt)
+                act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
+                kc_wc = max(assigned_cost_k * 1.05, op * 1.05)
+            else:
+                exp_date_wc, exp_dt_wc, act_dte_wc = bco_mod._pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
+                kc_wc = max(assigned_cost_k, op * 1.02)
+            c_bid_wc, _ = bco_mod._opt_exec_price_sp(op, kc_wc, act_dte_wc / 365.0, pw["r"], pw["q"], vxn_wc, coeffs, "call", "sell", OPT_SLIP)
+            if c_bid_wc >= MIN_OPT_BID:
+                prem_wc = assigned_shares * c_bid_wc
+                sp_comm_total += assigned_shares * OPT_COMM_PER_SH
+                sp_cash += prem_wc
+                wc_tid += 1
+                active_wc = {
+                    "wc_id": wc_tid,
+                    "cycle_id": cur_cycle_id,
+                    "signal_date": pw["signal_date"],
+                    "entry_date": d,
+                    "entry_dt": dt_objs[i],
+                    "exp_date": exp_date_wc,
+                    "exp_dt": exp_dt_wc,
+                    "dte": act_dte_wc,
+                    "entry_spot": op,
+                    "kc": kc_wc,
+                    "assigned_cost_k": assigned_cost_k,
+                    "shares": assigned_shares,
+                    "prem_usd": prem_wc,
+                }
+
+        if i > 0 and sp_enabled and pending_sp is not None and active_sp is None and assigned_shares <= 1e-6:
+            ps = pending_sp
+            pending_sp = None
+            vxn_sp = max(10.0, ps["vxn"] - 0.45 * (op / ps["close"] - 1.0) * 100.0)
+            exp_date_sp, exp_dt_sp, act_dte_sp = bco_mod._pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
+            kp_sp = op * (1.0 - sp_otm_pct)
+            p_bid_sp, _ = bco_mod._opt_exec_price_sp(op, kp_sp, act_dte_sp / 365.0, ps["r"], ps["q"], vxn_sp, coeffs, "put", "sell", OPT_SLIP)
+            if p_bid_sp >= MIN_OPT_BID:
+                nav_open = _estimate_nav_open(op, vxn_sp, ps["r"], ps["q"], dt_objs[i])
+                put_sh = (sp_max_lev * nav_open) / kp_sp
+                prem_sp = put_sh * p_bid_sp
+                sp_comm_total += put_sh * OPT_COMM_PER_SH
+                sp_cash += prem_sp
+                sp_tid += 1
+                cur_cycle_id = sp_tid
+                cur_cycle_start_dt = dt_objs[i]
+                active_sp = {
+                    "sp_id": sp_tid,
+                    "cycle_id": cur_cycle_id,
+                    "signal_date": ps["signal_date"],
+                    "entry_date": d,
+                    "entry_dt": dt_objs[i],
+                    "exp_date": exp_date_sp,
+                    "exp_dt": exp_dt_sp,
+                    "dte": act_dte_sp,
+                    "entry_spot": op,
+                    "kp": kp_sp,
+                    "shares": put_sh,
+                    "prem_usd": prem_sp,
+                    "entry_vix_ratio": ps["vix_ratio"],
+                }
+
+        # 3. Dividends DRIP (exact run_put_engine parity)
+        if div > 0.0 and core_shares > 0.0:
+            core_shares += (core_shares * div) / (cl * (1.0 + STOCK_REBAL_FEE))
+            if assigned_shares > 0.0:
+                sp_cash += assigned_shares * div
+
+        was_active_today = len(active_tranches) > 0
+        active_slots_today = len(active_tranches)
+
+        # 4. EOD Expiries
+        still_open_exp: list[dict[str, Any]] = []
+        for tr in active_tranches:
+            if dt_objs[i] >= tr["exp_dt"]:
+                put_intr = max(0.0, tr["kp"] - cl)
+                settle_usd = tr["hedged_shares"] * put_intr
+                d_sh = 0.0
+                if abs(settle_usd) > 1e-10:
+                    d_sh = settle_usd / (cl * (1.0 + STOCK_REBAL_FEE))
+                    core_shares += d_sh
+                roi_mult = (settle_usd / tr["entry_cost_usd"]) if tr["entry_cost_usd"] > 1e-6 else 0.0
+                actual_net_sh = put_intr - tr["entry_put_ask"]
+                conv = bco_mod.decompose_tranche_convexity(
+                    "naked_put",
+                    tr["entry_spot"],
+                    cl,
+                    tr["kp"],
+                    None,
+                    tr["T_entry"],
+                    0.0,
+                    tr["entry_r"],
+                    r_cur,
+                    tr["entry_q"],
+                    q_cur,
+                    tr["entry_vxn"],
+                    vxn_cl,
+                    coeffs,
+                    actual_net_sh,
+                )
+                hs = tr["hedged_shares"]
+                ledger.append(
+                    {
+                        "tranche_id": tr["tranche_id"],
+                        "strategy_id": strategy_id,
+                        "slot_num": tr["slot_num"],
+                        "tier": tr["tier"],
+                        "max_slots": max_slots,
+                        "tranche_type": "naked_put",
+                        "put_otm_pct": otm_pct_int,
+                        "tp_mode": tp_code,
+                        "roll_mode": roll_mode,
+                        "target_dte": target_dte,
+                        "signal_date": tr["signal_date"],
+                        "entry_date": tr["entry_date"],
+                        "planned_exp_date": tr["exp_date"],
+                        "exit_date": d,
+                        "actual_days_held": (dt_objs[i] - tr["entry_dt"]).days,
+                        "rem_dte_at_exit": 0,
+                        "exit_reason": "expiry_120dte" if is_roll50 else "expiry_90dte",
+                        "sig_score": tr["sig_score"],
+                        "sig_ad_below50": tr["sig_ad_below50"],
+                        "crisis_prob": tr["crisis_prob"],
+                        "p1": tr["p1"],
+                        "p2": tr["p2"],
+                        "p3": tr["p3"],
+                        "triggered_modules": tr["triggered_modules"],
+                        "trigger_code": tr["trigger_code"],
+                        "trigger_en": tr["trigger_en"],
+                        "trigger_zh": tr["trigger_zh"],
+                        "entry_spot": round(tr["entry_spot"], 2),
+                        "entry_vxn": round(tr["entry_vxn"], 2),
+                        "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
+                        "kp": round(tr["kp"], 2),
+                        "kc": None,
+                        "call_cap_pct": None,
+                        "hedged_shares": round(hs, 2),
+                        "contracts_est": round(hs / 100.0, 2),
+                        "slot_coverage": round(tr["hedged_ratio"], 4),
+                        "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
+                        "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
+                        "entry_cost_usd": round(tr["entry_cost_usd"], 2),
+                        "entry_shares_sold": round(tr["entry_shares_sold"], 4),
+                        "exit_spot": round(cl, 2),
+                        "exit_vxn": round(vxn_cl, 2),
+                        "exit_vix_ratio": round(vix_r, 3),
+                        "underlying_ret_pct": round((cl / tr["entry_spot"] - 1.0) * 100.0, 2),
+                        "put_exit_val_sh": round(put_intr, 4),
+                        "call_exit_cost_sh": 0.0,
+                        "exit_net_cash_usd": round(settle_usd, 2),
+                        "net_pnl_usd": round(settle_usd - tr["entry_cost_usd"], 2),
+                        "roi_mult": round(roi_mult, 2),
+                        "exit_shares_delta": round(d_sh, 2),
+                        "shares_added": round(tr["entry_shares_sold"] + d_sh, 2),
+                        "delta0": round(float(conv["delta0"]), 4),
+                        "delta_usd": round(float(conv["dV_delta_sh"]) * hs, 2),
+                        "gamma_usd": round(float(conv["dV_gamma_sh"]) * hs, 2),
+                        "vega_usd": round(float(conv["dV_vega_sh"]) * hs, 2),
+                        "theta_slip_usd": round(
+                            round(settle_usd - tr["entry_cost_usd"], 2)
+                            - (
+                                round(float(conv["dV_delta_sh"]) * hs, 2)
+                                + round(float(conv["dV_gamma_sh"]) * hs, 2)
+                                + round(float(conv["dV_vega_sh"]) * hs, 2)
+                            ),
+                            2,
+                        ),
+                        "convexity_mult": round(float(conv["conv_mult"]), 2) if conv["conv_mult"] is not None else None,
+                        "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
+                        "comp_put_gain_usd": round(d_sh * mult_eod, 2),
+                        "comp_call_drag_usd": 0.0,
+                    }
+                )
+            else:
+                still_open_exp.append(tr)
+        active_tranches = still_open_exp
+
+        # 5. EOD MTM & Unified TP Check
+        put_mtm = 0.0
+        for tr in active_tranches:
+            rem_days = max(1, (tr["exp_dt"] - dt_objs[i]).days)
+            t_rem = rem_days / 365.0
+            sig_p = bco_mod.eval_skew_iv(cl, tr["kp"], t_rem, r_cur, q_cur, vxn_cl, coeffs)
+            put_mid = bco_mod.bsm_price(cl, tr["kp"], t_rem, r_cur, q_cur, sig_p, "put")
+            put_mtm += tr["hedged_shares"] * put_mid
+            if not tr["pending_tp"]:
+                vix_ok = (vix_r >= vix_ratio_tp) and ((cl <= tr["kp"]) if require_itm_tp else True)
+                if vix_ok:
+                    tr["pending_tp"] = True
+                    tr["tp_trigger_ratio"] = vix_r
+                    tr["tp_reason"] = "vix_inv_1.10_itm_tp" if require_itm_tp else "vix_inv_1.10_tp"
+                elif rem_days <= put_mult_max_dte and tr["entry_put_ask"] > 1e-6 and put_mid >= tr["entry_put_ask"] * put_mult_tp:
+                    tr["pending_tp"] = True
+                    tr["tp_trigger_ratio"] = vix_r
+                    tr["tp_reason"] = "put_5x_dte75_tp" if is_roll50 else "put_5x_dte45_tp"
+                elif is_roll50 and rem_days <= roll_dte_thr:
+                    tr["pending_tp"] = True
+                    tr["tp_trigger_ratio"] = vix_r
+                    tr["tp_reason"] = "roll_50d"
+
+        # 5b. Engine 2 & Engine 3 EOD MTM/Expiries
+        cc_mtm = 0.0
+        if active_cc is not None:
+            if d == active_cc["exp_date"]:
+                pay_cc = max(0.0, cl - active_cc["kc"])
+                loss_cc = active_cc["shares"] * pay_cc
+                if pay_cc > 0.0:
+                    cc_assigned_cnt += 1
+                    cc_gross_loss += loss_cc
+                    if cc_cash >= loss_cc:
+                        cc_cash -= loss_cc
+                    else:
+                        core_shares -= (loss_cc - cc_cash) / (cl * (1.0 - STOCK_REBAL_FEE))
+                        cc_cash = 0.0
+                cc_ledger.append(
+                    {
+                        "cc_id": active_cc["cc_id"],
+                        "entry_date": active_cc["entry_date"],
+                        "exit_date": d,
+                        "entry_spot": round(active_cc["entry_spot"], 2),
+                        "kc": round(active_cc["kc"], 2),
+                        "exit_spot": round(cl, 2),
+                        "entry_vxn": round(active_cc["entry_vxn"], 2),
+                        "shares": round(active_cc["shares"], 2),
+                        "prem_usd": round(active_cc["prem_usd"], 2),
+                        "loss_usd": round(loss_cc, 2),
+                        "net_pnl_usd": round(active_cc["prem_usd"] - loss_cc, 2),
+                        "exit_reason": "assigned_breach" if pay_cc > 0.0 else "expired_worthless",
+                        "roll_gen": int(active_cc.get("roll_count", 0)),
+                    }
+                )
+                active_cc = None
+            else:
+                rem_cc = max(1, (active_cc["exp_dt"] - dt_objs[i]).days)
+                t_cc = rem_cc / 365.0
+                sc_cc = bco_mod.eval_skew_iv(cl, active_cc["kc"], t_cc, r_cur, q_cur, vxn_cl, coeffs)
+                cm_cc = bco_mod.bsm_price(cl, active_cc["kc"], t_cc, r_cur, q_cur, sc_cc, "call")
+                cc_mtm = -active_cc["shares"] * cm_cc
+                cur_delta = bco_mod.bsm_call_delta(cl, active_cc["kc"], t_cc, r_cur, q_cur, sc_cc)
+                if rem_cc >= 3 and vix_r >= 1.10:
+                    active_cc["pending_close"] = True
+                    active_cc["close_reason"] = "panic_close_uncap"
+                elif cc_stop_delta is not None and cur_delta >= cc_stop_delta:
+                    active_cc["pending_close"] = True
+                    active_cc["close_reason"] = (
+                        "delta_roll_up" if cc_roll_mode == "fresh_30d" else ("delta_credit_roll" if cc_roll_mode == "credit_45d" else "delta_stop")
+                    )
+
+        sp_mtm = 0.0
+        if active_sp is not None:
+            days_short_put_open += 1
+            if d == active_sp["exp_date"]:
+                if cl >= active_sp["kp"]:
+                    sp_closed_ledger.append(
+                        {
+                            "leg_id": f"SP-{active_sp['sp_id']}",
+                            "sp_id": active_sp["sp_id"],
+                            "cycle_id": active_sp["cycle_id"],
+                            "leg_type": "short_put",
+                            "is_open_live": False,
+                            "signal_date": active_sp["signal_date"],
+                            "entry_date": active_sp["entry_date"],
+                            "exit_date": d,
+                            "dte": active_sp["dte"],
+                            "entry_spot": round(active_sp["entry_spot"], 2),
+                            "strike": round(active_sp["kp"], 2),
+                            "kp": round(active_sp["kp"], 2),
+                            "exit_spot": round(cl, 2),
+                            "shares": round(active_sp["shares"], 2),
+                            "prem_usd": round(active_sp["prem_usd"], 2),
+                            "exit_cost_usd": 0.0,
+                            "net_pnl_usd": round(active_sp["prem_usd"], 2),
+                            "exit_reason": "expired_otm",
+                        }
+                    )
+                    active_sp = None
+                    if assigned_shares <= 1e-6:
+                        cur_cycle_start_dt = None
+                        _sweep_sp_cash(cl)
+                else:
+                    assigned_shares = active_sp["shares"]
+                    assigned_cost_k = active_sp["kp"]
+                    sp_cash -= assigned_shares * active_sp["kp"]
+                    sp_assign_count += 1
+                    intr_cost = active_sp["shares"] * (active_sp["kp"] - cl)
+                    sp_closed_ledger.append(
+                        {
+                            "leg_id": f"SP-{active_sp['sp_id']}",
+                            "sp_id": active_sp["sp_id"],
+                            "cycle_id": active_sp["cycle_id"],
+                            "leg_type": "short_put",
+                            "is_open_live": False,
+                            "signal_date": active_sp["signal_date"],
+                            "entry_date": active_sp["entry_date"],
+                            "exit_date": d,
+                            "dte": active_sp["dte"],
+                            "entry_spot": round(active_sp["entry_spot"], 2),
+                            "strike": round(active_sp["kp"], 2),
+                            "kp": round(active_sp["kp"], 2),
+                            "exit_spot": round(cl, 2),
+                            "shares": round(active_sp["shares"], 2),
+                            "prem_usd": round(active_sp["prem_usd"], 2),
+                            "exit_cost_usd": round(intr_cost, 2),
+                            "net_pnl_usd": round(active_sp["prem_usd"] - intr_cost, 2),
+                            "exit_reason": "assigned_wheel",
+                        }
+                    )
+                    active_sp = None
+            else:
+                rem_sp = max(1, (active_sp["exp_dt"] - dt_objs[i]).days)
+                _, pm_sp = bco_mod._opt_exec_price_sp(cl, active_sp["kp"], rem_sp / 365.0, r_cur, q_cur, vxn_cl, coeffs, "put", "buy", OPT_SLIP)
+                sp_mtm = -active_sp["shares"] * pm_sp
+
+        wc_mtm = 0.0
+        if active_wc is not None:
+            if d == active_wc["exp_date"]:
+                if cl > active_wc["kc"]:
+                    sp_cash += assigned_shares * active_wc["kc"]
+                    stock_gain = active_wc["shares"] * (active_wc["kc"] - active_wc["assigned_cost_k"])
+                    wc_closed_ledger.append(
+                        {
+                            "leg_id": f"WC-{active_wc['wc_id']}",
+                            "wc_id": active_wc["wc_id"],
+                            "cycle_id": active_wc["cycle_id"],
+                            "leg_type": "wheel_call",
+                            "is_open_live": False,
+                            "signal_date": active_wc["signal_date"],
+                            "entry_date": active_wc["entry_date"],
+                            "exit_date": d,
+                            "dte": active_wc["dte"],
+                            "entry_spot": round(active_wc["entry_spot"], 2),
+                            "strike": round(active_wc["kc"], 2),
+                            "kc": round(active_wc["kc"], 2),
+                            "assigned_cost_k": round(active_wc["assigned_cost_k"], 2),
+                            "exit_spot": round(cl, 2),
+                            "shares": round(active_wc["shares"], 2),
+                            "prem_usd": round(active_wc["prem_usd"], 2),
+                            "exit_cost_usd": 0.0,
+                            "stock_gain_usd": round(stock_gain, 2),
+                            "net_pnl_usd": round(active_wc["prem_usd"] + stock_gain, 2),
+                            "exit_reason": "called_away",
+                        }
+                    )
+                    assigned_shares = 0.0
+                    assigned_cost_k = 0.0
+                    active_wc = None
+                    if cur_cycle_start_dt is not None:
+                        max_wheel_cycle_days = max(max_wheel_cycle_days, (dt_objs[i] - cur_cycle_start_dt).days)
+                        cur_cycle_start_dt = None
+                    _sweep_sp_cash(cl)
+                else:
+                    wc_closed_ledger.append(
+                        {
+                            "leg_id": f"WC-{active_wc['wc_id']}",
+                            "wc_id": active_wc["wc_id"],
+                            "cycle_id": active_wc["cycle_id"],
+                            "leg_type": "wheel_call",
+                            "is_open_live": False,
+                            "signal_date": active_wc["signal_date"],
+                            "entry_date": active_wc["entry_date"],
+                            "exit_date": d,
+                            "dte": active_wc["dte"],
+                            "entry_spot": round(active_wc["entry_spot"], 2),
+                            "strike": round(active_wc["kc"], 2),
+                            "kc": round(active_wc["kc"], 2),
+                            "assigned_cost_k": round(active_wc["assigned_cost_k"], 2),
+                            "exit_spot": round(cl, 2),
+                            "shares": round(active_wc["shares"], 2),
+                            "prem_usd": round(active_wc["prem_usd"], 2),
+                            "exit_cost_usd": 0.0,
+                            "stock_gain_usd": 0.0,
+                            "net_pnl_usd": round(active_wc["prem_usd"], 2),
+                            "exit_reason": "expired_otm",
+                        }
+                    )
+                    active_wc = None
+            else:
+                rem_wc = max(1, (active_wc["exp_dt"] - dt_objs[i]).days)
+                _, cm_wc = bco_mod._opt_exec_price_sp(cl, active_wc["kc"], rem_wc / 365.0, r_cur, q_cur, vxn_cl, coeffs, "call", "buy", OPT_SLIP)
+                wc_mtm = -active_wc["shares"] * cm_wc
+
+        nav = (core_shares + assigned_shares) * cl + cc_cash + sp_cash + put_mtm + cc_mtm + sp_mtm + wc_mtm
+        if sp_enabled:
+            gross_stock_lev = ((core_shares + assigned_shares) * cl) / max(nav, 1.0)
+            put_notional = (active_sp["shares"] * active_sp["kp"]) if active_sp is not None else 0.0
+            notional_lev = ((core_shares + assigned_shares) * cl + put_notional) / max(nav, 1.0)
+            if assigned_shares > 1e-6:
+                days_levered += 1
+            max_gross_stock_lev = max(max_gross_stock_lev, gross_stock_lev)
+            max_notional_lev = max(max_notional_lev, notional_lev)
+
+        nav_list.append(nav)
+        equiv_sh_list.append(nav / cl)
+        any_active_list.append(1 if (was_active_today or len(active_tranches) > 0) else 0)
+        active_slots_list.append(max(active_slots_today, len(active_tranches)))
+
+        # 6. EOD M7 Signal & Hard Redline Gate for T+1 Open
+        cap_slots = int(sig_d["target_slots_m7g" if is_graded else "target_slots_m7"])
+        redline_blocked = bool(vxn_cl > 27.0 or vix_r >= 1.02)
+        eff_open = [t for t in active_tranches if not t.get("pending_tp")] if is_roll50 else active_tranches
+        if cap_slots > 0 and not redline_blocked and len(eff_open) < cap_slots:
+            min_gap = step_cal_days if cap_slots <= 2 else escalate_min_days
+            recent = any((dt_objs[i] - t["entry_dt"]).days < min_gap for t in eff_open)
+            if not recent:
+                mods, t_code, t_en, t_zh = format_m7_trigger_labels(sig_d, max_slots)
+                pending_sig = {
+                    "signal_date": d,
+                    "vxn": vxn_cl,
+                    "close": cl,
+                    "vix_ratio": vix_r,
+                    "r": r_cur,
+                    "q": q_cur,
+                    "cap_slots": cap_slots,
+                    "tier": cap_slots,
+                    "sig_score": int(row["score"]),
+                    "sig_ad_below50": bool(float(row["ad_line"]) < float(row["ad_sma50"])),
+                    "crisis_prob": float(sig_d["crisis_prob"]),
+                    "p1": float(sig_d["p1"]),
+                    "p2": float(sig_d["p2"]),
+                    "p3": float(sig_d["p3"]),
+                    "triggered_modules": mods,
+                    "trigger_code": t_code,
+                    "trigger_en": t_en,
+                    "trigger_zh": t_zh,
+                }
+
+        if cc_enabled and i < n_days - 1:
+            if active_cc is None and dd_cur >= -cc_ath_limit and vxn_cl >= cc_min_vxn:
+                pending_cc = {"close": cl, "vxn": vxn_cl, "r": r_cur, "q": q_cur}
+            if cc_cash > 1.0 and vix_r >= 1.10:
+                pending_cc_deploy = True
+
+        wc_reclaim_ready = (cl >= assigned_cost_k) if wc_mode == "wc_reclaim_30d_d35" else True
+        if sp_enabled and assigned_shares > 1e-6 and active_wc is None and wc_reclaim_ready:
+            pending_wc = {"signal_date": d, "close": cl, "vxn": vxn_cl, "vix_ratio": vix_r, "r": r_cur, "q": q_cur}
+        if sp_enabled and active_sp is None and assigned_shares <= 1e-6:
+            trig_sp = vix_r >= sp_vix_thr
+            if trig_sp and sp_require_vix_falling:
+                trig_sp = bool(row.get("vix_falling"))
+            if trig_sp:
+                pending_sp = {"signal_date": d, "close": cl, "vxn": vxn_cl, "vix_ratio": vix_r, "r": r_cur, "q": q_cur}
+
+    closed_trades_count = len(ledger)
+
+    # Serialize any open live tranches at final EOD (e.g. ITM_TP Slot 1 on 2026-11-20!)
+    last_r = rows_eval[-1]
+    last_d = dates[-1]
+    last_dt = dt_objs[-1]
+    last_cl = float(last_r["close"])
+    last_vxn = float(last_r["vxn"])
+    last_vr = float(last_r["vix_ratio"])
+    last_rf = float(last_r["r"])
+    last_q = float(last_r["div_yield"])
+    mult_last = (final_bh_sh / bh_m7["post_sh"][-1]) * final_cl
+
+    active_tranches_serialized: list[dict[str, Any]] = []
+    for tr in active_tranches:
+        rem_d = max(1, (tr["exp_dt"] - last_dt).days)
+        t_rem = rem_d / 365.0
+        sp_iv = bco_mod.eval_skew_iv(last_cl, tr["kp"], t_rem, last_rf, last_q, last_vxn, coeffs)
+        pm = bco_mod.bsm_price(last_cl, tr["kp"], t_rem, last_rf, last_q, sp_iv, "put")
+        hs = tr["hedged_shares"]
+        mtm_cash_usd = hs * pm
+        mtm_net_pnl = mtm_cash_usd - tr["entry_cost_usd"]
+        roi_mult = (mtm_cash_usd / tr["entry_cost_usd"]) if tr["entry_cost_usd"] > 1e-6 else 0.0
+        est_d_sh = mtm_cash_usd / (last_cl * (1.0 + STOCK_REBAL_FEE)) if abs(mtm_cash_usd) > 1e-8 else 0.0
+        est_sh_added = tr["entry_shares_sold"] + est_d_sh
+        actual_net_sh = pm - tr["entry_put_ask"]
+        conv = bco_mod.decompose_tranche_convexity(
+            "naked_put",
+            tr["entry_spot"],
+            last_cl,
+            tr["kp"],
+            None,
+            tr["T_entry"],
+            t_rem,
+            tr["entry_r"],
+            last_rf,
+            tr["entry_q"],
+            last_q,
+            tr["entry_vxn"],
+            last_vxn,
+            coeffs,
+            actual_net_sh,
+        )
+        is_armed = bool(tr.get("pending_tp"))
+        armed_reason = tr.get("tp_reason") or ""
+        if is_armed and armed_reason == "roll_50d":
+            live_reason = "live_roll50_armed_next_open"
+        elif is_armed:
+            live_reason = "live_tp_armed_next_open"
+        else:
+            live_reason = "open_live_mtm"
+        ledger.append(
+            {
+                "tranche_id": tr["tranche_id"],
+                "strategy_id": strategy_id,
+                "slot_num": tr["slot_num"],
+                "tier": tr["tier"],
+                "max_slots": max_slots,
+                "tranche_type": "naked_put",
+                "put_otm_pct": otm_pct_int,
+                "tp_mode": tp_code,
+                "roll_mode": roll_mode,
+                "target_dte": target_dte,
+                "signal_date": tr["signal_date"],
+                "entry_date": tr["entry_date"],
+                "planned_exp_date": tr["exp_date"],
+                "exit_date": None,
+                "mtm_date": last_d,
+                "is_open_live": True,
+                "pending_tp": is_armed,
+                "pending_tp_reason": tr.get("tp_reason") or "",
+                "actual_days_held": (last_dt - tr["entry_dt"]).days,
+                "rem_dte_at_exit": rem_d,
+                "exit_reason": live_reason,
+                "sig_score": tr["sig_score"],
+                "sig_ad_below50": tr["sig_ad_below50"],
+                "crisis_prob": tr["crisis_prob"],
+                "p1": tr["p1"],
+                "p2": tr["p2"],
+                "p3": tr["p3"],
+                "triggered_modules": tr["triggered_modules"],
+                "trigger_code": tr["trigger_code"],
+                "trigger_en": tr["trigger_en"],
+                "trigger_zh": tr["trigger_zh"],
+                "entry_spot": round(tr["entry_spot"], 2),
+                "entry_vxn": round(tr["entry_vxn"], 2),
+                "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
+                "kp": round(tr["kp"], 2),
+                "kc": None,
+                "call_cap_pct": None,
+                "hedged_shares": round(hs, 2),
+                "contracts_est": round(hs / 100.0, 2),
+                "slot_coverage": round(tr["hedged_ratio"], 4),
+                "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
+                "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
+                "entry_cost_usd": round(tr["entry_cost_usd"], 2),
+                "entry_shares_sold": round(tr["entry_shares_sold"], 4),
+                "exit_spot": round(last_cl, 2),
+                "exit_vxn": round(last_vxn, 2),
+                "exit_vix_ratio": round(last_vr, 3),
+                "underlying_ret_pct": round((last_cl / tr["entry_spot"] - 1.0) * 100.0, 2),
+                "put_exit_val_sh": round(pm, 4),
+                "call_exit_cost_sh": 0.0,
+                "exit_net_cash_usd": round(mtm_cash_usd, 2),
+                "net_pnl_usd": round(mtm_net_pnl, 2),
+                "roi_mult": round(roi_mult, 2),
+                "exit_shares_delta": round(est_d_sh, 2),
+                "shares_added": round(est_sh_added, 2),
+                "delta0": round(float(conv["delta0"]), 4),
+                "delta_usd": round(float(conv["dV_delta_sh"]) * hs, 2),
+                "gamma_usd": round(float(conv["dV_gamma_sh"]) * hs, 2),
+                "vega_usd": round(float(conv["dV_vega_sh"]) * hs, 2),
+                "theta_slip_usd": round(
+                    round(mtm_net_pnl, 2)
+                    - (
+                        round(float(conv["dV_delta_sh"]) * hs, 2)
+                        + round(float(conv["dV_gamma_sh"]) * hs, 2)
+                        + round(float(conv["dV_vega_sh"]) * hs, 2)
+                    ),
+                    2,
+                ),
+                "convexity_mult": round(float(conv["conv_mult"]), 2) if conv["conv_mult"] is not None else None,
+                "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
+                "comp_put_gain_usd": round((hs * pm / last_cl) * mult_last, 2),
+                "comp_call_drag_usd": 0.0,
+            }
+        )
+        active_tranches_serialized.append(
+            {
+                "tranche_id": tr["tranche_id"],
+                "slot_num": tr["slot_num"],
+                "tier": tr["tier"],
+                "tranche_type": "naked_put",
+                "put_otm_pct": otm_pct_int,
+                "roll_mode": roll_mode,
+                "target_dte": target_dte,
+                "roll_dte": roll_dte_thr,
+                "days_to_roll50": max(0, rem_d - 50) if is_roll50 else None,
+                "entry_date": tr["entry_date"],
+                "exp_date": tr["exp_date"],
+                "rem_dte": rem_d,
+                "entry_spot": round(tr["entry_spot"], 2),
+                "mtm_spot": round(last_cl, 2),
+                "mtm_date": last_d,
+                "kp": round(tr["kp"], 2),
+                "kc": None,
+                "hedged_shares": round(hs, 2),
+                "contracts_est": round(hs / 100.0, 2),
+                "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
+                "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
+                "entry_cost_usd": round(tr["entry_cost_usd"], 2),
+                "mtm_put_val_sh": round(pm, 4),
+                "mtm_call_val_sh": 0.0,
+                "mtm_pnl_usd": round(mtm_net_pnl, 2),
+                "roi_mult": round(roi_mult, 2),
+                "est_shares_added": round(est_sh_added, 2),
+                "pending_tp": is_armed,
+                "tp_reason": tr.get("tp_reason") or "",
+                "tp_trigger_ratio": round(float(tr.get("tp_trigger_ratio") or last_vr), 3),
+                "trigger_code": tr["trigger_code"],
+                "crisis_prob": tr["crisis_prob"],
+            }
+        )
+
+    # Metrics (matching run_8models_crisis_study.py identically!)
+    yrs = (dt_objs[-1] - dt_objs[0]).days / 365.25
+    cagr = (nav_list[-1] / INITIAL_CAPITAL) ** (1.0 / yrs) - 1.0
+    rets = [nav_list[j] / nav_list[j - 1] - 1.0 for j in range(1, n_days)]
+    mean_r = sum(rets) / len(rets)
+    var_r = sum((x - mean_r) ** 2 for x in rets) / max(1, len(rets) - 1)
+    vol = math.sqrt(var_r) * math.sqrt(252.0)
+    sharpe = (mean_r * 252.0) / vol if vol > 0 else 0.0
+    neg_rets = [x for x in rets if x < 0.0]
+    if len(neg_rets) > 1:
+        mu_neg = sum(neg_rets) / len(neg_rets)
+        down_std = math.sqrt(sum((x - mu_neg) ** 2 for x in neg_rets) / (len(neg_rets) - 1)) * math.sqrt(252.0)
+        sortino = (mean_r * 252.0) / down_std if down_std > 0 else 0.0
+    else:
+        sortino = 0.0
+
+    peak = nav_list[0]
+    mdd = 0.0
+    for v in nav_list:
+        if v > peak:
+            peak = v
+        dd = v / peak - 1.0
+        if dd < mdd:
+            mdd = dd
+    calmar = cagr / abs(mdd) if mdd < 0 else 0.0
+
+    n_tp = sum(1 for x in ledger if "tp" in x["exit_reason"] and not x.get("is_open_live"))
+    roll_exits = [x for x in ledger if x["exit_reason"] == "roll_50d" and not x.get("is_open_live")]
+    roll_salvage_count = len(roll_exits)
+    avg_roll_salvage_pct = (
+        (sum(float(x.get("roi_mult") or 0.0) for x in roll_exits) / roll_salvage_count) * 100.0
+        if roll_salvage_count > 0
+        else 0.0
+    )
+    naked_spent = sum(x["entry_cost_usd"] for x in ledger)
+    gross_put = sum(x["exit_net_cash_usd"] for x in ledger if not x.get("is_open_live"))
+    net_alpha = nav_list[-1] - bh_m7["end_nav"]
+    pct_active = (sum(any_active_list) / n_days) * 100.0
+    active_days = max(1, sum(any_active_list))
+    extra_sh_vs_bh = equiv_sh_list[-1] - final_bh_sh
+    extra_sh_pct = (extra_sh_vs_bh / final_bh_sh) * 100.0 if final_bh_sh > 0 else 0.0
+    max_roi = max((float(x.get("roi_mult") or 0.0) for x in ledger if not x.get("is_open_live")), default=0.0)
+
+    sp_wins = sum(1 for x in sp_closed_ledger if x["net_pnl_usd"] > 0)
+    sp_win_rate = (sp_wins / len(sp_closed_ledger) * 100.0) if sp_closed_ledger else 0.0
+    sp_gross_prem_val = sum(x["prem_usd"] for x in sp_closed_ledger)
+    wc_gross_prem_val = sum(x["prem_usd"] for x in wc_closed_ledger)
+    wc_called_cnt = sum(1 for x in wc_closed_ledger if x["exit_reason"] == "called_away")
+
+    open_sp_ser = None
+    open_wc_ser = None
+    sp_combined_ledger = list(sp_closed_ledger) + list(wc_closed_ledger)
+    if active_sp is not None:
+        rem_sp_last = max(1, (active_sp["exp_dt"] - last_dt).days)
+        _, pm_sp_last = bco_mod._opt_exec_price_sp(last_cl, active_sp["kp"], rem_sp_last / 365.0, last_rf, last_q, last_vxn, coeffs, "put", "buy", OPT_SLIP)
+        mtm_cost_sp = active_sp["shares"] * pm_sp_last
+        open_sp_ser = {
+            "leg_id": f"SP-{active_sp['sp_id']}",
+            "sp_id": active_sp["sp_id"],
+            "cycle_id": active_sp["cycle_id"],
+            "leg_type": "short_put",
+            "is_open_live": True,
+            "signal_date": active_sp["signal_date"],
+            "entry_date": active_sp["entry_date"],
+            "exp_date": active_sp["exp_date"],
+            "exit_date": None,
+            "dte": active_sp["dte"],
+            "rem_dte": rem_sp_last,
+            "entry_spot": round(active_sp["entry_spot"], 2),
+            "strike": round(active_sp["kp"], 2),
+            "kp": round(active_sp["kp"], 2),
+            "exit_spot": round(last_cl, 2),
+            "shares": round(active_sp["shares"], 2),
+            "prem_usd": round(active_sp["prem_usd"], 2),
+            "exit_cost_usd": round(mtm_cost_sp, 2),
+            "mtm_pnl_usd": round(active_sp["prem_usd"] - mtm_cost_sp, 2),
+            "net_pnl_usd": round(active_sp["prem_usd"] - mtm_cost_sp, 2),
+            "exit_reason": "open_live_short_put",
+        }
+        sp_combined_ledger.append(open_sp_ser)
+    if active_wc is not None:
+        rem_wc_last = max(1, (active_wc["exp_dt"] - last_dt).days)
+        _, cm_wc_last = bco_mod._opt_exec_price_sp(last_cl, active_wc["kc"], rem_wc_last / 365.0, last_rf, last_q, last_vxn, coeffs, "call", "buy", OPT_SLIP)
+        mtm_cost_wc = active_wc["shares"] * cm_wc_last
+        open_wc_ser = {
+            "leg_id": f"WC-{active_wc['wc_id']}",
+            "wc_id": active_wc["wc_id"],
+            "cycle_id": active_wc["cycle_id"],
+            "leg_type": "wheel_call",
+            "is_open_live": True,
+            "signal_date": active_wc["signal_date"],
+            "entry_date": active_wc["entry_date"],
+            "exp_date": active_wc["exp_date"],
+            "exit_date": None,
+            "dte": active_wc["dte"],
+            "rem_dte": rem_wc_last,
+            "entry_spot": round(active_wc["entry_spot"], 2),
+            "strike": round(active_wc["kc"], 2),
+            "kc": round(active_wc["kc"], 2),
+            "assigned_cost_k": round(active_wc["assigned_cost_k"], 2),
+            "exit_spot": round(last_cl, 2),
+            "shares": round(active_wc["shares"], 2),
+            "prem_usd": round(active_wc["prem_usd"], 2),
+            "exit_cost_usd": round(mtm_cost_wc, 2),
+            "mtm_pnl_usd": round(active_wc["prem_usd"] - mtm_cost_wc, 2),
+            "net_pnl_usd": round(active_wc["prem_usd"] - mtm_cost_wc, 2),
+            "exit_reason": "open_live_wheel_call",
+        }
+        sp_combined_ledger.append(open_wc_ser)
+    sp_combined_ledger.sort(key=lambda x: (x["entry_date"], 0 if x["leg_type"] == "short_put" else 1))
+
+    if cur_cycle_start_dt is not None and assigned_shares > 1e-6:
+        max_wheel_cycle_days = max(max_wheel_cycle_days, (last_dt - cur_cycle_start_dt).days)
+
+    end_gross_lev = ((core_shares + assigned_shares) * last_cl) / max(nav_list[-1], 1.0)
+    end_put_notional = (active_sp["shares"] * active_sp["kp"]) if active_sp is not None else 0.0
+    end_notional_lev = ((core_shares + assigned_shares) * last_cl + end_put_notional) / max(nav_list[-1], 1.0)
+
+    summary = {
+        "id": strategy_id,
+        "arch": "m7_equal_dollar",
+        "put_otm": put_otm,
+        "put_otm_pct": otm_pct_int,
+        "m7_tp_mode": m7_tp_mode,
+        "roll_mode": roll_mode,
+        "target_dte": target_dte,
+        "roll_dte": roll_dte_thr,
+        "m0_enabled": m0_enabled,
+        "max_slots": max_slots,
+        "slot_coverage": 0.50,
+        "end_nav": round(nav_list[-1], 2),
+        "bh_parity_end_nav": round(bh_m7["end_nav"], 2),
+        "net_alpha_usd": round(net_alpha, 2),
+        "cagr_pct": round(cagr * 100.0, 2),
+        "vol_pct": round(vol * 100.0, 2),
+        "max_dd_pct": round(mdd * 100.0, 2),
+        "sharpe": round(sharpe, 3),
+        "sortino": round(sortino, 3),
+        "calmar": round(calmar, 3),
+        "final_shares": round(equiv_sh_list[-1], 2),
+        "bh_final_shares": round(final_bh_sh, 2),
+        "extra_shares_vs_bh": round(extra_sh_vs_bh, 2),
+        "extra_shares_pct": round(extra_sh_pct, 2),
+        "pct_days_hedged": round(pct_active, 1),
+        "alpha_per_active_day_usd": round(net_alpha / active_days, 2),
+        "tranches_total": len(ledger),
+        "closed_trades_count": closed_trades_count,
+        "naked_count": len(ledger),
+        "collar_count": 0,
+        "tp_count": n_tp,
+        "roll_salvage_count": roll_salvage_count,
+        "roll_50d_count": roll_salvage_count,
+        "avg_roll_salvage_pct": round(avg_roll_salvage_pct, 1),
+        "max_roi_mult": round(max_roi, 2),
+        "naked_prem_spent_usd": round(naked_spent, 2),
+        "gross_put_monetized_usd": round(gross_put, 2),
+        "gross_call_drag_usd": 0.0,
+        "sum_delta_usd": round(sum(x["delta_usd"] for x in ledger), 2),
+        "sum_gamma_usd": round(sum(x["gamma_usd"] for x in ledger), 2),
+        "sum_vega_usd": round(sum(x["vega_usd"] for x in ledger), 2),
+        "sum_theta_slip_usd": round(sum(x["theta_slip_usd"] for x in ledger), 2),
+        "cc_mode": cc_mode,
+        "cc_trades_count": len(cc_ledger),
+        "cc_assigned_count": cc_assigned_cnt,
+        "cc_stop_count": sum(1 for x in cc_ledger if x["exit_reason"] in ("delta_stop", "delta_roll_up", "delta_credit_roll")),
+        "cc_roll_count": sum(1 for x in cc_ledger if int(x.get("roll_gen", 0)) > 0),
+        "cc_active_years": len({x["entry_date"][:4] for x in cc_ledger}),
+        "cc_gross_prem_usd": round(cc_gross_prem, 2),
+        "cc_gross_loss_usd": round(cc_gross_loss, 2),
+        "cc_net_pnl_usd": round(cc_gross_prem - cc_gross_loss, 2),
+        "cc_funded_puts_usd": round(cc_funded_puts, 2),
+        "cc_cash_end_usd": round(cc_cash, 2),
+        "sp_mode": sp_mode,
+        "wc_mode": wc_mode,
+        "sp_trades_count": len(sp_closed_ledger) + (1 if open_sp_ser else 0),
+        "sp_win_rate_pct": round(sp_win_rate, 1),
+        "sp_assignments_count": sp_assign_count,
+        "wc_trades_count": len(wc_closed_ledger) + (1 if open_wc_ser else 0),
+        "wc_called_away_count": wc_called_cnt,
+        "sp_gross_prem_usd": round(sp_gross_prem_val, 2),
+        "wc_gross_prem_usd": round(wc_gross_prem_val, 2),
+        "margin_interest_usd": round(sp_margin_interest_total, 2),
+        "sp_comm_usd": round(sp_comm_total, 2),
+        "days_short_put_open": days_short_put_open,
+        "days_levered_stock": days_levered,
+        "max_wheel_cycle_days": max_wheel_cycle_days,
+        "max_gross_stock_lev": round(max_gross_stock_lev, 3),
+        "max_notional_lev": round(max_notional_lev, 3),
+        "end_assigned_shares": round(assigned_shares, 2),
+        "end_sp_cash_usd": round(sp_cash, 2),
+    }
+
+    sp_live_eod = {
+        "sp_mode": sp_mode,
+        "wc_mode": wc_mode,
+        "enabled": sp_enabled,
+        "sp_dte": sp_dte,
+        "sp_otm_pct": sp_otm_pct,
+        "sp_max_lev": sp_max_lev,
+        "require_vix_falling": sp_require_vix_falling,
+        "assigned_shares": round(assigned_shares, 2),
+        "assigned_cost_k": round(assigned_cost_k, 2),
+        "sp_cash_usd": round(sp_cash, 2),
+        "gross_stock_lev": round(end_gross_lev, 3),
+        "notional_lev": round(end_notional_lev, 3),
+        "pending_sp_eod": pending_sp is not None,
+        "pending_wc_eod": pending_wc is not None,
+        "open_short_put": open_sp_ser,
+        "open_wheel_call": open_wc_ser,
+    }
+
+    return {
+        "summary": summary,
+        "nav": nav_list,
+        "equiv_shares": equiv_sh_list,
+        "any_active": any_active_list,
+        "active_slots": active_slots_list,
+        "slot1_naked": [s > 0 for s in active_slots_list],
+        "ledger": ledger,
+        "cc_ledger": cc_ledger,
+        "sp_ledger": sp_combined_ledger,
+        "shield_events": [],
+        "active_tranches_eod": active_tranches_serialized,
+        "pending_sig_eod": pending_sig,
+        "sp_live_eod": sp_live_eod,
+    }
+
+
+def build_m7_live_dashboard(
+    row: dict[str, Any],
+    sig_day: dict[str, Any],
+    feat_row_dict: dict[str, Any],
+    m7_sim: dict[str, Any],
+    coeffs: list[float],
+    bco_mod: Any,
+    put_otm: str = DEFAULT_PUT_OTM,
+    m7_tp_mode: str = DEFAULT_M7_TP_MODE,
+    roll_mode: str = DEFAULT_ROLL_MODE,
+    m0_enabled: bool = DEFAULT_M0_ENABLED,
+) -> dict[str, Any]:
+    d = str(row["date"])
+    cl = float(row["close"])
+    ath = float(row["running_ath"])
+    dd_pct = float(row["dd_from_ath"]) * 100.0
+    vxn = float(row["vxn"])
+    vr = float(row["vix_ratio"])
+    r_cur = float(row["r"])
+    q_cur = float(row["div_yield"])
+    sc = int(row["score"])
+    ad_line = float(row["ad_line"])
+    ad_sma50 = float(row["ad_sma50"])
+    ad_below = ad_line < ad_sma50
+
+    is_roll50 = roll_mode == "120d_roll50"
+    entry_dte = 120 if is_roll50 else 90
+    five_x_dte = 75 if is_roll50 else 45
+    roll_dte = 50 if is_roll50 else 0
+
+    max_slots = int(m7_sim["summary"]["max_slots"])
+    is_graded = max_slots == 3
+    prob = float(sig_day["crisis_prob"])
+    p1 = float(sig_day["p1"])
+    p2 = float(sig_day["p2"])
+    p3 = float(sig_day["p3"])
+    target_slots = int(sig_day["target_slots_m7g" if is_graded else "target_slots_m7"])
+
+    active_tr = m7_sim["active_tranches_eod"]
+    active_slots = len(active_tr)
+    eff_active_tr = [t for t in active_tr if not bool(t.get("pending_tp"))] if is_roll50 else active_tr
+    pend_sig = m7_sim["pending_sig_eod"]
+
+    vxn_red_ok = vxn <= 27.0
+    vr_red_ok = vr < 1.02
+    redline_blocked = not (vxn_red_ok and vr_red_ok)
+
+    req_gap = 21 if target_slots == 3 else 30
+    cur_dt = datetime.date.fromisoformat(d)
+    last_entry_dt_str: str | None = None
+    days_since_last: int | None = None
+    if eff_active_tr:
+        last_entry_dt_str = max(t["entry_date"] for t in eff_active_tr)
+        days_since_last = (cur_dt - datetime.date.fromisoformat(last_entry_dt_str)).days
+    cooldown_passed = (days_since_last is None) or (days_since_last >= req_gap)
+
+    mods_active, trig_code, _, _ = format_m7_trigger_labels(sig_day, max_slots)
+
+    # T+1 Open Execution Order Verdict
+    any_tp_armed = any(bool(t.get("pending_tp")) and (t.get("tp_reason") != "roll_50d") for t in active_tr)
+    any_roll50_armed = any(bool(t.get("pending_tp")) and (t.get("tp_reason") == "roll_50d") for t in active_tr)
+    otm_lbl = "-20% OTM" if put_otm == "otm20" else "-15% OTM"
+    tenor_lbl_en = "120D (Roll@50D)" if is_roll50 else "90D"
+    tenor_lbl_zh = "120D（剩50天滚仓）" if is_roll50 else "90D"
+
+    if any_tp_armed:
+        t1_code = "TP_ARMED_NEXT_OPEN"
+        t1_tone = "tp"
+        t1_badge_en = "T+1 OPEN: TAKE-PROFIT MONETIZE & RELOAD QQQ"
+        t1_badge_zh = "T+1 开盘指令：触发恐慌止盈 · 变现 Put 抄底加仓 QQQ"
+        t1_title_en = "Panic Take-Profit Triggered — Monetize Active Put Slot(s) at Next Open"
+        t1_title_zh = "恐慌止盈阈值已触发 —— 次日开盘全额平仓变现并复投 QQQ 正股"
+    elif any_roll50_armed and pend_sig is not None:
+        next_slot_idx = len(eff_active_tr) + 1
+        t1_code = "ROLL_50D_AND_REOPEN"
+        t1_tone = "armed"
+        t1_badge_en = f"T+1 OPEN: 50-DTE ROLL -> HARVEST RESIDUAL & OPEN 120D {otm_lbl} PUT"
+        t1_badge_zh = f"T+1 开盘指令：剩 <=50 DTE 触发滚仓 · 回收残值并换入新 120D {otm_lbl} Put"
+        t1_title_en = f"Score {prob:.0f}% ({trig_code}) Active at <=50 DTE — Salvage Expiring Slot & Roll Into Fresh 120-DTE {otm_lbl} Put"
+        t1_title_zh = f"在途槽位剩 <=50 DTE 且综合概率 {prob:.0f}%（{trig_code}）仍亮 —— 次日开盘回收残值并滚入新 120D {otm_lbl} Put"
+    elif any_roll50_armed:
+        t1_code = "SALVAGE_50D_EXIT"
+        t1_tone = "active"
+        t1_badge_en = "T+1 OPEN: 50-DTE SALVAGE EXIT -> HARVEST RESIDUAL TO QQQ"
+        t1_badge_zh = "T+1 开盘指令：剩 <=50 DTE 信号熄灭 · 平仓回收残值复投 QQQ"
+        t1_title_en = "Slot Reached <=50 DTE With M7 Signal Off — Exit Before Theta Cliff & Reinvest Residual Cash Into QQQ"
+        t1_title_zh = "在途槽位剩 <=50 DTE 且 M7 信号已解除 —— 在 Theta 悬崖前平仓回收残值并复投 QQQ"
+    elif pend_sig is not None:
+        next_slot_idx = len(eff_active_tr) + 1
+        t1_code = "OPEN_NEW_SLOT"
+        t1_tone = "armed"
+        t1_badge_en = f"T+1 OPEN: BUY 1 NEW SLOT (SLOT {next_slot_idx}/{max_slots} · {tenor_lbl_en} {otm_lbl} PUT)"
+        t1_badge_zh = f"T+1 开盘指令：新开 1 槽保护（第 {next_slot_idx}/{max_slots} 槽 · {tenor_lbl_zh} {otm_lbl} Put）"
+        t1_title_en = f"Score {prob:.0f}% ({trig_code}) -> Open Slot {next_slot_idx}/{max_slots} Equal-Dollar {entry_dte}-DTE {otm_lbl} Put"
+        t1_title_zh = f"综合概率 {prob:.0f}%（{trig_code}）-> 次日开盘按等金额预算买入第 {next_slot_idx}/{max_slots} 槽 {tenor_lbl_zh} {otm_lbl} Put"
+    elif target_slots > len(eff_active_tr) and redline_blocked:
+        t1_code = "REDLINE_BLOCKED"
+        t1_tone = "blocked"
+        t1_badge_en = "T+1 OPEN: HARD REDLINE BLOCKED (NO NEW PUTS IN HIGH IV)"
+        t1_badge_zh = "T+1 开盘指令：风控红线锁死禁开新仓（拒绝高波追买天价 Put）"
+        t1_title_en = f"Hard Risk Redline Active (VXN {vxn:.2f} > 27 or VIX/3M {vr:.3f} >= 1.02) — New Entries Strictly Forbidden"
+        t1_title_zh = f"绝对风控红线生效（VXN {vxn:.2f} > 27 或 VIX/3M {vr:.3f} >= 1.02）—— 严禁在恐慌高波区新开任何槽位"
+    elif target_slots > len(eff_active_tr) and not cooldown_passed:
+        rem_wait = max(1, req_gap - (days_since_last or 0))
+        t1_code = "COOLDOWN_WAIT"
+        t1_tone = "cooldown"
+        t1_badge_en = f"T+1 OPEN: COOLDOWN WAIT ({days_since_last}D / {req_gap}D · {rem_wait}D LEFT)"
+        t1_badge_zh = f"T+1 开盘指令：加仓冷却期等待中（距上槽 {days_since_last}/{req_gap} 天 · 还需 {rem_wait} 天）"
+        t1_title_en = f"Score {prob:.0f}% Wants {target_slots} Slots, Waiting {rem_wait} Calendar Days for {req_gap}D Step Cooldown"
+        t1_title_zh = f"综合概率 {prob:.0f}% 指向 {target_slots} 槽，当前距上一槽仅 {days_since_last} 天（未满 {req_gap} 天冷却期，暂缓加槽）"
+    elif active_slots > 0:
+        t1_code = "HOLD_ACTIVE_SLOTS"
+        t1_tone = "active"
+        roll_note_en = " · ROLL @ <=50 DTE" if is_roll50 else ""
+        roll_note_zh = " · 剩<=50天滚仓" if is_roll50 else ""
+        t1_badge_en = f"T+1 OPEN: HOLD {active_slots}/{max_slots} ACTIVE PUT SLOT(S) · MONITOR TP{roll_note_en}"
+        t1_badge_zh = f"T+1 开盘指令：继续持有 {active_slots}/{max_slots} 槽在途 Put · 盯紧止盈线{roll_note_zh}"
+        t1_title_en = f"{active_slots}/{max_slots} Equal-Dollar {entry_dte}D Put Slot(s) Shielding 100% Uncapped QQQ Core"
+        t1_title_zh = f"当前 {active_slots}/{max_slots} 槽等金额 {entry_dte}D 裸 Put 在途护航 · 100% QQQ 底仓无封顶持有"
+    else:
+        t1_code = "STANDBY"
+        t1_tone = "standby"
+        if redline_blocked:
+            t1_badge_en = "T+1 OPEN: STANDBY (100% QQQ · HIGH-VOL REDLINE FREEZE)"
+            t1_badge_zh = "T+1 开盘指令：空盾待命（100% 满仓 QQQ · 恐慌高波红线冻结禁买）"
+            t1_title_en = f"Score {prob:.0f}% (<35%) & High-IV Redline Active (VXN {vxn:.1f}, VIX/3M {vr:.3f}) — Hold 100% QQQ Uncapped"
+            t1_title_zh = f"危机概率 {prob:.0f}% (<35%) 且处于高波红线区（VXN {vxn:.1f}、VIX/3M {vr:.3f}）—— 100% QQQ 零损耗待弹"
+        else:
+            t1_badge_en = "T+1 OPEN: STANDBY · ZERO PUT SPEND (100% QQQ CRUISE)"
+            t1_badge_zh = "T+1 开盘指令：静默待命 · 零保费损耗（100% 满仓 QQQ 复利巡航）"
+            t1_title_en = f"Composite Crisis Score {prob:.0f}% (< 35% Threshold) — Zero Option Drag, 100% QQQ Compounding"
+            t1_title_zh = f"三支柱综合危机概率 {prob:.0f}%（低于 35% 开仓线）—— 零期权保费损耗，100% QQQ 顺风复利"
+
+    # Equal-Dollar Strike & Budget Calculator (90-DTE or 120-DTE matched reference)
+    tau_calc = float(entry_dte) / 365.0
+    k10 = cl * 0.90
+    k15 = cl * 0.85
+    k20 = cl * 0.80
+    iv10 = bco_mod.eval_skew_iv(cl, k10, tau_calc, r_cur, q_cur, vxn, coeffs)
+    iv15 = bco_mod.eval_skew_iv(cl, k15, tau_calc, r_cur, q_cur, vxn, coeffs)
+    iv20 = bco_mod.eval_skew_iv(cl, k20, tau_calc, r_cur, q_cur, vxn, coeffs)
+    mid10 = bco_mod.bsm_price(cl, k10, tau_calc, r_cur, q_cur, iv10, "put")
+    mid15 = bco_mod.bsm_price(cl, k15, tau_calc, r_cur, q_cur, iv15, "put")
+    mid20 = bco_mod.bsm_price(cl, k20, tau_calc, r_cur, q_cur, iv20, "put")
+    ask10_ref = mid10 * 1.025
+    ask15 = mid15 * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH
+    ask20 = mid20 * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH
+    skew_ratio = iv20 / max(iv10, 1e-6)
+    favorable_20 = skew_ratio <= 1.18
+
+    sel_ask = ask20 if put_otm == "otm20" else ask15
+    sel_k = k20 if put_otm == "otm20" else k15
+    ref_sh_1000 = 1000.0
+    budget_per_1000_sh = (ref_sh_1000 * 0.50) * ask10_ref
+    contracts_per_1000_sh = (budget_per_1000_sh / max(sel_ask, 1e-6)) / 100.0
+
+    sizing_calc = {
+        "qqq_spot": round(cl, 2),
+        "vxn": round(vxn, 2),
+        "dte": entry_dte,
+        "roll_dte": roll_dte,
+        "roll_mode": roll_mode,
+        "selected_otm": put_otm,
+        "formula_en": (
+            f"Per-Slot Budget = Current QQQ Shares × 50% × Ask({entry_dte}D -10% OTM Put)"
+            + (" · Salvage/Roll at <= 50 DTE" if is_roll50 else "")
+        ),
+        "formula_zh": (
+            f"单槽美元预算 = 当前持有 QQQ 股数 × 50% × {entry_dte}-DTE -10% OTM Put 卖一价(Ask)"
+            + (" · 剩 <=50 DTE 残值滚仓/平仓" if is_roll50 else "")
+        ),
+        "ref_otm10": {
+            "otm_pct": 10,
+            "strike": round(k10, 2),
+            "iv_pct": round(iv10 * 100.0, 2),
+            "mid_sh": round(mid10, 2),
+            "ask_sh": round(ask10_ref, 2),
+        },
+        "otm15": {
+            "otm_pct": 15,
+            "strike": round(k15, 2),
+            "iv_pct": round(iv15 * 100.0, 2),
+            "mid_sh": round(mid15, 2),
+            "ask_sh": round(ask15, 2),
+        },
+        "otm20": {
+            "otm_pct": 20,
+            "strike": round(k20, 2),
+            "iv_pct": round(iv20 * 100.0, 2),
+            "mid_sh": round(mid20, 2),
+            "ask_sh": round(ask20, 2),
+        },
+        "skew_ratio_20_10": round(skew_ratio, 3),
+        "skew_switch_threshold": 1.18,
+        "favorable_otm20_skew": favorable_20,
+        "skew_tip_en": (
+            f"Tail Skew Favorable: IV(-20%)/IV(-10%) = {skew_ratio:.3f} <= 1.18 — switching equal budget to -20% OTM offers superior crash convexity!"
+            if favorable_20
+            else f"Steep Tail Skew: IV(-20%)/IV(-10%) = {skew_ratio:.3f} > 1.18 — keep default -15% OTM to avoid overpaying deep-tail skew."
+        ),
+        "skew_tip_zh": (
+            f"偏度性价比极佳：当前 IV(-20%)/IV(-10%) = {skew_ratio:.3f} <= 1.18 —— 等金额切换至 -20% OTM 可获更高崩盘凸性赔率！"
+            if favorable_20
+            else f"尾部偏度较陡：当前 IV(-20%)/IV(-10%) = {skew_ratio:.3f} > 1.18 —— 建议维持默认 -15% OTM，避免为深虚值高偏度溢价买单。"
+        ),
+        "default_qqq_shares": 1000,
+        "model_qqq_shares": round(float(m7_sim["summary"]["final_shares"]), 2),
+        "sample_1000sh_budget_usd": round(budget_per_1000_sh, 2),
+        "sample_1000sh_selected_strike": round(sel_k, 2),
+        "sample_1000sh_selected_ask": round(sel_ask, 2),
+        "sample_1000sh_contracts": round(contracts_per_1000_sh, 2),
+    }
+
+    # TP Monitor
+    tp_spec = next((x for x in M7_TP_MODE_SPECS if x["id"] == m7_tp_mode), M7_TP_MODE_SPECS[0])
+    tp_rule_en = (
+        (
+            f"Exit at T+1 Open when EOD (VIX/VIX3M >= 1.10 AND QQQ <= Strike Kp) OR (DTE <= {five_x_dte} AND Put Mid >= 5x Cost)"
+            if m7_tp_mode == "itm_tp"
+            else f"Exit at T+1 Open when EOD VIX/VIX3M >= 1.10 OR (DTE <= {five_x_dte} AND Put Mid >= 5x Cost)"
+        )
+        + ("; else at DTE <= 50 salvage residual (and roll into fresh 120D Put if M7 stays active)." if is_roll50 else ".")
+    )
+    tp_rule_zh = (
+        (
+            f"收盘同时满足（VIX/VIX3M >= 1.10 且 QQQ <= 行权价 Kp 实值），或（DTE <= {five_x_dte} 且中间价 >= 5 倍成本）次日开盘止盈"
+            if m7_tp_mode == "itm_tp"
+            else f"收盘触发 VIX/VIX3M >= 1.10 恐慌倒挂，或（DTE <= {five_x_dte} 且期权中间价 >= 5 倍成本）次日开盘止盈"
+        )
+        + ("；未止盈且 DTE <= 50 时次日开盘回收残值（信号仍亮则同步滚入新 120D Put）。" if is_roll50 else "。")
+    )
+    tp_slots_live: list[dict[str, Any]] = []
+    for tr in active_tr:
+        kp_tr = float(tr["kp"])
+        rem_tr = int(tr["rem_dte"])
+        is_itm = cl <= kp_tr
+        tp_vix_ok = (vr >= 1.10) and (is_itm if m7_tp_mode == "itm_tp" else True)
+        tp_5x_ok = rem_tr <= five_x_dte and float(tr["mtm_put_val_sh"]) >= float(tr["tp_target_5x_sh"])
+        roll50_due = bool(is_roll50 and rem_tr <= 50 and not tp_vix_ok and not tp_5x_ok)
+        tp_slots_live.append(
+            {
+                "slot_num": tr["slot_num"],
+                "entry_date": tr["entry_date"],
+                "exp_date": tr["exp_date"],
+                "rem_dte": rem_tr,
+                "days_to_roll50": max(0, rem_tr - 50) if is_roll50 else None,
+                "roll50_due": roll50_due,
+                "kp": kp_tr,
+                "spot_vs_kp_pct": round((cl / kp_tr - 1.0) * 100.0, 2),
+                "is_itm": is_itm,
+                "entry_ask_sh": tr["entry_put_ask_sh"],
+                "current_mid_sh": tr["mtm_put_val_sh"],
+                "target_5x_mid_sh": tr["tp_target_5x_sh"],
+                "roi_mult": tr["roi_mult"],
+                "mtm_pnl_usd": tr["mtm_pnl_usd"],
+                "vix_leg_met": tp_vix_ok,
+                "five_x_leg_met": tp_5x_ok,
+                "pending_tp": bool(tr["pending_tp"]),
+                "tp_reason": tr.get("tp_reason") or "",
+            }
+        )
+
+    tp_monitor = {
+        "tp_mode": m7_tp_mode,
+        "tp_code": tp_spec["code"],
+        "roll_mode": roll_mode,
+        "five_x_max_dte": five_x_dte,
+        "roll_dte": roll_dte,
+        "label_en": tp_spec["label_en"],
+        "label_zh": tp_spec["label_zh"],
+        "rule_en": tp_rule_en,
+        "rule_zh": tp_rule_zh,
+        "vix_ratio_now": round(vr, 3),
+        "vix_ratio_target": 1.10,
+        "vix_ratio_met": bool(vr >= 1.10),
+        "qqq_spot_now": round(cl, 2),
+        "simulated_next_slot_kp": round(sel_k, 2),
+        "simulated_next_slot_5x_mid": round(5.0 * sel_ask, 2),
+        "open_slots": tp_slots_live,
+    }
+
+    # Three-Pillar & 6 Sub-Module Status Grid
+    def _fv(key: str, default: float = 0.0) -> float:
+        v = feat_row_dict.get(key)
+        return default if v is None else float(v)
+
+    rsp_spy_v, rsp_sma_v = _fv("rsp_spy"), _fv("rsp_sma50")
+    iwm_qqq_v, iwm_sma_v = _fv("iwm_qqq"), _fv("iwm_sma50")
+    def_ret20_pct = _fv("def_ret20") * 100.0
+    skew10_v, skew_p75_v = _fv("skew10"), _fv("skew_p75")
+    vvix_v, vvix_p75_v = _fv("vvix"), _fv("vvix_p75")
+    vr_j5_v = _fv("vr_jump5")
+    hmm_p_v, hmm_p5_v = _fv("hmm_p"), _fv("hmm_p5")
+    ewmac_v, ema20_v, sma200_v = _fv("ewmac"), _fv("ema20"), _fv("sma200")
+    hyg_v, hyg_sma_v = _fv("hyg_lqd"), _fv("hyg_sma50")
+    baa_v, baa_r_v = _fv("baa_lag1"), _fv("baa_rise63")
+    dgs2_v, dgs2_j_v = _fv("dgs2_lag1"), _fv("dgs2_jump63")
+    nfci_v, nfci_j_v = _fv("nfci_lag5"), _fv("nfci_jump20")
+
+    pillars = [
+        {
+            "id": "P1",
+            "title_en": "Pillar 1 · Calm-Top Fragility",
+            "title_zh": "第一支柱 P1 · 高位脆弱与顶背离",
+            "subtitle_en": "Detects stealth breadth decay & defensive rotation near highs while IV is cheap",
+            "subtitle_zh": "捕捉指数高位横盘期内部宽度恶化与防御板块暗中抢跑（低波潜伏买盾）",
+            "score": round(p1, 0),
+            "cap": 45,
+            "modules": [
+                {
+                    "id": "M0",
+                    "name_en": "M0 Six Lights Baseline",
+                    "name_zh": "M0 六灯基线开关",
+                    "points": 35,
+                    "earned_points": 35 if sig_day["M0"] else 0,
+                    "triggered": bool(sig_day["M0"]),
+                    "pluggable": True,
+                    "enabled": m0_enabled,
+                    "vol_gate_passed": bool(vxn <= 22.0),
+                    "vol_gate_en": f"VXN {vxn:.2f} <= 22.0",
+                    "vol_gate_zh": f"VXN {vxn:.2f} <= 22.0 低波门控",
+                    "metrics": [
+                        {
+                            "label_en": "QQQ vs ATH",
+                            "label_zh": "QQQ 距历史前高",
+                            "value": f"{dd_pct:+.2f}% (${cl:.2f})",
+                            "threshold": ">= -5.00% (0.95*ATH)",
+                            "passed": bool(dd_pct >= -5.0),
+                        },
+                        {
+                            "label_en": "A-D Line < SMA50",
+                            "label_zh": "腾落线 AD < 50DMA",
+                            "value": f"{ad_line - ad_sma50:+,.0f}",
+                            "threshold": "< 0",
+                            "passed": bool(m0_enabled and ad_below),
+                        },
+                        {
+                            "label_en": "Macro Crisis Lights",
+                            "label_zh": "宏观六灯亮灯数",
+                            "value": f"{sc} / 6",
+                            "threshold": ">= 4 / 6",
+                            "passed": bool(m0_enabled and sc >= 4),
+                        },
+                    ],
+                },
+                {
+                    "id": "M6",
+                    "name_en": "M6 Breadth + Defensive Rotation",
+                    "name_zh": "M6 宽度恶化 + 防御轮动",
+                    "points": 20,
+                    "earned_points": 20 if sig_day["M6"] else 0,
+                    "triggered": bool(sig_day["M6"]),
+                    "pluggable": False,
+                    "enabled": True,
+                    "vol_gate_passed": bool(vxn <= 25.0 and vr <= 0.92),
+                    "vol_gate_en": f"VXN {vxn:.1f}<=25 & VIX/3M {vr:.3f}<=0.92",
+                    "vol_gate_zh": f"VXN {vxn:.1f}<=25 且 VIX/3M {vr:.3f}<=0.92",
+                    "metrics": [
+                        {
+                            "label_en": "RSP/SPY vs SMA50",
+                            "label_zh": "等权 RSP/SPY vs 50DMA",
+                            "value": f"{rsp_spy_v:.4f} vs {rsp_sma_v:.4f}",
+                            "threshold": "< SMA50",
+                            "passed": bool(rsp_sma_v > 0 and rsp_spy_v < rsp_sma_v),
+                        },
+                        {
+                            "label_en": "IWM/QQQ (<SMA50 or AD)",
+                            "label_zh": "小盘 IWM/QQQ (<50DMA 或 AD弱)",
+                            "value": f"{iwm_qqq_v:.4f} vs {iwm_sma_v:.4f}",
+                            "threshold": "< SMA50" + (" or AD<50D" if m0_enabled else ""),
+                            "passed": bool((iwm_sma_v > 0 and iwm_qqq_v < iwm_sma_v) or (m0_enabled and ad_below)),
+                        },
+                        {
+                            "label_en": "(XLP+XLU+XLV)/XLK 20D",
+                            "label_zh": "防御/科技 20日超额轮动",
+                            "value": f"{def_ret20_pct:+.2f}%",
+                            "threshold": ">= +2.50%",
+                            "passed": bool(def_ret20_pct >= 2.50),
+                        },
+                    ],
+                },
+            ],
+        },
+        {
+            "id": "P2",
+            "title_en": "Pillar 2 · Exogenous Shock Ignition",
+            "title_zh": "第二支柱 P2 · 外生黑天鹅启爆",
+            "subtitle_en": "Requires dual-sensor consensus (M2 + M5 = 40% >= 35%) to catch sudden shocks like 2020-01-28",
+            "subtitle_zh": "要求期权台偏度与因果 HMM 双传感器共振（20+20=40% >= 35%），精准捕获 2020-01-28 等突发黑天鹅",
+            "score": round(p2, 0),
+            "cap": 40,
+            "modules": [
+                {
+                    "id": "M2",
+                    "name_en": "M2 Options Desk Warning",
+                    "name_zh": "M2 期权台尾部预警",
+                    "points": 20,
+                    "earned_points": 20 if sig_day["M2"] else 0,
+                    "triggered": bool(sig_day["M2"]),
+                    "pluggable": False,
+                    "enabled": True,
+                    "vol_gate_passed": bool(vxn <= 24.0),
+                    "vol_gate_en": f"VXN {vxn:.2f} <= 24.0",
+                    "vol_gate_zh": f"VXN {vxn:.2f} <= 24.0",
+                    "metrics": [
+                        {
+                            "label_en": "A) Silent Tail (SKEW10 & VVIX)",
+                            "label_zh": "A) 静默买尾 (SKEW10 & VVIX>=P75)",
+                            "value": f"SKEW {skew10_v:.1f}/{skew_p75_v:.1f} · VVIX {vvix_v:.1f}/{vvix_p75_v:.1f}",
+                            "threshold": ">=252D P75 & 0.85<=V/V3M<=0.98",
+                            "passed": bool(sig_day["M2_silent_tail"]),
+                        },
+                        {
+                            "label_en": "B) Term Inflection (5D Jump)",
+                            "label_zh": "B) 期限拐点 (5日跃升 & VVIX>=100)",
+                            "value": f"Δ5D {vr_j5_v:+.3f} · VVIX {vvix_v:.1f}",
+                            "threshold": "0.92..1.02 & Δ>=+0.06 & VVIX>=100",
+                            "passed": bool(sig_day["M2_term_inflection"]),
+                        },
+                    ],
+                },
+                {
+                    "id": "M5",
+                    "name_en": "M5 Causal HMM Regime Transition",
+                    "name_zh": "M5 因果 HMM 状态跃迁",
+                    "points": 20,
+                    "earned_points": 20 if sig_day["M5"] else 0,
+                    "triggered": bool(sig_day["M5"]),
+                    "pluggable": False,
+                    "enabled": True,
+                    "vol_gate_passed": bool(vxn <= 24.0 and vr < 1.02),
+                    "vol_gate_en": f"VXN {vxn:.1f}<=24 & VIX/3M {vr:.3f}<1.02",
+                    "vol_gate_zh": f"VXN {vxn:.1f}<=24 且 VIX/3M {vr:.3f}<1.02",
+                    "metrics": [
+                        {
+                            "label_en": "Hamilton P_t(Stress)",
+                            "label_zh": "当前高压态后验概率 P_t",
+                            "value": f"{hmm_p_v * 100.0:.1f}%",
+                            "threshold": ">= 55.0%",
+                            "passed": bool(hmm_p_v >= 0.55),
+                        },
+                        {
+                            "label_en": "5D Prior P_{t-5}(Stress)",
+                            "label_zh": "5日前后验概率 P_{t-5}（新鲜跃迁）",
+                            "value": f"{hmm_p5_v * 100.0:.1f}%",
+                            "threshold": "< 40.0%",
+                            "passed": bool(hmm_p5_v < 0.40),
+                        },
+                    ],
+                },
+            ],
+        },
+        {
+            "id": "P3",
+            "title_en": "Pillar 3 · Bear Continuation & Credit Crunch",
+            "title_zh": "第三支柱 P3 · 熊市延续与信用紧缩",
+            "subtitle_en": "Buys cheap puts on bear-market dead-cat rallies (>EMA20 while <SMA200 & EWMAC<0) + lagged FRED credit stress",
+            "subtitle_zh": "专抓 2022 式慢熊死猫跳自满期（跌破年线且 EWMAC<0 但反弹上穿 EMA20 压低波动率）叠加滞后信用压力",
+            "score": round(p3, 0),
+            "cap": 45,
+            "modules": [
+                {
+                    "id": "M4",
+                    "name_en": "M4 CTA Bear-Rally Complacency",
+                    "name_zh": "M4 CTA 熊市反弹自满",
+                    "points": 35,
+                    "earned_points": 35 if sig_day["M4"] else 0,
+                    "triggered": bool(sig_day["M4"]),
+                    "pluggable": False,
+                    "enabled": True,
+                    "vol_gate_passed": bool(vxn <= 27.0 and vr <= 0.88),
+                    "vol_gate_en": f"VXN {vxn:.1f}<=27 & VIX/3M {vr:.3f}<=0.88",
+                    "vol_gate_zh": f"VXN {vxn:.1f}<=27 且 VIX/3M {vr:.3f}<=0.88",
+                    "metrics": [
+                        {
+                            "label_en": "QQQ < SMA200",
+                            "label_zh": "熊市主趋势 QQQ < 200DMA",
+                            "value": f"${cl:.2f} vs ${sma200_v:.2f}",
+                            "threshold": "< SMA200",
+                            "passed": bool(sma200_v > 0 and cl < sma200_v),
+                        },
+                        {
+                            "label_en": "3-Speed EWMAC (16/32/64)",
+                            "label_zh": "三速 EWMAC 趋势均值",
+                            "value": f"{ewmac_v:+.2f}",
+                            "threshold": "< 0.00",
+                            "passed": bool(ewmac_v < 0.0),
+                        },
+                        {
+                            "label_en": "Bear Bounce QQQ > EMA20",
+                            "label_zh": "死猫跳反弹 QQQ > EMA20",
+                            "value": f"${cl:.2f} vs ${ema20_v:.2f}",
+                            "threshold": "> EMA20",
+                            "passed": bool(ema20_v > 0 and cl > ema20_v),
+                        },
+                    ],
+                },
+                {
+                    "id": "M3",
+                    "name_en": "M3 Credit & Macro Stress (FRED PIT)",
+                    "name_zh": "M3 信用利差与宏观压力 (FRED 严格滞后)",
+                    "points": 20,
+                    "earned_points": 20 if sig_day["M3"] else 0,
+                    "triggered": bool(sig_day["M3"]),
+                    "pluggable": False,
+                    "enabled": True,
+                    "vol_gate_passed": bool(vxn <= 26.0 and vr <= 0.92),
+                    "vol_gate_en": f"VXN {vxn:.1f}<=26 & VIX/3M {vr:.3f}<=0.92",
+                    "vol_gate_zh": f"VXN {vxn:.1f}<=26 且 VIX/3M {vr:.3f}<=0.92",
+                    "metrics": [
+                        {
+                            "label_en": "HYG/LQD < SMA50",
+                            "label_zh": "高收益/投资级 HYG/LQD < 50DMA",
+                            "value": f"{hyg_v:.4f} vs {hyg_sma_v:.4f}",
+                            "threshold": "< SMA50",
+                            "passed": bool(hyg_sma_v > 0 and hyg_v < hyg_sma_v),
+                        },
+                        {
+                            "label_en": "BAA10Y (+1d lag) 63D Widening",
+                            "label_zh": "Baa利差 (+1日滞后) 63D走阔",
+                            "value": f"{baa_v:.2f}% ({baa_r_v * 100.0:+.0f}bp)",
+                            "threshold": ">= +15bp (+0.15)",
+                            "passed": bool(baa_r_v >= 0.15),
+                        },
+                        {
+                            "label_en": "DGS2 (+1d) 63D / NFCI (+5d) 20D",
+                            "label_zh": "2Y美债(+1日)63D / NFCI(+5日)20D",
+                            "value": f"2Y {dgs2_j_v * 100.0:+.0f}bp · NFCI {nfci_j_v:+.2f}",
+                            "threshold": "2Y>=+40bp OR NFCI>=+0.10",
+                            "passed": bool(dgs2_j_v >= 0.40 or nfci_j_v >= 0.10),
+                        },
+                    ],
+                },
+            ],
+        },
+    ]
+
+    return {
+        "as_of_date": d,
+        "strategy_id": m7_sim["summary"]["id"],
+        "put_otm": put_otm,
+        "m7_tp_mode": m7_tp_mode,
+        "roll_mode": roll_mode,
+        "m0_enabled": m0_enabled,
+        "crisis_prob": round(prob, 0),
+        "p1_score": round(p1, 0),
+        "p2_score": round(p2, 0),
+        "p3_score": round(p3, 0),
+        "target_slots": target_slots,
+        "active_slots": active_slots,
+        "max_slots": max_slots,
+        "triggered_modules": mods_active,
+        "trigger_code": trig_code if mods_active else "NONE",
+        "tier_rule_en": "<35%: 0 Slots · 35-44%: 1 Slot · 45-64%: 2 Slots · >=65%: 3 Slots",
+        "tier_rule_zh": "<35%：0槽 · 35–44%：1槽 · 45–64%：2槽 · >=65%：3槽满配",
+        "redline": {
+            "blocked": redline_blocked,
+            "vxn": round(vxn, 2),
+            "vxn_max": 27.0,
+            "vxn_ok": vxn_red_ok,
+            "vix_ratio": round(vr, 3),
+            "vix_ratio_max": 1.02,
+            "vix_ratio_ok": vr_red_ok,
+            "label_en": (
+                f"REDLINE BLOCKED (VXN {vxn:.1f} > 27 or VIX/3M {vr:.3f} >= 1.02)"
+                if redline_blocked
+                else f"REDLINE CLEAR (VXN {vxn:.1f} <= 27 & VIX/3M {vr:.3f} < 1.02)"
+            ),
+            "label_zh": (
+                f"红线禁开生效（VXN {vxn:.1f} > 27 或 VIX/3M {vr:.3f} >= 1.02）"
+                if redline_blocked
+                else f"风控红线安全（VXN {vxn:.1f} <= 27 且 VIX/3M {vr:.3f} < 1.02）"
+            ),
+        },
+        "cooldown": {
+            "required_days": req_gap,
+            "days_since_last_entry": days_since_last,
+            "last_entry_date": last_entry_dt_str,
+            "passed": cooldown_passed,
+            "label_en": (
+                f"No open slots ({req_gap}D cooldown ready)"
+                if days_since_last is None
+                else f"{days_since_last}D since {last_entry_dt_str} (Req >= {req_gap}D: {'READY' if cooldown_passed else 'WAIT'})"
+            ),
+            "label_zh": (
+                f"当前无在途槽位（{req_gap}天阶梯冷却已就绪）"
+                if days_since_last is None
+                else f"距上槽 {last_entry_dt_str} 已过 {days_since_last} 天（要求 >= {req_gap} 天：{'已就绪' if cooldown_passed else '冷却中'}）"
+            ),
+        },
+        "t1_action": {
+            "code": t1_code,
+            "tone": t1_tone,
+            "badge_en": t1_badge_en,
+            "badge_zh": t1_badge_zh,
+            "title_en": t1_title_en,
+            "title_zh": t1_title_zh,
+        },
+        "sizing_calculator": sizing_calc,
+        "tp_monitor": tp_monitor,
+        "pillars": pillars,
+    }

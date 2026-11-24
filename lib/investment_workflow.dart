@@ -360,14 +360,18 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         if (query['cta_$key'] != null) key: query['cta_$key'],
     };
     crisisObservatorySelection = {
-      for (final key in [
-        'strategy',
-        'window',
-        'tpMode',
-        'ccMode',
-        'spMode',
-        'wcMode',
-      ])
+      if ((query['co_strategy'] ?? query['co_strat']) != null)
+        'strategy': query['co_strategy'] ?? query['co_strat'],
+      if ((query['co_window'] ?? query['co_win']) != null)
+        'window': query['co_window'] ?? query['co_win'],
+      if ((query['co_putOtm'] ?? query['co_otm']) != null)
+        'putOtm': query['co_putOtm'] ?? query['co_otm'],
+      if ((query['co_m7TpMode'] ?? query['co_m7Tp']) != null)
+        'm7TpMode': query['co_m7TpMode'] ?? query['co_m7Tp'],
+      if (query['co_rollMode'] != null) 'rollMode': query['co_rollMode'],
+      if ((query['co_m0Enabled'] ?? query['co_m0']) != null)
+        'm0Enabled': query['co_m0Enabled'] ?? query['co_m0'],
+      for (final key in ['tpMode', 'ccMode', 'spMode', 'wcMode'])
         if (query['co_$key'] != null) key: query['co_$key'],
     };
     final legacyAutoPinnedAi =

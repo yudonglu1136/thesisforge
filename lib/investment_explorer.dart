@@ -224,6 +224,10 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
       for (final key in [
         'strategy',
         'window',
+        'putOtm',
+        'm7TpMode',
+        'rollMode',
+        'm0Enabled',
         'tpMode',
         'ccMode',
         'spMode',

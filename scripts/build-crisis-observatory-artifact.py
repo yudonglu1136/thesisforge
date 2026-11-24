@@ -20,9 +20,11 @@ import argparse
 import bisect
 import datetime
 import gzip
+import importlib.util
 import json
 import math
 import statistics
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -33,8 +35,16 @@ except ImportError:
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 SEED_GZ = ROOT_DIR / "server" / "config" / "crisis-observatory-seed-inputs.json.gz"
+M7_SEED_GZ = ROOT_DIR / "server" / "config" / "crisis-observatory-m7-inputs.json.gz"
 DEFAULT_OUT = ROOT_DIR / "server" / "config" / "crisis-observatory-dashboard.json"
 DEFAULT_FACT_ROOT = ROOT_DIR / "data" / "fact_os"
+
+_M7_SPEC = importlib.util.spec_from_file_location(
+    "m7_crisis_engine", Path(__file__).resolve().parent / "m7_crisis_engine.py"
+)
+assert _M7_SPEC is not None and _M7_SPEC.loader is not None
+m7e = importlib.util.module_from_spec(_M7_SPEC)
+_M7_SPEC.loader.exec_module(m7e)
 
 ARTIFACT_VERSION = "crisis-observatory-v2"
 START_DATE = "2015-01-02"
@@ -2863,49 +2873,78 @@ def build_unified_events(
     events: list[dict[str, Any]] = []
     for tr in ledger:
         is_nk = tr["tranche_type"] == "naked_put"
-        ev_type = "slot1_naked_put" if is_nk else f"slot{tr['slot_num']}_collar"
-        events.append(
-            {
-                "event_id": f"{strategy_id}_tr{tr['tranche_id']}_open",
-                "tranche_id": tr["tranche_id"],
-                "strategy_id": strategy_id,
-                "date": tr["entry_date"],
-                "signal_date": tr["signal_date"],
-                "event_type": ev_type,
-                "slot_num": tr["slot_num"],
-                "tranche_type": tr["tranche_type"],
-                "spot": tr["entry_spot"],
-                "vxn": tr["entry_vxn"],
-                "vix_ratio": tr["entry_vix_ratio"],
-                "kp": tr["kp"],
-                "kc": tr["kc"],
-                "call_cap_pct": tr["call_cap_pct"],
-                "entry_cost_usd": tr["entry_cost_usd"],
-                "hedged_shares": tr["hedged_shares"],
-                "sig_score": tr["sig_score"],
-                "sig_ad_below50": tr["sig_ad_below50"],
-                "trigger_en": tr["trigger_en"],
-                "trigger_zh": tr["trigger_zh"],
-                "linked_exit_date": tr["exit_date"],
-                "linked_exit_spot": tr["exit_spot"],
-                "linked_exit_reason": tr["exit_reason"],
-                "net_pnl_usd": tr["net_pnl_usd"],
-                "shares_added": tr["shares_added"],
-                "delta_usd": tr["delta_usd"],
-                "gamma_usd": tr["gamma_usd"],
-                "vega_usd": tr["vega_usd"],
-                "theta_slip_usd": tr["theta_slip_usd"],
-            }
-        )
+        s_num = int(tr.get("slot_num") or 1)
+        if is_nk:
+            ev_type = "slot1_naked_put" if s_num == 1 else f"slot{s_num}_naked_put"
+        else:
+            ev_type = f"slot{s_num}_collar"
+        open_ev: dict[str, Any] = {
+            "event_id": f"{strategy_id}_tr{tr['tranche_id']}_open",
+            "tranche_id": tr["tranche_id"],
+            "strategy_id": strategy_id,
+            "date": tr["entry_date"],
+            "signal_date": tr["signal_date"],
+            "event_type": ev_type,
+            "slot_num": s_num,
+            "tranche_type": tr["tranche_type"],
+            "spot": tr["entry_spot"],
+            "vxn": tr["entry_vxn"],
+            "vix_ratio": tr["entry_vix_ratio"],
+            "kp": tr["kp"],
+            "kc": tr["kc"],
+            "call_cap_pct": tr["call_cap_pct"],
+            "entry_cost_usd": tr["entry_cost_usd"],
+            "hedged_shares": tr["hedged_shares"],
+            "sig_score": tr["sig_score"],
+            "sig_ad_below50": tr["sig_ad_below50"],
+            "trigger_en": tr["trigger_en"],
+            "trigger_zh": tr["trigger_zh"],
+            "linked_exit_date": tr["exit_date"],
+            "linked_exit_spot": tr["exit_spot"],
+            "linked_exit_reason": tr["exit_reason"],
+            "net_pnl_usd": tr["net_pnl_usd"],
+            "shares_added": tr["shares_added"],
+            "delta_usd": tr["delta_usd"],
+            "gamma_usd": tr["gamma_usd"],
+            "vega_usd": tr["vega_usd"],
+            "theta_slip_usd": tr["theta_slip_usd"],
+        }
+        if "crisis_prob" in tr:
+            open_ev.update(
+                {
+                    "crisis_prob": tr.get("crisis_prob"),
+                    "p1": tr.get("p1"),
+                    "p2": tr.get("p2"),
+                    "p3": tr.get("p3"),
+                    "triggered_modules": tr.get("triggered_modules"),
+                    "trigger_code": tr.get("trigger_code"),
+                    "tier": tr.get("tier"),
+                    "max_slots": tr.get("max_slots"),
+                    "put_otm_pct": tr.get("put_otm_pct"),
+                    "contracts_est": tr.get("contracts_est"),
+                    "roi_mult": tr.get("roi_mult"),
+                    "tp_mode": tr.get("tp_mode"),
+                    "roll_mode": tr.get("roll_mode"),
+                    "target_dte": tr.get("target_dte"),
+                }
+            )
+        events.append(open_ev)
+
         is_open_live = bool(tr.get("is_open_live"))
-        is_live_armed = tr["exit_reason"] == "live_tp_armed_next_open"
-        is_tp = ("tp" in tr["exit_reason"]) and not is_open_live
-        is_put5x = "put_5x" in tr["exit_reason"]
-        is_itm_tp = "itm_tp" in tr["exit_reason"]
-        is_4x_tp = "4x_tp" in tr["exit_reason"]
+        ex_reason = str(tr.get("exit_reason") or "")
+        is_live_armed = ex_reason in ("live_tp_armed_next_open", "live_roll50_armed_next_open")
+        is_roll50 = ex_reason == "roll_50d"
+        is_tp = ("tp" in ex_reason) and not is_open_live
+        is_put5x = "put_5x" in ex_reason
+        is_itm_tp = "itm_tp" in ex_reason
+        is_4x_tp = "4x_tp" in ex_reason
         ev_exit_date = tr["exit_date"] if not is_open_live else tr.get("mtm_date")
         if (not is_open_live or is_live_armed) and ev_exit_date:
-            if is_live_armed:
+            if ex_reason == "live_roll50_armed_next_open":
+                ev_type_exit = "live_roll50_armed"
+                trig_en_exit = f"50-DTE Roll/Salvage Armed ({tr['rem_dte_at_exit']} DTE left · Next Open)"
+                trig_zh_exit = f"50-DTE 残值滚仓已触发（剩 {tr['rem_dte_at_exit']} 天 · 待次日开盘执行）"
+            elif is_live_armed:
                 ev_type_exit = "live_tp_armed"
                 trig_en_exit = (
                     f"Deep-ITM Panic TP Armed ({tr['rem_dte_at_exit']} DTE left · VIX/3M {tr['exit_vix_ratio']:.3f} · Next Open)"
@@ -2913,10 +2952,16 @@ def build_unified_events(
                 trig_zh_exit = (
                     f"实值恐慌止盈已触发（剩余 {tr['rem_dte_at_exit']} 天 · VIX/3M {tr['exit_vix_ratio']:.3f} · 待次日开盘换股）"
                 )
+            elif is_roll50:
+                ev_type_exit = "roll_50d"
+                salv_pct = float(tr.get("roi_mult") or 0.0) * 100.0
+                trig_en_exit = f"50-DTE Residual Roll/Salvage ({tr['rem_dte_at_exit']} DTE left · {salv_pct:.0f}% Value Saved)"
+                trig_zh_exit = f"50-DTE 剩余残值滚仓/回收（剩 {tr['rem_dte_at_exit']} 天 · 回收 {salv_pct:.0f}% 残值）"
             elif is_put5x:
+                dte_cap_lbl = 75 if "dte75" in ex_reason else 45
                 ev_type_exit = "put5x_dte45_tp"
-                trig_en_exit = f"5x Put Slow-Bear TP ({tr['rem_dte_at_exit']} DTE <= 45, Deep ITM Lock)"
-                trig_zh_exit = f"后半程 Put >= 5x 慢熊止盈（剩余 {tr['rem_dte_at_exit']} 天 <= 45 · 深实值锁利）"
+                trig_en_exit = f"5x Put Slow-Bear TP ({tr['rem_dte_at_exit']} DTE <= {dte_cap_lbl}, Deep ITM Lock)"
+                trig_zh_exit = f"后半程 Put >= 5x 慢熊止盈（剩余 {tr['rem_dte_at_exit']} 天 <= {dte_cap_lbl} · 深实值锁利）"
             elif is_itm_tp:
                 ev_type_exit = "vix110_itm_tp"
                 trig_en_exit = f"Deep-ITM Panic TP (QQQ <= K_P & VIX/3M {tr['exit_vix_ratio']:.3f} >= 1.10)"
@@ -2930,43 +2975,58 @@ def build_unified_events(
                 trig_en_exit = f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 Panic TP"
                 trig_zh_exit = f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 恐慌止盈抄底"
             else:
+                tenor_exp = 120 if "120dte" in ex_reason else 90
                 ev_type_exit = "option_expiry"
-                trig_en_exit = f"90-DTE Expiry ({tr['underlying_ret_pct']:+.1f}% spot)"
-                trig_zh_exit = f"90-DTE 到期结算（期间正股 {tr['underlying_ret_pct']:+.1f}%）"
+                trig_en_exit = f"{tenor_exp}-DTE Expiry ({tr['underlying_ret_pct']:+.1f}% spot)"
+                trig_zh_exit = f"{tenor_exp}-DTE 到期结算（期间正股 {tr['underlying_ret_pct']:+.1f}%）"
 
-            events.append(
-                {
-                    "event_id": f"{strategy_id}_tr{tr['tranche_id']}_exit",
-                    "tranche_id": tr["tranche_id"],
-                    "strategy_id": strategy_id,
-                    "date": ev_exit_date,
-                    "signal_date": tr["signal_date"],
-                    "event_type": ev_type_exit,
-                    "slot_num": tr["slot_num"],
-                    "tranche_type": tr["tranche_type"],
-                    "spot": tr["exit_spot"],
-                    "vxn": tr["exit_vxn"],
-                    "vix_ratio": tr["exit_vix_ratio"],
-                    "kp": tr["kp"],
-                    "kc": tr["kc"],
-                    "call_cap_pct": tr["call_cap_pct"],
-                    "entry_spot": tr["entry_spot"],
-                    "entry_date": tr["entry_date"],
-                    "entry_cost_usd": tr["entry_cost_usd"],
-                    "hedged_shares": tr["hedged_shares"],
-                    "sig_score": tr["sig_score"],
-                    "sig_ad_below50": tr["sig_ad_below50"],
-                    "trigger_en": trig_en_exit,
-                    "trigger_zh": trig_zh_exit,
-                    "net_pnl_usd": tr["net_pnl_usd"],
-                    "shares_added": tr["shares_added"],
-                    "delta_usd": tr["delta_usd"],
-                    "gamma_usd": tr["gamma_usd"],
-                    "vega_usd": tr["vega_usd"],
-                    "theta_slip_usd": tr["theta_slip_usd"],
-                    "convexity_mult": tr["convexity_mult"],
-                }
-            )
+            exit_ev: dict[str, Any] = {
+                "event_id": f"{strategy_id}_tr{tr['tranche_id']}_exit",
+                "tranche_id": tr["tranche_id"],
+                "strategy_id": strategy_id,
+                "date": ev_exit_date,
+                "signal_date": tr["signal_date"],
+                "event_type": ev_type_exit,
+                "slot_num": s_num,
+                "tranche_type": tr["tranche_type"],
+                "spot": tr["exit_spot"],
+                "vxn": tr["exit_vxn"],
+                "vix_ratio": tr["exit_vix_ratio"],
+                "kp": tr["kp"],
+                "kc": tr["kc"],
+                "call_cap_pct": tr["call_cap_pct"],
+                "entry_spot": tr["entry_spot"],
+                "entry_date": tr["entry_date"],
+                "entry_cost_usd": tr["entry_cost_usd"],
+                "hedged_shares": tr["hedged_shares"],
+                "sig_score": tr["sig_score"],
+                "sig_ad_below50": tr["sig_ad_below50"],
+                "trigger_en": trig_en_exit,
+                "trigger_zh": trig_zh_exit,
+                "net_pnl_usd": tr["net_pnl_usd"],
+                "shares_added": tr["shares_added"],
+                "delta_usd": tr["delta_usd"],
+                "gamma_usd": tr["gamma_usd"],
+                "vega_usd": tr["vega_usd"],
+                "theta_slip_usd": tr["theta_slip_usd"],
+                "convexity_mult": tr["convexity_mult"],
+            }
+            if "crisis_prob" in tr:
+                exit_ev.update(
+                    {
+                        "crisis_prob": tr.get("crisis_prob"),
+                        "trigger_code": tr.get("trigger_code"),
+                        "triggered_modules": tr.get("triggered_modules"),
+                        "max_slots": tr.get("max_slots"),
+                        "put_otm_pct": tr.get("put_otm_pct"),
+                        "contracts_est": tr.get("contracts_est"),
+                        "roi_mult": tr.get("roi_mult"),
+                        "tp_mode": tr.get("tp_mode"),
+                        "roll_mode": tr.get("roll_mode"),
+                        "exit_reason": ex_reason,
+                    }
+                )
+            events.append(exit_ev)
 
     for sev in shield_events:
         events.append(
@@ -3006,20 +3066,26 @@ def build_unified_events(
         "vix110_4x_tp": 1,
         "put5x_dte45_tp": 1,
         "live_tp_armed": 1,
-        "option_expiry": 2,
-        "shield_enter": 3,
-        "shield_exit": 4,
-        "slot1_naked_put": 5,
-        "slot1_collar": 6,
-        "slot2_collar": 7,
-        "slot3_collar": 8,
+        "roll_50d": 2,
+        "live_roll50_armed": 2,
+        "option_expiry": 3,
+        "shield_enter": 4,
+        "shield_exit": 5,
+        "slot1_naked_put": 6,
+        "slot2_naked_put": 7,
+        "slot3_naked_put": 8,
+        "slot1_collar": 9,
+        "slot2_collar": 10,
+        "slot3_collar": 11,
     }
     events.sort(key=lambda e: (e["date"], order_rank.get(e["event_type"], 99)))
     return events
 
 
-def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
+def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> dict[str, Any]:
     rows_all, coeffs = load_seed_and_extend(fact_root=fact_root)
+    m7_data, rows_all = m7e.load_m7_seed_and_optional_live(M7_SEED_GZ, rows_all, live_fetch=live_fetch)
+    m7_sig_pack = m7e.compute_m7_signals_and_tail(rows_all, m7_data, start_eval_date=START_DATE)
     rows_eval = [r for r in rows_all if r["date"] >= START_DATE]
 
     strategy_defs = [
@@ -3035,13 +3101,13 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
             },
             {
                 "code_name": "U1_AD_or_Score4_VXN22_H2_2x50",
-                "name_en": "U1 Pure Options Champion (100% QQQ + AD/4-Light First-Naked 2x50%)",
-                "name_zh": "U1 纯期权总冠军（100% 满仓 QQQ + AD背离/四灯 首裸次领口）",
-                "short_en": "U1 Pure Options",
-                "short_zh": "U1 纯期权冠军",
-                "badge_en": "FLAGSHIP #1 · 100% QQQ PURE OPTIONS",
-                "badge_zh": "纯期权总冠军 · 永不卖股",
-                "color_hex": "#80C6A8",
+                "name_en": "U1 Classic Six-Lights Hybrid (50% Naked Put + 50% Zero-Cost Collar)",
+                "name_zh": "U1 经典六灯双槽版（50% 首仓裸 Put + 50% 次仓零成本领口对照）",
+                "short_en": "U1 Classic (Put+Collar)",
+                "short_zh": "U1 经典六灯双槽",
+                "badge_en": "CLASSIC BASELINE · PUT + COLLAR",
+                "badge_zh": "经典六灯双槽对照",
+                "color_hex": "#7DB8F0",
                 "rule_summary_en": "100% QQQ core forever; opens Slot 1 50% Naked -10% Put + Slot 2 50% 30D-stepped Collar on (AD<50DMA or >=4 Lights) & ATH<=5% & VXN<=22; Dual-Track TP monetizes into QQQ shares on VIX/VIX3M >= 1.10 OR (DTE <= 45 & Put Bid >= 5x entry cost).",
                 "rule_summary_zh": "底仓 100% QQQ 永不卖股择时；在 ATH<=5% 且 VXN<=22 时凭 AD 顶背离或 >=4 盏危机灯开首仓 50% 裸 Put、满30天补次仓 50% 零成本 Collar；双轨止盈（VIX/VIX3M >= 1.10 恐慌倒挂，或后半程 DTE <= 45 且 Put 涨超 5 倍）变现抄底复投 QQQ。",
             },
@@ -3576,17 +3642,319 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
     sp_modes_meta = [sp_modes_meta_by_id[s["id"]] for s in SP_MODE_SPECS]
     wc_modes_meta = [wc_modes_meta_by_id[w["id"]] for w in WC_MODE_SPECS]
 
+    # --- Build M7-Graded & M7 Ensemble Three-Pillar Bundles (16 core configs: OTM x TP x Roll x M0) ---
+    m7_strategy_meta: dict[str, dict[str, Any]] = {
+        "M7G_Graded": {
+            "code_name": "M7G_ThreePillar_Graded_3Slot",
+            "name_en": "M7-Graded Three-Pillar Probabilistic Put Overlay (0-1-2-3 Equal-Dollar Slots)",
+            "name_zh": "M7-Graded 三支柱概率分层 Put 叠加引擎（0-1-2-3 等金额裸 Put 旗舰）",
+            "short_en": "M7-Graded (3-Pillar)",
+            "short_zh": "M7-Graded 三支柱分层",
+            "badge_en": "FLAGSHIP #1 · 3-PILLAR GRADED",
+            "badge_zh": "三支柱总冠军 · 零封顶裸Put",
+            "color_hex": "#80C6A8",
+            "rule_summary_en": "100% uncapped QQQ core + zero-lookahead 3-Pillar probability scoring (P1 Calm-Top M0+M6, P2 Shock M2+M5 HMM, P3 Bear/Credit M4+M3) grading 0-1-2-3 equal-dollar Naked Put slots (-15%/-20% OTM, 90D Hold or 120D->50D Roll).",
+            "rule_summary_zh": "底仓 100% QQQ 零封顶持有；由三支柱零前视概率引擎（P1 高位背离 M0+M6、P2 外生启爆 M2+M5 HMM、P3 慢熊信用 M4+M3）动态映射 0-1-2-3 槽等金额裸 Put（可选 -15%/-20% OTM 与 90D持有 / 120D剩50天滚仓）。",
+        },
+        "M7_Ensemble": {
+            "code_name": "M7_ThreePillar_2Slot",
+            "name_en": "M7 Three-Pillar 2-Slot Baseline (>=35% Binary 2-Slot Put Overlay)",
+            "name_zh": "M7 三支柱双槽标准版（>=35% 概率触发 2 槽裸 Put 对照）",
+            "short_en": "M7 2-Slot (>=35%)",
+            "short_zh": "M7 三支柱双槽",
+            "badge_en": "3-PILLAR 2-SLOT",
+            "badge_zh": "三支柱双槽对照",
+            "color_hex": "#F2BC60",
+            "rule_summary_en": "Same 3-Pillar probability signals as M7-Graded, capped at max 2 equal-dollar Naked Put slots whenever composite score >= 35%.",
+            "rule_summary_zh": "与 M7-Graded 共用同一套三支柱日频评分，综合概率 >= 35% 时最多开启 2 槽等金额裸 Put（对照验证 3 槽满配在高危共振期的增益）。",
+        },
+    }
+
+    m7_narratives_by_win: dict[str, tuple[str, str]] = {
+        "2015-08": (
+            "P1 Calm-Top (M0+M6=45%) armed two equal-dollar Naked Put slots ahead of the August flash crash ($110.64 & $112.73) with ZERO upside Call cap; VIX/VIX3M=1.194 on 2015-08-24 monetized both slots into cheap QQQ shares.",
+            "第一支柱 P1（M0+M6=45%）在 8 月汇改闪崩前提前挂入双槽等金额裸 Put（全程零卖 Call 封顶）；8/24 恐慌倒挂飙至 1.194 触发次日开盘止盈抄底 QQQ。",
+        ),
+        "2018-Q4": (
+            "P1 M0 armed pre-peak protection, then P3 Bear/Credit (M4+M3) re-entered cheap puts during November's bear-market bounce (<SMA200 & EWMAC<0 while >EMA20), monetizing into December's Fed QT waterfall.",
+            "P1 高位提前布防，随后第三支柱 P3（M4 熊市死猫跳自满 + M3 信用利差走阔）在 11 月缩表熊市反弹期二次低波补盾，精准吃下 12 月主跌浪。",
+        ),
+        "2020-03": (
+            "Breakthrough exogenous shock capture: while macro lights were calm (2/6), Pillar 2 (M2 Options Desk SKEW/VVIX + M5 Causal HMM transition = 40% >= 35%) ignited on 2020-01-28 — 3 weeks BEFORE the peak — cutting COVID crash MDD from -28.56% to -23.33% under ITM_TP!",
+            "外生黑天鹅突破性捕获：当传统宏观灯仅亮 2 盏时，第二支柱 P2（M2 期权台偏度预警 + M5 因果 HMM 跃迁 = 40% >= 35%）提前三周于 2020-01-28 精准启爆上盾，在 ITM_TP 下将疫情熔断回撤从 -28.56% 砍至 -23.33%！",
+        ),
+        "2022": (
+            "Pillar 3 (M4 CTA Bear-Rally Complacency +35 & M3 Lagged FRED Credit Stress +20) repeatedly bought cheap puts on bear bounces (>EMA20 while <SMA200 & EWMAC<0) and locked 5x ITM gains, slashing 2022 slow-bear MDD from -35.12% to -24.44% (+10.68% cushion)!",
+            "第三支柱 P3（M4 跌破年线死猫跳自满 + M3 严格滞后信用压力）在 2022 慢熊历次反弹高点低波买盾并触发 5x 深实值锁利，将 2022 全年回撤从 -35.12% 大幅压降至 -24.44%（缓冲 +10.68%）！",
+        ),
+        "2024-08": (
+            "P1+P2 resonance pushed M7 score into multi-slot protection right into July's $497 peak; VIX/VIX3M=1.144 on 2024-08-05 harvested pure convex Put profits with zero Call drag on the summer AI rally.",
+            "P1 高位背离与 P2 期权台信号共振在 7 月见顶前布满裸 Put 保护（零卖 Call 拖累完整吃满 AI 主升浪），8/05 日元闪崩倒挂 1.144 果断止盈加仓 QQQ。",
+        ),
+        "2025-04": (
+            "P1 top-divergence + P2 HMM stress transition escalated protection ahead of the February $539 peak; April's tariff panic (VIX/VIX3M=1.234) delivered massive deep-OTM convexity (22x-38x max ROI) reloaded straight into QQQ at $408!",
+            "P1 顶背离叠加 P2 HMM 状态跃迁在 2 月 $539 大顶前分层加盾；4/07 关税恐慌极值（倒挂 1.234）兑现深虚值高凸性暴利并全额在 $408 铁底抄底 QQQ！",
+        ),
+        "2026-08_11_LIVE": (
+            "P1 M0+M6 opened equal-dollar Naked Puts on 8/31 @$715.17 and 10/05 @$749.35 (capturing 100% of the rally to $759.66 ATH!). STANDARD TP monetized on 11/06 Open (VIX/3M=1.103), while ITM_TP held Slot 1 ($607.89 strike) right to the $608.45 crash low with redline blocking overpriced new puts at VXN 45.25.",
+            "P1（M0+M6）于 8/31 @$715.17 与 10/05 @$749.35 精准挂入等金额裸 Put（无封顶吃满 $759.66 历史大顶！）；STANDARD 已于 11/06 倒挂 1.103 落袋抄底，ITM_TP 则守住首槽（Kp=$607.89）逼近 $608.45 深跌实值线，同时风控红线（VXN 45.25>27）严锁高波追买。",
+        ),
+    }
+
+    date_to_eval_idx = {r["date"]: idx for idx, r in enumerate(rows_eval)}
+    feat_cols_m7 = m7_sig_pack["feature_table"]["_cols"]
+    feat_last_dict = dict(zip(feat_cols_m7, m7_sig_pack["feature_table"]["_rows"][-1]))
+
     default_bundle = mode_bundles[f"{DEFAULT_TP_MODE}__{DEFAULT_CC_MODE}"]
-    strategies_summary = default_bundle["strategies_summary"]
-    trade_ledgers_by_strategy = default_bundle["trade_ledgers_by_strategy"]
-    cc_ledgers_by_strategy = default_bundle["cc_ledgers_by_strategy"]
-    sp_ledgers_by_strategy = default_bundle["sp_ledgers_by_strategy"]
-    events_by_strategy = default_bundle["events_by_strategy"]
+    base_windows_template = default_bundle["crisis_windows"]
+
+    def _compute_m7_win_stats(sim_obj: dict[str, Any]) -> list[dict[str, Any]]:
+        stats_per_win: list[dict[str, Any]] = []
+        for w in base_windows_template:
+            c0 = date_to_eval_idx[w["crash_start_date"]]
+            c1 = date_to_eval_idx[w["crash_end_date"]]
+            z0_d = w["start_date"]
+            z1_d = w["end_date"]
+            q_ret = float(w["qqq_ret_pct"])
+            q_mdd = float(w["qqq_mdd"])
+            m_sub = sim_obj["nav"][c0 : c1 + 1]
+            m_ret = (m_sub[-1] / m_sub[0] - 1.0) * 100.0
+            mpk = m_sub[0]
+            m_mdd = 0.0
+            for v in m_sub:
+                if v > mpk:
+                    mpk = v
+                dd = (v / mpk - 1.0) * 100.0
+                if dd < m_mdd:
+                    m_mdd = dd
+            led_in_win = [
+                t
+                for t in sim_obj["ledger"]
+                if (z0_d <= t["entry_date"] <= z1_d)
+                or (
+                    (t.get("exit_date") or t.get("mtm_date") or "") != ""
+                    and z0_d <= (t.get("exit_date") or t.get("mtm_date")) <= z1_d
+                )
+            ]
+            tp_harv = sum(
+                t["net_pnl_usd"]
+                for t in led_in_win
+                if ("tp" in str(t.get("exit_reason") or "") or t.get("is_open_live")) and t["net_pnl_usd"] > 0
+            )
+            tp_sh = sum(
+                t["shares_added"]
+                for t in led_in_win
+                if ("tp" in str(t.get("exit_reason") or "") or t.get("is_open_live")) and t["shares_added"] > 0
+            )
+            net_all = sum(t["net_pnl_usd"] for t in led_in_win)
+            stats_per_win.append(
+                {
+                    "ret_pct": round(m_ret, 2),
+                    "mdd_pct": round(m_mdd, 2),
+                    "dd_cushion_pct": round(m_mdd - q_mdd, 2),
+                    "excess_ret_pct": round(m_ret - q_ret, 2),
+                    "harvested_tp_usd": round(tp_harv, 2),
+                    "shares_added_tp": round(tp_sh, 2),
+                    "net_option_pnl_usd": round(net_all, 2),
+                    "tranche_ids": [t["tranche_id"] for t in led_in_win],
+                }
+            )
+        return stats_per_win
+
+    sys_self_mod = sys.modules[__name__]
+    m7_bundles: dict[str, dict[str, Any]] = {}
+    for otm_spec in m7e.PUT_OTM_SPECS:
+        otm_id = otm_spec["id"]
+        for m7_tp_spec in m7e.M7_TP_MODE_SPECS:
+            m7_tp_id = m7_tp_spec["id"]
+            for roll_spec in m7e.M7_ROLL_MODE_SPECS:
+                roll_id = roll_spec["id"]
+                for m0_on in (True, False):
+                    sig_list = m7_sig_pack["signals_m0_on"] if m0_on else m7_sig_pack["signals_m0_off"]
+                    sig_last = sig_list[-1]
+                    is_def_m7 = (
+                        otm_id == m7e.DEFAULT_PUT_OTM
+                        and m7_tp_id == m7e.DEFAULT_M7_TP_MODE
+                        and roll_id == m7e.DEFAULT_ROLL_MODE
+                        and m0_on == m7e.DEFAULT_M0_ENABLED
+                    )
+                    b_summaries: dict[str, dict[str, Any]] = {}
+                    b_ledgers: dict[str, Any] = {}
+                    b_events: dict[str, list[dict[str, Any]]] = {}
+                    b_live_dash: dict[str, dict[str, Any]] = {}
+                    b_live_sig: dict[str, dict[str, Any]] = {}
+                    b_live_sp: dict[str, dict[str, Any]] = {}
+                    b_win_stats: dict[str, list[dict[str, Any]]] = {}
+                    b_sims: dict[str, dict[str, Any]] = {}
+
+                    for m7_sid in ("M7G_Graded", "M7_Ensemble"):
+                        m7_res = m7e.simulate_m7_strategy(
+                            rows_eval,
+                            coeffs,
+                            sys_self_mod,
+                            m7_sid,
+                            sig_list,
+                            put_otm=otm_id,
+                            m7_tp_mode=m7_tp_id,
+                            roll_mode=roll_id,
+                            m0_enabled=m0_on,
+                            cc_mode=DEFAULT_CC_MODE,
+                            sp_mode=DEFAULT_SP_MODE,
+                            wc_mode=DEFAULT_WC_MODE,
+                        )
+                        b_sims[m7_sid] = m7_res
+                        b_summaries[m7_sid] = {**m7_res["summary"], **m7_strategy_meta[m7_sid]}
+                        b_ledgers[m7_sid] = m7_res["ledger"] if is_def_m7 else _pack_ledger_rows(m7_res["ledger"])
+                        b_events[m7_sid] = build_unified_events(m7_sid, m7_res["ledger"], [])
+                        b_live_dash[m7_sid] = m7e.build_m7_live_dashboard(
+                            last_row,
+                            sig_last,
+                            feat_last_dict,
+                            m7_res,
+                            coeffs,
+                            sys_self_mod,
+                            put_otm=otm_id,
+                            m7_tp_mode=m7_tp_id,
+                            roll_mode=roll_id,
+                            m0_enabled=m0_on,
+                        )
+                        b_live_sig[m7_sid] = build_live_signal_state(last_row, m7_res, tp_mode=DEFAULT_TP_MODE)
+                        b_live_sp[m7_sid] = _build_live_sp_state(last_row, prev_eval_row, m7_res)
+                        b_win_stats[m7_sid] = _compute_m7_win_stats(m7_res)
+
+                    m7_key = f"{otm_id}__{m7_tp_id}__{roll_id}__{'m0on' if m0_on else 'm0off'}"
+                    m7_bundles[m7_key] = {
+                        "put_otm": otm_id,
+                        "m7_tp_mode": m7_tp_id,
+                        "roll_mode": roll_id,
+                        "m0_enabled": m0_on,
+                        "summaries": b_summaries,
+                        "ledgers": b_ledgers,
+                        "events": b_events,
+                        "m7_live_dashboards": b_live_dash,
+                        "live_signal_states": b_live_sig,
+                        "live_sp_states": b_live_sp,
+                        "window_stats": b_win_stats,
+                        "nav_m7g": [round(v, 2) for v in b_sims["M7G_Graded"]["nav"]],
+                        "nav_m7": [round(v, 2) for v in b_sims["M7_Ensemble"]["nav"]],
+                        "m7g_active_slots": [int(v) for v in b_sims["M7G_Graded"]["active_slots"]],
+                        "m7_active_slots": [int(v) for v in b_sims["M7_Ensemble"]["active_slots"]],
+                    }
+
+    def_m7_key = f"{m7e.DEFAULT_PUT_OTM}__{m7e.DEFAULT_M7_TP_MODE}__{m7e.DEFAULT_ROLL_MODE}__m0on"
+    def_m7_bundle = m7_bundles[def_m7_key]
+
+    put_otm_meta: list[dict[str, Any]] = []
+    for otm_spec in m7e.PUT_OTM_SPECS:
+        b_ref = m7_bundles[f"{otm_spec['id']}__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]
+        put_otm_meta.append(
+            {
+                **otm_spec,
+                "m7g_end_nav": b_ref["end_nav"],
+                "m7g_net_alpha_usd": b_ref["net_alpha_usd"],
+                "m7g_cagr_pct": b_ref["cagr_pct"],
+                "m7g_max_dd_pct": b_ref["max_dd_pct"],
+                "m7g_sharpe": b_ref["sharpe"],
+                "m7g_calmar": b_ref["calmar"],
+                "m7g_max_roi_mult": b_ref["max_roi_mult"],
+            }
+        )
+
+    m7_tp_modes_meta: list[dict[str, Any]] = []
+    for tp_spec in m7e.M7_TP_MODE_SPECS:
+        b_ref = m7_bundles[f"otm15__{tp_spec['id']}__90d_hold__m0on"]["summaries"]["M7G_Graded"]
+        m7_tp_modes_meta.append(
+            {
+                **tp_spec,
+                "m7g_end_nav": b_ref["end_nav"],
+                "m7g_net_alpha_usd": b_ref["net_alpha_usd"],
+                "m7g_cagr_pct": b_ref["cagr_pct"],
+                "m7g_max_dd_pct": b_ref["max_dd_pct"],
+                "m7g_sharpe": b_ref["sharpe"],
+                "m7g_calmar": b_ref["calmar"],
+            }
+        )
+
+    m7_roll_modes_meta: list[dict[str, Any]] = []
+    for r_spec in m7e.M7_ROLL_MODE_SPECS:
+        b_15 = m7_bundles[f"otm15__standard__{r_spec['id']}__m0on"]["summaries"]["M7G_Graded"]
+        b_20 = m7_bundles[f"otm20__standard__{r_spec['id']}__m0on"]["summaries"]["M7G_Graded"]
+        m7_roll_modes_meta.append(
+            {
+                **r_spec,
+                "m7g_otm15_end_nav": b_15["end_nav"],
+                "m7g_otm15_cagr_pct": b_15["cagr_pct"],
+                "m7g_otm15_max_dd_pct": b_15["max_dd_pct"],
+                "m7g_otm15_sharpe": b_15["sharpe"],
+                "m7g_otm15_calmar": b_15["calmar"],
+                "m7g_otm15_avg_salvage_pct": b_15["avg_roll_salvage_pct"],
+                "m7g_otm20_end_nav": b_20["end_nav"],
+                "m7g_otm20_cagr_pct": b_20["cagr_pct"],
+                "m7g_otm20_max_dd_pct": b_20["max_dd_pct"],
+                "m7g_otm20_sharpe": b_20["sharpe"],
+                "m7g_otm20_calmar": b_20["calmar"],
+                "m7g_otm20_avg_salvage_pct": b_20["avg_roll_salvage_pct"],
+            }
+        )
+
+    strategies_summary = [
+        def_m7_bundle["summaries"]["M7G_Graded"],
+        def_m7_bundle["summaries"]["M7_Ensemble"],
+        *default_bundle["strategies_summary"],
+    ]
+    trade_ledgers_by_strategy = {
+        "M7G_Graded": def_m7_bundle["ledgers"]["M7G_Graded"],
+        "M7_Ensemble": def_m7_bundle["ledgers"]["M7_Ensemble"],
+        **default_bundle["trade_ledgers_by_strategy"],
+    }
+    cc_ledgers_by_strategy = {
+        "M7G_Graded": [],
+        "M7_Ensemble": [],
+        **default_bundle["cc_ledgers_by_strategy"],
+    }
+    sp_ledgers_by_strategy = {
+        "M7G_Graded": [],
+        "M7_Ensemble": [],
+        **default_bundle["sp_ledgers_by_strategy"],
+    }
+    events_by_strategy = {
+        "M7G_Graded": def_m7_bundle["events"]["M7G_Graded"],
+        "M7_Ensemble": def_m7_bundle["events"]["M7_Ensemble"],
+        **default_bundle["events_by_strategy"],
+    }
+    live_signal_states_by_strategy = {
+        "M7G_Graded": def_m7_bundle["live_signal_states"]["M7G_Graded"],
+        "M7_Ensemble": def_m7_bundle["live_signal_states"]["M7_Ensemble"],
+        **default_bundle["live_signal_states_by_strategy"],
+    }
     live_signal_state = default_bundle["live_signal_state"]
-    live_signal_states_by_strategy = default_bundle["live_signal_states_by_strategy"]
+    live_sp_states_by_strategy = {
+        "M7G_Graded": def_m7_bundle["live_sp_states"]["M7G_Graded"],
+        "M7_Ensemble": def_m7_bundle["live_sp_states"]["M7_Ensemble"],
+        **default_bundle["live_sp_states_by_strategy"],
+    }
     live_sp_state = default_bundle["live_sp_state"]
-    live_sp_states_by_strategy = default_bundle["live_sp_states_by_strategy"]
-    crisis_windows = default_bundle["crisis_windows"]
+
+    crisis_windows: list[dict[str, Any]] = []
+    for w_idx, w in enumerate(base_windows_template):
+        w_copy = dict(w)
+        st_copy = dict(w["strategy_stats"])
+        m7g_st = def_m7_bundle["window_stats"]["M7G_Graded"][w_idx]
+        m7_st = def_m7_bundle["window_stats"]["M7_Ensemble"][w_idx]
+        st_copy["M7G_Graded"] = m7g_st
+        st_copy["M7_Ensemble"] = m7_st
+        w_copy["strategy_stats"] = st_copy
+        w_copy["m7g_mdd"] = m7g_st["mdd_pct"]
+        w_copy["m7_mdd"] = m7_st["mdd_pct"]
+        w_copy["excess_ret_m7g"] = m7g_st["excess_ret_pct"]
+        w_copy["dd_cushion_m7g"] = m7g_st["dd_cushion_pct"]
+        w_copy["harvested_usd_m7g"] = m7g_st["harvested_tp_usd"]
+        w_copy["shares_added_m7g"] = m7g_st["shares_added_tp"]
+        narr_pair = m7_narratives_by_win.get(w["id"])
+        if narr_pair:
+            w_copy["m7_narrative_en"] = narr_pair[0]
+            w_copy["m7_narrative_zh"] = narr_pair[1]
+        crisis_windows.append(w_copy)
 
     prev_vix_val = round(float(prev_eval_row["vix"]), 2)
     cur_vix_val = round(float(last_row["vix"]), 2)
@@ -3625,7 +3993,9 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
     six_crisis_lights = build_six_crisis_lights(last_row)
     ad_line_signal = build_ad_line_signal(rows_all, len(rows_all) - 1)
 
+    sig_on_series = m7_sig_pack["signals_m0_on"]
     daily_series: list[dict[str, Any]] = []
+    m7_eval_bar_rows: list[list[Any]] = []
     for i, r in enumerate(rows_eval):
         mask = (
             (1 if r["sig1_fed"] else 0)
@@ -3635,6 +4005,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
             | (16 if r["sig5_defensive"] else 0)
             | (32 if r["sig6_macro"] else 0)
         )
+        sd_i = sig_on_series[i]
         daily_series.append(
             {
                 "date": r["date"],
@@ -3642,12 +4013,22 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
                 "qqq_ma200": round(float(r["qqq_ma200"]), 2),
                 "running_ath": round(float(r["running_ath"]), 2),
                 "dd_ath_pct": round(float(r["dd_from_ath"]) * 100.0, 2),
+                "nav_m7g": def_m7_bundle["nav_m7g"][i],
+                "nav_m7": def_m7_bundle["nav_m7"][i],
                 "nav_bh": round(bh_sim["nav"][i], 2),
                 "nav_u1": default_bundle["nav_u1"][i],
                 "nav_b1c": default_bundle["nav_b1c"][i],
                 "nav_d2": default_bundle["nav_d2"][i],
                 "nav_h2": default_bundle["nav_h2"][i],
                 "nav_cc": default_bundle["nav_cc"][i],
+                "m7_prob": int(round(float(sd_i["crisis_prob"]))),
+                "m7_p1": int(round(float(sd_i["p1"]))),
+                "m7_p2": int(round(float(sd_i["p2"]))),
+                "m7_p3": int(round(float(sd_i["p3"]))),
+                "m7_target_slots": int(sd_i["target_slots_m7g"]),
+                "m7_active_slots": def_m7_bundle["m7g_active_slots"][i],
+                "m7_mask": int(sd_i["mask"]),
+                "hmm_p": round(float(sd_i["hmm_p"]), 3),
                 "crisis_lights": int(r["score"]),
                 "smooth_lights": round(float(r["score_5d"]), 2),
                 "lights_mask": mask,
@@ -3663,8 +4044,29 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
                 "slot1_naked": default_bundle["slot1_naked"][i],
             }
         )
+        m7_eval_bar_rows.append(
+            [
+                r["date"],
+                float(r["open"]),
+                float(r["close"]),
+                float(r["dividends"]),
+                float(r["vxn"]),
+                float(r["vix"]),
+                float(r["vix3m"]),
+                float(r["vix_ratio"]),
+                float(r["r"]),
+                float(r["div_yield"]),
+                float(r["dd_from_ath"]),
+                int(r["score"]),
+                bool(float(r["ad_line"]) < float(r["ad_sma50"])),
+                bool(r.get("vix_falling")),
+                float(r["ad_line"]),
+                float(r["ad_sma50"]),
+                float(r["running_ath"]),
+            ]
+        )
 
-    default_events = events_by_strategy["U1_PureOptions"]
+    default_events = events_by_strategy["M7G_Graded"]
 
     return {
         "version": ARTIFACT_VERSION,
@@ -3677,11 +4079,22 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
             "end_date": as_of_date,
             "trading_days": len(rows_eval),
             "initial_capital_usd": INITIAL_CAPITAL,
-            "execution_convention": "Strict Zero-Lookahead: EOD signal on day t -> executed at day t+1 Open",
-            "pricing_calibration": "OPRA 53,347-print 90-DTE skew polynomial + 2.5% per-leg option slippage + $0.65/contract Engine-3 option fee + IBKR rf+1.50% margin + 3 bps stock rebalance fee",
+            "execution_convention": "Strict Zero-Lookahead: EOD signal on day t -> executed at day t+1 Open (FRED BAA10Y/DGS2 +1d lag, NFCI +5d lag)",
+            "pricing_calibration": "OPRA 53,347-print skew polynomial + 2.5% per-leg option slippage + $0.65/contract option fee + IBKR rf+1.50% margin + 3 bps stock rebalance fee",
         },
-        "default_strategy_id": "U1_PureOptions",
+        "default_strategy_id": "M7G_Graded",
         "strategy_order": [s["id"] for s in strategies_summary],
+        "default_put_otm": m7e.DEFAULT_PUT_OTM,
+        "put_otm": m7e.DEFAULT_PUT_OTM,
+        "put_otm_meta": put_otm_meta,
+        "default_m7_tp_mode": m7e.DEFAULT_M7_TP_MODE,
+        "m7_tp_mode": m7e.DEFAULT_M7_TP_MODE,
+        "m7_tp_modes_meta": m7_tp_modes_meta,
+        "default_roll_mode": m7e.DEFAULT_ROLL_MODE,
+        "roll_mode": m7e.DEFAULT_ROLL_MODE,
+        "m7_roll_modes_meta": m7_roll_modes_meta,
+        "default_m0_enabled": m7e.DEFAULT_M0_ENABLED,
+        "m0_enabled": m7e.DEFAULT_M0_ENABLED,
         "default_tp_mode": DEFAULT_TP_MODE,
         "tp_mode": DEFAULT_TP_MODE,
         "tp_modes_meta": tp_modes_meta,
@@ -3697,6 +4110,38 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         "tp_slot_series": tp_slot_series,
         "tp_modes": tp_modes_bundle,
         "mode_bundles": mode_bundles,
+        "m7_bundles": m7_bundles,
+        "m7_signals": {
+            "m0on": _pack_ledger_rows(m7_sig_pack["signals_m0_on"]),
+            "m0off": _pack_ledger_rows(m7_sig_pack["signals_m0_off"]),
+        },
+        "m7_feature_table": m7_sig_pack["feature_table"],
+        "m7_live_tail_state": m7_sig_pack["live_tail_state"],
+        "m7_eval_bars": {
+            "_cols": [
+                "date",
+                "open",
+                "close",
+                "dividends",
+                "vxn",
+                "vix",
+                "vix3m",
+                "vix_ratio",
+                "r",
+                "div_yield",
+                "dd_from_ath",
+                "score",
+                "ad_below50",
+                "vix_falling",
+                "ad_line",
+                "ad_sma50",
+                "running_ath",
+            ],
+            "_rows": m7_eval_bar_rows,
+        },
+        "opra_90dte_poly3_coeffs_desc": coeffs,
+        "m7_live_dashboard": def_m7_bundle["m7_live_dashboards"]["M7G_Graded"],
+        "m7_live_dashboards_by_strategy": def_m7_bundle["m7_live_dashboards"],
         "live_market_snapshot": live_market_snapshot,
         "live_signal_state": live_signal_state,
         "live_signal_states_by_strategy": live_signal_states_by_strategy,
@@ -3708,7 +4153,7 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         "daily_series": daily_series,
         "events": default_events,
         "events_by_strategy": events_by_strategy,
-        "trade_ledger": trade_ledgers_by_strategy["U1_PureOptions"],
+        "trade_ledger": trade_ledgers_by_strategy["M7G_Graded"],
         "trade_ledgers_by_strategy": trade_ledgers_by_strategy,
         "cc_ledgers_by_strategy": cc_ledgers_by_strategy,
         "sp_ledgers_by_strategy": sp_ledgers_by_strategy,
@@ -3739,7 +4184,15 @@ def verify_artifact(doc: dict[str, Any]) -> None:
             raise AssertionError(f"Artifact contains forbidden identifier: {banned}")
 
     snap = doc["live_market_snapshot"]
-    assert doc["default_strategy_id"] == "U1_PureOptions", doc["default_strategy_id"]
+    assert doc["default_strategy_id"] == "M7G_Graded", doc["default_strategy_id"]
+    assert doc["default_put_otm"] == "otm15", doc["default_put_otm"]
+    assert doc["put_otm"] == "otm15", doc["put_otm"]
+    assert doc["default_m7_tp_mode"] == "standard", doc["default_m7_tp_mode"]
+    assert doc["m7_tp_mode"] == "standard", doc["m7_tp_mode"]
+    assert doc["default_roll_mode"] == "90d_hold", doc["default_roll_mode"]
+    assert doc["roll_mode"] == "90d_hold", doc["roll_mode"]
+    assert doc["default_m0_enabled"] is True, doc["default_m0_enabled"]
+    assert doc["m0_enabled"] is True, doc["m0_enabled"]
     assert doc["default_tp_mode"] == "layered_itm", doc["default_tp_mode"]
     assert doc["tp_mode"] == "layered_itm", doc["tp_mode"]
     assert doc["default_cc_mode"] == "cc_off", doc["default_cc_mode"]
@@ -3748,6 +4201,9 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     assert doc["sp_mode"] == "sp_off", doc["sp_mode"]
     assert doc["default_wc_mode"] == "wc_reclaim_30d_d35", doc["default_wc_mode"]
     assert doc["wc_mode"] == "wc_reclaim_30d_d35", doc["wc_mode"]
+    assert [m["id"] for m in doc["put_otm_meta"]] == ["otm15", "otm20"]
+    assert [m["id"] for m in doc["m7_tp_modes_meta"]] == ["standard", "itm_tp"]
+    assert [m["id"] for m in doc["m7_roll_modes_meta"]] == ["90d_hold", "120d_roll50"]
     assert [m["id"] for m in doc["sp_modes_meta"]] == [
         "sp_off",
         "sp_14d_cap10",
@@ -3761,6 +4217,7 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     ]
     assert set(doc["tp_modes"].keys()) == {"layered_itm", "standard_dual", "both_4x"}
     assert len(doc["mode_bundles"]) == 120, len(doc["mode_bundles"])
+    assert len(doc["m7_bundles"]) == 16, len(doc["m7_bundles"])
     assert doc["as_of_date"] >= "2026-11-20"
     if doc["as_of_date"] == "2026-11-20":
         assert snap["qqq_close"] == 608.45, snap["qqq_close"]
@@ -3776,7 +4233,51 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         smap = {s["id"]: s for s in doc["strategies_summary"]}
         assert "U4_DualEngine" not in smap
         assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02, smap["BH_Pure_QQQ"]["end_nav"]
-        # Default mode: layered_itm + cc_off + sp_off
+        # M7G_Graded & M7_Ensemble penny-exact parity assertions across 90d_hold & 120d_roll50
+        assert abs(smap["M7G_Graded"]["end_nav"] - 1682250.03) <= 0.05, smap["M7G_Graded"]["end_nav"]
+        assert smap["M7G_Graded"]["cagr_pct"] == 19.63, smap["M7G_Graded"]["cagr_pct"]
+        assert smap["M7G_Graded"]["max_dd_pct"] == -28.02, smap["M7G_Graded"]["max_dd_pct"]
+        assert smap["M7G_Graded"]["calmar"] == 0.701, smap["M7G_Graded"]["calmar"]
+        assert smap["M7G_Graded"]["sharpe"] == 0.983, smap["M7G_Graded"]["sharpe"]
+        assert abs(smap["M7_Ensemble"]["end_nav"] - 1676747.11) <= 0.05, smap["M7_Ensemble"]["end_nav"]
+        assert smap["M7_Ensemble"]["cagr_pct"] == 19.60, smap["M7_Ensemble"]["cagr_pct"]
+        assert smap["M7_Ensemble"]["max_dd_pct"] == -28.02, smap["M7_Ensemble"]["max_dd_pct"]
+
+        m7_15_roll = doc["m7_bundles"]["otm15__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]
+        assert abs(m7_15_roll["end_nav"] - 1625935.17) <= 0.05, m7_15_roll["end_nav"]
+        assert m7_15_roll["cagr_pct"] == 19.29, m7_15_roll["cagr_pct"]
+        assert m7_15_roll["max_dd_pct"] == -28.43, m7_15_roll["max_dd_pct"]
+        assert m7_15_roll["sharpe"] == 0.983, m7_15_roll["sharpe"]
+        assert m7_15_roll["roll_50d_count"] == 32, m7_15_roll["roll_50d_count"]
+        assert abs(m7_15_roll["avg_roll_salvage_pct"] - 37.6) <= 0.2, m7_15_roll["avg_roll_salvage_pct"]
+
+        m7_20_hold = doc["m7_bundles"]["otm20__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]
+        assert abs(m7_20_hold["end_nav"] - 1856309.08) <= 0.05, m7_20_hold["end_nav"]
+        assert m7_20_hold["cagr_pct"] == 20.62, m7_20_hold["cagr_pct"]
+        assert m7_20_hold["max_dd_pct"] == -27.98, m7_20_hold["max_dd_pct"]
+        assert m7_20_hold["calmar"] == 0.737, m7_20_hold["calmar"]
+        assert m7_20_hold["sharpe"] == 1.029, m7_20_hold["sharpe"]
+
+        m7_20_roll = doc["m7_bundles"]["otm20__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]
+        assert abs(m7_20_roll["end_nav"] - 1823635.00) <= 0.05, m7_20_roll["end_nav"]
+        assert m7_20_roll["cagr_pct"] == 20.44, m7_20_roll["cagr_pct"]
+        assert m7_20_roll["max_dd_pct"] == -29.05, m7_20_roll["max_dd_pct"]
+        assert m7_20_roll["sharpe"] == 1.038, m7_20_roll["sharpe"]
+        assert m7_20_roll["roll_50d_count"] == 32, m7_20_roll["roll_50d_count"]
+        assert abs(m7_20_roll["avg_roll_salvage_pct"] - 32.0) <= 0.2, m7_20_roll["avg_roll_salvage_pct"]
+
+        m7_15_itm = doc["m7_bundles"]["otm15__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]
+        assert abs(m7_15_itm["end_nav"] - 1523801.10) <= 0.05, m7_15_itm["end_nav"]
+        assert m7_15_itm["cagr_pct"] == 18.64, m7_15_itm["cagr_pct"]
+        assert m7_15_itm["max_dd_pct"] == -24.44, m7_15_itm["max_dd_pct"]
+        assert m7_15_itm["calmar"] == 0.763, m7_15_itm["calmar"]
+
+        m7_20_itm = doc["m7_bundles"]["otm20__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]
+        assert abs(m7_20_itm["end_nav"] - 1511253.76) <= 0.05, m7_20_itm["end_nav"]
+        assert m7_20_itm["cagr_pct"] == 18.55, m7_20_itm["cagr_pct"]
+        assert m7_20_itm["max_dd_pct"] == -26.98, m7_20_itm["max_dd_pct"]
+
+        # Legacy U1 default mode: layered_itm + cc_off + sp_off
         assert abs(smap["U1_PureOptions"]["end_nav"] - 1654577.25) <= 0.05, smap["U1_PureOptions"]["end_nav"]
         assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 366272.47) <= 0.05, smap["U1_PureOptions"]["net_alpha_usd"]
         assert smap["U1_PureOptions"]["cagr_pct"] == 19.46, smap["U1_PureOptions"]["cagr_pct"]
@@ -3986,15 +4487,24 @@ def verify_artifact(doc: dict[str, Any]) -> None:
                     raise AssertionError(
                         f"4-factor convexity mismatch in {mode_key}/{sid} #{tr['tranche_id']}: {four_sum} vs {tr['net_pnl_usd']}"
                     )
+    for m7_key, m7_bundle in doc["m7_bundles"].items():
+        for sid, led in m7_bundle["ledgers"].items():
+            for tr in _iter_unpacked(led):
+                four_sum = tr["delta_usd"] + tr["gamma_usd"] + tr["vega_usd"] + tr["theta_slip_usd"]
+                if abs(four_sum - tr["net_pnl_usd"]) > 0.05:
+                    raise AssertionError(
+                        f"4-factor convexity mismatch in m7/{m7_key}/{sid} #{tr['tranche_id']}: {four_sum} vs {tr['net_pnl_usd']}"
+                    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build Crisis Observatory JSON artifact.")
     parser.add_argument("--fact-root", type=Path, default=DEFAULT_FACT_ROOT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--live-fetch", action="store_true", help="Fetch latest daily EOD closes from Yahoo + FRED.")
     args = parser.parse_args()
 
-    doc = build_artifact(fact_root=args.fact_root)
+    doc = build_artifact(fact_root=args.fact_root, live_fetch=args.live_fetch)
     verify_artifact(doc)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
@@ -4002,8 +4512,9 @@ def main() -> None:
     smap = {s["id"]: s for s in doc["strategies_summary"]}
     print(
         f"OK: verified {args.output} ({size_kb:.1f} KB) | as_of_date={doc['as_of_date']} | "
-        f"days={len(doc['daily_series'])} | U1=${smap['U1_PureOptions']['end_nav']:,.2f} "
-        f"(+${smap['U1_PureOptions']['net_alpha_usd']:,.2f}) | BH=${smap['BH_Pure_QQQ']['end_nav']:,.2f}"
+        f"days={len(doc['daily_series'])} | M7G=${smap['M7G_Graded']['end_nav']:,.2f} "
+        f"(+${smap['M7G_Graded']['net_alpha_usd']:,.2f}) | U1=${smap['U1_PureOptions']['end_nav']:,.2f} | "
+        f"BH=${smap['BH_Pure_QQQ']['end_nav']:,.2f}"
     )
 
 

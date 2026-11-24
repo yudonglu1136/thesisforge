@@ -31,11 +31,19 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   static const Color _lilac = Color(0xFFB8A1EA);
 
   static const List<String> _primaryStrategies = [
+    'M7G_Graded',
+    'M7_Ensemble',
     'U1_PureOptions',
     'B1c_PureAD',
     'D2_SixLights',
     'NoPut_CallOnly',
   ];
+
+  static const List<String> _putOtmIds = ['otm15', 'otm20'];
+
+  static const List<String> _m7TpModeIds = ['standard', 'itm_tp'];
+
+  static const List<String> _rollModeIds = ['90d_hold', '120d_roll50'];
 
   static const List<String> _tpModeIds = [
     'layered_itm',
@@ -64,6 +72,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   ];
 
   static const Map<String, String> _strategyNavKeys = {
+    'M7G_Graded': 'nav_m7g',
+    'M7_Ensemble': 'nav_m7',
     'U1_PureOptions': 'nav_u1',
     'B1c_PureAD': 'nav_b1c',
     'D2_SixLights': 'nav_d2',
@@ -74,11 +84,19 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   Map<String, dynamic>? data;
   final Map<String, Map<String, dynamic>> _tpModeCache = {};
+  final TextEditingController _qqqSharesCtrl = TextEditingController(
+    text: '1000',
+  );
+  double customQqqShares = 1000.0;
   bool loading = true;
   bool switchingTpMode = false;
   String? error;
 
-  String selectedStrategyId = 'U1_PureOptions';
+  String selectedStrategyId = 'M7G_Graded';
+  String selectedPutOtm = 'otm15';
+  String selectedM7TpMode = 'standard';
+  String selectedRollMode = '90d_hold';
+  bool selectedM0Enabled = true;
   String selectedTpMode = 'layered_itm';
   String selectedCcMode = 'cc_off';
   String selectedSpMode = 'sp_off';
@@ -87,7 +105,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String activeForensicWindowId = '2026-08_11_LIVE';
   bool useLogScale = true;
   bool showRulesDisclosure = false;
-  bool showSignalSubTrack = false;
+  bool showClassicSixLights = false;
+  bool showSignalSubTrack = true;
   bool showFullLedger = false;
   bool showCcLedger = false;
   bool showSpLedger = false;
@@ -98,12 +117,49 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
+  bool get _isM7Strategy =>
+      selectedStrategyId == 'M7G_Graded' ||
+      selectedStrategyId == 'M7_Ensemble';
 
   String _normalizeStrategyId(String raw) {
-    if (raw == 'U4_DualEngine' || raw.isEmpty || raw == 'BH_Pure_QQQ') {
-      return 'U1_PureOptions';
+    final mapped = switch (raw) {
+      'm7g' || 'm7_graded' || 'M7G' => 'M7G_Graded',
+      'm7' || 'm7_ensemble' || 'M7' => 'M7_Ensemble',
+      'U4_DualEngine' => 'U1_PureOptions',
+      '' || 'BH_Pure_QQQ' => 'M7G_Graded',
+      _ => raw,
+    };
+    return _strategyNavKeys.containsKey(mapped) ? mapped : 'M7G_Graded';
+  }
+
+  String _normalizePutOtm(String raw) {
+    final v = raw.trim().toLowerCase();
+    if (v == 'otm20' || v == '20' || v == '-20' || v == '-20%') return 'otm20';
+    return 'otm15';
+  }
+
+  String _normalizeM7TpMode(String raw) {
+    final v = raw.trim().toLowerCase();
+    if (v == 'itm_tp' || v == 'itm' || v == 'deep_itm') return 'itm_tp';
+    return 'standard';
+  }
+
+  String _normalizeRollMode(String raw) {
+    final v = raw.trim().toLowerCase();
+    if (v == '120d_roll50' ||
+        v == '120d' ||
+        v == 'roll50' ||
+        v == '120_50') {
+      return '120d_roll50';
     }
-    return _strategyNavKeys.containsKey(raw) ? raw : 'U1_PureOptions';
+    return '90d_hold';
+  }
+
+  bool _normalizeM0Enabled(dynamic raw) {
+    if (raw is bool) return raw;
+    final v = text(raw).trim().toLowerCase();
+    if (v == 'false' || v == '0' || v == 'off' || v == 'no') return false;
+    return true;
   }
 
   String _normalizeTpMode(String raw) {
@@ -145,7 +201,23 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   void initState() {
     super.initState();
     selectedStrategyId = _normalizeStrategyId(
-      text(widget.initialSelection['strategy']),
+      text(
+        widget.initialSelection['strategy'] ?? widget.initialSelection['strat'],
+      ),
+    );
+    selectedPutOtm = _normalizePutOtm(
+      text(widget.initialSelection['putOtm'] ?? widget.initialSelection['otm']),
+    );
+    selectedM7TpMode = _normalizeM7TpMode(
+      text(
+        widget.initialSelection['m7TpMode'] ?? widget.initialSelection['m7Tp'],
+      ),
+    );
+    selectedRollMode = _normalizeRollMode(
+      text(widget.initialSelection['rollMode']),
+    );
+    selectedM0Enabled = _normalizeM0Enabled(
+      widget.initialSelection['m0Enabled'] ?? widget.initialSelection['m0'],
     );
     selectedTpMode = _normalizeTpMode(
       text(widget.initialSelection['tpMode']),
@@ -159,7 +231,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     selectedWcMode = _normalizeWcMode(
       text(widget.initialSelection['wcMode']),
     );
-    final initWin = text(widget.initialSelection['window']);
+    final initWin = text(
+      widget.initialSelection['window'] ?? widget.initialSelection['win'],
+    );
     if (initWin.isNotEmpty) {
       selectedWindowId = initWin;
       if (initWin != 'ALL' && initWin != '1Y' && initWin != '3Y') {
@@ -167,6 +241,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       }
     }
     unawaited(_loadObservatory());
+  }
+
+  @override
+  void dispose() {
+    _qqqSharesCtrl.dispose();
+    super.dispose();
   }
 
   @override
@@ -182,6 +262,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     widget.onSelection?.call({
       'strategy': selectedStrategyId,
       'window': selectedWindowId,
+      'putOtm': selectedPutOtm,
+      'm7TpMode': selectedM7TpMode,
+      'rollMode': selectedRollMode,
+      'm0Enabled': selectedM0Enabled ? 'true' : 'false',
       'tpMode': selectedTpMode,
       'ccMode': selectedCcMode,
       'spMode': selectedSpMode,
@@ -190,16 +274,32 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   }
 
   void _selectModes({
+    String? putOtm,
+    String? m7TpMode,
+    String? rollMode,
+    bool? m0Enabled,
     String? tpMode,
     String? ccMode,
     String? spMode,
     String? wcMode,
   }) {
+    final nextOtm = putOtm != null ? _normalizePutOtm(putOtm) : selectedPutOtm;
+    final nextM7Tp = m7TpMode != null
+        ? _normalizeM7TpMode(m7TpMode)
+        : selectedM7TpMode;
+    final nextRoll = rollMode != null
+        ? _normalizeRollMode(rollMode)
+        : selectedRollMode;
+    final nextM0 = m0Enabled ?? selectedM0Enabled;
     final nextTp = tpMode != null ? _normalizeTpMode(tpMode) : selectedTpMode;
     final nextCc = ccMode != null ? _normalizeCcMode(ccMode) : selectedCcMode;
     final nextSp = spMode != null ? _normalizeSpMode(spMode) : selectedSpMode;
     final nextWc = wcMode != null ? _normalizeWcMode(wcMode) : selectedWcMode;
-    if (nextTp == selectedTpMode &&
+    if (nextOtm == selectedPutOtm &&
+        nextM7Tp == selectedM7TpMode &&
+        nextRoll == selectedRollMode &&
+        nextM0 == selectedM0Enabled &&
+        nextTp == selectedTpMode &&
         nextCc == selectedCcMode &&
         nextSp == selectedSpMode &&
         nextWc == selectedWcMode &&
@@ -207,10 +307,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       return;
     }
     final effectiveWc = nextSp == 'sp_off' ? 'wc_reclaim_30d_d35' : nextWc;
-    final cacheKey = '${widget.asOf}::$nextTp::$nextCc::$nextSp::$effectiveWc';
+    final cacheKey =
+        '${widget.asOf}::$nextOtm::$nextM7Tp::$nextRoll::$nextM0::$nextTp::$nextCc::$nextSp::$effectiveWc';
     final cached = _tpModeCache[cacheKey];
     if (cached != null) {
       setState(() {
+        selectedPutOtm = nextOtm;
+        selectedM7TpMode = nextM7Tp;
+        selectedRollMode = nextRoll;
+        selectedM0Enabled = nextM0;
         selectedTpMode = nextTp;
         selectedCcMode = nextCc;
         selectedSpMode = nextSp;
@@ -223,6 +328,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       return;
     }
     setState(() {
+      selectedPutOtm = nextOtm;
+      selectedM7TpMode = nextM7Tp;
+      selectedRollMode = nextRoll;
+      selectedM0Enabled = nextM0;
       selectedTpMode = nextTp;
       selectedCcMode = nextCc;
       selectedSpMode = nextSp;
@@ -234,6 +343,14 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     unawaited(_loadObservatory(isModeSwitch: data != null));
   }
 
+  void _selectPutOtm(String modeId) => _selectModes(putOtm: modeId);
+
+  void _selectM7TpMode(String modeId) => _selectModes(m7TpMode: modeId);
+
+  void _selectRollMode(String modeId) => _selectModes(rollMode: modeId);
+
+  void _toggleM0Enabled() => _selectModes(m0Enabled: !selectedM0Enabled);
+
   void _selectTpMode(String modeId) => _selectModes(tpMode: modeId);
 
   void _selectCcMode(String modeId) => _selectModes(ccMode: modeId);
@@ -244,6 +361,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   Future<void> _loadObservatory({bool isModeSwitch = false}) async {
     final serial = ++loadSerial;
+    final targetOtm = selectedPutOtm;
+    final targetM7Tp = selectedM7TpMode;
+    final targetRoll = selectedRollMode;
+    final targetM0 = selectedM0Enabled;
     final targetTp = selectedTpMode;
     final targetCc = selectedCcMode;
     final targetSp = selectedSpMode;
@@ -263,6 +384,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         queryParameters: {
           'asOf': widget.asOf,
           'strategy': selectedStrategyId,
+          'putOtm': targetOtm,
+          'm7TpMode': targetM7Tp,
+          'rollMode': targetRoll,
+          'm0Enabled': targetM0 ? 'true' : 'false',
           'tpMode': targetTp,
           'ccMode': targetCc,
           'spMode': targetSp,
@@ -271,7 +396,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       );
       final res = await widget.api.getJson(uri.toString());
       if (!mounted || serial != loadSerial) return;
-      _tpModeCache['${widget.asOf}::$targetTp::$targetCc::$targetSp::$effectiveWc'] =
+      _tpModeCache['${widget.asOf}::$targetOtm::$targetM7Tp::$targetRoll::$targetM0::$targetTp::$targetCc::$targetSp::$effectiveWc'] =
           res;
       final windows = asList(res['crisis_windows']);
       var nextForensic = activeForensicWindowId;
@@ -363,7 +488,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   String _humanStrategyLabel(String id) {
     return switch (id) {
-      'U1_PureOptions' => w('U1 Dual-Slot Put+Collar (Rec.)', 'U1 双槽买 Put+领口（推荐）'),
+      'M7G_Graded' => w(
+        'M7-Graded 3-Pillar (Flagship)',
+        'M7-Graded 三支柱分层（旗舰）',
+      ),
+      'M7_Ensemble' => w('M7 2-Slot Ensemble', 'M7 三支柱双槽'),
+      'U1_PureOptions' => w('U1 Dual-Slot Put+Collar', 'U1 双槽买 Put+领口'),
       'B1c_PureAD' => w('B1c AD Breadth Put', 'B1c 宽度背离买 Put'),
       'D2_SixLights' => w('D2 6-Light Collar', 'D2 六灯领口（零保费）'),
       'NoPut_CallOnly' => selectedSpMode == 'sp_off'
@@ -373,6 +503,67 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       'BH_Pure_QQQ' => w('Buy & Hold QQQ', '死拿 QQQ'),
       _ => w('Protected Strategy', '保护策略'),
     };
+  }
+
+  String _humanPutOtmLabel(String modeId) {
+    return switch (modeId) {
+      'otm20' => w('-20% OTM (High Convexity)', '-20% OTM（高凸性）'),
+      _ => w('-15% OTM (Default)', '-15% OTM（默认）'),
+    };
+  }
+
+  String _humanPutOtmShort(String modeId) {
+    return modeId == 'otm20' ? '-20% OTM' : '-15% OTM';
+  }
+
+  String _humanRollModeLabel(String modeId) {
+    return switch (modeId) {
+      '120d_roll50' => w(
+        '120D -> 50D Roll/Salvage',
+        '120D 建仓 · 50D 剩余滚仓',
+      ),
+      _ => w('90D Hold to Expiry (Default)', '90D 持有到期（默认）'),
+    };
+  }
+
+  String _humanRollModeShort(String modeId) {
+    return modeId == '120d_roll50'
+        ? w('120D->50D Roll', '120D->50D滚仓')
+        : w('90D Hold', '90D持有');
+  }
+
+  String _humanM7TpModeLabel(String modeId) {
+    return switch (modeId) {
+      'itm_tp' => w(
+        'ITM_TP (1.10 & QQQ<=Kp)',
+        'ITM_TP 实值止盈（1.10 且破行权价）',
+      ),
+      _ => w('STANDARD (1.10 · Default)', 'STANDARD 标准 1.10（默认）'),
+    };
+  }
+
+  String _humanM7TpModeShort(String modeId) {
+    return modeId == 'itm_tp' ? 'ITM_TP' : 'STANDARD';
+  }
+
+  String _humanM7EngineHint(Map<String, dynamic> stratSummary) {
+    final trN = _numVal(stratSummary['tranches_total']).round();
+    final tpN = _numVal(stratSummary['tp_count']).round();
+    final rollN = _numVal(stratSummary['roll_50d_count']).round();
+    final salvPct = _numVal(stratSummary['avg_salvage_pct']);
+    final maxRoi = _numVal(stratSummary['max_roi_mult']);
+    final dte = selectedRollMode == '120d_roll50' ? 120 : 90;
+    final max5xDte = selectedRollMode == '120d_roll50' ? 75 : 45;
+    final rollClauseEn = selectedRollMode == '120d_roll50'
+        ? ' · <=50 DTE residual roll/salvage ($rollN rolls, avg ${salvPct.toStringAsFixed(1)}% recovered)'
+        : ' · hold to TP or 90D expiry';
+    final rollClauseZh = selectedRollMode == '120d_roll50'
+        ? ' · 剩 ≤50 DTE 残值滚仓/回收（共 $rollN 次滚仓 · 平均回收 ${salvPct.toStringAsFixed(1)}%）'
+        : ' · 持有至止盈或 90D 到期';
+    return w(
+      'Equal-dollar ${dte}D ${_humanPutOtmShort(selectedPutOtm)} Naked Put (anchored to ${dte}D -10% Put Ask) · TP ${_humanM7TpModeShort(selectedM7TpMode)} + 5x (DTE<=$max5xDte)$rollClauseEn · M0 ${selectedM0Enabled ? 'ON' : 'OFF'} -> $trN tranches ($tpN TPs, peak ${maxRoi.toStringAsFixed(1)}x)',
+      '等美元预算买 ${dte}D ${_humanPutOtmShort(selectedPutOtm)} 裸 Put（锚定 ${dte}D -10% Put 成本）· 止盈 ${_humanM7TpModeShort(selectedM7TpMode)} + 5x（DTE≤$max5xDte）$rollClauseZh · M0 ${selectedM0Enabled ? '开启' : '关闭'} → 共 $trN 笔（止盈 $tpN 次 · 单笔最高 ${maxRoi.toStringAsFixed(1)}x）',
+    );
   }
 
   String _activeComboBadgeText() {
@@ -407,7 +598,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         '当前组合：不买危机 Put · 叠加「$callPart」 + 「$spWithWc」',
       );
     }
-    final tpPart = _humanTpModeLabel(selectedTpMode);
+    final tpPart = _isM7Strategy
+        ? '${_humanPutOtmShort(selectedPutOtm)} · ${_humanRollModeShort(selectedRollMode)} · ${_humanM7TpModeShort(selectedM7TpMode)}${selectedM0Enabled ? '' : ' · No-M0'}'
+        : _humanTpModeLabel(selectedTpMode);
     if (!hasCall && !hasSp) {
       return w(
         'Active Combo: $putPart ($tpPart) · No Normal-Time Call',
@@ -948,17 +1141,35 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         final compact = constraints.maxWidth < 680;
         final desktop = constraints.maxWidth >= 960;
         final gap = compact ? 18.0 : 24.0;
+        final m7Dash = _resolveM7LiveDashboard(doc);
         return Column(
           key: const ValueKey('crisis-observatory-root'),
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _buildVerdictBlock(doc, compact: compact, desktop: desktop),
             SizedBox(height: gap),
-            _buildSixSignalsBlock(
-              doc,
-              maxWidth: constraints.maxWidth,
-              compact: compact,
-            ),
+            if (m7Dash.isNotEmpty) ...[
+              _buildThreePillarBlock(
+                doc,
+                m7Dash: m7Dash,
+                maxWidth: constraints.maxWidth,
+                compact: compact,
+                desktop: desktop,
+              ),
+              if (showClassicSixLights || !_isM7Strategy) ...[
+                const SizedBox(height: 14),
+                _buildSixSignalsBlock(
+                  doc,
+                  maxWidth: constraints.maxWidth,
+                  compact: compact,
+                ),
+              ],
+            ] else
+              _buildSixSignalsBlock(
+                doc,
+                maxWidth: constraints.maxWidth,
+                compact: compact,
+              ),
             SizedBox(height: gap),
             _buildHeroChartBlock(doc, compact: compact, desktop: desktop),
             SizedBox(height: gap),
@@ -973,14 +1184,33 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     );
   }
 
+  Map<String, dynamic> _resolveM7LiveDashboard(Map<String, dynamic> doc) {
+    final byStrat = asMap(doc['m7_live_dashboards_by_strategy']);
+    final key = selectedStrategyId == 'M7_Ensemble'
+        ? 'M7_Ensemble'
+        : 'M7G_Graded';
+    final found = asMap(byStrat[key]);
+    if (found.isNotEmpty) return found;
+    return asMap(doc['m7_live_dashboard']);
+  }
+
   // ===========================================================================
-  // BLOCK 1: Clean Verdict Header (今日信号结论)
+  // BLOCK 1: Clean Verdict Header (今日信号结论 · M7-Graded Command Deck)
   // ===========================================================================
   Widget _buildVerdictBlock(
     Map<String, dynamic> doc, {
     required bool compact,
     required bool desktop,
   }) {
+    final m7Dash = _resolveM7LiveDashboard(doc);
+    if (_isM7Strategy && m7Dash.isNotEmpty) {
+      return _buildM7VerdictBlock(
+        doc,
+        m7Dash: m7Dash,
+        compact: compact,
+        desktop: desktop,
+      );
+    }
     final snap = asMap(doc['live_market_snapshot']);
     final sigByStrat = asMap(doc['live_signal_states_by_strategy']);
     final stratSig = asMap(sigByStrat[selectedStrategyId]);
@@ -1604,6 +1834,1294 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     );
   }
 
+  Widget _buildM7VerdictBlock(
+    Map<String, dynamic> doc, {
+    required Map<String, dynamic> m7Dash,
+    required bool compact,
+    required bool desktop,
+  }) {
+    final snap = asMap(doc['live_market_snapshot']);
+    final stratSummary = _findStrategySummary(doc, selectedStrategyId);
+    final bhSummary = _findStrategySummary(doc, 'BH_Pure_QQQ');
+    final asOfDate = text(m7Dash['as_of_date']).isNotEmpty
+        ? text(m7Dash['as_of_date'])
+        : (text(doc['as_of_date']).isEmpty ? widget.asOf : text(doc['as_of_date']));
+
+    final qqqClose = _numVal(
+      asMap(m7Dash['sizing_calculator'])['qqq_spot'],
+      _numVal(snap['qqq_close']),
+    );
+    final ddAth = _numVal(snap['dd_from_ath_pct']);
+    final vxnNow = _numVal(
+      asMap(m7Dash['redline'])['vxn'],
+      _numVal(snap['vxn']),
+    );
+    final vixRatio = _numVal(
+      asMap(m7Dash['redline'])['vix_ratio'],
+      _numVal(snap['vix_vix3m_ratio']),
+    );
+
+    final crisisProb = _numVal(m7Dash['crisis_prob']).round();
+    final p1Score = _numVal(m7Dash['p1_score']).round();
+    final p2Score = _numVal(m7Dash['p2_score']).round();
+    final p3Score = _numVal(m7Dash['p3_score']).round();
+    final targetSlots = _numVal(m7Dash['target_slots']).round();
+    final activeSlots = _numVal(m7Dash['active_slots']).round();
+    final maxSlots = math.max(1, _numVal(m7Dash['max_slots'], 3).round());
+
+    final redline = asMap(m7Dash['redline']);
+    final redlineBlocked = redline['blocked'] == true;
+    final cooldown = asMap(m7Dash['cooldown']);
+    final cooldownPassed = cooldown['passed'] == true;
+    final t1 = asMap(m7Dash['t1_action']);
+    final t1Code = text(t1['code']);
+    final t1Badge = w(text(t1['badge_en']), text(t1['badge_zh']));
+    final t1Title = w(text(t1['title_en']), text(t1['title_zh']));
+
+    final Color statusColor = t1Code.contains('TP') || t1Code.contains('HARVEST')
+        ? _emerald
+        : (redlineBlocked
+              ? _coral
+              : (crisisProb >= 45 || activeSlots >= 2
+                    ? _amber
+                    : (crisisProb >= 35 || activeSlots >= 1 ? _sky : _emerald)));
+
+    final totalShares = _numVal(stratSummary['final_shares'], 2764.81);
+    final bhShares = _numVal(
+      stratSummary['bh_final_shares'],
+      _numVal(bhSummary['final_shares'], 2117.34),
+    );
+    final extraShares = _numVal(
+      stratSummary['extra_shares_vs_bh'],
+      totalShares - bhShares,
+    );
+    final extraSharesPct = _numVal(
+      stratSummary['extra_shares_pct'],
+      bhShares > 0 ? (extraShares / bhShares) * 100.0 : 0.0,
+    );
+
+    final tpMon = asMap(m7Dash['tp_monitor']);
+    final openSlots = asList(tpMon['open_slots']);
+    final firstOpen = openSlots.isNotEmpty ? openSlots.first : const <String, dynamic>{};
+    final fiveXMaxDte = _numVal(
+      tpMon['five_x_max_dte'],
+      selectedRollMode == '120d_roll50' ? 75 : 45,
+    ).round();
+
+    final probAccent = crisisProb >= 65
+        ? _coral
+        : (crisisProb >= 35 ? _amber : _emerald);
+    final probCard = Column(
+      key: const ValueKey('crisis-m7-prob-card'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          w('Composite Crisis Probability', '综合危机概率（三支柱加总）'),
+          style: TextStyle(
+            color: p.muted,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Row(
+          children: [
+            Text(
+              '$crisisProb%',
+              style: TextStyle(
+                color: probAccent,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.4,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  value: (crisisProb / 100.0).clamp(0.0, 1.0),
+                  minHeight: 5,
+                  backgroundColor: p.border,
+                  color: probAccent,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'P1 $p1Score/45 · P2 $p2Score/40 · P3 $p3Score/45',
+          style: TextStyle(color: p.muted, fontSize: 11.5),
+        ),
+      ],
+    );
+
+    final slotsCard = Column(
+      key: const ValueKey('crisis-m7-slots-card'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          w('Graded Put Slots & Core QQQ', '概率分层槽位与底仓'),
+          style: TextStyle(
+            color: p.muted,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Wrap(
+          spacing: 5,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(
+              w(
+                'Active $activeSlots/$maxSlots · Target $targetSlots/$maxSlots',
+                '在途 $activeSlots/$maxSlots 槽 · 目标 $targetSlots/$maxSlots 槽',
+              ),
+              style: TextStyle(
+                color: activeSlots > 0 ? _amber : _emerald,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            for (var s = 1; s <= maxSlots; s++)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: s <= activeSlots
+                      ? _amber.withValues(alpha: 0.18)
+                      : (s <= targetSlots
+                            ? _sky.withValues(alpha: 0.14)
+                            : p.text.withValues(alpha: 0.04)),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color: s <= activeSlots
+                        ? _amber.withValues(alpha: 0.7)
+                        : p.border,
+                  ),
+                ),
+                child: Text(
+                  'S$s',
+                  style: TextStyle(
+                    color: s <= activeSlots ? _amber : p.muted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          w(
+            '100% QQQ · ${_fmtShares(totalShares)} sh (${_fmtPct(extraSharesPct)} vs BH)',
+            '100% 满仓 QQQ · ${_fmtShares(totalShares)} 股（较死拿 ${_fmtPct(extraSharesPct)}）',
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: p.muted, fontSize: 11.5),
+        ),
+      ],
+    );
+
+    final redlineCard = Column(
+      key: const ValueKey('crisis-m7-redline-card'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          w('Hard Risk Redline & Cooldown', '硬性禁开红线与阶梯冷却'),
+          style: TextStyle(
+            color: p.muted,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          redlineBlocked
+              ? w(
+                  'BLOCKED · VXN ${vxnNow.toStringAsFixed(1)} · VIX/3M ${vixRatio.toStringAsFixed(2)}',
+                  '红线禁开 · VXN ${vxnNow.toStringAsFixed(1)} · VIX/3M ${vixRatio.toStringAsFixed(2)}',
+                )
+              : w(
+                  'CLEAR · VXN ${vxnNow.toStringAsFixed(1)}<=27 · VIX/3M ${vixRatio.toStringAsFixed(2)}<1.02',
+                  '红线安全 · VXN ${vxnNow.toStringAsFixed(1)}≤27 · VIX/3M ${vixRatio.toStringAsFixed(2)}<1.02',
+                ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: redlineBlocked ? _coral : _emerald,
+            fontSize: 13.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          w(text(cooldown['label_en']), text(cooldown['label_zh'])),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: cooldownPassed ? p.muted : _amber,
+            fontSize: 11.5,
+          ),
+        ),
+      ],
+    );
+
+    final String tpCardSub;
+    if (firstOpen.isNotEmpty) {
+      final remDte = _numVal(firstOpen['rem_dte']).round();
+      final kp = _numVal(firstOpen['kp']);
+      final mult = _numVal(firstOpen['roi_mult']);
+      final rollCountdown = selectedRollMode == '120d_roll50'
+          ? w(
+              ' · ${_numVal(firstOpen['days_to_roll50']).round()}d to 50D roll',
+              ' · 距50D滚仓 ${_numVal(firstOpen['days_to_roll50']).round()}天',
+            )
+          : '';
+      tpCardSub = w(
+        'S${_numVal(firstOpen['slot_num']).round()} K=\$${kp.toStringAsFixed(0)} · ${remDte}D left · ${mult.toStringAsFixed(2)}x$rollCountdown',
+        'S${_numVal(firstOpen['slot_num']).round()} 行权 \$${kp.toStringAsFixed(0)} · 剩$remDte天 · ${mult.toStringAsFixed(2)}x$rollCountdown',
+      );
+    } else {
+      final nextKp = _numVal(tpMon['simulated_next_slot_kp']);
+      tpCardSub = selectedRollMode == '120d_roll50'
+          ? w(
+              'Next K=\$${nextKp.toStringAsFixed(0)} · 5x<=75D · <=50D Roll/Salvage',
+              '模拟行权 \$${nextKp.toStringAsFixed(0)} · 5x≤75D · ≤50D残值滚仓',
+            )
+          : w(
+              'Next K=\$${nextKp.toStringAsFixed(0)} · 5x<=${fiveXMaxDte}D Slow-Bear Lock',
+              '模拟行权 \$${nextKp.toStringAsFixed(0)} · 5x≤${fiveXMaxDte}D 慢熊锁利',
+            );
+    }
+
+    final tpCard = Column(
+      key: const ValueKey('crisis-m7-tp-card'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          w('Take-Profit & Roll Monitor', '止盈与滚仓实时阈值'),
+          style: TextStyle(
+            color: p.muted,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          selectedM7TpMode == 'itm_tp'
+              ? w(
+                  'ITM_TP · VIX/3M ${vixRatio.toStringAsFixed(2)}/1.10 + QQQ<=Kp',
+                  'ITM_TP · VIX/3M ${vixRatio.toStringAsFixed(2)}/1.10 且破行权',
+                )
+              : w(
+                  'STANDARD · VIX/3M ${vixRatio.toStringAsFixed(2)} / 1.10',
+                  'STANDARD · VIX/3M ${vixRatio.toStringAsFixed(2)} / 1.10',
+                ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: vixRatio >= 1.10 ? _emerald : p.text,
+            fontSize: 13.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          tpCardSub,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: p.muted, fontSize: 11.5),
+        ),
+      ],
+    );
+
+    return Container(
+      key: const ValueKey('crisis-observatory-command-center'),
+      padding: EdgeInsets.all(compact ? 16 : 22),
+      decoration: _calmSurfaceDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 9,
+                    height: 9,
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Flexible(
+                    child: Text(
+                      t1Badge.isNotEmpty
+                          ? t1Badge
+                          : w(
+                              'M7-Graded Three-Pillar Put Overlay',
+                              'M7-Graded 三支柱概率分层 Put 风控引擎',
+                            ),
+                      style: TextStyle(
+                        color: p.text,
+                        fontSize: compact ? 16.5 : 18.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  if (doc['liveExtended'] == true)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6.5,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _emerald.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: _emerald.withValues(alpha: 0.5),
+                        ),
+                      ),
+                      child: Text(
+                        w('LIVE EOD', '实时收盘'),
+                        style: const TextStyle(
+                          color: _emerald,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  InkWell(
+                    key: const ValueKey('crisis-observatory-qqq-chip'),
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: () => widget.onCompany('QQQ'),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2,
+                      ),
+                      child: Text(
+                        'QQQ \$${qqqClose.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          color: p.text,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    w(
+                      '· ${_fmtPct(ddAth)} off high · VXN ${vxnNow.toStringAsFixed(1)} · VIX/3M ${vixRatio.toStringAsFixed(2)} · $asOfDate',
+                      '· 距高点 ${_fmtPct(ddAth)} · VXN ${vxnNow.toStringAsFixed(1)} · VIX/3M ${vixRatio.toStringAsFixed(2)} · $asOfDate',
+                    ),
+                    style: TextStyle(color: p.muted, fontSize: 12.5),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            t1Title,
+            style: TextStyle(
+              color: p.muted,
+              fontSize: compact ? 13 : 13.5,
+              height: 1.48,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Container(height: 1, color: p.border),
+          const SizedBox(height: 14),
+          if (desktop)
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: probCard),
+                  Container(
+                    width: 1,
+                    margin: const EdgeInsets.symmetric(horizontal: 16),
+                    color: p.border,
+                  ),
+                  Expanded(child: slotsCard),
+                  Container(
+                    width: 1,
+                    margin: const EdgeInsets.symmetric(horizontal: 16),
+                    color: p.border,
+                  ),
+                  Expanded(child: redlineCard),
+                  Container(
+                    width: 1,
+                    margin: const EdgeInsets.symmetric(horizontal: 16),
+                    color: p.border,
+                  ),
+                  Expanded(child: tpCard),
+                ],
+              ),
+            )
+          else
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                probCard,
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  child: Container(height: 1, color: p.border),
+                ),
+                slotsCard,
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  child: Container(height: 1, color: p.border),
+                ),
+                redlineCard,
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  child: Container(height: 1, color: p.border),
+                ),
+                tpCard,
+              ],
+            ),
+          const SizedBox(height: 14),
+          _buildM7SizingCalculator(
+            m7Dash: m7Dash,
+            stratSummary: stratSummary,
+            compact: compact,
+          ),
+          const SizedBox(height: 12),
+          _buildLiveEngine3Strip(doc, snap),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              InkWell(
+                key: const ValueKey('crisis-rules-toggle'),
+                borderRadius: BorderRadius.circular(6),
+                onTap: () =>
+                    setState(() => showRulesDisclosure = !showRulesDisclosure),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        showRulesDisclosure
+                            ? w('Hide Execution Rules', '收起执行规则')
+                            : w('View Execution Rules', '查看执行规则'),
+                        style: TextStyle(
+                          color: p.muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        showRulesDisclosure
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        size: 16,
+                        color: p.muted,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Text(
+                w(
+                  'Tier Mapping: ${text(m7Dash['tier_rule_en'])}',
+                  '概率映射：${text(m7Dash['tier_rule_zh'])}',
+                ),
+                style: TextStyle(
+                  color: p.muted,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          if (showRulesDisclosure) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: p.border),
+              ),
+              child: Text(
+                w(
+                  'Execution rules (T+1 Open, strict zero-lookahead): 1) Hold 100% QQQ core forever. 2) Daily 3-pillar score P1(<=45) + P2(<=40) + P3(<=45) maps to 0/1/2/3 Naked Put slots (<35->0, 35-44->1, 45-64->2, >=65->3). 3) Hard Redline forbids opening any new slot if VXN > 27 or VIX/VIX3M >= 1.02; cooldown requires >= 30D between slots (>= 21D when score >= 65%). 4) Equal-Dollar Sizing: per-slot USD budget = Current QQQ Shares × 50% × Ask(${selectedRollMode == '120d_roll50' ? '120D' : '90D'} -10% Put), allocated into ${_humanPutOtmShort(selectedPutOtm)} Put. 5) ${w(text(tpMon['rule_en']), text(tpMon['rule_zh']))}',
+                  '实战规则（严格零前视 T+1 开盘执行）：① 底仓 100% 持有 QQQ 永不卖股；② 三支柱日度总分 P1(≤45)+P2(≤40)+P3(≤45) 映射 0–3 槽裸 Put（<35→0槽，35–44→1槽，45–64→2槽，≥65→3槽）；③ 硬性红线：VXN > 27 或 VIX/VIX3M ≥ 1.02 严禁开新槽，加槽冷却 ≥ 30 天（总分 ≥ 65% 缩短至 ≥ 21 天）；④ 等金额预算：单槽预算 = 当前 QQQ 股数 × 50% × ${selectedRollMode == '120d_roll50' ? '120D' : '90D'} -10% Put 卖一价，全部买入 ${_humanPutOtmShort(selectedPutOtm)} Put；⑤ ${w(text(tpMon['rule_en']), text(tpMon['rule_zh']))}',
+                ),
+                style: TextStyle(color: p.muted, fontSize: 12, height: 1.5),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildM7SizingCalculator({
+    required Map<String, dynamic> m7Dash,
+    required Map<String, dynamic> stratSummary,
+    required bool compact,
+  }) {
+    final calc = asMap(m7Dash['sizing_calculator']);
+    final dte = _numVal(
+      calc['dte'],
+      selectedRollMode == '120d_roll50' ? 120 : 90,
+    ).round();
+    final ref10 = asMap(calc['ref_otm10']);
+    final selMap = asMap(
+      calc[selectedPutOtm == 'otm20' ? 'otm20' : 'otm15'],
+    );
+    final refAsk10 = _numVal(ref10['ask_sh']);
+    final selStrike = _numVal(selMap['strike']);
+    final selAsk = _numVal(selMap['ask_sh']);
+    final selIv = _numVal(selMap['iv_pct']);
+    final skewRatio = _numVal(calc['skew_ratio_20_10']);
+    final skewThresh = _numVal(calc['skew_switch_threshold'], 1.18);
+    final skewFav = calc['favorable_otm20_skew'] == true;
+    final modelShares = _numVal(
+      calc['model_qqq_shares'],
+      _numVal(stratSummary['final_shares'], 1000.0),
+    );
+
+    final shCount = customQqqShares > 0 ? customQqqShares : 1000.0;
+    final perSlotBudgetUsd = shCount * 0.50 * refAsk10;
+    final contractsEst = selAsk > 0 ? perSlotBudgetUsd / (selAsk * 100.0) : 0.0;
+
+    return Container(
+      key: const ValueKey('crisis-m7-sizing-calculator'),
+      padding: EdgeInsets.all(compact ? 12 : 14),
+      decoration: BoxDecoration(
+        color: p.text.withValues(alpha: 0.028),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: p.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    w('QQQ Shares:', '持有 QQQ 股数：'),
+                    style: TextStyle(
+                      color: p.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(
+                    width: 86,
+                    height: 30,
+                    child: TextField(
+                      key: const ValueKey('crisis-qqq-shares-input'),
+                      controller: _qqqSharesCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      style: TextStyle(
+                        color: p.text,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 6,
+                        ),
+                        filled: true,
+                        fillColor: p.card,
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          borderSide: BorderSide(color: p.border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          borderSide: const BorderSide(color: _emerald),
+                        ),
+                      ),
+                      onChanged: (val) {
+                        final parsed = double.tryParse(
+                          val.replaceAll(',', '').trim(),
+                        );
+                        if (parsed != null && parsed > 0 && parsed <= 1e7) {
+                          setState(() => customQqqShares = parsed);
+                        }
+                      },
+                    ),
+                  ),
+                  InkWell(
+                    key: const ValueKey('crisis-use-model-shares-btn'),
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: () {
+                      final rounded = modelShares.roundToDouble();
+                      _qqqSharesCtrl.text = rounded.toStringAsFixed(0);
+                      setState(() => customQqqShares = rounded);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: p.border),
+                      ),
+                      child: Text(
+                        w(
+                          'Model (${modelShares.toStringAsFixed(0)})',
+                          '策略股数(${modelShares.toStringAsFixed(0)})',
+                        ),
+                        style: TextStyle(
+                          color: p.muted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              Text(
+                w(
+                  'Per-Slot Equal Budget: ${_fmtUsdCents(perSlotBudgetUsd)} -> Buy ${contractsEst.toStringAsFixed(2)} ctr (${dte}D K=\$${selStrike.toStringAsFixed(1)} Put @ Ask \$${selAsk.toStringAsFixed(2)} · IV ${selIv.toStringAsFixed(1)}%)',
+                  '单槽等金额预算：${_fmtUsdCents(perSlotBudgetUsd)} → 买 ${contractsEst.toStringAsFixed(2)} 张（${dte}D 行权 \$${selStrike.toStringAsFixed(1)} Put @ Ask \$${selAsk.toStringAsFixed(2)} · IV ${selIv.toStringAsFixed(1)}%）',
+                ),
+                key: const ValueKey('crisis-m7-budget-output'),
+                style: const TextStyle(
+                  color: _emerald,
+                  fontSize: 12.2,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 14,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Wrap(
+                key: const ValueKey('crisis-otm-mode-bar'),
+                spacing: 5,
+                runSpacing: 5,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    w('Strike:', '虚值行权价：'),
+                    style: TextStyle(
+                      color: p.muted,
+                      fontSize: 11.2,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  for (final oid in _putOtmIds) _buildCalmPutOtmTab(oid),
+                ],
+              ),
+              Wrap(
+                key: const ValueKey('crisis-roll-mode-bar'),
+                spacing: 5,
+                runSpacing: 5,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    w('Tenor / Roll:', '期限与滚仓：'),
+                    style: TextStyle(
+                      color: p.muted,
+                      fontSize: 11.2,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  for (final rid in _rollModeIds) _buildCalmRollModeTab(rid),
+                ],
+              ),
+              Wrap(
+                key: const ValueKey('crisis-m7-tp-bar'),
+                spacing: 5,
+                runSpacing: 5,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    w('TP Rule:', '止盈规则：'),
+                    style: TextStyle(
+                      color: p.muted,
+                      fontSize: 11.2,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  for (final tid in _m7TpModeIds) _buildCalmM7TpTab(tid),
+                ],
+              ),
+              Container(
+                key: const ValueKey('crisis-skew-indicator'),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: skewFav
+                      ? _emerald.withValues(alpha: 0.12)
+                      : p.text.withValues(alpha: 0.04),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: skewFav ? _emerald.withValues(alpha: 0.45) : p.border,
+                  ),
+                ),
+                child: Text(
+                  w(
+                    'Skew IV(-20/-10) ${skewRatio.toStringAsFixed(3)} vs ${skewThresh.toStringAsFixed(2)} ${skewFav ? '(Favorable -20%)' : '(Steep Skew)'}',
+                    '尾部偏度 IV(-20/-10) ${skewRatio.toStringAsFixed(3)} vs ${skewThresh.toStringAsFixed(2)} ${skewFav ? '（宜切 -20%）' : '（偏度较陡）'}',
+                  ),
+                  style: TextStyle(
+                    color: skewFav ? _emerald : p.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // BLOCK 2A: M7-Graded Three-Pillar & 6 Sub-Module Status Matrix
+  // ===========================================================================
+  Widget _buildThreePillarBlock(
+    Map<String, dynamic> doc, {
+    required Map<String, dynamic> m7Dash,
+    required double maxWidth,
+    required bool compact,
+    required bool desktop,
+  }) {
+    final pillars = asList(m7Dash['pillars']);
+    final crisisProb = _numVal(m7Dash['crisis_prob']).round();
+    final p1 = _numVal(m7Dash['p1_score']).round();
+    final p2 = _numVal(m7Dash['p2_score']).round();
+    final p3 = _numVal(m7Dash['p3_score']).round();
+    final lights = asList(doc['six_crisis_lights']);
+    final litCount = lights.where((item) => item['lit'] == true).length;
+
+    return Container(
+      key: const ValueKey('crisis-observatory-three-pillars'),
+      padding: EdgeInsets.all(compact ? 16 : 22),
+      decoration: _calmSurfaceDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    w(
+                      'Three-Pillar Crisis Probability Matrix (M7-Graded)',
+                      '三支柱概率分层监控矩阵（M7-Graded · 六大子模块）',
+                    ),
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: compact ? 15.5 : 16.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    w(
+                      'Calm-Top Fragility (P1) + Options/HMM Jump (P2) + Bear Rally & Credit PIT (P3)',
+                      '高位脆弱顶背离 (P1) + 期权偏度与因果 HMM 跃迁 (P2) + 慢熊反弹自满与滞后信用利差 (P3)',
+                    ),
+                    style: TextStyle(color: p.muted, fontSize: 12),
+                  ),
+                ],
+              ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: (crisisProb >= 35 ? _amber : _emerald).withValues(
+                        alpha: 0.12,
+                      ),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: (crisisProb >= 35 ? _amber : _emerald).withValues(
+                          alpha: 0.45,
+                        ),
+                      ),
+                    ),
+                    child: Text(
+                      w(
+                        'Total $crisisProb% ($p1 + $p2 + $p3)',
+                        '总分 $crisisProb%（$p1 + $p2 + $p3）',
+                      ),
+                      style: TextStyle(
+                        color: crisisProb >= 35 ? _amber : _emerald,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (_isM7Strategy)
+                    InkWell(
+                      key: const ValueKey('crisis-classic-lights-toggle'),
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: () => setState(
+                        () => showClassicSixLights = !showClassicSixLights,
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: p.border),
+                        ),
+                        child: Text(
+                          showClassicSixLights
+                              ? w(
+                                  'Hide M0 6-Lights ($litCount/6)',
+                                  '收起 M0 六灯明细 ($litCount/6)',
+                                )
+                              : w(
+                                  'M0 6-Lights Detail ($litCount/6)',
+                                  '展开 M0 六灯明细 ($litCount/6)',
+                                ),
+                          style: TextStyle(
+                            color: p.muted,
+                            fontSize: 11.2,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (desktop && pillars.length == 3)
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _buildM7PillarColumn(pillars[0])),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildM7PillarColumn(pillars[1])),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildM7PillarColumn(pillars[2])),
+                ],
+              ),
+            )
+          else
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < pillars.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 10),
+                  _buildM7PillarColumn(pillars[i]),
+                ],
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildM7PillarColumn(Map<String, dynamic> pillar) {
+    final pid = text(pillar['id']);
+    final score = _numVal(pillar['score']).round();
+    final cap = _numVal(pillar['cap']).round();
+    final modules = asList(pillar['modules']);
+    final Color accent = switch (pid) {
+      'P1' => _emerald,
+      'P2' => _sky,
+      _ => _amber,
+    };
+    final active = score > 0;
+
+    return Container(
+      key: ValueKey('crisis-m7-pillar-$pid'),
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: p.text.withValues(alpha: 0.02),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(
+          color: active ? accent.withValues(alpha: 0.5) : p.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  w(text(pillar['title_en']), text(pillar['title_zh'])),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: p.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: active
+                      ? accent.withValues(alpha: 0.16)
+                      : p.text.withValues(alpha: 0.04),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '$score / $cap',
+                  style: TextStyle(
+                    color: active ? accent : p.muted,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            w(text(pillar['subtitle_en']), text(pillar['subtitle_zh'])),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: p.muted, fontSize: 11, height: 1.35),
+          ),
+          const SizedBox(height: 10),
+          for (var i = 0; i < modules.length; i++) ...[
+            if (i > 0) const SizedBox(height: 8),
+            _buildM7ModuleCard(modules[i], accent: accent),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildM7ModuleCard(
+    Map<String, dynamic> mod, {
+    required Color accent,
+  }) {
+    final mid = text(mod['id']);
+    final pts = _numVal(mod['points']).round();
+    final earned = _numVal(mod['earned_points']).round();
+    final triggered = mod['triggered'] == true;
+    final pluggable = mod['pluggable'] == true;
+    final enabled = mod['enabled'] != false;
+    final volOk = mod['vol_gate_passed'] == true;
+    final metrics = asList(mod['metrics']);
+
+    return Container(
+      key: ValueKey('crisis-m7-module-$mid'),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: p.card,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(
+          color: triggered
+              ? accent.withValues(alpha: 0.55)
+              : p.border.withValues(alpha: 0.8),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: !enabled
+                          ? p.muted.withValues(alpha: 0.35)
+                          : (triggered
+                                ? accent
+                                : p.muted.withValues(alpha: 0.45)),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      w(text(mod['name_en']), text(mod['name_zh'])),
+                      style: TextStyle(
+                        color: enabled ? p.text : p.muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (pluggable) ...[
+                    _buildCalmM0Switch(compactPill: true),
+                    const SizedBox(width: 5),
+                  ],
+                  Text(
+                    !enabled
+                        ? w('OFF', '已关')
+                        : (triggered ? '+$earned' : '0 / +$pts'),
+                    style: TextStyle(
+                      color: triggered ? accent : p.muted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Row(
+            children: [
+              Icon(
+                volOk ? Icons.check_circle_outline : Icons.shield_outlined,
+                size: 12,
+                color: volOk ? _emerald : p.muted,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  w(text(mod['vol_gate_en']), text(mod['vol_gate_zh'])),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: volOk ? _emerald : p.muted,
+                    fontSize: 10.8,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Container(height: 1, color: p.border.withValues(alpha: 0.55)),
+          const SizedBox(height: 6),
+          for (final m in metrics)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Row(
+                children: [
+                  Container(
+                    width: 5,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: m['passed'] == true
+                          ? _emerald
+                          : p.muted.withValues(alpha: 0.4),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      w(text(m['label_en']), text(m['label_zh'])),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: p.muted, fontSize: 11),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      text(m['value']),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        color: m['passed'] == true ? p.text : p.muted,
+                        fontSize: 11,
+                        fontWeight: m['passed'] == true
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCalmPutOtmTab(String modeId) {
+    final active = selectedPutOtm == modeId;
+    return InkWell(
+      key: ValueKey('crisis-otm-pill-$modeId'),
+      borderRadius: BorderRadius.circular(7),
+      onTap: () => _selectPutOtm(modeId),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8.5, vertical: 4.5),
+        decoration: BoxDecoration(
+          color: active ? _emerald.withValues(alpha: 0.16) : Colors.transparent,
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(
+            color: active ? _emerald.withValues(alpha: 0.72) : p.border,
+          ),
+        ),
+        child: Text(
+          _humanPutOtmLabel(modeId),
+          style: TextStyle(
+            color: active ? p.text : p.muted,
+            fontSize: 11.2,
+            fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalmRollModeTab(String modeId) {
+    final active = selectedRollMode == modeId;
+    final accent = modeId == '120d_roll50' ? _sky : _emerald;
+    return InkWell(
+      key: ValueKey('crisis-roll-pill-$modeId'),
+      borderRadius: BorderRadius.circular(7),
+      onTap: () => _selectRollMode(modeId),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8.5, vertical: 4.5),
+        decoration: BoxDecoration(
+          color: active ? accent.withValues(alpha: 0.16) : Colors.transparent,
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(
+            color: active ? accent.withValues(alpha: 0.72) : p.border,
+          ),
+        ),
+        child: Text(
+          _humanRollModeLabel(modeId),
+          style: TextStyle(
+            color: active ? p.text : p.muted,
+            fontSize: 11.2,
+            fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalmM7TpTab(String modeId) {
+    final active = selectedM7TpMode == modeId;
+    return InkWell(
+      key: ValueKey('crisis-m7-tp-pill-$modeId'),
+      borderRadius: BorderRadius.circular(7),
+      onTap: () => _selectM7TpMode(modeId),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8.5, vertical: 4.5),
+        decoration: BoxDecoration(
+          color: active ? _emerald.withValues(alpha: 0.16) : Colors.transparent,
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(
+            color: active ? _emerald.withValues(alpha: 0.72) : p.border,
+          ),
+        ),
+        child: Text(
+          _humanM7TpModeLabel(modeId),
+          style: TextStyle(
+            color: active ? p.text : p.muted,
+            fontSize: 11.2,
+            fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalmM0Switch({bool compactPill = false}) {
+    final on = selectedM0Enabled;
+    return InkWell(
+      key: ValueKey(
+        compactPill ? 'crisis-m0-toggle' : 'crisis-m0-workbench-toggle',
+      ),
+      borderRadius: BorderRadius.circular(6),
+      onTap: _toggleM0Enabled,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: compactPill ? 6.5 : 8.5,
+          vertical: compactPill ? 2.0 : 4.5,
+        ),
+        decoration: BoxDecoration(
+          color: on
+              ? _emerald.withValues(alpha: 0.14)
+              : p.text.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: on ? _emerald.withValues(alpha: 0.65) : p.border,
+          ),
+        ),
+        child: Text(
+          on
+              ? w('M0: ON (+35)', 'M0开关：开启(+35)')
+              : w('M0: OFF (Pure 5-Mod)', 'M0开关：关闭(纯5模块)'),
+          style: TextStyle(
+            color: on ? _emerald : p.muted,
+            fontSize: compactPill ? 10.2 : 11.2,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
   // ===========================================================================
   // BLOCK 2: Minimalist 6 Crisis Signals Strip (六大危机信号状态)
   // ===========================================================================
@@ -1999,8 +3517,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     label: w('Ending Value', '策略终值'),
                     value: _fmtUsd(_numVal(stratSummary['end_nav'])),
                     sub: w(
-                      'vs QQQ ${_fmtUsd(_numVal(bhSummary['end_nav']))}',
-                      '死拿 ${_fmtUsd(_numVal(bhSummary['end_nav']))}',
+                      'vs QQQ ${_fmtUsd(_numVal(stratSummary['bh_parity_end_nav'], _numVal(bhSummary['end_nav'])))}',
+                      '死拿 ${_fmtUsd(_numVal(stratSummary['bh_parity_end_nav'], _numVal(bhSummary['end_nav'])))}',
                     ),
                     color: p.text,
                   ),
@@ -2142,12 +3660,19 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   if (hasPutLayer) ...[
                     _cleanVectorMarkerLegend(
                       kind: _CrisisMarkerKind.putOpen,
-                      label: w('Buy Put / Collar', '买 Put / 领口'),
+                      label: _isM7Strategy
+                          ? w('Buy Graded Put (S1–S3)', '分层买 Put (S1–S3)')
+                          : w('Buy Put / Collar', '买 Put / 领口'),
                     ),
                     _cleanVectorMarkerLegend(
                       kind: _CrisisMarkerKind.putTp,
                       label: w('Put TP Harvest', 'Put 止盈换股'),
                     ),
+                    if (_isM7Strategy && selectedRollMode == '120d_roll50')
+                      _cleanVectorMarkerLegend(
+                        kind: _CrisisMarkerKind.putRoll50,
+                        label: w('50D Roll / Salvage', '50D 残值滚仓'),
+                      ),
                   ],
                   if (hasCallLayer)
                     _cleanVectorMarkerLegend(
@@ -2183,8 +3708,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               if (hoveredRow.isNotEmpty)
                 Text(
                   !rebasedMode
-                      ? '${text(hoveredRow['date'])} · ${_fmtUsd(hovStratNav)} vs ${_fmtUsd(hovBhNav)} · VIX/3M ${_numVal(hoveredRow['vix_ratio']).toStringAsFixed(2)}'
-                      : '${text(hoveredRow['date'])} · ${_fmtPct(hovStratRet)} vs QQQ ${_fmtPct(hovBhRet)} · QQQ \$${_numVal(hoveredRow['qqq_close']).toStringAsFixed(1)}',
+                      ? '${text(hoveredRow['date'])} · ${_fmtUsd(hovStratNav)} vs ${_fmtUsd(hovBhNav)}${hoveredRow['m7_prob'] is num ? ' · M7 ${_numVal(hoveredRow['m7_prob']).round()}%' : ''} · VIX/3M ${_numVal(hoveredRow['vix_ratio']).toStringAsFixed(2)}'
+                      : '${text(hoveredRow['date'])} · ${_fmtPct(hovStratRet)} vs QQQ ${_fmtPct(hovBhRet)}${hoveredRow['m7_prob'] is num ? ' · M7 ${_numVal(hoveredRow['m7_prob']).round()}%' : ''} · QQQ \$${_numVal(hoveredRow['qqq_close']).toStringAsFixed(1)}',
                   style: TextStyle(
                     color: p.muted,
                     fontSize: 12,
@@ -2291,12 +3816,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 child: Text(
                   showSignalSubTrack
                       ? w(
-                          'Hide Crisis Lights & VIX Sub-Track',
-                          '收起危机灯与恐慌副图',
+                          'Hide M7 Prob & VIX Sub-Track',
+                          '收起 M7 概率与恐慌副图',
                         )
                       : w(
-                          'Show Crisis Lights & VIX Sub-Track',
-                          '展开危机灯与恐慌副图',
+                          'Show M7 Prob & VIX Sub-Track',
+                          '展开 M7 概率与恐慌副图',
                         ),
                   style: TextStyle(color: p.muted, fontSize: 11.5),
                 ),
@@ -2381,6 +3906,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final stratRet = startStratNav > 0 ? (stratNav / startStratNav - 1) * 100 : 0.0;
     final bhRet = startBhNav > 0 ? (bhNav / startBhNav - 1) * 100 : 0.0;
     final lights = _numVal(row['crisis_lights']).round();
+    final hasM7Row = row['m7_prob'] is num;
+    final m7Prob = _numVal(row['m7_prob']).round();
+    final m7Slots = _numVal(row['m7_slots']).round();
+    final m7P1 = _numVal(row['m7_p1']).round();
+    final m7P2 = _numVal(row['m7_p2']).round();
+    final m7P3 = _numVal(row['m7_p3']).round();
     final vixRatio = _numVal(row['vix_ratio']);
     final qqqClose = _numVal(row['qqq_close']);
 
@@ -2393,6 +3924,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     bool hasLiveArmed = false;
     bool hasOpen = false;
     Map<String, dynamic>? firstOpenEv;
+    Map<String, dynamic>? firstRoll50Ev;
     Map<String, dynamic>? firstCcOpenEv;
     Map<String, dynamic>? firstCcRollEv;
     Map<String, dynamic>? firstCcStopEv;
@@ -2419,6 +3951,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         }
         netPnlSum += _numVal(ev['net_pnl_usd']);
         sharesSum += _numVal(ev['shares_added']);
+      } else if (et == 'roll_50d' || et == 'live_roll50_armed') {
+        firstRoll50Ev ??= ev;
       } else if (et.startsWith('slot')) {
         hasOpen = true;
         firstOpenEv ??= ev;
@@ -2441,6 +3975,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final hasAnyMarkerEvent =
         hasTp ||
         hasOpen ||
+        firstRoll50Ev != null ||
         firstCcOpenEv != null ||
         firstCcRollEv != null ||
         firstCcStopEv != null ||
@@ -2514,6 +4049,20 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 ),
                 const SizedBox(height: 2),
               ],
+              if (hasM7Row) ...[
+                Text(
+                  w(
+                    'M7 Crisis Prob: $m7Prob% (P1:$m7P1 · P2:$m7P2 · P3:$m7P3 · Slots $m7Slots)',
+                    'M7 危机概率：$m7Prob%（P1:$m7P1 · P2:$m7P2 · P3:$m7P3 · 目标 $m7Slots 槽）',
+                  ),
+                  style: TextStyle(
+                    color: m7Prob >= 35 ? _amber : p.muted,
+                    fontSize: 11,
+                    fontWeight: m7Prob >= 35 ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                ),
+                const SizedBox(height: 2),
+              ],
               Text(
                 w(
                   'Crisis Lights: $lights / 6 active',
@@ -2534,8 +4083,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                           )
                         : (hasPut5xTp
                               ? w(
-                                  '◆ 5x Slow-Bear Harvest (DTE<=45) · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
-                                  '◆ 5x 慢熊止盈（DTE≤45） · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
+                                  '◆ 5x Slow-Bear Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
+                                  '◆ 5x 慢熊止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
                                 )
                               : (hasItmTp
                                     ? w(
@@ -2552,16 +4101,35 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                                                     '◆ 1.10 Panic Harvest · ${_fmtUsd(netPnlSum, signed: true)} (+${sharesSum.toStringAsFixed(1)} sh)',
                                                     '◆ 1.10 恐慌止盈 · ${_fmtUsd(netPnlSum, signed: true)}（+${sharesSum.toStringAsFixed(1)} 股）',
                                                   )
-                                                : w(
-                                                    '▼ Buy ${text(firstOpenEv?['tranche_type']) == 'naked_put' ? 'Naked Put' : 'Collar'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)} (K=\$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)})',
-                                                    '▼ 买${text(firstOpenEv?['tranche_type']) == 'naked_put' ? '首仓裸 Put' : '次仓领口'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)}（行权 \$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)}）',
-                                                  ))))),
+                                                : (firstOpenEv?['slot_num'] != null
+                                                      ? w(
+                                                          '▼ Open Slot S${_numVal(firstOpenEv?['slot_num']).round()} Put @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)} (K=\$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)} · M7 ${_numVal(firstOpenEv?['crisis_prob']).round()}%)',
+                                                          '▼ 开启第 ${_numVal(firstOpenEv?['slot_num']).round()} 槽裸 Put @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)}（行权 \$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)} · 概率 ${_numVal(firstOpenEv?['crisis_prob']).round()}%）',
+                                                        )
+                                                      : w(
+                                                          '▼ Buy ${text(firstOpenEv?['tranche_type']) == 'naked_put' ? 'Naked Put' : 'Collar'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)} (K=\$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)})',
+                                                          '▼ 买${text(firstOpenEv?['tranche_type']) == 'naked_put' ? '首仓裸 Put' : '次仓领口'} @\$${_numVal(firstOpenEv?['spot']).toStringAsFixed(1)}（行权 \$${_numVal(firstOpenEv?['kp']).toStringAsFixed(1)}）',
+                                                        )))))),
                     style: TextStyle(
                       color: hasTp ? _emerald : _amber,
                       fontSize: 11.5,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                if (firstRoll50Ev != null) ...[
+                  if (hasTp || hasOpen) const SizedBox(height: 4),
+                  Text(
+                    w(
+                      '⟳ 50D Roll / Salvage · Recovered ${_fmtUsd(_numVal(firstRoll50Ev['exit_val_usd']))} (${_fmtUsd(_numVal(firstRoll50Ev['net_pnl_usd']), signed: true)})',
+                      '⟳ 剩≤50D 残值滚仓/回收 · 残值 ${_fmtUsd(_numVal(firstRoll50Ev['exit_val_usd']))}（净盈亏 ${_fmtUsd(_numVal(firstRoll50Ev['net_pnl_usd']), signed: true)}）',
+                    ),
+                    style: const TextStyle(
+                      color: _sky,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
                 if (firstCcOpenEv != null) ...[
                   if (hasTp || hasOpen) const SizedBox(height: 4),
                   Text(
@@ -2867,11 +4435,18 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final card1 = _buildOrthogonalModuleCard(
       keyId: 'e1',
       indexTag: '01',
-      title: w('Crisis Long Put Shield', '危机买 Put 保护'),
-      regimeTag: w(
-        'Top warning · Left-tail convexity insurance',
-        '高位预警 · 左尾防暴跌凸性保险',
-      ),
+      title: _isM7Strategy
+          ? w('M7-Graded Crisis Put Overlay', 'M7 三支柱分层买 Put')
+          : w('Crisis Long Put Shield', '危机买 Put 保护'),
+      regimeTag: _isM7Strategy
+          ? w(
+              '3-Pillar probability tiers · Equal-dollar OTM Naked Put',
+              '三支柱概率分层 · 等美元虚值裸 Put 左尾保护',
+            )
+          : w(
+              'Top warning · Left-tail convexity insurance',
+              '高位预警 · 左尾防暴跌凸性保险',
+            ),
       accent: _emerald,
       active: e1Active,
       deltaUsd: _numVal(e1['delta_usd']),
@@ -2896,7 +4471,130 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               for (final sid in strategyTabs) _buildCalmStrategyTab(sid),
             ],
           ),
-          if (hasPutLayer) ...[
+          if (hasPutLayer && _isM7Strategy) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              key: const ValueKey('crisis-e1-m7-controls'),
+              spacing: 5,
+              runSpacing: 5,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  w('M7 Config:', 'M7 参数：'),
+                  style: TextStyle(
+                    color: p.muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                for (final oid in _putOtmIds)
+                  InkWell(
+                    key: ValueKey('crisis-e1-otm-$oid'),
+                    borderRadius: BorderRadius.circular(7),
+                    onTap: () => _selectPutOtm(oid),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7.5,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: selectedPutOtm == oid
+                            ? _emerald.withValues(alpha: 0.16)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(7),
+                        border: Border.all(
+                          color: selectedPutOtm == oid
+                              ? _emerald.withValues(alpha: 0.72)
+                              : p.border,
+                        ),
+                      ),
+                      child: Text(
+                        _humanPutOtmShort(oid),
+                        style: TextStyle(
+                          color: selectedPutOtm == oid ? p.text : p.muted,
+                          fontSize: 10.8,
+                          fontWeight: selectedPutOtm == oid
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                for (final rid in _rollModeIds)
+                  InkWell(
+                    key: ValueKey('crisis-e1-roll-$rid'),
+                    borderRadius: BorderRadius.circular(7),
+                    onTap: () => _selectRollMode(rid),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7.5,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: selectedRollMode == rid
+                            ? _sky.withValues(alpha: 0.16)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(7),
+                        border: Border.all(
+                          color: selectedRollMode == rid
+                              ? _sky.withValues(alpha: 0.72)
+                              : p.border,
+                        ),
+                      ),
+                      child: Text(
+                        _humanRollModeShort(rid),
+                        style: TextStyle(
+                          color: selectedRollMode == rid ? p.text : p.muted,
+                          fontSize: 10.8,
+                          fontWeight: selectedRollMode == rid
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                for (final tid in _m7TpModeIds)
+                  InkWell(
+                    key: ValueKey('crisis-e1-tp-$tid'),
+                    borderRadius: BorderRadius.circular(7),
+                    onTap: () => _selectM7TpMode(tid),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7.5,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: selectedM7TpMode == tid
+                            ? _amber.withValues(alpha: 0.16)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(7),
+                        border: Border.all(
+                          color: selectedM7TpMode == tid
+                              ? _amber.withValues(alpha: 0.72)
+                              : p.border,
+                        ),
+                      ),
+                      child: Text(
+                        _humanM7TpModeShort(tid),
+                        style: TextStyle(
+                          color: selectedM7TpMode == tid ? p.text : p.muted,
+                          fontSize: 10.8,
+                          fontWeight: selectedM7TpMode == tid
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _humanM7EngineHint(stratSummary),
+              key: const ValueKey('crisis-m7-engine-hint'),
+              style: TextStyle(color: p.muted, fontSize: 11, height: 1.38),
+            ),
+          ] else if (hasPutLayer) ...[
             const SizedBox(height: 8),
             Wrap(
               key: const ValueKey('crisis-tp-mode-bar'),
@@ -4538,10 +6236,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           if (!showFullLedger) ...[
             const SizedBox(height: 12),
             Text(
-              w(
-                text(forensicWin['narrative_en']),
-                text(forensicWin['narrative_zh']),
-              ),
+              (_isM7Strategy && text(forensicWin['m7_narrative_en']).isNotEmpty)
+                  ? w(
+                      text(forensicWin['m7_narrative_en']),
+                      text(forensicWin['m7_narrative_zh']),
+                    )
+                  : w(
+                      text(forensicWin['narrative_en']),
+                      text(forensicWin['narrative_zh']),
+                    ),
               style: TextStyle(
                 color: p.muted,
                 fontSize: compact ? 12.5 : 13,
@@ -4869,10 +6572,16 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   }) {
     final trancheId = _numVal(tr['tranche_id']).round();
     final expanded = expandedTrancheIds.contains(trancheId);
-    final isNaked = text(tr['tranche_type']) == 'naked_put';
+    final isM7Tranche =
+        tr['crisis_prob'] is num ||
+        tr['slot_num'] is num ||
+        text(tr['trigger_code']).isNotEmpty;
+    final isNaked = text(tr['tranche_type']) == 'naked_put' || isM7Tranche;
     final isOpenLive = tr['is_open_live'] == true;
     final exitReason = text(tr['exit_reason']);
     final isLiveArmed = exitReason == 'live_tp_armed_next_open';
+    final isLiveRoll50Armed = exitReason == 'live_roll50_armed_next_open';
+    final isRoll50 = exitReason == 'roll_50d' || isLiveRoll50Armed;
     final isOpenCutoff = tr['exit_date'] == null && !isOpenLive;
     final isPut5xTp = exitReason.contains('put_5x');
     final isItmTp = exitReason.contains('itm_tp');
@@ -4883,10 +6592,41 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final kp = _numVal(tr['kp']);
     final kc = tr['kc'] == null ? null : _numVal(tr['kc']);
 
-    final tagLabel = isNaked
-        ? w('First-Half Put', '首仓裸 Put')
-        : w('Zero-Cost Collar', '次仓领口');
+    final slotNum = _numVal(tr['slot_num'], 1).round();
+    final maxSlots = _numVal(
+      tr['max_slots'],
+      selectedStrategyId == 'M7_Ensemble' ? 2 : 3,
+    ).round();
+    final dte = _numVal(
+      tr['target_dte'],
+      selectedRollMode == '120d_roll50' ? 120 : 90,
+    ).round();
+    final otmPct = (_numVal(
+              tr['put_otm_pct'],
+              selectedPutOtm == 'otm20' ? 0.20 : 0.15,
+            ) *
+            100)
+        .round();
+    final prob = _numVal(tr['crisis_prob']).round();
+    final trigCode = text(tr['trigger_code']);
+    final roiMult = tr['roi_mult'] is num
+        ? (tr['roi_mult'] as num).toDouble()
+        : null;
+    final entryCostUsd = _numVal(
+      tr['entry_cost_usd'],
+      _numVal(tr['gross_cost_usd']),
+    );
+    final contractsEst = _numVal(tr['contracts_est']);
+
+    final tagLabel = isM7Tranche
+        ? w('Slot S$slotNum/$maxSlots · -$otmPct%', '第 $slotNum/$maxSlots 槽 · -$otmPct%')
+        : (isNaked
+              ? w('First-Half Put', '首仓裸 Put')
+              : w('Zero-Cost Collar', '次仓领口'));
     final tagColor = isNaked ? _amber : p.muted;
+    final String? subSignalLabel = isM7Tranche && trigCode.isNotEmpty
+        ? '$trigCode · $prob%'
+        : null;
 
     final entrySpot = _numVal(tr['entry_spot']).toStringAsFixed(1);
     final exitSpot = _numVal(tr['exit_spot']).toStringAsFixed(1);
@@ -4896,31 +6636,51 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final exitShort = isOpenCutoff || rawExitDate.length < 10
         ? ''
         : rawExitDate.substring(5);
-    final tpLabelEn = isLiveArmed
-        ? 'Deep-ITM TP Armed (Next Open)'
-        : (isOpenLive
-              ? 'Open Live MTM'
-              : (isPut5xTp
-                    ? '5x Slow-Bear Harvest'
-                    : (isItmTp
-                          ? 'Deep-ITM Panic Harvest'
-                          : (is4xTp
-                                ? '4x Deep Panic Harvest'
-                                : (isTp ? '1.10 Panic Harvest' : 'Expired')))));
-    final tpLabelZh = isLiveArmed
-        ? '实值恐慌触发 · 待次日开盘止盈'
-        : (isOpenLive
-              ? '实盘持仓浮盈'
-              : (isPut5xTp
-                    ? '5x 慢熊止盈'
-                    : (isItmTp
-                          ? '实值恐慌止盈'
-                          : (is4xTp
-                                ? '4x 深度恐慌止盈'
-                                : (isTp ? '恐慌止盈' : '到期结算')))));
+    final tpLabelEn = isLiveRoll50Armed
+        ? '50D Roll Armed (Next Open)'
+        : (isLiveArmed
+              ? 'Deep-ITM TP Armed (Next Open)'
+              : (isRoll50
+                    ? '50D Roll / Salvage'
+                    : (isOpenLive
+                          ? 'Open Live MTM'
+                          : (isPut5xTp
+                                ? '5x Slow-Bear Harvest'
+                                : (isItmTp
+                                      ? 'Deep-ITM Panic Harvest'
+                                      : (is4xTp
+                                            ? '4x Deep Panic Harvest'
+                                            : (isTp
+                                                  ? '1.10 Panic Harvest'
+                                                  : 'Expired')))))));
+    final tpLabelZh = isLiveRoll50Armed
+        ? '剩≤50D 待次日滚仓'
+        : (isLiveArmed
+              ? '实值恐慌触发 · 待次日开盘止盈'
+              : (isRoll50
+                    ? '50D 残值滚仓回收'
+                    : (isOpenLive
+                          ? '实盘持仓浮盈'
+                          : (isPut5xTp
+                                ? '5x 慢熊止盈'
+                                : (isItmTp
+                                      ? '实值恐慌止盈'
+                                      : (is4xTp
+                                            ? '4x 深度恐慌止盈'
+                                            : (isTp ? '恐慌止盈' : '到期结算')))))));
 
     final String actionSentence;
-    if (isNaked) {
+    if (isM7Tranche) {
+      actionSentence = isOpenCutoff
+          ? w(
+              'QQQ \$$entrySpot -> Bought ${dte}D \$${kp.toStringAsFixed(1)} Put (${_fmtUsd(entryCostUsd)} · ${contractsEst.toStringAsFixed(1)} ctr) · Open',
+              'QQQ \$$entrySpot 买 ${dte}D \$${kp.toStringAsFixed(1)} 裸 Put（预算 ${_fmtUsd(entryCostUsd)} · ${contractsEst.toStringAsFixed(1)} 张）· 持仓中',
+            )
+          : w(
+              'QQQ \$$entrySpot -> ${dte}D \$${kp.toStringAsFixed(1)} Put (${_fmtUsd(entryCostUsd)}) · $tpLabelEn $exitShort @\$$exitSpot',
+              'QQQ \$$entrySpot 买 ${dte}D \$${kp.toStringAsFixed(1)} 裸 Put（${_fmtUsd(entryCostUsd)}） → $exitShort @\$$exitSpot $tpLabelZh',
+            );
+    } else if (isNaked) {
       actionSentence = isOpenCutoff
           ? w(
               'QQQ \$$entrySpot -> Bought 90D \$${kp.toStringAsFixed(1)} Put (no upside cap) · Open',
@@ -4942,12 +6702,17 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             );
     }
 
+    final roiSuffix = roiMult != null && !isOpenCutoff
+        ? ' · ${roiMult.toStringAsFixed(2)}x'
+        : '';
     final pnlText = isOpenCutoff
         ? w('Open', '持仓中')
-        : '${_fmtUsd(netPnl, signed: true)}${shAdded.abs() >= 0.1 ? ' · ${shAdded >= 0 ? '+' : ''}${shAdded.toStringAsFixed(1)} ${w('sh', '股')}' : ''}';
+        : '${_fmtUsd(netPnl, signed: true)}$roiSuffix${shAdded.abs() >= 0.1 ? ' · ${shAdded >= 0 ? '+' : ''}${shAdded.toStringAsFixed(1)} ${w('sh', '股')}' : ''}';
     final pnlColor = isOpenCutoff
         ? _amber
-        : (netPnl > 0 ? _emerald : p.muted);
+        : (isRoll50 && netPnl <= 0
+              ? _sky
+              : (netPnl > 0 ? _emerald : p.muted));
 
     return InkWell(
       key: ValueKey('crisis-tranche-row-$trancheId'),
@@ -4975,8 +6740,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 alignment: WrapAlignment.spaceBetween,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text(
                         text(tr['entry_date']),
@@ -4986,19 +6753,22 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                           fontWeight: FontWeight.w500,
                         ),
                       ),
-                      const SizedBox(width: 8),
                       _smallTimelineTag(tagLabel, tagColor),
+                      if (subSignalLabel != null)
+                        _smallTimelineTag(subSignalLabel, _sky),
                     ],
                   ),
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        pnlText,
-                        style: TextStyle(
-                          color: pnlColor,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
+                      Flexible(
+                        child: Text(
+                          pnlText,
+                          style: TextStyle(
+                            color: pnlColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                       if (!isOpenCutoff) ...[
@@ -5036,6 +6806,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     ),
                   ),
                   _smallTimelineTag(tagLabel, tagColor),
+                  if (subSignalLabel != null) ...[
+                    const SizedBox(width: 6),
+                    _smallTimelineTag(subSignalLabel, _sky),
+                  ],
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
@@ -5072,10 +6846,23 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 spacing: 18,
                 runSpacing: 6,
                 children: [
+                  if (isM7Tranche && text(tr['signal_date']).isNotEmpty)
+                    Text(
+                      '${w('Signal EOD', '信号收盘日')}: ${text(tr['signal_date'])}',
+                      style: TextStyle(color: p.muted, fontSize: 11.5),
+                    ),
                   Text(
                     '${w('Trigger', '触发信号')}: ${w(text(tr['trigger_en']), text(tr['trigger_zh']))}',
                     style: TextStyle(color: p.muted, fontSize: 11.5),
                   ),
+                  if (isM7Tranche && tr['entry_put_ask'] is num)
+                    Text(
+                      w(
+                        'Put Ask \$${_numVal(tr['entry_put_ask']).toStringAsFixed(2)} -> Exit \$${_numVal(tr['exit_put_val']).toStringAsFixed(2)} (Rem ${_numVal(tr['rem_dte']).round()}D)',
+                        '期权单价 \$${_numVal(tr['entry_put_ask']).toStringAsFixed(2)} → \$${_numVal(tr['exit_put_val']).toStringAsFixed(2)}（剩 ${_numVal(tr['rem_dte']).round()}天）',
+                      ),
+                      style: TextStyle(color: p.muted, fontSize: 11.5),
+                    ),
                   Text(
                     'Delta ${_fmtUsd(_numVal(tr['delta_usd']), signed: true)}',
                     style: TextStyle(color: p.muted, fontSize: 11.5),
@@ -5151,6 +6938,7 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
   static const Color _emerald = Color(0xFF5EC49E);
   static const Color _amber = Color(0xFFE5B45B);
   static const Color _coral = Color(0xFFE47F8B);
+  static const Color _sky = Color(0xFF7DB8F0);
 
   double _val(dynamic v, [double fb = 0]) {
     if (v is num && v.isFinite) return v.toDouble();
@@ -5210,11 +6998,12 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
     double yMain(double v) =>
         mainBot - ((v - yMin) / (yMax - yMin)).clamp(0.0, 1.0) * mainH;
 
-    // 1. Ultra-subtle translucent crisis tint when >= 5 lights ON
+    // 1. Ultra-subtle translucent crisis tint when M7 Prob >= 55% or >= 5 lights ON
     final crisisTint = Paint()..color = _coral.withValues(alpha: 0.045);
     final stepW = math.max(1.0, plotW / (n - 1));
     for (var i = 0; i < n; i++) {
-      if (_val(rows[i]['crisis_lights']) >= 5) {
+      if (_val(rows[i]['m7_prob']) >= 55 ||
+          _val(rows[i]['crisis_lights']) >= 5) {
         canvas.drawRect(
           Rect.fromLTWH(xAt(i) - stepW * 0.5, mainTop, stepW, mainH),
           crisisTint,
@@ -5331,14 +7120,35 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
       final x = xAt(idx);
       final y = yMain(stratVals[idx]);
       if (et == 'slot1_naked_put' ||
+          et == 'slot2_naked_put' ||
+          et == 'slot3_naked_put' ||
           et == 'slot2_collar' ||
           et == 'slot1_collar' ||
           et == 'slot3_collar') {
+        final slotNum = _val(ev['slot_num']).round();
+        final dyOff = slotNum >= 2
+            ? (rebasedMode ? 5.0 + (slotNum - 1) * 2.2 : 3.2 + (slotNum - 1) * 1.4)
+            : (rebasedMode ? 4.5 : 3.0);
+        final drawPos = Offset(
+          x,
+          (y + dyOff).clamp(mainTop + 5.0, mainBot - 5.0),
+        );
         _paintCrisisMarkerGlyph(
           canvas,
-          Offset(x, (y + (rebasedMode ? 4.5 : 3.0)).clamp(mainTop + 5.0, mainBot - 5.0)),
+          drawPos,
           baseR,
           _CrisisMarkerKind.putOpen,
+          rimColor: slotNum >= 3 ? _coral : (slotNum == 2 ? _sky : null),
+        );
+      } else if (et == 'roll_50d' || et == 'live_roll50_armed') {
+        _paintCrisisMarkerGlyph(
+          canvas,
+          Offset(
+            x,
+            (y + (rebasedMode ? 5.2 : 3.8)).clamp(mainTop + 6.0, mainBot - 6.0),
+          ),
+          rebasedMode ? 5.2 : 4.0,
+          _CrisisMarkerKind.putRoll50,
         );
       } else if (et == 'vix110_tp' ||
           et == 'vix110_itm_tp' ||
@@ -5407,7 +7217,7 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
       );
     }
 
-    // 5. Optional compact sub-track (Crisis Lights + VIX/3M 1.10 threshold)
+    // 5. Optional compact sub-track (M7 Crisis Prob 0..100% + VIX/3M 1.10 threshold)
     if (showSubTrack) {
       canvas.drawLine(
         Offset(padL, subTop),
@@ -5419,7 +7229,54 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
         Offset(padL + plotW, subBot),
         gridPaint,
       );
-      _drawLabel(canvas, '1.10', Offset(6, subTop + 8), _amber, 9.5);
+      _drawLabel(canvas, '1.10', Offset(6, subTop + 6), _amber, 9.5);
+      _drawLabel(canvas, '35%', Offset(6, subBot - 22), _sky, 9.5);
+
+      double yProb(double pr) =>
+          subBot - (pr / 100.0).clamp(0.0, 1.0) * subH;
+      final hasAnyM7 = rows.any((r) => r['m7_prob'] is num);
+      if (hasAnyM7) {
+        final y35 = yProb(35.0);
+        _drawDashedPath(
+          canvas,
+          Path()
+            ..moveTo(padL, y35)
+            ..lineTo(padL + plotW, y35),
+          Paint()
+            ..color = _sky.withValues(alpha: 0.42)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.85,
+        );
+        final probPath = Path();
+        final probFill = Path();
+        for (var i = 0; i < n; i++) {
+          final x = xAt(i);
+          final pr = _val(rows[i]['m7_prob']);
+          final y = yProb(pr);
+          if (i == 0) {
+            probPath.moveTo(x, y);
+            probFill.moveTo(x, subBot);
+            probFill.lineTo(x, y);
+          } else {
+            probPath.lineTo(x, y);
+            probFill.lineTo(x, y);
+          }
+        }
+        probFill
+          ..lineTo(xAt(n - 1), subBot)
+          ..close();
+        canvas.drawPath(
+          probFill,
+          Paint()..color = _sky.withValues(alpha: 0.11),
+        );
+        canvas.drawPath(
+          probPath,
+          Paint()
+            ..color = _sky.withValues(alpha: 0.80)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.15,
+        );
+      }
 
       const vMin = 0.75;
       const vMax = 1.35;
@@ -5552,6 +7409,7 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
 enum _CrisisMarkerKind {
   putOpen,
   putTp,
+  putRoll50,
   ccOpen,
   ccRoll,
   ccStop,
@@ -5607,10 +7465,47 @@ void _paintCrisisMarkerGlyph(
       canvas.drawPath(
         tri,
         Paint()
-          ..color = obsidian.withValues(alpha: 0.85)
+          ..color = rimColor ?? obsidian.withValues(alpha: 0.85)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.9,
+          ..strokeWidth = rimColor != null ? 1.15 : 0.9,
       );
+      break;
+
+    case _CrisisMarkerKind.putRoll50:
+      // Sky-Mint Circular Roll Badge (⟳ 120D -> 50D 剩余期限残值滚仓/回收)
+      canvas.drawCircle(c, r, Paint()..color = obsidian.withValues(alpha: 0.94));
+      canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..color = sky.withValues(alpha: 0.42)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.95,
+      );
+      final arcR50 = r * 0.60;
+      canvas.drawArc(
+        Rect.fromCircle(center: c, radius: arcR50),
+        -math.pi * 0.25,
+        math.pi * 1.45,
+        false,
+        Paint()
+          ..color = sky
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(1.2, r * 0.24)
+          ..strokeCap = StrokeCap.round,
+      );
+      final tipA50 = -math.pi * 0.25;
+      final tip50 = Offset(
+        c.dx + arcR50 * math.cos(tipA50),
+        c.dy + arcR50 * math.sin(tipA50),
+      );
+      final ah50 = math.max(2.0, r * 0.40);
+      final arr50 = Path()
+        ..moveTo(tip50.dx + ah50 * 0.35, tip50.dy + ah50 * 0.15)
+        ..lineTo(tip50.dx - ah50 * 0.70, tip50.dy - ah50 * 0.65)
+        ..lineTo(tip50.dx + ah50 * 0.40, tip50.dy - ah50 * 0.80)
+        ..close();
+      canvas.drawPath(arr50, Paint()..color = emerald);
       break;
 
     case _CrisisMarkerKind.putTp:
