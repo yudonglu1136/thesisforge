@@ -1,12 +1,18 @@
 part of 'main.dart';
 
 // Calm, low-glare institutional dark-mode palette:
-// Soft steel-sky blue for option premium vs muted sage-teal for cash dividends.
+// Steel-sky blue for Calls, lilac for Puts, sage-teal for cash dividends, coral-rose for realized option losses.
 Color passiveCallColor(Palette p) =>
     p.colorBlind ? const Color(0xFF6BA3E8) : const Color(0xFF6B9FD4);
 
+Color passivePutColor(Palette p) =>
+    p.colorBlind ? const Color(0xFFD8A45B) : const Color(0xFF9B8AE6);
+
 Color passiveDividendColor(Palette p) =>
     p.colorBlind ? const Color(0xFF9F8FEF) : const Color(0xFF4CA98E);
+
+Color passiveLossColor(Palette p) =>
+    p.colorBlind ? const Color(0xFFE5865E) : const Color(0xFFE06C75);
 
 class PortfolioPassiveIncomeCard extends StatefulWidget {
   const PortfolioPassiveIncomeCard({
@@ -93,8 +99,8 @@ class _PortfolioPassiveIncomeCardState
       '0',
     );
     final monthly12 = <Map<String, dynamic>>[];
-    var divSum = 0.0, callSum = 0.0;
-    var divCount = 0, callCount = 0;
+    var divSum = 0.0, callSum = 0.0, putSum = 0.0, optSum = 0.0;
+    var divCount = 0, callCount = 0, putCount = 0, optCount = 0;
     for (var m = 1; m <= 12; m++) {
       final mm = m.toString().padLeft(2, '0');
       final ym = '$year-$mm';
@@ -102,23 +108,58 @@ class _PortfolioPassiveIncomeCardState
       final cur = monthByYm[ym];
       final prev = monthByYm[priorYm];
       final d = number(cur?['dividends']);
-      final c = number(cur?['expiredCalls']);
+      final hasSplit = cur != null &&
+          (cur.containsKey('callPnl') || cur.containsKey('putPnl'));
+      final c = hasSplit ? number(cur['callPnl']) : number(cur?['expiredCalls']);
+      final pt = hasSplit ? number(cur['putPnl']) : 0.0;
+      final o = cur != null && cur.containsKey('optionsPnl')
+          ? number(cur['optionsPnl'])
+          : c + pt;
+      final prevHasSplit = prev != null &&
+          (prev.containsKey('priorYearCallPnl') ||
+              prev.containsKey('callPnl') ||
+              prev.containsKey('putPnl'));
+      final pCall = prevHasSplit
+          ? number(prev['callPnl'])
+          : number(prev?['expiredCalls']);
+      final pPut = prevHasSplit ? number(prev['putPnl']) : 0.0;
+      final pOpt = prev != null && prev.containsKey('optionsPnl')
+          ? number(prev['optionsPnl'])
+          : pCall + pPut;
       divSum += d;
       callSum += c;
+      putSum += pt;
+      optSum += o;
       divCount += number(cur?['dividendCount']).round();
       callCount += number(cur?['callCount']).round();
+      putCount += number(cur?['putCount']).round();
+      optCount += cur != null && cur.containsKey('optionCount')
+          ? number(cur['optionCount']).round()
+          : (number(cur?['callCount']).round() +
+                number(cur?['putCount']).round());
       monthly12.add({
         'month': ym,
         'covered': cur != null,
         'dividends': d,
-        'expiredCalls': c,
-        'total': d + c,
+        'callPnl': c,
+        'putPnl': pt,
+        'optionsPnl': o,
+        'expiredCalls': o,
+        'total': d + o,
         'dividendCount': number(cur?['dividendCount']).round(),
         'callCount': number(cur?['callCount']).round(),
+        'putCount': number(cur?['putCount']).round(),
+        'optionCount': cur != null && cur.containsKey('optionCount')
+            ? number(cur['optionCount']).round()
+            : (number(cur?['callCount']).round() +
+                  number(cur?['putCount']).round()),
         'priorYearMonth': priorYm,
         'priorYearCovered': prev != null,
         'priorYearDividends': number(prev?['dividends']),
-        'priorYearCalls': number(prev?['expiredCalls']),
+        'priorYearCallPnl': pCall,
+        'priorYearPutPnl': pPut,
+        'priorYearOptions': pOpt,
+        'priorYearCalls': pOpt,
         'priorYearTotal': number(prev?['total']),
       });
     }
@@ -135,13 +176,13 @@ class _PortfolioPassiveIncomeCardState
         0,
         (s, m) => s + number(m['priorYearTotal']),
       );
-      final currCalls = overlapMonths.fold<double>(
+      final currOpts = overlapMonths.fold<double>(
         0,
-        (s, m) => s + number(m['expiredCalls']),
+        (s, m) => s + number(m['optionsPnl'] ?? m['expiredCalls']),
       );
-      final priorCalls = overlapMonths.fold<double>(
+      final priorOpts = overlapMonths.fold<double>(
         0,
-        (s, m) => s + number(m['priorYearCalls']),
+        (s, m) => s + number(m['priorYearOptions'] ?? m['priorYearCalls']),
       );
       final currDivs = overlapMonths.fold<double>(
         0,
@@ -164,10 +205,14 @@ class _PortfolioPassiveIncomeCardState
         'priorTotal': priorComp,
         'deltaTotal': currComp - priorComp,
         'pctTotal': priorComp > 0 ? (currComp - priorComp) / priorComp : null,
-        'currentCalls': currCalls,
-        'priorCalls': priorCalls,
-        'deltaCalls': currCalls - priorCalls,
-        'pctCalls': priorCalls > 0 ? (currCalls - priorCalls) / priorCalls : null,
+        'currentOptions': currOpts,
+        'priorOptions': priorOpts,
+        'deltaOptions': currOpts - priorOpts,
+        'pctOptions': priorOpts > 0 ? (currOpts - priorOpts) / priorOpts : null,
+        'currentCalls': currOpts,
+        'priorCalls': priorOpts,
+        'deltaCalls': currOpts - priorOpts,
+        'pctCalls': priorOpts > 0 ? (currOpts - priorOpts) / priorOpts : null,
         'currentDividends': currDivs,
         'priorDividends': priorDivs,
         'deltaDividends': currDivs - priorDivs,
@@ -191,7 +236,7 @@ class _PortfolioPassiveIncomeCardState
           : '$year-12-31',
       'isFullYear': yrMonths.length == 12,
       'isYtd': yrMonths.length < 12,
-      'totalConfirmed': divSum + callSum,
+      'totalConfirmed': divSum + optSum,
       'dividends': {
         'grossAmount': divSum,
         'withholdingTax': yrsSingle(data, year)
@@ -202,10 +247,19 @@ class _PortfolioPassiveIncomeCardState
             : null,
         'eventCount': divCount,
       },
+      'options': {
+        'amount': optSum,
+        'callAmount': callSum,
+        'putAmount': putSum,
+        'settlementCount': optCount,
+        'callCount': callCount,
+        'putCount': putCount,
+        'contractCount': optCount,
+      },
       'expiredCalls': {
-        'amount': callSum,
-        'settlementCount': callCount,
-        'contractCount': callCount,
+        'amount': optSum,
+        'settlementCount': optCount,
+        'contractCount': optCount,
       },
       'monthly': monthly12,
       'byTicker': yrsSingle(data, year) ? asList(data['byTicker']) : const [],
@@ -224,12 +278,18 @@ class _PortfolioPassiveIncomeCardState
   Widget build(BuildContext context) {
     final p = widget.palette;
     final callColor = passiveCallColor(p);
+    final putColor = passivePutColor(p);
     final divColor = passiveDividendColor(p);
+    final lossColor = passiveLossColor(p);
     final data = widget.passiveIncome;
     final ready = data['status'] == 'ready';
     final pending = asMap(data['pendingShortCalls']);
     final pendingRows = asList(pending['rows']);
-    if (!ready && pendingRows.isEmpty) return const SizedBox.shrink();
+    final pendingPuts = asMap(data['pendingShortPuts']);
+    final pendingPutRows = asList(pendingPuts['rows']);
+    if (!ready && pendingRows.isEmpty && pendingPutRows.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     final allMonths = asList(data['monthly']);
     final years = _resolveYears(data, allMonths);
@@ -247,9 +307,11 @@ class _PortfolioPassiveIncomeCardState
 
     late final List<Map<String, dynamic>> displayMonths;
     late final double windowDivs;
+    late final double windowOptions;
     late final double windowCalls;
+    late final double windowPuts;
     late final int windowDivCount;
-    late final int windowCallCount;
+    late final int windowOptCount;
     late final double? taxAmount;
     late final double? netDividends;
     late final List<Map<String, dynamic>> scopedByTicker;
@@ -260,12 +322,24 @@ class _PortfolioPassiveIncomeCardState
     if (isYearScope) {
       final yrData = _resolveYearData(activeScope, data, allMonths);
       final yrDivInfo = asMap(yrData['dividends']);
+      final yrOptInfo = asMap(yrData['options']);
       final yrCallInfo = asMap(yrData['expiredCalls']);
       displayMonths = asList(yrData['monthly']);
       windowDivs = number(yrDivInfo['grossAmount']);
-      windowCalls = number(yrCallInfo['amount']);
+      if (yrOptInfo.isNotEmpty) {
+        windowOptions = number(yrOptInfo['amount']);
+        windowCalls = yrOptInfo.containsKey('callAmount')
+            ? number(yrOptInfo['callAmount'])
+            : windowOptions;
+        windowPuts = number(yrOptInfo['putAmount']);
+        windowOptCount = number(yrOptInfo['contractCount']).round();
+      } else {
+        windowOptions = number(yrCallInfo['amount']);
+        windowCalls = windowOptions;
+        windowPuts = 0.0;
+        windowOptCount = number(yrCallInfo['contractCount']).round();
+      }
       windowDivCount = number(yrDivInfo['eventCount']).round();
-      windowCallCount = number(yrCallInfo['contractCount']).round();
       taxAmount = nullableNumber(yrDivInfo['withholdingTax']);
       netDividends = nullableNumber(yrDivInfo['netAmount']);
       final yrTickers = asList(yrData['byTicker']);
@@ -286,15 +360,36 @@ class _PortfolioPassiveIncomeCardState
       );
       windowCalls = displayMonths.fold<double>(
         0,
-        (s, m) => s + number(m['expiredCalls']),
+        (s, m) =>
+            s +
+            (m.containsKey('callPnl')
+                ? number(m['callPnl'])
+                : number(m['expiredCalls'])),
+      );
+      windowPuts = displayMonths.fold<double>(
+        0,
+        (s, m) => s + number(m['putPnl']),
+      );
+      windowOptions = displayMonths.fold<double>(
+        0,
+        (s, m) =>
+            s +
+            (m.containsKey('optionsPnl')
+                ? number(m['optionsPnl'])
+                : number(m['expiredCalls'])),
       );
       windowDivCount = displayMonths.fold<int>(
         0,
         (s, m) => s + number(m['dividendCount']).round(),
       );
-      windowCallCount = displayMonths.fold<int>(
+      windowOptCount = displayMonths.fold<int>(
         0,
-        (s, m) => s + number(m['callCount']).round(),
+        (s, m) =>
+            s +
+            (m.containsKey('optionCount')
+                ? number(m['optionCount']).round()
+                : number(m['callCount']).round() +
+                      number(m['putCount']).round()),
       );
       taxAmount = null;
       netDividends = null;
@@ -311,12 +406,24 @@ class _PortfolioPassiveIncomeCardState
           : '—';
     } else {
       final divInfo = asMap(data['dividends']);
+      final optInfo = asMap(data['options']);
       final callInfo = asMap(data['expiredCalls']);
       displayMonths = allMonths;
       windowDivs = number(divInfo['grossAmount']);
-      windowCalls = number(callInfo['amount']);
+      if (optInfo.isNotEmpty) {
+        windowOptions = number(optInfo['amount']);
+        windowCalls = optInfo.containsKey('callAmount')
+            ? number(optInfo['callAmount'])
+            : windowOptions;
+        windowPuts = number(optInfo['putAmount']);
+        windowOptCount = number(optInfo['contractCount']).round();
+      } else {
+        windowOptions = number(callInfo['amount']);
+        windowCalls = windowOptions;
+        windowPuts = 0.0;
+        windowOptCount = number(callInfo['contractCount']).round();
+      }
       windowDivCount = number(divInfo['eventCount']).round();
-      windowCallCount = number(callInfo['contractCount']).round();
       taxAmount = nullableNumber(divInfo['withholdingTax']);
       netDividends = nullableNumber(divInfo['netAmount']);
       scopedByTicker = asList(data['byTicker']);
@@ -328,7 +435,7 @@ class _PortfolioPassiveIncomeCardState
           '${text(data['fromDate'], '—')} → ${text(data['toDate'], '—')}';
     }
 
-    final windowTotal = windowDivs + windowCalls;
+    final windowTotal = windowDivs + windowOptions;
     final allTimeTotal = number(data['totalConfirmed']);
 
     // Default active month on chart: latest covered month
@@ -381,7 +488,9 @@ class _PortfolioPassiveIncomeCardState
               _buildSummaryGrid(
                 p: p,
                 callColor: callColor,
+                putColor: putColor,
                 divColor: divColor,
+                lossColor: lossColor,
                 activeScope: activeScope,
                 isYearScope: isYearScope,
                 years: years,
@@ -389,9 +498,11 @@ class _PortfolioPassiveIncomeCardState
                 allMonths: allMonths,
                 windowTotal: windowTotal,
                 allTimeTotal: allTimeTotal,
+                windowOptions: windowOptions,
                 windowCalls: windowCalls,
+                windowPuts: windowPuts,
                 windowDivs: windowDivs,
-                windowCallCount: windowCallCount,
+                windowOptCount: windowOptCount,
                 windowDivCount: windowDivCount,
                 taxAmount: taxAmount,
                 netDividends: netDividends,
@@ -403,7 +514,9 @@ class _PortfolioPassiveIncomeCardState
                   final monthlyChart = _buildMonthlyChart(
                     p: p,
                     callColor: callColor,
+                    putColor: putColor,
                     divColor: divColor,
+                    lossColor: lossColor,
                     months: displayMonths,
                     hoveredIdx: hoveredIndex,
                     activeMonth: activeMonth,
@@ -413,7 +526,9 @@ class _PortfolioPassiveIncomeCardState
                   final sourceBreakdown = _buildSourceBreakdown(
                     p: p,
                     callColor: callColor,
+                    putColor: putColor,
                     divColor: divColor,
+                    lossColor: lossColor,
                     rows: scopedByTicker,
                     scopeTotal: windowTotal > 0 ? windowTotal : allTimeTotal,
                     scopeLabel: isYearScope
@@ -450,13 +565,9 @@ class _PortfolioPassiveIncomeCardState
               const SizedBox(height: 16),
               _buildPendingShortCalls(p, callColor, pending, pendingRows),
             ],
-            if (asList(asMap(data['pendingShortPuts'])['rows']).isNotEmpty) ...[
+            if (pendingPutRows.isNotEmpty) ...[
               const SizedBox(height: 12),
-              _buildPendingShortPuts(
-                p,
-                asMap(data['pendingShortPuts']),
-                asList(asMap(data['pendingShortPuts'])['rows']),
-              ),
+              _buildPendingShortPuts(p, pendingPuts, pendingPutRows),
             ],
             if (ready && scopedEvents.isNotEmpty) ...[
               const SizedBox(height: 10),
@@ -483,7 +594,14 @@ class _PortfolioPassiveIncomeCardState
                 ),
               ),
               if (showLedger)
-                _buildRecentLedger(p, callColor, divColor, scopedEvents),
+                _buildRecentLedger(
+                  p,
+                  callColor,
+                  putColor,
+                  divColor,
+                  lossColor,
+                  scopedEvents,
+                ),
             ],
           ],
         ),
@@ -571,8 +689,8 @@ class _PortfolioPassiveIncomeCardState
                   const SizedBox(height: 3),
                   Text(
                     w(
-                      'Received cash dividends + OTM expired short calls · $periodLabel',
-                      '实际到账股息 + 到期作废确认卖 Call 权利金 · $periodLabel',
+                      'Cash dividends + realized Call/Put P&L (expiry, TP & SL) · $periodLabel',
+                      '实际到账股息 + Call/Put 期权已实现盈亏（含到期、止盈、止损） · $periodLabel',
                     ),
                     style: TextStyle(color: p.muted, fontSize: 12, height: 1.4),
                   ),
@@ -638,7 +756,9 @@ class _PortfolioPassiveIncomeCardState
   Widget _buildSummaryGrid({
     required Palette p,
     required Color callColor,
+    required Color putColor,
     required Color divColor,
+    required Color lossColor,
     required String activeScope,
     required bool isYearScope,
     required List<String> years,
@@ -646,9 +766,11 @@ class _PortfolioPassiveIncomeCardState
     required List<Map<String, dynamic>> allMonths,
     required double windowTotal,
     required double allTimeTotal,
+    required double windowOptions,
     required double windowCalls,
+    required double windowPuts,
     required double windowDivs,
-    required int windowCallCount,
+    required int windowOptCount,
     required int windowDivCount,
     required double? taxAmount,
     required double? netDividends,
@@ -657,12 +779,15 @@ class _PortfolioPassiveIncomeCardState
     final yoyStatus = text(yoyInfo['status']);
     final hasComparableYoy =
         yoyStatus == 'full_same_period' || yoyStatus == 'overlapping_subperiod';
-    final callYoyPct = hasComparableYoy
-        ? nullableNumber(yoyInfo['pctCalls'])
+    final optYoyPct = hasComparableYoy
+        ? nullableNumber(yoyInfo['pctOptions'] ?? yoyInfo['pctCalls'])
         : null;
     final divYoyPct = hasComparableYoy
         ? nullableNumber(yoyInfo['pctDividends'])
         : null;
+    final hasAnyPut = windowPuts.abs() > 0.005;
+    final allNonNegative = windowOptions >= 0 && windowDivs >= 0 && windowTotal > 0;
+    final optAccent = windowOptions < 0 ? lossColor : callColor;
 
     return LayoutBuilder(
       builder: (_, c) {
@@ -674,57 +799,93 @@ class _PortfolioPassiveIncomeCardState
             ? c.maxWidth
             : (c.maxWidth - (cols - 1) * 12) / cols;
 
+        final String totalSub;
+        if (widget.hideAmounts) {
+          totalSub = allNonNegative
+              ? w(
+                  'Options ${fmtShare(windowOptions, windowTotal)} · Dividends ${fmtShare(windowDivs, windowTotal)}',
+                  '期权 ${fmtShare(windowOptions, windowTotal)} · 股息 ${fmtShare(windowDivs, windowTotal)}',
+                )
+              : w(
+                  'Includes realized Call/Put TP & SL + dividends',
+                  '已含 Call/Put 止盈止损与到账股息',
+                );
+        } else if (allNonNegative) {
+          totalSub = isYearScope && years.length > 1
+              ? w(
+                  'Options ${fmtShare(windowOptions, windowTotal)} · Divs ${fmtShare(windowDivs, windowTotal)} · All-time ${fmtMoney(allTimeTotal)}',
+                  '期权 ${fmtShare(windowOptions, windowTotal)} · 股息 ${fmtShare(windowDivs, windowTotal)} · 跨年累计 ${fmtMoney(allTimeTotal)}',
+                )
+              : w(
+                  'Options ${fmtShare(windowOptions, windowTotal)} · Dividends ${fmtShare(windowDivs, windowTotal)}',
+                  '期权占 ${fmtShare(windowOptions, windowTotal)} · 股息占 ${fmtShare(windowDivs, windowTotal)}',
+                );
+        } else {
+          totalSub = isYearScope && years.length > 1
+              ? w(
+                  'Options ${fmtMoney(windowOptions, signed: true)} · Divs ${fmtMoney(windowDivs)} · All-time ${fmtMoney(allTimeTotal)}',
+                  '期权 ${fmtMoney(windowOptions, signed: true)} · 股息 ${fmtMoney(windowDivs)} · 跨年累计 ${fmtMoney(allTimeTotal)}',
+                )
+              : w(
+                  'Options ${fmtMoney(windowOptions, signed: true)} · Dividends ${fmtMoney(windowDivs)}',
+                  '期权 ${fmtMoney(windowOptions, signed: true)} · 股息 ${fmtMoney(windowDivs)}',
+                );
+        }
+
+        final String optSubtitle;
+        if (widget.hideAmounts) {
+          optSubtitle = allNonNegative
+              ? w('Share of confirmed income', '占当期已确认收入比例')
+              : w('Realized Call & Put expiry, TP & SL', '含 Call/Put 到期与止盈止损');
+        } else if (hasAnyPut) {
+          optSubtitle = w(
+            'Call ${fmtMoney(windowCalls, signed: true)} · Put ${fmtMoney(windowPuts, signed: true)} · $windowOptCount contracts',
+            'Call ${fmtMoney(windowCalls, signed: true)} · Put ${fmtMoney(windowPuts, signed: true)} · $windowOptCount 张（已扣佣金）',
+          );
+        } else {
+          optSubtitle = w(
+            'Call ${fmtMoney(windowCalls, signed: true)} · $windowOptCount contracts · net of fees',
+            'Call ${fmtMoney(windowCalls, signed: true)} · $windowOptCount 张期权平仓/到期 · 已扣佣金',
+          );
+        }
+
         final tiles = <Widget>[
           _summaryTile(
             p: p,
-            accentColor: p.text,
+            accentColor: windowTotal < 0 ? lossColor : p.text,
             title: isYearScope
                 ? w('$activeScope confirmed total', '$activeScope 年已确认合计')
                 : w('Total confirmed', '已确认被动收入合计'),
             value: widget.hideAmounts
                 ? (windowTotal > 0 ? '100.0%' : '—')
                 : fmtMoney(windowTotal),
+            valueColor: windowTotal < 0 ? lossColor : null,
             badge: null,
-            subtitle: widget.hideAmounts
-                ? w(
-                    'Calls ${fmtShare(windowCalls, windowTotal)} · Dividends ${fmtShare(windowDivs, windowTotal)}',
-                    '卖 Call ${fmtShare(windowCalls, windowTotal)} · 股息 ${fmtShare(windowDivs, windowTotal)}',
-                  )
-                : (isYearScope && years.length > 1
-                      ? w(
-                          'Calls ${fmtShare(windowCalls, windowTotal)} · Divs ${fmtShare(windowDivs, windowTotal)} · All-time ${fmtMoney(allTimeTotal)}',
-                          '卖 Call ${fmtShare(windowCalls, windowTotal)} · 股息 ${fmtShare(windowDivs, windowTotal)} · 跨年累计 ${fmtMoney(allTimeTotal)}',
-                        )
-                      : w(
-                          'Calls ${fmtShare(windowCalls, windowTotal)} · Dividends ${fmtShare(windowDivs, windowTotal)}',
-                          '卖 Call 占 ${fmtShare(windowCalls, windowTotal)} · 股息占 ${fmtShare(windowDivs, windowTotal)}',
-                        )),
+            subtitle: totalSub,
             highlight: true,
           ),
           _summaryTile(
             p: p,
-            accentColor: callColor,
-            title: w('Expired short calls', '卖 Call 到期确认收入'),
+            accentColor: optAccent,
+            title: w('Realized options (Call & Put)', '期权已实现净盈亏（Call/Put）'),
             value: widget.hideAmounts
-                ? fmtShare(windowCalls, windowTotal)
-                : fmtMoney(windowCalls),
-            badge: callYoyPct != null
-                ? '${w('YoY', '同比')} ${fmtPct(callYoyPct)}'
+                ? (allNonNegative
+                      ? fmtShare(windowOptions, windowTotal)
+                      : (windowOptions >= 0 ? '≥0' : '<0'))
+                : fmtMoney(windowOptions),
+            valueColor: windowOptions < 0 ? lossColor : null,
+            badge: optYoyPct != null
+                ? '${w('YoY', '同比')} ${fmtPct(optYoyPct)}'
                 : null,
-            badgePositive: callYoyPct == null ? null : callYoyPct >= 0,
-            subtitle: widget.hideAmounts
-                ? w('Share of confirmed income', '占当期已确认收入比例')
-                : w(
-                    '$windowCallCount expired contracts · net of fees',
-                    '$windowCallCount 张期权到期作废确认 · 已扣佣金',
-                  ),
+            badgePositive: optYoyPct == null ? null : optYoyPct >= 0,
+            subtitle: optSubtitle,
           ),
           _summaryTile(
             p: p,
             accentColor: divColor,
             title: w('Cash dividends', '已到账现金股息'),
             value: widget.hideAmounts
-                ? fmtShare(windowDivs, windowTotal)
+                ? (allNonNegative ? fmtShare(windowDivs, windowTotal) : '••••')
                 : fmtMoney(windowDivs),
             badge: divYoyPct != null
                 ? '${w('YoY', '同比')} ${fmtPct(divYoyPct)}'
@@ -807,7 +968,7 @@ class _PortfolioPassiveIncomeCardState
       final deltaTotal = number(yoyInfo['deltaTotal']);
       final pctTotal = nullableNumber(yoyInfo['pctTotal']);
       final priorTotal = number(yoyInfo['priorTotal']);
-      final deltaCalls = number(yoyInfo['deltaCalls']);
+      final deltaOpts = number(yoyInfo['deltaOptions'] ?? yoyInfo['deltaCalls']);
       final deltaDivs = number(yoyInfo['deltaDividends']);
       final priorFrom = text(yoyInfo['priorFrom']);
       final priorTo = text(yoyInfo['priorTo']);
@@ -839,8 +1000,8 @@ class _PortfolioPassiveIncomeCardState
                   '严格同日历区间对比 ($windowSpan)',
                 )
               : w(
-                  '$priorYear ($windowSpan): ${fmtMoney(priorTotal)} · Call ${fmtMoney(deltaCalls, signed: true)} · Div ${fmtMoney(deltaDivs, signed: true)}',
-                  '$priorYear 同期 ${fmtMoney(priorTotal)} · 卖 Call ${fmtMoney(deltaCalls, signed: true)} · 股息 ${fmtMoney(deltaDivs, signed: true)}',
+                  '$priorYear ($windowSpan): ${fmtMoney(priorTotal)} · Opt ${fmtMoney(deltaOpts, signed: true)} · Div ${fmtMoney(deltaDivs, signed: true)}',
+                  '$priorYear 同期 ${fmtMoney(priorTotal)} · 期权 ${fmtMoney(deltaOpts, signed: true)} · 股息 ${fmtMoney(deltaDivs, signed: true)}',
                 ),
         ),
       );
@@ -967,7 +1128,9 @@ class _PortfolioPassiveIncomeCardState
   Widget _buildMonthlyChart({
     required Palette p,
     required Color callColor,
+    required Color putColor,
     required Color divColor,
+    required Color lossColor,
     required List<Map<String, dynamic>> months,
     required int? hoveredIdx,
     required Map<String, dynamic>? activeMonth,
@@ -983,23 +1146,52 @@ class _PortfolioPassiveIncomeCardState
         ),
       );
     }
+    double monthCall(Map<String, dynamic>? m) => m == null
+        ? 0.0
+        : (m.containsKey('callPnl')
+              ? number(m['callPnl'])
+              : number(m['expiredCalls']));
+    double monthPut(Map<String, dynamic>? m) =>
+        m == null ? 0.0 : number(m['putPnl']);
+
     final hasAnyPriorOverlay =
         isYearScope &&
         months.any(
           (m) =>
-              m['priorYearCovered'] == true && number(m['priorYearTotal']) > 0,
+              m['priorYearCovered'] == true &&
+              number(m['priorYearTotal']).abs() > 0.005,
         );
-    final maxTotal = months.fold<double>(0, (mx, r) {
-      final cur = number(r['total']);
-      final prev = isYearScope && r['priorYearCovered'] == true
-          ? number(r['priorYearTotal'])
-          : 0.0;
-      return math.max(mx, math.max(cur, prev));
-    });
+    final hasAnyPut = months.any((m) => monthPut(m).abs() > 0.005);
+    final hasAnyLoss = months.any(
+      (m) =>
+          monthCall(m) < -0.005 ||
+          monthPut(m) < -0.005 ||
+          number(m['total']) < -0.005,
+    );
+
+    double maxPos = 0.0;
+    double minNeg = 0.0;
+    for (final r in months) {
+      final d = number(r['dividends']);
+      final c = monthCall(r);
+      final pt = monthPut(r);
+      final posStack =
+          (d > 0 ? d : 0.0) + (c > 0 ? c : 0.0) + (pt > 0 ? pt : 0.0);
+      final negStack =
+          (d < 0 ? d : 0.0) + (c < 0 ? c : 0.0) + (pt < 0 ? pt : 0.0);
+      if (posStack > maxPos) maxPos = posStack;
+      if (negStack < minNeg) minNeg = negStack;
+      if (isYearScope && r['priorYearCovered'] == true) {
+        final prev = number(r['priorYearTotal']);
+        if (prev > maxPos) maxPos = prev;
+        if (prev < minNeg) minNeg = prev;
+      }
+    }
 
     final activeCovered = activeMonth?['covered'] != false;
     final activeTotal = number(activeMonth?['total']);
-    final activeCalls = number(activeMonth?['expiredCalls']);
+    final activeCalls = monthCall(activeMonth);
+    final activePuts = monthPut(activeMonth);
     final activeDivs = number(activeMonth?['dividends']);
     final activePriorCovered =
         isYearScope && activeMonth?['priorYearCovered'] == true;
@@ -1018,9 +1210,9 @@ class _PortfolioPassiveIncomeCardState
               isYearScope
                   ? w(
                       '$activeScope monthly cashflow (Jan–Dec)',
-                      '$activeScope 年月度确认收入（1–12月）',
+                      '$activeScope 年月度确认净收入（1–12月）',
                     )
-                  : w('Monthly confirmed cashflow', '月度已确认被动收入'),
+                  : w('Monthly confirmed cashflow', '月度已确认净收入'),
               style: TextStyle(
                 color: p.text,
                 fontSize: 14,
@@ -1031,8 +1223,12 @@ class _PortfolioPassiveIncomeCardState
               spacing: 12,
               runSpacing: 4,
               children: [
-                _legendDot(p, callColor, w('Expired Call', '卖 Call 到期')),
+                _legendDot(p, callColor, w('Call P&L', 'Call 净盈亏')),
+                if (hasAnyPut)
+                  _legendDot(p, putColor, w('Put P&L', 'Put 净盈亏')),
                 _legendDot(p, divColor, w('Cash Dividend', '现金股息')),
+                if (hasAnyLoss)
+                  _legendDot(p, lossColor, w('Option Loss', '期权止损')),
                 if (hasAnyPriorOverlay)
                   _legendTick(p, w('Prior yr month', '去年同月')),
               ],
@@ -1050,23 +1246,36 @@ class _PortfolioPassiveIncomeCardState
                 !activeCovered
                     ? '${text(activeMonth['month'])} · ${w('Not yet reached / outside report window', '尚未进入该月份或不在报表区间')}'
                     : widget.hideAmounts
-                    ? '${text(activeMonth['month'])} · ${activeTotal > 0 ? '${w('Call', '卖 Call')} ${fmtShare(activeCalls, activeTotal)} · ${w('Div', '股息')} ${fmtShare(activeDivs, activeTotal)}' : w('No confirmed income', '无确认收入')}'
+                    ? '${text(activeMonth['month'])} · ${activeTotal > 0 && activeCalls >= 0 && activePuts >= 0 ? '${w('Options', '期权')} ${fmtShare(activeCalls + activePuts, activeTotal)} · ${w('Div', '股息')} ${fmtShare(activeDivs, activeTotal)}' : (activeTotal.abs() > 0.005 ? w('Confirmed activity recorded', '有已确认记录') : w('No confirmed income', '无确认记录'))}'
                     : '${text(activeMonth['month'])} · ${fmtMoney(activeTotal)}',
                 style: TextStyle(
-                  color: activeCovered && activeTotal > 0 ? p.text : p.muted,
+                  color: !activeCovered
+                      ? p.muted
+                      : (activeTotal < 0
+                            ? lossColor
+                            : (activeTotal > 0 ? p.text : p.muted)),
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
                 ),
               ),
               if (activeCovered && !widget.hideAmounts) ...[
                 Text(
-                  '${w('Call', '卖 Call')} ${fmtMoney(activeCalls)}',
+                  'Call ${fmtMoney(activeCalls, signed: true)}',
                   style: TextStyle(
-                    color: callColor,
+                    color: activeCalls < 0 ? lossColor : callColor,
                     fontSize: 11.5,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                if (hasAnyPut || activePuts.abs() > 0.005)
+                  Text(
+                    'Put ${fmtMoney(activePuts, signed: true)}',
+                    style: TextStyle(
+                      color: activePuts < 0 ? lossColor : putColor,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 Text(
                   '${w('Div', '股息')} ${fmtMoney(activeDivs)}',
                   style: TextStyle(
@@ -1109,10 +1318,13 @@ class _PortfolioPassiveIncomeCardState
                   child: CustomPaint(
                     painter: _PassiveIncomeBarPainter(
                       months: months,
-                      maxTotal: maxTotal,
+                      maxPos: maxPos,
+                      minNeg: minNeg,
                       palette: p,
                       callColor: callColor,
+                      putColor: putColor,
                       divColor: divColor,
+                      lossColor: lossColor,
                       activeIndex: hoveredIdx,
                       hideAmounts: widget.hideAmounts,
                       isYearScope: isYearScope,
@@ -1163,15 +1375,20 @@ class _PortfolioPassiveIncomeCardState
   Widget _buildSourceBreakdown({
     required Palette p,
     required Color callColor,
+    required Color putColor,
     required Color divColor,
+    required Color lossColor,
     required List<Map<String, dynamic>> rows,
     required double scopeTotal,
     required String scopeLabel,
   }) {
-    final top = rows.where((r) => number(r['total']) > 0).take(6).toList();
+    final top = rows
+        .where((r) => number(r['total']).abs() > 0.005)
+        .take(6)
+        .toList();
     final maxRow = top.fold<double>(
       0,
-      (m, r) => math.max(m, number(r['total'])),
+      (m, r) => math.max(m, number(r['total']).abs()),
     );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1210,123 +1427,168 @@ class _PortfolioPassiveIncomeCardState
               onTap: widget.onCompany != null && text(r['ticker']) != 'CASH'
                   ? () => widget.onCompany!(text(r['ticker']), 'evidence')
                   : null,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
+              child: Builder(
+                builder: (_) {
+                  final hasSplit =
+                      r.containsKey('callPnl') || r.containsKey('putPnl');
+                  final callAmt = hasSplit
+                      ? number(r['callPnl'])
+                      : number(r['expiredCalls']);
+                  final putAmt = hasSplit ? number(r['putPnl']) : 0.0;
+                  final divAmt = number(r['dividends']);
+                  final totAmt = number(r['total']);
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      StockLogo(
-                        ticker: text(r['ticker']),
-                        palette: p,
-                        size: 24,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Wrap(
-                          spacing: 5,
-                          runSpacing: 3,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            Text(
-                              text(r['ticker']),
-                              style: TextStyle(
-                                color: p.text,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
+                      Row(
+                        children: [
+                          StockLogo(
+                            ticker: text(r['ticker']),
+                            palette: p,
+                            size: 24,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Wrap(
+                              spacing: 5,
+                              runSpacing: 3,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(
+                                  text(r['ticker']),
+                                  style: TextStyle(
+                                    color: p.text,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                if (callAmt.abs() > 0.005)
+                                  _miniTag(
+                                    callAmt < 0 ? lossColor : callColor,
+                                    widget.hideAmounts
+                                        ? 'Call'
+                                        : 'Call ${fmtMoney(callAmt, signed: callAmt < 0 || putAmt.abs() > 0.005)}',
+                                  ),
+                                if (putAmt.abs() > 0.005)
+                                  _miniTag(
+                                    putAmt < 0 ? lossColor : putColor,
+                                    widget.hideAmounts
+                                        ? 'Put'
+                                        : 'Put ${fmtMoney(putAmt, signed: true)}',
+                                  ),
+                                if (divAmt > 0.005)
+                                  _miniTag(
+                                    divColor,
+                                    widget.hideAmounts
+                                        ? w('Div', '股息')
+                                        : '${w('Div', '股息')} ${fmtMoney(divAmt)}',
+                                  ),
+                              ],
                             ),
-                            if (number(r['expiredCalls']) > 0)
-                              _miniTag(
-                                callColor,
-                                widget.hideAmounts
-                                    ? w('Call', '卖 Call')
-                                    : '${w('Call', '卖 Call')} ${fmtMoney(r['expiredCalls'])}',
-                              ),
-                            if (number(r['dividends']) > 0)
-                              _miniTag(
-                                divColor,
-                                widget.hideAmounts
-                                    ? w('Div', '股息')
-                                    : '${w('Div', '股息')} ${fmtMoney(r['dividends'])}',
-                              ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            widget.hideAmounts
+                                ? (totAmt >= 0 && scopeTotal > 0
+                                      ? fmtShare(totAmt, scopeTotal)
+                                      : (totAmt < 0 ? '<0' : '—'))
+                                : fmtMoney(totAmt),
+                            style: TextStyle(
+                              color: totAmt < 0 ? lossColor : p.text,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        widget.hideAmounts
-                            ? fmtShare(number(r['total']), scopeTotal)
-                            : fmtMoney(r['total']),
-                        style: TextStyle(
-                          color: p.text,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
-                        ),
+                      const SizedBox(height: 5),
+                      LayoutBuilder(
+                        builder: (_, barConstraints) {
+                          final fullW = barConstraints.maxWidth;
+                          if (totAmt < 0) {
+                            final lossW = maxRow > 0
+                                ? (totAmt.abs() / maxRow * fullW)
+                                      .clamp(2.0, fullW)
+                                      .toDouble()
+                                : 0.0;
+                            return Container(
+                              height: 5.5,
+                              decoration: BoxDecoration(
+                                color: p.border.withValues(alpha: .42),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                              child: Row(
+                                children: [
+                                  if (lossW > 0)
+                                    Container(
+                                      width: lossW,
+                                      height: 5.5,
+                                      decoration: BoxDecoration(
+                                        color: lossColor.withValues(alpha: .85),
+                                        borderRadius: BorderRadius.circular(3),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            );
+                          }
+                          final posCall = callAmt > 0 ? callAmt : 0.0;
+                          final posPut = putAmt > 0 ? putAmt : 0.0;
+                          final posDiv = divAmt > 0 ? divAmt : 0.0;
+                          final posSum = posCall + posPut + posDiv;
+                          final segs = <(double, Color)>[
+                            if (posCall > 0) (posCall, callColor),
+                            if (posPut > 0) (posPut, putColor),
+                            if (posDiv > 0) (posDiv, divColor),
+                          ];
+                          final barScale = maxRow > 0 && posSum > 0
+                              ? (totAmt / maxRow).clamp(0.0, 1.0)
+                              : 0.0;
+                          final totalBarW = fullW * barScale;
+                          final gaps = segs.length > 1
+                              ? (segs.length - 1) * 1.8
+                              : 0.0;
+                          final usableW = math.max(0.0, totalBarW - gaps);
+                          return Container(
+                            height: 5.5,
+                            decoration: BoxDecoration(
+                              color: p.border.withValues(alpha: .42),
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: Row(
+                              children: [
+                                for (var idx = 0; idx < segs.length; idx++) ...[
+                                  if (idx > 0) const SizedBox(width: 1.8),
+                                  Container(
+                                    width: posSum > 0
+                                        ? (segs[idx].$1 / posSum * usableW)
+                                              .clamp(0.0, usableW)
+                                              .toDouble()
+                                        : 0.0,
+                                    height: 5.5,
+                                    decoration: BoxDecoration(
+                                      color: segs[idx].$2.withValues(
+                                        alpha: .82,
+                                      ),
+                                      borderRadius: BorderRadius.horizontal(
+                                        left: idx == 0
+                                            ? const Radius.circular(3)
+                                            : const Radius.circular(1),
+                                        right: idx == segs.length - 1
+                                            ? const Radius.circular(3)
+                                            : const Radius.circular(1),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          );
+                        },
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 5),
-                  LayoutBuilder(
-                    builder: (_, barConstraints) {
-                      final fullW = barConstraints.maxWidth;
-                      final hasBoth =
-                          number(r['expiredCalls']) > 0 &&
-                          number(r['dividends']) > 0;
-                      final gap = hasBoth ? 2.0 : 0.0;
-                      final usableW = math.max(0.0, fullW - gap);
-                      final callW = maxRow > 0
-                          ? (number(r['expiredCalls']) / maxRow * usableW)
-                                .clamp(0.0, usableW)
-                                .toDouble()
-                          : 0.0;
-                      final divW = maxRow > 0
-                          ? (number(r['dividends']) / maxRow * usableW)
-                                .clamp(0.0, math.max(0.0, usableW - callW))
-                                .toDouble()
-                          : 0.0;
-                      return Container(
-                        height: 5.5,
-                        decoration: BoxDecoration(
-                          color: p.border.withValues(alpha: .42),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Row(
-                          children: [
-                            if (callW > 0)
-                              Container(
-                                width: callW,
-                                height: 5.5,
-                                decoration: BoxDecoration(
-                                  color: callColor.withValues(alpha: .82),
-                                  borderRadius: BorderRadius.horizontal(
-                                    left: const Radius.circular(3),
-                                    right: hasBoth
-                                        ? const Radius.circular(1)
-                                        : const Radius.circular(3),
-                                  ),
-                                ),
-                              ),
-                            if (hasBoth) SizedBox(width: gap),
-                            if (divW > 0)
-                              Container(
-                                width: divW,
-                                height: 5.5,
-                                decoration: BoxDecoration(
-                                  color: divColor.withValues(alpha: .82),
-                                  borderRadius: BorderRadius.horizontal(
-                                    left: hasBoth
-                                        ? const Radius.circular(1)
-                                        : const Radius.circular(3),
-                                    right: const Radius.circular(3),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ],
+                  );
+                },
               ),
             ),
           ),
@@ -1541,7 +1803,9 @@ class _PortfolioPassiveIncomeCardState
   Widget _buildRecentLedger(
     Palette p,
     Color callColor,
+    Color putColor,
     Color divColor,
+    Color lossColor,
     List<Map<String, dynamic>> events,
   ) => Container(
     margin: const EdgeInsets.only(top: 6),
@@ -1553,74 +1817,113 @@ class _PortfolioPassiveIncomeCardState
     ),
     child: Column(
       children: [
-        for (var i = 0; i < events.take(20).length; i++) ...[
+        for (var i = 0; i < events.take(30).length; i++) ...[
           if (i > 0) Divider(height: 1, color: p.border),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color:
-                        (events[i]['kind'] == 'expired_call'
-                                ? callColor
-                                : divColor)
-                            .withValues(alpha: .15),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    events[i]['kind'] == 'expired_call'
-                        ? w('Call', '卖 Call')
-                        : w('Div', '股息'),
-                    style: TextStyle(
-                      color: events[i]['kind'] == 'expired_call'
-                          ? callColor
-                          : divColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
+          Builder(
+            builder: (_) {
+              final ev = events[i];
+              final kind = text(ev['kind']);
+              final amt = number(ev['amount']);
+              final isDiv = kind == 'dividend';
+              final isPut =
+                  kind.startsWith('put_') ||
+                  text(ev['right']).toUpperCase() == 'P';
+              final isLoss = !isDiv && amt < 0;
+              final badgeColor = isDiv
+                  ? divColor
+                  : (isLoss ? lossColor : (isPut ? putColor : callColor));
+              final badgeText = switch (kind) {
+                'dividend' => w('Div', '股息'),
+                'expired_call' || 'call_expired' => w('Call Exp', 'Call 到期'),
+                'call_tp' => w('Call TP', 'Call 止盈'),
+                'call_sl' => w('Call SL', 'Call 止损'),
+                'call_expired_loss' => w('Call Exp', 'Call 过期亏'),
+                'put_expired' => w('Put Exp', 'Put 到期'),
+                'put_tp' => w('Put TP', 'Put 止盈'),
+                'put_sl' => w('Put SL', 'Put 止损'),
+                'put_expired_loss' => w('Put Exp', 'Put 过期亏'),
+                _ => isPut ? 'Put' : 'Call',
+              };
+              final strikeSuffix =
+                  !widget.hideAmounts && nullableNumber(ev['strike']) != null
+                  ? ' (${formatNumber(number(ev['strike']))}${isPut ? 'P' : 'C'})'
+                  : '';
+              final detailLabel = switch (kind) {
+                'dividend' =>
+                  ev['category'] == 'substitute_dividends' || ev['pil'] == true
+                      ? '${text(ev['ticker'])} · ${w('PIL dividend', '代付股息 (PIL)')}'
+                      : '${text(ev['ticker'])} · ${w('Cash Dividend', '现金股息')}',
+                'expired_call' || 'call_expired' =>
+                  '${text(ev['ticker'])} · ${w('Expired Short Call', '卖 Call 虚值到期归零')}$strikeSuffix',
+                'call_tp' =>
+                  '${text(ev['ticker'])} · ${w('Call Take-Profit Close', 'Call 平仓止盈')}$strikeSuffix',
+                'call_sl' =>
+                  '${text(ev['ticker'])} · ${w('Call Stop-Loss Close', 'Call 平仓止损')}$strikeSuffix',
+                'call_expired_loss' =>
+                  '${text(ev['ticker'])} · ${w('Long Call Expired Loss', '买 Call 到期作废')}$strikeSuffix',
+                'put_expired' =>
+                  '${text(ev['ticker'])} · ${w('Expired Short Put', '卖 Put 虚值到期归零')}$strikeSuffix',
+                'put_tp' =>
+                  '${text(ev['ticker'])} · ${w('Put Take-Profit Close', 'Put 平仓止盈')}$strikeSuffix',
+                'put_sl' =>
+                  '${text(ev['ticker'])} · ${w('Put Stop-Loss Close', 'Put 平仓止损')}$strikeSuffix',
+                'put_expired_loss' =>
+                  '${text(ev['ticker'])} · ${w('Long Put Expired Loss', '买 Put 到期作废')}$strikeSuffix',
+                _ => '${text(ev['ticker'])} · ${text(ev['label'])}',
+              };
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: badgeColor.withValues(alpha: .15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        badgeText,
+                        style: TextStyle(
+                          color: badgeColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 78,
+                      child: Text(
+                        text(ev['date']),
+                        style: TextStyle(color: p.muted, fontSize: 11.5),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        detailLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: p.text, fontSize: 12),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      widget.hideAmounts
+                          ? '••••'
+                          : fmtMoney(amt, signed: true),
+                      style: TextStyle(
+                        color: badgeColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 78,
-                  child: Text(
-                    text(events[i]['date']),
-                    style: TextStyle(color: p.muted, fontSize: 11.5),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    events[i]['kind'] == 'expired_call'
-                        ? '${text(events[i]['ticker'])} · ${w('Expired Short Call', '卖 Call 虚值到期归零')}${!widget.hideAmounts && nullableNumber(events[i]['strike']) != null ? ' (${formatNumber(number(events[i]['strike']))}C)' : ''}'
-                        : events[i]['category'] == 'substitute_dividends' ||
-                              events[i]['pil'] == true
-                        ? '${text(events[i]['ticker'])} · ${w('PIL dividend', '代付股息 (PIL)')}'
-                        : '${text(events[i]['ticker'])} · ${w('Cash Dividend', '现金股息')}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: p.text, fontSize: 12),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  widget.hideAmounts
-                      ? '••••'
-                      : '+${fmtMoney(events[i]['amount'])}',
-                  style: TextStyle(
-                    color: events[i]['kind'] == 'expired_call'
-                        ? callColor
-                        : divColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
+              );
+            },
           ),
         ],
       ],
@@ -1631,20 +1934,26 @@ class _PortfolioPassiveIncomeCardState
 class _PassiveIncomeBarPainter extends CustomPainter {
   _PassiveIncomeBarPainter({
     required this.months,
-    required this.maxTotal,
+    required this.maxPos,
+    required this.minNeg,
     required this.palette,
     required this.callColor,
+    required this.putColor,
     required this.divColor,
+    required this.lossColor,
     required this.activeIndex,
     required this.hideAmounts,
     required this.isYearScope,
   });
 
   final List<Map<String, dynamic>> months;
-  final double maxTotal;
+  final double maxPos;
+  final double minNeg;
   final Palette palette;
   final Color callColor;
+  final Color putColor;
   final Color divColor;
+  final Color lossColor;
   final int? activeIndex;
   final bool hideAmounts;
   final bool isYearScope;
@@ -1662,9 +1971,16 @@ class _PassiveIncomeBarPainter extends CustomPainter {
     );
     if (rect.width <= 0 || rect.height <= 0 || months.isEmpty) return;
 
-    final scaleMax = maxTotal > 0 ? maxTotal * 1.14 : 100.0;
+    final hasNeg = minNeg < -0.005;
+    final topVal = maxPos > 0 ? maxPos * 1.14 : (hasNeg ? 0.0 : 100.0);
+    final botVal = hasNeg ? minNeg * 1.14 : 0.0;
+    final span = math.max(1e-6, topVal - botVal);
+    double yOf(double v) => rect.bottom - ((v - botVal) / span) * rect.height;
+    final zeroY = yOf(0.0);
+
     for (var g = 0; g <= 3; g++) {
       final frac = g / 3;
+      final val = botVal + span * frac;
       final y = rect.bottom - frac * rect.height;
       canvas.drawLine(
         Offset(rect.left, y),
@@ -1673,12 +1989,13 @@ class _PassiveIncomeBarPainter extends CustomPainter {
           ..color = palette.border.withValues(alpha: .55)
           ..strokeWidth = 1,
       );
-      final val = scaleMax * frac;
+      final absVal = val.abs();
+      final sign = val < -0.5 ? '-' : '';
       final labelText = hideAmounts
-          ? (maxTotal > 0 ? '${(frac * 100).round()}%' : '—')
-          : val >= 1000
-          ? '${(val / 1000).toStringAsFixed(1)}K'
-          : val.toStringAsFixed(0);
+          ? (maxPos > 0 ? '${(frac * 100).round()}%' : '—')
+          : absVal >= 1000
+          ? '$sign${(absVal / 1000).toStringAsFixed(1)}K'
+          : '$sign${absVal.toStringAsFixed(0)}';
       final tp = TextPainter(
         text: TextSpan(
           text: labelText,
@@ -1689,6 +2006,16 @@ class _PassiveIncomeBarPainter extends CustomPainter {
       tp.paint(canvas, Offset(0, y - tp.height / 2));
     }
 
+    if (hasNeg) {
+      canvas.drawLine(
+        Offset(rect.left, zeroY),
+        Offset(rect.right, zeroY),
+        Paint()
+          ..color = palette.muted.withValues(alpha: .65)
+          ..strokeWidth = 1.1,
+      );
+    }
+
     final slotW = rect.width / months.length;
     final barW = (slotW * 0.58).clamp(6.0, 26.0);
     final labelStep = months.length > 12 ? 2 : 1;
@@ -1696,7 +2023,9 @@ class _PassiveIncomeBarPainter extends CustomPainter {
     for (var i = 0; i < months.length; i++) {
       final m = months[i];
       final covered = m['covered'] != false;
-      final calls = number(m['expiredCalls']);
+      final hasSplit = m.containsKey('callPnl') || m.containsKey('putPnl');
+      final calls = hasSplit ? number(m['callPnl']) : number(m['expiredCalls']);
+      final puts = hasSplit ? number(m['putPnl']) : 0.0;
       final divs = number(m['dividends']);
       final cx = rect.left + (i + 0.5) * slotW;
       final isFocused = activeIndex == null || activeIndex == i;
@@ -1717,11 +2046,10 @@ class _PassiveIncomeBarPainter extends CustomPainter {
       }
 
       if (!covered) {
-        // Subtle placeholder base tick for future/uncovered months in a 12-month year view
         canvas.drawRRect(
           RRect.fromRectAndRadius(
             Rect.fromCenter(
-              center: Offset(cx, rect.bottom - 1.5),
+              center: Offset(cx, zeroY - 1.5),
               width: barW * 0.7,
               height: 2,
             ),
@@ -1730,54 +2058,54 @@ class _PassiveIncomeBarPainter extends CustomPainter {
           Paint()..color = palette.border.withValues(alpha: .45),
         );
       } else {
-        final divH = maxTotal > 0 ? (divs / scaleMax) * rect.height : 0.0;
-        final callH = maxTotal > 0 ? (calls / scaleMax) * rect.height : 0.0;
-        final hasBoth = divH > 1.5 && callH > 1.5;
-        final gap = hasBoth ? 1.8 : 0.0;
-
         final barAlpha = activeIndex == null
-            ? 0.80
-            : (isFocused ? 0.94 : 0.36);
+            ? 0.82
+            : (isFocused ? 0.95 : 0.36);
 
-        if (divH > 0) {
-          final adjDivH = math.max(1.5, divH - (hasBoth ? gap * 0.5 : 0));
-          final divRect = Rect.fromLTWH(
-            cx - barW / 2,
-            rect.bottom - adjDivH,
-            barW,
-            adjDivH,
-          );
+        // Positive stacked segments (upward from zeroY): Dividends -> Put -> Call
+        final posSegs = <(double, Color)>[
+          if (divs > 0.005) (divs, divColor),
+          if (puts > 0.005) (puts, putColor),
+          if (calls > 0.005) (calls, callColor),
+        ];
+        var posCursor = zeroY;
+        for (var s = 0; s < posSegs.length; s++) {
+          final hPx = (posSegs[s].$1 / span) * rect.height;
+          if (hPx <= 0.2) continue;
+          final gap = posSegs.length > 1 && s > 0 ? 1.5 : 0.0;
+          final segH = math.max(1.5, hPx - gap);
+          final segTop = posCursor - gap - segH;
+          final isTop = s == posSegs.length - 1;
           canvas.drawRRect(
             RRect.fromRectAndCorners(
-              divRect,
-              topLeft: hasBoth
-                  ? const Radius.circular(1.5)
-                  : const Radius.circular(3.5),
-              topRight: hasBoth
-                  ? const Radius.circular(1.5)
-                  : const Radius.circular(3.5),
+              Rect.fromLTWH(cx - barW / 2, segTop, barW, segH),
+              topLeft: isTop
+                  ? const Radius.circular(3.5)
+                  : const Radius.circular(1.5),
+              topRight: isTop
+                  ? const Radius.circular(3.5)
+                  : const Radius.circular(1.5),
+              bottomLeft: s == 0 ? Radius.zero : const Radius.circular(1.5),
+              bottomRight: s == 0 ? Radius.zero : const Radius.circular(1.5),
             ),
-            Paint()..color = divColor.withValues(alpha: barAlpha),
+            Paint()..color = posSegs[s].$2.withValues(alpha: barAlpha),
           );
+          posCursor = segTop;
         }
-        if (callH > 0) {
-          final baseOffset = divH > 0 ? divH + gap * 0.5 : 0.0;
-          final adjCallH = math.max(1.5, callH - (hasBoth ? gap * 0.5 : 0));
-          final callRect = Rect.fromLTWH(
-            cx - barW / 2,
-            rect.bottom - baseOffset - adjCallH,
-            barW,
-            adjCallH,
-          );
+
+        // Negative stacked segments (downward from zeroY): Call/Put realized losses
+        final negAmt = (calls < -0.005 ? -calls : 0.0) +
+            (puts < -0.005 ? -puts : 0.0) +
+            (divs < -0.005 ? -divs : 0.0);
+        if (negAmt > 0.005) {
+          final negH = math.max(2.0, (negAmt / span) * rect.height);
           canvas.drawRRect(
             RRect.fromRectAndCorners(
-              callRect,
-              topLeft: const Radius.circular(3.5),
-              topRight: const Radius.circular(3.5),
-              bottomLeft: hasBoth ? const Radius.circular(1.5) : Radius.zero,
-              bottomRight: hasBoth ? const Radius.circular(1.5) : Radius.zero,
+              Rect.fromLTWH(cx - barW / 2, zeroY, barW, negH),
+              bottomLeft: const Radius.circular(3.5),
+              bottomRight: const Radius.circular(3.5),
             ),
-            Paint()..color = callColor.withValues(alpha: barAlpha),
+            Paint()..color = lossColor.withValues(alpha: barAlpha),
           );
         }
       }
@@ -1785,10 +2113,8 @@ class _PassiveIncomeBarPainter extends CustomPainter {
       // Draw prior-year same-month reference tick when viewing a specific year
       if (isYearScope &&
           m['priorYearCovered'] == true &&
-          number(m['priorYearTotal']) > 0 &&
-          maxTotal > 0) {
-        final priorH = (number(m['priorYearTotal']) / scaleMax) * rect.height;
-        final py = rect.bottom - priorH;
+          number(m['priorYearTotal']).abs() > 0.005) {
+        final py = yOf(number(m['priorYearTotal']));
         canvas.drawLine(
           Offset(cx - barW * 0.58, py),
           Offset(cx + barW * 0.58, py),
@@ -1827,10 +2153,13 @@ class _PassiveIncomeBarPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _PassiveIncomeBarPainter old) =>
       old.months != months ||
-      old.maxTotal != maxTotal ||
+      old.maxPos != maxPos ||
+      old.minNeg != minNeg ||
       old.palette != palette ||
       old.callColor != callColor ||
+      old.putColor != putColor ||
       old.divColor != divColor ||
+      old.lossColor != lossColor ||
       old.activeIndex != activeIndex ||
       old.hideAmounts != hideAmounts ||
       old.isYearScope != isYearScope;

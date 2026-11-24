@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import {brokerIncome, brokerExpiredShortCalls, portfolioIncome, portfolioPassiveIncome} from './portfolioIncome.js';
+import {brokerIncome, brokerExpiredShortCalls, brokerRealizedOptions, portfolioIncome, portfolioPassiveIncome} from './portfolioIncome.js';
 
 const number = v => v == null || v === '' || typeof v === 'boolean' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const date = v => {
@@ -35,6 +35,7 @@ export function brokerStatementHistory(statement, currency, rows) {
   return {fromDate, toDate, tradeStatus, cashStatus,
     ...brokerIncome(statement, currency, rows),
     ...brokerExpiredShortCalls(statement, currency, rows),
+    ...brokerRealizedOptions(statement, currency, rows),
     realized: tradeStatus === 'ready' ? realized : [],
     cashFlows: cashStatus === 'ready' ? cashFlows : [],
     // This adapter does not reconcile asset transfers, corporate actions or

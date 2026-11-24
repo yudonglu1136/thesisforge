@@ -73,9 +73,88 @@ export function parseOccOptionSymbol(rawSymbol) {
   };
 }
 
-// Confirmed expired short Calls only: requires expiration-date BookTrade close
-// on a short Call (BUY to close at $0 price/proceeds) with positive realized
-// FIFO P&L (OTM worthless expiry; ITM assigned calls have 0 option FIFO P&L).
+export function brokerRealizedOptions(statement, currency, rows) {
+  const fromDate = iso(statement.fromDate), toDate = iso(statement.toDate);
+  const validPeriod = Boolean(currency && fromDate && toDate && fromDate <= toDate);
+  if (!rows(statement, 'Trades').length) {
+    return {realizedOptionsStatus: 'trades_section_missing', realizedOptions: []};
+  }
+  if (!validPeriod) {
+    return {realizedOptionsStatus: 'trade_rows_need_review', realizedOptions: []};
+  }
+  const trades = rows(statement, 'Trade');
+  const realizedOptions = [];
+  for (let i = 0; i < trades.length; i += 1) {
+    const r = trades[i];
+    if (String(r.assetCategory ?? '').toUpperCase() !== 'OPT') continue;
+    const occ = parseOccOptionSymbol(r.symbol);
+    const desc = String(r.description ?? '').trim();
+    const right = String(
+      r.putCall ||
+      occ?.right ||
+      (/\sC$/i.test(desc) ? 'C' : /\sP$/i.test(desc) ? 'P' : '')
+    ).toUpperCase();
+    if (right !== 'C' && right !== 'P') continue;
+    const tradeDate = iso(r.tradeDate);
+    const expiry = iso(r.expiry) || occ?.expiry || null;
+    if (!tradeDate || tradeDate < fromDate || tradeDate > toDate) continue;
+    const openClose = String(r.openCloseIndicator ?? '').toUpperCase();
+    if (openClose === 'O') continue;
+    const sourceCurrency = String(r.currency ?? currency);
+    const fx = sourceCurrency === currency ? 1 : finite(r.fxRateToBase);
+    const pnl = finite(r.fifoPnlRealized);
+    // Zero FIFO P&L rows are opening fills or ITM assignments folded into stock basis.
+    if (pnl === null || !(fx > 0) || pnl === 0) continue;
+    const amount = pnl * fx;
+    const qty = finite(r.quantity);
+    const contracts = qty !== null && Math.abs(qty) > 0 ? Math.abs(qty) : 1;
+    const tradePrice = finite(r.tradePrice);
+    const proceeds = finite(r.proceeds);
+    const txType = String(r.transactionType ?? '');
+    const buySell = String(r.buySell ?? '').toUpperCase();
+    const isExpired = Boolean(
+      expiry &&
+      tradeDate === expiry &&
+      (txType === '' || txType === 'BookTrade') &&
+      (tradePrice === null || tradePrice === 0) &&
+      (proceeds === null || proceeds === 0)
+    );
+    const outcome = isExpired
+      ? (amount > 0 ? 'expired' : 'expired_loss')
+      : (amount > 0 ? 'tp' : 'sl');
+    const prefix = right === 'C' ? 'call' : 'put';
+    const kind = `${prefix}_${outcome}`;
+    const underlying = String(
+      r.underlyingSymbol || occ?.underlying || String(r.symbol ?? '').trim().split(/\s+/)[0] || ''
+    ).trim().toUpperCase();
+    const strike = finite(r.strike) ?? occ?.strike ?? null;
+    const identity = r.tradeID || r.transactionID || JSON.stringify(['opt_realized', i, r.symbol, tradeDate, qty, pnl, sourceCurrency]);
+    realizedOptions.push({
+      eventKey: crypto.createHash('sha256').update(String(identity)).digest('hex'),
+      date: tradeDate,
+      ticker: underlying || String(r.symbol ?? '').trim(),
+      contract: String(r.symbol ?? '').trim(),
+      name: desc || String(r.symbol ?? '').trim(),
+      right,
+      strike,
+      expiry,
+      contracts,
+      buySell,
+      isExpired,
+      outcome,
+      kind,
+      sourceCurrency,
+      sourceAmount: pnl,
+      fxRateToBase: fx,
+      amount,
+      category: right === 'C' ? 'realized_call' : 'realized_put',
+    });
+  }
+  return {realizedOptionsStatus: 'ready', realizedOptions};
+}
+
+// Confirmed expired short Calls only: kept for legacy compatibility alongside
+// brokerRealizedOptions (which captures all Call & Put expiry/TP/SL P&L).
 export function brokerExpiredShortCalls(statement, currency, rows) {
   const fromDate = iso(statement.fromDate), toDate = iso(statement.toDate);
   const validPeriod = Boolean(currency && fromDate && toDate && fromDate <= toDate);
@@ -120,9 +199,13 @@ export function brokerExpiredShortCalls(statement, currency, rows) {
       ticker: underlying || String(r.symbol ?? '').trim(),
       contract: String(r.symbol ?? '').trim(),
       name: String(r.description ?? r.symbol ?? '').trim(),
+      right: 'C',
       strike,
       expiry,
       contracts: qty !== null ? qty : 1,
+      isExpired: true,
+      outcome: 'expired',
+      kind: 'call_expired',
       sourceCurrency,
       sourceAmount: pnl,
       fxRateToBase: fx,
@@ -133,30 +216,121 @@ export function brokerExpiredShortCalls(statement, currency, rows) {
   return {expiredCallsStatus: 'ready', expiredShortCalls};
 }
 
-function fallbackExpiredShortCallsFromRealized(history) {
+function normalizeRealizedOptionRow(r) {
+  if (!r) return null;
+  const amount = finite(r.amount);
+  const d = iso(r.date);
+  if (!d || amount === null || amount === 0) return null;
+  const occ = parseOccOptionSymbol(r.contract || r.symbol || r.ticker);
+  const name = String(r.name || r.contract || r.ticker || '').trim();
+  const right = String(
+    r.right ||
+    occ?.right ||
+    (r.category === 'expired_short_call' || r.category === 'realized_call' ? 'C' : '') ||
+    (r.category === 'realized_put' ? 'P' : '') ||
+    (/\sC$/i.test(name) ? 'C' : /\sP$/i.test(name) ? 'P' : '')
+  ).toUpperCase();
+  if (right !== 'C' && right !== 'P') return null;
+  const expiry = iso(r.expiry) || occ?.expiry || null;
+  const isExpired = typeof r.isExpired === 'boolean'
+    ? r.isExpired
+    : Boolean(r.category === 'expired_short_call' || (expiry && d === expiry));
+  const outcome = r.outcome || (isExpired ? (amount > 0 ? 'expired' : 'expired_loss') : (amount > 0 ? 'tp' : 'sl'));
+  const prefix = right === 'C' ? 'call' : 'put';
+  const kind = r.kind || `${prefix}_${outcome}`;
+  const ticker = String(r.ticker || occ?.underlying || name.split(/\s+/)[0] || 'OPT').trim().toUpperCase();
+  const contracts = finite(r.contracts) !== null && Math.abs(finite(r.contracts)) > 0 ? Math.abs(finite(r.contracts)) : 1;
+  const eventKey = r.eventKey || crypto.createHash('sha256').update(`${r.contract || ticker}:${d}:${amount}:${right}`).digest('hex');
+  return {
+    eventKey,
+    date: d,
+    ticker,
+    contract: String(r.contract || name || ticker).trim(),
+    name,
+    right,
+    strike: finite(r.strike) ?? occ?.strike ?? null,
+    expiry,
+    contracts,
+    isExpired,
+    outcome,
+    kind,
+    amount,
+    category: right === 'C' ? 'realized_call' : 'realized_put',
+  };
+}
+
+function fallbackRealizedOptionsFromRealized(history) {
   if (history?.tradeStatus !== 'ready' || !Array.isArray(history?.realized)) return null;
   const rows = [];
   for (const r of history.realized) {
     if (String(r.assetCategory ?? '').toUpperCase() !== 'OPT') continue;
     const occ = parseOccOptionSymbol(r.ticker);
-    if (!occ || occ.right !== 'C') continue;
+    const name = String(r.name ?? r.ticker ?? '').trim();
+    const right = occ?.right || (/\sC$/i.test(name) ? 'C' : /\sP$/i.test(name) ? 'P' : '');
+    if (right !== 'C' && right !== 'P') continue;
     const d = iso(r.date);
     const pnl = finite(r.pnl);
-    if (!d || d !== occ.expiry || pnl === null || !(pnl > 0)) continue;
+    if (!d || pnl === null || pnl === 0) continue;
+    const expiry = occ?.expiry || null;
+    const isExpired = Boolean(expiry && d === expiry);
+    const outcome = isExpired ? (pnl > 0 ? 'expired' : 'expired_loss') : (pnl > 0 ? 'tp' : 'sl');
+    const prefix = right === 'C' ? 'call' : 'put';
     rows.push({
       eventKey: r.eventKey || crypto.createHash('sha256').update(`${r.ticker}:${d}:${pnl}`).digest('hex'),
       date: d,
-      ticker: occ.underlying,
+      ticker: occ?.underlying || String(r.ticker ?? '').trim().split(/\s+/)[0] || 'OPT',
       contract: String(r.ticker ?? '').trim(),
-      name: String(r.name ?? r.ticker ?? '').trim(),
-      strike: occ.strike,
-      expiry: occ.expiry,
-      contracts: null,
+      name,
+      right,
+      strike: occ?.strike ?? null,
+      expiry,
+      contracts: 1,
+      isExpired,
+      outcome,
+      kind: `${prefix}_${outcome}`,
       amount: pnl,
-      category: 'expired_short_call',
+      category: right === 'C' ? 'realized_call' : 'realized_put',
     });
   }
   return rows;
+}
+
+function resolveAccountRealizedOptions(account) {
+  const passiveSlot = account?.passiveHistoryEvidence;
+  const currentHist = account?.historyEvidence;
+  if (passiveSlot?.realizedOptionsStatus === 'ready' && Array.isArray(passiveSlot.realizedOptions)) {
+    return passiveSlot.realizedOptions.map(normalizeRealizedOptionRow).filter(Boolean);
+  }
+  const fromCurrent = currentHist?.realizedOptionsStatus === 'ready' && Array.isArray(currentHist.realizedOptions)
+    ? currentHist.realizedOptions.map(normalizeRealizedOptionRow).filter(Boolean)
+    : fallbackRealizedOptionsFromRealized(currentHist);
+
+  // If a pre-upgrade saved passive ledger exists without realizedOptions, use full Call+Put
+  // realized P&L from currentHist for its covered window and supplement older dates from
+  // legacy expiredShortCalls (deduped by eventKey) so live users immediately see TP/SL P&L.
+  if (passiveSlot) {
+    const legacyExpired = passiveSlot.expiredCallsStatus === 'ready' && Array.isArray(passiveSlot.expiredShortCalls)
+      ? passiveSlot.expiredShortCalls.map(normalizeRealizedOptionRow).filter(Boolean)
+      : null;
+    if (Array.isArray(fromCurrent)) {
+      const merged = new Map();
+      const currentFrom = iso(currentHist?.fromDate);
+      for (const r of legacyExpired ?? []) {
+        if (!currentFrom || r.date < currentFrom) merged.set(r.eventKey, r);
+      }
+      for (const r of fromCurrent) {
+        merged.set(r.eventKey, r);
+      }
+      return [...merged.values()].sort((a, b) => a.date.localeCompare(b.date));
+    }
+    return legacyExpired;
+  }
+
+  if (Array.isArray(fromCurrent)) return fromCurrent;
+  if (currentHist?.expiredCallsStatus === 'ready' && Array.isArray(currentHist.expiredShortCalls)) {
+    return currentHist.expiredShortCalls.map(normalizeRealizedOptionRow).filter(Boolean);
+  }
+  return null;
 }
 
 function enumerateMonths(fromDate, toDate) {
@@ -260,12 +434,69 @@ function mapMonthDayToYear(targetYear, mmdd) {
   return `${String(targetYear).padStart(4, '0')}-${mmdd}`;
 }
 
-function buildTickerBreakdown(divEvents, callEvents, totalAmount) {
+function summarizeOptions(optionEvents, ready = true) {
+  let amount = 0, callAmount = 0, putAmount = 0;
+  let expiredAmount = 0, closedProfitAmount = 0, closedLossAmount = 0;
+  let callCount = 0, putCount = 0;
+  let contractCount = 0, callContractCount = 0, putContractCount = 0;
+  let winCount = 0, lossCount = 0;
+  for (const r of optionEvents) {
+    const a = r.amount;
+    const c = r.contracts ?? 1;
+    amount += a;
+    contractCount += c;
+    if (r.right === 'P') {
+      putAmount += a;
+      putCount += 1;
+      putContractCount += c;
+    } else {
+      callAmount += a;
+      callCount += 1;
+      callContractCount += c;
+    }
+    if (a > 0) winCount += 1;
+    else if (a < 0) lossCount += 1;
+    if (r.isExpired) expiredAmount += a;
+    else if (a > 0) closedProfitAmount += a;
+    else closedLossAmount += a;
+  }
+  return {
+    status: ready ? 'ready' : 'trade_history_required',
+    amount: ready ? amount : null,
+    callAmount: ready ? callAmount : null,
+    putAmount: ready ? putAmount : null,
+    expiredAmount: ready ? expiredAmount : null,
+    closedProfitAmount: ready ? closedProfitAmount : null,
+    closedLossAmount: ready ? closedLossAmount : null,
+    settlementCount: optionEvents.length,
+    callCount,
+    putCount,
+    contractCount,
+    callContractCount,
+    putContractCount,
+    winCount,
+    lossCount,
+  };
+}
+
+function buildTickerBreakdown(divEvents, optionEvents, totalAmount) {
   const map = new Map();
   const ensure = ticker => {
     const key = ticker || 'OTHER';
     if (!map.has(key)) {
-      map.set(key, {ticker: key, dividends: 0, expiredCalls: 0, total: 0, dividendCount: 0, callCount: 0});
+      map.set(key, {
+        ticker: key,
+        dividends: 0,
+        callPnl: 0,
+        putPnl: 0,
+        optionsPnl: 0,
+        expiredCalls: 0,
+        total: 0,
+        dividendCount: 0,
+        callCount: 0,
+        putCount: 0,
+        optionCount: 0,
+      });
     }
     return map.get(key);
   };
@@ -275,33 +506,47 @@ function buildTickerBreakdown(divEvents, callEvents, totalAmount) {
     tb.total += r.amount;
     tb.dividendCount += 1;
   }
-  for (const r of callEvents) {
+  for (const r of optionEvents) {
     const tb = ensure(r.ticker || 'OPT');
+    const c = r.contracts ?? 1;
+    if (r.right === 'P') {
+      tb.putPnl += r.amount;
+      tb.putCount += c;
+    } else {
+      tb.callPnl += r.amount;
+      tb.callCount += c;
+    }
+    tb.optionsPnl += r.amount;
     tb.expiredCalls += r.amount;
     tb.total += r.amount;
-    tb.callCount += (r.contracts ?? 1);
+    tb.optionCount += c;
   }
   return [...map.values()]
     .map(row => ({...row, share: totalAmount > 0 ? row.total / totalAmount : 0}))
-    .sort((a, b) => b.total - a.total || a.ticker.localeCompare(b.ticker));
+    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total) || b.total - a.total || a.ticker.localeCompare(b.ticker));
 }
 
-function buildConfirmedEventRows(divEvents, callEvents, limit = 30) {
+function buildConfirmedEventRows(divEvents, optionEvents, limit = 50) {
   return [
     ...divEvents.map(r => ({
       date: r.date,
       ticker: r.ticker || 'CASH',
       kind: 'dividend',
+      right: null,
+      outcome: null,
+      category: r.category,
       label: r.category === 'substitute_dividends' ? 'PIL dividend' : 'Cash dividend',
       contracts: null,
       strike: null,
       expiry: null,
       amount: r.amount,
     })),
-    ...callEvents.map(r => ({
+    ...optionEvents.map(r => ({
       date: r.date,
       ticker: r.ticker,
-      kind: 'expired_call',
+      kind: r.kind || (r.right === 'P' ? (r.amount >= 0 ? 'put_tp' : 'put_sl') : (r.isExpired && r.amount > 0 ? 'call_expired' : r.amount >= 0 ? 'call_tp' : 'call_sl')),
+      right: r.right || 'C',
+      outcome: r.outcome || (r.isExpired ? (r.amount > 0 ? 'expired' : 'expired_loss') : (r.amount > 0 ? 'tp' : 'sl')),
       label: r.name || r.contract,
       contracts: r.contracts,
       strike: r.strike,
@@ -309,7 +554,7 @@ function buildConfirmedEventRows(divEvents, callEvents, limit = 30) {
       amount: r.amount,
     })),
   ]
-    .sort((a, b) => b.date.localeCompare(a.date) || b.amount - a.amount)
+    .sort((a, b) => b.date.localeCompare(a.date) || Math.abs(b.amount) - Math.abs(a.amount))
     .slice(0, limit);
 }
 
@@ -324,12 +569,8 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
   const validWindow = Boolean(covered && fromDate && toDate && fromDate <= toDate);
 
   const dividendsReady = validWindow && histories.every(h => h.incomeStatus === 'ready');
-  const callArrays = validWindow ? histories.map(h =>
-    h.expiredCallsStatus === 'ready' && Array.isArray(h.expiredShortCalls)
-      ? h.expiredShortCalls
-      : fallbackExpiredShortCallsFromRealized(h)
-  ) : [];
-  const expiredCallsReady = validWindow && callArrays.every(Array.isArray);
+  const optionArrays = validWindow ? scoped.map(resolveAccountRealizedOptions) : [];
+  const optionsReady = validWindow && optionArrays.every(Array.isArray);
 
   const dividendEvents = dividendsReady
     ? histories.flatMap(h => h.income ?? []).filter(r =>
@@ -343,22 +584,35 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
   const taxEvents = taxReady
     ? histories.flatMap(h => h.dividendTaxes ?? []).filter(r => r.date >= fromDate && r.date <= toDate)
     : [];
-  const expiredCallEvents = expiredCallsReady
-    ? callArrays.flat().filter(r => r.amount > 0 && r.date >= fromDate && r.date <= toDate)
+  const optionEvents = optionsReady
+    ? optionArrays.flat().filter(r => r.amount !== 0 && r.date >= fromDate && r.date <= toDate)
     : [];
 
-  const ready = dividendsReady && expiredCallsReady;
+  const ready = dividendsReady && optionsReady;
   const dividendsGross = dividendsReady ? dividendEvents.reduce((s, r) => s + r.amount, 0) : null;
   const withholdingTax = taxReady ? taxEvents.reduce((s, r) => s + r.amount, 0) : null;
   const dividendsNet = dividendsReady && withholdingTax !== null ? dividendsGross + withholdingTax : null;
-  const expiredCallsTotal = expiredCallsReady ? expiredCallEvents.reduce((s, r) => s + r.amount, 0) : null;
-  const totalConfirmed = ready ? dividendsGross + expiredCallsTotal : null;
-  const totalConfirmedNet = ready ? (dividendsNet ?? dividendsGross) + expiredCallsTotal : null;
+  const optionsSummary = summarizeOptions(optionEvents, optionsReady);
+  const optionsTotal = optionsSummary.amount;
+  const totalConfirmed = ready ? dividendsGross + optionsTotal : null;
+  const totalConfirmedNet = ready ? (dividendsNet ?? dividendsGross) + optionsTotal : null;
 
   const monthMap = new Map(
     (ready ? enumerateMonths(fromDate, toDate) : []).map(m => [
       m,
-      {month: m, dividends: 0, expiredCalls: 0, total: 0, dividendCount: 0, callCount: 0},
+      {
+        month: m,
+        dividends: 0,
+        callPnl: 0,
+        putPnl: 0,
+        optionsPnl: 0,
+        expiredCalls: 0,
+        total: 0,
+        dividendCount: 0,
+        callCount: 0,
+        putCount: 0,
+        optionCount: 0,
+      },
     ])
   );
 
@@ -372,19 +626,27 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
         bucket.dividendCount += 1;
       }
     }
-    for (const r of expiredCallEvents) {
+    for (const r of optionEvents) {
       const ym = r.date.slice(0, 7);
       const bucket = monthMap.get(ym);
       if (bucket) {
+        if (r.right === 'P') {
+          bucket.putPnl += r.amount;
+          bucket.putCount += 1;
+        } else {
+          bucket.callPnl += r.amount;
+          bucket.callCount += 1;
+        }
+        bucket.optionsPnl += r.amount;
         bucket.expiredCalls += r.amount;
         bucket.total += r.amount;
-        bucket.callCount += 1;
+        bucket.optionCount += 1;
       }
     }
   }
 
-  const byTicker = ready ? buildTickerBreakdown(dividendEvents, expiredCallEvents, totalConfirmed) : [];
-  const recentEvents = ready ? buildConfirmedEventRows(dividendEvents, expiredCallEvents, 30) : [];
+  const byTicker = ready ? buildTickerBreakdown(dividendEvents, optionEvents, totalConfirmed) : [];
+  const recentEvents = ready ? buildConfirmedEventRows(dividendEvents, optionEvents, 50) : [];
 
   const availableYears = [];
   const annual = {};
@@ -399,13 +661,14 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
       const yrEnd = toDate < `${yr}-12-31` ? toDate : `${yr}-12-31`;
       const yrDivs = dividendEvents.filter(r => r.date >= yrStart && r.date <= yrEnd);
       const yrTaxes = taxEvents.filter(r => r.date >= yrStart && r.date <= yrEnd);
-      const yrCalls = expiredCallEvents.filter(r => r.date >= yrStart && r.date <= yrEnd);
+      const yrOpts = optionEvents.filter(r => r.date >= yrStart && r.date <= yrEnd);
 
       const yrDivGross = yrDivs.reduce((s, r) => s + r.amount, 0);
       const yrTaxSum = taxReady ? yrTaxes.reduce((s, r) => s + r.amount, 0) : null;
       const yrDivNet = yrTaxSum !== null ? yrDivGross + yrTaxSum : null;
-      const yrCallSum = yrCalls.reduce((s, r) => s + r.amount, 0);
-      const yrTotal = yrDivGross + yrCallSum;
+      const yrOptSummary = summarizeOptions(yrOpts, true);
+      const yrOptSum = yrOptSummary.amount;
+      const yrTotal = yrDivGross + yrOptSum;
 
       const monthly12 = [];
       for (let m = 1; m <= 12; m += 1) {
@@ -418,14 +681,22 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
           month: ym,
           covered: Boolean(curBucket),
           dividends: curBucket?.dividends ?? 0,
-          expiredCalls: curBucket?.expiredCalls ?? 0,
+          callPnl: curBucket?.callPnl ?? 0,
+          putPnl: curBucket?.putPnl ?? 0,
+          optionsPnl: curBucket?.optionsPnl ?? 0,
+          expiredCalls: curBucket?.optionsPnl ?? 0,
           total: curBucket?.total ?? 0,
           dividendCount: curBucket?.dividendCount ?? 0,
           callCount: curBucket?.callCount ?? 0,
+          putCount: curBucket?.putCount ?? 0,
+          optionCount: curBucket?.optionCount ?? 0,
           priorYearMonth: priorYm,
           priorYearCovered: Boolean(prevBucket),
           priorYearDividends: prevBucket?.dividends ?? 0,
-          priorYearCalls: prevBucket?.expiredCalls ?? 0,
+          priorYearCallPnl: prevBucket?.callPnl ?? 0,
+          priorYearPutPnl: prevBucket?.putPnl ?? 0,
+          priorYearOptions: prevBucket?.optionsPnl ?? 0,
+          priorYearCalls: prevBucket?.optionsPnl ?? 0,
           priorYearTotal: prevBucket?.total ?? 0,
         });
       }
@@ -442,18 +713,18 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
         const currDivComp = dividendEvents
           .filter(r => r.date >= compCurrStart && r.date <= compCurrEnd)
           .reduce((s, r) => s + r.amount, 0);
-        const currCallComp = expiredCallEvents
+        const currOptComp = optionEvents
           .filter(r => r.date >= compCurrStart && r.date <= compCurrEnd)
           .reduce((s, r) => s + r.amount, 0);
-        const currTotalComp = currDivComp + currCallComp;
+        const currTotalComp = currDivComp + currOptComp;
 
         const priorDivComp = dividendEvents
           .filter(r => r.date >= overlapPriorStart && r.date <= overlapPriorEnd)
           .reduce((s, r) => s + r.amount, 0);
-        const priorCallComp = expiredCallEvents
+        const priorOptComp = optionEvents
           .filter(r => r.date >= overlapPriorStart && r.date <= overlapPriorEnd)
           .reduce((s, r) => s + r.amount, 0);
-        const priorTotalComp = priorDivComp + priorCallComp;
+        const priorTotalComp = priorDivComp + priorOptComp;
         const fullSamePeriod = overlapPriorStart === targetPriorStart && overlapPriorEnd === targetPriorEnd;
 
         yoy = {
@@ -467,10 +738,14 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
           priorTotal: priorTotalComp,
           deltaTotal: currTotalComp - priorTotalComp,
           pctTotal: priorTotalComp > 0 ? (currTotalComp - priorTotalComp) / priorTotalComp : null,
-          currentCalls: currCallComp,
-          priorCalls: priorCallComp,
-          deltaCalls: currCallComp - priorCallComp,
-          pctCalls: priorCallComp > 0 ? (currCallComp - priorCallComp) / priorCallComp : null,
+          currentOptions: currOptComp,
+          priorOptions: priorOptComp,
+          deltaOptions: currOptComp - priorOptComp,
+          pctOptions: priorOptComp > 0 ? (currOptComp - priorOptComp) / priorOptComp : null,
+          currentCalls: currOptComp,
+          priorCalls: priorOptComp,
+          deltaCalls: currOptComp - priorOptComp,
+          pctCalls: priorOptComp > 0 ? (currOptComp - priorOptComp) / priorOptComp : null,
           currentDividends: currDivComp,
           priorDividends: priorDivComp,
           deltaDividends: currDivComp - priorDivComp,
@@ -488,7 +763,11 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
           priorTotal: null,
           deltaTotal: null,
           pctTotal: null,
-          currentCalls: yrCallSum,
+          currentOptions: yrOptSum,
+          priorOptions: null,
+          deltaOptions: null,
+          pctOptions: null,
+          currentCalls: yrOptSum,
           priorCalls: null,
           deltaCalls: null,
           pctCalls: null,
@@ -512,21 +791,37 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
           netAmount: yrDivNet,
           eventCount: yrDivs.length,
         },
+        options: {
+          amount: yrOptSummary.amount,
+          callAmount: yrOptSummary.callAmount,
+          putAmount: yrOptSummary.putAmount,
+          expiredAmount: yrOptSummary.expiredAmount,
+          closedProfitAmount: yrOptSummary.closedProfitAmount,
+          closedLossAmount: yrOptSummary.closedLossAmount,
+          settlementCount: yrOptSummary.settlementCount,
+          callCount: yrOptSummary.callCount,
+          putCount: yrOptSummary.putCount,
+          contractCount: yrOptSummary.contractCount,
+          callContractCount: yrOptSummary.callContractCount,
+          putContractCount: yrOptSummary.putContractCount,
+          winCount: yrOptSummary.winCount,
+          lossCount: yrOptSummary.lossCount,
+        },
         expiredCalls: {
-          amount: yrCallSum,
-          settlementCount: yrCalls.length,
-          contractCount: yrCalls.reduce((s, r) => s + (r.contracts ?? 1), 0),
+          amount: yrOptSummary.amount,
+          settlementCount: yrOptSummary.settlementCount,
+          contractCount: yrOptSummary.contractCount,
         },
         monthly: monthly12,
-        byTicker: buildTickerBreakdown(yrDivs, yrCalls, yrTotal),
-        recentEvents: buildConfirmedEventRows(yrDivs, yrCalls, 50),
+        byTicker: buildTickerBreakdown(yrDivs, yrOpts, yrTotal),
+        recentEvents: buildConfirmedEventRows(yrDivs, yrOpts, 60),
         yoy,
       };
     }
   }
 
   return {
-    status: ready ? 'ready' : (dividendsReady || expiredCallsReady) ? 'partial' : 'history_required',
+    status: ready ? 'ready' : (dividendsReady || optionsReady) ? 'partial' : 'history_required',
     fromDate,
     toDate,
     totalConfirmed,
@@ -538,11 +833,12 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
       netAmount: dividendsNet,
       eventCount: dividendEvents.length,
     },
+    options: optionsSummary,
     expiredCalls: {
-      status: expiredCallsReady ? 'ready' : 'trade_history_required',
-      amount: expiredCallsTotal,
-      settlementCount: expiredCallEvents.length,
-      contractCount: expiredCallEvents.reduce((s, r) => s + (r.contracts ?? 1), 0),
+      status: optionsReady ? 'ready' : 'trade_history_required',
+      amount: optionsTotal,
+      settlementCount: optionsSummary.settlementCount,
+      contractCount: optionsSummary.contractCount,
     },
     availableYears,
     annual,
@@ -551,7 +847,7 @@ export function portfolioPassiveIncome(accounts, baseCurrency = null) {
     recentEvents,
     pendingShortCalls,
     pendingShortPuts,
-    basis: 'confirmed_broker_cash_dividends_plus_otm_expired_short_call_fifo_net_premium',
+    basis: 'confirmed_broker_cash_dividends_plus_realized_call_put_option_fifo_pnl',
   };
 }
 

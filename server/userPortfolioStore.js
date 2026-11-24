@@ -344,7 +344,9 @@ function dedupeByEventKey(prevRows = [], nextRows = []) {
 function extractPassiveSlot(account, index) {
   const h = account?.historyEvidence;
   if (!h?.fromDate || !h?.toDate || h.fromDate > h.toDate || h.incomeStatus !== "ready") return null;
-  if (h.expiredCallsStatus !== "ready" || !Array.isArray(h.expiredShortCalls)) return null;
+  const hasRealizedOptions = h.realizedOptionsStatus === "ready" && Array.isArray(h.realizedOptions);
+  const hasExpiredCalls = h.expiredCallsStatus === "ready" && Array.isArray(h.expiredShortCalls);
+  if (!hasRealizedOptions && !hasExpiredCalls) return null;
   const accountKey = String(account.accountId || `slot-${index}:${account.currency || ""}`);
   return {
     accountKey,
@@ -353,10 +355,12 @@ function extractPassiveSlot(account, index) {
     toDate: h.toDate,
     incomeStatus: "ready",
     dividendTaxStatus: h.dividendTaxStatus === "ready" ? "ready" : "unavailable",
-    expiredCallsStatus: "ready",
+    expiredCallsStatus: hasExpiredCalls ? "ready" : "unavailable",
+    realizedOptionsStatus: hasRealizedOptions ? "ready" : "unavailable",
     income: (h.income || []).filter(r => r?.eventKey && (r.category === "dividends" || r.category === "substitute_dividends")),
     dividendTaxes: h.dividendTaxStatus === "ready" ? (h.dividendTaxes || []).filter(r => r?.eventKey) : [],
-    expiredShortCalls: (h.expiredShortCalls || []).filter(r => r?.eventKey),
+    expiredShortCalls: hasExpiredCalls ? (h.expiredShortCalls || []).filter(r => r?.eventKey) : [],
+    realizedOptions: hasRealizedOptions ? (h.realizedOptions || []).filter(r => r?.eventKey) : [],
   };
 }
 
@@ -371,6 +375,13 @@ function mergePassiveLedgerSlots(previousSlots = [], analysisAccounts = []) {
     const contiguous = prev.fromDate <= nextIsoDay(current.toDate) && current.fromDate <= nextIsoDay(prev.toDate);
     if (!contiguous) return current.toDate >= prev.toDate ? current : prev;
     const taxReady = prev.dividendTaxStatus === "ready" && current.dividendTaxStatus === "ready";
+    const prevRealizedOpts = prev.realizedOptionsStatus === "ready" && Array.isArray(prev.realizedOptions)
+      ? prev.realizedOptions
+      : (prev.expiredShortCalls || []).filter(r => r?.date && r.date < current.fromDate);
+    const curRealizedOpts = current.realizedOptionsStatus === "ready" && Array.isArray(current.realizedOptions)
+      ? current.realizedOptions
+      : (current.expiredShortCalls || []);
+    const realizedReady = current.realizedOptionsStatus === "ready" || prev.realizedOptionsStatus === "ready";
     return {
       accountKey: current.accountKey,
       currency: current.currency,
@@ -379,9 +390,11 @@ function mergePassiveLedgerSlots(previousSlots = [], analysisAccounts = []) {
       incomeStatus: "ready",
       dividendTaxStatus: taxReady ? "ready" : "unavailable",
       expiredCallsStatus: "ready",
+      realizedOptionsStatus: realizedReady ? "ready" : "unavailable",
       income: dedupeByEventKey(prev.income, current.income),
       dividendTaxes: taxReady ? dedupeByEventKey(prev.dividendTaxes, current.dividendTaxes) : [],
       expiredShortCalls: dedupeByEventKey(prev.expiredShortCalls, current.expiredShortCalls),
+      realizedOptions: realizedReady ? dedupeByEventKey(prevRealizedOpts, curRealizedOpts) : [],
     };
   }).filter(Boolean);
 }

@@ -555,7 +555,8 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
   bool _hasPassiveIncomeContent(Map<String, dynamic> h) {
     final passive = asMap(h['passiveIncome']);
     if (passive['status'] == 'ready') return true;
-    return asList(asMap(passive['pendingShortCalls'])['rows']).isNotEmpty;
+    return asList(asMap(passive['pendingShortCalls'])['rows']).isNotEmpty ||
+        asList(asMap(passive['pendingShortPuts'])['rows']).isNotEmpty;
   }
 
   void _showMobilePnlFootnoteSheet(Map<String, dynamic> g) {
@@ -777,7 +778,9 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
         : rawRows.reversed.take(30).toList();
     final passive = asMap(h['passiveIncome']);
     final dividends = asMap(passive['dividends']);
-    final expiredCalls = asMap(passive['expiredCalls']);
+    final realizedOptions = asMap(passive['options']).isNotEmpty
+        ? asMap(passive['options'])
+        : asMap(passive['expiredCalls']);
     final passiveByTicker = asList(passive['byTicker']);
     final pendingShortCalls = asList(asMap(passive['pendingShortCalls'])['rows']);
     final trailing = asMap(h['trailingDividends']);
@@ -1244,11 +1247,14 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                     ),
                     Divider(height: 1, color: p.border),
                     _mobileSheetMetricRow(
-                      'Expired OTM Short Calls (${number(expiredCalls['contractCount']).round()})',
-                      '到期落袋权利金 (${number(expiredCalls['contractCount']).round()} 张)',
+                      'Realized Options Call/Put (${number(realizedOptions['contractCount']).round()})',
+                      '期权已实现盈亏 Call/Put (${number(realizedOptions['contractCount']).round()} 张)',
                       hideAmounts
                           ? '••••'
-                          : amount(expiredCalls['amount'] ?? 0),
+                          : amount(realizedOptions['amount'] ?? 0),
+                      valueColor: number(realizedOptions['amount']) < 0
+                          ? p.negative
+                          : null,
                     ),
                     if (trailing['status'] == 'ready') ...[
                       Divider(height: 1, color: p.border),
@@ -5592,7 +5598,9 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
         : rawRows.reversed.take(40).toList();
     final passive = asMap(h['passiveIncome']);
     final dividends = asMap(passive['dividends']);
-    final expiredCalls = asMap(passive['expiredCalls']);
+    final realizedOptions = asMap(passive['options']).isNotEmpty
+        ? asMap(passive['options'])
+        : asMap(passive['expiredCalls']);
     final passiveByTicker = asList(passive['byTicker']);
     final pendingShortCalls = asList(asMap(passive['pendingShortCalls'])['rows']);
     final trailing = asMap(h['trailingDividends']);
@@ -6029,11 +6037,18 @@ extension _PersonalPortfolioHome on _PortfolioResearchPanelState {
                 ),
                 Divider(height: 1, color: Colors.white.withValues(alpha: .06)),
                 _mobileSheetMetricRow(
-                  'Expired Short Calls (${number(expiredCalls['contractCount']).round()})',
-                  '到期落袋权利金 (${number(expiredCalls['contractCount']).round()} 张)',
+                  'Realized Options Call/Put (${number(realizedOptions['contractCount']).round()})',
+                  '期权已实现盈亏 Call/Put (${number(realizedOptions['contractCount']).round()} 张)',
                   hideAmounts
                       ? '••••'
-                      : _snowballMoneyCompact(g, expiredCalls['amount'] ?? 0),
+                      : _snowballMoneyCompact(
+                          g,
+                          realizedOptions['amount'] ?? 0,
+                          signed: true,
+                        ),
+                  valueColor: number(realizedOptions['amount']) < 0
+                      ? const Color(0xFFFB7185)
+                      : null,
                 ),
                 if (trailing['status'] == 'ready') ...[
                   Divider(

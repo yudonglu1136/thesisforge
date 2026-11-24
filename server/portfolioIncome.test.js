@@ -77,7 +77,7 @@ test('v4 stores income structurally with provenance; pre-income snapshots stay r
     assert.equal(portfolioIncome(localOwnerPortfolio({id:'local-dev-user'},env).analysisAccounts).grossReceived,null);
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
 });
-test('passiveIncome confirms cash dividends and expired OTM short calls while isolating open, early-closed and assigned calls',()=>{
+test('passiveIncome confirms cash dividends plus all realized Call & Put expirations, TP and SL while isolating open and assigned options',()=>{
   const s=statement();
   s.fromDate='20260101';s.toDate='20260228';
   s.Trades={Trade:[
@@ -85,22 +85,30 @@ test('passiveIncome confirms cash dividends and expired OTM short calls while is
     {tradeID:'T1',assetCategory:'OPT',symbol:'NVDA  260116C00250000',description:'NVDA 16JAN26 250 C',
       transactionType:'BookTrade',openCloseIndicator:'C',buySell:'BUY',quantity:2,tradePrice:0,proceeds:0,
       tradeDate:'20260116',expiry:'20260116',strike:250,fifoPnlRealized:240,currency:'USD',fxRateToBase:1},
-    // 2. Early bought-to-close short Call (+90) -> NOT expired, must NOT enter passiveIncome
+    // 2. Early bought-to-close short Call TP (+90) -> MUST be included
     {tradeID:'T2',assetCategory:'OPT',symbol:'GOOG  260220C00400000',description:'GOOG 20FEB26 400 C',
       transactionType:'ExchTrade',openCloseIndicator:'C',buySell:'BUY',quantity:1,tradePrice:0.5,proceeds:-50,
       tradeDate:'20260205',expiry:'20260220',strike:400,fifoPnlRealized:90,currency:'USD',fxRateToBase:1},
-    // 3. Assigned ITM short Call (fifoPnlRealized = 0) -> NOT expired worthless income
+    // 3. Assigned ITM short Call (fifoPnlRealized = 0) -> excluded (folded into stock basis)
     {tradeID:'T3',assetCategory:'OPT',symbol:'GOOG  260116C00330000',description:'GOOG 16JAN26 330 C',
       transactionType:'BookTrade',openCloseIndicator:'C',buySell:'BUY',quantity:1,tradePrice:0,proceeds:0,
       tradeDate:'20260116',expiry:'20260116',strike:330,fifoPnlRealized:0,currency:'USD',fxRateToBase:1},
-    // 4. Long Call expired worthless (-15) -> NOT short call income
+    // 4. Long Call expired worthless (-15) -> MUST be included (stop/expiry loss)
     {tradeID:'T4',assetCategory:'OPT',symbol:'QQQ   260116C00750000',description:'QQQ 16JAN26 750 C',
       transactionType:'BookTrade',openCloseIndicator:'C',buySell:'SELL',quantity:-1,tradePrice:0,proceeds:0,
       tradeDate:'20260116',expiry:'20260116',strike:750,fifoPnlRealized:-15,currency:'USD',fxRateToBase:1},
-    // 5. Expired Put (+180) -> Put, NOT Call
+    // 5. Expired Short Put (+180) -> MUST be included
     {tradeID:'T5',assetCategory:'OPT',symbol:'SPCX  260116P00095000',description:'SPCX 16JAN26 95 P',
       transactionType:'BookTrade',openCloseIndicator:'C',buySell:'BUY',quantity:1,tradePrice:0,proceeds:0,
       tradeDate:'20260116',expiry:'20260116',strike:95,fifoPnlRealized:180,currency:'USD',fxRateToBase:1},
+    // 6. Early closed Put Stop Loss (-120) -> MUST be included
+    {tradeID:'T6',assetCategory:'OPT',symbol:'QQQ   260220P00550000',description:'QQQ 20FEB26 550 P',
+      transactionType:'ExchTrade',openCloseIndicator:'C',buySell:'BUY',quantity:2,tradePrice:2.4,proceeds:-480,
+      tradeDate:'20260210',expiry:'20260220',strike:550,fifoPnlRealized:-120,currency:'USD',fxRateToBase:1},
+    // 7. Pure opening trade ('O', fifoPnlRealized = 0) -> MUST be excluded
+    {tradeID:'T7',assetCategory:'OPT',symbol:'PLTR  260320C00250000',description:'PLTR 20MAR26 250 C',
+      transactionType:'ExchTrade',openCloseIndicator:'O',buySell:'SELL',quantity:-3,tradePrice:1.4,proceeds:420,
+      tradeDate:'20260218',expiry:'20260320',strike:250,fifoPnlRealized:0,currency:'USD',fxRateToBase:1},
   ]};
   s.OpenPosition=[
     {symbol:'PLTR  260320C00250000',description:'PLTR 20MAR26 250 C',assetCategory:'OPT',currency:'USD',
@@ -113,27 +121,66 @@ test('passiveIncome confirms cash dividends and expired OTM short calls while is
   assert.equal(passive.dividends.grossAmount,115);
   assert.equal(passive.dividends.withholdingTax,-15);
   assert.equal(passive.dividends.netAmount,100);
-  // Only T1 (+240) qualifies as confirmed expired short Call
-  assert.equal(passive.expiredCalls.amount,240);
-  assert.equal(passive.expiredCalls.settlementCount,1);
-  assert.equal(passive.expiredCalls.contractCount,2);
-  assert.equal(passive.totalConfirmed,355);
+  // Realized Call + Put net P&L: Call (+240 +90 -15 = +315) + Put (+180 -120 = +60) = +375
+  assert.equal(passive.options.amount,375);
+  assert.equal(passive.options.callAmount,315);
+  assert.equal(passive.options.putAmount,60);
+  assert.equal(passive.options.settlementCount,5);
+  assert.equal(passive.options.contractCount,7); // 2 + 1 + 1 + 1 + 2
+  assert.equal(passive.options.winCount,3);
+  assert.equal(passive.options.lossCount,2);
+  assert.equal(passive.expiredCalls.amount,375);
+  assert.equal(passive.totalConfirmed,490); // 115 + 375
+  assert.equal(passive.totalConfirmedNet,475); // 100 + 375
   assert.equal(passive.monthly.length,2);
   assert.equal(passive.monthly[0].month,'2026-01');
   assert.equal(passive.monthly[0].dividends,115);
-  assert.equal(passive.monthly[0].expiredCalls,240);
+  assert.equal(passive.monthly[0].callPnl,225); // +240 - 15
+  assert.equal(passive.monthly[0].putPnl,180);
+  assert.equal(passive.monthly[0].optionsPnl,405);
+  assert.equal(passive.monthly[1].month,'2026-02');
+  assert.equal(passive.monthly[1].callPnl,90);
+  assert.equal(passive.monthly[1].putPnl,-120);
+  assert.equal(passive.monthly[1].optionsPnl,-30);
+  assert.equal(passive.monthly[1].total,-30);
+  // QQQ has net negative (-15 - 120 = -135) and MUST remain visible in byTicker!
+  const qqqRow=passive.byTicker.find(r=>r.ticker==='QQQ');
+  assert.ok(qqqRow);
+  assert.equal(qqqRow.callPnl,-15);
+  assert.equal(qqqRow.putPnl,-120);
+  assert.equal(qqqRow.total,-135);
   assert.equal(passive.pendingShortCalls.confirmed,false);
   assert.equal(passive.pendingShortCalls.count,1);
   assert.equal(passive.pendingShortCalls.totalContracts,3);
   assert.equal(passive.pendingShortCalls.collectedPremium,420);
 
-  // Also verify v4 fallback when expiredShortCalls array was not stored on an older saved account
+  // Also verify v4 fallback when realizedOptions/expiredShortCalls were not stored on an older saved account
   const legacyAcc=structuredClone(accs[0]);
+  delete legacyAcc.historyEvidence.realizedOptionsStatus;
+  delete legacyAcc.historyEvidence.realizedOptions;
   delete legacyAcc.historyEvidence.expiredCallsStatus;
   delete legacyAcc.historyEvidence.expiredShortCalls;
   const fallback=portfolioPassiveIncome([legacyAcc],'USD');
   assert.equal(fallback.status,'ready');
-  assert.equal(fallback.expiredCalls.amount,240);
+  assert.equal(fallback.options.amount,375);
+  assert.equal(fallback.options.callAmount,315);
+  assert.equal(fallback.options.putAmount,60);
+
+  // Also verify pre-upgrade passiveHistoryEvidence (only expiredShortCalls) merges full realized from historyEvidence
+  const legacySlotAcc=structuredClone(accs[0]);
+  legacySlotAcc.passiveHistoryEvidence={
+    fromDate:'2026-01-01',toDate:'2026-02-28',
+    incomeStatus:'ready',dividendTaxStatus:'ready',expiredCallsStatus:'ready',
+    income:legacySlotAcc.historyEvidence.income,
+    dividendTaxes:legacySlotAcc.historyEvidence.dividendTaxes,
+    expiredShortCalls:legacySlotAcc.historyEvidence.expiredShortCalls,
+  };
+  delete legacySlotAcc.historyEvidence.realizedOptionsStatus;
+  delete legacySlotAcc.historyEvidence.realizedOptions;
+  const upgraded=portfolioPassiveIncome([legacySlotAcc],'USD');
+  assert.equal(upgraded.status,'ready');
+  assert.equal(upgraded.options.amount,375);
+  assert.equal(upgraded.options.putAmount,60);
 });
 
 test('passiveIncome computes multi-year annual summaries and strict same-period YoY comparisons',()=>{

@@ -687,4 +687,141 @@ void main() {
       expect(t.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'confirmed passive income includes Call & Put TP/SL (including negative months and negative tickers)',
+    (t) async {
+      final tpSlFixture = <String, dynamic>{
+        'status': 'ready',
+        'fromDate': '2026-01-01',
+        'toDate': '2026-03-31',
+        'totalConfirmed': 490,
+        'dividends': {
+          'status': 'ready',
+          'grossAmount': 115,
+          'withholdingTax': -15,
+          'netAmount': 100,
+          'eventCount': 2,
+        },
+        'options': {
+          'status': 'ready',
+          'amount': 375,
+          'callAmount': 315,
+          'putAmount': 60,
+          'settlementCount': 5,
+          'contractCount': 7,
+          'winCount': 3,
+          'lossCount': 2,
+        },
+        'expiredCalls': {
+          'status': 'ready',
+          'amount': 375,
+          'settlementCount': 5,
+          'contractCount': 7,
+        },
+        'monthly': [
+          {
+            'month': '2026-01',
+            'dividends': 115,
+            'callPnl': 225,
+            'putPnl': 180,
+            'optionsPnl': 405,
+            'expiredCalls': 405,
+            'total': 520,
+            'dividendCount': 2,
+            'callCount': 2,
+            'putCount': 1,
+            'optionCount': 3,
+          },
+          {
+            'month': '2026-02',
+            'dividends': 0,
+            'callPnl': 90,
+            'putPnl': -120,
+            'optionsPnl': -30,
+            'expiredCalls': -30,
+            'total': -30,
+            'dividendCount': 0,
+            'callCount': 1,
+            'putCount': 1,
+            'optionCount': 2,
+          },
+        ],
+        'byTicker': [
+          {
+            'ticker': 'NVDA',
+            'dividends': 0,
+            'callPnl': 240,
+            'putPnl': 0,
+            'optionsPnl': 240,
+            'total': 240,
+          },
+          {
+            'ticker': 'SPCX',
+            'dividends': 0,
+            'callPnl': 0,
+            'putPnl': 180,
+            'optionsPnl': 180,
+            'total': 180,
+          },
+          {
+            'ticker': 'QQQ',
+            'dividends': 0,
+            'callPnl': -15,
+            'putPnl': -120,
+            'optionsPnl': -135,
+            'total': -135,
+          },
+        ],
+        'recentEvents': [
+          {
+            'date': '2026-02-10',
+            'ticker': 'QQQ',
+            'kind': 'put_sl',
+            'right': 'P',
+            'strike': 550,
+            'amount': -120,
+          },
+          {
+            'date': '2026-02-05',
+            'ticker': 'GOOG',
+            'kind': 'call_tp',
+            'right': 'C',
+            'strike': 400,
+            'amount': 90,
+          },
+        ],
+        'pendingShortCalls': {'count': 0, 'rows': []},
+        'pendingShortPuts': {'count': 0, 'rows': []},
+      };
+
+      await mount(
+        t,
+        PortfolioPassiveIncomeCard(
+          passiveIncome: tpSlFixture,
+          currency: 'USD',
+          palette: Palette(false),
+          hideAmounts: false,
+        ),
+        lang: AppLanguage.zh,
+      );
+
+      expect(find.text('期权已实现净盈亏（Call/Put）'), findsOneWidget);
+      expect(find.text('USD 490'), findsOneWidget);
+      expect(find.text('USD 375'), findsOneWidget);
+      expect(
+        find.textContaining('Call +USD 315 · Put +USD 60'),
+        findsOneWidget,
+      );
+      // Negative net ticker (QQQ -USD 135) must be rendered visibly, never filtered out
+      expect(find.text('-USD 135'), findsOneWidget);
+
+      await tap(t, find.byKey(const ValueKey('passive-income-ledger-toggle')));
+      expect(find.text('Put 止损'), findsOneWidget);
+      expect(find.text('Call 止盈'), findsOneWidget);
+      expect(find.text('-USD 120'), findsOneWidget);
+      expect(find.text('+USD 90'), findsOneWidget);
+      expect(t.takeException(), isNull);
+    },
+  );
 }
