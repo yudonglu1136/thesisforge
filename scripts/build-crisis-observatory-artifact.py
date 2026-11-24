@@ -55,22 +55,31 @@ CC_MODE_SPECS: list[dict[str, Any]] = [
         "summary_zh": "平时不卖 Call，牛市主升浪 100% 零封顶损耗，仅在危机信号触发时开启保护。",
     },
     {
-        "id": "cc_high_vol",
-        "label_en": "25D +10% OTM · High IV (VXN>=25)",
-        "label_zh": "高波卖 25D Call（推荐 · VXN≥25）",
-        "short_en": "High-IV 25D CC",
-        "short_zh": "高波 25D Call",
-        "summary_en": "When within 3% of ATH and VXN >= 25 (rich vol), sell 25D (20-30 DTE) +10% OTM Calls on uncollared shares to build cash -> 0 breaches in 12y, funds Naked Puts first & buys dips on VIX/3M >= 1.10.",
-        "summary_zh": "距前高 ≤ 3% 且隐波肥厚（VXN ≥ 25）时，对非领口仓位卖 25 天（20–30 DTE 黄金区间）+10% 虚值 Call 攒现金——12 年零击穿，优先免费付首仓裸 Put 保费，余钱留到 VIX/3M ≥ 1.10 恐慌抄底 QQQ。",
+        "id": "cc_hv_8",
+        "label_en": "High-IV 25D +8% (Rec.)",
+        "label_zh": "高波 25D +8%（推荐）",
+        "short_en": "High-IV 25D +8%",
+        "short_zh": "高波 25D +8%",
+        "summary_en": "When within 3% of ATH and VXN >= 25 (rich vol), sell 25D +8% OTM Calls on uncollared shares -> 0 breaches in 12y, highest cash war chest (+$44.8K) funding Naked Puts first & buying dips on VIX/3M >= 1.10.",
+        "summary_zh": "距前高 ≤ 3% 且隐波肥厚（VXN ≥ 25）时，对非领口仓位卖 25 天 +8% 虚值 Call 攒现金——12 年零击穿、收现最肥（+$44.8K），优先免费付首仓裸 Put 保费，余钱留到 VIX/3M ≥ 1.10 恐慌抄底 QQQ。",
     },
     {
-        "id": "cc_always",
-        "label_en": "25D +10% OTM · Always (ATH<=3%)",
-        "label_zh": "全天候 25D Call（ATH≤3%）",
-        "short_en": "Always 25D CC",
-        "short_zh": "全天候 25D Call",
-        "summary_en": "Unconditionally sells 25D (20-30 DTE) +10% OTM Calls whenever within 3% of ATH (any VXN) to accumulate cash — cuts 45D breach drag in half, still shows low-IV breakout drag in 2026-05.",
-        "summary_zh": "只要距前高 ≤ 3%（不限 VXN）即持续卖 25 天 +10% 虚值 Call 攒现金——较 45 天损耗减半且躲过 2020-08，但仍直观呈现 2026-05 低波主升浪击穿代价。",
+        "id": "cc_hv_9",
+        "label_en": "High-IV 25D +9% (Ultra-Safe)",
+        "label_zh": "高波 25D +9%（零穿最稳）",
+        "short_en": "High-IV 25D +9%",
+        "short_zh": "高波 25D +9%",
+        "summary_en": "When within 3% of ATH and VXN >= 25, sell 25D +9% OTM Calls on uncollared shares -> 0 breaches across both fixed 25D and standard Friday expiries, collecting +$31.2K cash to fund Naked Puts.",
+        "summary_zh": "距前高 ≤ 3% 且 VXN ≥ 25 时卖 25 天 +9% 虚值 Call 攒现金——连实盘美股周五到期也保持 12 年零击穿，稳收 +$31.2K 现金抵付裸 Put 保费。",
+    },
+    {
+        "id": "cc_always_8",
+        "label_en": "Always 25D +8% (ATH<=3%)",
+        "label_zh": "全天候 25D +8%（ATH≤3%）",
+        "short_en": "Always 25D +8%",
+        "short_zh": "全天候 25D +8%",
+        "summary_en": "Unconditionally sells 25D +8% OTM Calls whenever within 3% of ATH (any VXN) to accumulate cash — transparent comparison showing low-IV breakout breach drag (2026-05).",
+        "summary_zh": "只要距前高 ≤ 3%（不限 VXN）即持续卖 25 天 +8% 虚值 Call 攒现金——直观对比不设 VXN 门控在 2026-05 低波主升浪被穿价的真实代价。",
     },
 ]
 
@@ -399,10 +408,16 @@ def simulate_strategy(
     in_slow_bear_def = False
     pending_bear_change: str | None = None
 
-    cc_enabled = cc_mode in ("cc_high_vol", "cc_always") and arch != "pure_qqq"
-    cc_min_vxn = 25.0 if cc_mode == "cc_high_vol" else 0.0
+    cc_cfg_map = {
+        "cc_hv_8": (25.0, 0.08),
+        "cc_hv_9": (25.0, 0.09),
+        "cc_always_8": (0.0, 0.08),
+        "cc_high_vol": (25.0, 0.08),
+        "cc_always": (0.0, 0.08),
+    }
+    cc_enabled = cc_mode in cc_cfg_map and arch != "pure_qqq"
+    cc_min_vxn, cc_otm_pct = cc_cfg_map.get(cc_mode, (0.0, 0.08))
     cc_ath_limit = 0.03
-    cc_otm_pct = 0.10
     cc_dte = 25
 
     active_tranches: list[dict[str, Any]] = []
@@ -2608,7 +2623,7 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     assert doc["default_cc_mode"] == "cc_off", doc["default_cc_mode"]
     assert doc["cc_mode"] == "cc_off", doc["cc_mode"]
     assert set(doc["tp_modes"].keys()) == {"layered_itm", "standard_dual", "both_4x"}
-    assert len(doc["mode_bundles"]) == 9
+    assert len(doc["mode_bundles"]) == 12
     assert doc["as_of_date"] >= "2026-11-20"
     if doc["as_of_date"] == "2026-11-20":
         assert snap["qqq_close"] == 608.45, snap["qqq_close"]
@@ -2639,11 +2654,14 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         d4x_map = {s["id"]: s for s in doc["tp_modes"]["both_4x"]["strategies_summary"]}
         assert abs(d4x_map["U1_PureOptions"]["end_nav"] - 1643122.56) <= 1.0, d4x_map["U1_PureOptions"]["end_nav"]
 
-        hv_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_high_vol"]["strategies_summary"]}
-        assert hv_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "High-IV 25D CC must beat no-CC baseline"
-        assert hv_map["U1_PureOptions"]["cc_assigned_count"] == 0, hv_map["U1_PureOptions"]["cc_assigned_count"]
-        al_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_always"]["strategies_summary"]}
-        assert al_map["U1_PureOptions"]["cc_trades_count"] >= 30
+        hv8_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_hv_8"]["strategies_summary"]}
+        assert hv8_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "High-IV 25D +8% CC must beat no-CC baseline"
+        assert hv8_map["U1_PureOptions"]["cc_assigned_count"] == 0, hv8_map["U1_PureOptions"]["cc_assigned_count"]
+        hv9_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_hv_9"]["strategies_summary"]}
+        assert hv9_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "High-IV 25D +9% CC must beat no-CC baseline"
+        assert hv9_map["U1_PureOptions"]["cc_assigned_count"] == 0, hv9_map["U1_PureOptions"]["cc_assigned_count"]
+        al8_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_always_8"]["strategies_summary"]}
+        assert al8_map["U1_PureOptions"]["cc_trades_count"] >= 45
 
     assert len(doc["six_crisis_lights"]) == 6
     assert len(doc["crisis_windows"]) == 7

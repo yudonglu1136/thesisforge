@@ -42,8 +42,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   static const List<String> _ccModeIds = [
     'cc_off',
-    'cc_high_vol',
-    'cc_always',
+    'cc_hv_8',
+    'cc_hv_9',
+    'cc_always_8',
   ];
 
   static const Map<String, String> _strategyNavKeys = {
@@ -89,7 +90,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   }
 
   String _normalizeCcMode(String raw) {
-    return _ccModeIds.contains(raw) ? raw : 'cc_off';
+    final mapped = switch (raw) {
+      'cc_high_vol' => 'cc_hv_8',
+      'cc_always' => 'cc_always_8',
+      _ => raw,
+    };
+    return _ccModeIds.contains(mapped) ? mapped : 'cc_off';
   }
 
   @override
@@ -299,14 +305,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String _humanCcModeLabel(String modeId) {
     return switch (modeId) {
       'cc_off' => w('Off', '关闭'),
-      'cc_high_vol' => w(
-        'High-IV 25D Call (Rec. · VXN>=25)',
-        '高波卖 25D Call（推荐 · VXN≥25）',
-      ),
-      'cc_always' => w(
-        'Always 25D Call (ATH<=3% · +10%)',
-        '全天候 25D Call（ATH≤3% · +10%）',
-      ),
+      'cc_hv_8' => w('High-IV 25D +8% (Rec.)', '高波 25D +8%（推荐）'),
+      'cc_hv_9' => w('High-IV 25D +9% (Ultra-Safe)', '高波 25D +9%（零穿最稳）'),
+      'cc_always_8' => w('Always 25D +8%', '全天候 25D +8%'),
       _ => w('Off', '关闭'),
     };
   }
@@ -322,13 +323,17 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         'Normal-time covered calls OFF · 100% uncapped upside during bull trends',
         '平时不卖 Call · 牛市主升浪 100% 零封顶损耗',
       ),
-      'cc_high_vol' => w(
-        '25D (20-30 DTE) +10% OTM Call when ATH <= 3% & VXN >= 25 (uncollared shares) -> $ccN trades ($ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} cash (funded ${_fmtUsd(ccPutFund)} of Put cost, early close ${_fmtUsd(-ccLoss)})',
-        '距前高 ≤ 3% 且 VXN ≥ 25 时卖 25 天（20–30 DTE）+10% OTM Call 攒现金（非领口仓位）：共 $ccN 次（被穿 $ccAsgn 次），收现金 ${_fmtUsd(ccPrem, signed: true)}（免费付 Put 保费 ${_fmtUsd(ccPutFund)} · 提前平仓 ${_fmtUsd(-ccLoss)}）',
+      'cc_hv_8' => w(
+        '25D +8% OTM Call when ATH <= 3% & VXN >= 25 (uncollared shares) -> $ccN trades ($ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} cash (funded ${_fmtUsd(ccPutFund)} of Put cost, early close ${_fmtUsd(-ccLoss)})',
+        '距前高 ≤ 3% 且 VXN ≥ 25 时卖 25 天 +8% OTM Call 攒现金（非领口仓位）：共 $ccN 次（被穿 $ccAsgn 次），收现金 ${_fmtUsd(ccPrem, signed: true)}（免费付 Put 保费 ${_fmtUsd(ccPutFund)} · 提前平仓 ${_fmtUsd(-ccLoss)}）',
       ),
-      'cc_always' => w(
-        '25D (20-30 DTE) +10% OTM Call whenever ATH <= 3% (any VXN) -> $ccN trades ($ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} cash vs ${_fmtUsd(-ccLoss)} breakout breach drag (2026-05)',
-        '距前高 ≤ 3% 全天候卖 25 天（20–30 DTE）+10% OTM Call 攒现金（不限 VXN）：共 $ccN 次（被穿 $ccAsgn 次），收现金 ${_fmtUsd(ccPrem, signed: true)}，但低波主升浪击穿成本 ${_fmtUsd(-ccLoss)}（2026-05）',
+      'cc_hv_9' => w(
+        '25D +9% OTM Call when ATH <= 3% & VXN >= 25 (0 breaches even on Fri expiries) -> $ccN trades ($ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} cash (funded ${_fmtUsd(ccPutFund)} of Put cost, early close ${_fmtUsd(-ccLoss)})',
+        '距前高 ≤ 3% 且 VXN ≥ 25 时卖 25 天 +9% OTM Call 攒现金（连实盘周五到期也零击穿）：共 $ccN 次（被穿 $ccAsgn 次），收现金 ${_fmtUsd(ccPrem, signed: true)}（免费付 Put 保费 ${_fmtUsd(ccPutFund)} · 提前平仓 ${_fmtUsd(-ccLoss)}）',
+      ),
+      'cc_always_8' => w(
+        '25D +8% OTM Call whenever ATH <= 3% (any VXN) -> $ccN trades ($ccAsgn breached), collected ${_fmtUsd(ccPrem, signed: true)} cash vs ${_fmtUsd(-ccLoss)} breakout breach drag (2026-05)',
+        '距前高 ≤ 3% 全天候卖 25 天 +8% OTM Call 攒现金（不限 VXN）：共 $ccN 次（被穿 $ccAsgn 次），收现金 ${_fmtUsd(ccPrem, signed: true)}，但低波主升浪击穿成本 ${_fmtUsd(-ccLoss)}（2026-05）',
       ),
       _ => '',
     };
@@ -2523,8 +2528,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                           children: [
                             Text(
                               w(
-                                'Normal-Time 25D +10% OTM Covered Call Cash Ledger (${ccList.length} trades)',
-                                '平时卖 25D +10% OTM Call 攒现金明细（共 ${ccList.length} 笔）',
+                                'Normal-Time 25D ${selectedCcMode == 'cc_hv_9' ? '+9%' : '+8%'} OTM Covered Call Cash Ledger (${ccList.length} trades)',
+                                '平时卖 25D ${selectedCcMode == 'cc_hv_9' ? '+9%' : '+8%'} OTM Call 攒现金明细（共 ${ccList.length} 笔）',
                               ),
                               style: TextStyle(
                                 color: p.text,

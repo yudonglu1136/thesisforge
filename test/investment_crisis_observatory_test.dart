@@ -186,14 +186,14 @@ void main() {
         findsOneWidget,
       );
 
-      // Switch selectable Normal-Time 25D +10% OTM Covered Call modes live
+      // Switch selectable 4-way Normal-Time 25D Covered Call modes live: +8% HV -> +9% HV -> +8% Always -> Off
       await tapVisible(
         tester,
-        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_high_vol')),
+        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_hv_8')),
       );
-      expect(find.text('\$1,683,325'), findsOneWidget);
-      expect(find.text('2,766.6 sh'), findsOneWidget);
-      expect(find.textContaining('+30.7%'), findsWidgets);
+      expect(find.text('\$1,708,351'), findsOneWidget);
+      expect(find.text('2,807.7 sh'), findsOneWidget);
+      expect(find.textContaining('+32.6%'), findsWidgets);
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-cc-ledger-toggle')),
@@ -202,11 +202,19 @@ void main() {
 
       await tapVisible(
         tester,
-        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_always')),
+        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_hv_9')),
       );
-      expect(find.text('\$1,619,515'), findsOneWidget);
-      expect(find.text('2,661.7 sh'), findsOneWidget);
-      expect(find.textContaining('+25.7%'), findsWidgets);
+      expect(find.text('\$1,693,978'), findsOneWidget);
+      expect(find.text('2,784.1 sh'), findsOneWidget);
+      expect(find.textContaining('+31.5%'), findsWidgets);
+
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-cc-mode-pill-cc_always_8')),
+      );
+      expect(find.text('\$1,643,395'), findsOneWidget);
+      expect(find.text('2,700.9 sh'), findsOneWidget);
+      expect(find.textContaining('+27.6%'), findsWidgets);
 
       await tapVisible(
         tester,
@@ -381,8 +389,9 @@ void main() {
         expect(find.text('分层实值（推荐）'), findsOneWidget);
         expect(find.text('标准 1.10'), findsOneWidget);
         expect(find.text('两槽 4x 深度'), findsOneWidget);
-        expect(find.text('高波卖 25D Call（推荐 · VXN≥25）'), findsOneWidget);
-        expect(find.text('全天候 25D Call（ATH≤3% · +10%）'), findsOneWidget);
+        expect(find.text('高波 25D +8%（推荐）'), findsOneWidget);
+        expect(find.text('高波 25D +9%（零穿最稳）'), findsOneWidget);
+        expect(find.text('全天候 25D +8%'), findsOneWidget);
         expect(find.text('6 / 6 亮灯'), findsOneWidget);
         expect(find.text('历史保护策略 vs 死拿 QQQ'), findsOneWidget);
         expect(find.text('100% 满仓 QQQ · 2,719.3 股'), findsOneWidget);
