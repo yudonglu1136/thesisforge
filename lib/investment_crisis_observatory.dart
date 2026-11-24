@@ -58,6 +58,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   ];
 
   static const List<String> _wcModeIds = [
+    'wc_reclaim_30d_d35',
     'wc_30d_c5s5',
     'wc_14d_c0s2',
   ];
@@ -81,7 +82,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String selectedTpMode = 'layered_itm';
   String selectedCcMode = 'cc_off';
   String selectedSpMode = 'sp_off';
-  String selectedWcMode = 'wc_30d_c5s5';
+  String selectedWcMode = 'wc_reclaim_30d_d35';
   String selectedWindowId = 'ALL';
   String activeForensicWindowId = '2026-08_11_LIVE';
   bool useLogScale = true;
@@ -131,11 +132,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   String _normalizeWcMode(String raw) {
     final mapped = switch (raw) {
-      '30d' || '30d_c5s5' || 'c5s5' || 'rec' || 'default' => 'wc_30d_c5s5',
+      'reclaim' || 'd35' || 'reclaim_30d_d35' || 'rec' || 'default' =>
+        'wc_reclaim_30d_d35',
+      '30d' || '30d_c5s5' || 'c5s5' => 'wc_30d_c5s5',
       '14d' || '14d_c0s2' || 'c0s2' || 'legacy' || 'breakeven' => 'wc_14d_c0s2',
       _ => raw,
     };
-    return _wcModeIds.contains(mapped) ? mapped : 'wc_30d_c5s5';
+    return _wcModeIds.contains(mapped) ? mapped : 'wc_reclaim_30d_d35';
   }
 
   @override
@@ -203,7 +206,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         data != null) {
       return;
     }
-    final effectiveWc = nextSp == 'sp_off' ? 'wc_30d_c5s5' : nextWc;
+    final effectiveWc = nextSp == 'sp_off' ? 'wc_reclaim_30d_d35' : nextWc;
     final cacheKey = '${widget.asOf}::$nextTp::$nextCc::$nextSp::$effectiveWc';
     final cached = _tpModeCache[cacheKey];
     if (cached != null) {
@@ -245,7 +248,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final targetCc = selectedCcMode;
     final targetSp = selectedSpMode;
     final targetWc = selectedWcMode;
-    final effectiveWc = targetSp == 'sp_off' ? 'wc_30d_c5s5' : targetWc;
+    final effectiveWc = targetSp == 'sp_off' ? 'wc_reclaim_30d_d35' : targetWc;
     setState(() {
       if (!isModeSwitch) {
         loading = true;
@@ -618,23 +621,28 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   String _humanWcModeLabel(String modeId) {
     return switch (modeId) {
+      'wc_reclaim_30d_d35' => w(
+        'Reclaim K -> 30D 0.35Δ (Rec.)',
+        '涨回接货价卖 30D 0.35Δ（推荐）',
+      ),
       'wc_30d_c5s5' => w(
-        '30D +5% Cost/Spot (Rec.)',
-        '30D 双+5%（推荐）',
+        '30D +5% Cost/Spot (Immediate)',
+        '30D 双+5%（立即卖）',
       ),
       'wc_14d_c0s2' => w(
         '14D Breakeven+2% (Legacy)',
         '14D 保本+2%（原基准）',
       ),
-      _ => w('30D +5% Cost/Spot (Rec.)', '30D 双+5%（推荐）'),
+      _ => w('Reclaim K -> 30D 0.35Δ (Rec.)', '涨回接货价卖 30D 0.35Δ（推荐）'),
     };
   }
 
   String _humanWcModeShort(String modeId) {
     return switch (modeId) {
+      'wc_reclaim_30d_d35' => w('Reclaim -> 30D 0.35Δ', '涨回卖 30D 0.35Δ'),
       'wc_30d_c5s5' => w('30D +5% WC', '30D 双+5% Call'),
       'wc_14d_c0s2' => w('14D BE+2% WC', '14D 保本+2% Call'),
-      _ => w('30D +5% WC', '30D 双+5% Call'),
+      _ => w('Reclaim -> 30D 0.35Δ', '涨回卖 30D 0.35Δ'),
     };
   }
 
@@ -646,9 +654,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final cycEn = maxCyc > 0 ? ' · max cycle ${maxCyc}d' : '';
     final cycZh = maxCyc > 0 ? ' · 最长清债周期 $maxCyc 天' : '';
     return switch (modeId) {
+      'wc_reclaim_30d_d35' => w(
+        'Hold uncapped while QQQ < K_assign; once EOD >= K_assign, sell 30D 0.35Δ Call next open$cycEn',
+        '水下严禁封顶卖 Call，保留 100% 反弹斜率；收盘涨回 ≥ 接货价后次日开盘卖 30D 0.35Δ Call$cycZh',
+      ),
       'wc_30d_c5s5' => w(
-        'Strike = max(1.05x Cost, 1.05x Spot) · Captures +5% rebound & richer 30D Call rent$cycEn',
-        '行权价 = max(1.05×成本, 1.05×现价) · 留足 +5% 反弹空间并多收 30D 权利金$cycZh',
+        'Strike = max(1.05x Cost, 1.05x Spot) · Immediately sells 30D Call after assignment$cycEn',
+        '行权价 = max(1.05×成本, 1.05×现价) · 接货次日立即卖 30D Call$cycZh',
       ),
       'wc_14d_c0s2' => w(
         'Strike = max(Cost, 1.02x Spot) · Fast breakeven call-away de-leveraging$cycEn',
@@ -669,13 +681,18 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final marginInt = _numVal(stratSummary['margin_interest_usd']);
     final maxLev = _numVal(stratSummary['max_gross_stock_lev'], 1.0);
     final calmar = _numVal(stratSummary['calmar']);
-    final is30d = selectedWcMode != 'wc_14d_c0s2';
-    final wcRuleEn = is30d
-        ? '30D +5% Wheel Call max(1.05*K_assign, 1.05*S)'
-        : '${modeId == 'sp_10d_vixf' ? '10D' : '14D'} Breakeven+2% Wheel Call max(K_assign, 1.02*S)';
-    final wcRuleZh = is30d
-        ? '接货反向卖 30D 双+5% Call 去杠杆'
-        : '接货反向卖 ${modeId == 'sp_10d_vixf' ? '10D' : '14D'} 保本+2% Call 去杠杆';
+    final wcRuleEn = switch (selectedWcMode) {
+      'wc_reclaim_30d_d35' => 'Wait reclaim >= K_assign then 30D 0.35Δ Wheel Call',
+      'wc_30d_c5s5' => '30D +5% Wheel Call max(1.05*K_assign, 1.05*S)',
+      _ =>
+        '${modeId == 'sp_10d_vixf' ? '10D' : '14D'} Breakeven+2% Wheel Call max(K_assign, 1.02*S)',
+    };
+    final wcRuleZh = switch (selectedWcMode) {
+      'wc_reclaim_30d_d35' => '接货水下不封顶 · 涨回接货价后卖 30D 0.35Δ Call 去杠杆',
+      'wc_30d_c5s5' => '接货反向卖 30D 双+5% Call 去杠杆',
+      _ =>
+        '接货反向卖 ${modeId == 'sp_10d_vixf' ? '10D' : '14D'} 保本+2% Call 去杠杆',
+    };
     return switch (modeId) {
       'sp_off' => w(
         'Engine 3 OFF · 0 margin debt, max stock exposure strictly 1.00x',
@@ -2965,8 +2982,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       indexTag: '03',
       title: w('Panic Put Reverse Wheel', '恐慌卖 Put Wheel'),
       regimeTag: w(
-        'VIX/3M >= 1.00 inversion · Controlled dip harvest',
-        'VIX/3M ≥ 1.00 倒挂抄底 · 反向 30D Call',
+        'VIX/3M >= 1.00 inversion · Reclaim K -> 30D 0.35Δ Call',
+        'VIX/3M ≥ 1.00 倒挂抄底 · 涨回成本卖 30D 0.35Δ Call',
       ),
       accent: _amber,
       active: e3Active,

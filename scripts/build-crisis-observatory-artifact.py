@@ -44,22 +44,33 @@ STOCK_REBAL_FEE = 0.0003
 DEFAULT_TP_MODE = "layered_itm"
 DEFAULT_CC_MODE = "cc_off"
 DEFAULT_SP_MODE = "sp_off"
-DEFAULT_WC_MODE = "wc_30d_c5s5"
+DEFAULT_WC_MODE = "wc_reclaim_30d_d35"
 MARGIN_SPREAD = 0.015
 OPT_COMM_PER_SH = 0.0065
 MIN_OPT_BID = 0.05
 
 WC_MODE_SPECS: list[dict[str, Any]] = [
     {
+        "id": "wc_reclaim_30d_d35",
+        "label_en": "Reclaim K -> 30D 0.35Δ (Rec.)",
+        "label_zh": "涨回接货价卖 30D 0.35Δ（推荐）",
+        "short_en": "Reclaim -> 30D 0.35Δ",
+        "short_zh": "涨回成本卖 30D 0.35Δ",
+        "formula_en": "Hold uncapped while QQQ < K_assign; once QQQ >= K_assign sell 30D 0.35Δ Call",
+        "formula_zh": "接货水下零封顶死拿，待 QQQ 涨回 >= 接货行权价后卖 30D 0.35Δ Call",
+        "summary_en": "When assigned, holds shares 100% uncapped below K_assign; once QQQ EOD reclaims K_assign, sells a volatility-scaled 30D 0.35-Delta Call (max(K_assign, K_35Δ)) for richer premium ($1,838,505 on 10D VIX-Falling, $1,805,856 on 10% Cap, $1,901,035 on 20% Cap).",
+        "summary_zh": "接股后水下阶段不卖 Call（100% 保留深坑反弹），待收盘涨回接货行权价 K 后次日开盘按 30D 0.35Δ 动态卖 Call（收租增厚 77% · 10D VIX回落档升至 $1,838,505、10%帽 $1,805,856、20%帽 $1,901,035）。",
+    },
+    {
         "id": "wc_30d_c5s5",
-        "label_en": "30D +5% Cost/Spot (Rec)",
-        "label_zh": "30D 双+5%（推荐）",
+        "label_en": "30D +5% Cost/Spot (Immediate)",
+        "label_zh": "30D 双+5%（立即卖）",
         "short_en": "30D +5% Cost/Spot",
         "short_zh": "30D 双+5%",
         "formula_en": "max(1.05x Cost, 1.05x Spot)",
         "formula_zh": "max(1.05×成本, 1.05×现价)",
-        "summary_en": "When assigned, sells 30D Reverse Wheel Call at max(1.05*K_assign, 1.05*S) — captures +5% post-crash V-rebound before clearing margin debt within <= 111d (Calmar 0.685 on 10% Cap, $1,930,239 on 20% Cap).",
-        "summary_zh": "接货后卖 30D 反向 Wheel Call，行权价 max(1.05×成本, 1.05×现价)——锁住灾后 +5% V 反利润且最长 111 天清债去杠杆（10%帽 Calmar 升至 0.685，20%帽终值达 $1,930,239）。",
+        "summary_en": "Immediately after assignment sells 30D Reverse Wheel Call at max(1.05*K_assign, 1.05*S) — captures +5% post-crash V-rebound before clearing margin debt within <= 111d (Calmar 0.685 on 10% Cap, $1,930,239 on 20% Cap).",
+        "summary_zh": "接货次日即卖 30D 反向 Wheel Call，行权价 max(1.05×成本, 1.05×现价)——锁住灾后 +5% V 反利润且最长 111 天清债去杠杆（10%帽 Calmar 0.685，20%帽终值 $1,930,239）。",
     },
     {
         "id": "wc_14d_c0s2",
@@ -87,20 +98,20 @@ SP_MODE_SPECS: list[dict[str, Any]] = [
     {
         "id": "sp_14d_cap10",
         "label_en": "14D 10% Cap (Calmar #1 · Rec.)",
-        "label_zh": "14D 10%帽（Calmar冠军 · 推荐）",
-        "short_en": "14D 10% Cap (Calmar #1)",
-        "short_zh": "14D 10%帽（Calmar冠军）",
-        "summary_en": "Sells 14D 5% OTM Put on VIX/VIX3M >= 1.00 capped at <= 10% equity; if assigned, sells 30D Wheel Call at max(1.05*K_assign, 1.05*S) until called away -> $1,819,738 NAV, Calmar 0.685, MaxDD -29.82%, $1,481 12-yr interest.",
-        "summary_zh": "VIX/VIX3M >= 1.00 卖 14D 5% OTM Put（名义严控 <= 10% 净值）；若接货默认按 max(1.05×成本, 1.05×现价) 卖 30D Wheel Call 直至被 Call 走清债——终值 $1,819,738、Calmar 0.685 全场第一、最大回撤 -29.82%。",
+        "label_zh": "14D 10%帽（稳健 · 推荐）",
+        "short_en": "14D 10% Cap",
+        "short_zh": "14D 10%帽",
+        "summary_en": "Sells 14D 5% OTM Put on VIX/VIX3M >= 1.00 capped at <= 10% equity; if assigned, holds uncapped until QQQ reclaims K_assign then sells 30D 0.35Δ Wheel Call -> $1,805,856 NAV, $8,956 WC prem (switchable to 30D +5% or 14D BE+2%).",
+        "summary_zh": "VIX/VIX3M >= 1.00 卖 14D 5% OTM Put（名义严控 <= 10% 净值）；若接货默认待涨回接货行权价后再卖 30D 0.35Δ Wheel Call——终值 $1,805,856、Wheel Call 收租 $8,956（支持一键对比 30D 双+5% 与 14D 原基准）。",
     },
     {
         "id": "sp_10d_vixf",
         "label_en": "10D VIX Falling (20% Cap)",
-        "label_zh": "10D VIX回落（20%帽）",
+        "label_zh": "10D VIX回落（20%帽 · Calmar冠军）",
         "short_en": "10D VIX Falling (20%)",
         "short_zh": "10D VIX回落（20%帽）",
-        "summary_en": "Requires VIX/VIX3M >= 1.00 AND VIX[t] < VIX[t-1] (panic cresting) before selling 10D 5% OTM Put (<= 20% cap) + Reverse Wheel -> $1,831,563 NAV, 27 trades, 3 assignments, $1,257 12-yr interest.",
-        "summary_zh": "要求 VIX/VIX3M >= 1.00 且当日 VIX 回落（VIX[t] < VIX[t-1] 恐慌见顶拐头）才卖 10D 5% OTM Put（<= 20% 名义帽）+ 反向 Wheel——终值 $1,831,563，12 年仅 27 笔、3 次接货。",
+        "summary_en": "Requires VIX/VIX3M >= 1.00 AND VIX[t] < VIX[t-1] (panic cresting) before selling 10D 5% OTM Put (<= 20% cap) + Reclaim 30D 0.35Δ Wheel -> $1,838,505 NAV, Calmar 0.676, 27 trades, 3 assignments, $1,251 12-yr interest.",
+        "summary_zh": "要求 VIX/VIX3M >= 1.00 且当日 VIX 回落（恐慌见顶拐头）才卖 10D 5% OTM Put（<= 20% 名义帽）+ 涨回接货价卖 30D 0.35Δ Call——终值升至 $1,838,505、Calmar 0.676，12 年仅 27 笔、3 次接货。",
     },
     {
         "id": "sp_14d_unf",
@@ -108,8 +119,8 @@ SP_MODE_SPECS: list[dict[str, Any]] = [
         "label_zh": "14D 无过滤（20%帽 · 收益冠军）",
         "short_en": "14D Unfiltered (20%)",
         "short_zh": "14D 无过滤（20%帽）",
-        "summary_en": "Sells 14D 5% OTM Put whenever VIX/VIX3M >= 1.00 capped at <= 20% equity + 30D +5% Reverse Wheel -> $1,930,239 terminal NAV (+49.83% extra QQQ shares), 21.02% CAGR.",
-        "summary_zh": "只要 VIX/VIX3M >= 1.00 即卖 14D 5% OTM Put（<= 20% 名义帽）+ 30D 双+5% 反向 Wheel——终值达 $1,930,239 全场最高（多攒 +49.83% QQQ 份额），年化 21.02%。",
+        "summary_en": "Sells 14D 5% OTM Put whenever VIX/VIX3M >= 1.00 capped at <= 20% equity + Reclaim 30D 0.35Δ Reverse Wheel -> $1,901,035 terminal NAV (+47.56% extra QQQ shares), $18,463 WC prem, 20.87% CAGR.",
+        "summary_zh": "只要 VIX/VIX3M >= 1.00 即卖 14D 5% OTM Put（<= 20% 名义帽）+ 涨回接货价卖 30D 0.35Δ Call——终值达 $1,901,035（多攒 +47.56% QQQ 份额、Wheel Call 收租 $18,463），年化 20.87%。",
     },
 ]
 
@@ -1166,7 +1177,18 @@ def simulate_strategy(
             pw = pending_wc
             pending_wc = None
             vxn_wc = max(10.0, pw["vxn"] - 0.45 * (op / pw["close"] - 1.0) * 100.0)
-            if wc_mode == "wc_30d_c5s5":
+            if wc_mode == "wc_reclaim_30d_d35":
+                target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
+                pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
+                if pos_wc < len(dates):
+                    exp_date_wc, exp_dt_wc = dates[pos_wc], dt_objs[pos_wc]
+                else:
+                    exp_date_wc, exp_dt_wc = target_wc_dt.isoformat(), target_wc_dt
+                act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
+                t_wc_solve = act_dte_wc / 365.0
+                k_d35 = solve_call_strike_for_delta(op, t_wc_solve, pw["r"], pw["q"], vxn_wc, coeffs, 0.35)
+                kc_wc = max(assigned_cost_k, k_d35)
+            elif wc_mode == "wc_30d_c5s5":
                 target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
                 pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
                 if pos_wc < len(dates):
@@ -1670,7 +1692,8 @@ def simulate_strategy(
                 pending_cc_deploy = True
 
         # E3. Engine 3 Reverse Wheel Call & Short-DTE Panic Put EOD Gates for t+1 Open
-        if sp_enabled and assigned_shares > 1e-6 and active_wc is None:
+        wc_reclaim_ready = (cl >= assigned_cost_k) if wc_mode == "wc_reclaim_30d_d35" else True
+        if sp_enabled and assigned_shares > 1e-6 and active_wc is None and wc_reclaim_ready:
             pending_wc = {
                 "signal_date": d,
                 "close": cl,
@@ -3163,9 +3186,18 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         req_fall = bool(sp_eod["require_vix_falling"])
         mode_gate = vixf_gate if req_fall else unf_gate
         dte_lbl = f"{int(sp_eod['sp_dte'])}D"
-        wc_dte_lbl = "30D" if wc_id == "wc_30d_c5s5" else dte_lbl
-        wc_formula_zh = "max(1.05×成本, 1.05×现价)" if wc_id == "wc_30d_c5s5" else "max(成本, 1.02×现价)"
-        wc_formula_en = "max(1.05x Cost, 1.05x Spot)" if wc_id == "wc_30d_c5s5" else "max(Cost, 1.02x Spot)"
+        is_reclaim_30d = wc_id == "wc_reclaim_30d_d35"
+        wc_dte_lbl = "30D" if wc_id in ("wc_reclaim_30d_d35", "wc_30d_c5s5") else dte_lbl
+        wc_formula_zh = (
+            "涨回接货价后卖 30D 0.35Δ"
+            if is_reclaim_30d
+            else ("max(1.05×成本, 1.05×现价)" if wc_id == "wc_30d_c5s5" else "max(成本, 1.02×现价)")
+        )
+        wc_formula_en = (
+            "Reclaim K_assign -> 30D 0.35Δ"
+            if is_reclaim_30d
+            else ("max(1.05x Cost, 1.05x Spot)" if wc_id == "wc_30d_c5s5" else "max(Cost, 1.02x Spot)")
+        )
         cap_pct = round(float(sp_eod["sp_max_lev"]) * 100.0)
         asgn_sh = float(sp_eod["assigned_shares"])
         asgn_k = float(sp_eod["assigned_cost_k"])
@@ -3173,11 +3205,21 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
         open_wc = sp_eod["open_wheel_call"]
         lev_x = float(sp_eod["gross_stock_lev"])
         spot_cl = float(row["close"])
-        min_kc = (
-            max(asgn_k * 1.05, spot_cl * 1.05)
-            if wc_id == "wc_30d_c5s5"
-            else max(asgn_k, spot_cl * 1.02)
-        ) if asgn_sh > 1e-6 else 0.0
+        if asgn_sh > 1e-6:
+            if is_reclaim_30d:
+                if spot_cl >= asgn_k:
+                    k35_est = solve_call_strike_for_delta(
+                        spot_cl, 30.0 / 365.0, float(row["r"]), float(row["div_yield"]), float(row["vxn"]), coeffs, 0.35
+                    )
+                    min_kc = max(asgn_k, k35_est)
+                else:
+                    min_kc = asgn_k
+            elif wc_id == "wc_30d_c5s5":
+                min_kc = max(asgn_k * 1.05, spot_cl * 1.05)
+            else:
+                min_kc = max(asgn_k, spot_cl * 1.02)
+        else:
+            min_kc = 0.0
 
         if not enabled:
             pos_state = "disabled"
@@ -3203,6 +3245,24 @@ def build_artifact(fact_root: Path | None = None) -> dict[str, Any]:
             )
             detail_zh = f"到期若 QQQ 高于 ${open_wc['kc']:.2f} 即自动被 Call 走清零融资负债，净盈利沉淀为永久 QQQ 份额。"
             detail_en = f"If QQQ closes above ${open_wc['kc']:.2f} at expiry, assigned stock is called away, clearing margin debt into permanent QQQ shares."
+        elif asgn_sh > 1e-6 and is_reclaim_30d and spot_cl < asgn_k:
+            pos_state = "wheel_assigned_wait_reclaim"
+            tone = "wheel"
+            gap_pct = (asgn_k / max(spot_cl, 1e-6) - 1.0) * 100.0
+            badge_zh = (
+                f"已接货进 Wheel（{asgn_sh:.0f}股 @ ${asgn_k:.2f} · 股票敞口 {lev_x:.2f}x）"
+                f" · 水下暂不卖 Call，等涨回 >= ${asgn_k:.2f}（差 +{gap_pct:.1f}%）再卖 30D 0.35Δ Call"
+            )
+            badge_en = (
+                f"Assigned into Wheel ({asgn_sh:.0f} sh @ ${asgn_k:.2f} · {lev_x:.2f}x Stock Lev)"
+                f" · Holding Uncapped until QQQ >= ${asgn_k:.2f} (+{gap_pct:.1f}%), then Sell 30D 0.35Δ Call"
+            )
+            detail_zh = (
+                f"水下阶段严禁封顶卖 Call 且禁止再卖新 Put；按 IBKR 基准利率 +1.50% 计息，100% 保留反弹斜率，待收盘涨回 >= ${asgn_k:.2f} 后次日开盘卖 30D 0.35Δ Call 清债。"
+            )
+            detail_en = (
+                f"No capped calls or new puts while underwater (QQQ ${spot_cl:.2f} < ${asgn_k:.2f}); holds 100% uncapped recovery until EOD reclaim >= ${asgn_k:.2f}, then sells 30D 0.35Δ Call."
+            )
         elif asgn_sh > 1e-6:
             pos_state = "wheel_assigned_wc_armed"
             tone = "wheel"
@@ -3686,8 +3746,8 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     assert doc["cc_mode"] == "cc_off", doc["cc_mode"]
     assert doc["default_sp_mode"] == "sp_off", doc["default_sp_mode"]
     assert doc["sp_mode"] == "sp_off", doc["sp_mode"]
-    assert doc["default_wc_mode"] == "wc_30d_c5s5", doc["default_wc_mode"]
-    assert doc["wc_mode"] == "wc_30d_c5s5", doc["wc_mode"]
+    assert doc["default_wc_mode"] == "wc_reclaim_30d_d35", doc["default_wc_mode"]
+    assert doc["wc_mode"] == "wc_reclaim_30d_d35", doc["wc_mode"]
     assert [m["id"] for m in doc["sp_modes_meta"]] == [
         "sp_off",
         "sp_14d_cap10",
@@ -3695,11 +3755,12 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         "sp_14d_unf",
     ]
     assert [m["id"] for m in doc["wc_modes_meta"]] == [
+        "wc_reclaim_30d_d35",
         "wc_30d_c5s5",
         "wc_14d_c0s2",
     ]
     assert set(doc["tp_modes"].keys()) == {"layered_itm", "standard_dual", "both_4x"}
-    assert len(doc["mode_bundles"]) == 84, len(doc["mode_bundles"])
+    assert len(doc["mode_bundles"]) == 120, len(doc["mode_bundles"])
     assert doc["as_of_date"] >= "2026-11-20"
     if doc["as_of_date"] == "2026-11-20":
         assert snap["qqq_close"] == 608.45, snap["qqq_close"]
@@ -3742,10 +3803,63 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         assert cr55_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "Delta 0.55 credit roll must beat baseline"
         assert cr55_map["U1_PureOptions"]["cc_active_years"] >= 11
 
-        # Exact penny-level assertions on NEW DEFAULT wc_30d_c5s5 (30D + max(1.05*K, 1.05*S))
-        cap10_30d = {
+        # Exact penny-level assertions on NEW DEFAULT wc_reclaim_30d_d35 (Hold uncapped until QQQ >= K_assign -> 30D 0.35Δ Call)
+        cap10_rec = {
             s["id"]: s
             for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10"]["strategies_summary"]
+        }
+        assert abs(cap10_rec["U1_PureOptions"]["end_nav"] - 1805855.89) <= 0.05, cap10_rec["U1_PureOptions"]["end_nav"]
+        assert cap10_rec["U1_PureOptions"]["cagr_pct"] == 20.34
+        assert cap10_rec["U1_PureOptions"]["max_dd_pct"] == -30.96
+        assert cap10_rec["U1_PureOptions"]["sharpe"] == 0.881
+        assert cap10_rec["U1_PureOptions"]["calmar"] == 0.657
+        assert cap10_rec["U1_PureOptions"]["sp_trades_count"] == 44
+        assert cap10_rec["U1_PureOptions"]["sp_assignments_count"] == 5
+        assert cap10_rec["U1_PureOptions"]["wc_trades_count"] == 8
+        assert cap10_rec["U1_PureOptions"]["wc_called_away_count"] == 4
+        assert abs(cap10_rec["U1_PureOptions"]["wc_gross_prem_usd"] - 8956.46) <= 0.05
+        assert abs(cap10_rec["U1_PureOptions"]["margin_interest_usd"] - 3842.41) <= 0.05
+        assert cap10_rec["U1_PureOptions"]["days_levered_stock"] == 337
+        assert cap10_rec["U1_PureOptions"]["max_wheel_cycle_days"] == 355
+
+        vixf_rec = {
+            s["id"]: s
+            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf"]["strategies_summary"]
+        }
+        assert abs(vixf_rec["U1_PureOptions"]["end_nav"] - 1838505.47) <= 0.05, vixf_rec["U1_PureOptions"]["end_nav"]
+        assert vixf_rec["U1_PureOptions"]["cagr_pct"] == 20.53
+        assert vixf_rec["U1_PureOptions"]["max_dd_pct"] == -30.38
+        assert vixf_rec["U1_PureOptions"]["sharpe"] == 0.885
+        assert vixf_rec["U1_PureOptions"]["calmar"] == 0.676
+        assert vixf_rec["U1_PureOptions"]["sp_trades_count"] == 27
+        assert vixf_rec["U1_PureOptions"]["sp_assignments_count"] == 3
+        assert vixf_rec["U1_PureOptions"]["wc_trades_count"] == 5
+        assert vixf_rec["U1_PureOptions"]["wc_called_away_count"] == 3
+        assert abs(vixf_rec["U1_PureOptions"]["wc_gross_prem_usd"] - 7976.65) <= 0.05
+        assert abs(vixf_rec["U1_PureOptions"]["margin_interest_usd"] - 1250.65) <= 0.05
+        assert vixf_rec["U1_PureOptions"]["days_levered_stock"] == 133
+        assert vixf_rec["U1_PureOptions"]["max_wheel_cycle_days"] == 106
+
+        unf_rec = {
+            s["id"]: s
+            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf"]["strategies_summary"]
+        }
+        assert abs(unf_rec["U1_PureOptions"]["end_nav"] - 1901035.03) <= 0.05, unf_rec["U1_PureOptions"]["end_nav"]
+        assert unf_rec["U1_PureOptions"]["cagr_pct"] == 20.87
+        assert unf_rec["U1_PureOptions"]["wc_trades_count"] == 8
+        assert abs(unf_rec["U1_PureOptions"]["wc_gross_prem_usd"] - 18463.22) <= 0.05
+        assert abs(unf_rec["U1_PureOptions"]["margin_interest_usd"] - 7942.77) <= 0.05
+
+        sp_live_rec = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10"]["live_sp_state"]
+        assert sp_live_rec["wc_mode"] == "wc_reclaim_30d_d35"
+        assert sp_live_rec["position_state"] == "wheel_assigned_wait_reclaim"
+        assert sp_live_rec["min_next_wc_strike"] == 625.43
+        assert "等涨回 >= $625.43" in sp_live_rec["badge_zh"]
+
+        # Exact penny-level assertions on COMPARE wc_30d_c5s5 (30D + max(1.05*K, 1.05*S))
+        cap10_30d = {
+            s["id"]: s
+            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10__wc_30d_c5s5"]["strategies_summary"]
         }
         assert abs(cap10_30d["U1_PureOptions"]["end_nav"] - 1819738.31) <= 0.05, cap10_30d["U1_PureOptions"]["end_nav"]
         assert cap10_30d["U1_PureOptions"]["cagr_pct"] == 20.42
@@ -3765,7 +3879,7 @@ def verify_artifact(doc: dict[str, Any]) -> None:
 
         vixf_30d = {
             s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf"]["strategies_summary"]
+            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf__wc_30d_c5s5"]["strategies_summary"]
         }
         assert abs(vixf_30d["U1_PureOptions"]["end_nav"] - 1831562.63) <= 0.05, vixf_30d["U1_PureOptions"]["end_nav"]
         assert vixf_30d["U1_PureOptions"]["cagr_pct"] == 20.49
@@ -3785,7 +3899,7 @@ def verify_artifact(doc: dict[str, Any]) -> None:
 
         unf_30d = {
             s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf"]["strategies_summary"]
+            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf__wc_30d_c5s5"]["strategies_summary"]
         }
         assert abs(unf_30d["U1_PureOptions"]["end_nav"] - 1930238.95) <= 0.05, unf_30d["U1_PureOptions"]["end_nav"]
         assert unf_30d["U1_PureOptions"]["cagr_pct"] == 21.02
@@ -3802,7 +3916,7 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         assert abs(unf_30d["U1_PureOptions"]["end_assigned_shares"] - 658.56) <= 0.05
 
         # Live 2026-11-20 assigned state verification on wc_30d_c5s5 vs wc_14d_c0s2
-        sp_live_30d = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10"]["live_sp_state"]
+        sp_live_30d = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10__wc_30d_c5s5"]["live_sp_state"]
         assert sp_live_30d["wc_mode"] == "wc_30d_c5s5"
         assert sp_live_30d["min_next_wc_strike"] == 656.70
         assert "30D Wheel Call（K >= $656.70，max(1.05×成本, 1.05×现价)）" in sp_live_30d["badge_zh"]

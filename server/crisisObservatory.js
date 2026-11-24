@@ -30,6 +30,7 @@ export const CRISIS_OBSERVATORY_SP_MODES = Object.freeze([
   'sp_14d_unf',
 ]);
 export const CRISIS_OBSERVATORY_WC_MODES = Object.freeze([
+  'wc_reclaim_30d_d35',
   'wc_30d_c5s5',
   'wc_14d_c0s2',
 ]);
@@ -42,9 +43,13 @@ const LEGACY_SP_MODE_ALIASES = Object.freeze({
 });
 
 const LEGACY_WC_MODE_ALIASES = Object.freeze({
+  reclaim: 'wc_reclaim_30d_d35',
+  d35: 'wc_reclaim_30d_d35',
+  reclaim_30d_d35: 'wc_reclaim_30d_d35',
+  rec: 'wc_reclaim_30d_d35',
+  default: 'wc_reclaim_30d_d35',
   '30d': 'wc_30d_c5s5',
   c5s5: 'wc_30d_c5s5',
-  default: 'wc_30d_c5s5',
   '14d': 'wc_14d_c0s2',
   c0s2: 'wc_14d_c0s2',
   legacy: 'wc_14d_c0s2',
@@ -306,11 +311,17 @@ function hydrateCrisisWindows(baseWindows, bundleWindows) {
   }));
 }
 
-function resolveModeBundle(rawData, tpMode, ccMode, spMode = 'sp_off', wcMode = 'wc_30d_c5s5') {
+function resolveModeBundle(
+  rawData,
+  tpMode,
+  ccMode,
+  spMode = 'sp_off',
+  wcMode = 'wc_reclaim_30d_d35',
+) {
   const modeBundles = rawData.mode_bundles;
   const tpModes = rawData.tp_modes;
-  const effWc = wcMode || rawData.default_wc_mode || 'wc_30d_c5s5';
-  const defaultWc = rawData.default_wc_mode || 'wc_30d_c5s5';
+  const defaultWc = rawData.default_wc_mode || 'wc_reclaim_30d_d35';
+  const effWc = wcMode || defaultWc;
   const bundleKey =
     spMode === 'sp_off'
       ? `${tpMode}__${ccMode}`
@@ -411,8 +422,9 @@ function buildEngineAttributionByStrategy(
   selectedWcMode,
   { cutoffSeries = null, liveScale = 1.0 } = {},
 ) {
-  const bE1 = resolveModeBundle(rawData, selectedTpMode, 'cc_off', 'sp_off', 'wc_30d_c5s5');
-  const bE2 = resolveModeBundle(rawData, selectedTpMode, selectedCcMode, 'sp_off', 'wc_30d_c5s5');
+  const defaultWc = rawData.default_wc_mode || 'wc_reclaim_30d_d35';
+  const bE1 = resolveModeBundle(rawData, selectedTpMode, 'cc_off', 'sp_off', defaultWc);
+  const bE2 = resolveModeBundle(rawData, selectedTpMode, selectedCcMode, 'sp_off', defaultWc);
   const bE3Standalone = resolveModeBundle(
     rawData,
     selectedTpMode,
@@ -592,10 +604,11 @@ function projectArtifactForModes(
   selectedTpMode,
   selectedCcMode,
   selectedSpMode = 'sp_off',
-  selectedWcMode = 'wc_30d_c5s5',
+  selectedWcMode = 'wc_reclaim_30d_d35',
 ) {
-  const effectiveWcMode = selectedWcMode || 'wc_30d_c5s5';
-  const cacheWcKey = selectedSpMode === 'sp_off' ? 'wc_30d_c5s5' : effectiveWcMode;
+  const defaultWcMode = data.default_wc_mode ?? 'wc_reclaim_30d_d35';
+  const effectiveWcMode = selectedWcMode || defaultWcMode;
+  const cacheWcKey = selectedSpMode === 'sp_off' ? defaultWcMode : effectiveWcMode;
   const cacheKey = `${snapshotId}:${selectedTpMode}:${selectedCcMode}:${selectedSpMode}:${cacheWcKey}`;
   const hit = projectedModeCache.get(cacheKey);
   if (hit) return hit;
@@ -609,7 +622,7 @@ function projectArtifactForModes(
   const bundleKey =
     selectedSpMode === 'sp_off'
       ? `${selectedTpMode}__${selectedCcMode}`
-      : effectiveWcMode === 'wc_30d_c5s5'
+      : effectiveWcMode === defaultWcMode
         ? `${selectedTpMode}__${selectedCcMode}__${selectedSpMode}`
         : `${selectedTpMode}__${selectedCcMode}__${selectedSpMode}__${effectiveWcMode}`;
   const bundle =
@@ -626,7 +639,7 @@ function projectArtifactForModes(
       sp_mode: data.sp_mode ?? 'sp_off',
       default_sp_mode: data.default_sp_mode ?? 'sp_off',
       wc_mode: effectiveWcMode,
-      default_wc_mode: data.default_wc_mode ?? 'wc_30d_c5s5',
+      default_wc_mode: defaultWcMode,
     };
     projectedModeCache.set(cacheKey, fallback);
     return fallback;
@@ -688,7 +701,7 @@ function projectArtifactForModes(
     default_sp_mode: data.default_sp_mode ?? 'sp_off',
     sp_modes_meta: data.sp_modes_meta ?? [],
     wc_mode: effectiveWcMode,
-    default_wc_mode: data.default_wc_mode ?? 'wc_30d_c5s5',
+    default_wc_mode: defaultWcMode,
     wc_modes_meta: data.wc_modes_meta ?? [],
     live_signal_state: bundle.live_signal_state ?? data.live_signal_state,
     live_signal_states_by_strategy:
@@ -998,13 +1011,26 @@ function buildCutoffSpState(
   const reqFall = spMode === 'sp_10d_vixf';
   const modeGate = reqFall ? vixfGate : unfGate;
   const dteLbl = spMode === 'sp_10d_vixf' ? '10D' : '14D';
-  const effWcMode = wcMode || 'wc_30d_c5s5';
-  const wcDteLbl = effWcMode === 'wc_30d_c5s5' ? '30D' : dteLbl;
-  const wcFormulaZh =
-    effWcMode === 'wc_30d_c5s5' ? 'max(1.05×成本, 1.05×现价)' : 'max(成本, 1.02×现价)';
-  const wcFormulaEn =
-    effWcMode === 'wc_30d_c5s5' ? 'max(1.05x Cost, 1.05x Spot)' : 'max(Cost, 1.02x Spot)';
+  const effWcMode = wcMode || 'wc_reclaim_30d_d35';
+  const isReclaim30d = effWcMode === 'wc_reclaim_30d_d35';
+  const wcDteLbl = isReclaim30d || effWcMode === 'wc_30d_c5s5' ? '30D' : dteLbl;
+  const wcFormulaZh = isReclaim30d
+    ? '涨回接货价后卖 30D 0.35Δ'
+    : effWcMode === 'wc_30d_c5s5'
+      ? 'max(1.05×成本, 1.05×现价)'
+      : 'max(成本, 1.02×现价)';
+  const wcFormulaEn = isReclaim30d
+    ? 'Reclaim K_assign -> 30D 0.35Δ'
+    : effWcMode === 'wc_30d_c5s5'
+      ? 'max(1.05x Cost, 1.05x Spot)'
+      : 'max(Cost, 1.02x Spot)';
   const capPct = spMode === 'sp_14d_cap10' ? 10 : 20;
+  const estimate30dD35Strike = (spotPx, barVxn, floorK) => {
+    const sigma = Math.max(Number(barVxn ?? 25) / 100, 0.12);
+    // N^-1(0.65) = 0.38532 for 0.35-Delta 30-calendar-day call
+    const rawK = spotPx * Math.exp(0.38532 * sigma * Math.sqrt(30 / 365));
+    return Math.max(floorK, rawK);
+  };
 
   const openSpLeg =
     enabled
@@ -1046,6 +1072,8 @@ function buildCutoffSpState(
   let minNextWcStrike = null;
   let badgeEn;
   let badgeZh;
+  let detailEn = baseSpState?.detail_en ?? '';
+  let detailZh = baseSpState?.detail_zh ?? '';
   if (!enabled) {
     const invZh = invOn ? '倒挂满足 >=1.00' : '未倒挂 <1.00';
     const invEn = invOn ? 'Inverted >=1.00' : 'Contango <1.00';
@@ -1062,7 +1090,40 @@ function buildCutoffSpState(
     const asgnSh = Number(unclosedAssignLeg.shares ?? 0);
     const asgnK = Number(unclosedAssignLeg.strike ?? 0);
     const isPostLive = artifactAsOfDate && effDate > artifactAsOfDate && effDate > unclosedAssignLeg.exit_date;
-    if (isPostLive) {
+    if (isReclaim30d) {
+      const postBars = slicedSeries.filter(b => b.date > unclosedAssignLeg.exit_date);
+      const firstReclaimIdx = postBars.findIndex(b => Number(b.qqq_close ?? 0) >= asgnK);
+      if (firstReclaimIdx === -1) {
+        const gapPct = (asgnK / Math.max(spotCl, 1e-6) - 1) * 100;
+        positionState = 'wheel_assigned_wait_reclaim';
+        statusTone = 'wheel';
+        minNextWcStrike = r2(asgnK);
+        badgeZh = `已接货进 Wheel（${Math.round(asgnSh)}股 @ $${asgnK.toFixed(2)}）· 水下暂不卖 Call，等涨回 >= $${asgnK.toFixed(2)}（差 +${gapPct.toFixed(1)}%）再卖 30D 0.35Δ Call`;
+        badgeEn = `Assigned into Wheel (${Math.round(asgnSh)} sh @ $${asgnK.toFixed(2)}) · Holding Uncapped until QQQ >= $${asgnK.toFixed(2)} (+${gapPct.toFixed(1)}%), then Sell 30D 0.35Δ Call`;
+        detailZh = `水下阶段严禁封顶卖 Call 且禁止再卖新 Put；按 IBKR 基准利率 +1.50% 计息，100% 保留反弹斜率，待收盘涨回 >= $${asgnK.toFixed(2)} 后次日开盘卖 30D 0.35Δ Call 清债。`;
+        detailEn = `No capped calls or new puts while underwater (QQQ $${spotCl.toFixed(2)} < $${asgnK.toFixed(2)}); holds 100% uncapped recovery until EOD reclaim >= $${asgnK.toFixed(2)}, then sells 30D 0.35Δ Call.`;
+      } else if (firstReclaimIdx === postBars.length - 1) {
+        const estKc = estimate30dD35Strike(spotCl, lastBar.vxn ?? lastBar.vix ?? 25, asgnK);
+        positionState = 'wheel_assigned_wc_armed';
+        statusTone = 'wheel';
+        minNextWcStrike = r2(estKc);
+        badgeZh = `已涨回接货价 >= $${asgnK.toFixed(2)}（${Math.round(asgnSh)}股） -> 次日开盘卖 30D 0.35Δ Wheel Call（预估 K=$${estKc.toFixed(2)}，${wcFormulaZh}）`;
+        badgeEn = `Reclaimed K_assign >= $${asgnK.toFixed(2)} (${Math.round(asgnSh)} sh) -> Next Open Sell 30D 0.35Δ Wheel Call (Est. K=$${estKc.toFixed(2)}, ${wcFormulaEn})`;
+        detailZh = `QQQ 收盘 $${spotCl.toFixed(2)} 已涨回接货成本 $${asgnK.toFixed(2)}，次日开盘卖出 30D 0.35Δ Covered Call（行权价约 $${estKc.toFixed(2)}）启动清债去杠杆。`;
+        detailEn = `QQQ closed at $${spotCl.toFixed(2)} >= $${asgnK.toFixed(2)} cost basis; armed to sell 30D 0.35Δ Covered Call (est. K=$${estKc.toFixed(2)}) at next Open to clear margin debt.`;
+      } else {
+        const sellBar = postBars[firstReclaimIdx + 1] ?? lastBar;
+        const openPxEst = Number(sellBar.qqq_close ?? spotCl);
+        const estKc = estimate30dD35Strike(openPxEst, sellBar.vxn ?? sellBar.vix ?? 25, asgnK);
+        positionState = 'wheel_call_open';
+        statusTone = 'wheel';
+        minNextWcStrike = r2(estKc);
+        badgeZh = `反向 Wheel 持仓中（${Math.round(asgnSh)}股 @ $${asgnK.toFixed(2)}）· 已卖 30D 0.35Δ Call K=$${estKc.toFixed(2)}（${wcFormulaZh}）`;
+        badgeEn = `Wheel Call Active (${Math.round(asgnSh)} sh @ $${asgnK.toFixed(2)}) · Short 30D 0.35Δ Call K=$${estKc.toFixed(2)} (${wcFormulaEn})`;
+        detailZh = `已在涨回 $${asgnK.toFixed(2)} 后卖出 30D 0.35Δ Call（K=$${estKc.toFixed(2)}）；到期若 QQQ 高于行权价即自动被 Call 走清零融资负债。`;
+        detailEn = `Sold 30D 0.35Δ Call (K=$${estKc.toFixed(2)}) after reclaiming $${asgnK.toFixed(2)}; assigned stock clears margin debt if QQQ closes above strike at expiry.`;
+      }
+    } else if (isPostLive) {
       const firstPostBar =
         slicedSeries.find(b => b.date > unclosedAssignLeg.exit_date) ?? lastBar;
       const openPxEst = Number(firstPostBar.qqq_close ?? spotCl);
@@ -1130,6 +1191,8 @@ function buildCutoffSpState(
     min_next_wc_strike: minNextWcStrike,
     badge_en: badgeEn,
     badge_zh: badgeZh,
+    detail_en: detailEn,
+    detail_zh: detailZh,
   };
 }
 
@@ -1163,7 +1226,7 @@ export function loadCrisisObservatoryDashboard({
   if (!CRISIS_OBSERVATORY_SP_MODES.includes(rawSpMode)) {
     fail('invalid_crisis_observatory_sp_mode', 400);
   }
-  const requestedWcMode = wcMode ? String(wcMode).trim() : rawData.default_wc_mode ?? 'wc_30d_c5s5';
+  const requestedWcMode = wcMode ? String(wcMode).trim() : rawData.default_wc_mode ?? 'wc_reclaim_30d_d35';
   const rawWcMode = LEGACY_WC_MODE_ALIASES[requestedWcMode] ?? requestedWcMode;
   if (!CRISIS_OBSERVATORY_WC_MODES.includes(rawWcMode)) {
     fail('invalid_crisis_observatory_wc_mode', 400);

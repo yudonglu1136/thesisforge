@@ -115,8 +115,8 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1402250.68) <= 0.50
     assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02
 
-    # Verify alternate selectable TP, Covered-Call, Panic Put Wheel & Wheel Call modes (84 mode bundles: 3*4*(1+3*2))
-    assert len(doc["mode_bundles"]) == 84
+    # Verify alternate selectable TP, Covered-Call, Panic Put Wheel & Wheel Call modes (120 mode bundles: 3*4*(1+3*3))
+    assert len(doc["mode_bundles"]) == 120
     std_map = {s["id"]: s for s in doc["mode_bundles"]["standard_dual__cc_off"]["strategies_summary"]}
     assert abs(std_map["U1_PureOptions"]["end_nav"] - 1625377.79) <= 0.50
     assert doc["mode_bundles"]["standard_dual__cc_off"]["live_signal_state"]["regime_code"] == "LOW_SPOT_FREEZE_NO_NEW_COLLAR"
@@ -163,8 +163,8 @@ def test_third_engine_panic_put_wheel_3d_matrix():
     doc = json.loads(ARTIFACT_PATH.read_text(encoding="utf-8"))
     assert doc["default_sp_mode"] == "sp_off"
     assert doc["sp_mode"] == "sp_off"
-    assert doc["default_wc_mode"] == "wc_30d_c5s5"
-    assert doc["wc_mode"] == "wc_30d_c5s5"
+    assert doc["default_wc_mode"] == "wc_reclaim_30d_d35"
+    assert doc["wc_mode"] == "wc_reclaim_30d_d35"
     assert [m["id"] for m in doc["sp_modes_meta"]] == [
         "sp_off",
         "sp_14d_cap10",
@@ -172,13 +172,74 @@ def test_third_engine_panic_put_wheel_3d_matrix():
         "sp_14d_unf",
     ]
     assert [m["id"] for m in doc["wc_modes_meta"]] == [
+        "wc_reclaim_30d_d35",
         "wc_30d_c5s5",
         "wc_14d_c0s2",
     ]
-    assert len(doc["mode_bundles"]) == 84
+    assert len(doc["mode_bundles"]) == 120
 
-    # 1. NEW DEFAULT wc_30d_c5s5 (30D + max(1.05*K, 1.05*S)) — Calmar #1 (14D 10% Cap on Dual U1 + layered_itm + cc_d12_d35)
-    cap10_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10"]
+    # 1. NEW DEFAULT wc_reclaim_30d_d35 (Hold uncapped < K_assign, then 30D 0.35Δ Call) — 14D 10% Cap
+    cap10_rec = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10"]
+    cap10_rec_u1 = next(s for s in cap10_rec["strategies_summary"] if s["id"] == "U1_PureOptions")
+    assert cap10_rec["wc_mode"] == "wc_reclaim_30d_d35"
+    assert abs(cap10_rec_u1["end_nav"] - 1805855.89) <= 0.05
+    assert cap10_rec_u1["cagr_pct"] == 20.34
+    assert cap10_rec_u1["max_dd_pct"] == -30.96
+    assert cap10_rec_u1["sharpe"] == 0.881
+    assert cap10_rec_u1["calmar"] == 0.657
+    assert cap10_rec_u1["sp_trades_count"] == 44
+    assert cap10_rec_u1["sp_assignments_count"] == 5
+    assert cap10_rec_u1["wc_trades_count"] == 8
+    assert cap10_rec_u1["wc_called_away_count"] == 4
+    assert abs(cap10_rec_u1["wc_gross_prem_usd"] - 8956.46) <= 0.05
+    assert abs(cap10_rec_u1["margin_interest_usd"] - 3842.41) <= 0.05
+    assert cap10_rec_u1["days_levered_stock"] == 337
+    assert cap10_rec_u1["max_wheel_cycle_days"] == 355
+    assert cap10_rec_u1["max_gross_stock_lev"] == 1.135
+    assert abs(cap10_rec_u1["end_assigned_shares"] - 307.55) <= 0.05
+    assert cap10_rec["live_sp_state"]["position_state"] == "wheel_assigned_wait_reclaim"
+    assert cap10_rec["live_sp_state"]["min_next_wc_strike"] == 625.43
+    assert "水下暂不卖 Call，等涨回 >= $625.43" in cap10_rec["live_sp_state"]["badge_zh"]
+    assert len(_unpack_rows(cap10_rec["sp_ledgers_by_strategy"]["U1_PureOptions"])) == 52
+
+    # 2. NEW DEFAULT wc_reclaim_30d_d35 — 10D VIX Falling 20% Cap (New All-Time Record!)
+    vixf_rec = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf"]
+    vixf_rec_u1 = next(s for s in vixf_rec["strategies_summary"] if s["id"] == "U1_PureOptions")
+    assert abs(vixf_rec_u1["end_nav"] - 1838505.47) <= 0.05
+    assert vixf_rec_u1["cagr_pct"] == 20.53
+    assert vixf_rec_u1["max_dd_pct"] == -30.38
+    assert vixf_rec_u1["sharpe"] == 0.885
+    assert vixf_rec_u1["calmar"] == 0.676
+    assert vixf_rec_u1["sp_trades_count"] == 27
+    assert vixf_rec_u1["sp_assignments_count"] == 3
+    assert vixf_rec_u1["wc_trades_count"] == 5
+    assert vixf_rec_u1["wc_called_away_count"] == 3
+    assert abs(vixf_rec_u1["wc_gross_prem_usd"] - 7976.65) <= 0.05
+    assert abs(vixf_rec_u1["margin_interest_usd"] - 1250.65) <= 0.05
+    assert vixf_rec_u1["days_levered_stock"] == 133
+    assert vixf_rec_u1["max_wheel_cycle_days"] == 106
+    assert vixf_rec_u1["max_gross_stock_lev"] == 1.252
+    assert vixf_rec_u1["end_assigned_shares"] == 0.0
+    assert vixf_rec["live_sp_state"]["position_state"] == "flat_standby"
+    assert vixf_rec["live_sp_state"]["vix_falling_signal_on"] is False
+
+    # 3. NEW DEFAULT wc_reclaim_30d_d35 — 14D Unfiltered 20% Cap
+    unf_rec = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf"]
+    unf_rec_u1 = next(s for s in unf_rec["strategies_summary"] if s["id"] == "U1_PureOptions")
+    assert abs(unf_rec_u1["end_nav"] - 1901035.03) <= 0.05
+    assert unf_rec_u1["cagr_pct"] == 20.87
+    assert unf_rec_u1["max_dd_pct"] == -31.73
+    assert unf_rec_u1["sharpe"] == 0.873
+    assert unf_rec_u1["calmar"] == 0.658
+    assert abs(unf_rec_u1["wc_gross_prem_usd"] - 18463.22) <= 0.05
+    assert abs(unf_rec_u1["margin_interest_usd"] - 7942.77) <= 0.05
+    assert unf_rec_u1["days_levered_stock"] == 337
+    assert unf_rec_u1["max_wheel_cycle_days"] == 355
+    assert unf_rec_u1["max_gross_stock_lev"] == 1.276
+    assert abs(unf_rec_u1["end_assigned_shares"] - 648.60) <= 0.05
+
+    # 4. COMPARE wc_30d_c5s5 (Immediate 30D + max(1.05*K, 1.05*S)) 100% penny parity
+    cap10_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10__wc_30d_c5s5"]
     cap10_u1 = next(s for s in cap10_b["strategies_summary"] if s["id"] == "U1_PureOptions")
     assert cap10_b["wc_mode"] == "wc_30d_c5s5"
     assert abs(cap10_u1["end_nav"] - 1819738.31) <= 0.05
@@ -201,43 +262,17 @@ def test_third_engine_panic_put_wheel_3d_matrix():
     assert "30D Wheel Call（K >= $656.70，max(1.05×成本, 1.05×现价)）" in cap10_b["live_sp_state"]["badge_zh"]
     assert len(_unpack_rows(cap10_b["sp_ledgers_by_strategy"]["U1_PureOptions"])) == 54
 
-    # 2. NEW DEFAULT wc_30d_c5s5 — 10D VIX Falling 20% Cap on Dual
-    vixf_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf"]
+    vixf_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf__wc_30d_c5s5"]
     vixf_u1 = next(s for s in vixf_b["strategies_summary"] if s["id"] == "U1_PureOptions")
     assert abs(vixf_u1["end_nav"] - 1831562.63) <= 0.05
-    assert vixf_u1["cagr_pct"] == 20.49
-    assert vixf_u1["max_dd_pct"] == -30.27
-    assert vixf_u1["sharpe"] == 0.884
-    assert vixf_u1["calmar"] == 0.677
-    assert vixf_u1["sp_trades_count"] == 27
-    assert vixf_u1["sp_assignments_count"] == 3
-    assert vixf_u1["wc_trades_count"] == 6
-    assert vixf_u1["wc_called_away_count"] == 3
-    assert abs(vixf_u1["wc_gross_prem_usd"] - 6383.86) <= 0.05
     assert abs(vixf_u1["margin_interest_usd"] - 1257.35) <= 0.05
-    assert vixf_u1["days_levered_stock"] == 132
-    assert vixf_u1["max_wheel_cycle_days"] == 107
-    assert vixf_u1["max_gross_stock_lev"] == 1.250
-    assert vixf_u1["end_assigned_shares"] == 0.0
-    assert vixf_b["live_sp_state"]["position_state"] == "flat_standby"
-    assert vixf_b["live_sp_state"]["vix_falling_signal_on"] is False
 
-    # 3. NEW DEFAULT wc_30d_c5s5 — Terminal NAV #1 (14D Unfiltered 20% Cap on Dual)
-    unf_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf"]
+    unf_b = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf__wc_30d_c5s5"]
     unf_u1 = next(s for s in unf_b["strategies_summary"] if s["id"] == "U1_PureOptions")
     assert abs(unf_u1["end_nav"] - 1930238.95) <= 0.05
-    assert unf_u1["cagr_pct"] == 21.02
-    assert unf_u1["max_dd_pct"] == -31.63
-    assert unf_u1["sharpe"] == 0.889
-    assert unf_u1["calmar"] == 0.665
-    assert abs(unf_u1["wc_gross_prem_usd"] - 10407.12) <= 0.05
     assert abs(unf_u1["margin_interest_usd"] - 3062.70) <= 0.05
-    assert unf_u1["days_levered_stock"] == 221
-    assert unf_u1["max_wheel_cycle_days"] == 111
-    assert unf_u1["max_gross_stock_lev"] == 1.274
-    assert abs(unf_u1["end_assigned_shares"] - 658.56) <= 0.05
 
-    # 4. LEGACY wc_14d_c0s2 (14D + max(K, 1.02*S)) 100% penny parity with 2f28247
+    # 5. LEGACY wc_14d_c0s2 (14D + max(K, 1.02*S)) 100% penny parity with 2f28247
     cap10_leg = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10__wc_14d_c0s2"]
     cap10_leg_u1 = next(s for s in cap10_leg["strategies_summary"] if s["id"] == "U1_PureOptions")
     assert cap10_leg["wc_mode"] == "wc_14d_c0s2"
@@ -258,10 +293,16 @@ def test_third_engine_panic_put_wheel_3d_matrix():
     assert unf_leg_u1["extra_shares_pct"] == 43.37
     assert abs(unf_leg_u1["margin_interest_usd"] - 1667.62) <= 0.05
 
-    # 5. Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_mode)
-    bh_unf_30d = next(
+    # 6. Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_mode)
+    bh_unf_rec = next(
         s
         for s in doc["mode_bundles"]["layered_itm__cc_off__sp_14d_unf"]["strategies_summary"]
+        if s["id"] == "NoPut_CallOnly"
+    )
+    assert abs(bh_unf_rec["end_nav"] - 1427923.23) <= 0.05
+    bh_unf_30d = next(
+        s
+        for s in doc["mode_bundles"]["layered_itm__cc_off__sp_14d_unf__wc_30d_c5s5"]["strategies_summary"]
         if s["id"] == "NoPut_CallOnly"
     )
     assert abs(bh_unf_30d["end_nav"] - 1449831.69) <= 0.05
