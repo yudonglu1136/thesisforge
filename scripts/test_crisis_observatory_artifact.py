@@ -398,3 +398,115 @@ def test_dual_track_live_stress_and_module_readiness_in_artifact():
     assert series_by_date["2020-03-20"]["live_stress"] >= 75
     assert series_by_date["2026-11-20"]["live_stress"] == dash["live_stress_index"]
 
+
+def test_kmlm20_hypothesis_seed_golden_benchmarks():
+    import gzip
+    kmlm_spec = importlib.util.spec_from_file_location(
+        "build_crisis_observatory_kmlm20_artifact",
+        Path(__file__).resolve().parent / "build-crisis-observatory-kmlm20-artifact.py",
+    )
+    kmlm_mod = importlib.util.module_from_spec(kmlm_spec)
+    kmlm_spec.loader.exec_module(kmlm_mod)
+
+    seed_path = ARTIFACT_PATH.parent / "crisis-observatory-kmlm20-seed.json.gz"
+    assert seed_path.exists(), f"Missing {seed_path}"
+    seed = json.loads(gzip.decompress(seed_path.read_bytes()).decode("utf-8"))
+    assert seed["version"] == "crisis-observatory-kmlm20-v1"
+    assert seed["status"] == "HYPOTHESIS"
+    assert seed["kmlm_weight"] == 0.20
+    assert seed["gross_leverage"] == 1.20
+    assert seed["rebal_fee"] == 0.0005
+
+    d11 = seed["d11"]["dates"]
+    n11 = len(d11)
+    assert d11[0] == "2015-01-02" and d11[-1] == "2025-12-15" and n11 == 2755
+    r_lim_11 = kmlm_mod.pct_change_zero_first(seed["d11"]["m7g_lim_nav"])
+    r_ab_11 = kmlm_mod.pct_change_zero_first(seed["d11"]["m7g_ab_nav"])
+    px_qqq_11 = seed["d11"]["qqq_adj"]
+    r_qqq_11 = kmlm_mod.pct_change_zero_first(px_qqq_11)
+    r_aq_11 = kmlm_mod.pct_change_zero_first(seed["d11"]["aqmix_adj"])
+    r_km_raw = kmlm_mod.pct_change_zero_first(seed["d11"]["kmlm_adj"])
+    splice_km = d11.index("2020-12-03")
+    r_km_11 = [r_aq_11[i] if i < splice_km else r_km_raw[i] for i in range(n11)]
+    px_km_11 = []
+    acc = 100.0
+    for r in r_km_11:
+        acc *= 1.0 + r
+        px_km_11.append(acc)
+    effr_11 = seed["d11"]["effr"]
+    vix_11 = seed["d11"]["vix"]
+    vr_11 = seed["d11"]["vr"]
+    tp11, lk11 = kmlm_mod.build_tp_and_lockout(d11, vix_11, vr_11, seed["d11"]["m7g_lockout_episodes"])
+    bh11 = [200000.0 * (x / px_qqq_11[0]) for x in px_qqq_11]
+
+    # 11Y Stitched (Box +0.35% & IBKR +1.50%, Limit & Ask/Bid)
+    s11_box = kmlm_mod.sim_pure_cta_blueprint(
+        d11, r_lim_11, r_qqq_11, px_qqq_11, [("KMLM", 0.20, r_km_11, px_km_11)],
+        effr_11, vix_11, 0.0035, tp11, lk11, mode="rot_vix20",
+    )
+    s11_box_ab = kmlm_mod.sim_pure_cta_blueprint(
+        d11, r_ab_11, r_qqq_11, px_qqq_11, [("KMLM", 0.20, r_km_11, px_km_11)],
+        effr_11, vix_11, 0.0035, tp11, lk11, mode="rot_vix20",
+    )
+    s11_ibkr = kmlm_mod.sim_pure_cta_blueprint(
+        d11, r_lim_11, r_qqq_11, px_qqq_11, [("KMLM", 0.20, r_km_11, px_km_11)],
+        effr_11, vix_11, 0.0150, tp11, lk11, mode="rot_vix20",
+    )
+    p11_box = kmlm_mod.calc_perf(d11, s11_box["nav"], bh11, effr_11, extra=s11_box)
+    p11_ibkr = kmlm_mod.calc_perf(d11, s11_ibkr["nav"], bh11, effr_11, extra=s11_ibkr)
+    assert abs(p11_box["final_nav"] - 1785222.38) <= 0.50
+    assert abs(s11_box_ab["nav"][-1] - 1732487.07) <= 0.50
+    assert p11_box["cagr_pct"] == 22.13
+    assert p11_box["mdd_pct"] == -23.60
+    assert p11_box["calmar"] == 0.938
+    assert p11_box["sharpe"] == 1.010
+    assert p11_box["sortino"] == 1.353
+    assert p11_box["peak_ltv_pct"] == 20.44
+    assert p11_box["rot_cnt"] == 2
+    assert abs(p11_ibkr["final_nav"] - 1741934.61) <= 0.50
+    assert p11_ibkr["cagr_pct"] == 21.85
+    assert p11_ibkr["mdd_pct"] == -23.62
+    assert p11_ibkr["calmar"] == 0.925
+
+    # 5Y Pure Live KMLM (2020-12-02 -> 2025-12-15, zero proxy)
+    i5 = d11.index("2020-12-02")
+    d5 = d11[i5:]
+    r_lim_5 = list(r_lim_11[i5:]); r_lim_5[0] = 0.0
+    r_ab_5 = list(r_ab_11[i5:]); r_ab_5[0] = 0.0
+    r_qqq_5 = list(r_qqq_11[i5:]); r_qqq_5[0] = 0.0
+    px_qqq_5 = px_qqq_11[i5:]
+    r_km_5 = list(r_km_raw[i5:]); r_km_5[0] = 0.0
+    px_km_5 = [float(x) for x in seed["d11"]["kmlm_adj"][i5:]]
+    effr_5 = effr_11[i5:]
+    vix_5 = vix_11[i5:]
+    bh5 = [200000.0 * (x / px_qqq_5[0]) for x in px_qqq_5]
+    tp5 = {k - i5: v for k, v in tp11.items() if k >= i5}
+    lk5 = lk11[i5:]
+
+    s5_box = kmlm_mod.sim_pure_cta_blueprint(
+        d5, r_lim_5, r_qqq_5, px_qqq_5, [("KMLM", 0.20, r_km_5, px_km_5)],
+        effr_5, vix_5, 0.0035, tp5, lk5, mode="rot_vix20",
+    )
+    s5_box_ab = kmlm_mod.sim_pure_cta_blueprint(
+        d5, r_ab_5, r_qqq_5, px_qqq_5, [("KMLM", 0.20, r_km_5, px_km_5)],
+        effr_5, vix_5, 0.0035, tp5, lk5, mode="rot_vix20",
+    )
+    p5_box = kmlm_mod.calc_perf(d5, s5_box["nav"], bh5, effr_5, extra=s5_box)
+    assert abs(p5_box["final_nav"] - 570416.64) <= 0.25
+    assert abs(s5_box_ab["nav"][-1] - 566429.07) <= 0.25
+    assert p5_box["cagr_pct"] == 23.14
+    assert p5_box["mdd_pct"] == -22.27
+    assert p5_box["calmar"] == 1.039
+    assert p5_box["sharpe"] == 0.983
+    assert p5_box["sortino"] == 1.498
+    assert p5_box["peak_ltv_pct"] == 19.58
+    assert p5_box["rot_cnt"] == 1
+
+    eps = seed["episodes_7_historical_and_q4"]
+    assert len(eps) == 7
+    assert [e["decision"] for e in eps] == ["ROTATE", "HOLD", "HOLD", "ROTATE", "HOLD", "HOLD", "HOLD"]
+    assert eps[-1]["tp_date"] == "2026-11-20"
+    assert abs(eps[-1]["corr"] - 0.092) <= 0.002
+    assert eps[-1]["reason"] == "HOLD_POS_CORR"
+
+

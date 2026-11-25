@@ -376,6 +376,14 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         'm0Enabled': query['co_m0Enabled'] ?? query['co_m0'],
       if ((query['co_fillMode'] ?? query['fillMode']) != null)
         'fillMode': query['co_fillMode'] ?? query['fillMode'],
+      if ((query['co_overlayMode'] ?? query['co_overlay'] ?? query['overlayMode']) != null)
+        'overlayMode':
+            query['co_overlayMode'] ?? query['co_overlay'] ?? query['overlayMode'],
+      if ((query['co_finMode'] ?? query['finMode']) != null)
+        'finMode': query['co_finMode'] ?? query['finMode'],
+      if ((query['co_kmlmWindow'] ?? query['co_kmlmWin'] ?? query['kmlmWindow']) != null)
+        'kmlmWindow':
+            query['co_kmlmWindow'] ?? query['co_kmlmWin'] ?? query['kmlmWindow'],
       for (final key in ['tpMode', 'ccMode', 'spMode', 'wcMode'])
         if (query['co_$key'] != null) key: query['co_$key'],
     };

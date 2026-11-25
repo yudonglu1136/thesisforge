@@ -103,6 +103,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String selectedProfile = 'full_m7_adaptive';
   String selectedStrategyId = 'M7G_Graded';
   String selectedFillMode = 'ibkr_limit';
+  String selectedOverlayMode = 'core_100x';
+  String selectedFinMode = 'box_35bp';
+  String selectedKmlmWindow = '5yr_live';
   String selectedPutOtm = 'otm15';
   String selectedM7TpMode = 'standard';
   String selectedRollMode = 'adaptive_120_90';
@@ -179,6 +182,44 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       return 'ask_bid';
     }
     return 'ibkr_limit';
+  }
+
+  String _normalizeOverlayMode(String raw) {
+    final v = raw.trim().toLowerCase();
+    if (v == 'kmlm20_120x' ||
+        v == 'kmlm20' ||
+        v == 'kmlm_20' ||
+        v == 'kmlm_20_hypothesis' ||
+        v == 'hypothesis' ||
+        v == '1.20x' ||
+        v == '1.2x' ||
+        v == 'kmlm') {
+      return 'kmlm20_120x';
+    }
+    return 'core_100x';
+  }
+
+  String _normalizeFinMode(String raw) {
+    final v = raw.trim().toLowerCase();
+    if (v == 'ibkr_150bp' ||
+        v == 'ibkr' ||
+        v == 'margin' ||
+        v == '150bp') {
+      return 'ibkr_150bp';
+    }
+    return 'box_35bp';
+  }
+
+  String _normalizeKmlmWindow(String raw) {
+    final v = raw.trim().toLowerCase();
+    if (v == '11yr_stitched' ||
+        v == '11yr' ||
+        v == '11y' ||
+        v == 'stitched' ||
+        v == 'full') {
+      return '11yr_stitched';
+    }
+    return '5yr_live';
   }
 
   String _normalizePutOtm(String raw) {
@@ -280,6 +321,29 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             widget.initialSelection['fill'],
       ),
     );
+    selectedOverlayMode = _normalizeOverlayMode(
+      text(
+        widget.initialSelection['overlayMode'] ??
+            widget.initialSelection['co_overlayMode'] ??
+            widget.initialSelection['co_overlay'] ??
+            widget.initialSelection['overlay'],
+      ),
+    );
+    selectedFinMode = _normalizeFinMode(
+      text(
+        widget.initialSelection['finMode'] ??
+            widget.initialSelection['co_finMode'] ??
+            widget.initialSelection['fin'],
+      ),
+    );
+    selectedKmlmWindow = _normalizeKmlmWindow(
+      text(
+        widget.initialSelection['kmlmWindow'] ??
+            widget.initialSelection['co_kmlmWindow'] ??
+            widget.initialSelection['co_kmlmWin'] ??
+            widget.initialSelection['kmlmWin'],
+      ),
+    );
     selectedPutOtm = _normalizePutOtm(
       text(widget.initialSelection['putOtm'] ?? widget.initialSelection['otm']),
     );
@@ -343,6 +407,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       'profile': selectedProfile,
       'strategy': selectedStrategyId,
       'fillMode': selectedFillMode,
+      'overlayMode': selectedOverlayMode,
+      'finMode': selectedFinMode,
+      'kmlmWindow': selectedKmlmWindow,
       'window': selectedWindowId,
       'putOtm': selectedPutOtm,
       'm7TpMode': selectedM7TpMode,
@@ -353,6 +420,33 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       'spMode': selectedSpMode,
       if (selectedSpMode != 'sp_off') 'wcMode': selectedWcMode,
     });
+  }
+
+  void _selectOverlayMode(String modeId) {
+    final norm = _normalizeOverlayMode(modeId);
+    if (selectedOverlayMode == norm) return;
+    setState(() {
+      selectedOverlayMode = norm;
+    });
+    _emitSelection();
+  }
+
+  void _selectFinMode(String modeId) {
+    final norm = _normalizeFinMode(modeId);
+    if (selectedFinMode == norm) return;
+    setState(() {
+      selectedFinMode = norm;
+    });
+    _emitSelection();
+  }
+
+  void _selectKmlmWindow(String winId) {
+    final norm = _normalizeKmlmWindow(winId);
+    if (selectedKmlmWindow == norm) return;
+    setState(() {
+      selectedKmlmWindow = norm;
+    });
+    _emitSelection();
   }
 
   void _selectProfile(String profileId) {
@@ -536,6 +630,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           'profile': targetProfile,
           'strategy': selectedStrategyId,
           'fillMode': targetFill,
+          'overlayMode': selectedOverlayMode,
+          'finMode': selectedFinMode,
+          'kmlmWindow': selectedKmlmWindow,
           'putOtm': targetOtm,
           'm7TpMode': targetM7Tp,
           'rollMode': targetRoll,
@@ -691,6 +788,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           'profile': targetProfile,
           'strategy': selectedStrategyId,
           'fillMode': targetFill,
+          'overlayMode': selectedOverlayMode,
+          'finMode': selectedFinMode,
+          'kmlmWindow': selectedKmlmWindow,
           'putOtm': targetOtm,
           'm7TpMode': targetM7Tp,
           'rollMode': targetRoll,
@@ -756,6 +856,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           'live_sp_states_by_strategy': snapDoc['live_sp_states_by_strategy'],
         if (asList(snapDoc['strategies_summary']).isNotEmpty)
           'strategies_summary': snapDoc['strategies_summary'],
+        if (asMap(snapDoc['hypothesis_kmlm20']).isNotEmpty)
+          'hypothesis_kmlm20': {
+            ...asMap(doc['hypothesis_kmlm20']),
+            ...asMap(snapDoc['hypothesis_kmlm20']),
+            if (asMap(asMap(doc['hypothesis_kmlm20'])['curves_5yr']).isNotEmpty)
+              'curves_5yr': asMap(doc['hypothesis_kmlm20'])['curves_5yr'],
+            if (asMap(asMap(doc['hypothesis_kmlm20'])['curves_11yr']).isNotEmpty)
+              'curves_11yr': asMap(doc['hypothesis_kmlm20'])['curves_11yr'],
+          },
       };
     }
 
@@ -1904,6 +2013,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               compact: compact,
               desktop: desktop,
             ),
+            if (selectedOverlayMode == 'kmlm20_120x') ...[
+              SizedBox(height: compact ? 12 : 16),
+              _buildKmlm20HypothesisPanel(
+                topDoc,
+                fullDoc: doc,
+                compact: compact,
+                desktop: desktop,
+              ),
+            ],
             SizedBox(height: compact ? 12 : 16),
             _buildVerdictBlock(
               topDoc,
@@ -1995,6 +2113,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       key: const ValueKey('crisis-profile-switcher'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _buildOverlayVersionSwitcher(
+          doc,
+          compact: compact,
+          desktop: desktop,
+        ),
+        const SizedBox(height: 10),
         if (desktop)
           IntrinsicHeight(
             child: Row(
@@ -2146,6 +2270,1187 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildOverlayVersionSwitcher(
+    Map<String, dynamic> doc, {
+    required bool compact,
+    required bool desktop,
+  }) {
+    final isKmlmActive = selectedOverlayMode == 'kmlm20_120x';
+    final hyp = asMap(doc['hypothesis_kmlm20']);
+    final fin = asMap(hyp['financing']);
+    final boxRate = _numVal(fin['box_rate_pct'], 4.23);
+    final b5Box = asMap(
+      asMap(asMap(hyp['backtest_5yr_live'])['box_35bp'])['reload_vix20_5d'],
+    );
+    final b11Box = asMap(
+      asMap(asMap(hyp['backtest_11yr'])['box_35bp'])['reload_vix20_5d'],
+    );
+    final nav5 = _numVal(b5Box['final_nav'], 570417);
+    final mdd5 = _numVal(b5Box['mdd_pct'], -22.27);
+    final calmar5 = _numVal(b5Box['calmar'], 1.039);
+    final nav11 = _numVal(b11Box['final_nav'], 1785222);
+
+    Widget buildTab({
+      required String modeId,
+      required bool active,
+      required Color accent,
+      required String badge,
+      required String title,
+      required String subtitle,
+    }) {
+      return InkWell(
+        key: ValueKey('crisis-overlay-tab-$modeId'),
+        borderRadius: BorderRadius.circular(11),
+        onTap: () => _selectOverlayMode(modeId),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 11 : 14,
+            vertical: compact ? 9 : 11,
+          ),
+          decoration: BoxDecoration(
+            color: active
+                ? accent.withValues(alpha: 0.11)
+                : p.card.withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(
+              color: active ? accent.withValues(alpha: 0.75) : p.border,
+              width: active ? 1.4 : 1.0,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: accent.withValues(alpha: 0.55)),
+                    ),
+                    child: Text(
+                      badge,
+                      style: TextStyle(
+                        color: accent,
+                        fontSize: 10.2,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: compact ? 12.6 : 13.4,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  color: active ? p.text.withValues(alpha: 0.88) : p.muted,
+                  fontSize: compact ? 11.0 : 11.5,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final coreTab = buildTab(
+      modeId: 'core_100x',
+      active: !isKmlmActive,
+      accent: _emerald,
+      badge: w('PRODUCTION · 1.00x', '生产实盘 · 1.00x'),
+      title: w(
+        '1.00x Production Core · B020_M125 (Unlevered)',
+        '1.00x 生产基线 · B020_M125（无杠杆）',
+      ),
+      subtitle: w(
+        'Locked 100% QQQ + 0.20% Base (VIX<=20) + 1.25%/slot M7G · Zero Margin Debt',
+        '写死 100% QQQ + 0.20% 常态盾(VIX≤20) + 1.25%/槽 M7G · 零融资负债',
+      ),
+    );
+
+    final kmlmTab = buildTab(
+      modeId: 'kmlm20_120x',
+      active: isKmlmActive,
+      accent: _lilac,
+      badge: w('HYPOTHESIS · 1.20x', '版本假说 · 1.20x'),
+      title: w(
+        '🧪 +20% KMLM Return-Stacking Overlay',
+        '🧪 +20% KMLM 杠杆叠仓（版本假说）',
+      ),
+      subtitle: w(
+        '100% Core + 20% Pure KMLM (Box ${boxRate.toStringAsFixed(2)}%) · 5Y Live ${_fmtUsd(nav5)} (MDD ${mdd5.toStringAsFixed(2)}%, Calmar ${calmar5.toStringAsFixed(3)}) · 11Y ${_fmtUsd(nav11)}',
+        '100% 锁死核心仓 + 20% 纯 KMLM（Box ${boxRate.toStringAsFixed(2)}%）· 5年实盘 ${_fmtUsd(nav5)}（回撤 ${mdd5.toStringAsFixed(2)}%，卡玛 ${calmar5.toStringAsFixed(3)}）· 11年 ${_fmtUsd(nav11)}',
+      ),
+    );
+
+    return Container(
+      key: const ValueKey('crisis-overlay-version-switcher'),
+      child: desktop
+          ? IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: coreTab),
+                  const SizedBox(width: 12),
+                  Expanded(child: kmlmTab),
+                ],
+              ),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                coreTab,
+                const SizedBox(height: 8),
+                kmlmTab,
+              ],
+            ),
+    );
+  }
+
+  Widget _buildKmlm20SizerLine(double coreNavUsd, {required bool compact}) {
+    final doc = data ?? const <String, dynamic>{};
+    final hyp = asMap(doc['hypothesis_kmlm20']);
+    final liveSig = asMap(hyp['live_signal']);
+    final fin = asMap(hyp['financing']);
+    final ms = asMap(hyp['margin_safety']);
+    final kmlmSpot = _numVal(liveSig['kmlm_spot_close'], 27.50);
+    final boxRate = _numVal(fin['box_rate_pct'], 4.23);
+    final ibkrRate = _numVal(fin['ibkr_rate_pct'], 5.38);
+    final activeRate = selectedFinMode == 'ibkr_150bp' ? ibkrRate : boxRate;
+    final crash25 = _numVal(ms['crash_to_regt_25_pct'], -77.78);
+    final kmlmNotionalUsd = coreNavUsd * 0.20;
+    final kmlmShares = kmlmSpot > 0 ? (kmlmNotionalUsd / kmlmSpot).floor() : 0;
+    final annFinUsd = kmlmNotionalUsd * (activeRate / 100.0);
+    final sleeveInQqq = text(liveSig['sleeve_state']) == 'ROTATED_TO_QQQ';
+
+    return Container(
+      key: const ValueKey('crisis-kmlm20-sizer-line'),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 10 : 12,
+        vertical: compact ? 7 : 8,
+      ),
+      decoration: BoxDecoration(
+        color: _lilac.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _lilac.withValues(alpha: 0.42)),
+      ),
+      child: Text(
+        sleeveInQqq
+            ? w(
+                '🧪 1.20x Hypothesis Active (Rotated State): Stack +20% (${_fmtUsdCents(kmlmNotionalUsd)}) into QQQ rebound until VIX<=20 & 5D unlock · Fin ${activeRate.toStringAsFixed(2)}%/yr (${_fmtUsd(annFinUsd)}/yr) · Reg-T 25% Margin Call Cushion ${crash25.toStringAsFixed(2)}%',
+                '🧪 1.20x 版本假说（当前危机切股期）：+20% 叠仓（${_fmtUsdCents(kmlmNotionalUsd)}）持有 QQQ 反弹仓位直至 VIX≤20 且 5天解锁 · 融资 ${activeRate.toStringAsFixed(2)}%/年（${_fmtUsd(annFinUsd)}/年）· Reg-T 25% 强平缓冲 ${crash25.toStringAsFixed(2)}%',
+              )
+            : w(
+                '🧪 1.20x Hypothesis Stack (+20% Pure KMLM): Target ${_fmtUsdCents(kmlmNotionalUsd)} -> Buy $kmlmShares sh KMLM @ \$${kmlmSpot.toStringAsFixed(2)} (Init LTV 16.67%) · ${selectedFinMode == 'ibkr_150bp' ? 'IBKR' : 'SPX Box'} ${activeRate.toStringAsFixed(2)}%/yr (${_fmtUsd(annFinUsd)}/yr) · Reg-T 25% Cushion ${crash25.toStringAsFixed(2)}%',
+                '🧪 1.20x 版本假说配单（+20% 纯 KMLM）：叠仓名义 ${_fmtUsdCents(kmlmNotionalUsd)} → 买入 $kmlmShares 股 KMLM @ \$${kmlmSpot.toStringAsFixed(2)}（初始 LTV 16.67%）· ${selectedFinMode == 'ibkr_150bp' ? 'IBKR融资' : 'SPX Box'} ${activeRate.toStringAsFixed(2)}%/年（${_fmtUsd(annFinUsd)}/年）· 距 Reg-T 25% 强平需跌 ${crash25.toStringAsFixed(2)}%',
+              ),
+        style: TextStyle(
+          color: p.text,
+          fontSize: compact ? 11.2 : 11.8,
+          fontWeight: FontWeight.w600,
+          height: 1.4,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildKmlm20HypothesisPanel(
+    Map<String, dynamic> topDoc, {
+    required Map<String, dynamic> fullDoc,
+    required bool compact,
+    required bool desktop,
+  }) {
+    final hyp = asMap(topDoc['hypothesis_kmlm20']).isNotEmpty
+        ? asMap(topDoc['hypothesis_kmlm20'])
+        : asMap(fullDoc['hypothesis_kmlm20']);
+    if (hyp.isEmpty) return const SizedBox.shrink();
+
+    final is11Yr = selectedKmlmWindow == '11yr_stitched';
+    final isIbkrFin = selectedFinMode == 'ibkr_150bp';
+    final fin = asMap(hyp['financing']);
+    final effrDate = text(fin['effr_effective_date'], '2026-11-24');
+    final effrPct = _numVal(fin['effr_pct'], 3.88);
+    final boxRate = _numVal(fin['box_rate_pct'], effrPct + 0.35);
+    final ibkrRate = _numVal(fin['ibkr_rate_pct'], effrPct + 1.50);
+
+    final winBlock = asMap(
+      hyp[is11Yr ? 'backtest_11yr' : 'backtest_5yr_live'],
+    );
+    final finBlock = asMap(winBlock[isIbkrFin ? 'ibkr_150bp' : 'box_35bp']);
+    final activePerf = asMap(finBlock['reload_vix20_5d']);
+    final staticPerf = asMap(finBlock['static_drift_250bp']);
+    final corePerf = asMap(winBlock['core_100x']);
+    final qqqPerf = asMap(winBlock['qqq_bh']);
+    final ms = asMap(hyp['margin_safety']);
+    final liveSig = asMap(hyp['live_signal']);
+    final q4Audit = asMap(liveSig['q4_2026_tp_audit']);
+    final reloadGate = asMap(liveSig['reload_gate']);
+    final fourGates = asList(liveSig['four_gates']);
+    final episodes = asList(hyp['episodes_7']);
+    final ytd26 = asMap(hyp['live_2026_ytd']);
+    final ytd26Fin = asMap(ytd26[isIbkrFin ? 'ibkr_150bp' : 'box_35bp']);
+    final ytd26St = asMap(ytd26['standalone']);
+
+    final fullHyp = asMap(fullDoc['hypothesis_kmlm20']);
+    final curveBlock = asMap(
+      (is11Yr ? hyp['curves_11yr'] : hyp['curves_5yr']) ??
+          (is11Yr ? fullHyp['curves_11yr'] : fullHyp['curves_5yr']),
+    );
+    final curveDates = (curveBlock['dates'] is List)
+        ? (curveBlock['dates'] as List).map((e) => e.toString()).toList()
+        : const <String>[];
+    final curveSeries = asMap(curveBlock['series']);
+    List<double> numList(String key) {
+      final raw = curveSeries[key];
+      if (raw is! List) return const <double>[];
+      return raw.map((v) => _numVal(v)).toList();
+    }
+
+    final navKmlmSeries = numList(isIbkrFin ? 'kmlm20_ibkr' : 'kmlm20_box');
+    final navCoreSeries = numList('core_100x');
+    final navQqqSeries = numList('qqq_bh');
+    final spliceDate = text(curveBlock['splice_date'], '2020-12-03');
+
+    final finalNav = _numVal(activePerf['final_nav']);
+    final staticNav = _numVal(staticPerf['final_nav']);
+    final coreNav = _numVal(corePerf['final_nav']);
+    final qqqNav = _numVal(qqqPerf['final_nav']);
+    final alphaVsCore = finalNav - coreNav;
+    final alphaVsQqq = finalNav - qqqNav;
+    final cagr = _numVal(activePerf['cagr_pct']);
+    final coreCagr = _numVal(corePerf['cagr_pct']);
+    final mdd = _numVal(activePerf['mdd_pct']);
+    final coreMdd = _numVal(corePerf['mdd_pct']);
+    final qqqMdd = _numVal(qqqPerf['mdd_pct']);
+    final calmar = _numVal(activePerf['calmar']);
+    final coreCalmar = _numVal(corePerf['calmar']);
+    final sharpe = _numVal(activePerf['sharpe']);
+    final sortino = _numVal(activePerf['sortino']);
+    final peakLtv = _numVal(activePerf['peak_ltv_pct']);
+    final annIntPct = _numVal(activePerf['ann_interest_pct_nav']);
+    final totIntUsd = _numVal(activePerf['tot_interest_usd']);
+    final rotCnt = _numVal(activePerf['rot_cnt']).round();
+    final rebalCnt = _numVal(activePerf['rebal_cnt']).round();
+    final boxSaved11Yr = _numVal(ms['box_vs_ibkr_11yr_saved_usd'], 43288);
+
+    Widget buildPill({
+      required Key key,
+      required bool active,
+      required Color accent,
+      required String label,
+      required VoidCallback onTap,
+    }) {
+      return InkWell(
+        key: key,
+        borderRadius: BorderRadius.circular(7),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4.5),
+          decoration: BoxDecoration(
+            color: active ? accent.withValues(alpha: 0.17) : Colors.transparent,
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(
+              color: active ? accent.withValues(alpha: 0.75) : p.border,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: active ? p.text : p.muted,
+              fontSize: 11.2,
+              fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget buildKpiCard({
+      required String eyebrow,
+      required String value,
+      required Color valueColor,
+      required String sub1,
+      required String sub2,
+    }) {
+      return Container(
+        padding: EdgeInsets.all(compact ? 11 : 13),
+        decoration: BoxDecoration(
+          color: p.text.withValues(alpha: 0.028),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: p.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              eyebrow,
+              style: TextStyle(
+                color: p.muted,
+                fontSize: 11.0,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              value,
+              style: TextStyle(
+                color: valueColor,
+                fontSize: compact ? 18.0 : 20.0,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              sub1,
+              style: TextStyle(
+                color: p.text.withValues(alpha: 0.90),
+                fontSize: 11.2,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              sub2,
+              style: TextStyle(
+                color: p.muted,
+                fontSize: 10.8,
+                height: 1.3,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final kpiCards = [
+      buildKpiCard(
+        eyebrow: w(
+          '1.20x +20% KMLM NAV (\$200K Start)',
+          '1.20x +20% KMLM 终值（\$200K 起投）',
+        ),
+        value: _fmtUsd(finalNav),
+        valueColor: _lilac,
+        sub1: w(
+          '${_fmtUsd(alphaVsCore, signed: true)} vs 1.00x Core · ${_fmtUsd(alphaVsQqq, signed: true)} vs QQQ',
+          '较 1.00x 核心仓 ${_fmtUsd(alphaVsCore, signed: true)} · 较 QQQ ${_fmtUsd(alphaVsQqq, signed: true)}',
+        ),
+        sub2: w(
+          'Static ±2.5pp Drift: ${_fmtUsd(staticNav)} · $rotCnt Rotations / $rebalCnt Rebals',
+          '静态 ±2.5pp 漂移对照：${_fmtUsd(staticNav)} · 危机切股 $rotCnt 次 / 再平衡 $rebalCnt 次',
+        ),
+      ),
+      buildKpiCard(
+        eyebrow: w('CAGR · Sharpe · Sortino', '年化复合收益 · 夏普 · 索提诺'),
+        value: '${cagr.toStringAsFixed(2)}%',
+        valueColor: _emerald,
+        sub1: w(
+          'Sharpe ${sharpe.toStringAsFixed(3)} · Sortino ${sortino.toStringAsFixed(3)}',
+          '夏普 ${sharpe.toStringAsFixed(3)} · 索提诺 ${sortino.toStringAsFixed(3)}',
+        ),
+        sub2: w(
+          '1.00x Core CAGR: ${coreCagr.toStringAsFixed(2)}% (${_humanFillModeLabel(selectedFillMode)})',
+          '1.00x 核心仓年化：${coreCagr.toStringAsFixed(2)}%（${_humanFillModeLabel(selectedFillMode)}）',
+        ),
+      ),
+      buildKpiCard(
+        eyebrow: w('Max Drawdown · Calmar', '最大回撤 · 卡玛比率'),
+        value: '${mdd.toStringAsFixed(2)}%',
+        valueColor: _emerald,
+        sub1: w(
+          'Calmar ${calmar.toStringAsFixed(3)} (vs Core ${coreCalmar.toStringAsFixed(3)})',
+          '卡玛 ${calmar.toStringAsFixed(3)}（核心仓 ${coreCalmar.toStringAsFixed(3)}）',
+        ),
+        sub2: w(
+          '1.00x Core MDD ${coreMdd.toStringAsFixed(2)}% · QQQ MDD ${qqqMdd.toStringAsFixed(2)}%',
+          '1.00x 核心仓回撤 ${coreMdd.toStringAsFixed(2)}% · QQQ 回撤 ${qqqMdd.toStringAsFixed(2)}%',
+        ),
+      ),
+      buildKpiCard(
+        eyebrow: w('Financing Cost & Margin Cushion', '融资成本拖累与强平安全垫'),
+        value: '-${annIntPct.toStringAsFixed(3)}%/yr',
+        valueColor: isIbkrFin ? _amber : _sky,
+        sub1: w(
+          'Total Interest ${_fmtUsd(totIntUsd)} · Peak LTV ${peakLtv.toStringAsFixed(2)}%',
+          '累计利息 ${_fmtUsd(totIntUsd)} · 峰值 LTV ${peakLtv.toStringAsFixed(2)}%',
+        ),
+        sub2: w(
+          'SPX Box saves +${_fmtUsd(boxSaved11Yr)} vs IBKR over 11Y · Reg-T 25% Cushion -77.78%',
+          'SPX Box 11年较 IBKR 省息 +${_fmtUsd(boxSaved11Yr)} · 距 Reg-T 25% 强平需跌 -77.78%',
+        ),
+      ),
+    ];
+
+    final sleeveInQqq = text(liveSig['sleeve_state']) == 'ROTATED_TO_QQQ';
+    final kmlmSpot = _numVal(liveSig['kmlm_spot_close']);
+    final kmlmYtd = _numVal(liveSig['kmlm_ytd_pct'], _numVal(ytd26St['KMLM_ytd']));
+    final qqqYtd = _numVal(liveSig['qqq_ytd_pct'], _numVal(ytd26St['QQQ_ytd']));
+    final stack26Ytd = _numVal(ytd26Fin['ytd_ret_pct']);
+
+    return Container(
+      key: const ValueKey('crisis-kmlm20-hypothesis-panel'),
+      padding: EdgeInsets.all(compact ? 14 : 18),
+      decoration: BoxDecoration(
+        color: p.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _lilac.withValues(alpha: 0.55), width: 1.25),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 1. Hypothesis Header + Controls
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _lilac.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: _lilac.withValues(alpha: 0.65)),
+                    ),
+                    child: Text(
+                      w(
+                        '🧪 HYPOTHESIS OVERLAY · 1.20x RETURN STACKING',
+                        '🧪 版本假说 · 1.20x 危机阿尔法杠杆叠仓',
+                      ),
+                      style: const TextStyle(
+                        color: _lilac,
+                        fontSize: 10.8,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    w(
+                      text(hyp['title_en']),
+                      text(hyp['title_zh']),
+                    ),
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: compact ? 13.5 : 15.0,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _sky.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(color: _sky.withValues(alpha: 0.40)),
+                ),
+                child: Text(
+                  w(
+                    'Official NY Fed EFFR: ${effrPct.toStringAsFixed(2)}% ($effrDate)',
+                    '纽约联储官方 EFFR：${effrPct.toStringAsFixed(2)}%（$effrDate）',
+                  ),
+                  style: const TextStyle(
+                    color: _sky,
+                    fontSize: 11.0,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            w(text(hyp['disclaimer_en']), text(hyp['disclaimer_zh'])),
+            style: TextStyle(color: p.muted, fontSize: 11.6, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 14,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Wrap(
+                key: const ValueKey('crisis-kmlm20-fin-bar'),
+                spacing: 6,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    w('Financing Channel:', '融资渠道：'),
+                    style: TextStyle(
+                      color: p.muted,
+                      fontSize: 11.2,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  buildPill(
+                    key: const ValueKey('crisis-fin-pill-box_35bp'),
+                    active: !isIbkrFin,
+                    accent: _lilac,
+                    label: w(
+                      'SPX Box / MNQ · EFFR+0.35% (${boxRate.toStringAsFixed(2)}%)',
+                      'SPX Box / MNQ · EFFR+0.35%（${boxRate.toStringAsFixed(2)}%）',
+                    ),
+                    onTap: () => _selectFinMode('box_35bp'),
+                  ),
+                  buildPill(
+                    key: const ValueKey('crisis-fin-pill-ibkr_150bp'),
+                    active: isIbkrFin,
+                    accent: _amber,
+                    label: w(
+                      'IBKR Margin · EFFR+1.50% (${ibkrRate.toStringAsFixed(2)}%)',
+                      'IBKR 常规融资 · EFFR+1.50%（${ibkrRate.toStringAsFixed(2)}%）',
+                    ),
+                    onTap: () => _selectFinMode('ibkr_150bp'),
+                  ),
+                ],
+              ),
+              Wrap(
+                key: const ValueKey('crisis-kmlm20-window-bar'),
+                spacing: 6,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    w('Audit Horizon:', '审计区间：'),
+                    style: TextStyle(
+                      color: p.muted,
+                      fontSize: 11.2,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  buildPill(
+                    key: const ValueKey('crisis-kmlm-win-5yr_live'),
+                    active: !is11Yr,
+                    accent: _emerald,
+                    label: w(
+                      '5Y Pure Live KMLM (2020–2025 · Zero Proxy)',
+                      '5年纯真盘（2020–2025 · 零代换）',
+                    ),
+                    onTap: () => _selectKmlmWindow('5yr_live'),
+                  ),
+                  buildPill(
+                    key: const ValueKey('crisis-kmlm-win-11yr_stitched'),
+                    active: is11Yr,
+                    accent: _sky,
+                    label: w(
+                      '11Y Full Cycle (2015–2025 · Pre-2020 AQMIX)',
+                      '11年全周期（2015–2025 · 2020前AQMIX拼接）',
+                    ),
+                    onTap: () => _selectKmlmWindow('11yr_stitched'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          if (is11Yr) ...[
+            const SizedBox(height: 8),
+            Container(
+              key: const ValueKey('crisis-kmlm20-splice-note'),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: _sky.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: _sky.withValues(alpha: 0.35)),
+              ),
+              child: Text(
+                w(
+                  'ℹ️ Provenance Disclosure: ${text(winBlock['splice_note_en'])}',
+                  'ℹ️ 拼接透明披露：${text(winBlock['splice_note_zh'])}',
+                ),
+                style: TextStyle(color: p.text, fontSize: 11.2, height: 1.35),
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+
+          // 2. Headline KPI Strip
+          Container(
+            key: const ValueKey('crisis-kmlm20-kpi-strip'),
+            child: desktop
+                ? IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (var i = 0; i < kpiCards.length; i++) ...[
+                          if (i > 0) const SizedBox(width: 10),
+                          Expanded(child: kpiCards[i]),
+                        ],
+                      ],
+                    ),
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < kpiCards.length; i++) ...[
+                        if (i > 0) const SizedBox(height: 8),
+                        kpiCards[i],
+                      ],
+                    ],
+                  ),
+          ),
+          const SizedBox(height: 14),
+
+          // 3. Live 4-Gate Anti-Overfitting NegCorr Radar & Margin Safety
+          Container(
+            key: const ValueKey('crisis-kmlm20-live-gates-card'),
+            padding: EdgeInsets.all(compact ? 11 : 14),
+            decoration: BoxDecoration(
+              color: p.text.withValues(alpha: 0.024),
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: p.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 6,
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: (sleeveInQqq ? _amber : _emerald)
+                                .withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: (sleeveInQqq ? _amber : _emerald)
+                                  .withValues(alpha: 0.60),
+                            ),
+                          ),
+                          child: Text(
+                            w(
+                              text(liveSig['action_label_en']),
+                              text(liveSig['action_label_zh']),
+                            ),
+                            style: TextStyle(
+                              color: sleeveInQqq ? _amber : _emerald,
+                              fontSize: 11.2,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          w(
+                            'KMLM Live \$${kmlmSpot.toStringAsFixed(2)} (2026 YTD ${kmlmYtd >= 0 ? '+' : ''}${kmlmYtd.toStringAsFixed(2)}% · QQQ YTD ${qqqYtd >= 0 ? '+' : ''}${qqqYtd.toStringAsFixed(2)}% · 1.20x Stack YTD ${stack26Ytd >= 0 ? '+' : ''}${stack26Ytd.toStringAsFixed(2)}%)',
+                            'KMLM 现价 \$${kmlmSpot.toStringAsFixed(2)}（2026 年内 ${kmlmYtd >= 0 ? '+' : ''}${kmlmYtd.toStringAsFixed(2)}% · QQQ 年内 ${qqqYtd >= 0 ? '+' : ''}${qqqYtd.toStringAsFixed(2)}% · 1.20x 叠仓年内 ${stack26Ytd >= 0 ? '+' : ''}${stack26Ytd.toStringAsFixed(2)}%）',
+                          ),
+                          style: TextStyle(
+                            color: p.muted,
+                            fontSize: 11.2,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      w(
+                        'As of ${text(liveSig['as_of_date'])}',
+                        '信号日期 ${text(liveSig['as_of_date'])}',
+                      ),
+                      style: TextStyle(color: p.muted, fontSize: 11.0),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  w(
+                    text(liveSig['reason_summary_en']),
+                    text(liveSig['reason_summary_zh']),
+                  ),
+                  style: TextStyle(color: p.text, fontSize: 11.8, height: 1.4),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final g in fourGates)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: (g['pass'] == true ? _emerald : p.muted)
+                              .withValues(alpha: 0.09),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: g['pass'] == true
+                                ? _emerald.withValues(alpha: 0.55)
+                                : p.border,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              w(text(g['label_en']), text(g['label_zh'])),
+                              style: TextStyle(
+                                color: p.muted,
+                                fontSize: 10.6,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${g['pass'] == true ? '✓' : '·'} ${text(g['current_reading'])} (${text(g['threshold'])})',
+                              style: TextStyle(
+                                color: g['pass'] == true ? _emerald : p.text,
+                                fontSize: 11.6,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: (reloadGate['pass'] == true ? _emerald : _amber)
+                            .withValues(alpha: 0.09),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color:
+                              (reloadGate['pass'] == true ? _emerald : _amber)
+                                  .withValues(alpha: 0.48),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            w(
+                              text(reloadGate['label_en']),
+                              text(reloadGate['label_zh']),
+                            ),
+                            style: TextStyle(
+                              color: p.muted,
+                              fontSize: 10.6,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            w(
+                              'VIX ${_numVal(reloadGate['vix_close']).toStringAsFixed(2)} · 5D Lock ${reloadGate['lockout_active'] == true ? 'LOCKED' : 'CLEAR'}',
+                              'VIX ${_numVal(reloadGate['vix_close']).toStringAsFixed(2)} · 5日禁买锁 ${reloadGate['lockout_active'] == true ? '锁定中' : '已解除'}',
+                            ),
+                            style: TextStyle(
+                              color: reloadGate['pass'] == true
+                                  ? _emerald
+                                  : _amber,
+                              fontSize: 11.6,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (q4Audit.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _sky.withValues(alpha: 0.07),
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(color: _sky.withValues(alpha: 0.30)),
+                    ),
+                    child: Text(
+                      w(
+                        text(q4Audit['verdict_en']),
+                        text(q4Audit['verdict_zh']),
+                      ),
+                      style: TextStyle(
+                        color: p.text,
+                        fontSize: 11.2,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Container(
+                  key: const ValueKey('crisis-kmlm20-margin-safety'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _emerald.withValues(alpha: 0.07),
+                    borderRadius: BorderRadius.circular(7),
+                    border: Border.all(color: _emerald.withValues(alpha: 0.32)),
+                  ),
+                  child: Text(
+                    w(
+                      '🛡️ Margin Safety (1.20x Gross): Init LTV ${_numVal(ms['init_ltv_pct'], 16.67).toStringAsFixed(2)}% · 11Y Peak LTV ${_numVal(ms['peak_ltv_11yr_pct'], 20.44).toStringAsFixed(2)}% · Min Equity Ratio ${_numVal(ms['min_eq_ratio_11yr_pct'], 79.56).toStringAsFixed(2)}% · Instantaneous Crash to Reg-T 25% Call: ${_numVal(ms['crash_to_regt_25_pct'], -77.78).toStringAsFixed(2)}% (35% Stress Line: ${_numVal(ms['crash_to_regt_35_pct'], -74.36).toStringAsFixed(2)}%)',
+                      '🛡️ 保证金极值安全垫（1.20x 总敞口）：初始 LTV ${_numVal(ms['init_ltv_pct'], 16.67).toStringAsFixed(2)}% · 11年峰值 LTV ${_numVal(ms['peak_ltv_11yr_pct'], 20.44).toStringAsFixed(2)}% · 最低净资产率 ${_numVal(ms['min_eq_ratio_11yr_pct'], 79.56).toStringAsFixed(2)}% · 触发 Reg-T 25% 强平需组合单日暴跌 ${_numVal(ms['crash_to_regt_25_pct'], -77.78).toStringAsFixed(2)}%（35% 券商高压线 ${_numVal(ms['crash_to_regt_35_pct'], -74.36).toStringAsFixed(2)}%）',
+                    ),
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: 11.1,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // 4. Equity Comparison Chart (1.20x +20% KMLM vs 1.00x Core vs QQQ B&H)
+          if (curveDates.length >= 5 &&
+              navKmlmSeries.length == curveDates.length &&
+              navCoreSeries.length == curveDates.length &&
+              navQqqSeries.length == curveDates.length) ...[
+            Container(
+              key: const ValueKey('crisis-kmlm20-chart'),
+              padding: EdgeInsets.all(compact ? 11 : 14),
+              decoration: BoxDecoration(
+                color: p.text.withValues(alpha: 0.022),
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(color: p.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 6,
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        w(
+                          'Equity Curve Comparison (${curveDates.first} -> ${curveDates.last} · \$200,000 Start)',
+                          '净值复利对比曲线（${curveDates.first} → ${curveDates.last} · \$200,000 起投）',
+                        ),
+                        style: TextStyle(
+                          color: p.text,
+                          fontSize: 12.4,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          _buildKmlmLegendDot(
+                            _lilac,
+                            w(
+                              '1.20x +20% KMLM (${_fmtUsd(finalNav)})',
+                              '1.20x +20% KMLM（${_fmtUsd(finalNav)}）',
+                            ),
+                          ),
+                          _buildKmlmLegendDot(
+                            _emerald,
+                            w(
+                              '1.00x Core (${_fmtUsd(coreNav)})',
+                              '1.00x 核心仓（${_fmtUsd(coreNav)}）',
+                            ),
+                          ),
+                          _buildKmlmLegendDot(
+                            p.muted,
+                            w(
+                              'QQQ B&H (${_fmtUsd(qqqNav)})',
+                              'QQQ 死拿（${_fmtUsd(qqqNav)}）',
+                            ),
+                          ),
+                          InkWell(
+                            borderRadius: BorderRadius.circular(6),
+                            onTap: () =>
+                                setState(() => useLogScale = !useLogScale),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: p.border),
+                              ),
+                              child: Text(
+                                useLogScale
+                                    ? w('Log Scale', '对数坐标')
+                                    : w('Linear', '线性坐标'),
+                                style: TextStyle(
+                                  color: p.muted,
+                                  fontSize: 10.6,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: compact ? 190 : 230,
+                    child: CustomPaint(
+                      painter: _Kmlm20HypothesisChartPainter(
+                        dates: curveDates,
+                        navKmlm: navKmlmSeries,
+                        navCore: navCoreSeries,
+                        navQqq: navQqqSeries,
+                        useLog: useLogScale,
+                        showSpliceSeam: is11Yr,
+                        spliceDate: spliceDate,
+                        borderColor: p.border,
+                        mutedColor: p.muted,
+                        kmlmColor: _lilac,
+                        coreColor: _emerald,
+                      ),
+                      size: Size.infinite,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+          ],
+
+          // 5. 7-Episode Forensic Rotation Audit Table
+          if (episodes.isNotEmpty)
+            Container(
+              key: const ValueKey('crisis-kmlm20-episodes-table'),
+              padding: EdgeInsets.all(compact ? 11 : 14),
+              decoration: BoxDecoration(
+                color: p.text.withValues(alpha: 0.022),
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(color: p.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    w(
+                      '7-Crisis Anti-Overfitting 4-Gate Rotation Forensic Ledger (2015–2026 Live)',
+                      '2015–2026 七轮核心仓止盈日 · 四门控负相关危机切股法医审计账本',
+                    ),
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: 12.4,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      width: 760,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(color: p.border),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                _epCell(w('Core TP Date', '核心止盈日'), 96, header: true),
+                                _epCell(w('ATH Anchor', '前高锚点'), 94, header: true),
+                                _epCell(w('QQQ DD', 'QQQ回撤'), 76, header: true),
+                                _epCell(w('KMLM Ret', 'KMLM区间'), 82, header: true),
+                                _epCell(w('Corr', '日相关'), 68, header: true),
+                                _epCell(w('Decision', '门控裁决'), 132, header: true),
+                                _epCell(w('Reload / Spread Gain', '回补日与切股净增厚'), 190, header: true),
+                              ],
+                            ),
+                          ),
+                          for (final ep in episodes)
+                            Builder(
+                              builder: (context) {
+                                final isRot = text(ep['decision']) == 'ROTATE';
+                                final kRet = _numVal(
+                                  ep['asset_ret_pct'] ?? ep['kmlm_ret_pct'],
+                                );
+                                final corr = _numVal(ep['corr']);
+                                final spreadPp = _numVal(
+                                  ep['spread_pp'] ?? ep['reload_vix20_spread_pp'],
+                                );
+                                final alphaUsd = _numVal(
+                                  ep['est_alpha_usd'] ??
+                                      ep['reload_vix20_alpha_usd'] ??
+                                      ep['net_alpha_usd'],
+                                );
+                                final reloadDt = text(
+                                  ep['reload_date'] ?? ep['reload_vix20_date'],
+                                  '—',
+                                );
+                                final reason = text(ep['reason']);
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 6.5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: isRot
+                                        ? _lilac.withValues(alpha: 0.07)
+                                        : Colors.transparent,
+                                    border: Border(
+                                      bottom: BorderSide(
+                                        color: p.border.withValues(alpha: 0.45),
+                                      ),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      _epCell(text(ep['tp_date']), 96, bold: true),
+                                      _epCell(text(ep['ath_date']), 94),
+                                      _epCell(
+                                        '${_numVal(ep['qqq_dd_pct']).toStringAsFixed(2)}%',
+                                        76,
+                                        color: _coral,
+                                      ),
+                                      _epCell(
+                                        '${kRet >= 0 ? '+' : ''}${kRet.toStringAsFixed(2)}%',
+                                        82,
+                                        color: kRet > 0 ? _emerald : p.muted,
+                                      ),
+                                      _epCell(
+                                        '${corr >= 0 ? '+' : ''}${corr.toStringAsFixed(3)}',
+                                        68,
+                                        color: corr < 0 ? _emerald : _amber,
+                                      ),
+                                      _epCell(
+                                        isRot
+                                            ? w('ROTATE -> QQQ', '切股 → QQQ')
+                                            : (reason == 'HOLD_CTA_NEG_RET'
+                                                  ? w('HOLD (KMLM<=0)', '不切(CTA负收益)')
+                                                  : w('HOLD (Corr>=0)', '不切(正相关拦截)')),
+                                        132,
+                                        color: isRot ? _lilac : p.muted,
+                                        bold: isRot,
+                                      ),
+                                      _epCell(
+                                        isRot
+                                            ? '$reloadDt (+${spreadPp.toStringAsFixed(1)}pp / ${_fmtUsd(alphaUsd, signed: true)})'
+                                            : w('0 Whipsaw Drag', '零假动作磨损'),
+                                        190,
+                                        color: isRot ? _emerald : p.muted,
+                                        bold: isRot,
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildKmlmLegendDot(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 9,
+          height: 3,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: p.muted,
+              fontSize: 10.9,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _epCell(
+    String val,
+    double width, {
+    bool header = false,
+    bool bold = false,
+    Color? color,
+  }) {
+    return SizedBox(
+      width: width,
+      child: Text(
+        val,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: color ?? (header ? p.muted : p.text),
+          fontSize: header ? 10.6 : 11.2,
+          fontWeight: header || bold ? FontWeight.w700 : FontWeight.w500,
+        ),
+      ),
     );
   }
 
@@ -4169,6 +5474,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               ),
             ],
           ),
+          if (selectedOverlayMode == 'kmlm20_120x') ...[
+            const SizedBox(height: 8),
+            _buildKmlm20SizerLine(navEstUsd, compact: compact),
+          ],
           const SizedBox(height: 10),
           Wrap(
             spacing: 14,
@@ -7447,14 +8756,17 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              showEngineAttribution
-                  ? w('Hide 3-Engine Breakdown', '收起三大块分部贡献')
-                  : w('Expand 3-Engine Breakdown', '展开三大块分部贡献'),
-              style: TextStyle(
-                color: p.text,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w600,
+            Flexible(
+              child: Text(
+                showEngineAttribution
+                    ? w('Hide 3-Engine Breakdown', '收起三大块分部贡献')
+                    : w('Expand 3-Engine Breakdown', '展开三大块分部贡献'),
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: p.text,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             const SizedBox(width: 4),
@@ -8122,7 +9434,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         else
           Container(width: 12, height: 2.5, color: color),
         const SizedBox(width: 6),
-        Text(label, style: TextStyle(color: p.muted, fontSize: 12)),
+        Flexible(
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: p.muted, fontSize: 12),
+          ),
+        ),
       ],
     );
   }
@@ -8140,7 +9458,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           child: CustomPaint(painter: _CrisisMarkerGlyphPainter(kind: kind)),
         ),
         const SizedBox(width: 5),
-        Text(label, style: TextStyle(color: p.muted, fontSize: 12)),
+        Flexible(
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: p.muted, fontSize: 12),
+          ),
+        ),
       ],
     );
   }
@@ -8740,11 +10064,6 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       tr['target_dte'],
       selectedRollMode == '90d_hold' ? 90 : 125,
     ).round();
-    final rawOtmVal = _numVal(
-      tr['put_otm_pct'],
-      selectedPutOtm == 'otm20' ? 20.0 : 15.0,
-    );
-    final otmPct = (rawOtmVal <= 1.0 ? rawOtmVal * 100.0 : rawOtmVal).round();
     final pricingSourceRaw = text(tr['quoteSource']).isNotEmpty
         ? text(tr['quoteSource'])
         : text(tr['pricing_source']);
@@ -9938,4 +11257,180 @@ class _CrisisMarkerGlyphPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _CrisisMarkerGlyphPainter oldDelegate) =>
       oldDelegate.kind != kind;
+}
+
+class _Kmlm20HypothesisChartPainter extends CustomPainter {
+  const _Kmlm20HypothesisChartPainter({
+    required this.dates,
+    required this.navKmlm,
+    required this.navCore,
+    required this.navQqq,
+    required this.useLog,
+    required this.showSpliceSeam,
+    required this.spliceDate,
+    required this.borderColor,
+    required this.mutedColor,
+    required this.kmlmColor,
+    required this.coreColor,
+  });
+
+  final List<String> dates;
+  final List<double> navKmlm;
+  final List<double> navCore;
+  final List<double> navQqq;
+  final bool useLog;
+  final bool showSpliceSeam;
+  final String spliceDate;
+  final Color borderColor;
+  final Color mutedColor;
+  final Color kmlmColor;
+  final Color coreColor;
+
+  double _tx(double v) => useLog ? math.log(math.max(v, 1.0)) : v;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final n = dates.length;
+    if (n < 2 || size.width <= 40 || size.height <= 40) return;
+
+    const padLeft = 52.0;
+    const padRight = 10.0;
+    const padTop = 8.0;
+    const padBottom = 20.0;
+    final plotW = math.max(10.0, size.width - padLeft - padRight);
+    final plotH = math.max(10.0, size.height - padTop - padBottom);
+
+    var minY = double.infinity;
+    var maxY = -double.infinity;
+    for (var i = 0; i < n; i++) {
+      for (final v in [navKmlm[i], navCore[i], navQqq[i]]) {
+        if (v > 0) {
+          final tv = _tx(v);
+          if (tv < minY) minY = tv;
+          if (tv > maxY) maxY = tv;
+        }
+      }
+    }
+    if (!minY.isFinite || !maxY.isFinite || maxY <= minY) return;
+    final spanY = (maxY - minY) * 1.06;
+    minY -= (maxY - minY) * 0.03;
+
+    double xAt(int i) => padLeft + (i / (n - 1)) * plotW;
+    double yAt(double v) =>
+        padTop + plotH - ((_tx(v) - minY) / spanY).clamp(0.0, 1.0) * plotH;
+
+    final gridPaint = Paint()
+      ..color = borderColor.withValues(alpha: 0.55)
+      ..strokeWidth = 0.8;
+
+    for (var g = 0; g <= 3; g++) {
+      final frac = g / 3.0;
+      final gy = padTop + plotH - frac * plotH;
+      canvas.drawLine(Offset(padLeft, gy), Offset(padLeft + plotW, gy), gridPaint);
+      final rawVal = useLog ? math.exp(minY + frac * spanY) : (minY + frac * spanY);
+      final label = rawVal >= 1e6
+          ? '\$${(rawVal / 1e6).toStringAsFixed(2)}M'
+          : '\$${(rawVal / 1e3).round()}K';
+      final tp = TextPainter(
+        text: TextSpan(
+          text: label,
+          style: TextStyle(
+            color: mutedColor,
+            fontSize: 9.8,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(math.max(0, padLeft - tp.width - 6), gy - tp.height / 2));
+    }
+
+    if (showSpliceSeam && spliceDate.isNotEmpty) {
+      final sIdx = dates.indexWhere((d) => d.compareTo(spliceDate) >= 0);
+      if (sIdx > 2 && sIdx < n - 2) {
+        final sx = xAt(sIdx);
+        final dashPaint = Paint()
+          ..color = mutedColor.withValues(alpha: 0.65)
+          ..strokeWidth = 1.0;
+        for (var y = padTop; y < padTop + plotH; y += 6) {
+          canvas.drawLine(
+            Offset(sx, y),
+            Offset(sx, math.min(y + 3, padTop + plotH)),
+            dashPaint,
+          );
+        }
+        final seamTp = TextPainter(
+          text: TextSpan(
+            text: '2020-12 KMLM Live ->',
+            style: TextStyle(
+              color: mutedColor,
+              fontSize: 9.2,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        seamTp.paint(
+          canvas,
+          Offset(
+            (sx + 4).clamp(padLeft, padLeft + plotW - seamTp.width),
+            padTop + 2,
+          ),
+        );
+      }
+    }
+
+    void drawCurve(List<double> arr, Color color, double width) {
+      final path = Path();
+      for (var i = 0; i < n; i++) {
+        final pt = Offset(xAt(i), yAt(arr[i]));
+        if (i == 0) {
+          path.moveTo(pt.dx, pt.dy);
+        } else {
+          path.lineTo(pt.dx, pt.dy);
+        }
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = width
+          ..strokeJoin = StrokeJoin.round
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+
+    drawCurve(navQqq, mutedColor.withValues(alpha: 0.72), 1.35);
+    drawCurve(navCore, coreColor.withValues(alpha: 0.90), 1.65);
+    drawCurve(navKmlm, kmlmColor, 2.25);
+
+    final midIdx = (n / 2).floor();
+    for (final idx in [0, midIdx, n - 1]) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: dates[idx].substring(0, 7),
+          style: TextStyle(
+            color: mutedColor,
+            fontSize: 9.6,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final dx = idx == 0
+          ? padLeft
+          : (idx == n - 1 ? padLeft + plotW - tp.width : xAt(idx) - tp.width / 2);
+      tp.paint(canvas, Offset(dx, padTop + plotH + 4));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _Kmlm20HypothesisChartPainter old) =>
+      old.dates != dates ||
+      old.navKmlm != navKmlm ||
+      old.navCore != navCore ||
+      old.navQqq != navQqq ||
+      old.useLog != useLog ||
+      old.showSpliceSeam != showSpliceSeam;
 }

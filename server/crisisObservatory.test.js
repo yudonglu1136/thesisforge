@@ -10,6 +10,9 @@ import {
   CRISIS_OBSERVATORY_M7_TP_MODES,
   CRISIS_OBSERVATORY_ROLL_MODES,
   CRISIS_OBSERVATORY_FILL_MODES,
+  CRISIS_OBSERVATORY_OVERLAY_MODES,
+  CRISIS_OBSERVATORY_FIN_MODES,
+  CRISIS_OBSERVATORY_KMLM_WINDOWS,
   CRISIS_OBSERVATORY_TP_MODES,
   CRISIS_OBSERVATORY_CC_MODES,
   CRISIS_OBSERVATORY_SP_MODES,
@@ -916,4 +919,146 @@ test('parseFredCsvText skips US holiday empty/dot cells without zero corruption 
   // Verify live six_crisis_lights dynamically recomputes post-artifact sig2_credit to 1.59% (not frozen 1.62%)
   const sig2 = live24.six_crisis_lights.find(l => l.key === 'sig2_credit');
   assert.ok(sig2.reading_value.startsWith('1.59%'), `Expected live sig2_credit 1.59%, got ${sig2.reading_value}`);
+});
+
+test('computes 1.20x +20% KMLM Hypothesis Overlay with $0.00 Python/JS parity, zero regression on 1.00x Core, and full HTTP/PIT support', async t => {
+  assert.deepEqual(CRISIS_OBSERVATORY_OVERLAY_MODES, ['core_100x', 'kmlm20_120x']);
+  assert.deepEqual(CRISIS_OBSERVATORY_FIN_MODES, ['box_35bp', 'ibkr_150bp']);
+  assert.deepEqual(CRISIS_OBSERVATORY_KMLM_WINDOWS, ['5yr_live', '11yr_stitched']);
+
+  assert.throws(
+    () => loadCrisisObservatoryDashboard({ overlayMode: 'UNKNOWN_OVERLAY' }),
+    /invalid_crisis_observatory_overlay_mode/,
+  );
+  assert.throws(
+    () => loadCrisisObservatoryDashboard({ finMode: 'UNKNOWN_FIN' }),
+    /invalid_crisis_observatory_fin_mode/,
+  );
+  assert.throws(
+    () => loadCrisisObservatoryDashboard({ kmlmWindow: 'UNKNOWN_WIN' }),
+    /invalid_crisis_observatory_kmlm_window/,
+  );
+
+  // Default remains 1.00x Core with $0.00 regression while shipping hypothesis_kmlm20 payload
+  const baseDoc = loadCrisisObservatoryDashboard({ asOf: '2026-11-20' });
+  assert.equal(baseDoc.overlay_mode, 'core_100x');
+  assert.equal(baseDoc.default_overlay_mode, 'core_100x');
+  assert.equal(baseDoc.fin_mode, 'box_35bp');
+  assert.equal(baseDoc.kmlm_window, '5yr_live');
+  assert.equal(baseDoc.overlay_modes_meta.length, 2);
+  assert.equal(baseDoc.fin_modes_meta.length, 2);
+  assert.equal(baseDoc.kmlm_windows_meta.length, 2);
+  assert.equal(baseDoc.hypothesis_kmlm20.status, 'HYPOTHESIS');
+  assert.equal(baseDoc.hypothesis_kmlm20.is_active_overlay, false);
+
+  // Switch to 1.20x +20% KMLM Hypothesis Overlay (5Y Pure Live, Box +0.35%, IBKR Limit)
+  const k5BoxLim = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    overlayMode: 'kmlm20_120x',
+    finMode: 'box_35bp',
+    kmlmWindow: '5yr_live',
+  });
+  assert.equal(k5BoxLim.overlay_mode, 'kmlm20_120x');
+  const h5 = k5BoxLim.hypothesis_kmlm20;
+  assert.equal(h5.is_active_overlay, true);
+  assert.equal(h5.code, 'B020_M125_PLUS_20PCT_KMLM_DD12_NEGCORR');
+  assert.equal(h5.architecture.gross_leverage, 1.2);
+  assert.equal(h5.architecture.kmlm_weight_pct, 20.0);
+  assert.equal(h5.architecture.gld_weight_pct, 0.0);
+
+  // 5Y Pure Live KMLM (2020-12-02 -> 2025-12-15, $200k start, zero proxy)
+  const p5Box = h5.backtest_5yr_live.box_35bp.reload_vix20_5d;
+  const p5Ibkr = h5.backtest_5yr_live.ibkr_150bp.reload_vix20_5d;
+  assert.ok(Math.abs(p5Box.final_nav - 570416.64) <= 0.25, `5Y Box Limit got ${p5Box.final_nav}`);
+  assert.equal(p5Box.cagr_pct, 23.14);
+  assert.equal(p5Box.mdd_pct, -22.27);
+  assert.equal(p5Box.calmar, 1.039);
+  assert.equal(p5Box.sharpe, 0.983);
+  assert.equal(p5Box.sortino, 1.498);
+  assert.equal(p5Box.peak_ltv_pct, 19.58);
+  assert.equal(p5Box.rot_cnt, 1);
+
+  assert.ok(Math.abs(p5Ibkr.final_nav - 564011.73) <= 0.25, `5Y IBKR Limit got ${p5Ibkr.final_nav}`);
+  assert.equal(p5Ibkr.cagr_pct, 22.86);
+  assert.equal(p5Ibkr.mdd_pct, -22.38);
+  assert.equal(p5Ibkr.calmar, 1.022);
+
+  // 11Y Stitched (2015-01-02 -> 2025-12-15, AQMIX pre-2020-12-03 + live KMLM)
+  const p11Box = h5.backtest_11yr.box_35bp.reload_vix20_5d;
+  const p11Ibkr = h5.backtest_11yr.ibkr_150bp.reload_vix20_5d;
+  assert.ok(Math.abs(p11Box.final_nav - 1785222.38) <= 0.5, `11Y Box Limit got ${p11Box.final_nav}`);
+  assert.equal(p11Box.cagr_pct, 22.13);
+  assert.equal(p11Box.mdd_pct, -23.6);
+  assert.equal(p11Box.calmar, 0.938);
+  assert.equal(p11Box.sharpe, 1.01);
+  assert.equal(p11Box.sortino, 1.353);
+  assert.equal(p11Box.peak_ltv_pct, 20.44);
+  assert.equal(p11Box.rot_cnt, 2);
+
+  assert.ok(Math.abs(p11Ibkr.final_nav - 1741934.61) <= 0.5, `11Y IBKR Limit got ${p11Ibkr.final_nav}`);
+  assert.equal(p11Ibkr.cagr_pct, 21.85);
+  assert.equal(p11Ibkr.mdd_pct, -23.62);
+  assert.equal(p11Ibkr.calmar, 0.925);
+
+  // Ask/Bid toggle updates 1.20x KMLM stack dynamically ($566,429.07 5Y Box, $1,732,487.07 11Y Box)
+  const k11Ab = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-20',
+    overlayMode: 'kmlm20_120x',
+    finMode: 'ibkr_150bp',
+    kmlmWindow: '11yr_stitched',
+    fillMode: 'ask_bid',
+  });
+  const h11Ab = k11Ab.hypothesis_kmlm20;
+  assert.equal(h11Ab.selected_fin_mode, 'ibkr_150bp');
+  assert.equal(h11Ab.selected_window, '11yr_stitched');
+  assert.equal(h11Ab.fill_mode, 'ask_bid');
+  assert.ok(Math.abs(h11Ab.backtest_5yr_live.box_35bp.reload_vix20_5d.final_nav - 566429.07) <= 0.25);
+  assert.ok(Math.abs(h11Ab.backtest_11yr.box_35bp.reload_vix20_5d.final_nav - 1732487.07) <= 0.5);
+  assert.ok(Math.abs(h11Ab.active_summary.kmlm20.final_nav - 1690449.5) <= 0.5);
+
+  // Margin safety & 7 historical/live episodes & 2026 Q4 HOLD_POS_CORR
+  assert.equal(h5.margin_safety.init_ltv_pct, 16.67);
+  assert.equal(h5.margin_safety.crash_to_regt_25_pct, -77.78);
+  assert.equal(h5.margin_safety.crash_to_regt_35_pct, -74.36);
+  assert.ok(Math.abs(h5.margin_safety.box_vs_ibkr_11yr_saved_usd - 43288) <= 5);
+  assert.equal(h5.episodes_7.length, 7);
+  assert.equal(h5.live_signal.q4_2026_tp_audit.decision, 'HOLD');
+  assert.equal(h5.live_signal.q4_2026_tp_audit.reason, 'HOLD_POS_CORR');
+  assert.ok(Math.abs(h5.live_signal.q4_2026_tp_audit.corr - 0.092) <= 0.002);
+  assert.equal(h5.live_signal.four_gates.length, 4);
+
+  // PIT Replay during 2022 summer NegCorr rotation (2022-05-19 -> 2022-08-11): sleeve is ROTATED_TO_QQQ!
+  const pitRot2022 = loadCrisisObservatoryPitSnapshot({
+    date: '2022-06-15',
+    overlayMode: 'kmlm20_120x',
+  });
+  assert.equal(pitRot2022.overlay_mode, 'kmlm20_120x');
+  assert.equal(pitRot2022.hypothesis_kmlm20.live_signal.sleeve_state, 'ROTATED_TO_QQQ');
+  assert.equal(pitRot2022.hypothesis_kmlm20.curves_5yr, undefined, 'PIT payload omits full curve arrays for fast replay');
+
+  // HTTP route query parameter forwarding (?co_overlay=kmlm20_120x&co_finMode=ibkr_150bp&co_kmlmWin=11yr_stitched)
+  const app = express();
+  app.use((req, _res, next) => {
+    req.user = { id: '11111111-1111-4111-8111-111111111111' };
+    next();
+  });
+  registerInvestmentRoutes(app, {
+    source: { canonicalMarket: false },
+    date: v => v || '2026-11-20',
+  });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const port = server.address().port;
+
+  const resHttp = await fetch(
+    `http://127.0.0.1:${port}/api/discover/crisis-observatory?co_overlay=kmlm20_120x&co_finMode=ibkr_150bp&co_kmlmWin=11yr_stitched&asOf=2026-11-20`,
+  );
+  assert.equal(resHttp.status, 200);
+  const bodyHttp = await resHttp.json();
+  assert.equal(bodyHttp.overlay_mode, 'kmlm20_120x');
+  assert.equal(bodyHttp.fin_mode, 'ibkr_150bp');
+  assert.equal(bodyHttp.kmlm_window, '11yr_stitched');
+  assert.equal(bodyHttp.hypothesis_kmlm20.is_active_overlay, true);
+  assert.ok(Math.abs(bodyHttp.hypothesis_kmlm20.active_summary.kmlm20.final_nav - 1741934.61) <= 0.5);
 });

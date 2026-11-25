@@ -738,6 +738,10 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         'engine_attribution_by_strategy': engineAttrByStrat,
         'profile': profile,
         'fill_mode': fillMode,
+        'overlay_mode': qp['overlayMode'] ?? 'core_100x',
+        'fin_mode': qp['finMode'] ?? 'box_35bp',
+        'kmlm_window': qp['kmlmWindow'] ?? '5yr_live',
+        'hypothesis_kmlm20': _buildHypothesisKmlm20Fixture(fillMode: fillMode),
         'put_otm': putOtm,
         'm7_tp_mode': m7TpMode,
         'roll_mode': rollMode,
@@ -756,6 +760,302 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       'asOf': '2026-11-20',
       'rows': const <dynamic>[],
       'gurus': const <dynamic>[],
+    };
+  }
+
+  static Map<String, dynamic> _buildHypothesisKmlm20Fixture({
+    required String fillMode,
+  }) {
+    final isAb = fillMode == 'ask_bid';
+    return {
+      'id': 'kmlm_20_hypothesis',
+      'code': 'B020_M125_PLUS_20PCT_KMLM_DD12_NEGCORR',
+      'status': 'HYPOTHESIS',
+      'title_en':
+          '1.20x Return-Stacking Hypothesis: 100% Locked Core (B020_M125) + 20% Pure KMLM',
+      'title_zh':
+          '1.20x 杠杆叠仓版本假说：100% 锁死双账本核心仓（B020_M125）+ 20% 纯 KMLM 危机管理期货',
+      'disclaimer_en':
+          'Hypothesis Overlay (Research Preview): Keeps the 1.00x B020_M125 production core 100% unchanged and stacks +20% KMLM (0% GLD).',
+      'disclaimer_zh':
+          '版本假说（研究验证版）：1.00x B020_M125 生产核心仓 100% 原封不动，在此之上叠仓 +20% 纯 KMLM（0% 黄金）。',
+      'financing': {
+        'effr_effective_date': '2026-11-24',
+        'effr_pct': 3.88,
+        'box_spread_pct': 0.35,
+        'ibkr_spread_pct': 1.50,
+        'box_rate_pct': 4.23,
+        'ibkr_rate_pct': 5.38,
+      },
+      'margin_safety': {
+        'init_ltv_pct': 16.67,
+        'peak_ltv_11yr_pct': 20.44,
+        'min_eq_ratio_11yr_pct': 79.56,
+        'crash_to_regt_25_pct': -77.78,
+        'crash_to_regt_35_pct': -74.36,
+        'box_vs_ibkr_11yr_saved_usd': 43288,
+      },
+      'live_signal': {
+        'as_of_date': '2026-11-25',
+        'kmlm_spot_close': 27.60,
+        'kmlm_ytd_pct': -4.12,
+        'qqq_ytd_pct': 11.45,
+        'sleeve_state': 'HELD_IN_KMLM',
+        'action_code': 'HOLD_KMLM_20PCT',
+        'action_label_en': 'HOLD 100% Core + 20% Pure KMLM (1.20x Normal Stack)',
+        'action_label_zh': '常态持有 100% 核心仓 + 20% 纯 KMLM（1.20x 叠仓待命）',
+        'reason_summary_en':
+            'Daily Corr(QQQ, KMLM) since 2026-10-06 is +0.092 (>= 0). All 4 NegCorr gates prevent whipsaw rotation.',
+        'reason_summary_zh':
+            '自高点 2026-10-06 以来 Corr(QQQ, KMLM) = +0.092（>= 0 正相关），四门控严格拦截切股，继续持有 20% KMLM。',
+        'q4_2026_tp_audit': {
+          'tp_date': '2026-11-20',
+          'verdict_en':
+              '2026-11-20 Core Put TP Audit: QQQ -19.90%, KMLM -7.70%, Corr +0.092 (>= 0) -> SMART HOLD (Zero Whipsaw Rotation)',
+          'verdict_zh':
+              '2026-11-20 核心仓止盈日审计：QQQ -19.90%，KMLM -7.70%，日相关 +0.092（>= 0 正相关）→ 智能持有不切股（零假动作磨损）',
+        },
+        'four_gates': [
+          {
+            'id': 'gate_1_core_tp',
+            'pass': false,
+            'current_reading': 'IDLE',
+            'threshold': 'Core Put TP Armed',
+            'label_en': '1. Core B020_M125 Crash Put TP',
+            'label_zh': '1. 核心仓 B020_M125 崩盘 Put 止盈触发',
+          },
+          {
+            'id': 'gate_2_qqq_dd12',
+            'pass': true,
+            'current_reading': '-16.00%',
+            'threshold': '<= -12.0%',
+            'label_en': '2. QQQ Drawdown from ATH <= -12%',
+            'label_zh': '2. QQQ 距前高回撤 <= -12.0%',
+          },
+          {
+            'id': 'gate_3_kmlm_pos_ret',
+            'pass': false,
+            'current_reading': '-7.70%',
+            'threshold': '> 0.0%',
+            'label_en': '3. KMLM Crisis Return (ATH->Now) > 0%',
+            'label_zh': '3. KMLM 危机区间收益（前高至今）> 0%',
+          },
+          {
+            'id': 'gate_4_neg_corr',
+            'pass': false,
+            'current_reading': '+0.092',
+            'threshold': '< 0.000',
+            'label_en': '4. Daily Corr(QQQ, KMLM) < 0',
+            'label_zh': '4. 区间日收益相关 Corr(QQQ, KMLM) < 0',
+          },
+        ],
+        'reload_gate': {
+          'pass': false,
+          'vix_close': 28.40,
+          'lockout_active': true,
+          'label_en': 'Reload Gate: VIX <= 20.0 AND 5D Post-TP Lockout Cleared',
+          'label_zh': '常态回补门控：VIX <= 20.0 且 5天止盈后倒挂禁买锁已解除',
+        },
+      },
+      'backtest_5yr_live': {
+        'window': '2020-12-02 -> 2025-12-15',
+        'qqq_bh': {'final_nav': 417371.10, 'cagr_pct': 15.72, 'mdd_pct': -35.12, 'calmar': 0.448},
+        'core_100x': {
+          'final_nav': isAb ? 553914.0 : 557851.0,
+          'cagr_pct': isAb ? 22.42 : 22.71,
+          'mdd_pct': -26.17,
+          'calmar': 0.868,
+        },
+        'box_35bp': {
+          'reload_vix20_5d': {
+            'final_nav': isAb ? 566429.07 : 570416.64,
+            'cagr_pct': 23.14,
+            'mdd_pct': -22.27,
+            'calmar': 1.039,
+            'sharpe': 0.983,
+            'sortino': 1.498,
+            'peak_ltv_pct': 19.58,
+            'ann_interest_pct_nav': 0.768,
+            'tot_interest_usd': 12501.87,
+            'rot_cnt': 1,
+            'rebal_cnt': 20,
+          },
+          'static_drift_250bp': {'final_nav': 548120.0},
+        },
+        'ibkr_150bp': {
+          'reload_vix20_5d': {
+            'final_nav': isAb ? 560066.76 : 564011.73,
+            'cagr_pct': 22.86,
+            'mdd_pct': -22.38,
+            'calmar': 1.022,
+            'sharpe': 0.972,
+            'sortino': 1.481,
+            'peak_ltv_pct': 19.63,
+            'ann_interest_pct_nav': 0.997,
+            'tot_interest_usd': 16114.89,
+            'rot_cnt': 1,
+            'rebal_cnt': 20,
+          },
+          'static_drift_250bp': {'final_nav': 541900.0},
+        },
+      },
+      'backtest_11yr': {
+        'window': '2015-01-02 -> 2025-12-15',
+        'splice_note_en':
+            'Pre-2020-12-03 stitched with AQR Managed Futures (AQMIX) daily total return; 2020-12-03 onward 100% live KMLM ETF.',
+        'splice_note_zh':
+            '2020-12-03 KMLM 上市前采用 AQR 管理期货基金（AQMIX）真实日总回报拼接；2020-12-03 起为 100% KMLM 实盘净值（无任何代换）。',
+        'qqq_bh': {'final_nav': 1286327.45, 'cagr_pct': 18.51, 'mdd_pct': -35.12, 'calmar': 0.527},
+        'core_100x': {
+          'final_nav': isAb ? 1688420.02 : 1740267.20,
+          'cagr_pct': isAb ? 21.52 : 21.85,
+          'mdd_pct': -26.17,
+          'calmar': 0.835,
+        },
+        'box_35bp': {
+          'reload_vix20_5d': {
+            'final_nav': isAb ? 1732487.07 : 1785222.38,
+            'cagr_pct': 22.13,
+            'mdd_pct': -23.60,
+            'calmar': 0.938,
+            'sharpe': 1.010,
+            'sortino': 1.353,
+            'peak_ltv_pct': 20.44,
+            'ann_interest_pct_nav': 0.632,
+            'tot_interest_usd': 44489.89,
+            'rot_cnt': 2,
+            'rebal_cnt': 43,
+          },
+          'static_drift_250bp': {'final_nav': 1705000.0},
+        },
+        'ibkr_150bp': {
+          'reload_vix20_5d': {
+            'final_nav': isAb ? 1690449.50 : 1741934.61,
+            'cagr_pct': 21.85,
+            'mdd_pct': -23.62,
+            'calmar': 0.925,
+            'sharpe': 0.999,
+            'sortino': 1.337,
+            'peak_ltv_pct': 20.50,
+            'ann_interest_pct_nav': 0.859,
+            'tot_interest_usd': 59455.66,
+            'rot_cnt': 2,
+            'rebal_cnt': 43,
+          },
+          'static_drift_250bp': {'final_nav': 1662000.0},
+        },
+      },
+      'live_2026_ytd': {
+        'box_35bp': {'ytd_ret_pct': 14.20},
+        'ibkr_150bp': {'ytd_ret_pct': 13.98},
+        'standalone': {'KMLM_ytd': -4.12, 'QQQ_ytd': 11.45},
+      },
+      'curves_5yr': {
+        'dates': [
+          '2020-12-02',
+          '2021-12-27',
+          '2022-05-18',
+          '2022-08-11',
+          '2024-08-05',
+          '2025-12-15',
+        ],
+        'series': {
+          'qqq_bh': [200000, 265000, 192000, 218000, 315000, 417371],
+          'core_100x': [200000, 263000, 212000, 241000, 392000, 557851],
+          'kmlm20_box': [200000, 268000, 229000, 265000, 405000, 570417],
+          'kmlm20_ibkr': [200000, 267000, 228000, 263500, 401500, 564012],
+          'kmlm20_static_box': [200000, 268000, 229000, 251000, 390000, 548120],
+        },
+      },
+      'curves_11yr': {
+        'splice_date': '2020-12-03',
+        'dates': [
+          '2015-01-02',
+          '2018-12-20',
+          '2020-03-09',
+          '2020-12-03',
+          '2022-05-18',
+          '2025-12-15',
+        ],
+        'series': {
+          'qqq_bh': [200000, 290000, 395000, 615000, 592000, 1286327],
+          'core_100x': [200000, 318000, 482000, 760000, 795000, 1740267],
+          'kmlm20_box': [200000, 322000, 496000, 780000, 845000, 1785222],
+          'kmlm20_ibkr': [200000, 317000, 487000, 766000, 828000, 1741935],
+          'kmlm20_static_box': [200000, 320000, 494000, 776000, 818000, 1705000],
+        },
+      },
+      'episodes_7': [
+        {
+          'tp_date': '2015-08-24',
+          'ath_date': '2015-07-20',
+          'qqq_dd_pct': -13.62,
+          'asset_ret_pct': 6.07,
+          'corr': -0.594,
+          'decision': 'ROTATE',
+          'reason': 'ROTATE',
+          'reload_date': '2015-10-06',
+          'spread_pp': 9.70,
+          'est_alpha_usd': 4140,
+        },
+        {
+          'tp_date': '2018-12-20',
+          'ath_date': '2018-08-29',
+          'qqq_dd_pct': -18.30,
+          'asset_ret_pct': -5.18,
+          'corr': -0.018,
+          'decision': 'HOLD',
+          'reason': 'HOLD_CTA_NEG_RET',
+        },
+        {
+          'tp_date': '2020-03-09',
+          'ath_date': '2020-02-19',
+          'qqq_dd_pct': -18.32,
+          'asset_ret_pct': 2.51,
+          'corr': 0.041,
+          'decision': 'HOLD',
+          'reason': 'HOLD_POS_CORR',
+        },
+        {
+          'tp_date': '2022-05-18',
+          'ath_date': '2021-12-27',
+          'qqq_dd_pct': -27.75,
+          'asset_ret_pct': 33.12,
+          'corr': -0.155,
+          'decision': 'ROTATE',
+          'reason': 'ROTATE',
+          'reload_date': '2022-08-11',
+          'spread_pp': 14.80,
+          'est_alpha_usd': 26452,
+        },
+        {
+          'tp_date': '2024-08-05',
+          'ath_date': '2024-07-10',
+          'qqq_dd_pct': -13.44,
+          'asset_ret_pct': -2.38,
+          'corr': 0.453,
+          'decision': 'HOLD',
+          'reason': 'HOLD_POS_CORR',
+        },
+        {
+          'tp_date': '2025-04-04',
+          'ath_date': '2025-02-19',
+          'qqq_dd_pct': -21.54,
+          'asset_ret_pct': -2.18,
+          'corr': 0.141,
+          'decision': 'HOLD',
+          'reason': 'HOLD_POS_CORR',
+        },
+        {
+          'tp_date': '2026-11-20',
+          'ath_date': '2026-10-06',
+          'qqq_dd_pct': -19.90,
+          'asset_ret_pct': -7.70,
+          'corr': 0.092,
+          'decision': 'HOLD',
+          'reason': 'HOLD_POS_CORR',
+        },
+      ],
     };
   }
 }
@@ -1480,6 +1780,132 @@ void main() {
           findsNothing,
         );
         expect(tester.takeException(), isNull);
+      }
+
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+    },
+  );
+
+  testWidgets(
+    'renders 1.20x +20% KMLM Hypothesis Overlay switch, Box/IBKR & 5Y/11Y toggles, 4-Gate NegCorr audit, and Position Sizer cleanly in EN & ZH across Desktop & Mobile',
+    (tester) async {
+      for (final viewport in [const Size(1440, 1200), const Size(390, 844)]) {
+        for (final lang in [AppLanguage.zh, AppLanguage.en]) {
+          tester.view.physicalSize = viewport;
+          tester.view.devicePixelRatio = 1.0;
+
+          final api = CrisisObservatoryFixtureApi();
+          var lastSel = <String, dynamic>{};
+
+          await tester.pumpWidget(
+            MaterialApp(
+              home: LanguageScope(
+                language: lang,
+                child: Scaffold(
+                  backgroundColor: const Color(0xFF06090F),
+                  body: SingleChildScrollView(
+                    padding: const EdgeInsets.all(14),
+                    child: CrisisObservatoryPanel(
+                      key: UniqueKey(),
+                      api: api,
+                      palette: Palette(false),
+                      asOf: '2026-11-20',
+                      onCompany: (_) {},
+                      onSelection: (s) => lastSel = s,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          // Default starts on 1.00x Production Core (hypothesis panel hidden)
+          expect(
+            find.byKey(const ValueKey('crisis-overlay-version-switcher')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('crisis-kmlm20-hypothesis-panel')),
+            findsNothing,
+          );
+
+          // Switch to 1.20x +20% KMLM Hypothesis Overlay
+          await tapVisible(
+            tester,
+            find.byKey(const ValueKey('crisis-overlay-tab-kmlm20_120x')),
+          );
+          expect(lastSel['overlayMode'], 'kmlm20_120x');
+          expect(
+            find.byKey(const ValueKey('crisis-kmlm20-hypothesis-panel')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('crisis-kmlm20-kpi-strip')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('crisis-kmlm20-live-gates-card')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('crisis-kmlm20-margin-safety')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('crisis-kmlm20-chart')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('crisis-kmlm20-episodes-table')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('crisis-kmlm20-sizer-line')),
+            findsOneWidget,
+          );
+
+          // Verify 5Y Pure Live Box +0.35% NAV ($570,417) and -77.78% Reg-T cushion
+          expect(find.textContaining('570,417'), findsWidgets);
+          expect(find.textContaining('-77.78%'), findsWidgets);
+
+          // Toggle to IBKR Margin (+1.50%) -> $564,012
+          await tapVisible(
+            tester,
+            find.byKey(const ValueKey('crisis-fin-pill-ibkr_150bp')),
+          );
+          expect(lastSel['finMode'], 'ibkr_150bp');
+          expect(find.textContaining('564,012'), findsWidgets);
+
+          // Toggle back to SPX Box (+0.35%) and switch to 11Y Stitched -> $1,785,222 + AQMIX provenance note
+          await tapVisible(
+            tester,
+            find.byKey(const ValueKey('crisis-fin-pill-box_35bp')),
+          );
+          await tapVisible(
+            tester,
+            find.byKey(const ValueKey('crisis-kmlm-win-11yr_stitched')),
+          );
+          expect(lastSel['kmlmWindow'], '11yr_stitched');
+          expect(
+            find.byKey(const ValueKey('crisis-kmlm20-splice-note')),
+            findsOneWidget,
+          );
+          expect(find.textContaining('1,785,222'), findsWidgets);
+
+          // Switch back to 1.00x Production Core cleanly
+          await tapVisible(
+            tester,
+            find.byKey(const ValueKey('crisis-overlay-tab-core_100x')),
+          );
+          expect(lastSel['overlayMode'], 'core_100x');
+          expect(
+            find.byKey(const ValueKey('crisis-kmlm20-hypothesis-panel')),
+            findsNothing,
+          );
+          expect(tester.takeException(), isNull);
+        }
       }
 
       addTearDown(tester.view.resetPhysicalSize);

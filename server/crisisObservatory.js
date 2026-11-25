@@ -19,6 +19,19 @@ import {
   getLiveM7MarketFeed,
   normalizeLegacyExtraBarsToFeed,
 } from './crisisObservatoryM7.js';
+import {
+  CRISIS_OBSERVATORY_OVERLAY_MODES,
+  DEFAULT_OVERLAY_MODE,
+  CRISIS_OBSERVATORY_FIN_MODES,
+  DEFAULT_FIN_MODE,
+  CRISIS_OBSERVATORY_KMLM_WINDOWS,
+  DEFAULT_KMLM_WINDOW,
+  normalizeOverlayMode,
+  normalizeFinMode,
+  normalizeKmlmWindow,
+  getLiveKmlmEffrFeed,
+  buildHypothesisKmlm20Payload,
+} from './crisisObservatoryKmlm20.js';
 
 export {
   CRISIS_OBSERVATORY_PROFILES,
@@ -28,6 +41,12 @@ export {
   CRISIS_OBSERVATORY_FILL_MODES,
   DEFAULT_M7_FILL_MODE,
   HARDCODED_RULESET_SPEC,
+  CRISIS_OBSERVATORY_OVERLAY_MODES,
+  DEFAULT_OVERLAY_MODE,
+  CRISIS_OBSERVATORY_FIN_MODES,
+  DEFAULT_FIN_MODE,
+  CRISIS_OBSERVATORY_KMLM_WINDOWS,
+  DEFAULT_KMLM_WINDOW,
 };
 
 export const CRISIS_OBSERVATORY_VERSION = 'crisis-observatory-v3-m7';
@@ -1982,10 +2001,14 @@ export function loadCrisisObservatoryDashboard({
   ccMode = null,
   spMode = null,
   wcMode = null,
+  overlayMode = null,
+  finMode = null,
+  kmlmWindow = null,
   snapshotId: expectedSnapshotId = null,
   file = defaultFile,
   extraDailyBars = null,
   liveM7Feed = null,
+  liveKmlmFeed = null,
 } = {}) {
   const { data: rawData, snapshotId } = readArtifact(file);
   if (expectedSnapshotId && expectedSnapshotId !== snapshotId) {
@@ -2107,6 +2130,10 @@ export function loadCrisisObservatoryDashboard({
     fail('invalid_crisis_observatory_wc_mode', 400);
   }
 
+  const rawOverlayMode = normalizeOverlayMode(overlayMode);
+  const rawFinMode = normalizeFinMode(finMode);
+  const rawKmlmWindow = normalizeKmlmWindow(kmlmWindow);
+
   const data = projectArtifactForModes(
     rawData,
     snapshotId,
@@ -2153,9 +2180,74 @@ export function loadCrisisObservatoryDashboard({
         ? 'M7_Ensemble'
         : 'M7G_Graded';
 
+  const kmlmMetaFields = {
+    default_overlay_mode: 'core_100x',
+    overlay_mode: rawOverlayMode,
+    selected_overlay_mode: rawOverlayMode,
+    overlay_modes_meta: [
+      {
+        id: 'core_100x',
+        status: 'PRODUCTION',
+        label_en: '1.00x Production Core · B020_M125 (Unlevered)',
+        label_zh: '1.00x 生产基线 · B020_M125（无杠杆）',
+      },
+      {
+        id: 'kmlm20_120x',
+        status: 'HYPOTHESIS',
+        label_en: '1.20x Hypothesis · +20% KMLM Stack',
+        label_zh: '1.20x 版本假说 · +20% KMLM 杠杆叠仓',
+      },
+    ],
+    default_fin_mode: 'box_35bp',
+    fin_mode: rawFinMode,
+    selected_fin_mode: rawFinMode,
+    fin_modes_meta: [
+      {
+        id: 'box_35bp',
+        spread_pct: 0.35,
+        label_en: 'SPX Box / MNQ (NY Fed EFFR + 0.35%)',
+        label_zh: 'SPX Box / MNQ（EFFR + 0.35%）',
+      },
+      {
+        id: 'ibkr_150bp',
+        spread_pct: 1.5,
+        label_en: 'IBKR Tier-1 Margin (NY Fed EFFR + 1.50%)',
+        label_zh: 'IBKR 常规融资（EFFR + 1.50%）',
+      },
+    ],
+    default_kmlm_window: '5yr_live',
+    kmlm_window: rawKmlmWindow,
+    kmlm_windows_meta: [
+      {
+        id: '5yr_live',
+        label_en: '5Y Pure Live KMLM (2020-2025 · Zero Proxy)',
+        label_zh: '5年纯真盘（2020-2025 · 零代换）',
+      },
+      {
+        id: '11yr_stitched',
+        label_en: '11Y Full Cycle (2015-2025 · AQMIX Pre-2020 + KMLM)',
+        label_zh: '11年全周期（2015-2025 · 含2020前AQMIX拼接）',
+      },
+    ],
+  };
+
   // Fast path: exact audited snapshot when requestedAsOf >= artifact.as_of_date and no live tail
   if (!extendedSeries && !extendedM7 && requestedAsOf >= data.as_of_date) {
     const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'M7G_Graded' : selectedStrategy;
+    const fastM7Dash =
+      data.m7_live_dashboards_by_strategy?.[m7TargetStrat] ?? data.m7_live_dashboard ?? null;
+    const kmlmFastAsOf = asOf && requestedAsOf > data.as_of_date ? requestedAsOf : null;
+    const hypothesisKmlm20 = buildHypothesisKmlm20Payload({
+      asOf: kmlmFastAsOf,
+      profile: effectiveProfile,
+      fillMode: rawFillMode,
+      overlayMode: rawOverlayMode,
+      finMode: rawFinMode,
+      kmlmWindow: rawKmlmWindow,
+      m7LiveDashboard: fastM7Dash,
+      liveMarketSnapshot: data.live_market_snapshot,
+      liveKmlmFeed,
+    });
     return {
       ...data,
       version: CRISIS_OBSERVATORY_VERSION,
@@ -2168,6 +2260,7 @@ export function loadCrisisObservatoryDashboard({
       selected_strategy_id: selectedStrategy,
       fill_mode: rawFillMode,
       selected_fill_mode: rawFillMode,
+      ...kmlmMetaFields,
       put_otm: rawPutOtm,
       m7_tp_mode: rawM7TpMode,
       roll_mode: rawRollMode,
@@ -2176,8 +2269,8 @@ export function loadCrisisObservatoryDashboard({
       cc_mode: rawCcMode,
       sp_mode: rawSpMode,
       wc_mode: rawWcMode,
-      m7_live_dashboard:
-        data.m7_live_dashboards_by_strategy?.[m7TargetStrat] ?? data.m7_live_dashboard ?? null,
+      m7_live_dashboard: fastM7Dash,
+      hypothesis_kmlm20: hypothesisKmlm20,
       live_signal_state:
         data.live_signal_states_by_strategy?.[ledgerStrategy] ?? data.live_signal_state,
       live_sp_state:
@@ -2535,6 +2628,20 @@ export function loadCrisisObservatoryDashboard({
     },
   );
 
+  const resolvedM7Dash =
+    cutoffM7Dashboards[m7TargetStrat] ?? cutoffM7Dashboards.M7G_Graded ?? data.m7_live_dashboard ?? null;
+  const hypothesisKmlm20 = buildHypothesisKmlm20Payload({
+    asOf: isPostArtifactLive ? requestedAsOf : effDate,
+    profile: effectiveProfile,
+    fillMode: rawFillMode,
+    overlayMode: rawOverlayMode,
+    finMode: rawFinMode,
+    kmlmWindow: rawKmlmWindow,
+    m7LiveDashboard: resolvedM7Dash,
+    liveMarketSnapshot: liveSnap,
+    liveKmlmFeed,
+  });
+
   return {
     ...data,
     version: CRISIS_OBSERVATORY_VERSION,
@@ -2550,6 +2657,7 @@ export function loadCrisisObservatoryDashboard({
     selected_strategy_id: selectedStrategy,
     fill_mode: rawFillMode,
     selected_fill_mode: rawFillMode,
+    ...kmlmMetaFields,
     put_otm: rawPutOtm,
     m7_tp_mode: rawM7TpMode,
     roll_mode: rawRollMode,
@@ -2564,9 +2672,9 @@ export function loadCrisisObservatoryDashboard({
       end_date: effDate,
       trading_days: slicedSeries.length,
     },
-    m7_live_dashboard:
-      cutoffM7Dashboards[m7TargetStrat] ?? cutoffM7Dashboards.M7G_Graded ?? data.m7_live_dashboard ?? null,
+    m7_live_dashboard: resolvedM7Dash,
     m7_live_dashboards_by_strategy: cutoffM7Dashboards,
+    hypothesis_kmlm20: hypothesisKmlm20,
     live_market_snapshot: liveSnap,
     live_signal_state:
       cutoffStatesByStrategy[ledgerStrategy] ??
@@ -2636,9 +2744,13 @@ export function loadCrisisObservatoryPitSnapshot({
   ccMode = null,
   spMode = null,
   wcMode = null,
+  overlayMode = null,
+  finMode = null,
+  kmlmWindow = null,
   file = defaultFile,
   extraDailyBars = null,
   liveM7Feed = null,
+  liveKmlmFeed = null,
 } = {}) {
   const { data: rawData, snapshotId } = readArtifact(file);
   const rawDate = date ?? asOf ?? rawData.as_of_date;
@@ -2646,7 +2758,7 @@ export function loadCrisisObservatoryPitSnapshot({
   if (!isIsoDate(targetDate)) fail('invalid_pit_date', 400);
 
   const hasLiveTail =
-    Boolean(liveM7Feed) || (Array.isArray(extraDailyBars) && extraDailyBars.length > 0);
+    Boolean(liveM7Feed) || Boolean(liveKmlmFeed) || (Array.isArray(extraDailyBars) && extraDailyBars.length > 0);
   const cacheKey = hasLiveTail
     ? null
     : [
@@ -2663,6 +2775,9 @@ export function loadCrisisObservatoryPitSnapshot({
         ccMode ?? '',
         spMode ?? '',
         wcMode ?? '',
+        overlayMode ?? '',
+        finMode ?? '',
+        kmlmWindow ?? '',
       ].join('|');
 
   if (cacheKey) {
@@ -2683,9 +2798,13 @@ export function loadCrisisObservatoryPitSnapshot({
     ccMode,
     spMode,
     wcMode,
+    overlayMode,
+    finMode,
+    kmlmWindow,
     file,
     extraDailyBars,
     liveM7Feed,
+    liveKmlmFeed,
   });
 
   const baseDates = (rawData.daily_series ?? []).map(r => r.date);
@@ -2762,6 +2881,11 @@ export function loadCrisisObservatoryPitSnapshot({
     selected_strategy_id: slicedDoc.selected_strategy_id,
     fill_mode: slicedDoc.fill_mode,
     selected_fill_mode: slicedDoc.selected_fill_mode,
+    overlay_mode: slicedDoc.overlay_mode,
+    selected_overlay_mode: slicedDoc.selected_overlay_mode,
+    fin_mode: slicedDoc.fin_mode,
+    selected_fin_mode: slicedDoc.selected_fin_mode,
+    kmlm_window: slicedDoc.kmlm_window,
     available_fill_modes: slicedDoc.available_fill_modes,
     hardcoded_ruleset: slicedDoc.hardcoded_ruleset,
     put_otm: slicedDoc.put_otm,
@@ -2777,6 +2901,13 @@ export function loadCrisisObservatoryPitSnapshot({
     live_market_snapshot: slicedDoc.live_market_snapshot,
     m7_live_dashboard: stampPitFreshness(slicedDoc.m7_live_dashboard),
     m7_live_dashboards_by_strategy: pitM7ByStrategy,
+    hypothesis_kmlm20: slicedDoc.hypothesis_kmlm20
+      ? {
+          ...slicedDoc.hypothesis_kmlm20,
+          curves_5yr: undefined,
+          curves_11yr: undefined,
+        }
+      : null,
     six_crisis_lights: lightsPit,
     ad_line_signal: slicedDoc.ad_line_signal,
     live_signal_state: slicedDoc.live_signal_state,
@@ -2806,9 +2937,13 @@ export async function loadCrisisObservatoryPitSnapshotLive({
   ccMode = null,
   spMode = null,
   wcMode = null,
+  overlayMode = null,
+  finMode = null,
+  kmlmWindow = null,
   file = defaultFile,
   fetchLiveBars = null,
   fetchLiveM7Feed = null,
+  fetchLiveKmlmFeed = null,
 } = {}) {
   const { data } = readArtifact(file);
   const rawDate = date ?? asOf ?? data.as_of_date;
@@ -2817,24 +2952,38 @@ export async function loadCrisisObservatoryPitSnapshotLive({
 
   let extraDailyBars = null;
   let liveM7Feed = null;
+  let liveKmlmFeed = null;
   const liveEnabled =
     process.env.LIVE_MARKET_TAIL_ENABLED === 'true' ||
     typeof fetchLiveBars === 'function' ||
-    typeof fetchLiveM7Feed === 'function';
+    typeof fetchLiveM7Feed === 'function' ||
+    typeof fetchLiveKmlmFeed === 'function';
 
   if (liveEnabled && targetDate > data.as_of_date) {
     try {
-      if (typeof fetchLiveM7Feed === 'function') {
-        liveM7Feed = await fetchLiveM7Feed();
-      } else if (typeof fetchLiveBars === 'function') {
-        extraDailyBars = await fetchLiveBars();
-        liveM7Feed = normalizeLegacyExtraBarsToFeed(extraDailyBars);
-      } else {
-        liveM7Feed = await getLiveM7MarketFeed();
-      }
+      const m7Promise =
+        typeof fetchLiveM7Feed === 'function'
+          ? fetchLiveM7Feed()
+          : typeof fetchLiveBars === 'function'
+            ? fetchLiveBars().then(bars => {
+                extraDailyBars = bars;
+                return normalizeLegacyExtraBarsToFeed(bars);
+              })
+            : getLiveM7MarketFeed();
+      const kmlmPromise =
+        typeof fetchLiveKmlmFeed === 'function'
+          ? fetchLiveKmlmFeed()
+          : process.env.LIVE_MARKET_TAIL_ENABLED === 'true'
+            ? getLiveKmlmEffrFeed()
+            : Promise.resolve(null);
+      [liveM7Feed, liveKmlmFeed] = await Promise.all([
+        m7Promise.catch(() => null),
+        kmlmPromise.catch(() => null),
+      ]);
     } catch {
       extraDailyBars = null;
       liveM7Feed = null;
+      liveKmlmFeed = null;
     }
   }
 
@@ -2851,9 +3000,13 @@ export async function loadCrisisObservatoryPitSnapshotLive({
     ccMode,
     spMode,
     wcMode,
+    overlayMode,
+    finMode,
+    kmlmWindow,
     file,
     extraDailyBars,
     liveM7Feed,
+    liveKmlmFeed,
   });
 }
 
@@ -2870,10 +3023,14 @@ export async function loadCrisisObservatoryDashboardLive({
   ccMode = null,
   spMode = null,
   wcMode = null,
+  overlayMode = null,
+  finMode = null,
+  kmlmWindow = null,
   snapshotId = null,
   file = defaultFile,
   fetchLiveBars = null,
   fetchLiveM7Feed = null,
+  fetchLiveKmlmFeed = null,
 } = {}) {
   const { data } = readArtifact(file);
   const requestedAsOf = asOf ? String(asOf).trim() : new Date().toISOString().slice(0, 10);
@@ -2881,24 +3038,38 @@ export async function loadCrisisObservatoryDashboardLive({
 
   let extraDailyBars = null;
   let liveM7Feed = null;
+  let liveKmlmFeed = null;
   const liveEnabled =
     process.env.LIVE_MARKET_TAIL_ENABLED === 'true' ||
     typeof fetchLiveBars === 'function' ||
-    typeof fetchLiveM7Feed === 'function';
+    typeof fetchLiveM7Feed === 'function' ||
+    typeof fetchLiveKmlmFeed === 'function';
 
   if (liveEnabled && requestedAsOf > data.as_of_date) {
     try {
-      if (typeof fetchLiveM7Feed === 'function') {
-        liveM7Feed = await fetchLiveM7Feed();
-      } else if (typeof fetchLiveBars === 'function') {
-        extraDailyBars = await fetchLiveBars();
-        liveM7Feed = normalizeLegacyExtraBarsToFeed(extraDailyBars);
-      } else {
-        liveM7Feed = await getLiveM7MarketFeed();
-      }
+      const m7Promise =
+        typeof fetchLiveM7Feed === 'function'
+          ? fetchLiveM7Feed()
+          : typeof fetchLiveBars === 'function'
+            ? fetchLiveBars().then(bars => {
+                extraDailyBars = bars;
+                return normalizeLegacyExtraBarsToFeed(bars);
+              })
+            : getLiveM7MarketFeed();
+      const kmlmPromise =
+        typeof fetchLiveKmlmFeed === 'function'
+          ? fetchLiveKmlmFeed()
+          : process.env.LIVE_MARKET_TAIL_ENABLED === 'true'
+            ? getLiveKmlmEffrFeed()
+            : Promise.resolve(null);
+      [liveM7Feed, liveKmlmFeed] = await Promise.all([
+        m7Promise.catch(() => null),
+        kmlmPromise.catch(() => null),
+      ]);
     } catch {
       extraDailyBars = null;
       liveM7Feed = null;
+      liveKmlmFeed = null;
     }
   }
   return loadCrisisObservatoryDashboard({
@@ -2914,9 +3085,13 @@ export async function loadCrisisObservatoryDashboardLive({
     ccMode,
     spMode,
     wcMode,
+    overlayMode,
+    finMode,
+    kmlmWindow,
     snapshotId,
     file,
     extraDailyBars,
     liveM7Feed,
+    liveKmlmFeed,
   });
 }
