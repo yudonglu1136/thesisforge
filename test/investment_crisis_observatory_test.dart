@@ -128,6 +128,142 @@ class CrisisObservatoryFixtureApi extends ApiClient {
   Future<Map<String, dynamic>> getJson(String path) async {
     calls.add(path);
     final uri = Uri.parse(path);
+    if (uri.path == '/api/investment/crisis-observatory/pit' ||
+        uri.path == '/api/discover/crisis-observatory/pit') {
+      final raw = Map<String, dynamic>.from(artifact);
+      final qp = uri.queryParameters;
+      final reqDate = (qp['date'] ?? raw['as_of_date'] ?? '2026-11-20').toString();
+      final series = (raw['daily_series'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      var idx = series.lastIndexWhere((r) => (r['date'] ?? '').toString().compareTo(reqDate) <= 0);
+      if (idx < 0) idx = 0;
+      final bar = series[idx];
+      final pitDate = bar['date'].toString();
+      final latestDate = series.last['date'].toString();
+      final prevDate = idx > 0 ? series[idx - 1]['date'].toString() : null;
+      final nextDate = idx + 1 < series.length ? series[idx + 1]['date'].toString() : null;
+      final m7Mask = (bar['m7_mask'] as num?)?.toInt() ?? 0;
+      final lightsMask = (bar['lights_mask'] as num?)?.toInt() ?? 0;
+      final modOn = <String, bool>{
+        'M0': (m7Mask & 1) != 0,
+        'M6': (m7Mask & 2) != 0,
+        'M2': (m7Mask & 4) != 0,
+        'M5': (m7Mask & 8) != 0,
+        'M4': (m7Mask & 16) != 0,
+        'M3': (m7Mask & 32) != 0,
+      };
+      final pScores = <String, int>{
+        'P1': (bar['m7_p1'] as num?)?.round() ?? 0,
+        'P2': (bar['m7_p2'] as num?)?.round() ?? 0,
+        'P3': (bar['m7_p3'] as num?)?.round() ?? 0,
+      };
+      final baseDash = Map<String, dynamic>.from(
+        (raw['m7_live_dashboard'] as Map?) ?? const {},
+      );
+      final pitPillars = ((baseDash['pillars'] as List?) ?? const []).map((pil) {
+        final pm = Map<String, dynamic>.from(pil as Map);
+        final pid = pm['id'].toString();
+        final mods = ((pm['modules'] as List?) ?? const []).map((m) {
+          final mm = Map<String, dynamic>.from(m as Map);
+          final mid = mm['id'].toString();
+          final trig = modOn[mid] ?? false;
+          final pts = (mm['points'] as num?)?.round() ?? 0;
+          return <String, dynamic>{
+            ...mm,
+            'triggered': trig,
+            'earned_points': trig ? pts : 0,
+          };
+        }).toList();
+        return <String, dynamic>{
+          ...pm,
+          'score': pScores[pid] ?? 0,
+          'modules': mods,
+        };
+      }).toList();
+      final qqq = (bar['qqq_close'] as num?)?.toDouble() ?? 0.0;
+      final vxn = (bar['vxn'] as num?)?.toDouble() ?? 0.0;
+      final vr = (bar['vix_ratio'] as num?)?.toDouble() ?? 0.0;
+      final dd = (bar['dd_ath_pct'] as num?)?.toDouble() ?? 0.0;
+      final pitDash = <String, dynamic>{
+        ...baseDash,
+        'as_of_date': pitDate,
+        'crisis_prob': (bar['m7_prob'] as num?)?.round() ?? 0,
+        'p1_score': pScores['P1'],
+        'p2_score': pScores['P2'],
+        'p3_score': pScores['P3'],
+        'target_slots': (bar['m7_target_slots'] as num?)?.round() ?? 0,
+        'active_slots': (bar['m7_active_slots'] as num?)?.round() ?? 0,
+        'redline': {
+          ...Map<String, dynamic>.from((baseDash['redline'] as Map?) ?? const {}),
+          'vxn': vxn,
+          'vix_ratio': vr,
+          'blocked': vxn > 27.0 || vr >= 1.02,
+        },
+        'sizing_calculator': {
+          ...Map<String, dynamic>.from(
+            (baseDash['sizing_calculator'] as Map?) ?? const {},
+          ),
+          'qqq_spot': qqq,
+          'vxn': vxn,
+        },
+        'pillars': pitPillars,
+      };
+      final pitLights = ((raw['six_crisis_lights'] as List?) ?? const [])
+          .asMap()
+          .entries
+          .map((e) {
+            final lm = Map<String, dynamic>.from(e.value as Map);
+            final lit = ((lightsMask >> e.key) & 1) != 0;
+            return <String, dynamic>{
+              ...lm,
+              'lit': lit,
+              'pit_historical': pitDate != latestDate,
+              'reading_value': lit ? 'PIT ON' : 'PIT OFF',
+            };
+          })
+          .toList();
+      return {
+        'pit_mode': true,
+        'pit_date': pitDate,
+        'latest_as_of_date': latestDate,
+        'is_historical_pit': pitDate != latestDate,
+        'prev_date': prevDate,
+        'next_date': nextDate,
+        'as_of_date': pitDate,
+        'pit_bar': bar,
+        'live_market_snapshot': {
+          ...Map<String, dynamic>.from(
+            (raw['live_market_snapshot'] as Map?) ?? const {},
+          ),
+          'as_of_date': pitDate,
+          'qqq_close': qqq,
+          'dd_from_ath_pct': dd,
+          'vxn': vxn,
+          'vix': bar['vix'],
+          'vix3m': bar['vix3m'],
+          'vix_vix3m_ratio': vr,
+          'raw_crisis_score': bar['crisis_lights'],
+        },
+        'm7_live_dashboard': pitDash,
+        'm7_live_dashboards_by_strategy': {
+          'M7G_Graded': pitDash,
+          'M7_Ensemble': pitDash,
+        },
+        'six_crisis_lights': pitLights,
+        'ad_line_signal': {
+          ...Map<String, dynamic>.from(
+            (raw['ad_line_signal'] as Map?) ?? const {},
+          ),
+          'ad_line': bar['ad_line'],
+          'ad_sma50': bar['ad_sma50'],
+          'below_50ma':
+              ((bar['ad_line'] as num?)?.toDouble() ?? 0) <
+              ((bar['ad_sma50'] as num?)?.toDouble() ?? 0),
+          'last_top_divergence_date': '',
+        },
+      };
+    }
     if (uri.path == '/api/investment/crisis-observatory' ||
         uri.path == '/api/discover/crisis-observatory') {
       final raw = Map<String, dynamic>.from(artifact);
@@ -920,6 +1056,126 @@ void main() {
       expect(latestSelection['rollMode'], '90d_hold');
       expect(latestSelection['m7TpMode'], 'standard');
       expect(latestSelection['m0Enabled'], 'true');
+    },
+  );
+
+  testWidgets(
+    'Clicking any historical point on the curve replays PIT Three-Pillar state, displays date & QQQ price banner above, steps Prev/Next day, and returns cleanly to Live',
+    (tester) async {
+      final api = CrisisObservatoryFixtureApi();
+
+      for (final size in [const Size(1440, 1200), const Size(390, 844)]) {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1.0;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: LanguageScope(
+              language: AppLanguage.zh,
+              child: Scaffold(
+                backgroundColor: const Color(0xFF06090F),
+                body: SingleChildScrollView(
+                  padding: const EdgeInsets.all(14),
+                  child: CrisisObservatoryPanel(
+                    api: api,
+                    palette: Palette(false),
+                    asOf: '2026-11-20',
+                    onCompany: (_) {},
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Zoom into 2020 COVID Crash window and tap the curve around 2020-01-28 (M2+M5 P2=40%)
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('crisis-zoom-pill-2020-03')),
+        );
+        final canvasFinder = find.byKey(
+          const ValueKey('crisis-observatory-canvas'),
+        );
+        await tester.ensureVisible(canvasFinder);
+        await tester.pumpAndSettle();
+        final rect = tester.getRect(canvasFinder);
+        // Tap ~25% into the 2020 COVID window to pin a historical date
+        final tapPoint = Offset(
+          rect.left + 52.0 + (rect.width - 64.0) * 0.25,
+          rect.top + 120.0,
+        );
+        await tester.tapAt(tapPoint);
+        await tester.pumpAndSettle();
+
+        // Verify /pit API was called and BOTH top PIT replay banners + chart strip are shown with date & QQQ price
+        expect(
+          api.calls.any(
+            (c) => c.contains('/api/investment/crisis-observatory/pit'),
+          ),
+          isTrue,
+        );
+        final pillarsBanner = find.byKey(
+          const ValueKey('crisis-pit-pillars-banner'),
+        );
+        expect(pillarsBanner, findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('crisis-pit-cmd-banner')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('crisis-pit-chart-strip')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: pillarsBanner,
+            matching: find.text('PIT 历史状态回放'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: pillarsBanner,
+            matching: find.textContaining('2020-'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: pillarsBanner,
+            matching: find.textContaining('QQQ \$'),
+          ),
+          findsOneWidget,
+        );
+
+        // Step one trading day forward and back without overflow
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('crisis-pit-pillars-next-btn')),
+        );
+        expect(pillarsBanner, findsOneWidget);
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('crisis-pit-pillars-prev-btn')),
+        );
+        expect(pillarsBanner, findsOneWidget);
+
+        // Return cleanly to Live state
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('crisis-pit-pillars-return-live-btn')),
+        );
+        expect(pillarsBanner, findsNothing);
+        expect(
+          find.byKey(const ValueKey('crisis-pit-chart-strip')),
+          findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+      }
+
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
     },
   );
 }

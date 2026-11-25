@@ -115,6 +115,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   int hoverIndex = -1;
   int loadSerial = 0;
 
+  // Point-in-Time (PIT) historical replay state (click any point on curve)
+  String? pinnedPitDate;
+  Map<String, dynamic>? pinnedPitRow;
+  Map<String, dynamic>? pitSnapshot;
+  bool loadingPit = false;
+  int pitSerial = 0;
+  final Map<String, Map<String, dynamic>> _pitSnapshotCache = {};
+  final GlobalKey _threePillarsAnchorKey = GlobalKey();
+
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
   bool get _isM7Strategy =>
@@ -327,6 +336,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         switchingTpMode = false;
       });
       _emitSelection();
+      if (pinnedPitDate != null) {
+        unawaited(_loadPitSnapshot(pinnedPitDate!));
+      }
       return;
     }
     setState(() {
@@ -343,6 +355,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     });
     _emitSelection();
     unawaited(_loadObservatory(isModeSwitch: data != null));
+    if (pinnedPitDate != null) {
+      unawaited(_loadPitSnapshot(pinnedPitDate!));
+    }
   }
 
   void _selectPutOtm(String modeId) => _selectModes(putOtm: modeId);
@@ -443,6 +458,489 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         switchingTpMode = false;
       });
     }
+  }
+
+  String _pitCacheKeyFor(String date) {
+    final effectiveWc = selectedSpMode == 'sp_off'
+        ? 'wc_reclaim_30d_d35'
+        : selectedWcMode;
+    return '$date::$selectedPutOtm::$selectedM7TpMode::$selectedRollMode::$selectedM0Enabled::$selectedTpMode::$selectedCcMode::$selectedSpMode::$effectiveWc';
+  }
+
+  Map<String, dynamic>? _findDailyBarByDate(String date) {
+    final daily = asList(data?['daily_series']);
+    for (final row in daily) {
+      if (text(row['date']) == date) return row;
+    }
+    return null;
+  }
+
+  void _selectPitDate(String date, {Map<String, dynamic>? barRow}) {
+    final cleanDate = date.trim();
+    if (cleanDate.isEmpty) return;
+    final latestDate = text(data?['as_of_date']);
+    if (latestDate.isNotEmpty && cleanDate == latestDate) {
+      _clearPitSelection();
+      return;
+    }
+    final resolvedBar = barRow ?? _findDailyBarByDate(cleanDate);
+    final cacheKey = _pitCacheKeyFor(cleanDate);
+    final cached = _pitSnapshotCache[cacheKey];
+    if (cached != null) {
+      setState(() {
+        pinnedPitDate = cleanDate;
+        pinnedPitRow = resolvedBar;
+        pitSnapshot = cached;
+        loadingPit = false;
+      });
+      return;
+    }
+    setState(() {
+      pinnedPitDate = cleanDate;
+      pinnedPitRow = resolvedBar;
+      loadingPit = true;
+    });
+    unawaited(_loadPitSnapshot(cleanDate));
+  }
+
+  void _clearPitSelection() {
+    pitSerial++;
+    setState(() {
+      pinnedPitDate = null;
+      pinnedPitRow = null;
+      pitSnapshot = null;
+      loadingPit = false;
+    });
+  }
+
+  void _stepPitDate(int delta) {
+    final daily = asList(data?['daily_series']);
+    if (daily.isEmpty || pinnedPitDate == null) return;
+    final idx = daily.indexWhere((r) => text(r['date']) == pinnedPitDate);
+    if (idx < 0) return;
+    final nextIdx = (idx + delta).clamp(0, daily.length - 1);
+    if (nextIdx == idx) return;
+    final nextRow = daily[nextIdx];
+    final nextDate = text(nextRow['date']);
+    if (nextIdx == daily.length - 1) {
+      _clearPitSelection();
+    } else {
+      _selectPitDate(nextDate, barRow: nextRow);
+    }
+  }
+
+  void _jumpToThreePillars() {
+    final ctx = _threePillarsAnchorKey.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      alignment: 0.05,
+    );
+  }
+
+  Future<void> _loadPitSnapshot(String date) async {
+    final serial = ++pitSerial;
+    final cacheKey = _pitCacheKeyFor(date);
+    final cached = _pitSnapshotCache[cacheKey];
+    if (cached != null) {
+      if (!mounted || serial != pitSerial) return;
+      setState(() {
+        pitSnapshot = cached;
+        loadingPit = false;
+      });
+      return;
+    }
+    final targetOtm = selectedPutOtm;
+    final targetM7Tp = selectedM7TpMode;
+    final targetRoll = selectedRollMode;
+    final targetM0 = selectedM0Enabled;
+    final targetTp = selectedTpMode;
+    final targetCc = selectedCcMode;
+    final targetSp = selectedSpMode;
+    final targetWc = selectedWcMode;
+    try {
+      final uri = Uri(
+        path: '/api/investment/crisis-observatory/pit',
+        queryParameters: {
+          'date': date,
+          'strategy': selectedStrategyId,
+          'putOtm': targetOtm,
+          'm7TpMode': targetM7Tp,
+          'rollMode': targetRoll,
+          'm0Enabled': targetM0 ? 'true' : 'false',
+          'tpMode': targetTp,
+          'ccMode': targetCc,
+          'spMode': targetSp,
+          if (targetSp != 'sp_off') 'wcMode': targetWc,
+        },
+      );
+      final res = await widget.api.getJson(uri.toString());
+      if (!mounted || serial != pitSerial) return;
+      if (asMap(res['m7_live_dashboard']).isNotEmpty ||
+          asMap(res['live_market_snapshot']).isNotEmpty) {
+        _pitSnapshotCache[cacheKey] = res;
+        setState(() {
+          pitSnapshot = res;
+          loadingPit = false;
+        });
+      } else {
+        setState(() => loadingPit = false);
+      }
+    } catch (_) {
+      if (!mounted || serial != pitSerial) return;
+      setState(() => loadingPit = false);
+    }
+  }
+
+  Map<String, dynamic> _resolveEffectiveTopDoc(Map<String, dynamic> doc) {
+    final pitDate = pinnedPitDate;
+    if (pitDate == null || pitDate.isEmpty) return doc;
+
+    final snapDoc = pitSnapshot;
+    if (snapDoc != null && text(snapDoc['pit_date']) == pitDate) {
+      return <String, dynamic>{
+        ...doc,
+        'pit_mode': true,
+        'pit_date': pitDate,
+        'latest_as_of_date': text(snapDoc['latest_as_of_date']).isNotEmpty
+            ? text(snapDoc['latest_as_of_date'])
+            : text(doc['as_of_date']),
+        'as_of_date': pitDate,
+        'liveExtended': false,
+        if (asMap(snapDoc['live_market_snapshot']).isNotEmpty)
+          'live_market_snapshot': snapDoc['live_market_snapshot'],
+        if (asMap(snapDoc['m7_live_dashboard']).isNotEmpty)
+          'm7_live_dashboard': snapDoc['m7_live_dashboard'],
+        if (asMap(snapDoc['m7_live_dashboards_by_strategy']).isNotEmpty)
+          'm7_live_dashboards_by_strategy':
+              snapDoc['m7_live_dashboards_by_strategy'],
+        if (asList(snapDoc['six_crisis_lights']).isNotEmpty)
+          'six_crisis_lights': snapDoc['six_crisis_lights'],
+        if (asMap(snapDoc['ad_line_signal']).isNotEmpty)
+          'ad_line_signal': snapDoc['ad_line_signal'],
+        if (asMap(snapDoc['live_signal_state']).isNotEmpty)
+          'live_signal_state': snapDoc['live_signal_state'],
+        if (asMap(snapDoc['live_signal_states_by_strategy']).isNotEmpty)
+          'live_signal_states_by_strategy':
+              snapDoc['live_signal_states_by_strategy'],
+        if (asMap(snapDoc['live_sp_state']).isNotEmpty)
+          'live_sp_state': snapDoc['live_sp_state'],
+        if (asMap(snapDoc['live_sp_states_by_strategy']).isNotEmpty)
+          'live_sp_states_by_strategy': snapDoc['live_sp_states_by_strategy'],
+        if (asList(snapDoc['strategies_summary']).isNotEmpty)
+          'strategies_summary': snapDoc['strategies_summary'],
+      };
+    }
+
+    // Instant optimistic PIT overlay from daily_series bar while /pit is in flight
+    final bar = pinnedPitRow ?? _findDailyBarByDate(pitDate);
+    if (bar == null) return doc;
+
+    final qqq = _numVal(bar['qqq_close']);
+    final dd = _numVal(bar['dd_ath_pct']);
+    final vxn = _numVal(bar['vxn']);
+    final vr = _numVal(bar['vix_ratio']);
+    final m7Prob = _numVal(bar['m7_prob']).round();
+    final p1 = _numVal(bar['m7_p1']).round();
+    final p2 = _numVal(bar['m7_p2']).round();
+    final p3 = _numVal(bar['m7_p3']).round();
+    final tgtSlots = _numVal(bar['m7_target_slots']).round();
+    final actSlots = _numVal(bar['m7_active_slots']).round();
+    final m7Mask = _numVal(bar['m7_mask']).round();
+    final lightsMask = _numVal(bar['lights_mask']).round();
+    final modTriggered = <String, bool>{
+      'M0': (m7Mask & 1) != 0,
+      'M6': (m7Mask & 2) != 0,
+      'M2': (m7Mask & 4) != 0,
+      'M5': (m7Mask & 8) != 0,
+      'M4': (m7Mask & 16) != 0,
+      'M3': (m7Mask & 32) != 0,
+    };
+    final pillarScores = <String, int>{'P1': p1, 'P2': p2, 'P3': p3};
+
+    final baseDash = _resolveM7LiveDashboard(doc);
+    final optPillars = asList(baseDash['pillars']).map((pil) {
+      final pid = text(pil['id']);
+      final mods = asList(pil['modules']).map((mod) {
+        final mid = text(mod['id']);
+        final trig = modTriggered[mid] ?? false;
+        final pts = _numVal(mod['points']).round();
+        return <String, dynamic>{
+          ...mod,
+          'triggered': trig,
+          'earned_points': trig ? pts : 0,
+        };
+      }).toList();
+      return <String, dynamic>{
+        ...pil,
+        'score': pillarScores[pid] ?? 0,
+        'modules': mods,
+      };
+    }).toList();
+
+    final optDash = <String, dynamic>{
+      ...baseDash,
+      'as_of_date': pitDate,
+      'crisis_prob': m7Prob,
+      'p1_score': p1,
+      'p2_score': p2,
+      'p3_score': p3,
+      'target_slots': tgtSlots,
+      'active_slots': actSlots,
+      'redline': <String, dynamic>{
+        ...asMap(baseDash['redline']),
+        'vxn': vxn,
+        'vix_ratio': vr,
+        'blocked': vxn > 27.0 || vr >= 1.02,
+      },
+      'sizing_calculator': <String, dynamic>{
+        ...asMap(baseDash['sizing_calculator']),
+        'qqq_spot': qqq,
+        'vxn': vxn,
+      },
+      'pillars': optPillars,
+    };
+
+    final optLights = asList(doc['six_crisis_lights']).asMap().entries.map((e) {
+      final lit = ((lightsMask >> e.key) & 1) != 0;
+      return <String, dynamic>{
+        ...e.value,
+        'lit': lit,
+        'pit_historical': true,
+      };
+    }).toList();
+
+    final optSnap = <String, dynamic>{
+      ...asMap(doc['live_market_snapshot']),
+      'as_of_date': pitDate,
+      'qqq_close': qqq,
+      'dd_from_ath_pct': dd,
+      'vxn': vxn,
+      'vix': _numVal(bar['vix']),
+      'vix3m': _numVal(bar['vix3m']),
+      'vix_vix3m_ratio': vr,
+      'raw_crisis_score': _numVal(bar['crisis_lights']).round(),
+    };
+
+    return <String, dynamic>{
+      ...doc,
+      'pit_mode': true,
+      'pit_date': pitDate,
+      'latest_as_of_date': text(doc['as_of_date']),
+      'as_of_date': pitDate,
+      'liveExtended': false,
+      'live_market_snapshot': optSnap,
+      'm7_live_dashboard': optDash,
+      'm7_live_dashboards_by_strategy': <String, dynamic>{
+        'M7G_Graded': optDash,
+        'M7_Ensemble': optDash,
+      },
+      'six_crisis_lights': optLights,
+    };
+  }
+
+  Widget _buildPitReplayBanner(
+    Map<String, dynamic> fullDoc,
+    Map<String, dynamic> topDoc, {
+    required String keyPrefix,
+    required bool compact,
+    bool showStepButtons = true,
+  }) {
+    final pitDate = pinnedPitDate;
+    if (pitDate == null || pitDate.isEmpty) return const SizedBox.shrink();
+    final snap = asMap(topDoc['live_market_snapshot']);
+    final bar = pinnedPitRow ?? _findDailyBarByDate(pitDate);
+    final qqqClose = _numVal(snap['qqq_close'], _numVal(bar?['qqq_close']));
+    final ddAth = _numVal(snap['dd_from_ath_pct'], _numVal(bar?['dd_ath_pct']));
+    final vxnNow = _numVal(snap['vxn'], _numVal(bar?['vxn']));
+    final vixRatio = _numVal(
+      snap['vix_vix3m_ratio'],
+      _numVal(bar?['vix_ratio']),
+    );
+    final latestDate = text(fullDoc['as_of_date']).isNotEmpty
+        ? text(fullDoc['as_of_date'])
+        : widget.asOf;
+    final daily = asList(fullDoc['daily_series']);
+    final curIdx = daily.indexWhere((r) => text(r['date']) == pitDate);
+    final canPrev = curIdx > 0;
+    final canNext = curIdx >= 0 && curIdx + 1 < daily.length;
+
+    return Container(
+      key: ValueKey('crisis-pit-$keyPrefix-banner'),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 10 : 14,
+        vertical: compact ? 8 : 10,
+      ),
+      decoration: BoxDecoration(
+        color: _sky.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _sky.withValues(alpha: 0.45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 2.5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _sky.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: _sky.withValues(alpha: 0.55)),
+                    ),
+                    child: Text(
+                      w('PIT REPLAY', 'PIT 历史状态回放'),
+                      style: const TextStyle(
+                        color: _sky,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    pitDate,
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: compact ? 14 : 15,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  Text(
+                    'QQQ \$${qqqClose.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      color: _emerald,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  Text(
+                    w(
+                      '(${_fmtPct(ddAth)} vs ATH · VXN ${vxnNow.toStringAsFixed(1)} · VIX/3M ${vixRatio.toStringAsFixed(2)})',
+                      '（距前高 ${_fmtPct(ddAth)} · VXN ${vxnNow.toStringAsFixed(1)} · VIX/3M ${vixRatio.toStringAsFixed(2)}）',
+                    ),
+                    style: TextStyle(color: p.muted, fontSize: 11.8),
+                  ),
+                ],
+              ),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  if (showStepButtons) ...[
+                    InkWell(
+                      key: ValueKey('crisis-pit-$keyPrefix-prev-btn'),
+                      borderRadius: BorderRadius.circular(6),
+                      onTap: canPrev ? () => _stepPitDate(-1) : null,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: p.card,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: canPrev
+                                ? _sky.withValues(alpha: 0.45)
+                                : p.border,
+                          ),
+                        ),
+                        child: Text(
+                          w('◀ Prev', '◀ 上一日'),
+                          style: TextStyle(
+                            color: canPrev ? p.text : p.muted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    InkWell(
+                      key: ValueKey('crisis-pit-$keyPrefix-next-btn'),
+                      borderRadius: BorderRadius.circular(6),
+                      onTap: canNext ? () => _stepPitDate(1) : null,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: p.card,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: canNext
+                                ? _sky.withValues(alpha: 0.45)
+                                : p.border,
+                          ),
+                        ),
+                        child: Text(
+                          w('Next ▶', '下一日 ▶'),
+                          style: TextStyle(
+                            color: canNext ? p.text : p.muted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  InkWell(
+                    key: ValueKey('crisis-pit-$keyPrefix-return-live-btn'),
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: _clearPitSelection,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4.5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _emerald.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: _emerald.withValues(alpha: 0.55),
+                        ),
+                      ),
+                      child: Text(
+                        w(
+                          'Return to Live ($latestDate)',
+                          '回到最新（$latestDate）',
+                        ),
+                        style: const TextStyle(
+                          color: _emerald,
+                          fontSize: 11.2,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          if (loadingPit) ...[
+            const SizedBox(height: 6),
+            const LinearProgressIndicator(minHeight: 2, color: _sky),
+          ],
+        ],
+      ),
+    );
   }
 
   double _numVal(dynamic v, [double fallback = 0]) {
@@ -1169,21 +1667,28 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     }
 
     final doc = data ?? const <String, dynamic>{};
+    final topDoc = _resolveEffectiveTopDoc(doc);
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 680;
         final desktop = constraints.maxWidth >= 960;
         final gap = compact ? 18.0 : 24.0;
-        final m7Dash = _resolveM7LiveDashboard(doc);
+        final m7Dash = _resolveM7LiveDashboard(topDoc);
         return Column(
           key: const ValueKey('crisis-observatory-root'),
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildVerdictBlock(doc, compact: compact, desktop: desktop),
+            _buildVerdictBlock(
+              topDoc,
+              fullDoc: doc,
+              compact: compact,
+              desktop: desktop,
+            ),
             SizedBox(height: gap),
             if (m7Dash.isNotEmpty) ...[
               _buildThreePillarBlock(
-                doc,
+                topDoc,
+                fullDoc: doc,
                 m7Dash: m7Dash,
                 maxWidth: constraints.maxWidth,
                 compact: compact,
@@ -1192,14 +1697,14 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               if (showClassicSixLights || !_isM7Strategy) ...[
                 const SizedBox(height: 14),
                 _buildSixSignalsBlock(
-                  doc,
+                  topDoc,
                   maxWidth: constraints.maxWidth,
                   compact: compact,
                 ),
               ],
             ] else
               _buildSixSignalsBlock(
-                doc,
+                topDoc,
                 maxWidth: constraints.maxWidth,
                 compact: compact,
               ),
@@ -1232,6 +1737,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   // ===========================================================================
   Widget _buildVerdictBlock(
     Map<String, dynamic> doc, {
+    required Map<String, dynamic> fullDoc,
     required bool compact,
     required bool desktop,
   }) {
@@ -1239,6 +1745,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     if (_isM7Strategy && m7Dash.isNotEmpty) {
       return _buildM7VerdictBlock(
         doc,
+        fullDoc: fullDoc,
         m7Dash: m7Dash,
         compact: compact,
         desktop: desktop,
@@ -1430,10 +1937,24 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     return Container(
       key: const ValueKey('crisis-observatory-command-center'),
       padding: EdgeInsets.all(compact ? 16 : 22),
-      decoration: _calmSurfaceDecoration(),
+      decoration: pinnedPitDate != null
+          ? BoxDecoration(
+              color: p.card,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _sky.withValues(alpha: 0.45)),
+            )
+          : _calmSurfaceDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (pinnedPitDate != null)
+            _buildPitReplayBanner(
+              fullDoc,
+              doc,
+              keyPrefix: 'cmd',
+              compact: compact,
+              showStepButtons: false,
+            ),
           Wrap(
             spacing: 12,
             runSpacing: 8,
@@ -1869,6 +2390,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   Widget _buildM7VerdictBlock(
     Map<String, dynamic> doc, {
+    required Map<String, dynamic> fullDoc,
     required Map<String, dynamic> m7Dash,
     required bool compact,
     required bool desktop,
@@ -2175,10 +2697,24 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     return Container(
       key: const ValueKey('crisis-observatory-command-center'),
       padding: EdgeInsets.all(compact ? 16 : 22),
-      decoration: _calmSurfaceDecoration(),
+      decoration: pinnedPitDate != null
+          ? BoxDecoration(
+              color: p.card,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _sky.withValues(alpha: 0.45)),
+            )
+          : _calmSurfaceDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (pinnedPitDate != null)
+            _buildPitReplayBanner(
+              fullDoc,
+              doc,
+              keyPrefix: 'cmd',
+              compact: compact,
+              showStepButtons: false,
+            ),
           Wrap(
             spacing: 12,
             runSpacing: 8,
@@ -2655,6 +3191,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   // ===========================================================================
   Widget _buildThreePillarBlock(
     Map<String, dynamic> doc, {
+    required Map<String, dynamic> fullDoc,
     required Map<String, dynamic> m7Dash,
     required double maxWidth,
     required bool compact,
@@ -2669,13 +3206,29 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final litCount = lights.where((item) => item['lit'] == true).length;
 
     return Container(
-      key: const ValueKey('crisis-observatory-three-pillars'),
-      padding: EdgeInsets.all(compact ? 16 : 22),
-      decoration: _calmSurfaceDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Wrap(
+      key: _threePillarsAnchorKey,
+      child: Container(
+        key: const ValueKey('crisis-observatory-three-pillars'),
+        padding: EdgeInsets.all(compact ? 16 : 22),
+        decoration: pinnedPitDate != null
+            ? BoxDecoration(
+                color: p.card,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _sky.withValues(alpha: 0.55)),
+              )
+            : _calmSurfaceDecoration(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (pinnedPitDate != null)
+              _buildPitReplayBanner(
+                fullDoc,
+                doc,
+                keyPrefix: 'pillars',
+                compact: compact,
+                showStepButtons: true,
+              ),
+            Wrap(
             spacing: 12,
             runSpacing: 8,
             alignment: WrapAlignment.spaceBetween,
@@ -2800,7 +3353,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 ],
               ],
             ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -3266,11 +3820,19 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   (String, String, String) _cleanLightDisplay(Map<String, dynamic> light) {
     final keyStr = text(light['key']);
+    final isPitHist = light['pit_historical'] == true;
     final rawReading = text(light['reading_value']);
-    var primary = rawReading;
-    final parenIdx = rawReading.indexOf('(');
+    var primary = isPitHist &&
+            (rawReading.isEmpty ||
+                rawReading == 'PIT ON' ||
+                rawReading == 'PIT OFF')
+        ? (light['lit'] == true
+              ? w('PIT Lit', '历史亮灯')
+              : w('PIT Off', '历史未亮'))
+        : rawReading;
+    final parenIdx = primary.indexOf('(');
     if (parenIdx > 0) {
-      primary = rawReading.substring(0, parenIdx).trim();
+      primary = primary.substring(0, parenIdx).trim();
     }
     primary = primary
         .replaceFirst('2Y ', '')
@@ -3460,11 +4022,21 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final hasStopLayer = selectedCcMode == 'cc_d12_d35';
 
     final isHoverActive = hoverIndex >= 0 && hoverIndex < visibleDaily.length;
+    final pinnedIndex = (pinnedPitDate != null && pinnedPitDate!.isNotEmpty)
+        ? visibleDaily.indexWhere((r) => text(r['date']) == pinnedPitDate)
+        : -1;
+    final pinnedBarForStrip = pinnedIndex >= 0
+        ? visibleDaily[pinnedIndex]
+        : (pinnedPitRow ??
+              (pinnedPitDate != null
+                  ? _findDailyBarByDate(pinnedPitDate!)
+                  : null));
     final hoveredRow = isHoverActive
         ? visibleDaily[hoverIndex]
-        : (visibleDaily.isNotEmpty
-              ? visibleDaily.last
-              : const <String, dynamic>{});
+        : (pinnedBarForStrip ??
+              (visibleDaily.isNotEmpty
+                  ? visibleDaily.last
+                  : const <String, dynamic>{}));
 
     final startStratNav = visibleDaily.isNotEmpty
         ? _numVal(visibleDaily.first[navKey], 200000)
@@ -3865,7 +4437,148 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
+          if (pinnedPitDate != null && pinnedBarForStrip != null) ...[
+            Container(
+              key: const ValueKey('crisis-pit-chart-strip'),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: _sky.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: _sky.withValues(alpha: 0.40)),
+              ),
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 6,
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    w(
+                      'Pinned PIT: $pinnedPitDate · QQQ \$${_numVal(pinnedBarForStrip['qqq_close']).toStringAsFixed(2)} · M7 ${_numVal(pinnedBarForStrip['m7_prob']).round()}% (P1:${_numVal(pinnedBarForStrip['m7_p1']).round()} · P2:${_numVal(pinnedBarForStrip['m7_p2']).round()} · P3:${_numVal(pinnedBarForStrip['m7_p3']).round()})',
+                      '已锁定 PIT 回放：$pinnedPitDate · QQQ \$${_numVal(pinnedBarForStrip['qqq_close']).toStringAsFixed(2)} · M7 ${_numVal(pinnedBarForStrip['m7_prob']).round()}%（P1:${_numVal(pinnedBarForStrip['m7_p1']).round()} · P2:${_numVal(pinnedBarForStrip['m7_p2']).round()} · P3:${_numVal(pinnedBarForStrip['m7_p3']).round()}）',
+                    ),
+                    style: const TextStyle(
+                      color: _sky,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      InkWell(
+                        key: const ValueKey('crisis-pit-chart-prev-btn'),
+                        borderRadius: BorderRadius.circular(5),
+                        onTap: () => _stepPitDate(-1),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2.5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: p.card,
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(color: p.border),
+                          ),
+                          child: Text(
+                            '◀',
+                            style: TextStyle(color: p.text, fontSize: 10.5),
+                          ),
+                        ),
+                      ),
+                      InkWell(
+                        key: const ValueKey('crisis-pit-chart-next-btn'),
+                        borderRadius: BorderRadius.circular(5),
+                        onTap: () => _stepPitDate(1),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2.5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: p.card,
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(color: p.border),
+                          ),
+                          child: Text(
+                            '▶',
+                            style: TextStyle(color: p.text, fontSize: 10.5),
+                          ),
+                        ),
+                      ),
+                      InkWell(
+                        key: const ValueKey('crisis-pit-jump-pillars-btn'),
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: _jumpToThreePillars,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _sky.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: _sky.withValues(alpha: 0.5),
+                            ),
+                          ),
+                          child: Text(
+                            w('View 3 Pillars ↑', '查看上方三支柱 ↑'),
+                            style: const TextStyle(
+                              color: _sky,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                      InkWell(
+                        key: const ValueKey('crisis-pit-chart-clear-btn'),
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: _clearPitSelection,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _emerald.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: _emerald.withValues(alpha: 0.45),
+                            ),
+                          ),
+                          child: Text(
+                            w('Back to Live ×', '回到最新 ×'),
+                            style: const TextStyle(
+                              color: _emerald,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ] else ...[
+            Text(
+              w(
+                'Tip: Click any historical point on the curve to replay exact Point-In-Time (PIT) Three-Pillar & Command Deck states above.',
+                '提示：点击曲线上任意历史点，即可在上方三大支柱与指挥台完整回放当日 PIT 实时状态、日期与价格。',
+              ),
+              style: TextStyle(
+                color: p.muted.withValues(alpha: 0.85),
+                fontSize: 11,
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
           LayoutBuilder(
             builder: (context, chartConstraints) {
               final chartWidth = chartConstraints.maxWidth;
@@ -3883,6 +4596,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   : const <Map<String, dynamic>>[];
 
               return MouseRegion(
+                cursor: SystemMouseCursors.click,
                 onHover: (ev) => _updateHoverFromDx(
                   ev.localPosition.dx,
                   chartWidth,
@@ -3895,6 +4609,11 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     d.localPosition.dx,
                     chartWidth,
                     visibleDaily.length,
+                  ),
+                  onTapUp: (d) => _pinPitFromDx(
+                    d.localPosition.dx,
+                    chartWidth,
+                    visibleDaily,
                   ),
                   onPanDown: (d) => _updateHoverFromDx(
                     d.localPosition.dx,
@@ -3924,6 +4643,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                               useLogScale: !rebasedMode && useLogScale,
                               showSubTrack: showSignalSubTrack,
                               hoverIndex: hoverIndex,
+                              pinnedIndex: pinnedIndex,
                               borderColor: p.border,
                               mutedColor: p.muted,
                               textColor: p.text,
@@ -4405,6 +5125,25 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   ),
                 ],
               ],
+              const SizedBox(height: 5),
+              Text(
+                pinnedPitDate == text(row['date'])
+                    ? w(
+                        '● Pinned PIT replay active above',
+                        '● 已锁定该日上方 PIT 回放',
+                      )
+                    : w(
+                        'Click point to replay PIT Three Pillars above',
+                        '点击该点在上方回放当日三支柱 PIT 状态',
+                      ),
+                style: TextStyle(
+                  color: pinnedPitDate == text(row['date'])
+                      ? _sky
+                      : p.muted.withValues(alpha: 0.8),
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ],
           ),
         ),
@@ -6243,6 +6982,25 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     }
   }
 
+  void _pinPitFromDx(
+    double dx,
+    double width,
+    List<Map<String, dynamic>> visibleDaily,
+  ) {
+    final count = visibleDaily.length;
+    if (count <= 1 || width <= 64) return;
+    const padL = 52.0;
+    const padR = 12.0;
+    final plotW = math.max(1.0, width - padL - padR);
+    final rel = ((dx - padL) / plotW).clamp(0.0, 1.0);
+    final idx = (rel * (count - 1)).round().clamp(0, count - 1);
+    final row = visibleDaily[idx];
+    final d = text(row['date']);
+    if (d.isEmpty) return;
+    setState(() => hoverIndex = idx);
+    _selectPitDate(d, barRow: row);
+  }
+
   // ===========================================================================
   // BLOCK 4: Zoomed-In Crisis Story & Clean Action Timeline (危机复盘与具体操作)
   // ===========================================================================
@@ -7121,6 +7879,7 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
     required this.useLogScale,
     required this.showSubTrack,
     required this.hoverIndex,
+    this.pinnedIndex = -1,
     required this.borderColor,
     required this.mutedColor,
     required this.textColor,
@@ -7133,6 +7892,7 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
   final bool useLogScale;
   final bool showSubTrack;
   final int hoverIndex;
+  final int pinnedIndex;
   final Color borderColor;
   final Color mutedColor;
   final Color textColor;
@@ -7540,7 +8300,84 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
       lastRight = drawX + estW;
     }
 
-    // 7. Calm hover crosshair + active dots
+    // 7. Pinned PIT replay crosshair + luminous ring + date/price canvas badge
+    if (pinnedIndex >= 0 && pinnedIndex < n) {
+      final px = xAt(pinnedIndex);
+      final pinLinePath = Path()
+        ..moveTo(px, mainTop)
+        ..lineTo(px, axisBaseY);
+      _drawDashedPath(
+        canvas,
+        pinLinePath,
+        Paint()
+          ..color = _sky.withValues(alpha: 0.85)
+          ..strokeWidth = 1.5
+          ..style = PaintingStyle.stroke,
+        dash: 5.0,
+        gap: 3.0,
+      );
+      final psY = yMain(stratVals[pinnedIndex]);
+      final pbY = yMain(bhVals[pinnedIndex]);
+      canvas.drawCircle(
+        Offset(px, pbY),
+        3.5,
+        Paint()..color = _sky.withValues(alpha: 0.7),
+      );
+      canvas.drawCircle(
+        Offset(px, psY),
+        8.5,
+        Paint()..color = _sky.withValues(alpha: 0.22),
+      );
+      canvas.drawCircle(
+        Offset(px, psY),
+        5.0,
+        Paint()..color = const Color(0xFF080B0F),
+      );
+      canvas.drawCircle(
+        Offset(px, psY),
+        3.6,
+        Paint()..color = _sky,
+      );
+
+      final pRow = rows[pinnedIndex];
+      final pDate = (pRow['date'] ?? '').toString();
+      final pQqq = _val(pRow['qqq_close']);
+      final tagText = 'PIT $pDate · \$${pQqq.toStringAsFixed(2)}';
+      final tp = TextPainter(
+        text: TextSpan(
+          text: tagText,
+          style: const TextStyle(
+            color: Color(0xFFEDF1F5),
+            fontSize: 10.0,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final pillW = tp.width + 12.0;
+      final pillH = tp.height + 6.0;
+      final pillX = (px - pillW * 0.5)
+          .clamp(padL + 2.0, math.max(padL + 2.0, padL + plotW - pillW - 2.0))
+          .toDouble();
+      final pillRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(pillX, mainTop + 2.0, pillW, pillH),
+        const Radius.circular(5),
+      );
+      canvas.drawRRect(
+        pillRect,
+        Paint()..color = const Color(0xE80D1622),
+      );
+      canvas.drawRRect(
+        pillRect,
+        Paint()
+          ..color = _sky.withValues(alpha: 0.85)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0,
+      );
+      tp.paint(canvas, Offset(pillX + 6.0, mainTop + 5.0));
+    }
+
+    // 8. Calm hover crosshair + active dots
     if (hoverIndex >= 0 && hoverIndex < n) {
       final hx = xAt(hoverIndex);
       canvas.drawLine(
@@ -7604,6 +8441,7 @@ class _CrisisObservatoryChartPainter extends CustomPainter {
         oldDelegate.useLogScale != useLogScale ||
         oldDelegate.showSubTrack != showSubTrack ||
         oldDelegate.hoverIndex != hoverIndex ||
+        oldDelegate.pinnedIndex != pinnedIndex ||
         oldDelegate.borderColor != borderColor;
   }
 }

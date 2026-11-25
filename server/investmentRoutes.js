@@ -33,6 +33,7 @@ import {
 import {
   loadCrisisObservatoryDashboard,
   loadCrisisObservatoryDashboardLive,
+  loadCrisisObservatoryPitSnapshotLive,
 } from './crisisObservatory.js';
 import { researchInsiders } from './researchInsiders.js';
 import { withInvestmentMarketFacts } from './investmentMarketRoutes.js';
@@ -166,12 +167,36 @@ export function registerInvestmentRoutes(app,service) {
   });
   route('get','/crisis-observatory',readCrisisObservatory,
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
+  const readCrisisObservatoryPit=(_,r)=>loadCrisisObservatoryPitSnapshotLive({
+    date:r.query.date??r.query.pitDate??r.query.asOf??null,
+    strategy:r.query.strategy??null,
+    putOtm:r.query.putOtm??r.query.put_otm??r.query.otm??null,
+    m7TpMode:r.query.m7TpMode??r.query.m7_tp_mode??null,
+    rollMode:r.query.rollMode??r.query.roll_mode??null,
+    m0Enabled:r.query.m0Enabled??r.query.m0_enabled??r.query.m0??null,
+    tpMode:r.query.tpMode??r.query.tp_mode??null,
+    ccMode:r.query.ccMode??r.query.cc_mode??null,
+    spMode:r.query.spMode??r.query.sp_mode??null,
+    wcMode:r.query.wcMode??r.query.wc_mode??null,
+  });
+  route('get','/crisis-observatory/pit',readCrisisObservatoryPit,
+    {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   app.get('/api/discover/crisis-observatory',async (req,res)=>{
     res.setHeader('Cache-Control',service.source?.canonicalMarket
       ?'private, no-cache':'private, max-age=300, stale-while-revalidate=3600');
     if(!req.user?.id)return res.status(401).json({error:'unauthorized'});
     try {
       res.json(await withInvestmentMarketFacts(service,req.user.id,req,'/crisis-observatory',()=>readCrisisObservatory(req.user.id,req)));
+    } catch(e) {
+      res.setHeader('Cache-Control','private, no-store');
+      res.status(e.status??500).json({error:e.status?e.message:'investment_request_failed'});
+    }
+  });
+  app.get('/api/discover/crisis-observatory/pit',async (req,res)=>{
+    res.setHeader('Cache-Control','private, max-age=300, stale-while-revalidate=3600');
+    if(!req.user?.id)return res.status(401).json({error:'unauthorized'});
+    try {
+      res.json(await readCrisisObservatoryPit(req.user.id,req));
     } catch(e) {
       res.setHeader('Cache-Control','private, no-store');
       res.status(e.status??500).json({error:e.status?e.message:'investment_request_failed'});

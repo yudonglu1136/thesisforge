@@ -14,6 +14,7 @@ import {
   CRISIS_OBSERVATORY_WC_MODES,
   loadCrisisObservatoryDashboard,
   loadCrisisObservatoryDashboardLive,
+  loadCrisisObservatoryPitSnapshot,
 } from './crisisObservatory.js';
 import { registerInvestmentRoutes } from './investmentRoutes.js';
 
@@ -511,4 +512,52 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.equal(bodySpLegacy.wc_mode, 'wc_14d_c0s2');
   const httpLegacyU1 = Object.fromEntries(bodySpLegacy.strategies_summary.map(s => [s.id, s])).U1_PureOptions;
   assert.ok(Math.abs(httpLegacyU1.end_nav - 1383482.45) <= 0.1);
+
+  // Historical PIT snapshot API (/api/investment/crisis-observatory/pit & /api/discover/crisis-observatory/pit)
+  const unauthPit = await fetch(`http://127.0.0.1:${port}/api/investment/crisis-observatory/pit?date=2020-01-28`);
+  assert.equal(unauthPit.status, 401);
+  const badPit = await fetch(`http://127.0.0.1:${port}/api/investment/crisis-observatory/pit?date=not-a-date`, {
+    headers: authHeaders,
+  });
+  assert.equal(badPit.status, 400);
+
+  const [resPitInv, resPitDisc] = await Promise.all([
+    fetch(`http://127.0.0.1:${port}/api/investment/crisis-observatory/pit?date=2020-01-28&rollMode=120d_roll50`, {
+      headers: authHeaders,
+    }),
+    fetch(`http://127.0.0.1:${port}/api/discover/crisis-observatory/pit?date=2022-08-16&rollMode=120d_roll50`, {
+      headers: authHeaders,
+    }),
+  ]);
+  assert.equal(resPitInv.status, 200);
+  assert.equal(resPitDisc.status, 200);
+  const pit2020 = await resPitInv.json();
+  const pit2022 = await resPitDisc.json();
+  assert.equal(pit2020.pit_mode, true);
+  assert.equal(pit2020.pit_date, '2020-01-28');
+  assert.equal(pit2020.is_historical_pit, true);
+  assert.equal(pit2020.prev_date, '2020-01-27');
+  assert.equal(pit2020.next_date, '2020-01-29');
+  assert.equal(pit2020.daily_series, undefined);
+  assert.equal(pit2020.live_market_snapshot.qqq_close, 221.45);
+  assert.equal(pit2020.m7_live_dashboard.crisis_prob, 40);
+  assert.equal(pit2020.m7_live_dashboard.p2_score, 40);
+  const p2Mods = pit2020.m7_live_dashboard.pillars.find(p => p.id === 'P2').modules;
+  assert.equal(p2Mods.find(m => m.id === 'M2').triggered, true);
+  assert.equal(p2Mods.find(m => m.id === 'M5').triggered, true);
+  assert.equal(pit2020.ad_line_signal.last_top_divergence_date, '');
+
+  assert.equal(pit2022.pit_date, '2022-08-16');
+  assert.equal(pit2022.live_market_snapshot.qqq_close, 332.28);
+  assert.equal(pit2022.m7_live_dashboard.crisis_prob, 35);
+  assert.equal(pit2022.m7_live_dashboard.p3_score, 35);
+  const p3Mods = pit2022.m7_live_dashboard.pillars.find(p => p.id === 'P3').modules;
+  assert.equal(p3Mods.find(m => m.id === 'M4').triggered, true);
+
+  const pit2025 = loadCrisisObservatoryPitSnapshot({ date: '2025-04-04', rollMode: '120d_roll50' });
+  assert.equal(pit2025.pit_date, '2025-04-04');
+  assert.equal(pit2025.live_market_snapshot.qqq_close, 422.67);
+  assert.equal(pit2025.m7_live_dashboard.active_slots, 1);
+  assert.equal(pit2025.m7_live_dashboard.tp_monitor.open_slots[0].kp, 440);
+  assert.equal(pit2025.m7_live_dashboard.tp_monitor.open_slots[0].pending_tp, true);
 });

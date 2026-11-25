@@ -2130,6 +2130,11 @@ export function loadCrisisObservatoryDashboard({
           days_below_50ma: streakBelow50,
           pct_above_200d: lastBar.pct_200d,
           top_divergence_active: Boolean(athOk && adBelow),
+          last_top_divergence_date:
+            data.ad_line_signal?.last_top_divergence_date &&
+            data.ad_line_signal.last_top_divergence_date <= effDate
+              ? data.ad_line_signal.last_top_divergence_date
+              : '',
           status_en:
             athOk && adBelow
               ? 'TOP DIVERGENCE ACTIVE (ATH<=5% & AD<50DMA)'
@@ -2250,6 +2255,231 @@ export function loadCrisisObservatoryDashboard({
     shield_events: [],
     crisis_windows: visibleWindows,
   };
+}
+
+const PIT_SNAPSHOT_CACHE_MAX = 256;
+const pitSnapshotCache = new Map();
+
+function readCachedPitSnapshot(cacheKey) {
+  const hit = pitSnapshotCache.get(cacheKey);
+  if (!hit) return null;
+  // Refresh LRU order
+  pitSnapshotCache.delete(cacheKey);
+  pitSnapshotCache.set(cacheKey, hit);
+  return hit;
+}
+
+function writeCachedPitSnapshot(cacheKey, value) {
+  if (pitSnapshotCache.has(cacheKey)) {
+    pitSnapshotCache.delete(cacheKey);
+  } else if (pitSnapshotCache.size >= PIT_SNAPSHOT_CACHE_MAX) {
+    const oldestKey = pitSnapshotCache.keys().next().value;
+    if (oldestKey !== undefined) pitSnapshotCache.delete(oldestKey);
+  }
+  pitSnapshotCache.set(cacheKey, value);
+}
+
+export function loadCrisisObservatoryPitSnapshot({
+  date = null,
+  asOf = null,
+  strategy = null,
+  putOtm = null,
+  m7TpMode = null,
+  rollMode = null,
+  m0Enabled = null,
+  tpMode = null,
+  ccMode = null,
+  spMode = null,
+  wcMode = null,
+  file = defaultFile,
+  extraDailyBars = null,
+  liveM7Feed = null,
+} = {}) {
+  const { data: rawData, snapshotId } = readArtifact(file);
+  const rawDate = date ?? asOf ?? rawData.as_of_date;
+  const targetDate = String(rawDate ?? '').trim();
+  if (!isIsoDate(targetDate)) fail('invalid_pit_date', 400);
+
+  const hasLiveTail =
+    Boolean(liveM7Feed) || (Array.isArray(extraDailyBars) && extraDailyBars.length > 0);
+  const cacheKey = hasLiveTail
+    ? null
+    : [
+        snapshotId,
+        targetDate,
+        strategy ?? '',
+        putOtm ?? '',
+        m7TpMode ?? '',
+        rollMode ?? '',
+        m0Enabled ?? '',
+        tpMode ?? '',
+        ccMode ?? '',
+        spMode ?? '',
+        wcMode ?? '',
+      ].join('|');
+
+  if (cacheKey) {
+    const cached = readCachedPitSnapshot(cacheKey);
+    if (cached) return cached;
+  }
+
+  const slicedDoc = loadCrisisObservatoryDashboard({
+    asOf: targetDate,
+    strategy,
+    putOtm,
+    m7TpMode,
+    rollMode,
+    m0Enabled,
+    tpMode,
+    ccMode,
+    spMode,
+    wcMode,
+    file,
+    extraDailyBars,
+    liveM7Feed,
+  });
+
+  const baseDates = (rawData.daily_series ?? []).map(r => r.date);
+  let allDates = baseDates;
+  if (hasLiveTail) {
+    const extraDates = (
+      Array.isArray(extraDailyBars) && extraDailyBars.length > 0
+        ? extraDailyBars
+        : extractExtraBarsFromFeed(liveM7Feed)
+    )
+      .map(b => b?.date)
+      .filter(d => isIsoDate(d) && d > rawData.as_of_date);
+    if (extraDates.length > 0) {
+      allDates = [...baseDates, ...new Set(extraDates)].sort();
+    }
+  }
+
+  const effDate = slicedDoc.as_of_date;
+  const latestDate = allDates.length > 0 ? allDates[allDates.length - 1] : rawData.as_of_date;
+  const effIdx = allDates.indexOf(effDate);
+  const prevDate = effIdx > 0 ? allDates[effIdx - 1] : null;
+  const nextDate = effIdx >= 0 && effIdx + 1 < allDates.length ? allDates[effIdx + 1] : null;
+  const isHistoricalPit = effDate < latestDate;
+  const lastBar =
+    Array.isArray(slicedDoc.daily_series) && slicedDoc.daily_series.length > 0
+      ? slicedDoc.daily_series[slicedDoc.daily_series.length - 1]
+      : null;
+
+  const lightsPit = (slicedDoc.six_crisis_lights ?? []).map(light => ({
+    ...light,
+    pit_historical: isHistoricalPit,
+    ...(isHistoricalPit
+      ? {
+          reading_value:
+            light.key === 'sig3_breadth' && lastBar && Number.isFinite(Number(lastBar.pct_200d))
+              ? `${Number(lastBar.pct_200d).toFixed(1)}%`
+              : light.lit
+                ? 'PIT ON'
+                : 'PIT OFF',
+        }
+      : {}),
+  }));
+
+  const payload = {
+    version: CRISIS_OBSERVATORY_VERSION,
+    snapshotId: slicedDoc.snapshotId,
+    pit_mode: true,
+    pit_date: effDate,
+    requested_date: targetDate,
+    latest_as_of_date: latestDate,
+    is_historical_pit: isHistoricalPit,
+    prev_date: prevDate,
+    next_date: nextDate,
+    as_of_date: effDate,
+    asOfDate: effDate,
+    selected_strategy_id: slicedDoc.selected_strategy_id,
+    put_otm: slicedDoc.put_otm,
+    m7_tp_mode: slicedDoc.m7_tp_mode,
+    roll_mode: slicedDoc.roll_mode,
+    m0_enabled: slicedDoc.m0_enabled,
+    tp_mode: slicedDoc.tp_mode,
+    cc_mode: slicedDoc.cc_mode,
+    sp_mode: slicedDoc.sp_mode,
+    wc_mode: slicedDoc.wc_mode,
+    liveExtended: Boolean(slicedDoc.liveExtended),
+    pit_bar: lastBar,
+    live_market_snapshot: slicedDoc.live_market_snapshot,
+    m7_live_dashboard: slicedDoc.m7_live_dashboard,
+    m7_live_dashboards_by_strategy: slicedDoc.m7_live_dashboards_by_strategy,
+    six_crisis_lights: lightsPit,
+    ad_line_signal: slicedDoc.ad_line_signal,
+    live_signal_state: slicedDoc.live_signal_state,
+    live_signal_states_by_strategy: slicedDoc.live_signal_states_by_strategy,
+    live_sp_state: slicedDoc.live_sp_state,
+    live_sp_states_by_strategy: slicedDoc.live_sp_states_by_strategy,
+    strategies_summary: slicedDoc.strategies_summary,
+  };
+
+  if (cacheKey) {
+    writeCachedPitSnapshot(cacheKey, payload);
+  }
+  return payload;
+}
+
+export async function loadCrisisObservatoryPitSnapshotLive({
+  date = null,
+  asOf = null,
+  strategy = null,
+  putOtm = null,
+  m7TpMode = null,
+  rollMode = null,
+  m0Enabled = null,
+  tpMode = null,
+  ccMode = null,
+  spMode = null,
+  wcMode = null,
+  file = defaultFile,
+  fetchLiveBars = null,
+  fetchLiveM7Feed = null,
+} = {}) {
+  const { data } = readArtifact(file);
+  const rawDate = date ?? asOf ?? data.as_of_date;
+  const targetDate = String(rawDate ?? '').trim();
+  if (!isIsoDate(targetDate)) fail('invalid_pit_date', 400);
+
+  let extraDailyBars = null;
+  let liveM7Feed = null;
+  const liveEnabled =
+    process.env.LIVE_MARKET_TAIL_ENABLED === 'true' ||
+    typeof fetchLiveBars === 'function' ||
+    typeof fetchLiveM7Feed === 'function';
+
+  if (liveEnabled && targetDate > data.as_of_date) {
+    try {
+      if (typeof fetchLiveM7Feed === 'function') {
+        liveM7Feed = await fetchLiveM7Feed();
+      } else if (typeof fetchLiveBars === 'function') {
+        extraDailyBars = await fetchLiveBars();
+        liveM7Feed = normalizeLegacyExtraBarsToFeed(extraDailyBars);
+      } else {
+        liveM7Feed = await getLiveM7MarketFeed();
+      }
+    } catch {
+      extraDailyBars = null;
+      liveM7Feed = null;
+    }
+  }
+
+  return loadCrisisObservatoryPitSnapshot({
+    date: targetDate,
+    strategy,
+    putOtm,
+    m7TpMode,
+    rollMode,
+    m0Enabled,
+    tpMode,
+    ccMode,
+    spMode,
+    wcMode,
+    file,
+    extraDailyBars,
+    liveM7Feed,
+  });
 }
 
 export async function loadCrisisObservatoryDashboardLive({
