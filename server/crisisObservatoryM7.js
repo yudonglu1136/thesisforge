@@ -1,8 +1,14 @@
 // Pure-JS M7-Graded Three-Pillar Probabilistic Put Overlay Engine & Daily Live EOD Stepper.
-// Zero Python subprocesses, zero external dependencies, strict T+1 Open zero-lookahead parity.
+// Zero Python subprocesses, zero external dependencies, strict T+1 Close real-OPRA/Polygon parity with BSM fallback.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import zlib from 'node:zlib';
+import { fileURLToPath } from 'node:url';
 
 const INITIAL_CAPITAL = 200000.0;
 const OPT_SLIP = 0.025;
+const OPT_SLIP_SP = 0.03;
 const OPT_COMM_PER_SH = 0.0065;
 const STOCK_REBAL_FEE = 0.0003;
 const MARGIN_SPREAD = 0.015;
@@ -10,7 +16,73 @@ const MIN_OPT_BID = 0.03;
 
 export const CRISIS_OBSERVATORY_PUT_OTMS = Object.freeze(['otm15', 'otm20']);
 export const CRISIS_OBSERVATORY_M7_TP_MODES = Object.freeze(['standard', 'itm_tp']);
-export const CRISIS_OBSERVATORY_ROLL_MODES = Object.freeze(['90d_hold', '120d_roll50']);
+export const CRISIS_OBSERVATORY_ROLL_MODES = Object.freeze(['120d_roll50', '90d_hold']);
+
+const _m7Dir = path.dirname(fileURLToPath(import.meta.url));
+const REAL_QUOTES_GZ = path.resolve(_m7Dir, 'config/crisis-observatory-real-quotes.json.gz');
+
+const CODE_TO_SRC = Object.freeze({
+  0: 'bsm_fallback',
+  1: 'real_opra',
+  2: 'real_opra_interp',
+  3: 'real_polygon',
+  4: 'real_polygon_interp',
+});
+
+let cachedRealQuotes = null;
+let cachedRealQuotesMtime = -1;
+
+export function getRealQuoteCache(file = REAL_QUOTES_GZ) {
+  try {
+    const st = fs.statSync(file);
+    if (cachedRealQuotes && cachedRealQuotesMtime === st.mtimeMs) {
+      return cachedRealQuotes;
+    }
+    const raw = zlib.gunzipSync(fs.readFileSync(file)).toString('utf8');
+    cachedRealQuotes = JSON.parse(raw);
+    cachedRealQuotesMtime = st.mtimeMs;
+    return cachedRealQuotes;
+  } catch {
+    return null;
+  }
+}
+
+function classifyTradeSource(entrySrc, exitSrc) {
+  const en = String(entrySrc || 'bsm_fallback');
+  const ex = String(exitSrc || en);
+  if (en.startsWith('real_opra') && (ex.startsWith('real_opra') || ex.startsWith('real_polygon'))) {
+    return 'real_opra';
+  }
+  if ((en.startsWith('real_opra') || en.startsWith('real_polygon')) && (ex.startsWith('real_opra') || ex.startsWith('real_polygon'))) {
+    return 'real_polygon';
+  }
+  if (en.startsWith('real_opra') || ex.startsWith('real_opra')) return 'real_opra';
+  if (en.startsWith('real_polygon') || ex.startsWith('real_polygon')) return 'real_polygon';
+  return 'bsm_fallback';
+}
+
+function execBuyPrice(bid, ask, mid, src, slipBsm = OPT_SLIP) {
+  if (String(src).startsWith('real_opra')) {
+    const hs = Math.max(0.0, 0.5 * (ask - bid));
+    return mid + 0.35 * hs + OPT_COMM_PER_SH;
+  }
+  return mid * (1.0 + slipBsm) + OPT_COMM_PER_SH;
+}
+
+function execSellPrice(bid, ask, mid, src, slipBsm = OPT_SLIP) {
+  if (String(src).startsWith('real_opra')) {
+    if (bid <= 0.0) return 0.0;
+    const hs = Math.max(0.0, 0.5 * (ask - bid));
+    return Math.max(0.0, mid - 0.35 * hs - OPT_COMM_PER_SH);
+  }
+  return Math.max(0.0, mid * (1.0 - slipBsm) - OPT_COMM_PER_SH);
+}
+
+function isExpiryDay(idx, msArr, expMs) {
+  if (msArr[idx] >= expMs) return true;
+  if (idx + 1 < msArr.length && msArr[idx + 1] > expMs) return true;
+  return false;
+}
 
 const YF_SYMBOL_MAP = Object.freeze({
   QQQ: 'QQQ',
@@ -284,18 +356,20 @@ export function formatM7TriggerLabels(sigDay, maxSlots) {
   return { mods, codeStr, trigEn, trigZh };
 }
 
-function computeM7BhBaseline(evalBars) {
+function computeM7BhBaseline(evalBars, useReal = true) {
   const n = evalBars.length;
   const preSh = new Array(n);
   const postSh = new Array(n);
   const nav = new Array(n);
-  let sh = INITIAL_CAPITAL / Number(evalBars[0].close);
+  let sh = useReal
+    ? INITIAL_CAPITAL / Number(evalBars[0].close)
+    : INITIAL_CAPITAL / (Number(evalBars[0].open) * (1.0 + STOCK_REBAL_FEE));
   for (let i = 0; i < n; i += 1) {
     const cl = Number(evalBars[i].close);
     const div = Number(evalBars[i].dividends);
     preSh[i] = sh;
-    if (div > 0 && sh > 0) {
-      sh += (sh * div) / (cl * (1.0 + STOCK_REBAL_FEE));
+    if (div > 0 && sh > 0 && (!useReal || i > 0)) {
+      sh += (sh * div) / (useReal ? cl : cl * (1.0 + STOCK_REBAL_FEE));
     }
     postSh[i] = sh;
     nav[i] = sh * cl;
@@ -311,13 +385,16 @@ export function simulateM7StrategyJS(
   {
     putOtm = 'otm15',
     m7TpMode = 'standard',
-    rollMode = '90d_hold',
+    rollMode = '120d_roll50',
     m0Enabled = true,
     ccMode = 'cc_off',
     spMode = 'sp_off',
     wcMode = 'wc_reclaim_30d_d35',
+    realQuoteCache = undefined,
   } = {},
 ) {
+  const realCache = realQuoteCache === undefined ? getRealQuoteCache() : realQuoteCache;
+  const useReal = Boolean(realCache && realCache.selections && realCache.contracts);
   const isGraded = strategyId === 'M7G_Graded';
   const maxSlots = isGraded ? 3 : 2;
   const slotCoverage = 0.5;
@@ -329,21 +406,106 @@ export function simulateM7StrategyJS(
   const targetDte = isRoll50 ? 120 : 90;
   const refDte = targetDte;
   const rollDteThr = isRoll50 ? 50 : 0;
-  const putMultMaxDte = isRoll50 ? 75 : 45;
+  const putMultMaxDte = 45;
   const refMoneyness = 0.9;
   const vixRatioTp = 1.1;
   const putMultTp = 5.0;
   const stepCalDays = 30;
   const escalateMinDays = 21;
 
-  const bhM7 = computeM7BhBaseline(evalBars);
+  const bhM7 = computeM7BhBaseline(evalBars, useReal);
   const nDays = evalBars.length;
   const dates = evalBars.map(r => r.date);
   const msArr = dates.map(parseIsoDayMs);
   const finalBhSh = bhM7.finalSh;
   const finalCl = Number(evalBars[nDays - 1].close);
 
-  let coreShares = INITIAL_CAPITAL / Number(evalBars[0].close);
+  const qStats = { totalLookups: 0, realOpraHits: 0, realPolygonHits: 0, bsmFallbacks: 0 };
+  const recSrc = src => {
+    qStats.totalLookups += 1;
+    if (String(src).startsWith('real_opra')) qStats.realOpraHits += 1;
+    else if (String(src).startsWith('real_polygon')) qStats.realPolygonHits += 1;
+    else qStats.bsmFallbacks += 1;
+  };
+  const isExp = (idx, expMs) => (useReal ? isExpiryDay(idx, msArr, expMs) : msArr[idx] >= expMs);
+
+  const selectRec = (d, tag) => {
+    if (!useReal) return null;
+    const raw = realCache.selections[`${d}|${tag}`];
+    if (!raw) return null;
+    const [exp, kCents, bid, ask, iv, dl, srcCode] = raw;
+    const expMs = parseIsoDayMs(exp);
+    const src = CODE_TO_SRC[srcCode] || 'real_opra';
+    return {
+      exp,
+      expMs,
+      strike: kCents / 100.0,
+      k_cents: kCents,
+      bid,
+      ask,
+      mid: 0.5 * (bid + ask),
+      iv: iv !== null && Number.isFinite(iv) ? iv : null,
+      delta: dl !== null && Number.isFinite(dl) ? dl : null,
+      source: src,
+    };
+  };
+
+  const lookupOpt = (dStr, optType, expStr, kVal, kCents, spotPx, remDays, rC, qC, vxnC, lastIv, slipBsm = OPT_SLIP) => {
+    if (useReal && kCents !== null && kCents !== undefined) {
+      const ckey = `${optType[0]}|${expStr}|${kCents}`;
+      const dayRec = realCache.contracts[ckey]?.[dStr];
+      if (dayRec) {
+        const [bid, ask, ivRaw, dlRaw, srcCode] = dayRec;
+        const mid = 0.5 * (bid + ask);
+        const src = CODE_TO_SRC[srcCode] || 'real_opra';
+        const tR = Math.max(1, remDays) / 365.0;
+        const iv =
+          ivRaw !== null && Number.isFinite(ivRaw)
+            ? ivRaw
+            : lastIv !== null && Number.isFinite(lastIv)
+              ? lastIv
+              : evalSkewIv(spotPx, kVal, tR, rC, qC, vxnC, coeffs);
+        const dl =
+          dlRaw !== null && Number.isFinite(dlRaw)
+            ? dlRaw
+            : bsmDelta(spotPx, kVal, tR, rC, qC, iv, optType);
+        recSrc(src);
+        return { bid, ask, mid, iv, delta: dl, src };
+      }
+    }
+    const tR = Math.max(0, remDays) / 365.0;
+    const opraMax = realCache?.opra_range?.[1] || '2025-12-15';
+    const sig =
+      useReal &&
+      lastIv !== null &&
+      lastIv !== undefined &&
+      Number.isFinite(lastIv) &&
+      lastIv >= 0.04 &&
+      lastIv <= 2.5 &&
+      dStr <= opraMax
+        ? Number(lastIv)
+        : evalSkewIv(spotPx, kVal, Math.max(tR, 1.0 / 365.0), rC, qC, vxnC, coeffs);
+    const mid = bsmPrice(spotPx, kVal, tR, rC, qC, sig, optType);
+    const dl = bsmDelta(spotPx, kVal, tR, rC, qC, sig, optType);
+    recSrc('bsm_fallback');
+    return {
+      bid: Math.max(0.0, mid * (1.0 - slipBsm)),
+      ask: mid * (1.0 + slipBsm),
+      mid,
+      iv: sig,
+      delta: dl,
+      src: 'bsm_fallback',
+    };
+  };
+
+  const buyPx = (bid, ask, mid, src, slipBsm = OPT_SLIP) =>
+    useReal ? execBuyPrice(bid, ask, mid, src, slipBsm) : mid * (1.0 + slipBsm) + OPT_COMM_PER_SH;
+  const sellPx = (bid, ask, mid, src, slipBsm = OPT_SLIP) =>
+    useReal ? execSellPrice(bid, ask, mid, src, slipBsm) : Math.max(0.0, mid * (1.0 - slipBsm) - OPT_COMM_PER_SH);
+
+  let coreShares = useReal
+    ? INITIAL_CAPITAL / Number(evalBars[0].close)
+    : INITIAL_CAPITAL / (Number(evalBars[0].open) * (1.0 + STOCK_REBAL_FEE));
   let activeTranches = [];
   let pendingSig = null;
 
@@ -355,16 +517,16 @@ export function simulateM7StrategyJS(
   const ccMinOtm = 0.05;
   let ccStopDelta = null;
   let ccRollMode = null;
-  let ccMaxRolls = 0;
+  let ccMaxRolls = 3;
   if (ccMode === 'cc_d12_d35') ccStopDelta = 0.35;
   else if (ccMode === 'cc_d12_r45') {
     ccStopDelta = 0.45;
     ccRollMode = 'fresh_30d';
-    ccMaxRolls = 2;
+    ccMaxRolls = 3;
   } else if (ccMode === 'cc_d12_cr55') {
     ccStopDelta = 0.55;
     ccRollMode = 'credit_45d';
-    ccMaxRolls = 2;
+    ccMaxRolls = 3;
   }
 
   let activeCc = null;
@@ -408,28 +570,27 @@ export function simulateM7StrategyJS(
   const wcClosedLedger = [];
 
   const sweepSpCash = px => {
-    if (spCash > 1.0 && activeSp === null && assignedShares <= 1e-6) {
-      coreShares += spCash / (px * (1.0 + STOCK_REBAL_FEE));
+    if (Math.abs(spCash) > 1e-8) {
+      const denom = px * (1.0 + (spCash > 0 ? STOCK_REBAL_FEE : -STOCK_REBAL_FEE));
+      coreShares += spCash / denom;
       spCash = 0.0;
     }
   };
 
-  const estimateNavOpen = (opPx, vxnO, rC, qC, curMs) => {
+  const estimateNavExec = (exPx, vxnE, rC, qC, curMs, dStr) => {
     let mtmP = 0.0;
     for (const tr of activeTranches) {
       const remD = Math.max(1, diffDays(tr.expMs, curMs));
-      const tO = remD / 365.0;
-      const spIv = evalSkewIv(opPx, tr.kp, tO, rC, qC, vxnO, coeffs);
-      mtmP += tr.hedged_shares * bsmPrice(opPx, tr.kp, tO, rC, qC, spIv, 'put');
+      const { mid: pmO } = lookupOpt(dStr, 'put', tr.exp_date, tr.kp, tr.k_cents, exPx, remD, rC, qC, vxnE, tr.last_iv, OPT_SLIP);
+      mtmP += tr.hedged_shares * pmO;
     }
     let mtmCcO = 0.0;
     if (activeCc !== null) {
       const remCO = Math.max(1, diffDays(activeCc.expMs, curMs));
-      const tCO = remCO / 365.0;
-      const scIvC = evalSkewIv(opPx, activeCc.kc, tCO, rC, qC, vxnO, coeffs);
-      mtmCcO = -activeCc.shares * bsmPrice(opPx, activeCc.kc, tCO, rC, qC, scIvC, 'call');
+      const { mid: cmO } = lookupOpt(dStr, 'call', activeCc.exp_date, activeCc.kc, activeCc.k_cents, exPx, remCO, rC, qC, vxnE, activeCc.last_iv, OPT_SLIP);
+      mtmCcO = -activeCc.shares * cmO;
     }
-    return Math.max(1.0, (coreShares + assignedShares) * opPx + ccCash + spCash + mtmP + mtmCcO);
+    return Math.max(1.0, (coreShares + assignedShares) * exPx + ccCash + spCash + mtmP + mtmCcO);
   };
 
   const navList = new Array(nDays);
@@ -453,6 +614,14 @@ export function simulateM7StrategyJS(
     const qCur = Number(row.div_yield);
     const ddCur = Number(row.dd_from_ath);
 
+    const execPx = useReal ? cl : op;
+    let vxnEx = vxnCl;
+    if (!useReal && i > 0) {
+      const prevVxn = Number(evalBars[i - 1].vxn);
+      const prevCl = Number(evalBars[i - 1].close);
+      vxnEx = Math.max(10.0, prevVxn - 0.45 * (op / prevCl - 1.0) * 100.0);
+    }
+
     const multMorning = (finalBhSh / bhM7.preSh[i]) * finalCl;
     const multEod = (finalBhSh / bhM7.postSh[i]) * finalCl;
 
@@ -469,36 +638,41 @@ export function simulateM7StrategyJS(
     }
 
     if (i > 0 && pendingCcDeploy && ccCash > 1.0) {
-      coreShares += ccCash / (op * (1.0 + STOCK_REBAL_FEE));
+      coreShares += ccCash / (execPx * (1.0 + STOCK_REBAL_FEE));
       ccCash = 0.0;
       pendingCcDeploy = false;
     }
 
     if (i > 0 && activeCc !== null && activeCc.pending_close) {
-      const prevVxn = Number(evalBars[i - 1].vxn);
-      const prevCl = Number(evalBars[i - 1].close);
-      const vxnOpCc = Math.max(10.0, prevVxn - 0.45 * (op / prevCl - 1.0) * 100.0);
       const remCc = Math.max(0, diffDays(activeCc.expMs, curMs));
-      const tCc = remCc / 365.0;
-      const scEx = evalSkewIv(op, activeCc.kc, tCc, rCur, qCur, vxnOpCc, coeffs);
-      const cAskEx = bsmPrice(op, activeCc.kc, tCc, rCur, qCur, scEx, 'call') * (1.0 + OPT_SLIP);
+      let cAskEx;
+      let srcCcEx;
+      if (isExp(i, activeCc.expMs)) {
+        cAskEx = Math.max(0.0, execPx - activeCc.kc);
+        srcCcEx = activeCc.entry_source || 'bsm_fallback';
+      } else {
+        const qCc = lookupOpt(d, 'call', activeCc.exp_date, activeCc.kc, activeCc.k_cents, execPx, remCc, rCur, qCur, vxnEx, activeCc.last_iv, OPT_SLIP);
+        cAskEx = buyPx(qCc.bid, qCc.ask, qCc.mid, qCc.src, OPT_SLIP);
+        srcCcEx = qCc.src;
+      }
       const costCl = activeCc.shares * cAskEx;
       ccGrossLoss += costCl;
       if (ccCash >= costCl) ccCash -= costCl;
       else {
-        coreShares -= (costCl - ccCash) / (op * (1.0 - STOCK_REBAL_FEE));
+        coreShares -= (costCl - ccCash) / (execPx * (1.0 - STOCK_REBAL_FEE));
         ccCash = 0.0;
       }
       const closeReason = activeCc.close_reason || 'panic_close_uncap';
       const oldRolls = Number(activeCc.roll_count || 0);
       const oldSh = activeCc.shares;
+      const enCcSrc = activeCc.entry_source || 'bsm_fallback';
       ccLedger.push({
         cc_id: activeCc.cc_id,
         entry_date: activeCc.entry_date,
         exit_date: d,
         entry_spot: r2(activeCc.entry_spot),
         kc: r2(activeCc.kc),
-        exit_spot: r2(op),
+        exit_spot: r2(execPx),
         entry_vxn: r2(activeCc.entry_vxn),
         shares: r2(oldSh),
         prem_usd: r2(activeCc.prem_usd),
@@ -506,6 +680,7 @@ export function simulateM7StrategyJS(
         net_pnl_usd: r2(activeCc.prem_usd - costCl),
         exit_reason: closeReason,
         roll_gen: oldRolls,
+        pricing_source: classifyTradeSource(enCcSrc, srcCcEx),
       });
       activeCc = null;
       if (
@@ -514,77 +689,121 @@ export function simulateM7StrategyJS(
         oldRolls < ccMaxRolls
       ) {
         const rollDays = ccRollMode === 'credit_45d' ? 45 : 30;
-        const targetMs = curMs + rollDays * 86400000;
-        const posR = bisectLeftMs(msArr, targetMs);
-        const expDateR = posR < nDays ? dates[posR] : new Date(targetMs).toISOString().slice(0, 10);
-        const expMsR = posR < nDays ? msArr[posR] : targetMs;
-        const tR = Math.max(1, diffDays(expMsR, curMs)) / 365.0;
-        let kcNew = null;
-        if (ccRollMode === 'credit_45d') {
-          kcNew = solveCallStrikeForBid(op, tR, rCur, qCur, vxnOpCc, coeffs, cAskEx, OPT_SLIP);
-        } else if (ccRollMode === 'fresh_30d') {
-          kcNew = Math.max(
-            op * (1.0 + ccMinOtm),
-            solveCallStrikeForDelta(op, tR, rCur, qCur, vxnOpCc, coeffs, ccTargetDelta),
-          );
-        }
-        if (kcNew !== null && kcNew > op * 1.01) {
-          const scR = evalSkewIv(op, kcNew, tR, rCur, qCur, vxnOpCc, coeffs);
-          const cBidR = bsmPrice(op, kcNew, tR, rCur, qCur, scR, 'call') * (1.0 - OPT_SLIP);
-          if (cBidR >= 0.05) {
-            const premR = oldSh * cBidR;
-            ccTid += 1;
-            ccGrossPrem += premR;
-            ccCash += premR;
-            activeCc = {
-              cc_id: ccTid,
-              entry_date: d,
-              entryMs: curMs,
-              exp_date: expDateR,
-              expMs: expMsR,
-              entry_spot: op,
-              entry_vxn: vxnOpCc,
-              kc: kcNew,
-              shares: oldSh,
-              prem_usd: premR,
-              pending_close: false,
-              roll_count: oldRolls + 1,
-            };
+        let cRoll = null;
+        if (useReal) {
+          if (ccRollMode === 'credit_45d') {
+            cRoll = selectRec(d, `cc_45_cr_${Math.round(cAskEx * 100)}`);
+          } else if (ccRollMode === 'fresh_30d') {
+            cRoll = selectRec(d, 'cc_30_d12');
           }
+        }
+        let expDateR;
+        let expMsR;
+        let kcNew = null;
+        let kCentsR = null;
+        let cBidR = 0.0;
+        let ivR = null;
+        let srcR = 'bsm_fallback';
+        if (cRoll !== null) {
+          recSrc(cRoll.source);
+          expDateR = cRoll.exp;
+          expMsR = cRoll.expMs;
+          kcNew = cRoll.strike;
+          kCentsR = cRoll.k_cents;
+          cBidR = sellPx(cRoll.bid, cRoll.ask, cRoll.mid, cRoll.source, OPT_SLIP);
+          ivR = cRoll.iv;
+          srcR = cRoll.source;
+        } else {
+          const targetMs = curMs + rollDays * 86400000;
+          const posR = bisectLeftMs(msArr, targetMs);
+          expDateR = posR < nDays ? dates[posR] : new Date(targetMs).toISOString().slice(0, 10);
+          expMsR = posR < nDays ? msArr[posR] : targetMs;
+          const tR = Math.max(1, diffDays(expMsR, curMs)) / 365.0;
+          if (ccRollMode === 'credit_45d') {
+            kcNew = solveCallStrikeForBid(execPx, tR, rCur, qCur, vxnEx, coeffs, cAskEx, OPT_SLIP);
+          } else if (ccRollMode === 'fresh_30d') {
+            kcNew = Math.max(
+              execPx * (1.0 + ccMinOtm),
+              solveCallStrikeForDelta(execPx, tR, rCur, qCur, vxnEx, coeffs, ccTargetDelta),
+            );
+          }
+          if (kcNew !== null && kcNew > execPx * 1.01) {
+            ivR = evalSkewIv(execPx, kcNew, tR, rCur, qCur, vxnEx, coeffs);
+            const cmR = bsmPrice(execPx, kcNew, tR, rCur, qCur, ivR, 'call');
+            cBidR = sellPx(cmR * (1.0 - OPT_SLIP), cmR * (1.0 + OPT_SLIP), cmR, 'bsm_fallback', OPT_SLIP);
+            kCentsR = Math.round(kcNew * 100.0);
+            recSrc('bsm_fallback');
+          }
+        }
+        if (kcNew !== null && kcNew > execPx * 1.01 && cBidR >= 0.05) {
+          const premR = oldSh * cBidR;
+          ccTid += 1;
+          ccGrossPrem += premR;
+          ccCash += premR;
+          activeCc = {
+            cc_id: ccTid,
+            entry_date: d,
+            entryMs: curMs,
+            exp_date: expDateR,
+            expMs: expMsR,
+            entry_spot: execPx,
+            entry_vxn: vxnEx,
+            kc: kcNew,
+            k_cents: kCentsR,
+            last_iv: ivR,
+            entry_source: srcR,
+            shares: oldSh,
+            prem_usd: premR,
+            pending_close: false,
+            roll_count: oldRolls + 1,
+          };
         }
       }
     }
 
-    // 1. Pending M7 TP / 50D Roll Exits at T+1 Open
-    if (i > 0 && activeTranches.some(t => t.pending_tp)) {
-      const prevVxn = Number(evalBars[i - 1].vxn);
-      const prevCl = Number(evalBars[i - 1].close);
-      const vxnOp = Math.max(10.0, prevVxn - 0.45 * (op / prevCl - 1.0) * 100.0);
+    // 1. Pending M7 TP / 50D Roll Exits at T+1
+    if (i > 0 && activeTranches.some(t => t.pending_tp || t.pending_roll)) {
       const stillOpen = [];
+      const rollReplacements = [];
       for (const tr of activeTranches) {
-        if (!tr.pending_tp) {
+        if (!tr.pending_tp && !tr.pending_roll) {
           stillOpen.push(tr);
           continue;
         }
         const remDays = Math.max(0, diffDays(tr.expMs, curMs));
         const tRem = remDays / 365.0;
-        const sigEx = evalSkewIv(op, tr.kp, tRem, rCur, qCur, vxnOp, coeffs);
-        const putBid = Math.max(
-          0.0,
-          bsmPrice(op, tr.kp, tRem, rCur, qCur, sigEx, 'put') * (1.0 - OPT_SLIP) - OPT_COMM_PER_SH,
-        );
+        let putBid;
+        let srcEx;
+        if (isExp(i, tr.expMs)) {
+          putBid = Math.max(0.0, tr.kp - execPx);
+          srcEx = tr.entry_source || 'bsm_fallback';
+        } else {
+          const qEx = lookupOpt(d, 'put', tr.exp_date, tr.kp, tr.k_cents, execPx, remDays, rCur, qCur, vxnEx, tr.last_iv, OPT_SLIP);
+          putBid = sellPx(qEx.bid, qEx.ask, qEx.mid, qEx.src, OPT_SLIP);
+          srcEx = qEx.src;
+        }
         const exitUsd = tr.hedged_shares * putBid;
+        const isRollExit = Boolean(tr.pending_roll) && !Boolean(tr.pending_tp);
+        const exitRsn = isRollExit ? 'roll_50d' : tr.tp_reason;
+
+        const prevSigD = sigSeries[i - 1];
+        const prevCap = Number(isGraded ? prevSigD.target_slots_m7g : prevSigD.target_slots_m7);
+        const willAutoRoll = isRollExit && prevCap > stillOpen.length + rollReplacements.length;
+
         let dSh = 0.0;
-        if (Math.abs(exitUsd) > 1e-10) {
-          const denom = op * (1.0 + (exitUsd >= 0 ? STOCK_REBAL_FEE : -STOCK_REBAL_FEE));
+        if (!willAutoRoll && Math.abs(exitUsd) > 1e-10) {
+          const denom = execPx * (1.0 + (exitUsd >= 0 ? STOCK_REBAL_FEE : -STOCK_REBAL_FEE));
           dSh = exitUsd / denom;
           coreShares += dSh;
+        } else if (willAutoRoll) {
+          rollReplacements.push([exitUsd, prevCap, prevSigD]);
         }
+
         const roiMult = tr.entry_cost_usd > 1e-6 ? exitUsd / tr.entry_cost_usd : 0.0;
         const actualNetSh = putBid - tr.entry_put_ask;
         const conv = decomposeNakedPutConvexity(
           tr.entry_spot,
-          op,
+          execPx,
           tr.kp,
           tr.T_entry,
           tRem,
@@ -593,7 +812,7 @@ export function simulateM7StrategyJS(
           tr.entry_q,
           qCur,
           tr.entry_vxn,
-          vxnOp,
+          vxnEx,
           coeffs,
           actualNetSh,
         );
@@ -602,6 +821,7 @@ export function simulateM7StrategyJS(
         const dUsd = r2(conv.dvDelta * hs);
         const gUsd = r2(conv.dvGamma * hs);
         const vUsd = r2(conv.dvVega * hs);
+        const enSrc = tr.entry_source || 'bsm_fallback';
         ledger.push({
           tranche_id: tr.tranche_id,
           strategy_id: strategyId,
@@ -613,13 +833,16 @@ export function simulateM7StrategyJS(
           tp_mode: tpCode,
           roll_mode: rollMode,
           target_dte: targetDte,
+          pricing_source: classifyTradeSource(enSrc, srcEx),
+          entry_source: enSrc,
+          exit_source: srcEx,
           signal_date: tr.signal_date,
           entry_date: tr.entry_date,
           planned_exp_date: tr.exp_date,
           exit_date: d,
           actual_days_held: diffDays(curMs, tr.entryMs),
           rem_dte_at_exit: remDays,
-          exit_reason: tr.tp_reason,
+          exit_reason: exitRsn,
           sig_score: tr.sig_score,
           sig_ad_below50: tr.sig_ad_below50,
           crisis_prob: tr.crisis_prob,
@@ -643,10 +866,10 @@ export function simulateM7StrategyJS(
           tp_target_5x_sh: r4(5.0 * tr.entry_put_ask),
           entry_cost_usd: r2(tr.entry_cost_usd),
           entry_shares_sold: r4(tr.entry_shares_sold),
-          exit_spot: r2(op),
-          exit_vxn: r2(vxnOp),
+          exit_spot: r2(execPx),
+          exit_vxn: r2(vxnEx),
           exit_vix_ratio: r3(tr.tp_trigger_ratio),
-          underlying_ret_pct: r2((op / tr.entry_spot - 1.0) * 100.0),
+          underlying_ret_pct: r2((execPx / tr.entry_spot - 1.0) * 100.0),
           put_exit_val_sh: r4(putBid),
           call_exit_cost_sh: 0.0,
           exit_net_cash_usd: r2(exitUsd),
@@ -666,35 +889,208 @@ export function simulateM7StrategyJS(
         });
       }
       activeTranches = stillOpen;
+
+      // Direct 50D Roll replacements using salvaged cash without double stock-fee churn
+      for (const [salvUsd, rCap, rSigD] of rollReplacements) {
+        const rEn = rCur;
+        const qEn = qCur;
+        const vxnEn = vxnEx;
+        const cRef = useReal ? selectRec(d, `p_${refDte}_10`) : null;
+        const cEn = useReal ? selectRec(d, `p_${targetDte}_${otmPctInt}`) : null;
+
+        let putAskRef;
+        if (cRef !== null) {
+          recSrc(cRef.source);
+          putAskRef = buyPx(cRef.bid, cRef.ask, cRef.mid, cRef.source, OPT_SLIP);
+        } else {
+          const refTargetMs = curMs + refDte * 86400000;
+          const posRef = bisectLeftMs(msArr, refTargetMs);
+          const expMsRef = posRef < nDays ? msArr[posRef] : refTargetMs;
+          const tRef = Math.max(1, diffDays(expMsRef, curMs)) / 365.0;
+          const kpRef = execPx * refMoneyness;
+          const sigRef = evalSkewIv(execPx, kpRef, tRef, rEn, qEn, vxnEn, coeffs);
+          const midRef = bsmPrice(execPx, kpRef, tRef, rEn, qEn, sigRef, 'put');
+          putAskRef = buyPx(midRef * (1.0 - OPT_SLIP), midRef * (1.0 + OPT_SLIP), midRef, 'bsm_fallback', OPT_SLIP);
+          recSrc('bsm_fallback');
+        }
+
+        let expDate;
+        let expMs;
+        let tEn;
+        let kp;
+        let kCentsEn;
+        let putAskEn;
+        let ivEn;
+        let srcEn;
+        if (cEn !== null) {
+          recSrc(cEn.source);
+          expDate = cEn.exp;
+          expMs = cEn.expMs;
+          tEn = Math.max(1, diffDays(expMs, curMs)) / 365.0;
+          kp = cEn.strike;
+          kCentsEn = cEn.k_cents;
+          putAskEn = buyPx(cEn.bid, cEn.ask, cEn.mid, cEn.source, OPT_SLIP);
+          ivEn = cEn.iv;
+          srcEn = cEn.source;
+        } else {
+          const targetMs = curMs + targetDte * 86400000;
+          const pos = bisectLeftMs(msArr, targetMs);
+          expDate = pos < nDays ? dates[pos] : new Date(targetMs).toISOString().slice(0, 10);
+          expMs = pos < nDays ? msArr[pos] : targetMs;
+          tEn = Math.max(1, diffDays(expMs, curMs)) / 365.0;
+          kp = execPx * putMoneyness;
+          kCentsEn = Math.round(kp * 100.0);
+          ivEn = evalSkewIv(execPx, kp, tEn, rEn, qEn, vxnEn, coeffs);
+          const midEn = bsmPrice(execPx, kp, tEn, rEn, qEn, ivEn, 'put');
+          putAskEn = buyPx(midEn * (1.0 - OPT_SLIP), midEn * (1.0 + OPT_SLIP), midEn, 'bsm_fallback', OPT_SLIP);
+          srcEn = 'bsm_fallback';
+          recSrc('bsm_fallback');
+        }
+
+        let alreadyRefCov = 0.0;
+        for (const t of activeTranches) alreadyRefCov += t.ref_cov_sh;
+        const effCoreSh = coreShares + salvUsd / execPx;
+        const costShFracRef = putAskRef / (execPx * (1.0 - STOCK_REBAL_FEE));
+        const maxCov = effCoreSh * (slotCoverage * Math.max(2, rCap));
+        const availShRef = Math.max(0.0, maxCov - alreadyRefCov);
+        const refHedgedSh = Math.min(effCoreSh * slotCoverage, availShRef / (1.0 + costShFracRef));
+        const refBudgetUsd = refHedgedSh * putAskRef;
+
+        if (putAskEn >= 0.03 && refBudgetUsd > 1.0) {
+          const hedgedSh = refBudgetUsd / putAskEn;
+          const entryCostUsd = refBudgetUsd;
+          let remNeed = entryCostUsd - salvUsd;
+          let dShEntry = 0.0;
+          if (remNeed < 0.0) {
+            dShEntry = -remNeed / (execPx * (1.0 + STOCK_REBAL_FEE));
+            coreShares += dShEntry;
+          } else if (remNeed > 0.0) {
+            if (ccEnabled && ccCash > 0.0) {
+              const useCc = Math.min(ccCash, remNeed);
+              ccCash -= useCc;
+              ccFundedPuts += useCc;
+              remNeed -= useCc;
+            }
+            if (remNeed > 1e-8) {
+              dShEntry = -remNeed / (execPx * (1.0 - STOCK_REBAL_FEE));
+              coreShares += dShEntry;
+            }
+          }
+          tid += 1;
+          const usedSlots = new Set(activeTranches.map(t => t.slot_num));
+          let slotNum = 1;
+          while (usedSlots.has(slotNum)) slotNum += 1;
+          const hr = hedgedSh / Math.max(coreShares, 1e-6);
+          const prevRow = evalBars[i - 1];
+          const { mods, codeStr, trigEn, trigZh } = formatM7TriggerLabels(rSigD, maxSlots);
+          activeTranches.push({
+            tranche_id: tid,
+            slot_num: slotNum,
+            tier: rCap,
+            signal_date: dates[i - 1],
+            sig_score: Number(prevRow.score),
+            sig_ad_below50: Boolean(prevRow.ad_below50),
+            crisis_prob: Number(rSigD.crisis_prob),
+            p1: Number(rSigD.p1),
+            p2: Number(rSigD.p2),
+            p3: Number(rSigD.p3),
+            triggered_modules: mods,
+            trigger_code: codeStr,
+            trigger_en: trigEn,
+            trigger_zh: trigZh,
+            entry_date: d,
+            entryMs: curMs,
+            exp_date: expDate,
+            expMs,
+            T_entry: tEn,
+            entry_spot: execPx,
+            entry_vxn: vxnEn,
+            entry_vix_ratio: Number(prevRow.vix_ratio),
+            entry_r: rEn,
+            entry_q: qEn,
+            kp,
+            k_cents: kCentsEn,
+            last_iv: ivEn,
+            entry_source: srcEn,
+            hedged_shares: hedgedSh,
+            ref_cov_sh: refHedgedSh,
+            hedged_ratio: hr,
+            entry_put_ask: putAskEn,
+            entry_cost_usd: entryCostUsd,
+            entry_shares_sold: dShEntry,
+            comp_entry_cost_usd: dShEntry * multMorning,
+            pending_tp: false,
+            pending_roll: false,
+            tp_trigger_ratio: 0.0,
+            tp_reason: '',
+          });
+        } else if (salvUsd > 1e-8) {
+          coreShares += salvUsd / (execPx * (1.0 + STOCK_REBAL_FEE));
+        }
+      }
     }
 
-    // 2. Pending New M7 Tranche Entry at T+1 Open
+    // 2. Pending New M7 Tranche Entry at T+1
     if (i > 0 && pendingSig !== null && activeTranches.length < pendingSig.cap_slots) {
-      const vxnEn = Math.max(10.0, pendingSig.vxn - 0.45 * (op / pendingSig.close - 1.0) * 100.0);
       const rEn = pendingSig.r;
       const qEn = pendingSig.q;
+      const vxnEn = vxnEx;
 
-      const refTargetMs = curMs + refDte * 86400000;
-      const posRef = bisectLeftMs(msArr, refTargetMs);
-      const expMsRef = posRef < nDays ? msArr[posRef] : refTargetMs;
-      const tRef = Math.max(1, diffDays(expMsRef, curMs)) / 365.0;
-      const kpRef = op * refMoneyness;
-      const sigRef = evalSkewIv(op, kpRef, tRef, rEn, qEn, vxnEn, coeffs);
-      const putAskRef = bsmPrice(op, kpRef, tRef, rEn, qEn, sigRef, 'put') * (1.0 + 0.025);
+      const cRef = useReal ? selectRec(d, `p_${refDte}_10`) : null;
+      const cEn = useReal ? selectRec(d, `p_${targetDte}_${otmPctInt}`) : null;
 
-      const targetMs = curMs + targetDte * 86400000;
-      const pos = bisectLeftMs(msArr, targetMs);
-      const expDate = pos < nDays ? dates[pos] : new Date(targetMs).toISOString().slice(0, 10);
-      const expMs = pos < nDays ? msArr[pos] : targetMs;
-      const tEn = Math.max(1, diffDays(expMs, curMs)) / 365.0;
-      const kp = op * putMoneyness;
-      const sigPEn = evalSkewIv(op, kp, tEn, rEn, qEn, vxnEn, coeffs);
-      const midEn = bsmPrice(op, kp, tEn, rEn, qEn, sigPEn, 'put');
-      const putAskEn = midEn * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH;
+      let putAskRef;
+      if (cRef !== null) {
+        recSrc(cRef.source);
+        putAskRef = buyPx(cRef.bid, cRef.ask, cRef.mid, cRef.source, OPT_SLIP);
+      } else {
+        const refTargetMs = curMs + refDte * 86400000;
+        const posRef = bisectLeftMs(msArr, refTargetMs);
+        const expMsRef = posRef < nDays ? msArr[posRef] : refTargetMs;
+        const tRef = Math.max(1, diffDays(expMsRef, curMs)) / 365.0;
+        const kpRef = execPx * refMoneyness;
+        const sigRef = evalSkewIv(execPx, kpRef, tRef, rEn, qEn, vxnEn, coeffs);
+        const midRef = bsmPrice(execPx, kpRef, tRef, rEn, qEn, sigRef, 'put');
+        putAskRef = buyPx(midRef * (1.0 - OPT_SLIP), midRef * (1.0 + OPT_SLIP), midRef, 'bsm_fallback', OPT_SLIP);
+        recSrc('bsm_fallback');
+      }
+
+      let expDate;
+      let expMs;
+      let tEn;
+      let kp;
+      let kCentsEn;
+      let putAskEn;
+      let ivEn;
+      let srcEn;
+      if (cEn !== null) {
+        recSrc(cEn.source);
+        expDate = cEn.exp;
+        expMs = cEn.expMs;
+        tEn = Math.max(1, diffDays(expMs, curMs)) / 365.0;
+        kp = cEn.strike;
+        kCentsEn = cEn.k_cents;
+        putAskEn = buyPx(cEn.bid, cEn.ask, cEn.mid, cEn.source, OPT_SLIP);
+        ivEn = cEn.iv;
+        srcEn = cEn.source;
+      } else {
+        const targetMs = curMs + targetDte * 86400000;
+        const pos = bisectLeftMs(msArr, targetMs);
+        expDate = pos < nDays ? dates[pos] : new Date(targetMs).toISOString().slice(0, 10);
+        expMs = pos < nDays ? msArr[pos] : targetMs;
+        tEn = Math.max(1, diffDays(expMs, curMs)) / 365.0;
+        kp = execPx * putMoneyness;
+        kCentsEn = Math.round(kp * 100.0);
+        ivEn = evalSkewIv(execPx, kp, tEn, rEn, qEn, vxnEn, coeffs);
+        const midEn = bsmPrice(execPx, kp, tEn, rEn, qEn, ivEn, 'put');
+        putAskEn = buyPx(midEn * (1.0 - OPT_SLIP), midEn * (1.0 + OPT_SLIP), midEn, 'bsm_fallback', OPT_SLIP);
+        srcEn = 'bsm_fallback';
+        recSrc('bsm_fallback');
+      }
 
       let alreadyRefCov = 0.0;
       for (const t of activeTranches) alreadyRefCov += t.ref_cov_sh;
-      const costShFracRef = putAskRef / (op * (1.0 - STOCK_REBAL_FEE));
+      const costShFracRef = putAskRef / (execPx * (1.0 - STOCK_REBAL_FEE));
       const maxCov = coreShares * (slotCoverage * Math.max(2, pendingSig.cap_slots));
       const availShRef = Math.max(0.0, maxCov - alreadyRefCov);
       const refHedgedSh = Math.min(coreShares * slotCoverage, availShRef / (1.0 + costShFracRef));
@@ -712,10 +1108,10 @@ export function simulateM7StrategyJS(
           ccFundedPuts += paidCc;
           const remCost = entryCostUsd - paidCc;
           ccCash = 0.0;
-          dShEntry = -remCost / (op * (1.0 - STOCK_REBAL_FEE));
+          dShEntry = -remCost / (execPx * (1.0 - STOCK_REBAL_FEE));
           coreShares += dShEntry;
         } else {
-          dShEntry = -entryCostUsd / (op * (1.0 - STOCK_REBAL_FEE));
+          dShEntry = -entryCostUsd / (execPx * (1.0 - STOCK_REBAL_FEE));
           coreShares += dShEntry;
         }
 
@@ -744,12 +1140,15 @@ export function simulateM7StrategyJS(
           exp_date: expDate,
           expMs,
           T_entry: tEn,
-          entry_spot: op,
+          entry_spot: execPx,
           entry_vxn: vxnEn,
           entry_vix_ratio: pendingSig.vix_ratio,
           entry_r: rEn,
           entry_q: qEn,
           kp,
+          k_cents: kCentsEn,
+          last_iv: ivEn,
+          entry_source: srcEn,
           hedged_shares: hedgedSh,
           ref_cov_sh: refHedgedSh,
           hedged_ratio: hr,
@@ -758,6 +1157,7 @@ export function simulateM7StrategyJS(
           entry_shares_sold: dShEntry,
           comp_entry_cost_usd: dShEntry * multMorning,
           pending_tp: false,
+          pending_roll: false,
           tp_trigger_ratio: 0.0,
           tp_reason: '',
         });
@@ -765,25 +1165,48 @@ export function simulateM7StrategyJS(
       pendingSig = null;
     }
 
-    // 2b. Engine 2 & Engine 3 T+1 Open
+    // 2b. Engine 2 & Engine 3 T+1 Executions
     if (i > 0 && ccEnabled && pendingCc !== null && activeCc === null) {
-      const vxnCc = Math.max(10.0, pendingCc.vxn - 0.45 * (op / pendingCc.close - 1.0) * 100.0);
       const rCc = pendingCc.r;
       const qCc = pendingCc.q;
+      const vxnCc = vxnEx;
       const ccSh = Math.max(0.0, coreShares);
       if (ccSh > 1e-6) {
-        const targetMs = curMs + ccDte * 86400000;
-        const posCc = bisectLeftMs(msArr, targetMs);
-        const expDateCc = posCc < nDays ? dates[posCc] : new Date(targetMs).toISOString().slice(0, 10);
-        const expMsCc = posCc < nDays ? msArr[posCc] : targetMs;
-        const tCc = Math.max(1, diffDays(expMsCc, curMs)) / 365.0;
-        const kcCc = Math.max(
-          op * (1.0 + ccMinOtm),
-          solveCallStrikeForDelta(op, tCc, rCc, qCc, vxnCc, coeffs, ccTargetDelta),
-        );
-        const scCc = evalSkewIv(op, kcCc, tCc, rCc, qCc, vxnCc, coeffs);
-        const cBidCc = bsmPrice(op, kcCc, tCc, rCc, qCc, scCc, 'call') * (1.0 - OPT_SLIP);
-        if (cBidCc >= 0.05) {
+        const cCc = useReal ? selectRec(d, 'cc_25_d12') : null;
+        let expDateCc;
+        let expMsCc;
+        let kcCc;
+        let kCentsCc;
+        let cBidCc;
+        let ivCc;
+        let srcCc;
+        if (cCc !== null) {
+          recSrc(cCc.source);
+          expDateCc = cCc.exp;
+          expMsCc = cCc.expMs;
+          kcCc = cCc.strike;
+          kCentsCc = cCc.k_cents;
+          cBidCc = sellPx(cCc.bid, cCc.ask, cCc.mid, cCc.source, OPT_SLIP);
+          ivCc = cCc.iv;
+          srcCc = cCc.source;
+        } else {
+          const targetMs = curMs + ccDte * 86400000;
+          const posCc = bisectLeftMs(msArr, targetMs);
+          expDateCc = posCc < nDays ? dates[posCc] : new Date(targetMs).toISOString().slice(0, 10);
+          expMsCc = posCc < nDays ? msArr[posCc] : targetMs;
+          const tCc = Math.max(1, diffDays(expMsCc, curMs)) / 365.0;
+          kcCc = Math.max(
+            execPx * (1.0 + ccMinOtm),
+            solveCallStrikeForDelta(execPx, tCc, rCc, qCc, vxnCc, coeffs, ccTargetDelta),
+          );
+          ivCc = evalSkewIv(execPx, kcCc, tCc, rCc, qCc, vxnCc, coeffs);
+          const cmCc = bsmPrice(execPx, kcCc, tCc, rCc, qCc, ivCc, 'call');
+          cBidCc = sellPx(cmCc * (1.0 - OPT_SLIP), cmCc * (1.0 + OPT_SLIP), cmCc, 'bsm_fallback', OPT_SLIP);
+          kCentsCc = Math.round(kcCc * 100.0);
+          srcCc = 'bsm_fallback';
+          recSrc('bsm_fallback');
+        }
+        if (cBidCc >= 0.04) {
           const premUsd = ccSh * cBidCc;
           ccTid += 1;
           ccGrossPrem += premUsd;
@@ -794,9 +1217,12 @@ export function simulateM7StrategyJS(
             entryMs: curMs,
             exp_date: expDateCc,
             expMs: expMsCc,
-            entry_spot: op,
+            entry_spot: execPx,
             entry_vxn: vxnCc,
             kc: kcCc,
+            k_cents: kCentsCc,
+            last_iv: ivCc,
+            entry_source: srcCc,
             shares: ccSh,
             prem_usd: premUsd,
             pending_close: false,
@@ -810,28 +1236,60 @@ export function simulateM7StrategyJS(
     if (i > 0 && spEnabled && pendingWc !== null && assignedShares > 1e-6 && activeWc === null) {
       const pw = pendingWc;
       pendingWc = null;
-      const vxnWc = Math.max(10.0, pw.vxn - 0.45 * (op / pw.close - 1.0) * 100.0);
+      const vxnWc = vxnEx;
+      let cWc = null;
+      if (useReal) {
+        if (wcMode === 'wc_reclaim_30d_d35') {
+          cWc = selectRec(d, `wc_30_d35_${Math.round(assignedCostK * 100)}`);
+        } else if (wcMode === 'wc_30d_c5s5') {
+          const minKWc = Math.max(assignedCostK * 1.05, execPx * 1.05);
+          cWc = selectRec(d, `wc_30_k_${Math.round(minKWc * 100)}`);
+        } else {
+          const minKWc = Math.max(assignedCostK, execPx * 1.02);
+          cWc = selectRec(d, `wc_${spDte}_k_${Math.round(minKWc * 100)}`);
+        }
+      }
       let expDateWc;
       let expMsWc;
       let actDteWc;
       let kcWc;
-      if (wcMode === 'wc_reclaim_30d_d35' || wcMode === 'wc_30d_c5s5') {
-        const targetWcMs = curMs + 30 * 86400000;
-        const posWc = bisectLeftMs(msArr, targetWcMs);
-        expDateWc = posWc < nDays ? dates[posWc] : new Date(targetWcMs).toISOString().slice(0, 10);
-        expMsWc = posWc < nDays ? msArr[posWc] : targetWcMs;
+      let kCentsWc;
+      let cBidWc;
+      let ivWc;
+      let srcWc;
+      if (cWc !== null) {
+        recSrc(cWc.source);
+        expDateWc = cWc.exp;
+        expMsWc = cWc.expMs;
         actDteWc = Math.max(1, diffDays(expMsWc, curMs));
-        if (wcMode === 'wc_reclaim_30d_d35') {
-          const kD35 = solveCallStrikeForDelta(op, actDteWc / 365.0, pw.r, pw.q, vxnWc, coeffs, 0.35);
-          kcWc = Math.max(assignedCostK, kD35);
-        } else {
-          kcWc = Math.max(assignedCostK * 1.05, op * 1.05);
-        }
+        kcWc = cWc.strike;
+        kCentsWc = cWc.k_cents;
+        cBidWc = sellPx(cWc.bid, cWc.ask, cWc.mid, cWc.source, OPT_SLIP_SP);
+        ivWc = cWc.iv;
+        srcWc = cWc.source;
       } else {
-        [expDateWc, expMsWc, actDteWc] = pickExpiryStrictMax14(msArr, dates, i, spDte, 14);
-        kcWc = Math.max(assignedCostK, op * 1.02);
+        if (wcMode === 'wc_reclaim_30d_d35' || wcMode === 'wc_30d_c5s5') {
+          const targetWcMs = curMs + 30 * 86400000;
+          const posWc = bisectLeftMs(msArr, targetWcMs);
+          expDateWc = posWc < nDays ? dates[posWc] : new Date(targetWcMs).toISOString().slice(0, 10);
+          expMsWc = posWc < nDays ? msArr[posWc] : targetWcMs;
+          actDteWc = Math.max(1, diffDays(expMsWc, curMs));
+          if (wcMode === 'wc_reclaim_30d_d35') {
+            const kD35 = solveCallStrikeForDelta(execPx, actDteWc / 365.0, pw.r, pw.q, vxnWc, coeffs, 0.35);
+            kcWc = Math.max(assignedCostK, kD35);
+          } else {
+            kcWc = Math.max(assignedCostK * 1.05, execPx * 1.05);
+          }
+        } else {
+          [expDateWc, expMsWc, actDteWc] = pickExpiryStrictMax14(msArr, dates, i, spDte, 14);
+          kcWc = Math.max(assignedCostK, execPx * 1.02);
+        }
+        [cBidWc] = optExecPriceSp(execPx, kcWc, actDteWc / 365.0, pw.r, pw.q, vxnWc, coeffs, 'call', 'sell', OPT_SLIP_SP);
+        kCentsWc = Math.round(kcWc * 100.0);
+        ivWc = null;
+        srcWc = 'bsm_fallback';
+        recSrc('bsm_fallback');
       }
-      const [cBidWc] = optExecPriceSp(op, kcWc, actDteWc / 365.0, pw.r, pw.q, vxnWc, coeffs, 'call', 'sell', OPT_SLIP);
       if (cBidWc >= MIN_OPT_BID) {
         const premWc = assignedShares * cBidWc;
         spCommTotal += assignedShares * OPT_COMM_PER_SH;
@@ -846,8 +1304,11 @@ export function simulateM7StrategyJS(
           exp_date: expDateWc,
           expMs: expMsWc,
           dte: actDteWc,
-          entry_spot: op,
+          entry_spot: execPx,
           kc: kcWc,
+          k_cents: kCentsWc,
+          last_iv: ivWc,
+          entry_source: srcWc,
           assigned_cost_k: assignedCostK,
           shares: assignedShares,
           prem_usd: premWc,
@@ -858,12 +1319,37 @@ export function simulateM7StrategyJS(
     if (i > 0 && spEnabled && pendingSp !== null && activeSp === null && assignedShares <= 1e-6) {
       const ps = pendingSp;
       pendingSp = null;
-      const vxnSp = Math.max(10.0, ps.vxn - 0.45 * (op / ps.close - 1.0) * 100.0);
-      const [expDateSp, expMsSp, actDteSp] = pickExpiryStrictMax14(msArr, dates, i, spDte, 14);
-      const kpSp = op * (1.0 - spOtmPct);
-      const [pBidSp] = optExecPriceSp(op, kpSp, actDteSp / 365.0, ps.r, ps.q, vxnSp, coeffs, 'put', 'sell', OPT_SLIP);
+      const vxnSp = vxnEx;
+      const cSp = useReal ? selectRec(d, `sp_${spDte}_5`) : null;
+      let expDateSp;
+      let expMsSp;
+      let actDteSp;
+      let kpSp;
+      let kCentsSp;
+      let pBidSp;
+      let ivSp;
+      let srcSp;
+      if (cSp !== null) {
+        recSrc(cSp.source);
+        expDateSp = cSp.exp;
+        expMsSp = cSp.expMs;
+        actDteSp = Math.max(1, diffDays(expMsSp, curMs));
+        kpSp = cSp.strike;
+        kCentsSp = cSp.k_cents;
+        pBidSp = sellPx(cSp.bid, cSp.ask, cSp.mid, cSp.source, OPT_SLIP_SP);
+        ivSp = cSp.iv;
+        srcSp = cSp.source;
+      } else {
+        [expDateSp, expMsSp, actDteSp] = pickExpiryStrictMax14(msArr, dates, i, spDte, 14);
+        kpSp = execPx * (1.0 - spOtmPct);
+        [pBidSp] = optExecPriceSp(execPx, kpSp, actDteSp / 365.0, ps.r, ps.q, vxnSp, coeffs, 'put', 'sell', OPT_SLIP_SP);
+        kCentsSp = Math.round(kpSp * 100.0);
+        ivSp = null;
+        srcSp = 'bsm_fallback';
+        recSrc('bsm_fallback');
+      }
       if (pBidSp >= MIN_OPT_BID) {
-        const navOpen = estimateNavOpen(op, vxnSp, ps.r, ps.q, curMs);
+        const navOpen = estimateNavExec(execPx, vxnSp, ps.r, ps.q, curMs, d);
         const putSh = (spMaxLev * navOpen) / kpSp;
         const premSp = putSh * pBidSp;
         spCommTotal += putSh * OPT_COMM_PER_SH;
@@ -880,8 +1366,11 @@ export function simulateM7StrategyJS(
           exp_date: expDateSp,
           expMs: expMsSp,
           dte: actDteSp,
-          entry_spot: op,
+          entry_spot: execPx,
           kp: kpSp,
+          k_cents: kCentsSp,
+          last_iv: ivSp,
+          entry_source: srcSp,
           shares: putSh,
           prem_usd: premSp,
           entry_vix_ratio: ps.vix_ratio,
@@ -890,8 +1379,8 @@ export function simulateM7StrategyJS(
     }
 
     // 3. Dividends DRIP
-    if (div > 0.0 && coreShares > 0.0) {
-      coreShares += (coreShares * div) / (cl * (1.0 + STOCK_REBAL_FEE));
+    if (div > 0.0 && coreShares > 0.0 && (!useReal || i > 0)) {
+      coreShares += (coreShares * div) / (useReal ? cl : cl * (1.0 + STOCK_REBAL_FEE));
       if (assignedShares > 0.0) spCash += assignedShares * div;
     }
 
@@ -901,7 +1390,7 @@ export function simulateM7StrategyJS(
     // 4. EOD Expiries
     const stillOpenExp = [];
     for (const tr of activeTranches) {
-      if (curMs >= tr.expMs) {
+      if (isExp(i, tr.expMs)) {
         const putIntr = Math.max(0.0, tr.kp - cl);
         const settleUsd = tr.hedged_shares * putIntr;
         let dSh = 0.0;
@@ -931,6 +1420,7 @@ export function simulateM7StrategyJS(
         const dUsd = r2(conv.dvDelta * hs);
         const gUsd = r2(conv.dvGamma * hs);
         const vUsd = r2(conv.dvVega * hs);
+        const enSrc = tr.entry_source || 'bsm_fallback';
         ledger.push({
           tranche_id: tr.tranche_id,
           strategy_id: strategyId,
@@ -942,6 +1432,9 @@ export function simulateM7StrategyJS(
           tp_mode: tpCode,
           roll_mode: rollMode,
           target_dte: targetDte,
+          pricing_source: classifyTradeSource(enSrc, enSrc),
+          entry_source: enSrc,
+          exit_source: enSrc,
           signal_date: tr.signal_date,
           entry_date: tr.entry_date,
           planned_exp_date: tr.exp_date,
@@ -1003,9 +1496,9 @@ export function simulateM7StrategyJS(
     let putMtm = 0.0;
     for (const tr of activeTranches) {
       const remDays = Math.max(1, diffDays(tr.expMs, curMs));
-      const tRem = remDays / 365.0;
-      const sigP = evalSkewIv(cl, tr.kp, tRem, rCur, qCur, vxnCl, coeffs);
-      const putMid = bsmPrice(cl, tr.kp, tRem, rCur, qCur, sigP, 'put');
+      const qM = lookupOpt(d, 'put', tr.exp_date, tr.kp, tr.k_cents, cl, remDays, rCur, qCur, vxnCl, tr.last_iv, OPT_SLIP);
+      if (Number.isFinite(qM.iv) && qM.iv >= 0.03 && qM.iv <= 2.5) tr.last_iv = qM.iv;
+      const putMid = qM.mid;
       putMtm += tr.hedged_shares * putMid;
       if (!tr.pending_tp) {
         const vixOk = vixR >= vixRatioTp && (requireItmTp ? cl <= tr.kp : true);
@@ -1017,8 +1510,8 @@ export function simulateM7StrategyJS(
           tr.pending_tp = true;
           tr.tp_trigger_ratio = vixR;
           tr.tp_reason = isRoll50 ? 'put_5x_dte75_tp' : 'put_5x_dte45_tp';
-        } else if (isRoll50 && remDays <= rollDteThr) {
-          tr.pending_tp = true;
+        } else if (isRoll50 && remDays <= rollDteThr && !tr.pending_roll) {
+          tr.pending_roll = true;
           tr.tp_trigger_ratio = vixR;
           tr.tp_reason = 'roll_50d';
         }
@@ -1028,7 +1521,7 @@ export function simulateM7StrategyJS(
     // 5b. Engine 2 & Engine 3 EOD MTM/Expiries
     let ccMtm = 0.0;
     if (activeCc !== null) {
-      if (d === activeCc.exp_date) {
+      if (isExp(i, activeCc.expMs)) {
         const payCc = Math.max(0.0, cl - activeCc.kc);
         const lossCc = activeCc.shares * payCc;
         if (payCc > 0.0) {
@@ -1040,6 +1533,7 @@ export function simulateM7StrategyJS(
             ccCash = 0.0;
           }
         }
+        const ccEnSrc = activeCc.entry_source || 'bsm_fallback';
         ccLedger.push({
           cc_id: activeCc.cc_id,
           entry_date: activeCc.entry_date,
@@ -1054,15 +1548,15 @@ export function simulateM7StrategyJS(
           net_pnl_usd: r2(activeCc.prem_usd - lossCc),
           exit_reason: payCc > 0.0 ? 'assigned_breach' : 'expired_worthless',
           roll_gen: Number(activeCc.roll_count || 0),
+          pricing_source: classifyTradeSource(ccEnSrc, ccEnSrc),
         });
         activeCc = null;
       } else {
         const remCc = Math.max(1, diffDays(activeCc.expMs, curMs));
-        const tCc = remCc / 365.0;
-        const scCc = evalSkewIv(cl, activeCc.kc, tCc, rCur, qCur, vxnCl, coeffs);
-        const cmCc = bsmPrice(cl, activeCc.kc, tCc, rCur, qCur, scCc, 'call');
-        ccMtm = -activeCc.shares * cmCc;
-        const curDelta = bsmCallDelta(cl, activeCc.kc, tCc, rCur, qCur, scCc);
+        const qCcM = lookupOpt(d, 'call', activeCc.exp_date, activeCc.kc, activeCc.k_cents, cl, remCc, rCur, qCur, vxnCl, activeCc.last_iv, OPT_SLIP);
+        if (Number.isFinite(qCcM.iv) && qCcM.iv >= 0.03 && qCcM.iv <= 2.5) activeCc.last_iv = qCcM.iv;
+        ccMtm = -activeCc.shares * qCcM.mid;
+        const curDelta = qCcM.delta;
         if (remCc >= 3 && vixR >= 1.1) {
           activeCc.pending_close = true;
           activeCc.close_reason = 'panic_close_uncap';
@@ -1081,7 +1575,8 @@ export function simulateM7StrategyJS(
     let spMtm = 0.0;
     if (activeSp !== null) {
       daysShortPutOpen += 1;
-      if (d === activeSp.exp_date) {
+      if (isExp(i, activeSp.expMs)) {
+        const spEnSrc = activeSp.entry_source || 'bsm_fallback';
         if (cl >= activeSp.kp) {
           spClosedLedger.push({
             leg_id: `SP-${activeSp.sp_id}`,
@@ -1089,6 +1584,7 @@ export function simulateM7StrategyJS(
             cycle_id: activeSp.cycle_id,
             leg_type: 'short_put',
             is_open_live: false,
+            pricing_source: classifyTradeSource(spEnSrc, spEnSrc),
             signal_date: activeSp.signal_date,
             entry_date: activeSp.entry_date,
             exit_date: d,
@@ -1120,6 +1616,7 @@ export function simulateM7StrategyJS(
             cycle_id: activeSp.cycle_id,
             leg_type: 'short_put',
             is_open_live: false,
+            pricing_source: classifyTradeSource(spEnSrc, spEnSrc),
             signal_date: activeSp.signal_date,
             entry_date: activeSp.entry_date,
             exit_date: d,
@@ -1138,14 +1635,16 @@ export function simulateM7StrategyJS(
         }
       } else {
         const remSp = Math.max(1, diffDays(activeSp.expMs, curMs));
-        const [, pmSp] = optExecPriceSp(cl, activeSp.kp, remSp / 365.0, rCur, qCur, vxnCl, coeffs, 'put', 'buy', OPT_SLIP);
-        spMtm = -activeSp.shares * pmSp;
+        const qSpM = lookupOpt(d, 'put', activeSp.exp_date, activeSp.kp, activeSp.k_cents, cl, remSp, rCur, qCur, vxnCl, activeSp.last_iv, OPT_SLIP_SP);
+        if (Number.isFinite(qSpM.iv) && qSpM.iv >= 0.03 && qSpM.iv <= 2.5) activeSp.last_iv = qSpM.iv;
+        spMtm = -activeSp.shares * qSpM.mid;
       }
     }
 
     let wcMtm = 0.0;
     if (activeWc !== null) {
-      if (d === activeWc.exp_date) {
+      if (isExp(i, activeWc.expMs)) {
+        const wcEnSrc = activeWc.entry_source || 'bsm_fallback';
         if (cl > activeWc.kc) {
           spCash += assignedShares * activeWc.kc;
           const stockGain = activeWc.shares * (activeWc.kc - activeWc.assigned_cost_k);
@@ -1155,6 +1654,7 @@ export function simulateM7StrategyJS(
             cycle_id: activeWc.cycle_id,
             leg_type: 'wheel_call',
             is_open_live: false,
+            pricing_source: classifyTradeSource(wcEnSrc, wcEnSrc),
             signal_date: activeWc.signal_date,
             entry_date: activeWc.entry_date,
             exit_date: d,
@@ -1186,6 +1686,7 @@ export function simulateM7StrategyJS(
             cycle_id: activeWc.cycle_id,
             leg_type: 'wheel_call',
             is_open_live: false,
+            pricing_source: classifyTradeSource(wcEnSrc, wcEnSrc),
             signal_date: activeWc.signal_date,
             entry_date: activeWc.entry_date,
             exit_date: d,
@@ -1206,8 +1707,9 @@ export function simulateM7StrategyJS(
         }
       } else {
         const remWc = Math.max(1, diffDays(activeWc.expMs, curMs));
-        const [, cmWc] = optExecPriceSp(cl, activeWc.kc, remWc / 365.0, rCur, qCur, vxnCl, coeffs, 'call', 'buy', OPT_SLIP);
-        wcMtm = -activeWc.shares * cmWc;
+        const qWcM = lookupOpt(d, 'call', activeWc.exp_date, activeWc.kc, activeWc.k_cents, cl, remWc, rCur, qCur, vxnCl, activeWc.last_iv, OPT_SLIP_SP);
+        if (Number.isFinite(qWcM.iv) && qWcM.iv >= 0.03 && qWcM.iv <= 2.5) activeWc.last_iv = qWcM.iv;
+        wcMtm = -activeWc.shares * qWcM.mid;
       }
     }
 
@@ -1226,7 +1728,7 @@ export function simulateM7StrategyJS(
     anyActiveList[i] = wasActiveToday || activeTranches.length > 0 ? 1 : 0;
     activeSlotsList[i] = Math.max(activeSlotsToday, activeTranches.length);
 
-    // 6. EOD M7 Signal & Hard Redline Gate for T+1 Open
+    // 6. EOD M7 Signal & Hard Redline Gate for T+1
     const capSlots = Number(isGraded ? sigD.target_slots_m7g : sigD.target_slots_m7);
     const redlineBlocked = vxnCl > 27.0 || vixR >= 1.02;
     const effOpen = isRoll50 ? activeTranches.filter(t => !t.pending_tp) : activeTranches;
@@ -1293,8 +1795,8 @@ export function simulateM7StrategyJS(
   for (const tr of activeTranches) {
     const remD = Math.max(1, diffDays(tr.expMs, lastMs));
     const tRem = remD / 365.0;
-    const spIv = evalSkewIv(lastCl, tr.kp, tRem, lastRf, lastQ, lastVxn, coeffs);
-    const pm = bsmPrice(lastCl, tr.kp, tRem, lastRf, lastQ, spIv, 'put');
+    const qLast = lookupOpt(lastD, 'put', tr.exp_date, tr.kp, tr.k_cents, lastCl, remD, lastRf, lastQ, lastVxn, tr.last_iv, OPT_SLIP);
+    const pm = qLast.mid;
     const hs = tr.hedged_shares;
     const mtmCashUsd = hs * pm;
     const mtmNetPnl = mtmCashUsd - tr.entry_cost_usd;
@@ -1317,10 +1819,10 @@ export function simulateM7StrategyJS(
       coeffs,
       actualNetSh,
     );
-    const isArmed = Boolean(tr.pending_tp);
+    const isArmed = Boolean(tr.pending_tp || tr.pending_roll);
     const armedReason = tr.tp_reason || '';
     const liveReason =
-      isArmed && armedReason === 'roll_50d'
+      isArmed && (Boolean(tr.pending_roll) || armedReason === 'roll_50d')
         ? 'live_roll50_armed_next_open'
         : isArmed
           ? 'live_tp_armed_next_open'
@@ -1329,6 +1831,8 @@ export function simulateM7StrategyJS(
     const dUsd = r2(conv.dvDelta * hs);
     const gUsd = r2(conv.dvGamma * hs);
     const vUsd = r2(conv.dvVega * hs);
+    const enSrcL = tr.entry_source || 'bsm_fallback';
+    const psL = classifyTradeSource(enSrcL, qLast.src);
     ledger.push({
       tranche_id: tr.tranche_id,
       strategy_id: strategyId,
@@ -1340,6 +1844,9 @@ export function simulateM7StrategyJS(
       tp_mode: tpCode,
       roll_mode: rollMode,
       target_dte: targetDte,
+      pricing_source: psL,
+      entry_source: enSrcL,
+      exit_source: qLast.src,
       signal_date: tr.signal_date,
       entry_date: tr.entry_date,
       planned_exp_date: tr.exp_date,
@@ -1405,6 +1912,7 @@ export function simulateM7StrategyJS(
       target_dte: targetDte,
       roll_dte: rollDteThr,
       days_to_roll50: isRoll50 ? Math.max(0, remD - 50) : null,
+      pricing_source: psL,
       entry_date: tr.entry_date,
       exp_date: tr.exp_date,
       rem_dte: remD,
@@ -1490,14 +1998,15 @@ export function simulateM7StrategyJS(
   const spCombinedLedger = [...spClosedLedger, ...wcClosedLedger];
   if (activeSp !== null) {
     const remSpLast = Math.max(1, diffDays(activeSp.expMs, lastMs));
-    const [, pmSpLast] = optExecPriceSp(lastCl, activeSp.kp, remSpLast / 365.0, lastRf, lastQ, lastVxn, coeffs, 'put', 'buy', OPT_SLIP);
-    const mtmCostSp = activeSp.shares * pmSpLast;
+    const qSpLast = lookupOpt(lastD, 'put', activeSp.exp_date, activeSp.kp, activeSp.k_cents, lastCl, remSpLast, lastRf, lastQ, lastVxn, activeSp.last_iv, OPT_SLIP_SP);
+    const mtmCostSp = activeSp.shares * qSpLast.mid;
     openSpSer = {
       leg_id: `SP-${activeSp.sp_id}`,
       sp_id: activeSp.sp_id,
       cycle_id: activeSp.cycle_id,
       leg_type: 'short_put',
       is_open_live: true,
+      pricing_source: classifyTradeSource(activeSp.entry_source || 'bsm_fallback', qSpLast.src),
       signal_date: activeSp.signal_date,
       entry_date: activeSp.entry_date,
       exp_date: activeSp.exp_date,
@@ -1511,22 +2020,23 @@ export function simulateM7StrategyJS(
       shares: r2(activeSp.shares),
       prem_usd: r2(activeSp.prem_usd),
       exit_cost_usd: r2(mtmCostSp),
+      mtm_pnl_usd: r2(activeSp.prem_usd - mtmCostSp),
       net_pnl_usd: r2(activeSp.prem_usd - mtmCostSp),
-      exit_reason: 'open_live_mtm',
+      exit_reason: 'open_live_short_put',
     };
     spCombinedLedger.push(openSpSer);
   }
   if (activeWc !== null) {
     const remWcLast = Math.max(1, diffDays(activeWc.expMs, lastMs));
-    const [, cmWcLast] = optExecPriceSp(lastCl, activeWc.kc, remWcLast / 365.0, lastRf, lastQ, lastVxn, coeffs, 'call', 'buy', OPT_SLIP);
-    const mtmCostWc = activeWc.shares * cmWcLast;
-    const stockUnreal = activeWc.shares * (lastCl - activeWc.assigned_cost_k);
+    const qWcLast = lookupOpt(lastD, 'call', activeWc.exp_date, activeWc.kc, activeWc.k_cents, lastCl, remWcLast, lastRf, lastQ, lastVxn, activeWc.last_iv, OPT_SLIP_SP);
+    const mtmCostWc = activeWc.shares * qWcLast.mid;
     openWcSer = {
       leg_id: `WC-${activeWc.wc_id}`,
       wc_id: activeWc.wc_id,
       cycle_id: activeWc.cycle_id,
       leg_type: 'wheel_call',
       is_open_live: true,
+      pricing_source: classifyTradeSource(activeWc.entry_source || 'bsm_fallback', qWcLast.src),
       signal_date: activeWc.signal_date,
       entry_date: activeWc.entry_date,
       exp_date: activeWc.exp_date,
@@ -1541,16 +2051,16 @@ export function simulateM7StrategyJS(
       shares: r2(activeWc.shares),
       prem_usd: r2(activeWc.prem_usd),
       exit_cost_usd: r2(mtmCostWc),
-      stock_gain_usd: r2(stockUnreal),
-      net_pnl_usd: r2(activeWc.prem_usd - mtmCostWc + stockUnreal),
-      exit_reason: 'open_live_mtm',
+      mtm_pnl_usd: r2(activeWc.prem_usd - mtmCostWc),
+      net_pnl_usd: r2(activeWc.prem_usd - mtmCostWc),
+      exit_reason: 'open_live_wheel_call',
     };
     spCombinedLedger.push(openWcSer);
   }
   spCombinedLedger.sort((a, b) =>
     a.entry_date !== b.entry_date ? a.entry_date.localeCompare(b.entry_date) : String(a.leg_id).localeCompare(String(b.leg_id)),
   );
-  if (curCycleStartMs !== null) {
+  if (curCycleStartMs !== null && assignedShares > 1e-6) {
     maxWheelCycleDays = Math.max(maxWheelCycleDays, diffDays(lastMs, curCycleStartMs));
   }
 
@@ -1558,9 +2068,31 @@ export function simulateM7StrategyJS(
   const endPutNotional = activeSp !== null ? activeSp.shares * activeSp.kp : 0.0;
   const endNotionalLev = ((coreShares + assignedShares) * lastCl + endPutNotional) / Math.max(navList[nDays - 1], 1.0);
 
+  const allLegSources = [
+    ...ledger.map(x => String(x.pricing_source || 'bsm_fallback')),
+    ...ccLedger.map(x => String(x.pricing_source || 'bsm_fallback')),
+    ...spCombinedLedger.map(x => String(x.pricing_source || 'bsm_fallback')),
+  ];
+  const realOpraTrCnt = allLegSources.filter(s => s === 'real_opra').length;
+  const realPolyTrCnt = allLegSources.filter(s => s === 'real_polygon').length;
+  const realTrCnt = realOpraTrCnt + realPolyTrCnt;
+  const simTrCnt = allLegSources.length - realTrCnt;
+  const realTrPct = allLegSources.length > 0 ? (realTrCnt / allLegSources.length) * 100.0 : 0.0;
+  const realLk = qStats.realOpraHits + qStats.realPolygonHits;
+  const realHitPct = qStats.totalLookups > 0 ? (realLk / qStats.totalLookups) * 100.0 : 0.0;
+
   const summary = {
     id: strategyId,
     arch: 'm7_equal_dollar',
+    pricing_basis: useReal ? 'hybrid_real_opra_polygon_bsm' : 'bsm_simulated',
+    real_trades_count: realTrCnt,
+    real_opra_trades_count: realOpraTrCnt,
+    real_polygon_trades_count: realPolyTrCnt,
+    sim_trades_count: simTrCnt,
+    real_trades_pct: r1(realTrPct),
+    real_quote_lookups: qStats.totalLookups,
+    real_quote_hits: realLk,
+    real_quote_hit_pct: r1(realHitPct),
     put_otm: putOtm,
     put_otm_pct: otmPctInt,
     m7_tp_mode: m7TpMode,
@@ -1673,7 +2205,7 @@ export function buildM7LiveDashboardJS(
   {
     putOtm = 'otm15',
     m7TpMode = 'standard',
-    rollMode = '90d_hold',
+    rollMode = '120d_roll50',
     m0Enabled = true,
   } = {},
 ) {
@@ -1691,7 +2223,7 @@ export function buildM7LiveDashboardJS(
 
   const isRoll50 = rollMode === '120d_roll50';
   const entryDte = isRoll50 ? 120 : 90;
-  const fiveXDte = isRoll50 ? 75 : 45;
+  const fiveXDte = 45;
   const rollDte = isRoll50 ? 50 : 0;
 
   const maxSlots = Number(m7Sim.summary.max_slots || 3);

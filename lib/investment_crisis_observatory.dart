@@ -43,7 +43,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   static const List<String> _m7TpModeIds = ['standard', 'itm_tp'];
 
-  static const List<String> _rollModeIds = ['90d_hold', '120d_roll50'];
+  static const List<String> _rollModeIds = ['120d_roll50', '90d_hold'];
 
   static const List<String> _tpModeIds = [
     'layered_itm',
@@ -95,7 +95,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String selectedStrategyId = 'M7G_Graded';
   String selectedPutOtm = 'otm15';
   String selectedM7TpMode = 'standard';
-  String selectedRollMode = '90d_hold';
+  String selectedRollMode = '120d_roll50';
   bool selectedM0Enabled = true;
   String selectedTpMode = 'layered_itm';
   String selectedCcMode = 'cc_off';
@@ -120,6 +120,11 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   bool get _isM7Strategy =>
       selectedStrategyId == 'M7G_Graded' ||
       selectedStrategyId == 'M7_Ensemble';
+  bool get _isLegacyStrategy =>
+      selectedStrategyId == 'U1_PureOptions' ||
+      selectedStrategyId == 'B1c_PureAD' ||
+      selectedStrategyId == 'D2_SixLights' ||
+      selectedStrategyId == 'H2_G4_PriceGate';
 
   String _normalizeStrategyId(String raw) {
     final mapped = switch (raw) {
@@ -146,13 +151,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   String _normalizeRollMode(String raw) {
     final v = raw.trim().toLowerCase();
-    if (v == '120d_roll50' ||
-        v == '120d' ||
-        v == 'roll50' ||
-        v == '120_50') {
-      return '120d_roll50';
+    if (v == '90d_hold' || v == '90d' || v == 'hold') {
+      return '90d_hold';
     }
-    return '90d_hold';
+    return '120d_roll50';
   }
 
   bool _normalizeM0Enabled(dynamic raw) {
@@ -359,6 +361,20 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   void _selectWcMode(String modeId) => _selectModes(wcMode: modeId);
 
+  void _switchToFlagshipM7g() {
+    setState(() {
+      selectedStrategyId = 'M7G_Graded';
+      hoverIndex = -1;
+    });
+    _emitSelection();
+    _selectModes(
+      putOtm: 'otm15',
+      m7TpMode: 'standard',
+      rollMode: '120d_roll50',
+      m0Enabled: true,
+    );
+  }
+
   Future<void> _loadObservatory({bool isModeSwitch = false}) async {
     final serial = ++loadSerial;
     final targetOtm = selectedPutOtm;
@@ -489,26 +505,41 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String _humanStrategyLabel(String id) {
     return switch (id) {
       'M7G_Graded' => w(
-        'M7-Graded 3-Pillar (Flagship)',
+        'M7-Graded 3-Pillar (Real-OPRA #1)',
         'M7-Graded 三支柱分层（旗舰）',
       ),
       'M7_Ensemble' => w('M7 2-Slot Ensemble', 'M7 三支柱双槽'),
-      'U1_PureOptions' => w('U1 Dual-Slot Put+Collar', 'U1 双槽买 Put+领口'),
-      'B1c_PureAD' => w('B1c AD Breadth Put', 'B1c 宽度背离买 Put'),
-      'D2_SixLights' => w('D2 6-Light Collar', 'D2 六灯领口（零保费）'),
+      'U1_PureOptions' => w('Legacy U1 Dual-Slot', '旧版对照 · U1 双槽'),
+      'B1c_PureAD' => w('Legacy B1c AD Breadth', '旧版 · B1c 宽度背离'),
+      'D2_SixLights' => w('Legacy D2 6-Light Collar', '旧版 · D2 六灯领口'),
       'NoPut_CallOnly' => selectedSpMode == 'sp_off'
           ? w('No Put (Call Only)', '不买 Put（仅卖 Call）')
           : w('No Put (Overlay Only)', '不买危机 Put（仅叠加）'),
-      'H2_G4_PriceGate' => w('Price & Vol Gate', '价格低波门控'),
+      'H2_G4_PriceGate' => w('Legacy Price Gate', '旧版 · 价格低波门控'),
       'BH_Pure_QQQ' => w('Buy & Hold QQQ', '死拿 QQQ'),
       _ => w('Protected Strategy', '保护策略'),
     };
   }
 
+  String _pricingSourceShortLabel(String rawSrc) {
+    final s = rawSrc.trim().toLowerCase();
+    if (s.startsWith('real_opra')) return w('OPRA Real', 'OPRA 实盘');
+    if (s.startsWith('real_polygon')) return w('Polygon Real', 'Polygon 实盘');
+    if (s == 'real_hybrid') return w('Real Hybrid', '实盘混合');
+    return w('BSM Sim', 'BSM 模拟');
+  }
+
+  Color _pricingSourceColor(String rawSrc) {
+    final s = rawSrc.trim().toLowerCase();
+    if (s.startsWith('real_opra')) return _emerald;
+    if (s.startsWith('real_polygon') || s == 'real_hybrid') return _sky;
+    return _amber;
+  }
+
   String _humanPutOtmLabel(String modeId) {
     return switch (modeId) {
-      'otm20' => w('-20% OTM (High Convexity)', '-20% OTM（高凸性）'),
-      _ => w('-15% OTM (Default)', '-15% OTM（默认）'),
+      'otm20' => w('-20% OTM (Compare)', '-20% OTM（深虚值对照）'),
+      _ => w('-15% OTM (Real-OPRA #1)', '-15% OTM（真实 OPRA 冠军）'),
     };
   }
 
@@ -519,17 +550,17 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String _humanRollModeLabel(String modeId) {
     return switch (modeId) {
       '120d_roll50' => w(
-        '120D -> 50D Roll/Salvage',
-        '120D 建仓 · 50D 剩余滚仓',
+        '120D -> 50D Roll (Real-OPRA #1)',
+        '120D 建仓 · 50D 滚仓（真实 OPRA 冠军）',
       ),
-      _ => w('90D Hold to Expiry (Default)', '90D 持有到期（默认）'),
+      _ => w('90D Hold to Expiry', '90D 持有到期'),
     };
   }
 
   String _humanRollModeShort(String modeId) {
     return modeId == '120d_roll50'
-        ? w('120D->50D Roll', '120D->50D滚仓')
-        : w('90D Hold', '90D持有');
+        ? w('120D->50D Roll', '120D→50D 滚仓')
+        : w('90D Hold', '90D 持有');
   }
 
   String _humanM7TpModeLabel(String modeId) {
@@ -550,10 +581,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final trN = _numVal(stratSummary['tranches_total']).round();
     final tpN = _numVal(stratSummary['tp_count']).round();
     final rollN = _numVal(stratSummary['roll_50d_count']).round();
-    final salvPct = _numVal(stratSummary['avg_salvage_pct']);
+    final salvPct = _numVal(
+      stratSummary['avg_roll_salvage_pct'] ?? stratSummary['avg_salvage_pct'],
+    );
     final maxRoi = _numVal(stratSummary['max_roi_mult']);
     final dte = selectedRollMode == '120d_roll50' ? 120 : 90;
-    final max5xDte = selectedRollMode == '120d_roll50' ? 75 : 45;
+    const max5xDte = 45;
     final rollClauseEn = selectedRollMode == '120d_roll50'
         ? ' · <=50 DTE residual roll/salvage ($rollN rolls, avg ${salvPct.toStringAsFixed(1)}% recovered)'
         : ' · hold to TP or 90D expiry';
@@ -1658,7 +1691,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   ) {
     final spByStrat = asMap(doc['live_sp_states_by_strategy']);
     final stratKey = selectedStrategyId == 'BH_Pure_QQQ'
-        ? 'U1_PureOptions'
+        ? 'M7G_Graded'
         : selectedStrategyId;
     final stratSp = asMap(spByStrat[stratKey]);
     final spState = stratSp.isNotEmpty ? stratSp : asMap(doc['live_sp_state']);
@@ -1905,7 +1938,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final firstOpen = openSlots.isNotEmpty ? openSlots.first : const <String, dynamic>{};
     final fiveXMaxDte = _numVal(
       tpMon['five_x_max_dte'],
-      selectedRollMode == '120d_roll50' ? 75 : 45,
+      45,
     ).round();
 
     final probAccent = crisisProb >= 65
@@ -2370,8 +2403,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               ),
               child: Text(
                 w(
-                  'Execution rules (T+1 Open, strict zero-lookahead): 1) Hold 100% QQQ core forever. 2) Daily 3-pillar score P1(<=45) + P2(<=40) + P3(<=45) maps to 0/1/2/3 Naked Put slots (<35->0, 35-44->1, 45-64->2, >=65->3). 3) Hard Redline forbids opening any new slot if VXN > 27 or VIX/VIX3M >= 1.02; cooldown requires >= 30D between slots (>= 21D when score >= 65%). 4) Equal-Dollar Sizing: per-slot USD budget = Current QQQ Shares × 50% × Ask(${selectedRollMode == '120d_roll50' ? '120D' : '90D'} -10% Put), allocated into ${_humanPutOtmShort(selectedPutOtm)} Put. 5) ${w(text(tpMon['rule_en']), text(tpMon['rule_zh']))}',
-                  '实战规则（严格零前视 T+1 开盘执行）：① 底仓 100% 持有 QQQ 永不卖股；② 三支柱日度总分 P1(≤45)+P2(≤40)+P3(≤45) 映射 0–3 槽裸 Put（<35→0槽，35–44→1槽，45–64→2槽，≥65→3槽）；③ 硬性红线：VXN > 27 或 VIX/VIX3M ≥ 1.02 严禁开新槽，加槽冷却 ≥ 30 天（总分 ≥ 65% 缩短至 ≥ 21 天）；④ 等金额预算：单槽预算 = 当前 QQQ 股数 × 50% × ${selectedRollMode == '120d_roll50' ? '120D' : '90D'} -10% Put 卖一价，全部买入 ${_humanPutOtmShort(selectedPutOtm)} Put；⑤ ${w(text(tpMon['rule_en']), text(tpMon['rule_zh']))}',
+                  'Execution rules (T+1 Close on real 4:00 PM ET OPRA/Polygon quotes; BSM fallback after 2026-05-11): 1) Hold 100% QQQ core forever. 2) Daily 3-pillar score P1(<=45) + P2(<=40) + P3(<=45) maps to 0/1/2/3 Naked Put slots (<35->0, 35-44->1, 45-64->2, >=65->3). 3) Hard Redline forbids opening any new slot if VXN > 27 or VIX/VIX3M >= 1.02; cooldown requires >= 30D between slots (>= 21D when score >= 65%). 4) Equal-Dollar Sizing: per-slot USD budget = Current QQQ Shares × 50% × Ask(${selectedRollMode == '120d_roll50' ? '120D' : '90D'} -10% Put), allocated into ${_humanPutOtmShort(selectedPutOtm)} Put. 5) ${w(text(tpMon['rule_en']), text(tpMon['rule_zh']))}',
+                  '实战规则（严格零前视 T+1 收盘执行 · 2015–2025 真实 OPRA 盘口 + 2026Q1 Polygon + 缺失段 BSM 补齐）：① 底仓 100% 持有 QQQ 永不卖股；② 三支柱日度总分 P1(≤45)+P2(≤40)+P3(≤45) 映射 0–3 槽裸 Put（<35→0槽，35–44→1槽，45–64→2槽，≥65→3槽）；③ 硬性红线：VXN > 27 或 VIX/VIX3M ≥ 1.02 严禁开新槽，加槽冷却 ≥ 30 天（总分 ≥ 65% 缩短至 ≥ 21 天）；④ 等金额预算：单槽预算 = 当前 QQQ 股数 × 50% × ${selectedRollMode == '120d_roll50' ? '120D' : '90D'} -10% Put 卖一价，全部买入 ${_humanPutOtmShort(selectedPutOtm)} Put；⑤ ${w(text(tpMon['rule_en']), text(tpMon['rule_zh']))}',
                 ),
                 style: TextStyle(color: p.muted, fontSize: 12, height: 1.5),
               ),
@@ -3507,6 +3540,60 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     subtitleText,
                     style: TextStyle(color: p.muted, fontSize: 12),
                   ),
+                  if (stratSummary['pricing_basis'] ==
+                      'hybrid_real_opra_polygon_bsm') ...[
+                    const SizedBox(height: 6),
+                    Builder(
+                      builder: (_) {
+                        final realPct = _numVal(
+                          stratSummary['real_trades_pct'],
+                        );
+                        final opraCnt = _numVal(
+                          stratSummary['real_opra_trades_count'],
+                        ).round();
+                        final polyCnt = _numVal(
+                          stratSummary['real_polygon_trades_count'],
+                        ).round();
+                        final simCnt = _numVal(
+                          stratSummary['sim_trades_count'],
+                        ).round();
+                        final hasBreakdown = (opraCnt + polyCnt + simCnt) > 0;
+                        final detailEn = hasBreakdown
+                            ? '$opraCnt OPRA + $polyCnt Polygon real · $simCnt BSM fallback'
+                            : '2015–2025 OPRA + 2026Q1 Polygon · BSM fallback';
+                        final detailZh = hasBreakdown
+                            ? '实盘 $opraCnt OPRA + $polyCnt Polygon · 模拟 $simCnt 笔 BSM 补齐'
+                            : '2015–2025 真实 OPRA + 2026Q1 Polygon · 缺失段 BSM 补齐';
+                        return Container(
+                          key: const ValueKey(
+                            'crisis-real-data-provenance-pill',
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _emerald.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: _emerald.withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: Text(
+                            w(
+                              'Real Option Chain: ${realPct.toStringAsFixed(1)}% ($detailEn)',
+                              '真实期权盘口覆盖 ${realPct.toStringAsFixed(1)}%（$detailZh）',
+                            ),
+                            style: const TextStyle(
+                              color: _emerald,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ],
               ),
               Wrap(
@@ -3583,6 +3670,66 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               padding: EdgeInsets.only(bottom: 10),
               child: LinearProgressIndicator(minHeight: 2, color: _emerald),
             ),
+          if (_isLegacyStrategy) ...[
+            Container(
+              key: const ValueKey('crisis-legacy-upgrade-banner'),
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: _amber.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _amber.withValues(alpha: 0.40)),
+              ),
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    w(
+                      'Viewing legacy comparison (${_humanStrategyLabel(selectedStrategyId)}). Switch to the upgraded Real-OPRA #1 flagship M7-Graded (120D->50D Roll).',
+                      '当前正在查看旧版对照曲线（${_humanStrategyLabel(selectedStrategyId)}，通常由旧链接参数保留）。全面升级版 M7-Graded 三支柱（120D→50D · 真实 OPRA 盘口）在实盘回测中领先旧版 U1 超 +\$13.6 万。',
+                    ),
+                    style: TextStyle(
+                      color: p.text,
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  ),
+                  InkWell(
+                    key: const ValueKey('crisis-switch-to-m7g-btn'),
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: _switchToFlagshipM7g,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _emerald.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _emerald.withValues(alpha: 0.55),
+                        ),
+                      ),
+                      child: Text(
+                        w(
+                          'Switch to M7-Graded Flagship',
+                          '一键切换至 M7-Graded 全面升级旗舰',
+                        ),
+                        style: const TextStyle(
+                          color: _emerald,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           _buildThreeEngineWorkbench(
             doc,
             stratSummary: stratSummary,
@@ -3908,7 +4055,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final lights = _numVal(row['crisis_lights']).round();
     final hasM7Row = row['m7_prob'] is num;
     final m7Prob = _numVal(row['m7_prob']).round();
-    final m7Slots = _numVal(row['m7_slots']).round();
+    final m7TargetSlots = _numVal(
+      row['m7_target_slots'] ?? row['m7_slots'],
+    ).round();
+    final m7ActiveSlots = _numVal(row['m7_active_slots']).round();
     final m7P1 = _numVal(row['m7_p1']).round();
     final m7P2 = _numVal(row['m7_p2']).round();
     final m7P3 = _numVal(row['m7_p3']).round();
@@ -4051,14 +4201,23 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               ],
               if (hasM7Row) ...[
                 Text(
-                  w(
-                    'M7 Crisis Prob: $m7Prob% (P1:$m7P1 · P2:$m7P2 · P3:$m7P3 · Slots $m7Slots)',
-                    'M7 危机概率：$m7Prob%（P1:$m7P1 · P2:$m7P2 · P3:$m7P3 · 目标 $m7Slots 槽）',
-                  ),
+                  m7Prob == 0 && m7ActiveSlots > 0
+                      ? w(
+                          'M7 Entry Score: 0% (Crash Active · Holding $m7ActiveSlots Put Slot${m7ActiveSlots > 1 ? 's' : ''})',
+                          'M7 开仓分：0%（暴跌中禁追买 · 持仓 $m7ActiveSlots 槽保护待止盈）',
+                        )
+                      : w(
+                          'M7 Crisis Prob: $m7Prob% (P1:$m7P1 · P2:$m7P2 · P3:$m7P3 · Target $m7TargetSlots / Held $m7ActiveSlots)',
+                          'M7 危机概率：$m7Prob%（P1:$m7P1 · P2:$m7P2 · P3:$m7P3 · 目标 $m7TargetSlots / 持仓 $m7ActiveSlots 槽）',
+                        ),
                   style: TextStyle(
-                    color: m7Prob >= 35 ? _amber : p.muted,
+                    color: m7Prob >= 35
+                        ? _amber
+                        : (m7ActiveSlots > 0 ? _emerald : p.muted),
                     fontSize: 11,
-                    fontWeight: m7Prob >= 35 ? FontWeight.w600 : FontWeight.w400,
+                    fontWeight: m7Prob >= 35 || m7ActiveSlots > 0
+                        ? FontWeight.w600
+                        : FontWeight.w400,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -6405,12 +6564,31 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                             alignment: WrapAlignment.spaceBetween,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
-                              Text(
-                                w(
-                                  '${text(cc['entry_date'])} -> ${text(cc['exit_date'])} · Sold K=\$${_numVal(cc['kc']).toStringAsFixed(0)} Call (VXN ${_numVal(cc['entry_vxn']).toStringAsFixed(1)}, Exit \$${_numVal(cc['exit_spot']).toStringAsFixed(0)})',
-                                  '${text(cc['entry_date'])} → ${text(cc['exit_date'])} · 卖 \$${_numVal(cc['kc']).toStringAsFixed(0)} Call（VXN ${_numVal(cc['entry_vxn']).toStringAsFixed(1)} · 收盘 \$${_numVal(cc['exit_spot']).toStringAsFixed(0)}）',
-                                ),
-                                style: TextStyle(color: p.muted, fontSize: 12),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  if (text(cc['pricing_source']).isNotEmpty)
+                                    _smallTimelineTag(
+                                      _pricingSourceShortLabel(
+                                        text(cc['pricing_source']),
+                                      ),
+                                      _pricingSourceColor(
+                                        text(cc['pricing_source']),
+                                      ),
+                                    ),
+                                  Text(
+                                    w(
+                                      '${text(cc['entry_date'])} -> ${text(cc['exit_date'])} · Sold K=\$${_numVal(cc['kc']).toStringAsFixed(0)} Call (VXN ${_numVal(cc['entry_vxn']).toStringAsFixed(1)}, Exit \$${_numVal(cc['exit_spot']).toStringAsFixed(0)})',
+                                      '${text(cc['entry_date'])} → ${text(cc['exit_date'])} · 卖 \$${_numVal(cc['kc']).toStringAsFixed(0)} Call（VXN ${_numVal(cc['entry_vxn']).toStringAsFixed(1)} · 收盘 \$${_numVal(cc['exit_spot']).toStringAsFixed(0)}）',
+                                    ),
+                                    style: TextStyle(
+                                      color: p.muted,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
                               ),
                               Text(
                                 w(
@@ -6522,6 +6700,17 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       _smallTimelineTag(tagText, tagColor),
+                                      if (text(leg['pricing_source']).isNotEmpty) ...[
+                                        const SizedBox(width: 6),
+                                        _smallTimelineTag(
+                                          _pricingSourceShortLabel(
+                                            text(leg['pricing_source']),
+                                          ),
+                                          _pricingSourceColor(
+                                            text(leg['pricing_source']),
+                                          ),
+                                        ),
+                                      ],
                                       const SizedBox(width: 8),
                                       Flexible(
                                         child: Text(
@@ -6601,12 +6790,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       tr['target_dte'],
       selectedRollMode == '120d_roll50' ? 120 : 90,
     ).round();
-    final otmPct = (_numVal(
-              tr['put_otm_pct'],
-              selectedPutOtm == 'otm20' ? 0.20 : 0.15,
-            ) *
-            100)
-        .round();
+    final rawOtmVal = _numVal(
+      tr['put_otm_pct'],
+      selectedPutOtm == 'otm20' ? 20.0 : 15.0,
+    );
+    final otmPct = (rawOtmVal <= 1.0 ? rawOtmVal * 100.0 : rawOtmVal).round();
+    final pricingSourceRaw = text(tr['pricing_source']);
+    final hasPricingSource = pricingSourceRaw.isNotEmpty;
     final prob = _numVal(tr['crisis_prob']).round();
     final trigCode = text(tr['trigger_code']);
     final roiMult = tr['roi_mult'] is num
@@ -6756,6 +6946,11 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                       _smallTimelineTag(tagLabel, tagColor),
                       if (subSignalLabel != null)
                         _smallTimelineTag(subSignalLabel, _sky),
+                      if (hasPricingSource)
+                        _smallTimelineTag(
+                          _pricingSourceShortLabel(pricingSourceRaw),
+                          _pricingSourceColor(pricingSourceRaw),
+                        ),
                     ],
                   ),
                   Row(
@@ -6809,6 +7004,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   if (subSignalLabel != null) ...[
                     const SizedBox(width: 6),
                     _smallTimelineTag(subSignalLabel, _sky),
+                  ],
+                  if (hasPricingSource) ...[
+                    const SizedBox(width: 6),
+                    _smallTimelineTag(
+                      _pricingSourceShortLabel(pricingSourceRaw),
+                      _pricingSourceColor(pricingSourceRaw),
+                    ),
                   ],
                   const SizedBox(width: 12),
                   Expanded(

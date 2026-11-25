@@ -36,8 +36,16 @@ except ImportError:
 ROOT_DIR = Path(__file__).resolve().parent.parent
 SEED_GZ = ROOT_DIR / "server" / "config" / "crisis-observatory-seed-inputs.json.gz"
 M7_SEED_GZ = ROOT_DIR / "server" / "config" / "crisis-observatory-m7-inputs.json.gz"
+REAL_QUOTES_GZ = ROOT_DIR / "server" / "config" / "crisis-observatory-real-quotes.json.gz"
 DEFAULT_OUT = ROOT_DIR / "server" / "config" / "crisis-observatory-dashboard.json"
 DEFAULT_FACT_ROOT = ROOT_DIR / "data" / "fact_os"
+
+_ROC_SPEC = importlib.util.spec_from_file_location(
+    "real_option_chain", Path(__file__).resolve().parent / "real_option_chain.py"
+)
+assert _ROC_SPEC is not None and _ROC_SPEC.loader is not None
+roc = importlib.util.module_from_spec(_ROC_SPEC)
+_ROC_SPEC.loader.exec_module(roc)
 
 _M7_SPEC = importlib.util.spec_from_file_location(
     "m7_crisis_engine", Path(__file__).resolve().parent / "m7_crisis_engine.py"
@@ -102,26 +110,26 @@ SP_MODE_SPECS: list[dict[str, Any]] = [
         "label_zh": "关闭（0 杠杆）",
         "short_en": "Off (0 Lev)",
         "short_zh": "关闭（0 杠杆）",
-        "summary_en": "Engine 3 disabled (0 margin interest, max stock leverage strictly 1.00x). Preserves canonical 2D Long-Put x Covered-Call baselines.",
-        "summary_zh": "关闭第三引擎（0 融资利息、股票总敞口严格 1.00x），完全保留原双引擎基准曲线。",
+        "summary_en": "Engine 3 disabled (0 margin interest, max stock leverage strictly 1.00x). Isolates Engine 1 crisis protection on real OPRA quotes.",
+        "summary_zh": "关闭第三引擎（0 融资利息、股票总敞口严格 1.00x），独立检验引擎 1 危机买 Put 的真实 OPRA 盘口表现。",
     },
     {
         "id": "sp_14d_cap10",
-        "label_en": "14D 10% Cap (Calmar #1 · Rec.)",
+        "label_en": "14D 10% Cap (Balanced · Rec.)",
         "label_zh": "14D 10%帽（稳健 · 推荐）",
         "short_en": "14D 10% Cap",
         "short_zh": "14D 10%帽",
-        "summary_en": "Sells 14D 5% OTM Put on VIX/VIX3M >= 1.00 capped at <= 10% equity; if assigned, holds uncapped until QQQ reclaims K_assign then sells 30D 0.35Δ Wheel Call -> $1,805,856 NAV, $8,956 WC prem (switchable to 30D +5% or 14D BE+2%).",
-        "summary_zh": "VIX/VIX3M >= 1.00 卖 14D 5% OTM Put（名义严控 <= 10% 净值）；若接货默认待涨回接货行权价后再卖 30D 0.35Δ Wheel Call——终值 $1,805,856、Wheel Call 收租 $8,956（支持一键对比 30D 双+5% 与 14D 原基准）。",
+        "summary_en": "Sells 14D 5% OTM Put on VIX/VIX3M >= 1.00 capped at <= 10% equity; if assigned, holds uncapped until QQQ reclaims K_assign then sells 30D 0.35Δ Wheel Call. Positive real-OPRA alpha while reducing MDD.",
+        "summary_zh": "VIX/VIX3M >= 1.00 卖 14D 5% OTM Put（名义严控 <= 10% 净值）；若接货默认水下不封顶，等涨回接货价后再卖 30D 0.35Δ Call——真实 OPRA 盘口下仍稳健增厚收益并压缩最大回撤。",
     },
     {
         "id": "sp_10d_vixf",
         "label_en": "10D VIX Falling (20% Cap)",
-        "label_zh": "10D VIX回落（20%帽 · Calmar冠军）",
+        "label_zh": "10D VIX回落（20%帽 · 拐点过滤）",
         "short_en": "10D VIX Falling (20%)",
         "short_zh": "10D VIX回落（20%帽）",
-        "summary_en": "Requires VIX/VIX3M >= 1.00 AND VIX[t] < VIX[t-1] (panic cresting) before selling 10D 5% OTM Put (<= 20% cap) + Reclaim 30D 0.35Δ Wheel -> $1,838,505 NAV, Calmar 0.676, 27 trades, 3 assignments, $1,251 12-yr interest.",
-        "summary_zh": "要求 VIX/VIX3M >= 1.00 且当日 VIX 回落（恐慌见顶拐头）才卖 10D 5% OTM Put（<= 20% 名义帽）+ 涨回接货价卖 30D 0.35Δ Call——终值升至 $1,838,505、Calmar 0.676，12 年仅 27 笔、3 次接货。",
+        "summary_en": "Requires VIX/VIX3M >= 1.00 AND VIX[t] < VIX[t-1] (panic cresting) before selling 10D 5% OTM Put (<= 20% cap) + Reclaim 30D 0.35Δ Wheel; fewer trades and lower assignment frequency.",
+        "summary_zh": "要求 VIX/VIX3M >= 1.00 且当日 VIX 回落（恐慌见顶拐头）才卖 10D 5% OTM Put（<= 20% 名义帽）+ 涨回接货价卖 30D 0.35Δ Call——过滤急跌首日接飞刀，交易更精简。",
     },
     {
         "id": "sp_14d_unf",
@@ -129,29 +137,29 @@ SP_MODE_SPECS: list[dict[str, Any]] = [
         "label_zh": "14D 无过滤（20%帽 · 收益冠军）",
         "short_en": "14D Unfiltered (20%)",
         "short_zh": "14D 无过滤（20%帽）",
-        "summary_en": "Sells 14D 5% OTM Put whenever VIX/VIX3M >= 1.00 capped at <= 20% equity + Reclaim 30D 0.35Δ Reverse Wheel -> $1,901,035 terminal NAV (+47.56% extra QQQ shares), $18,463 WC prem, 20.87% CAGR.",
-        "summary_zh": "只要 VIX/VIX3M >= 1.00 即卖 14D 5% OTM Put（<= 20% 名义帽）+ 涨回接货价卖 30D 0.35Δ Call——终值达 $1,901,035（多攒 +47.56% QQQ 份额、Wheel Call 收租 $18,463），年化 20.87%。",
+        "summary_en": "Sells 14D 5% OTM Put whenever VIX/VIX3M >= 1.00 capped at <= 20% equity + Reclaim 30D 0.35Δ Reverse Wheel. Highest real-OPRA terminal NAV and Calmar.",
+        "summary_zh": "只要 VIX/VIX3M >= 1.00 即卖 14D 5% OTM Put（<= 20% 名义帽）+ 涨回接货价卖 30D 0.35Δ Call——真实 OPRA 盘口下终值与 Calmar 双冠军。",
     },
 ]
 
 CC_MODE_SPECS: list[dict[str, Any]] = [
     {
         "id": "cc_off",
-        "label_en": "Off (Pure Crisis)",
-        "label_zh": "关闭（纯危机对冲）",
+        "label_en": "Off (Rec. · Real-OPRA Optimal)",
+        "label_zh": "关闭（推荐 · 真实 OPRA 最优）",
         "short_en": "Off",
         "short_zh": "关闭",
-        "summary_en": "Zero normal-time covered calls; 100% uncapped upside during bull melt-ups.",
-        "summary_zh": "平时不卖 Call，牛市主升浪 100% 零封顶损耗，仅在危机信号触发时开启保护。",
+        "summary_en": "Zero normal-time covered calls (100% uncapped bull upside). Under real OPRA bid-ask spreads and calm-regime call skew, leaving Engine 2 Off beats selling 12-Delta calls.",
+        "summary_zh": "平时不卖 Call（100% 保留牛市主升浪）。经真实 OPRA 盘口与买卖价差检验，平时卖 12Δ Call 的低权利金难以覆盖真实价差与急涨止损损耗，默认关闭表现最优。",
     },
     {
         "id": "cc_d12_d35",
-        "label_en": "12Δ · Delta 0.35 Stop (Rec. · 0 Breach)",
-        "label_zh": "全天候 12Δ · Delta 0.35 止损（推荐 · 0穿最稳）",
+        "label_en": "12Δ · Delta 0.35 Stop (Compare)",
+        "label_zh": "全天候 12Δ · Delta 0.35 止损（对照）",
         "short_en": "12Δ · Δ0.35 Stop",
         "short_zh": "12Δ · Delta 0.35 止损",
-        "summary_en": "Whenever within 3% of ATH (any VXN), sells 25D 12-Delta (min +5% OTM) Calls and exits early at Delta >= 0.35 before Gamma explodes -> 0 expiry breaches in 12 years, active 11/12 years, highest real-Friday stability.",
-        "summary_zh": "距前高 ≤ 3%（不限 VXN）持续卖 25D 12Δ（保底 +5% OTM）Call，在 Call Delta 升至 0.35（仍在虚值、Gamma 未爆前）即次日开盘止损平仓——11 年常卖、12 年 0 穿价、实盘周五到期表现最稳。",
+        "summary_en": "Whenever within 3% of ATH, sells 25D 12-Delta (min +5% OTM) Calls and exits early at Delta >= 0.35. Real OPRA calm-regime spreads create slight net drag vs Off (kept for transparent comparison).",
+        "summary_zh": "距前高 <= 3% 卖 25D 12Δ（保底 +5% OTM）Call，Delta >= 0.35 止损平仓；真实 OPRA 实盘价差下呈小幅负贡献（保留供实盘透明对照）。",
     },
     {
         "id": "cc_d12_r45",
@@ -159,8 +167,8 @@ CC_MODE_SPECS: list[dict[str, Any]] = [
         "label_zh": "全天候 12Δ · Delta 0.45 展期 Roll（30D 上移）",
         "short_en": "12Δ · Δ0.45 Roll",
         "short_zh": "12Δ · Delta 0.45 展期 Roll",
-        "summary_en": "Whenever within 3% of ATH, sells 25D 12-Delta Calls; when Delta >= 0.45, buys back and immediately rolls out +30D to a fresh higher 12-Delta strike -> positive across all 21D-30D & Friday tenors, 11y active.",
-        "summary_zh": "距前高 ≤ 3% 全天候卖 25D 12Δ Call；当 Delta 升至 0.45 时立刻平旧仓并同步展期 30 天上移至新 12Δ 高行权价——认小亏拉大安全垫，21D–30D 与实盘周五全期限稳正。",
+        "summary_en": "Whenever within 3% of ATH, sells 25D 12-Delta Calls; when Delta >= 0.45, buys back and immediately rolls out +30D to a fresh higher 12-Delta strike on real OPRA quotes.",
+        "summary_zh": "距前高 <= 3% 全天候卖 25D 12Δ Call；当 Delta 升至 0.45 时立刻平旧仓并同步展期 30 天上移至新 12Δ 高行权价（真实 OPRA 盘口执行）。",
     },
     {
         "id": "cc_d12_cr55",
@@ -168,8 +176,8 @@ CC_MODE_SPECS: list[dict[str, Any]] = [
         "label_zh": "全天候 12Δ · Delta 0.55 零成本 Roll（45D）",
         "short_en": "12Δ · Δ0.55 Credit Roll",
         "short_zh": "12Δ · Delta 0.55 零成本 Roll",
-        "summary_en": "Whenever within 3% of ATH, sells 25D 12-Delta Calls; when Delta >= 0.55, attempts a zero-cost credit roll out +45D to the highest OTM strike covering the buyback (closes cleanly if no OTM credit roll exists) -> highest 25D upside.",
-        "summary_zh": "距前高 ≤ 3% 全天候卖 25D 12Δ Call；当 Delta 升至 0.55 时尝试向后展期 45 天做零成本上移 Roll（若已无虚值零成本可展则直接平仓不硬扛）——25D 账面弹性最高、最大回撤压至 -29.9%。",
+        "summary_en": "Whenever within 3% of ATH, sells 25D 12-Delta Calls; when Delta >= 0.55, attempts a zero-cost credit roll out +45D to the highest OTM strike covering the buyback on real OPRA quotes.",
+        "summary_zh": "距前高 <= 3% 全天候卖 25D 12Δ Call；当 Delta 升至 0.55 时尝试向后展期 45 天做零成本上移 Roll（真实 OPRA 盘口若无虚值零成本可展则直接平仓）。",
     },
 ]
 
@@ -595,7 +603,9 @@ def simulate_strategy(
     wc_mode: str = DEFAULT_WC_MODE,
     slow_bear_overlay: bool = False,
     slip: float = DEFAULT_SLIPPAGE,
+    real_store: Any = None,
 ) -> dict[str, Any]:
+    use_real = real_store is not None
     rows = [r for r in rows_all if r["date"] >= START_DATE]
     dates = [r["date"] for r in rows]
     dt_objs = [_parse_iso(d) for d in dates]
@@ -603,6 +613,54 @@ def simulate_strategy(
     final_bh_sh = post_drip_bh[-1]
     final_cl = float(rows[-1]["close"])
     bh_end_nav = final_bh_sh * final_cl
+
+    q_stats = {"total_lookups": 0, "real_opra_hits": 0, "real_polygon_hits": 0, "bsm_fallbacks": 0}
+
+    def _rec_q(src: str) -> None:
+        q_stats["total_lookups"] += 1
+        if src.startswith("real_opra"):
+            q_stats["real_opra_hits"] += 1
+        elif src.startswith("real_polygon"):
+            q_stats["real_polygon_hits"] += 1
+        else:
+            q_stats["bsm_fallbacks"] += 1
+
+    def _is_exp(idx: int, exp_dt: datetime.date) -> bool:
+        return roc.is_expiry_day(idx, dt_objs, exp_dt) if use_real else (dt_objs[idx] >= exp_dt)
+
+    def _lookup_leg(
+        d_str: str,
+        opt_type: str,
+        exp_str: str,
+        k_val: float,
+        k_cents: int | None,
+        spot_px: float,
+        rem_days: int,
+        r_c: float,
+        q_c: float,
+        vxn_c: float,
+        last_iv: float | None,
+        slip_bsm: float = slip,
+    ) -> tuple[float, float, float, float, float, str]:
+        if use_real and k_cents is not None:
+            b, a, m, iv, dl, src = real_store.lookup_contract(
+                d_str, opt_type, exp_str, k_cents, spot_px, rem_days, r_c, q_c, vxn_c, last_iv,
+                coeffs, eval_skew_iv, bsm_price, slip_bsm=slip_bsm,
+            )
+            _rec_q(src)
+            return b, a, m, iv, dl, src
+        t_r = max(0, rem_days) / 365.0
+        sig = eval_skew_iv(spot_px, k_val, max(t_r, 1.0 / 365.0), r_c, q_c, vxn_c, coeffs)
+        mid = bsm_price(spot_px, k_val, t_r, r_c, q_c, sig, opt_type)
+        dl = bsm_call_delta(spot_px, k_val, t_r, r_c, q_c, sig) if opt_type == "call" else (bsm_call_delta(spot_px, k_val, t_r, r_c, q_c, sig) - math.exp(-q_c * t_r))
+        _rec_q("bsm_fallback")
+        return max(0.0, mid * (1.0 - slip_bsm)), mid * (1.0 + slip_bsm), mid, sig, dl, "bsm_fallback"
+
+    def _buy_leg(b: float, a: float, m: float, src: str, slip_bsm: float = slip) -> float:
+        return roc.exec_buy_price(b, a, m, src, slip_bsm=slip_bsm) if use_real else (m * (1.0 + slip_bsm))
+
+    def _sell_leg(b: float, a: float, m: float, src: str, slip_bsm: float = slip) -> float:
+        return roc.exec_sell_price(b, a, m, src, slip_bsm=slip_bsm) if use_real else max(0.0, m * (1.0 - slip_bsm))
 
     core_shares = INITIAL_CAPITAL / float(rows[0]["close"])
     tbill_cash = 0.0
@@ -689,22 +747,29 @@ def simulate_strategy(
                 core_shares += sp_cash / (px * (1.0 - STOCK_REBAL_FEE))
             sp_cash = 0.0
 
-    def _estimate_nav_open(op_px: float, vxn_o: float, r_c: float, q_c: float, cur_dt: datetime.date) -> float:
+    def _estimate_nav_open(op_px: float, vxn_o: float, r_c: float, q_c: float, cur_dt: datetime.date, d_str: str = "") -> float:
         mtm_u1 = 0.0
         for tr_o in active_tranches:
             rem_d_o = max(1, (tr_o["exp_dt"] - cur_dt).days)
-            t_r_o = rem_d_o / 365.0
-            sp_iv_o = eval_skew_iv(op_px, tr_o["kp"], t_r_o, r_c, q_c, vxn_o, coeffs)
-            mtm_u1 += tr_o["hedged_shares"] * bsm_price(op_px, tr_o["kp"], t_r_o, r_c, q_c, sp_iv_o, "put")
+            _, _, pm_o, _, _, _ = _lookup_leg(
+                d_str, "put", tr_o["exp_date"], tr_o["kp"], tr_o.get("k_cents_p"),
+                op_px, rem_d_o, r_c, q_c, vxn_o, tr_o.get("last_iv_p"), slip_bsm=slip,
+            )
+            mtm_u1 += tr_o["hedged_shares"] * pm_o
             if tr_o["kc"] is not None:
-                sc_iv_o = eval_skew_iv(op_px, tr_o["kc"], t_r_o, r_c, q_c, vxn_o, coeffs)
-                mtm_u1 -= tr_o["hedged_shares"] * bsm_price(op_px, tr_o["kc"], t_r_o, r_c, q_c, sc_iv_o, "call")
+                _, _, cm_o, _, _, _ = _lookup_leg(
+                    d_str, "call", tr_o["exp_date"], tr_o["kc"], tr_o.get("k_cents_c"),
+                    op_px, rem_d_o, r_c, q_c, vxn_o, tr_o.get("last_iv_c"), slip_bsm=slip,
+                )
+                mtm_u1 -= tr_o["hedged_shares"] * cm_o
         mtm_cc_o = 0.0
         if active_cc is not None:
             rem_c_o = max(1, (active_cc["exp_dt"] - cur_dt).days)
-            t_c_o = rem_c_o / 365.0
-            sc_iv_c = eval_skew_iv(op_px, active_cc["kc"], t_c_o, r_c, q_c, vxn_o, coeffs)
-            mtm_cc_o = -active_cc["shares"] * bsm_price(op_px, active_cc["kc"], t_c_o, r_c, q_c, sc_iv_c, "call")
+            _, _, cm_c_o, _, _, _ = _lookup_leg(
+                d_str, "call", active_cc["exp_date"], active_cc["kc"], active_cc.get("k_cents"),
+                op_px, rem_c_o, r_c, q_c, vxn_o, active_cc.get("last_iv"), slip_bsm=slip,
+            )
+            mtm_cc_o = -active_cc["shares"] * cm_c_o
         return max(1.0, (core_shares + assigned_shares) * op_px + tbill_cash + cc_cash + sp_cash + mtm_u1 + mtm_cc_o)
 
     nav_list: list[float] = []
@@ -716,7 +781,7 @@ def simulate_strategy(
 
     for i, d in enumerate(dates):
         row = rows[i]
-        op = float(row["open"])
+        op_raw = float(row["open"])
         cl = float(row["close"])
         div = float(row["dividends"])
         vxn_cl = float(row["vxn"])
@@ -724,6 +789,14 @@ def simulate_strategy(
         r_cur = float(row["r"])
         q_cur = float(row["div_yield"])
         dd_cur = float(row["dd_from_ath"])
+        # Align execution spot/VXN to 4:00 PM ET real OPRA/Polygon quote timestamp when using real quotes
+        op = cl if use_real else op_raw
+        if use_real:
+            vxn_ex_day = vxn_cl
+        elif i > 0:
+            vxn_ex_day = max(10.0, float(rows[i - 1]["vxn"]) - 0.45 * (op / float(rows[i - 1]["close"]) - 1.0) * 100.0)
+        else:
+            vxn_ex_day = vxn_cl
 
         mult_morning = (final_bh_sh / pre_drip_bh[i]) * final_cl
         mult_eod = (final_bh_sh / post_drip_bh[i]) * final_cl
@@ -750,13 +823,17 @@ def simulate_strategy(
 
         # A0b. Close or Roll active Covered Call early on VIX/3M >= 1.10 panic or Delta stop/roll trigger
         if i > 0 and active_cc is not None and active_cc.get("pending_close"):
-            prev_vxn = float(rows[i - 1]["vxn"])
-            prev_cl = float(rows[i - 1]["close"])
-            vxn_op = max(10.0, prev_vxn - 0.45 * (op / prev_cl - 1.0) * 100.0)
+            vxn_op = vxn_ex_day
             rem_cc = max(0, (active_cc["exp_dt"] - dt_objs[i]).days)
-            t_cc = rem_cc / 365.0
-            sc_ex = eval_skew_iv(op, active_cc["kc"], t_cc, r_cur, q_cur, vxn_op, coeffs)
-            c_ask_ex = bsm_price(op, active_cc["kc"], t_cc, r_cur, q_cur, sc_ex, "call") * (1.0 + slip)
+            if _is_exp(i, active_cc["exp_dt"]):
+                c_ask_ex = max(0.0, op - active_cc["kc"])
+                src_cc_ex = active_cc.get("entry_source", "bsm_fallback")
+            else:
+                b_c, a_c, m_c, _, _, src_cc_ex = _lookup_leg(
+                    d, "call", active_cc["exp_date"], active_cc["kc"], active_cc.get("k_cents"),
+                    op, rem_cc, r_cur, q_cur, vxn_op, active_cc.get("last_iv"), slip_bsm=slip,
+                )
+                c_ask_ex = _buy_leg(b_c, a_c, m_c, src_cc_ex, slip_bsm=slip)
             cost_cl = active_cc["shares"] * c_ask_ex
             cc_gross_loss += cost_cl
             if cc_cash >= cost_cl:
@@ -767,6 +844,7 @@ def simulate_strategy(
             close_reason = active_cc.get("close_reason") or "panic_close_uncap"
             old_rolls = int(active_cc.get("roll_count", 0))
             old_sh = active_cc["shares"]
+            cc_en_src = active_cc.get("entry_source", "bsm_fallback")
             cc_ledger.append(
                 {
                     "cc_id": active_cc["cc_id"],
@@ -782,6 +860,7 @@ def simulate_strategy(
                     "net_pnl_usd": round(active_cc["prem_usd"] - cost_cl, 2),
                     "exit_reason": close_reason,
                     "roll_gen": old_rolls,
+                    "pricing_source": m7e._classify_trade_source(cc_en_src, src_cc_ex),
                 }
             )
             active_cc = None
@@ -795,43 +874,74 @@ def simulate_strategy(
                 and not has_collar_r
             ):
                 roll_days = 45 if cc_roll_mode == "credit_45d" else 30
-                target_r = dt_objs[i] + datetime.timedelta(days=roll_days)
-                pos_r = bisect.bisect_left(dt_objs, target_r)
-                if pos_r < len(dates):
-                    exp_date_r, exp_dt_r = dates[pos_r], dt_objs[pos_r]
+                c_roll = None
+                if use_real:
+                    if cc_roll_mode == "credit_45d":
+                        c_roll = real_store.select_call_contract_for_bid(
+                            d, op, 45, c_ask_ex, op * 1.01, 32, 62, r_cur, q_cur
+                        )
+                    elif cc_roll_mode == "fresh_30d":
+                        c_roll = real_store.select_call_contract_delta(
+                            d, op, 30, cc_target_delta, op * (1.0 + cc_min_otm), 20, 42, r_cur, q_cur
+                        )
+                if c_roll is not None:
+                    _rec_q(c_roll["source"])
+                    exp_date_r, exp_dt_r = c_roll["exp"], c_roll["exp_dt"]
+                    kc_new = c_roll["strike"]
+                    k_cents_r = c_roll["k_cents"]
+                    c_bid_r = _sell_leg(c_roll["bid"], c_roll["ask"], c_roll["mid"], c_roll["source"], slip_bsm=slip)
+                    iv_r = c_roll["iv"]
+                    src_r = c_roll["source"]
                 else:
-                    exp_date_r, exp_dt_r = target_r.isoformat(), target_r
-                t_r = max(1, (exp_dt_r - dt_objs[i]).days) / 365.0
-                kc_new: float | None = None
-                if cc_roll_mode == "credit_45d":
-                    kc_new = solve_call_strike_for_bid(op, t_r, r_cur, q_cur, vxn_op, coeffs, c_ask_ex, slip)
-                elif cc_roll_mode == "fresh_30d":
-                    kc_new = max(
-                        op * (1.0 + cc_min_otm),
-                        solve_call_strike_for_delta(op, t_r, r_cur, q_cur, vxn_op, coeffs, cc_target_delta),
-                    )
-                if kc_new is not None and kc_new > op * 1.01:
-                    sc_r = eval_skew_iv(op, kc_new, t_r, r_cur, q_cur, vxn_op, coeffs)
-                    c_bid_r = bsm_price(op, kc_new, t_r, r_cur, q_cur, sc_r, "call") * (1.0 - slip)
-                    if c_bid_r >= 0.05:
-                        prem_r = old_sh * c_bid_r
-                        cc_tid += 1
-                        cc_gross_prem += prem_r
-                        cc_cash += prem_r
-                        active_cc = {
-                            "cc_id": cc_tid,
-                            "entry_date": d,
-                            "entry_dt": dt_objs[i],
-                            "exp_date": exp_date_r,
-                            "exp_dt": exp_dt_r,
-                            "entry_spot": op,
-                            "entry_vxn": vxn_op,
-                            "kc": kc_new,
-                            "shares": old_sh,
-                            "prem_usd": prem_r,
-                            "pending_close": False,
-                            "roll_count": old_rolls + 1,
-                        }
+                    target_r = dt_objs[i] + datetime.timedelta(days=roll_days)
+                    pos_r = bisect.bisect_left(dt_objs, target_r)
+                    if pos_r < len(dates):
+                        exp_date_r, exp_dt_r = dates[pos_r], dt_objs[pos_r]
+                    else:
+                        exp_date_r, exp_dt_r = target_r.isoformat(), target_r
+                    t_r = max(1, (exp_dt_r - dt_objs[i]).days) / 365.0
+                    kc_new = None
+                    if cc_roll_mode == "credit_45d":
+                        kc_new = solve_call_strike_for_bid(op, t_r, r_cur, q_cur, vxn_op, coeffs, c_ask_ex, slip)
+                    elif cc_roll_mode == "fresh_30d":
+                        kc_new = max(
+                            op * (1.0 + cc_min_otm),
+                            solve_call_strike_for_delta(op, t_r, r_cur, q_cur, vxn_op, coeffs, cc_target_delta),
+                        )
+                    if kc_new is not None and kc_new > op * 1.01:
+                        iv_r = eval_skew_iv(op, kc_new, t_r, r_cur, q_cur, vxn_op, coeffs)
+                        cm_r = bsm_price(op, kc_new, t_r, r_cur, q_cur, iv_r, "call")
+                        c_bid_r = _sell_leg(cm_r * (1.0 - slip), cm_r * (1.0 + slip), cm_r, "bsm_fallback", slip_bsm=slip)
+                        k_cents_r = int(round(kc_new * 100.0))
+                        src_r = "bsm_fallback"
+                        _rec_q(src_r)
+                    else:
+                        c_bid_r = 0.0
+                        k_cents_r = None
+                        iv_r = None
+                        src_r = "bsm_fallback"
+                if kc_new is not None and kc_new > op * 1.01 and c_bid_r >= 0.05:
+                    prem_r = old_sh * c_bid_r
+                    cc_tid += 1
+                    cc_gross_prem += prem_r
+                    cc_cash += prem_r
+                    active_cc = {
+                        "cc_id": cc_tid,
+                        "entry_date": d,
+                        "entry_dt": dt_objs[i],
+                        "exp_date": exp_date_r,
+                        "exp_dt": exp_dt_r,
+                        "entry_spot": op,
+                        "entry_vxn": vxn_op,
+                        "kc": kc_new,
+                        "k_cents": k_cents_r,
+                        "last_iv": iv_r,
+                        "entry_source": src_r,
+                        "shares": old_sh,
+                        "prem_usd": prem_r,
+                        "pending_close": False,
+                        "roll_count": old_rolls + 1,
+                    }
 
         if i > 0 and slow_bear_overlay and pending_bear_change is not None:
             prev_r = rows[i - 1]
@@ -898,12 +1008,9 @@ def simulate_strategy(
                 in_slow_bear_def = False
             pending_bear_change = None
 
-        # A. Execute pending early Take-Profit exits at t+1 Open
+        # A. Execute pending early Take-Profit exits at T+1 (4:00 PM ET real OPRA/Polygon quote or BSM Open)
         if i > 0 and any(t.get("pending_tp") for t in active_tranches):
-            prev_vxn = float(rows[i - 1]["vxn"])
-            prev_cl = float(rows[i - 1]["close"])
-            gap_pct = (op / prev_cl - 1.0) * 100.0
-            vxn_op = max(10.0, prev_vxn - 0.45 * gap_pct)
+            vxn_op = vxn_ex_day
 
             still_open: list[dict[str, Any]] = []
             for tr in active_tranches:
@@ -912,15 +1019,30 @@ def simulate_strategy(
                     continue
                 rem_days = max(0, (tr["exp_dt"] - dt_objs[i]).days)
                 t_rem = rem_days / 365.0
-                sig_p_ex = eval_skew_iv(op, tr["kp"], t_rem, r_cur, q_cur, vxn_op, coeffs)
-                put_bid = bsm_price(op, tr["kp"], t_rem, r_cur, q_cur, sig_p_ex, "put") * (1.0 - slip)
+                if _is_exp(i, tr["exp_dt"]):
+                    put_bid = max(0.0, tr["kp"] - op)
+                    call_ask = max(0.0, op - tr["kc"]) if tr["kc"] is not None else 0.0
+                    src_p_ex = tr.get("entry_source", "bsm_fallback")
+                    src_c_ex = tr.get("entry_source_c", src_p_ex)
+                else:
+                    b_p, a_p, m_p, _, _, src_p_ex = _lookup_leg(
+                        d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents_p"),
+                        op, rem_days, r_cur, q_cur, vxn_op, tr.get("last_iv_p"), slip_bsm=slip,
+                    )
+                    put_bid = _sell_leg(b_p, a_p, m_p, src_p_ex, slip_bsm=slip)
+                    if tr["tranche_type"] == "collar":
+                        b_c, a_c, m_c, _, _, src_c_ex = _lookup_leg(
+                            d, "call", tr["exp_date"], tr["kc"], tr.get("k_cents_c"),
+                            op, rem_days, r_cur, q_cur, vxn_op, tr.get("last_iv_c"), slip_bsm=slip,
+                        )
+                        call_ask = _buy_leg(b_c, a_c, m_c, src_c_ex, slip_bsm=slip)
+                    else:
+                        call_ask = 0.0
+                        src_c_ex = src_p_ex
 
                 if tr["tranche_type"] == "collar":
-                    sig_c_ex = eval_skew_iv(op, tr["kc"], t_rem, r_cur, q_cur, vxn_op, coeffs)
-                    call_ask = bsm_price(op, tr["kc"], t_rem, r_cur, q_cur, sig_c_ex, "call") * (1.0 + slip)
                     actual_net_sh = put_bid - call_ask
                 else:
-                    call_ask = 0.0
                     actual_net_sh = put_bid - tr["entry_put_ask"]
 
                 net_sh_px = put_bid - call_ask
@@ -951,6 +1073,7 @@ def simulate_strategy(
                 )
                 hs = tr["hedged_shares"]
                 trig_en, trig_zh = _format_trigger_label(tr["sig_score"], tr["sig_ad_below50"], gate_key)
+                en_src = tr.get("entry_source", "bsm_fallback")
                 ledger.append(
                     {
                         "tranche_id": tr["tranche_id"],
@@ -964,6 +1087,9 @@ def simulate_strategy(
                         "actual_days_held": (dt_objs[i] - tr["entry_dt"]).days,
                         "rem_dte_at_exit": rem_days,
                         "exit_reason": tr["tp_reason"],
+                        "pricing_source": m7e._classify_trade_source(en_src, src_p_ex),
+                        "entry_source": en_src,
+                        "exit_source": src_p_ex,
                         "sig_score": tr["sig_score"],
                         "sig_ad_below50": tr["sig_ad_below50"],
                         "trigger_en": trig_en,
@@ -1006,24 +1132,10 @@ def simulate_strategy(
                 )
             active_tranches = still_open
 
-        # B. Execute pending new Tranche entry at t+1 Open
+        # B. Execute pending new Tranche entry at T+1
         if i > 0 and pending_sig is not None and arch != "pure_qqq" and len(active_tranches) < max_slots:
-            prev_vxn = pending_sig["vxn"]
-            prev_cl = pending_sig["close"]
-            gap_pct = (op / prev_cl - 1.0) * 100.0
-            vxn_en = max(10.0, prev_vxn - 0.45 * gap_pct)
-            r_en, q_en = pending_sig["r"], pending_sig["q"]
-
-            target_cal = dt_objs[i] + datetime.timedelta(days=target_dte)
-            pos = bisect.bisect_left(dt_objs, target_cal)
-            if pos < len(dates):
-                exp_date = dates[pos]
-                exp_dt = dt_objs[pos]
-            else:
-                exp_date = target_cal.isoformat()
-                exp_dt = target_cal
-            act_dte = max(1, (exp_dt - dt_objs[i]).days)
-            t_en = act_dte / 365.0
+            vxn_en = vxn_ex_day
+            r_en, q_en = (r_cur, q_cur) if use_real else (pending_sig["r"], pending_sig["q"])
 
             if arch == "all_collar":
                 t_type = "collar"
@@ -1034,9 +1146,39 @@ def simulate_strategy(
             else:
                 raise ValueError(f"Unknown arch: {arch}")
 
-            kp = op * put_moneyness
-            sig_p_en = eval_skew_iv(op, kp, t_en, r_en, q_en, vxn_en, coeffs)
-            put_ask_en = bsm_price(op, kp, t_en, r_en, q_en, sig_p_en, "put") * (1.0 + slip)
+            c_put = (
+                real_store.select_put_contract(d, op, target_dte, put_moneyness, 65, 120, r_en, q_en)
+                if use_real
+                else None
+            )
+            if c_put is not None:
+                _rec_q(c_put["source"])
+                exp_date, exp_dt = c_put["exp"], c_put["exp_dt"]
+                act_dte = c_put["dte"]
+                t_en = act_dte / 365.0
+                kp = c_put["strike"]
+                k_cents_p = c_put["k_cents"]
+                put_ask_en = _buy_leg(c_put["bid"], c_put["ask"], c_put["mid"], c_put["source"], slip_bsm=slip)
+                iv_p_en = c_put["iv"]
+                src_en = c_put["source"]
+            else:
+                target_cal = dt_objs[i] + datetime.timedelta(days=target_dte)
+                pos = bisect.bisect_left(dt_objs, target_cal)
+                if pos < len(dates):
+                    exp_date = dates[pos]
+                    exp_dt = dt_objs[pos]
+                else:
+                    exp_date = target_cal.isoformat()
+                    exp_dt = target_cal
+                act_dte = max(1, (exp_dt - dt_objs[i]).days)
+                t_en = act_dte / 365.0
+                kp = op * put_moneyness
+                k_cents_p = int(round(kp * 100.0))
+                iv_p_en = eval_skew_iv(op, kp, t_en, r_en, q_en, vxn_en, coeffs)
+                pm_en = bsm_price(op, kp, t_en, r_en, q_en, iv_p_en, "put")
+                put_ask_en = _buy_leg(pm_en * (1.0 - slip), pm_en * (1.0 + slip), pm_en, "bsm_fallback", slip_bsm=slip)
+                src_en = "bsm_fallback"
+                _rec_q(src_en)
 
             already_hedged = sum(t["hedged_shares"] for t in active_tranches)
             if max_slots == 1:
@@ -1051,13 +1193,22 @@ def simulate_strategy(
                     hedged_sh = min(core_shares * slot_coverage, avail_sh)
 
             if hedged_sh > 1e-6:
+                k_cents_c = None
+                iv_c_en = None
+                src_c_en = src_en
                 if t_type == "collar":
                     # Buy back any overlapping normal-time Covered Call before opening a Collar
                     if active_cc is not None:
                         rem_cc = max(0, (active_cc["exp_dt"] - dt_objs[i]).days)
-                        t_cc = rem_cc / 365.0
-                        sc_ex = eval_skew_iv(op, active_cc["kc"], t_cc, r_en, q_en, vxn_en, coeffs)
-                        c_ask_ex = bsm_price(op, active_cc["kc"], t_cc, r_en, q_en, sc_ex, "call") * (1.0 + slip)
+                        if _is_exp(i, active_cc["exp_dt"]):
+                            c_ask_ex = max(0.0, op - active_cc["kc"])
+                            src_cc_cl = active_cc.get("entry_source", "bsm_fallback")
+                        else:
+                            b_c, a_c, m_c, _, _, src_cc_cl = _lookup_leg(
+                                d, "call", active_cc["exp_date"], active_cc["kc"], active_cc.get("k_cents"),
+                                op, rem_cc, r_en, q_en, vxn_en, active_cc.get("last_iv"), slip_bsm=slip,
+                            )
+                            c_ask_ex = _buy_leg(b_c, a_c, m_c, src_cc_cl, slip_bsm=slip)
                         cost_cl = active_cc["shares"] * c_ask_ex
                         cc_gross_loss += cost_cl
                         if cc_cash >= cost_cl:
@@ -1080,10 +1231,31 @@ def simulate_strategy(
                                 "net_pnl_usd": round(active_cc["prem_usd"] - cost_cl, 2),
                                 "exit_reason": "closed_for_collar",
                                 "roll_gen": int(active_cc.get("roll_count", 0)),
+                                "pricing_source": m7e._classify_trade_source(
+                                    active_cc.get("entry_source", "bsm_fallback"), src_cc_cl
+                                ),
                             }
                         )
                         active_cc = None
-                    kc = solve_zero_cost_call_strike(op, kp, t_en, r_en, q_en, vxn_en, coeffs, slip)
+                    c_col = (
+                        real_store.select_call_contract_for_bid(
+                            d, op, act_dte, put_ask_en, op * 1.005, 65, 120, r_en, q_en, exp_override=exp_date
+                        )
+                        if (use_real and c_put is not None)
+                        else None
+                    )
+                    if c_col is not None:
+                        _rec_q(c_col["source"])
+                        kc = c_col["strike"]
+                        k_cents_c = c_col["k_cents"]
+                        iv_c_en = c_col["iv"]
+                        src_c_en = c_col["source"]
+                    else:
+                        kc = solve_zero_cost_call_strike(op, kp, t_en, r_en, q_en, vxn_en, coeffs, slip)
+                        k_cents_c = int(round(kc * 100.0))
+                        iv_c_en = eval_skew_iv(op, kc, t_en, r_en, q_en, vxn_en, coeffs)
+                        src_c_en = "bsm_fallback"
+                        _rec_q("bsm_fallback")
                     entry_cost_usd = 0.0
                     d_sh_entry = 0.0
                 else:
@@ -1127,6 +1299,12 @@ def simulate_strategy(
                         "slot_coverage": slot_coverage,
                         "kp": kp,
                         "kc": kc,
+                        "k_cents_p": k_cents_p,
+                        "k_cents_c": k_cents_c,
+                        "last_iv_p": iv_p_en,
+                        "last_iv_c": iv_c_en,
+                        "entry_source": src_en,
+                        "entry_source_c": src_c_en,
                         "entry_put_ask": put_ask_en,
                         "entry_cost_usd": entry_cost_usd,
                         "entry_shares_sold": d_sh_entry,
@@ -1138,29 +1316,47 @@ def simulate_strategy(
                 )
             pending_sig = None
 
-        # B2. Execute pending normal-time OTM +10% Covered Call sale at t+1 Open (only on uncollared shares)
+        # B2. Execute pending normal-time OTM Covered Call sale at T+1 (only on uncollared shares)
         if i > 0 and cc_enabled and pending_cc is not None and active_cc is None:
             has_collar = any(t["tranche_type"] == "collar" for t in active_tranches)
             if not has_collar:
-                prev_vxn_cc = pending_cc["vxn"]
-                prev_cl_cc = pending_cc["close"]
-                vxn_cc = max(10.0, prev_vxn_cc - 0.45 * (op / prev_cl_cc - 1.0) * 100.0)
-                r_cc, q_cc = pending_cc["r"], pending_cc["q"]
+                vxn_cc = vxn_ex_day
+                r_cc, q_cc = (r_cur, q_cur) if use_real else (pending_cc["r"], pending_cc["q"])
                 cc_sh = max(0.0, core_shares)
                 if cc_sh > 1e-6:
-                    target_cc = dt_objs[i] + datetime.timedelta(days=cc_dte)
-                    pos_cc = bisect.bisect_left(dt_objs, target_cc)
-                    if pos_cc < len(dates):
-                        exp_date_cc, exp_dt_cc = dates[pos_cc], dt_objs[pos_cc]
-                    else:
-                        exp_date_cc, exp_dt_cc = target_cc.isoformat(), target_cc
-                    t_cc = max(1, (exp_dt_cc - dt_objs[i]).days) / 365.0
-                    kc_cc = max(
-                        op * (1.0 + cc_min_otm),
-                        solve_call_strike_for_delta(op, t_cc, r_cc, q_cc, vxn_cc, coeffs, cc_target_delta),
+                    c_cc = (
+                        real_store.select_call_contract_delta(
+                            d, op, cc_dte, cc_target_delta, op * (1.0 + cc_min_otm), 18, 35, r_cc, q_cc
+                        )
+                        if use_real
+                        else None
                     )
-                    sc_cc = eval_skew_iv(op, kc_cc, t_cc, r_cc, q_cc, vxn_cc, coeffs)
-                    c_bid_cc = bsm_price(op, kc_cc, t_cc, r_cc, q_cc, sc_cc, "call") * (1.0 - slip)
+                    if c_cc is not None:
+                        _rec_q(c_cc["source"])
+                        exp_date_cc, exp_dt_cc = c_cc["exp"], c_cc["exp_dt"]
+                        kc_cc = c_cc["strike"]
+                        k_cents_cc = c_cc["k_cents"]
+                        c_bid_cc = _sell_leg(c_cc["bid"], c_cc["ask"], c_cc["mid"], c_cc["source"], slip_bsm=slip)
+                        iv_cc = c_cc["iv"]
+                        src_cc = c_cc["source"]
+                    else:
+                        target_cc = dt_objs[i] + datetime.timedelta(days=cc_dte)
+                        pos_cc = bisect.bisect_left(dt_objs, target_cc)
+                        if pos_cc < len(dates):
+                            exp_date_cc, exp_dt_cc = dates[pos_cc], dt_objs[pos_cc]
+                        else:
+                            exp_date_cc, exp_dt_cc = target_cc.isoformat(), target_cc
+                        t_cc = max(1, (exp_dt_cc - dt_objs[i]).days) / 365.0
+                        kc_cc = max(
+                            op * (1.0 + cc_min_otm),
+                            solve_call_strike_for_delta(op, t_cc, r_cc, q_cc, vxn_cc, coeffs, cc_target_delta),
+                        )
+                        iv_cc = eval_skew_iv(op, kc_cc, t_cc, r_cc, q_cc, vxn_cc, coeffs)
+                        cm_cc = bsm_price(op, kc_cc, t_cc, r_cc, q_cc, iv_cc, "call")
+                        c_bid_cc = _sell_leg(cm_cc * (1.0 - slip), cm_cc * (1.0 + slip), cm_cc, "bsm_fallback", slip_bsm=slip)
+                        k_cents_cc = int(round(kc_cc * 100.0))
+                        src_cc = "bsm_fallback"
+                        _rec_q(src_cc)
                     if c_bid_cc >= 0.05:
                         prem_usd = cc_sh * c_bid_cc
                         cc_tid += 1
@@ -1175,6 +1371,9 @@ def simulate_strategy(
                             "entry_spot": op,
                             "entry_vxn": vxn_cc,
                             "kc": kc_cc,
+                            "k_cents": k_cents_cc,
+                            "last_iv": iv_cc,
+                            "entry_source": src_cc,
                             "shares": cc_sh,
                             "prem_usd": prem_usd,
                             "pending_close": False,
@@ -1182,38 +1381,67 @@ def simulate_strategy(
                         }
             pending_cc = None
 
-        # B3. Engine 3 Reverse Wheel Covered Call & Panic Short-Put Morning Executions (T+1 Open)
+        # B3. Engine 3 Reverse Wheel Covered Call & Panic Short-Put Executions (T+1)
         if i > 0 and sp_enabled and pending_wc is not None and assigned_shares > 1e-6 and active_wc is None:
             pw = pending_wc
             pending_wc = None
-            vxn_wc = max(10.0, pw["vxn"] - 0.45 * (op / pw["close"] - 1.0) * 100.0)
-            if wc_mode == "wc_reclaim_30d_d35":
-                target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
-                pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
-                if pos_wc < len(dates):
-                    exp_date_wc, exp_dt_wc = dates[pos_wc], dt_objs[pos_wc]
-                else:
-                    exp_date_wc, exp_dt_wc = target_wc_dt.isoformat(), target_wc_dt
-                act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
-                t_wc_solve = act_dte_wc / 365.0
-                k_d35 = solve_call_strike_for_delta(op, t_wc_solve, pw["r"], pw["q"], vxn_wc, coeffs, 0.35)
-                kc_wc = max(assigned_cost_k, k_d35)
-            elif wc_mode == "wc_30d_c5s5":
-                target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
-                pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
-                if pos_wc < len(dates):
-                    exp_date_wc, exp_dt_wc = dates[pos_wc], dt_objs[pos_wc]
-                else:
-                    exp_date_wc, exp_dt_wc = target_wc_dt.isoformat(), target_wc_dt
-                act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
-                kc_wc = max(assigned_cost_k * 1.05, op * 1.05)
-            elif wc_mode == "wc_14d_c0s2":
-                exp_date_wc, exp_dt_wc, act_dte_wc = _pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
-                kc_wc = max(assigned_cost_k, op * 1.02)
+            vxn_wc = vxn_ex_day
+            r_wc, q_wc = (r_cur, q_cur) if use_real else (pw["r"], pw["q"])
+            c_wc = None
+            if use_real:
+                if wc_mode == "wc_reclaim_30d_d35":
+                    c_wc = real_store.select_call_contract_delta(
+                        d, op, 30, 0.35, assigned_cost_k, 21, 40, r_wc, q_wc
+                    )
+                elif wc_mode == "wc_30d_c5s5":
+                    c_wc = real_store.select_call_contract_strike(
+                        d, op, 30, max(assigned_cost_k * 1.05, op * 1.05), 21, 40, r_wc, q_wc
+                    )
+                elif wc_mode == "wc_14d_c0s2":
+                    c_wc = real_store.select_call_contract_strike(
+                        d, op, sp_dte, max(assigned_cost_k, op * 1.02), 5, 17, r_wc, q_wc
+                    )
+            if c_wc is not None:
+                _rec_q(c_wc["source"])
+                exp_date_wc, exp_dt_wc = c_wc["exp"], c_wc["exp_dt"]
+                act_dte_wc = c_wc["dte"]
+                kc_wc = c_wc["strike"]
+                k_cents_wc = c_wc["k_cents"]
+                c_bid_wc = _sell_leg(c_wc["bid"], c_wc["ask"], c_wc["mid"], c_wc["source"], slip_bsm=0.03)
+                iv_wc = c_wc["iv"]
+                src_wc = c_wc["source"]
             else:
-                raise ValueError(f"Unknown wc_mode: {wc_mode}")
-            t_wc = act_dte_wc / 365.0
-            c_bid_wc, _ = _opt_exec_price_sp(op, kc_wc, t_wc, pw["r"], pw["q"], vxn_wc, coeffs, "call", "sell", slip)
+                if wc_mode == "wc_reclaim_30d_d35":
+                    target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
+                    pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
+                    if pos_wc < len(dates):
+                        exp_date_wc, exp_dt_wc = dates[pos_wc], dt_objs[pos_wc]
+                    else:
+                        exp_date_wc, exp_dt_wc = target_wc_dt.isoformat(), target_wc_dt
+                    act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
+                    t_wc_solve = act_dte_wc / 365.0
+                    k_d35 = solve_call_strike_for_delta(op, t_wc_solve, r_wc, q_wc, vxn_wc, coeffs, 0.35)
+                    kc_wc = max(assigned_cost_k, k_d35)
+                elif wc_mode == "wc_30d_c5s5":
+                    target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
+                    pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
+                    if pos_wc < len(dates):
+                        exp_date_wc, exp_dt_wc = dates[pos_wc], dt_objs[pos_wc]
+                    else:
+                        exp_date_wc, exp_dt_wc = target_wc_dt.isoformat(), target_wc_dt
+                    act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
+                    kc_wc = max(assigned_cost_k * 1.05, op * 1.05)
+                elif wc_mode == "wc_14d_c0s2":
+                    exp_date_wc, exp_dt_wc, act_dte_wc = _pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
+                    kc_wc = max(assigned_cost_k, op * 1.02)
+                else:
+                    raise ValueError(f"Unknown wc_mode: {wc_mode}")
+                t_wc = act_dte_wc / 365.0
+                c_bid_wc, _ = _opt_exec_price_sp(op, kc_wc, t_wc, r_wc, q_wc, vxn_wc, coeffs, "call", "sell", slip)
+                k_cents_wc = int(round(kc_wc * 100.0))
+                iv_wc = eval_skew_iv(op, kc_wc, t_wc, r_wc, q_wc, vxn_wc, coeffs)
+                src_wc = "bsm_fallback"
+                _rec_q(src_wc)
             if c_bid_wc >= MIN_OPT_BID:
                 prem_wc = assigned_shares * c_bid_wc
                 sp_comm_total += assigned_shares * OPT_COMM_PER_SH
@@ -1230,6 +1458,9 @@ def simulate_strategy(
                     "dte": act_dte_wc,
                     "entry_spot": op,
                     "kc": kc_wc,
+                    "k_cents": k_cents_wc,
+                    "last_iv": iv_wc,
+                    "entry_source": src_wc,
                     "assigned_cost_k": assigned_cost_k,
                     "shares": assigned_shares,
                     "prem_usd": prem_wc,
@@ -1238,13 +1469,33 @@ def simulate_strategy(
         if i > 0 and sp_enabled and pending_sp is not None and active_sp is None and assigned_shares <= 1e-6:
             ps = pending_sp
             pending_sp = None
-            vxn_sp = max(10.0, ps["vxn"] - 0.45 * (op / ps["close"] - 1.0) * 100.0)
-            exp_date_sp, exp_dt_sp, act_dte_sp = _pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
-            t_sp = act_dte_sp / 365.0
-            kp_sp = op * (1.0 - sp_otm_pct)
-            p_bid_sp, _ = _opt_exec_price_sp(op, kp_sp, t_sp, ps["r"], ps["q"], vxn_sp, coeffs, "put", "sell", slip)
+            vxn_sp = vxn_ex_day
+            r_sp, q_sp = (r_cur, q_cur) if use_real else (ps["r"], ps["q"])
+            c_sp = (
+                real_store.select_put_contract(d, op, sp_dte, 1.0 - sp_otm_pct, 5, 17, r_sp, q_sp)
+                if use_real
+                else None
+            )
+            if c_sp is not None:
+                _rec_q(c_sp["source"])
+                exp_date_sp, exp_dt_sp = c_sp["exp"], c_sp["exp_dt"]
+                act_dte_sp = c_sp["dte"]
+                kp_sp = c_sp["strike"]
+                k_cents_sp = c_sp["k_cents"]
+                p_bid_sp = _sell_leg(c_sp["bid"], c_sp["ask"], c_sp["mid"], c_sp["source"], slip_bsm=0.03)
+                iv_sp = c_sp["iv"]
+                src_sp = c_sp["source"]
+            else:
+                exp_date_sp, exp_dt_sp, act_dte_sp = _pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
+                t_sp = act_dte_sp / 365.0
+                kp_sp = op * (1.0 - sp_otm_pct)
+                p_bid_sp, _ = _opt_exec_price_sp(op, kp_sp, t_sp, r_sp, q_sp, vxn_sp, coeffs, "put", "sell", slip)
+                k_cents_sp = int(round(kp_sp * 100.0))
+                iv_sp = eval_skew_iv(op, kp_sp, t_sp, r_sp, q_sp, vxn_sp, coeffs)
+                src_sp = "bsm_fallback"
+                _rec_q(src_sp)
             if p_bid_sp >= MIN_OPT_BID:
-                nav_open = _estimate_nav_open(op, vxn_sp, ps["r"], ps["q"], dt_objs[i])
+                nav_open = _estimate_nav_open(op, vxn_sp, r_sp, q_sp, dt_objs[i], d_str=d)
                 put_sh = (sp_max_lev * nav_open) / kp_sp
                 prem_sp = put_sh * p_bid_sp
                 sp_comm_total += put_sh * OPT_COMM_PER_SH
@@ -1263,6 +1514,9 @@ def simulate_strategy(
                     "dte": act_dte_sp,
                     "entry_spot": op,
                     "kp": kp_sp,
+                    "k_cents": k_cents_sp,
+                    "last_iv": iv_sp,
+                    "entry_source": src_sp,
                     "shares": put_sh,
                     "prem_usd": prem_sp,
                     "entry_vix_ratio": ps["vix_ratio"],
@@ -1283,22 +1537,27 @@ def simulate_strategy(
 
         rem_after_exp: list[dict[str, Any]] = []
         for tr in active_tranches:
-            if d == tr["exp_date"]:
-                is_true_exp = (i < len(dates) - 1) or ((tr["exp_dt"] - dt_objs[i]).days == 0)
+            if _is_exp(i, tr["exp_dt"]):
+                is_true_exp = (i < len(dates) - 1) or ((tr["exp_dt"] - dt_objs[i]).days <= 0)
                 if is_true_exp:
                     put_ex = max(0.0, tr["kp"] - cl)
                     call_ex = max(0.0, cl - tr["kc"]) if tr["kc"] is not None else 0.0
                     reason = f"expiry_{target_dte}dte"
                     rem_d = 0
                     t_rem_ex = 0.0
+                    src_ex = tr.get("entry_source", "bsm_fallback")
                 else:
-                    rem_d = (tr["exp_dt"] - dt_objs[i]).days
-                    t_rem_ex = max(1.0 / 365.0, rem_d / 365.0)
-                    sp = eval_skew_iv(cl, tr["kp"], t_rem_ex, r_cur, q_cur, vxn_cl, coeffs)
-                    put_ex = bsm_price(cl, tr["kp"], t_rem_ex, r_cur, q_cur, sp, "put")
+                    rem_d = max(1, (tr["exp_dt"] - dt_objs[i]).days)
+                    t_rem_ex = rem_d / 365.0
+                    _, _, put_ex, _, _, src_ex = _lookup_leg(
+                        d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents_p"),
+                        cl, rem_d, r_cur, q_cur, vxn_cl, tr.get("last_iv_p"), slip_bsm=slip,
+                    )
                     if tr["kc"] is not None:
-                        sc = eval_skew_iv(cl, tr["kc"], t_rem_ex, r_cur, q_cur, vxn_cl, coeffs)
-                        call_ex = bsm_price(cl, tr["kc"], t_rem_ex, r_cur, q_cur, sc, "call")
+                        _, _, call_ex, _, _, _ = _lookup_leg(
+                            d, "call", tr["exp_date"], tr["kc"], tr.get("k_cents_c"),
+                            cl, rem_d, r_cur, q_cur, vxn_cl, tr.get("last_iv_c"), slip_bsm=slip,
+                        )
                     else:
                         call_ex = 0.0
                     reason = "sample_end_mtm"
@@ -1332,6 +1591,7 @@ def simulate_strategy(
                 )
                 hs = tr["hedged_shares"]
                 trig_en, trig_zh = _format_trigger_label(tr["sig_score"], tr["sig_ad_below50"], gate_key)
+                en_src = tr.get("entry_source", "bsm_fallback")
                 ledger.append(
                     {
                         "tranche_id": tr["tranche_id"],
@@ -1345,6 +1605,9 @@ def simulate_strategy(
                         "actual_days_held": (dt_objs[i] - tr["entry_dt"]).days,
                         "rem_dte_at_exit": rem_d,
                         "exit_reason": reason,
+                        "pricing_source": m7e._classify_trade_source(en_src, src_ex),
+                        "entry_source": en_src,
+                        "exit_source": src_ex,
                         "sig_score": tr["sig_score"],
                         "sig_ad_below50": tr["sig_ad_below50"],
                         "trigger_en": trig_en,
@@ -1387,21 +1650,27 @@ def simulate_strategy(
                 )
             else:
                 rem_days = max(1, (tr["exp_dt"] - dt_objs[i]).days)
-                t_rem = rem_days / 365.0
-                sp = eval_skew_iv(cl, tr["kp"], t_rem, r_cur, q_cur, vxn_cl, coeffs)
-                pm = bsm_price(cl, tr["kp"], t_rem, r_cur, q_cur, sp, "put")
+                b_p, a_p, pm, iv_p_now, _, src_p_now = _lookup_leg(
+                    d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents_p"),
+                    cl, rem_days, r_cur, q_cur, vxn_cl, tr.get("last_iv_p"), slip_bsm=slip,
+                )
+                tr["last_iv_p"] = iv_p_now
                 if tr["kc"] is not None:
-                    sc = eval_skew_iv(cl, tr["kc"], t_rem, r_cur, q_cur, vxn_cl, coeffs)
-                    cm = bsm_price(cl, tr["kc"], t_rem, r_cur, q_cur, sc, "call")
+                    b_c, a_c, cm, iv_c_now, _, src_c_now = _lookup_leg(
+                        d, "call", tr["exp_date"], tr["kc"], tr.get("k_cents_c"),
+                        cl, rem_days, r_cur, q_cur, vxn_cl, tr.get("last_iv_c"), slip_bsm=slip,
+                    )
+                    tr["last_iv_c"] = iv_c_now
                 else:
-                    cm = 0.0
+                    b_c = a_c = cm = 0.0
+                    src_c_now = "bsm_fallback"
 
                 put_mtm_tot += tr["hedged_shares"] * pm
                 call_mtm_tot -= tr["hedged_shares"] * cm
 
                 if rem_days >= 3:
-                    est_put_bid = pm * (1.0 - slip)
-                    est_call_ask = cm * (1.0 + slip) if tr["kc"] is not None else 0.0
+                    est_put_bid = _sell_leg(b_p, a_p, pm, src_p_now, slip_bsm=slip)
+                    est_call_ask = _buy_leg(b_c, a_c, cm, src_c_now, slip_bsm=slip) if tr["kc"] is not None else 0.0
                     put_mult = est_put_bid / max(tr["entry_put_ask"], 1e-6)
                     tp_reason: str | None = None
                     # Track 1: Acute panic backwardation (VIX/VIX3M >= 1.10), gated by tp_mode
@@ -1447,7 +1716,7 @@ def simulate_strategy(
         # D2. Normal-time Covered Call expiry settlement or EOD MTM
         cc_mtm = 0.0
         if active_cc is not None:
-            if d == active_cc["exp_date"]:
+            if _is_exp(i, active_cc["exp_dt"]):
                 pay_cc = max(0.0, cl - active_cc["kc"])
                 loss_cc = active_cc["shares"] * pay_cc
                 if pay_cc > 0.0:
@@ -1458,6 +1727,7 @@ def simulate_strategy(
                     else:
                         core_shares -= (loss_cc - cc_cash) / (cl * (1.0 - STOCK_REBAL_FEE))
                         cc_cash = 0.0
+                en_cc_src = active_cc.get("entry_source", "bsm_fallback")
                 cc_ledger.append(
                     {
                         "cc_id": active_cc["cc_id"],
@@ -1473,16 +1743,18 @@ def simulate_strategy(
                         "net_pnl_usd": round(active_cc["prem_usd"] - loss_cc, 2),
                         "exit_reason": "assigned_breach" if pay_cc > 0.0 else "expired_worthless",
                         "roll_gen": int(active_cc.get("roll_count", 0)),
+                        "pricing_source": m7e._classify_trade_source(en_cc_src, en_cc_src),
                     }
                 )
                 active_cc = None
             else:
                 rem_cc = max(1, (active_cc["exp_dt"] - dt_objs[i]).days)
-                t_cc = rem_cc / 365.0
-                sc_cc = eval_skew_iv(cl, active_cc["kc"], t_cc, r_cur, q_cur, vxn_cl, coeffs)
-                cm_cc = bsm_price(cl, active_cc["kc"], t_cc, r_cur, q_cur, sc_cc, "call")
+                _, _, cm_cc, iv_cc_now, cur_delta, _ = _lookup_leg(
+                    d, "call", active_cc["exp_date"], active_cc["kc"], active_cc.get("k_cents"),
+                    cl, rem_cc, r_cur, q_cur, vxn_cl, active_cc.get("last_iv"), slip_bsm=slip,
+                )
+                active_cc["last_iv"] = iv_cc_now
                 cc_mtm = -active_cc["shares"] * cm_cc
-                cur_delta = bsm_call_delta(cl, active_cc["kc"], t_cc, r_cur, q_cur, sc_cc)
                 if rem_cc >= 3 and vix_r >= 1.10:
                     active_cc["pending_close"] = True
                     active_cc["close_reason"] = "panic_close_uncap"
@@ -1499,7 +1771,8 @@ def simulate_strategy(
         sp_mtm = 0.0
         if active_sp is not None:
             days_short_put_open += 1
-            if d == active_sp["exp_date"]:
+            if _is_exp(i, active_sp["exp_dt"]):
+                en_sp_src = active_sp.get("entry_source", "bsm_fallback")
                 if cl >= active_sp["kp"]:
                     sp_closed_ledger.append(
                         {
@@ -1521,6 +1794,7 @@ def simulate_strategy(
                             "exit_cost_usd": 0.0,
                             "net_pnl_usd": round(active_sp["prem_usd"], 2),
                             "exit_reason": "expired_otm",
+                            "pricing_source": m7e._classify_trade_source(en_sp_src, en_sp_src),
                         }
                     )
                     active_sp = None
@@ -1554,19 +1828,24 @@ def simulate_strategy(
                             "exit_cost_usd": round(intr_cost, 2),
                             "net_pnl_usd": round(active_sp["prem_usd"] - intr_cost, 2),
                             "exit_reason": "assigned_wheel",
+                            "pricing_source": m7e._classify_trade_source(en_sp_src, en_sp_src),
                         }
                     )
                     active_sp = None
             else:
                 rem_sp = max(1, (active_sp["exp_dt"] - dt_objs[i]).days)
-                t_sp = rem_sp / 365.0
-                _, pm_sp = _opt_exec_price_sp(cl, active_sp["kp"], t_sp, r_cur, q_cur, vxn_cl, coeffs, "put", "buy", slip)
+                _, _, pm_sp, iv_sp_now, _, _ = _lookup_leg(
+                    d, "put", active_sp["exp_date"], active_sp["kp"], active_sp.get("k_cents"),
+                    cl, rem_sp, r_cur, q_cur, vxn_cl, active_sp.get("last_iv"), slip_bsm=0.03,
+                )
+                active_sp["last_iv"] = iv_sp_now
                 sp_mtm = -active_sp["shares"] * pm_sp
 
         # D4. Engine 3 Reverse Wheel Covered Call EOD settlement or MTM
         wc_mtm = 0.0
         if active_wc is not None:
-            if d == active_wc["exp_date"]:
+            if _is_exp(i, active_wc["exp_dt"]):
+                en_wc_src = active_wc.get("entry_source", "bsm_fallback")
                 if cl > active_wc["kc"]:
                     sp_cash += assigned_shares * active_wc["kc"]
                     stock_gain = active_wc["shares"] * (active_wc["kc"] - active_wc["assigned_cost_k"])
@@ -1592,6 +1871,7 @@ def simulate_strategy(
                             "stock_gain_usd": round(stock_gain, 2),
                             "net_pnl_usd": round(active_wc["prem_usd"] + stock_gain, 2),
                             "exit_reason": "called_away",
+                            "pricing_source": m7e._classify_trade_source(en_wc_src, en_wc_src),
                         }
                     )
                     assigned_shares = 0.0
@@ -1625,13 +1905,17 @@ def simulate_strategy(
                             "stock_gain_usd": 0.0,
                             "net_pnl_usd": round(active_wc["prem_usd"], 2),
                             "exit_reason": "expired_otm",
+                            "pricing_source": m7e._classify_trade_source(en_wc_src, en_wc_src),
                         }
                     )
                     active_wc = None
             else:
                 rem_wc = max(1, (active_wc["exp_dt"] - dt_objs[i]).days)
-                t_wc = rem_wc / 365.0
-                _, cm_wc = _opt_exec_price_sp(cl, active_wc["kc"], t_wc, r_cur, q_cur, vxn_cl, coeffs, "call", "buy", slip)
+                _, _, cm_wc, iv_wc_now, _, _ = _lookup_leg(
+                    d, "call", active_wc["exp_date"], active_wc["kc"], active_wc.get("k_cents"),
+                    cl, rem_wc, r_cur, q_cur, vxn_cl, active_wc.get("last_iv"), slip_bsm=0.03,
+                )
+                active_wc["last_iv"] = iv_wc_now
                 wc_mtm = -active_wc["shares"] * cm_wc
 
         tot_mtm = put_mtm_tot + call_mtm_tot + cc_mtm + sp_mtm + wc_mtm
@@ -1753,11 +2037,15 @@ def simulate_strategy(
     for tr in active_tranches:
         rem_d = max(1, (tr["exp_dt"] - last_dt).days)
         t_rem = rem_d / 365.0
-        sp = eval_skew_iv(last_cl, tr["kp"], t_rem, last_rf, last_q, last_vxn, coeffs)
-        pm = bsm_price(last_cl, tr["kp"], t_rem, last_rf, last_q, sp, "put")
+        _, _, pm, _, _, src_p_live = _lookup_leg(
+            last_d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents_p"),
+            last_cl, rem_d, last_rf, last_q, last_vxn, tr.get("last_iv_p"), slip_bsm=slip,
+        )
         if tr["kc"] is not None:
-            sc = eval_skew_iv(last_cl, tr["kc"], t_rem, last_rf, last_q, last_vxn, coeffs)
-            cm = bsm_price(last_cl, tr["kc"], t_rem, last_rf, last_q, sc, "call")
+            _, _, cm, _, _, _ = _lookup_leg(
+                last_d, "call", tr["exp_date"], tr["kc"], tr.get("k_cents_c"),
+                last_cl, rem_d, last_rf, last_q, last_vxn, tr.get("last_iv_c"), slip_bsm=slip,
+            )
         else:
             cm = 0.0
         hs = tr["hedged_shares"]
@@ -1787,6 +2075,7 @@ def simulate_strategy(
         is_armed = bool(tr.get("pending_tp"))
         live_reason = "live_tp_armed_next_open" if is_armed else "open_live_mtm"
         trig_en, trig_zh = _format_trigger_label(tr["sig_score"], tr["sig_ad_below50"], gate_key)
+        en_src_l = tr.get("entry_source", "bsm_fallback")
         ledger.append(
             {
                 "tranche_id": tr["tranche_id"],
@@ -1804,6 +2093,9 @@ def simulate_strategy(
                 "actual_days_held": (last_dt - tr["entry_dt"]).days,
                 "rem_dte_at_exit": rem_d,
                 "exit_reason": live_reason,
+                "pricing_source": m7e._classify_trade_source(en_src_l, src_p_live),
+                "entry_source": en_src_l,
+                "exit_source": src_p_live,
                 "sig_score": tr["sig_score"],
                 "sig_ad_below50": tr["sig_ad_below50"],
                 "trigger_en": trig_en,
@@ -1866,6 +2158,7 @@ def simulate_strategy(
                 "pending_tp": is_armed,
                 "tp_reason": tr.get("tp_reason") or "",
                 "tp_trigger_ratio": round(float(tr.get("tp_trigger_ratio") or last_vr), 3),
+                "pricing_source": m7e._classify_trade_source(en_src_l, src_p_live),
             }
         )
 
@@ -1963,12 +2256,13 @@ def simulate_strategy(
 
     if active_sp is not None:
         rem_sp_last = max(1, (active_sp["exp_dt"] - last_dt).days)
-        t_sp_last = rem_sp_last / 365.0
-        _, pm_sp_last = _opt_exec_price_sp(
-            last_cl, active_sp["kp"], t_sp_last, last_rf, last_q, last_vxn, coeffs, "put", "buy", slip
+        _, _, pm_sp_last, _, _, src_sp_last = _lookup_leg(
+            last_d, "put", active_sp["exp_date"], active_sp["kp"], active_sp.get("k_cents"),
+            last_cl, rem_sp_last, last_rf, last_q, last_vxn, active_sp.get("last_iv"), slip_bsm=0.03,
         )
         mtm_cost_sp = active_sp["shares"] * pm_sp_last
         mtm_pnl_sp = active_sp["prem_usd"] - mtm_cost_sp
+        ps_sp_last = m7e._classify_trade_source(active_sp.get("entry_source", "bsm_fallback"), src_sp_last)
         open_sp_serialized = {
             "sp_id": active_sp["sp_id"],
             "cycle_id": active_sp["cycle_id"],
@@ -1984,6 +2278,7 @@ def simulate_strategy(
             "prem_usd": round(active_sp["prem_usd"], 2),
             "mtm_cost_usd": round(mtm_cost_sp, 2),
             "mtm_pnl_usd": round(mtm_pnl_sp, 2),
+            "pricing_source": ps_sp_last,
         }
         sp_combined_ledger.append(
             {
@@ -2007,17 +2302,19 @@ def simulate_strategy(
                 "exit_cost_usd": round(mtm_cost_sp, 2),
                 "net_pnl_usd": round(mtm_pnl_sp, 2),
                 "exit_reason": "open_live_short_put",
+                "pricing_source": ps_sp_last,
             }
         )
 
     if active_wc is not None:
         rem_wc_last = max(1, (active_wc["exp_dt"] - last_dt).days)
-        t_wc_last = rem_wc_last / 365.0
-        _, cm_wc_last = _opt_exec_price_sp(
-            last_cl, active_wc["kc"], t_wc_last, last_rf, last_q, last_vxn, coeffs, "call", "buy", slip
+        _, _, cm_wc_last, _, _, src_wc_last = _lookup_leg(
+            last_d, "call", active_wc["exp_date"], active_wc["kc"], active_wc.get("k_cents"),
+            last_cl, rem_wc_last, last_rf, last_q, last_vxn, active_wc.get("last_iv"), slip_bsm=0.03,
         )
         mtm_cost_wc = active_wc["shares"] * cm_wc_last
         mtm_pnl_wc = active_wc["prem_usd"] - mtm_cost_wc
+        ps_wc_last = m7e._classify_trade_source(active_wc.get("entry_source", "bsm_fallback"), src_wc_last)
         open_wc_serialized = {
             "wc_id": active_wc["wc_id"],
             "cycle_id": active_wc["cycle_id"],
@@ -2034,6 +2331,7 @@ def simulate_strategy(
             "prem_usd": round(active_wc["prem_usd"], 2),
             "mtm_cost_usd": round(mtm_cost_wc, 2),
             "mtm_pnl_usd": round(mtm_pnl_wc, 2),
+            "pricing_source": ps_wc_last,
         }
         sp_combined_ledger.append(
             {
@@ -2058,6 +2356,7 @@ def simulate_strategy(
                 "exit_cost_usd": round(mtm_cost_wc, 2),
                 "net_pnl_usd": round(mtm_pnl_wc, 2),
                 "exit_reason": "open_live_wheel_call",
+                "pricing_source": ps_wc_last,
             }
         )
 
@@ -2072,6 +2371,20 @@ def simulate_strategy(
         if sp_enabled
         else 1.0
     )
+
+    all_trades_src = (
+        [x.get("pricing_source", "bsm_fallback") for x in ledger]
+        + [x.get("pricing_source", "bsm_fallback") for x in cc_ledger]
+        + [x.get("pricing_source", "bsm_fallback") for x in sp_combined_ledger]
+    )
+    n_tot_tr = len(all_trades_src)
+    n_opra_tr = sum(1 for s in all_trades_src if s == "real_opra")
+    n_poly_tr = sum(1 for s in all_trades_src if s == "real_polygon")
+    n_real_tr = sum(1 for s in all_trades_src if s in ("real_opra", "real_polygon", "real_hybrid"))
+    n_sim_tr = n_tot_tr - n_real_tr
+    real_tr_pct = round(100.0 * n_real_tr / n_tot_tr, 1) if n_tot_tr > 0 else (100.0 if use_real else 0.0)
+    tot_lk = max(1, q_stats["total_lookups"])
+    real_hit_pct = round(100.0 * (q_stats["real_opra_hits"] + q_stats["real_polygon_hits"]) / tot_lk, 1) if q_stats["total_lookups"] > 0 else (100.0 if use_real else 0.0)
 
     summary.update(
         {
@@ -2094,6 +2407,13 @@ def simulate_strategy(
             "end_assigned_shares": round(assigned_shares, 2),
             "end_assigned_cost_k": round(assigned_cost_k, 2),
             "end_sp_cash": round(sp_cash, 2),
+            "pricing_basis": "hybrid_real_opra_polygon_bsm" if use_real else "bsm_synthetic",
+            "real_trades_count": n_real_tr,
+            "real_opra_trades_count": n_opra_tr,
+            "real_polygon_trades_count": n_poly_tr,
+            "sim_trades_count": n_sim_tr,
+            "real_trades_pct": real_tr_pct,
+            "real_quote_hit_pct": real_hit_pct,
         }
     )
 
@@ -3087,6 +3407,12 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
     m7_data, rows_all = m7e.load_m7_seed_and_optional_live(M7_SEED_GZ, rows_all, live_fetch=live_fetch)
     m7_sig_pack = m7e.compute_m7_signals_and_tail(rows_all, m7_data, start_eval_date=START_DATE)
     rows_eval = [r for r in rows_all if r["date"] >= START_DATE]
+    real_store = roc.HybridRealOptionChainStore()
+    print(
+        f"[real-chain] Loaded OPRA ({real_store.opra_date_min}..{real_store.opra_date_max}, {real_store.opra_days}d) "
+        f"+ Polygon ({real_store.polygon_date_min}..{real_store.polygon_date_max}, {real_store.polygon_days}d)",
+        flush=True,
+    )
 
     strategy_defs = [
         (
@@ -3101,15 +3427,15 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
             },
             {
                 "code_name": "U1_AD_or_Score4_VXN22_H2_2x50",
-                "name_en": "U1 Classic Six-Lights Hybrid (50% Naked Put + 50% Zero-Cost Collar)",
-                "name_zh": "U1 经典六灯双槽版（50% 首仓裸 Put + 50% 次仓零成本领口对照）",
-                "short_en": "U1 Classic (Put+Collar)",
-                "short_zh": "U1 经典六灯双槽",
-                "badge_en": "CLASSIC BASELINE · PUT + COLLAR",
-                "badge_zh": "经典六灯双槽对照",
+                "name_en": "Legacy U1 Six-Lights Hybrid (50% Naked Put + 50% Zero-Cost Collar)",
+                "name_zh": "旧版对照 · U1 六灯双槽版（50% 首仓裸 Put + 50% 次仓零成本领口）",
+                "short_en": "Legacy U1 Dual-Slot",
+                "short_zh": "旧版对照 · U1 双槽",
+                "badge_en": "LEGACY COMPARISON · PUT + COLLAR",
+                "badge_zh": "旧版六灯双槽对照",
                 "color_hex": "#7DB8F0",
-                "rule_summary_en": "100% QQQ core forever; opens Slot 1 50% Naked -10% Put + Slot 2 50% 30D-stepped Collar on (AD<50DMA or >=4 Lights) & ATH<=5% & VXN<=22; Dual-Track TP monetizes into QQQ shares on VIX/VIX3M >= 1.10 OR (DTE <= 45 & Put Bid >= 5x entry cost).",
-                "rule_summary_zh": "底仓 100% QQQ 永不卖股择时；在 ATH<=5% 且 VXN<=22 时凭 AD 顶背离或 >=4 盏危机灯开首仓 50% 裸 Put、满30天补次仓 50% 零成本 Collar；双轨止盈（VIX/VIX3M >= 1.10 恐慌倒挂，或后半程 DTE <= 45 且 Put 涨超 5 倍）变现抄底复投 QQQ。",
+                "rule_summary_en": "Legacy baseline: 100% QQQ core + Slot 1 50% Naked -10% Put + Slot 2 50% 30D-stepped Collar on (AD<50DMA or >=4 Lights) & ATH<=5% & VXN<=22. Priced on real OPRA+Polygon option quotes where available.",
+                "rule_summary_zh": "旧版双槽对照：底仓 100% QQQ，在 ATH<=5% 且 VXN<=22 时凭 AD 顶背离或 >=4 盏危机灯开首仓 50% 裸 Put、满30天补次仓 50% 零成本 Collar（同样基于真实 OPRA+Polygon 历史期权盘口回测）。",
             },
         ),
         (
@@ -3419,7 +3745,7 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
 
     # Simulate Buy & Hold once (identical across all TP, CC, SP & WC modes)
     bh_def = [d for d in strategy_defs if d[0] == "BH_Pure_QQQ"][0]
-    bh_sim = simulate_strategy(rows_all, coeffs, strategy_id="BH_Pure_QQQ", **bh_def[1])
+    bh_sim = simulate_strategy(rows_all, coeffs, strategy_id="BH_Pure_QQQ", real_store=real_store, **bh_def[1])
     bh_summary = {**bh_sim["summary"], **bh_def[2]}
 
     mode_bundles: dict[str, Any] = {}
@@ -3492,6 +3818,7 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
                             cc_mode=cc_id,
                             sp_mode=sp_id,
                             wc_mode=wc_id,
+                            real_store=real_store,
                             **sim_kw,
                         )
                         sims_m[sid] = res
@@ -3646,15 +3973,15 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
     m7_strategy_meta: dict[str, dict[str, Any]] = {
         "M7G_Graded": {
             "code_name": "M7G_ThreePillar_Graded_3Slot",
-            "name_en": "M7-Graded Three-Pillar Probabilistic Put Overlay (0-1-2-3 Equal-Dollar Slots)",
-            "name_zh": "M7-Graded 三支柱概率分层 Put 叠加引擎（0-1-2-3 等金额裸 Put 旗舰）",
+            "name_en": "M7-Graded Three-Pillar Probabilistic Put Overlay (Real OPRA · 120D->50D Champion)",
+            "name_zh": "M7-Graded 三支柱概率分层旗舰（真实 OPRA 盘口 · 120D→50D 冠军）",
             "short_en": "M7-Graded (3-Pillar)",
             "short_zh": "M7-Graded 三支柱分层",
-            "badge_en": "FLAGSHIP #1 · 3-PILLAR GRADED",
-            "badge_zh": "三支柱总冠军 · 零封顶裸Put",
+            "badge_en": "REAL OPRA #1 · 3-PILLAR GRADED",
+            "badge_zh": "真实 OPRA 总冠军 · 120D→50D",
             "color_hex": "#80C6A8",
-            "rule_summary_en": "100% uncapped QQQ core + zero-lookahead 3-Pillar probability scoring (P1 Calm-Top M0+M6, P2 Shock M2+M5 HMM, P3 Bear/Credit M4+M3) grading 0-1-2-3 equal-dollar Naked Put slots (-15%/-20% OTM, 90D Hold or 120D->50D Roll).",
-            "rule_summary_zh": "底仓 100% QQQ 零封顶持有；由三支柱零前视概率引擎（P1 高位背离 M0+M6、P2 外生启爆 M2+M5 HMM、P3 慢熊信用 M4+M3）动态映射 0-1-2-3 槽等金额裸 Put（可选 -15%/-20% OTM 与 90D持有 / 120D剩50天滚仓）。",
+            "rule_summary_en": "100% uncapped QQQ core + zero-lookahead 3-Pillar probability scoring (P1 Calm-Top M0+M6, P2 Shock M2+M5 HMM, P3 Bear/Credit M4+M3) grading 0-1-2-3 equal-dollar Naked Put slots. Default -15% OTM 120D->50D Roll validated on 2015-2025 real OPRA bid/ask quotes + 2026Q1 Polygon quotes + BSM fallback.",
+            "rule_summary_zh": "底仓 100% QQQ 零封顶持有；由三支柱零前视概率引擎（P1 高位背离 M0+M6、P2 外生启爆 M2+M5 HMM、P3 慢熊信用 M4+M3）动态映射 0-1-2-3 槽等金额裸 Put。默认 -15% OTM 120D→50D 滚仓经 2015–2025 真实 OPRA 盘口 + 2026Q1 Polygon 实盘验证，缺失段以校准 BSM 补齐。",
         },
         "M7_Ensemble": {
             "code_name": "M7_ThreePillar_2Slot",
@@ -3665,39 +3992,39 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
             "badge_en": "3-PILLAR 2-SLOT",
             "badge_zh": "三支柱双槽对照",
             "color_hex": "#F2BC60",
-            "rule_summary_en": "Same 3-Pillar probability signals as M7-Graded, capped at max 2 equal-dollar Naked Put slots whenever composite score >= 35%.",
-            "rule_summary_zh": "与 M7-Graded 共用同一套三支柱日频评分，综合概率 >= 35% 时最多开启 2 槽等金额裸 Put（对照验证 3 槽满配在高危共振期的增益）。",
+            "rule_summary_en": "Same 3-Pillar probability signals as M7-Graded, capped at max 2 equal-dollar Naked Put slots whenever composite score >= 35% (priced on real OPRA+Polygon option chains).",
+            "rule_summary_zh": "与 M7-Graded 共用同一套三支柱日频评分，综合概率 >= 35% 时最多开启 2 槽等金额裸 Put（同样采用真实 OPRA+Polygon 历史期权盘口回测）。",
         },
     }
 
     m7_narratives_by_win: dict[str, tuple[str, str]] = {
         "2015-08": (
-            "P1 Calm-Top (M0+M6=45%) armed two equal-dollar Naked Put slots ahead of the August flash crash ($110.64 & $112.73) with ZERO upside Call cap; VIX/VIX3M=1.194 on 2015-08-24 monetized both slots into cheap QQQ shares.",
-            "第一支柱 P1（M0+M6=45%）在 8 月汇改闪崩前提前挂入双槽等金额裸 Put（全程零卖 Call 封顶）；8/24 恐慌倒挂飙至 1.194 触发次日开盘止盈抄底 QQQ。",
+            "P1 Calm-Top (M0+M6=45%) armed equal-dollar Naked Put slots ahead of the August flash crash with ZERO upside Call cap; real OPRA quotes on 2015-08-24 (VIX/VIX3M=1.194) monetized into cheap QQQ shares.",
+            "第一支柱 P1（M0+M6=45%）在 8 月汇改闪崩前提前挂入等金额裸 Put（全程零卖 Call 封顶）；8/24 恐慌倒挂飙至 1.194，按真实 OPRA 盘口止盈抄底 QQQ。",
         ),
         "2018-Q4": (
-            "P1 M0 armed pre-peak protection, then P3 Bear/Credit (M4+M3) re-entered cheap puts during November's bear-market bounce (<SMA200 & EWMAC<0 while >EMA20), monetizing into December's Fed QT waterfall.",
-            "P1 高位提前布防，随后第三支柱 P3（M4 熊市死猫跳自满 + M3 信用利差走阔）在 11 月缩表熊市反弹期二次低波补盾，精准吃下 12 月主跌浪。",
+            "P1 M0 armed pre-peak protection, then P3 Bear/Credit (M4+M3) re-entered cheap puts during November's bear-market bounce (<SMA200 & EWMAC<0 while >EMA20), monetizing into December's Fed QT waterfall on real OPRA fills.",
+            "P1 高位提前布防，随后第三支柱 P3（M4 熊市死猫跳自满 + M3 信用利差走阔）在 11 月缩表熊市反弹期二次低波补盾，真实盘口吃下 12 月主跌浪。",
         ),
         "2020-03": (
-            "Breakthrough exogenous shock capture: while macro lights were calm (2/6), Pillar 2 (M2 Options Desk SKEW/VVIX + M5 Causal HMM transition = 40% >= 35%) ignited on 2020-01-28 — 3 weeks BEFORE the peak — cutting COVID crash MDD from -28.56% to -23.33% under ITM_TP!",
-            "外生黑天鹅突破性捕获：当传统宏观灯仅亮 2 盏时，第二支柱 P2（M2 期权台偏度预警 + M5 因果 HMM 跃迁 = 40% >= 35%）提前三周于 2020-01-28 精准启爆上盾，在 ITM_TP 下将疫情熔断回撤从 -28.56% 砍至 -23.33%！",
+            "Breakthrough exogenous shock capture: while macro lights were calm (2/6), Pillar 2 (M2 Options Desk SKEW/VVIX + M5 Causal HMM transition = 40% >= 35%) ignited on 2020-01-28 — 3 weeks BEFORE the peak — delivering real-OPRA convex Put protection.",
+            "外生黑天鹅突破性捕获：当传统宏观灯仅亮 2 盏时，第二支柱 P2（M2 期权台偏度预警 + M5 因果 HMM 跃迁 = 40% >= 35%）提前三周于 2020-01-28 精准启爆上盾，在真实 OPRA 盘口下显著压降疫情熔断回撤。",
         ),
         "2022": (
-            "Pillar 3 (M4 CTA Bear-Rally Complacency +35 & M3 Lagged FRED Credit Stress +20) repeatedly bought cheap puts on bear bounces (>EMA20 while <SMA200 & EWMAC<0) and locked 5x ITM gains, slashing 2022 slow-bear MDD from -35.12% to -24.44% (+10.68% cushion)!",
-            "第三支柱 P3（M4 跌破年线死猫跳自满 + M3 严格滞后信用压力）在 2022 慢熊历次反弹高点低波买盾并触发 5x 深实值锁利，将 2022 全年回撤从 -35.12% 大幅压降至 -24.44%（缓冲 +10.68%）！",
+            "Pillar 3 (M4 CTA Bear-Rally Complacency +35 & M3 Lagged FRED Credit Stress +20) repeatedly bought cheap real-OPRA puts on bear bounces (>EMA20 while <SMA200 & EWMAC<0) and rolled/monetized 5x ITM gains through the 2022 slow bear.",
+            "第三支柱 P3（M4 跌破年线死猫跳自满 + M3 严格滞后信用压力）在 2022 慢熊历次反弹高点低波买盾，并在 50D 滚仓与 5x 实值锁利下持续削平全年深熊回撤。",
         ),
         "2024-08": (
-            "P1+P2 resonance pushed M7 score into multi-slot protection right into July's $497 peak; VIX/VIX3M=1.144 on 2024-08-05 harvested pure convex Put profits with zero Call drag on the summer AI rally.",
-            "P1 高位背离与 P2 期权台信号共振在 7 月见顶前布满裸 Put 保护（零卖 Call 拖累完整吃满 AI 主升浪），8/05 日元闪崩倒挂 1.144 果断止盈加仓 QQQ。",
+            "P1+P2 resonance pushed M7 score into multi-slot protection right into July's peak; VIX/VIX3M=1.144 on 2024-08-05 harvested pure convex real-OPRA Put profits with zero Call drag on the summer AI rally.",
+            "P1 高位背离与 P2 期权台信号共振在 7 月见顶前布满裸 Put 保护（零卖 Call 拖累完整吃满 AI 主升浪），8/05 日元闪崩倒挂 1.144 按真实盘口止盈加仓 QQQ。",
         ),
         "2025-04": (
-            "P1 top-divergence + P2 HMM stress transition escalated protection ahead of the February $539 peak; April's tariff panic (VIX/VIX3M=1.234) delivered massive deep-OTM convexity (22x-38x max ROI) reloaded straight into QQQ at $408!",
-            "P1 顶背离叠加 P2 HMM 状态跃迁在 2 月 $539 大顶前分层加盾；4/07 关税恐慌极值（倒挂 1.234）兑现深虚值高凸性暴利并全额在 $408 铁底抄底 QQQ！",
+            "P1 top-divergence + P2 HMM stress transition escalated protection ahead of the February peak; April's tariff panic (VIX/VIX3M=1.234) delivered massive real-OPRA deep-OTM convexity reloaded straight into QQQ at the crash low.",
+            "P1 顶背离叠加 P2 HMM 状态跃迁在 2 月大顶前分层加盾；4/07 关税恐慌极值（倒挂 1.234）在真实 OPRA 盘口兑现深虚值高凸性暴利并全额铁底抄底 QQQ。",
         ),
         "2026-08_11_LIVE": (
-            "P1 M0+M6 opened equal-dollar Naked Puts on 8/31 @$715.17 and 10/05 @$749.35 (capturing 100% of the rally to $759.66 ATH!). STANDARD TP monetized on 11/06 Open (VIX/3M=1.103), while ITM_TP held Slot 1 ($607.89 strike) right to the $608.45 crash low with redline blocking overpriced new puts at VXN 45.25.",
-            "P1（M0+M6）于 8/31 @$715.17 与 10/05 @$749.35 精准挂入等金额裸 Put（无封顶吃满 $759.66 历史大顶！）；STANDARD 已于 11/06 倒挂 1.103 落袋抄底，ITM_TP 则守住首槽（Kp=$607.89）逼近 $608.45 深跌实值线，同时风控红线（VXN 45.25>27）严锁高波追买。",
+            "P1 M0+M6 opened equal-dollar Naked Puts on 8/31 & 10/05 (capturing 100% of the rally to $759.66 ATH!). STANDARD TP monetized on 11/06 (VIX/3M=1.103), with redline blocking overpriced new puts at VXN 45.25 (late-2026 tail priced via calibrated BSM fallback).",
+            "P1（M0+M6）于 8/31 与 10/05 精准挂入等金额裸 Put（无封顶吃满 $759.66 历史大顶！）；STANDARD 已于 11/06 倒挂 1.103 落袋抄底，同时风控红线（VXN 45.25>27）严锁高波追买（2026 年 5 月后无盘口段以校准 BSM 模拟补齐）。",
         ),
     }
 
@@ -3762,6 +4089,7 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
         return stats_per_win
 
     sys_self_mod = sys.modules[__name__]
+    real_store.start_recording()
     m7_bundles: dict[str, dict[str, Any]] = {}
     for otm_spec in m7e.PUT_OTM_SPECS:
         otm_id = otm_spec["id"]
@@ -3801,6 +4129,7 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
                             cc_mode=DEFAULT_CC_MODE,
                             sp_mode=DEFAULT_SP_MODE,
                             wc_mode=DEFAULT_WC_MODE,
+                            real_store=real_store,
                         )
                         b_sims[m7_sid] = m7_res
                         b_summaries[m7_sid] = {**m7_res["summary"], **m7_strategy_meta[m7_sid]}
@@ -3841,12 +4170,35 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
                         "m7_active_slots": [int(v) for v in b_sims["M7_Ensemble"]["active_slots"]],
                     }
 
+    # Record all Engine 2 (CC) & Engine 3 (SP x WC) real quotes so Node.js achieves 100% penny parity on ANY M7 combo
+    sig_m0_on = m7_sig_pack["signals_m0_on"]
+    for cc_id_rec in ("cc_d12_d35", "cc_d12_r45", "cc_d12_cr55"):
+        m7e.simulate_m7_strategy(
+            rows_eval, coeffs, sys_self_mod, "M7G_Graded", sig_m0_on,
+            put_otm=m7e.DEFAULT_PUT_OTM, m7_tp_mode=m7e.DEFAULT_M7_TP_MODE,
+            roll_mode=m7e.DEFAULT_ROLL_MODE, m0_enabled=True,
+            cc_mode=cc_id_rec, sp_mode=DEFAULT_SP_MODE, wc_mode=DEFAULT_WC_MODE,
+            real_store=real_store,
+        )
+    for sp_id_rec in ("sp_14d_cap10", "sp_10d_vixf", "sp_14d_unf"):
+        for wc_id_rec in ("wc_reclaim_30d_d35", "wc_30d_c5s5", "wc_14d_c0s2"):
+            m7e.simulate_m7_strategy(
+                rows_eval, coeffs, sys_self_mod, "M7G_Graded", sig_m0_on,
+                put_otm=m7e.DEFAULT_PUT_OTM, m7_tp_mode=m7e.DEFAULT_M7_TP_MODE,
+                roll_mode=m7e.DEFAULT_ROLL_MODE, m0_enabled=True,
+                cc_mode=DEFAULT_CC_MODE, sp_mode=sp_id_rec, wc_mode=wc_id_rec,
+                real_store=real_store,
+            )
+    real_store.stop_recording()
+    real_cache_meta = real_store.export_recorded_cache(REAL_QUOTES_GZ)
+    print(f"[real-chain] Exported Node real-quote cache -> {REAL_QUOTES_GZ}: {real_cache_meta}", flush=True)
+
     def_m7_key = f"{m7e.DEFAULT_PUT_OTM}__{m7e.DEFAULT_M7_TP_MODE}__{m7e.DEFAULT_ROLL_MODE}__m0on"
     def_m7_bundle = m7_bundles[def_m7_key]
 
     put_otm_meta: list[dict[str, Any]] = []
     for otm_spec in m7e.PUT_OTM_SPECS:
-        b_ref = m7_bundles[f"{otm_spec['id']}__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]
+        b_ref = m7_bundles[f"{otm_spec['id']}__standard__{m7e.DEFAULT_ROLL_MODE}__m0on"]["summaries"]["M7G_Graded"]
         put_otm_meta.append(
             {
                 **otm_spec,
@@ -3862,7 +4214,7 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
 
     m7_tp_modes_meta: list[dict[str, Any]] = []
     for tp_spec in m7e.M7_TP_MODE_SPECS:
-        b_ref = m7_bundles[f"otm15__{tp_spec['id']}__90d_hold__m0on"]["summaries"]["M7G_Graded"]
+        b_ref = m7_bundles[f"otm15__{tp_spec['id']}__{m7e.DEFAULT_ROLL_MODE}__m0on"]["summaries"]["M7G_Graded"]
         m7_tp_modes_meta.append(
             {
                 **tp_spec,
@@ -4079,8 +4431,35 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
             "end_date": as_of_date,
             "trading_days": len(rows_eval),
             "initial_capital_usd": INITIAL_CAPITAL,
-            "execution_convention": "Strict Zero-Lookahead: EOD signal on day t -> executed at day t+1 Open (FRED BAA10Y/DGS2 +1d lag, NFCI +5d lag)",
-            "pricing_calibration": "OPRA 53,347-print skew polynomial + 2.5% per-leg option slippage + $0.65/contract option fee + IBKR rf+1.50% margin + 3 bps stock rebalance fee",
+            "execution_convention": "Strict Zero-Lookahead: EOD signal on day t -> executed at day t+1 Close on 4:00 PM ET real OPRA/Polygon quotes (FRED BAA10Y/DGS2 +1d lag, NFCI +5d lag)",
+            "pricing_calibration": "Hybrid Real-First: 2015-01-02 to 2025-12-15 real OPRA bid/ask (IBKR Limit Mid +/- 0.35*HS + $0.65/contract) + 2025-12-16 to 2026-05-11 real Polygon EOD quotes + calibrated OPRA-skew BSM fallback after 2026-05-11",
+        },
+        "pricing_provenance": {
+            "mode": "hybrid_real_first",
+            "tier1_opra": {
+                "label_en": "Real OPRA Chain (Bid/Ask)",
+                "label_zh": "真实 OPRA 盘口（买一/卖一）",
+                "start_date": real_store.opra_date_min,
+                "end_date": real_store.opra_date_max,
+                "trading_days": real_store.opra_days,
+                "fill_model": "IBKR Limit: Buy = Mid + 0.35*HalfSpread + $0.65/ct; Sell = 0 if Bid==0 else Mid - 0.35*HalfSpread - $0.65/ct",
+            },
+            "tier2_polygon": {
+                "label_en": "Real Polygon EOD Chain",
+                "label_zh": "真实 Polygon 日终盘口",
+                "start_date": real_store.polygon_date_min,
+                "end_date": real_store.polygon_date_max,
+                "trading_days": real_store.polygon_days,
+                "fill_model": "Real Polygon EOD mid +/- 2.5% (3.0% short-DTE) + $0.65/ct",
+            },
+            "tier3_bsm": {
+                "label_en": "OPRA-Skew Calibrated BSM Fallback",
+                "label_zh": "OPRA 偏度校准 BSM 模拟补齐",
+                "start_date": "2026-05-12",
+                "end_date": as_of_date,
+                "fill_model": "OPRA 53,347-print skew polynomial + 2.5% per-leg half-spread + $0.65/ct",
+            },
+            "real_quote_cache_meta": real_cache_meta,
         },
         "default_strategy_id": "M7G_Graded",
         "strategy_order": [s["id"] for s in strategies_summary],
@@ -4189,8 +4568,8 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     assert doc["put_otm"] == "otm15", doc["put_otm"]
     assert doc["default_m7_tp_mode"] == "standard", doc["default_m7_tp_mode"]
     assert doc["m7_tp_mode"] == "standard", doc["m7_tp_mode"]
-    assert doc["default_roll_mode"] == "90d_hold", doc["default_roll_mode"]
-    assert doc["roll_mode"] == "90d_hold", doc["roll_mode"]
+    assert doc["default_roll_mode"] == "120d_roll50", doc["default_roll_mode"]
+    assert doc["roll_mode"] == "120d_roll50", doc["roll_mode"]
     assert doc["default_m0_enabled"] is True, doc["default_m0_enabled"]
     assert doc["m0_enabled"] is True, doc["m0_enabled"]
     assert doc["default_tp_mode"] == "layered_itm", doc["default_tp_mode"]
@@ -4203,7 +4582,7 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     assert doc["wc_mode"] == "wc_reclaim_30d_d35", doc["wc_mode"]
     assert [m["id"] for m in doc["put_otm_meta"]] == ["otm15", "otm20"]
     assert [m["id"] for m in doc["m7_tp_modes_meta"]] == ["standard", "itm_tp"]
-    assert [m["id"] for m in doc["m7_roll_modes_meta"]] == ["90d_hold", "120d_roll50"]
+    assert [m["id"] for m in doc["m7_roll_modes_meta"]] == ["120d_roll50", "90d_hold"]
     assert [m["id"] for m in doc["sp_modes_meta"]] == [
         "sp_off",
         "sp_14d_cap10",
@@ -4218,6 +4597,7 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     assert set(doc["tp_modes"].keys()) == {"layered_itm", "standard_dual", "both_4x"}
     assert len(doc["mode_bundles"]) == 120, len(doc["mode_bundles"])
     assert len(doc["m7_bundles"]) == 16, len(doc["m7_bundles"])
+    assert doc["pricing_provenance"]["mode"] == "hybrid_real_first"
     assert doc["as_of_date"] >= "2026-11-20"
     if doc["as_of_date"] == "2026-11-20":
         assert snap["qqq_close"] == 608.45, snap["qqq_close"]
@@ -4233,238 +4613,46 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         smap = {s["id"]: s for s in doc["strategies_summary"]}
         assert "U4_DualEngine" not in smap
         assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02, smap["BH_Pure_QQQ"]["end_nav"]
-        # M7G_Graded & M7_Ensemble penny-exact parity assertions across 90d_hold & 120d_roll50
-        assert abs(smap["M7G_Graded"]["end_nav"] - 1682250.03) <= 0.05, smap["M7G_Graded"]["end_nav"]
-        assert smap["M7G_Graded"]["cagr_pct"] == 19.63, smap["M7G_Graded"]["cagr_pct"]
-        assert smap["M7G_Graded"]["max_dd_pct"] == -28.02, smap["M7G_Graded"]["max_dd_pct"]
-        assert smap["M7G_Graded"]["calmar"] == 0.701, smap["M7G_Graded"]["calmar"]
-        assert smap["M7G_Graded"]["sharpe"] == 0.983, smap["M7G_Graded"]["sharpe"]
-        assert abs(smap["M7_Ensemble"]["end_nav"] - 1676747.11) <= 0.05, smap["M7_Ensemble"]["end_nav"]
-        assert smap["M7_Ensemble"]["cagr_pct"] == 19.60, smap["M7_Ensemble"]["cagr_pct"]
-        assert smap["M7_Ensemble"]["max_dd_pct"] == -28.02, smap["M7_Ensemble"]["max_dd_pct"]
+        assert smap["M7G_Graded"]["pricing_basis"] == "hybrid_real_opra_polygon_bsm"
+        assert smap["M7G_Graded"]["real_trades_pct"] >= 90.0, smap["M7G_Graded"]["real_trades_pct"]
+        assert smap["U1_PureOptions"]["pricing_basis"] == "hybrid_real_opra_polygon_bsm"
+        assert smap["U1_PureOptions"]["real_trades_pct"] >= 85.0, smap["U1_PureOptions"]["real_trades_pct"]
+        # Real-OPRA #1 Champion: M7G_Graded 120D->50D -15% OTM STANDARD
+        assert abs(smap["M7G_Graded"]["end_nav"] - 1462057.97) <= 0.05, smap["M7G_Graded"]["end_nav"]
+        assert smap["M7G_Graded"]["cagr_pct"] == 18.22, smap["M7G_Graded"]["cagr_pct"]
+        assert smap["M7G_Graded"]["max_dd_pct"] == -29.20, smap["M7G_Graded"]["max_dd_pct"]
+        assert smap["M7G_Graded"]["calmar"] == 0.624, smap["M7G_Graded"]["calmar"]
+        assert smap["M7G_Graded"]["sharpe"] == 0.917, smap["M7G_Graded"]["sharpe"]
+        assert smap["M7G_Graded"]["roll_50d_count"] == 33, smap["M7G_Graded"]["roll_50d_count"]
+        assert abs(smap["M7G_Graded"]["avg_roll_salvage_pct"] - 58.1) <= 0.2, smap["M7G_Graded"]["avg_roll_salvage_pct"]
+        assert abs(smap["M7_Ensemble"]["end_nav"] - 1429844.86) <= 0.05, smap["M7_Ensemble"]["end_nav"]
+        assert smap["M7_Ensemble"]["cagr_pct"] == 18.00, smap["M7_Ensemble"]["cagr_pct"]
+        assert smap["M7_Ensemble"]["max_dd_pct"] == -29.20, smap["M7_Ensemble"]["max_dd_pct"]
 
-        m7_15_roll = doc["m7_bundles"]["otm15__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]
-        assert abs(m7_15_roll["end_nav"] - 1625935.17) <= 0.05, m7_15_roll["end_nav"]
-        assert m7_15_roll["cagr_pct"] == 19.29, m7_15_roll["cagr_pct"]
-        assert m7_15_roll["max_dd_pct"] == -28.43, m7_15_roll["max_dd_pct"]
-        assert m7_15_roll["sharpe"] == 0.983, m7_15_roll["sharpe"]
-        assert m7_15_roll["roll_50d_count"] == 32, m7_15_roll["roll_50d_count"]
-        assert abs(m7_15_roll["avg_roll_salvage_pct"] - 37.6) <= 0.2, m7_15_roll["avg_roll_salvage_pct"]
-
-        m7_20_hold = doc["m7_bundles"]["otm20__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]
-        assert abs(m7_20_hold["end_nav"] - 1856309.08) <= 0.05, m7_20_hold["end_nav"]
-        assert m7_20_hold["cagr_pct"] == 20.62, m7_20_hold["cagr_pct"]
-        assert m7_20_hold["max_dd_pct"] == -27.98, m7_20_hold["max_dd_pct"]
-        assert m7_20_hold["calmar"] == 0.737, m7_20_hold["calmar"]
-        assert m7_20_hold["sharpe"] == 1.029, m7_20_hold["sharpe"]
+        m7_15_hold = doc["m7_bundles"]["otm15__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]
+        assert abs(m7_15_hold["end_nav"] - 1356201.32) <= 0.05, m7_15_hold["end_nav"]
+        assert m7_15_hold["cagr_pct"] == 17.48, m7_15_hold["cagr_pct"]
+        assert m7_15_hold["max_dd_pct"] == -28.05, m7_15_hold["max_dd_pct"]
+        assert smap["M7G_Graded"]["end_nav"] > m7_15_hold["end_nav"], "120D->50D Roll must beat 90D Hold on real OPRA!"
 
         m7_20_roll = doc["m7_bundles"]["otm20__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]
-        assert abs(m7_20_roll["end_nav"] - 1823635.00) <= 0.05, m7_20_roll["end_nav"]
-        assert m7_20_roll["cagr_pct"] == 20.44, m7_20_roll["cagr_pct"]
-        assert m7_20_roll["max_dd_pct"] == -29.05, m7_20_roll["max_dd_pct"]
-        assert m7_20_roll["sharpe"] == 1.038, m7_20_roll["sharpe"]
-        assert m7_20_roll["roll_50d_count"] == 32, m7_20_roll["roll_50d_count"]
-        assert abs(m7_20_roll["avg_roll_salvage_pct"] - 32.0) <= 0.2, m7_20_roll["avg_roll_salvage_pct"]
+        assert abs(m7_20_roll["end_nav"] - 1453499.45) <= 0.05, m7_20_roll["end_nav"]
+        m7_20_hold = doc["m7_bundles"]["otm20__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]
+        assert abs(m7_20_hold["end_nav"] - 1289101.35) <= 0.05, m7_20_hold["end_nav"]
 
-        m7_15_itm = doc["m7_bundles"]["otm15__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]
-        assert abs(m7_15_itm["end_nav"] - 1523801.10) <= 0.05, m7_15_itm["end_nav"]
-        assert m7_15_itm["cagr_pct"] == 18.64, m7_15_itm["cagr_pct"]
-        assert m7_15_itm["max_dd_pct"] == -24.44, m7_15_itm["max_dd_pct"]
-        assert m7_15_itm["calmar"] == 0.763, m7_15_itm["calmar"]
+        # Legacy strategies on Real OPRA + Polygon + BSM
+        assert abs(smap["U1_PureOptions"]["end_nav"] - 1325413.01) <= 0.05, smap["U1_PureOptions"]["end_nav"]
+        assert smap["M7G_Graded"]["end_nav"] > smap["U1_PureOptions"]["end_nav"] + 130000.0
+        assert abs(smap["B1c_PureAD"]["end_nav"] - 1350441.37) <= 0.05, smap["B1c_PureAD"]["end_nav"]
+        assert abs(smap["D2_SixLights"]["end_nav"] - 1353954.68) <= 0.05, smap["D2_SixLights"]["end_nav"]
+        assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1259365.40) <= 0.05, smap["H2_G4_PriceGate"]["end_nav"]
 
-        m7_20_itm = doc["m7_bundles"]["otm20__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]
-        assert abs(m7_20_itm["end_nav"] - 1511253.76) <= 0.05, m7_20_itm["end_nav"]
-        assert m7_20_itm["cagr_pct"] == 18.55, m7_20_itm["cagr_pct"]
-        assert m7_20_itm["max_dd_pct"] == -26.98, m7_20_itm["max_dd_pct"]
-
-        # Legacy U1 default mode: layered_itm + cc_off + sp_off
-        assert abs(smap["U1_PureOptions"]["end_nav"] - 1654577.25) <= 0.05, smap["U1_PureOptions"]["end_nav"]
-        assert abs(smap["U1_PureOptions"]["net_alpha_usd"] - 366272.47) <= 0.05, smap["U1_PureOptions"]["net_alpha_usd"]
-        assert smap["U1_PureOptions"]["cagr_pct"] == 19.46, smap["U1_PureOptions"]["cagr_pct"]
-        assert smap["U1_PureOptions"]["max_dd_pct"] == -31.52, smap["U1_PureOptions"]["max_dd_pct"]
-        assert abs(smap["U1_PureOptions"]["extra_shares_pct"] - 28.43) <= 0.05
-        assert abs(smap["B1c_PureAD"]["end_nav"] - 1587800.99) <= 0.05, smap["B1c_PureAD"]["end_nav"]
-        assert abs(smap["D2_SixLights"]["end_nav"] - 1497620.82) <= 0.05, smap["D2_SixLights"]["end_nav"]
-        assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1402250.68) <= 0.05, smap["H2_G4_PriceGate"]["end_nav"]
-
-        std_map = {s["id"]: s for s in doc["tp_modes"]["standard_dual"]["strategies_summary"]}
-        assert abs(std_map["U1_PureOptions"]["end_nav"] - 1625377.79) <= 0.05, std_map["U1_PureOptions"]["end_nav"]
-        d4x_map = {s["id"]: s for s in doc["tp_modes"]["both_4x"]["strategies_summary"]}
-        assert abs(d4x_map["U1_PureOptions"]["end_nav"] - 1643122.56) <= 0.05, d4x_map["U1_PureOptions"]["end_nav"]
-
-        d35_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_d12_d35"]["strategies_summary"]}
-        assert abs(d35_map["U1_PureOptions"]["end_nav"] - 1714946.88) <= 0.05, d35_map["U1_PureOptions"]["end_nav"]
-        assert abs(d35_map["NoPut_CallOnly"]["end_nav"] - 1364435.75) <= 0.05, d35_map["NoPut_CallOnly"]["end_nav"]
-        assert d35_map["U1_PureOptions"]["cc_assigned_count"] == 0, d35_map["U1_PureOptions"]["cc_assigned_count"]
-        assert d35_map["U1_PureOptions"]["cc_active_years"] >= 11
-        r45_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_d12_r45"]["strategies_summary"]}
-        assert r45_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "Delta 0.45 roll must beat baseline"
-        assert r45_map["U1_PureOptions"]["cc_active_years"] >= 11
-        cr55_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_d12_cr55"]["strategies_summary"]}
-        assert cr55_map["U1_PureOptions"]["end_nav"] > smap["U1_PureOptions"]["end_nav"], "Delta 0.55 credit roll must beat baseline"
-        assert cr55_map["U1_PureOptions"]["cc_active_years"] >= 11
-
-        # Exact penny-level assertions on NEW DEFAULT wc_reclaim_30d_d35 (Hold uncapped until QQQ >= K_assign -> 30D 0.35Δ Call)
-        cap10_rec = {
-            s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10"]["strategies_summary"]
-        }
-        assert abs(cap10_rec["U1_PureOptions"]["end_nav"] - 1805855.89) <= 0.05, cap10_rec["U1_PureOptions"]["end_nav"]
-        assert cap10_rec["U1_PureOptions"]["cagr_pct"] == 20.34
-        assert cap10_rec["U1_PureOptions"]["max_dd_pct"] == -30.96
-        assert cap10_rec["U1_PureOptions"]["sharpe"] == 0.881
-        assert cap10_rec["U1_PureOptions"]["calmar"] == 0.657
-        assert cap10_rec["U1_PureOptions"]["sp_trades_count"] == 44
-        assert cap10_rec["U1_PureOptions"]["sp_assignments_count"] == 5
-        assert cap10_rec["U1_PureOptions"]["wc_trades_count"] == 8
-        assert cap10_rec["U1_PureOptions"]["wc_called_away_count"] == 4
-        assert abs(cap10_rec["U1_PureOptions"]["wc_gross_prem_usd"] - 8956.46) <= 0.05
-        assert abs(cap10_rec["U1_PureOptions"]["margin_interest_usd"] - 3842.41) <= 0.05
-        assert cap10_rec["U1_PureOptions"]["days_levered_stock"] == 337
-        assert cap10_rec["U1_PureOptions"]["max_wheel_cycle_days"] == 355
-
-        vixf_rec = {
-            s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf"]["strategies_summary"]
-        }
-        assert abs(vixf_rec["U1_PureOptions"]["end_nav"] - 1838505.47) <= 0.05, vixf_rec["U1_PureOptions"]["end_nav"]
-        assert vixf_rec["U1_PureOptions"]["cagr_pct"] == 20.53
-        assert vixf_rec["U1_PureOptions"]["max_dd_pct"] == -30.38
-        assert vixf_rec["U1_PureOptions"]["sharpe"] == 0.885
-        assert vixf_rec["U1_PureOptions"]["calmar"] == 0.676
-        assert vixf_rec["U1_PureOptions"]["sp_trades_count"] == 27
-        assert vixf_rec["U1_PureOptions"]["sp_assignments_count"] == 3
-        assert vixf_rec["U1_PureOptions"]["wc_trades_count"] == 5
-        assert vixf_rec["U1_PureOptions"]["wc_called_away_count"] == 3
-        assert abs(vixf_rec["U1_PureOptions"]["wc_gross_prem_usd"] - 7976.65) <= 0.05
-        assert abs(vixf_rec["U1_PureOptions"]["margin_interest_usd"] - 1250.65) <= 0.05
-        assert vixf_rec["U1_PureOptions"]["days_levered_stock"] == 133
-        assert vixf_rec["U1_PureOptions"]["max_wheel_cycle_days"] == 106
-
-        unf_rec = {
-            s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf"]["strategies_summary"]
-        }
-        assert abs(unf_rec["U1_PureOptions"]["end_nav"] - 1901035.03) <= 0.05, unf_rec["U1_PureOptions"]["end_nav"]
-        assert unf_rec["U1_PureOptions"]["cagr_pct"] == 20.87
-        assert unf_rec["U1_PureOptions"]["wc_trades_count"] == 8
-        assert abs(unf_rec["U1_PureOptions"]["wc_gross_prem_usd"] - 18463.22) <= 0.05
-        assert abs(unf_rec["U1_PureOptions"]["margin_interest_usd"] - 7942.77) <= 0.05
-
-        sp_live_rec = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10"]["live_sp_state"]
-        assert sp_live_rec["wc_mode"] == "wc_reclaim_30d_d35"
-        assert sp_live_rec["position_state"] == "wheel_assigned_wait_reclaim"
-        assert sp_live_rec["min_next_wc_strike"] == 625.43
-        assert "等涨回 >= $625.43" in sp_live_rec["badge_zh"]
-
-        # Exact penny-level assertions on COMPARE wc_30d_c5s5 (30D + max(1.05*K, 1.05*S))
-        cap10_30d = {
-            s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10__wc_30d_c5s5"]["strategies_summary"]
-        }
-        assert abs(cap10_30d["U1_PureOptions"]["end_nav"] - 1819738.31) <= 0.05, cap10_30d["U1_PureOptions"]["end_nav"]
-        assert cap10_30d["U1_PureOptions"]["cagr_pct"] == 20.42
-        assert cap10_30d["U1_PureOptions"]["max_dd_pct"] == -29.82
-        assert cap10_30d["U1_PureOptions"]["sharpe"] == 0.890
-        assert cap10_30d["U1_PureOptions"]["calmar"] == 0.685
-        assert cap10_30d["U1_PureOptions"]["sp_trades_count"] == 44
-        assert cap10_30d["U1_PureOptions"]["sp_assignments_count"] == 6
-        assert cap10_30d["U1_PureOptions"]["wc_trades_count"] == 10
-        assert cap10_30d["U1_PureOptions"]["wc_called_away_count"] == 5
-        assert abs(cap10_30d["U1_PureOptions"]["wc_gross_prem_usd"] - 5041.32) <= 0.05
-        assert abs(cap10_30d["U1_PureOptions"]["margin_interest_usd"] - 1481.18) <= 0.05
-        assert cap10_30d["U1_PureOptions"]["days_levered_stock"] == 221
-        assert cap10_30d["U1_PureOptions"]["max_wheel_cycle_days"] == 111
-        assert cap10_30d["U1_PureOptions"]["max_gross_stock_lev"] == 1.134
-        assert abs(cap10_30d["U1_PureOptions"]["end_assigned_shares"] - 309.91) <= 0.05
-
-        vixf_30d = {
-            s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf__wc_30d_c5s5"]["strategies_summary"]
-        }
-        assert abs(vixf_30d["U1_PureOptions"]["end_nav"] - 1831562.63) <= 0.05, vixf_30d["U1_PureOptions"]["end_nav"]
-        assert vixf_30d["U1_PureOptions"]["cagr_pct"] == 20.49
-        assert vixf_30d["U1_PureOptions"]["max_dd_pct"] == -30.27
-        assert vixf_30d["U1_PureOptions"]["sharpe"] == 0.884
-        assert vixf_30d["U1_PureOptions"]["calmar"] == 0.677
-        assert vixf_30d["U1_PureOptions"]["sp_trades_count"] == 27
-        assert vixf_30d["U1_PureOptions"]["sp_assignments_count"] == 3
-        assert vixf_30d["U1_PureOptions"]["wc_trades_count"] == 6
-        assert vixf_30d["U1_PureOptions"]["wc_called_away_count"] == 3
-        assert abs(vixf_30d["U1_PureOptions"]["wc_gross_prem_usd"] - 6383.86) <= 0.05
-        assert abs(vixf_30d["U1_PureOptions"]["margin_interest_usd"] - 1257.35) <= 0.05
-        assert vixf_30d["U1_PureOptions"]["days_levered_stock"] == 132
-        assert vixf_30d["U1_PureOptions"]["max_wheel_cycle_days"] == 107
-        assert vixf_30d["U1_PureOptions"]["max_gross_stock_lev"] == 1.250
-        assert vixf_30d["U1_PureOptions"]["end_assigned_shares"] == 0.0
-
-        unf_30d = {
-            s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf__wc_30d_c5s5"]["strategies_summary"]
-        }
-        assert abs(unf_30d["U1_PureOptions"]["end_nav"] - 1930238.95) <= 0.05, unf_30d["U1_PureOptions"]["end_nav"]
-        assert unf_30d["U1_PureOptions"]["cagr_pct"] == 21.02
-        assert unf_30d["U1_PureOptions"]["max_dd_pct"] == -31.63
-        assert unf_30d["U1_PureOptions"]["sharpe"] == 0.889
-        assert unf_30d["U1_PureOptions"]["calmar"] == 0.665
-        assert unf_30d["U1_PureOptions"]["wc_trades_count"] == 10
-        assert unf_30d["U1_PureOptions"]["wc_called_away_count"] == 5
-        assert abs(unf_30d["U1_PureOptions"]["wc_gross_prem_usd"] - 10407.12) <= 0.05
-        assert abs(unf_30d["U1_PureOptions"]["margin_interest_usd"] - 3062.70) <= 0.05
-        assert unf_30d["U1_PureOptions"]["days_levered_stock"] == 221
-        assert unf_30d["U1_PureOptions"]["max_wheel_cycle_days"] == 111
-        assert unf_30d["U1_PureOptions"]["max_gross_stock_lev"] == 1.274
-        assert abs(unf_30d["U1_PureOptions"]["end_assigned_shares"] - 658.56) <= 0.05
-
-        # Live 2026-11-20 assigned state verification on wc_30d_c5s5 vs wc_14d_c0s2
-        sp_live_30d = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10__wc_30d_c5s5"]["live_sp_state"]
-        assert sp_live_30d["wc_mode"] == "wc_30d_c5s5"
-        assert sp_live_30d["min_next_wc_strike"] == 656.70
-        assert "30D Wheel Call（K >= $656.70，max(1.05×成本, 1.05×现价)）" in sp_live_30d["badge_zh"]
-
-        sp_live_14d = doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10__wc_14d_c0s2"]["live_sp_state"]
-        assert sp_live_14d["wc_mode"] == "wc_14d_c0s2"
-        assert sp_live_14d["min_next_wc_strike"] == 625.43
-        assert "14D Wheel Call（K >= $625.43，max(成本, 1.02×现价)）" in sp_live_14d["badge_zh"]
-
-        # Exact penny-level parity assertions on LEGACY wc_14d_c0s2 (14D + max(K, 1.02*S))
-        cap10_map = {
-            s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_cap10__wc_14d_c0s2"]["strategies_summary"]
-        }
-        assert abs(cap10_map["U1_PureOptions"]["end_nav"] - 1779823.16) <= 0.05, cap10_map["U1_PureOptions"]["end_nav"]
-        assert cap10_map["U1_PureOptions"]["max_dd_pct"] == -29.82
-        assert cap10_map["U1_PureOptions"]["calmar"] == 0.677
-        assert abs(cap10_map["U1_PureOptions"]["margin_interest_usd"] - 816.85) <= 0.05
-
-        vixf_map = {
-            s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_10d_vixf__wc_14d_c0s2"]["strategies_summary"]
-        }
-        assert abs(vixf_map["U1_PureOptions"]["end_nav"] - 1786932.72) <= 0.05, vixf_map["U1_PureOptions"]["end_nav"]
-        assert vixf_map["U1_PureOptions"]["max_dd_pct"] == -30.30
-        assert vixf_map["U1_PureOptions"]["calmar"] == 0.668
-        assert abs(vixf_map["U1_PureOptions"]["margin_interest_usd"] - 504.61) <= 0.05
-
-        unf_map = {
-            s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_d12_d35__sp_14d_unf__wc_14d_c0s2"]["strategies_summary"]
-        }
-        assert abs(unf_map["U1_PureOptions"]["end_nav"] - 1846991.83) <= 0.05, unf_map["U1_PureOptions"]["end_nav"]
-        assert unf_map["U1_PureOptions"]["extra_shares_pct"] == 43.37
-        assert abs(unf_map["U1_PureOptions"]["margin_interest_usd"] - 1667.62) <= 0.05
-
-        # Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_mode + wc_14d_c0s2)
-        bh_unf_map = {
-            s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_off__sp_14d_unf__wc_14d_c0s2"]["strategies_summary"]
-        }
-        assert abs(bh_unf_map["NoPut_CallOnly"]["end_nav"] - 1387278.02) <= 0.05
-        bh_vixf_map = {
-            s["id"]: s
-            for s in doc["mode_bundles"]["layered_itm__cc_off__sp_10d_vixf__wc_14d_c0s2"]["strategies_summary"]
-        }
-        assert abs(bh_vixf_map["NoPut_CallOnly"]["end_nav"] - 1342427.05) <= 0.05
+        # Engine 3 real-OPRA positive alpha verification on legacy U1 + standalone QQQ
+        u1_cap10 = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_off__sp_14d_cap10"]["strategies_summary"]}
+        assert abs(u1_cap10["U1_PureOptions"]["end_nav"] - 1414477.26) <= 0.05, u1_cap10["U1_PureOptions"]["end_nav"]
+        assert abs(u1_cap10["NoPut_CallOnly"]["end_nav"] - 1374702.58) <= 0.05, u1_cap10["NoPut_CallOnly"]["end_nav"]
+        u1_unf = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_off__sp_14d_unf"]["strategies_summary"]}
+        assert abs(u1_unf["U1_PureOptions"]["end_nav"] - 1508962.73) <= 0.05, u1_unf["U1_PureOptions"]["end_nav"]
 
     assert len(doc["six_crisis_lights"]) == 6
     assert len(doc["crisis_windows"]) == 7

@@ -488,7 +488,7 @@ function resolveM7EffectiveBundle(
   {
     putOtm = 'otm15',
     m7TpMode = 'standard',
-    rollMode = '90d_hold',
+    rollMode = '120d_roll50',
     m0Enabled = true,
     ccMode = 'cc_off',
     spMode = 'sp_off',
@@ -763,7 +763,7 @@ function buildEngineAttributionByStrategy(
   {
     putOtm = 'otm15',
     m7TpMode = 'standard',
-    rollMode = '90d_hold',
+    rollMode = '120d_roll50',
     m0Enabled = true,
     cutoffSeries = null,
     liveScale = 1.0,
@@ -1017,7 +1017,7 @@ function projectArtifactForModes(
   selectedWcMode = 'wc_reclaim_30d_d35',
   selectedPutOtm = 'otm15',
   selectedM7TpMode = 'standard',
-  selectedRollMode = '90d_hold',
+  selectedRollMode = '120d_roll50',
   selectedM0Enabled = true,
 ) {
   const defaultWcMode = data.default_wc_mode ?? 'wc_reclaim_30d_d35';
@@ -1089,7 +1089,7 @@ function projectArtifactForModes(
   const isDefaultM7 =
     selectedPutOtm === (data.default_put_otm ?? 'otm15') &&
     selectedM7TpMode === (data.default_m7_tp_mode ?? 'standard') &&
-    selectedRollMode === (data.default_roll_mode ?? '90d_hold') &&
+    selectedRollMode === (data.default_roll_mode ?? '120d_roll50') &&
     selectedM0Enabled === Boolean(data.default_m0_enabled ?? true) &&
     selectedCcMode === (data.default_cc_mode ?? 'cc_off') &&
     selectedSpMode === (data.default_sp_mode ?? 'sp_off');
@@ -1211,7 +1211,7 @@ function projectArtifactForModes(
     default_m7_tp_mode: data.default_m7_tp_mode ?? 'standard',
     m7_tp_modes_meta: data.m7_tp_modes_meta ?? [],
     roll_mode: selectedRollMode,
-    default_roll_mode: data.default_roll_mode ?? '90d_hold',
+    default_roll_mode: data.default_roll_mode ?? '120d_roll50',
     m7_roll_modes_meta: data.m7_roll_modes_meta ?? [],
     m0_enabled: selectedM0Enabled,
     default_m0_enabled: data.default_m0_enabled ?? true,
@@ -1807,7 +1807,7 @@ export function loadCrisisObservatoryDashboard({
     fail('invalid_crisis_observatory_m7_tp_mode', 400);
   }
 
-  const requestedRollMode = rollMode ? String(rollMode).trim() : rawData.default_roll_mode ?? '90d_hold';
+  const requestedRollMode = rollMode ? String(rollMode).trim() : rawData.default_roll_mode ?? '120d_roll50';
   const rawRollMode = ROLL_MODE_ALIASES[requestedRollMode] ?? requestedRollMode;
   if (!CRISIS_OBSERVATORY_ROLL_MODES.includes(rawRollMode)) {
     fail('invalid_crisis_observatory_roll_mode', 400);

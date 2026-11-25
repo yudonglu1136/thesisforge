@@ -21,15 +21,28 @@ from typing import Any
 
 DEFAULT_PUT_OTM = "otm15"
 DEFAULT_M7_TP_MODE = "standard"
-DEFAULT_ROLL_MODE = "90d_hold"
+DEFAULT_ROLL_MODE = "120d_roll50"
 DEFAULT_M0_ENABLED = True
 
 INITIAL_CAPITAL = 200_000.0
 STOCK_REBAL_FEE = 0.0003
 OPT_SLIP = 0.025
+OPT_SLIP_SP = 0.030
 OPT_COMM_PER_SH = 0.0065
 MARGIN_SPREAD = 0.015
 MIN_OPT_BID = 0.05
+
+try:
+    import real_option_chain as _roc_mod
+except ImportError:
+    _roc_mod = None
+    _roc_path = Path(__file__).resolve().parent / "real_option_chain.py"
+    if _roc_path.exists():
+        import importlib.util as _ilu
+        _roc_spec = _ilu.spec_from_file_location("real_option_chain", _roc_path)
+        if _roc_spec is not None and _roc_spec.loader is not None:
+            _roc_mod = _ilu.module_from_spec(_roc_spec)
+            _roc_spec.loader.exec_module(_roc_mod)
 
 YF_ETF_KEYS = ["QQQ", "SPY", "RSP", "IWM", "XLP", "XLU", "XLV", "XLK", "HYG", "LQD"]
 YF_IDX_KEYS = ["VXN", "VIX", "VIX3M", "VVIX", "SKEW"]
@@ -93,30 +106,30 @@ M7_TP_MODE_SPECS: list[dict[str, Any]] = [
 
 M7_ROLL_MODE_SPECS: list[dict[str, Any]] = [
     {
-        "id": "90d_hold",
-        "target_dte": 90,
-        "ref_dte": 90,
-        "roll_dte": 0,
-        "five_x_max_dte": 45,
-        "label_en": "90D Hold-to-Expiry (Default)",
-        "label_zh": "90D 持有到期（默认基准）",
-        "short_en": "90D Hold",
-        "short_zh": "90D 持有到期",
-        "summary_en": "Buys 90-DTE OTM Puts sized to 90D -10% Put Ask and holds to panic TP or expiry ($1,682,250 on -15%, $1,856,309 on -20%, MDD -28.02%).",
-        "summary_zh": "按 90-DTE -10% Put 基准保费买入 90D Put，持有至恐慌止盈或到期（-15% 终值 $1,682,250、-20% 终值 $1,856,309、最大回撤 -28.02%）。",
-    },
-    {
         "id": "120d_roll50",
         "target_dte": 120,
         "ref_dte": 120,
         "roll_dte": 50,
         "five_x_max_dte": 75,
-        "label_en": "120D Entry · 50D Roll/Salvage",
-        "label_zh": "120D 建仓 · 50D 剩余滚仓",
+        "label_en": "120D Entry · 50D Roll/Salvage (Real OPRA #1 · Default)",
+        "label_zh": "120D 建仓 · 50D 剩余滚仓（实盘 OPRA 总冠军 · 默认）",
         "short_en": "120D -> 50D Roll",
         "short_zh": "120D · 50D滚仓",
-        "summary_en": "Buys 120-DTE Puts sized to 120D -10% Put Ask; at <= 50 DTE exits at bid to salvage approx. 32%-38% residual time value, auto-rolling into a fresh 120D Put if M7 stays active ($1,823,635 & Sharpe 1.038 on -20% OTM; +$63.4K over 90D under +3pt steep skew).",
-        "summary_zh": "按 120-DTE -10% Put 基准保费建仓 120D Put；剩 <=50 DTE 时在 Theta 悬崖前平仓回收约 32%–38% 残值，若 M7 信号仍亮同步滚入新 120D Put，熄灭则落袋归股（-20% OTM Sharpe 升至 1.038，陡偏度下反超 90D +$6.34万）。",
+        "summary_en": "Real-OPRA #1 Champion: buys 120-DTE Puts sized to 120D -10% Put Ask; at <= 50 DTE exits at real bid before the Theta cliff (salvaging approx. 58% residual value on real OPRA quotes) and auto-rolls into a fresh 120D Put if M7 remains active.",
+        "summary_zh": "真实 OPRA 盘口收益与夏普双料总冠军：按 120D -10% Put 基准保费建仓 120D Put；剩 <=50 DTE 在 Theta 悬崖前按实盘买价回收残值（OPRA 实盘均值约 58%），若 M7 仍亮同步滚入新 120D Put，熄灭则落袋归股。",
+    },
+    {
+        "id": "90d_hold",
+        "target_dte": 90,
+        "ref_dte": 90,
+        "roll_dte": 0,
+        "five_x_max_dte": 45,
+        "label_en": "90D Hold-to-Expiry (Calmar #1 Compare)",
+        "label_zh": "90D 持有到期（卡玛冠军对照）",
+        "short_en": "90D Hold",
+        "short_zh": "90D 持有到期",
+        "summary_en": "Real-OPRA Calmar Champion: buys 90-DTE OTM Puts sized to 90D -10% Put Ask and holds to panic TP or expiry with minimum annual premium spend.",
+        "summary_zh": "真实 OPRA 盘口卡玛冠军对照：按 90D -10% Put 基准保费买入 90D Put，持有至恐慌止盈或到期，年均保费开支最低。",
     },
 ]
 
@@ -997,18 +1010,18 @@ def format_m7_trigger_labels(sig_day: dict[str, Any], max_slots: int) -> tuple[l
     return mods, code, trig_en, trig_zh
 
 
-def compute_m7_bh_parity(rows_eval: list[dict[str, Any]]) -> dict[str, Any]:
-    op0 = float(rows_eval[0]["open"])
-    sh = INITIAL_CAPITAL / (op0 * (1.0 + STOCK_REBAL_FEE))
+def compute_m7_bh_parity(rows_eval: list[dict[str, Any]], use_close_start: bool = True) -> dict[str, Any]:
+    px0 = float(rows_eval[0]["close"]) if use_close_start else float(rows_eval[0]["open"])
+    sh = INITIAL_CAPITAL / px0 if use_close_start else INITIAL_CAPITAL / (px0 * (1.0 + STOCK_REBAL_FEE))
     navs: list[float] = []
     post_sh: list[float] = []
     pre_sh: list[float] = []
-    for r in rows_eval:
+    for idx_r, r in enumerate(rows_eval):
         pre_sh.append(sh)
         div = float(r["dividends"])
         cl = float(r["close"])
-        if div > 0.0:
-            sh += (sh * div) / (cl * (1.0 + STOCK_REBAL_FEE))
+        if div > 0.0 and (not use_close_start or idx_r > 0):
+            sh += (sh * div) / cl if use_close_start else (sh * div) / (cl * (1.0 + STOCK_REBAL_FEE))
         post_sh.append(sh)
         navs.append(sh * cl)
     return {
@@ -1018,6 +1031,14 @@ def compute_m7_bh_parity(rows_eval: list[dict[str, Any]]) -> dict[str, Any]:
         "pre_sh": pre_sh,
         "post_sh": post_sh,
     }
+
+
+def _classify_trade_source(entry_src: str, exit_src: str) -> str:
+    if entry_src.startswith("real_opra") or exit_src.startswith("real_opra"):
+        return "real_opra"
+    if entry_src.startswith("real_polygon") or exit_src.startswith("real_polygon"):
+        return "real_polygon"
+    return "bsm_fallback"
 
 
 def simulate_m7_strategy(
@@ -1033,10 +1054,13 @@ def simulate_m7_strategy(
     cc_mode: str = "cc_off",
     sp_mode: str = "sp_off",
     wc_mode: str = "wc_reclaim_30d_d35",
+    real_store: Any = None,
 ) -> dict[str, Any]:
-    """Simulate M7G_Graded (0-1-2-3 slots) or M7_Ensemble (2 slots) with penny parity to run_8models_crisis_study.py
-    and 120d_roll50 parity, plus full compatibility with Engine 2 Covered Call (cc_mode) and Engine 3 Wheel (sp_mode, wc_mode).
+    """Simulate M7G_Graded (0-1-2-3 slots) or M7_Ensemble (2 slots) using Hybrid 3-Tier Real Option
+    Quotes (2015-2025 OPRA Bid/Ask + 2026Q1 Polygon Real EOD + BSM simulation fallback where real
+    quotes do not exist), plus full Engine 2 Covered Call & Engine 3 Panic Put Reverse Wheel overlays.
     """
+    use_real = real_store is not None and _roc_mod is not None
     is_graded = strategy_id == "M7G_Graded"
     max_slots = 3 if is_graded else 2
     put_moneyness = 0.80 if put_otm == "otm20" else 0.85
@@ -1049,23 +1073,99 @@ def simulate_m7_strategy(
     dt_objs = [datetime.date.fromisoformat(d) for d in dates]
     n_days = len(rows_eval)
 
-    bh_m7 = compute_m7_bh_parity(rows_eval)
+    bh_m7 = compute_m7_bh_parity(rows_eval, use_close_start=use_real)
     final_bh_sh = bh_m7["final_shares"]
     final_cl = float(rows_eval[-1]["close"])
 
-    init_op = float(rows_eval[0]["open"])
-    core_shares = INITIAL_CAPITAL / (init_op * (1.0 + STOCK_REBAL_FEE))
+    if use_real:
+        core_shares = INITIAL_CAPITAL / float(rows_eval[0]["close"])
+    else:
+        init_op = float(rows_eval[0]["open"])
+        core_shares = INITIAL_CAPITAL / (init_op * (1.0 + STOCK_REBAL_FEE))
 
     slot_coverage = 0.50
     ref_moneyness = 0.90
     ref_dte = 120 if is_roll50 else 90
     target_dte = 120 if is_roll50 else 90
     roll_dte_thr = 50 if is_roll50 else 0
+    lo_put, hi_put = (90, 155) if is_roll50 else (65, 120)
+    lo_ref, hi_ref = (90, 155) if is_roll50 else (65, 120)
     step_cal_days = 30
     escalate_min_days = 21
     vix_ratio_tp = 1.10
     put_mult_tp = 5.0
-    put_mult_max_dte = 75 if is_roll50 else 45
+    put_mult_max_dte = 45
+
+    q_stats = {
+        "total_lookups": 0,
+        "real_opra_hits": 0,
+        "real_polygon_hits": 0,
+        "bsm_fallbacks": 0,
+    }
+
+    def _rec_src(src: str) -> None:
+        q_stats["total_lookups"] += 1
+        if src.startswith("real_opra"):
+            q_stats["real_opra_hits"] += 1
+        elif src.startswith("real_polygon"):
+            q_stats["real_polygon_hits"] += 1
+        else:
+            q_stats["bsm_fallbacks"] += 1
+
+    def _is_exp(idx: int, exp_dt: datetime.date) -> bool:
+        if use_real:
+            return _roc_mod.is_expiry_day(idx, dt_objs, exp_dt)
+        return dt_objs[idx] >= exp_dt
+
+    def _lookup_opt(
+        d_str: str,
+        opt_type: str,
+        exp_str: str,
+        k_val: float,
+        k_cents: int | None,
+        spot_px: float,
+        rem_days: int,
+        r_c: float,
+        q_c: float,
+        vxn_c: float,
+        last_iv: float | None,
+        slip_bsm: float = OPT_SLIP,
+    ) -> tuple[float, float, float, float, float, str]:
+        if use_real and k_cents is not None:
+            b, a, m, iv, dl, src = real_store.lookup_contract(
+                d_str,
+                opt_type,
+                exp_str,
+                k_cents,
+                spot_px,
+                rem_days,
+                r_c,
+                q_c,
+                vxn_c,
+                last_iv,
+                coeffs,
+                bco_mod.eval_skew_iv,
+                bco_mod.bsm_price,
+                slip_bsm=slip_bsm,
+            )
+            _rec_src(src)
+            return b, a, m, iv, dl, src
+        t_r = max(0, rem_days) / 365.0
+        sig = bco_mod.eval_skew_iv(spot_px, k_val, max(t_r, 1.0 / 365.0), r_c, q_c, vxn_c, coeffs)
+        mid = bco_mod.bsm_price(spot_px, k_val, t_r, r_c, q_c, sig, opt_type)
+        dl = bco_mod.bsm_call_delta(spot_px, k_val, t_r, r_c, q_c, sig) if opt_type == "call" else (bco_mod.bsm_call_delta(spot_px, k_val, t_r, r_c, q_c, sig) - math.exp(-q_c * t_r))
+        _rec_src("bsm_fallback")
+        return max(0.0, mid * (1.0 - slip_bsm)), mid * (1.0 + slip_bsm), mid, sig, dl, "bsm_fallback"
+
+    def _buy_px(bid: float, ask: float, mid: float, src: str, slip_bsm: float = OPT_SLIP) -> float:
+        if use_real:
+            return _roc_mod.exec_buy_price(bid, ask, mid, src, slip_bsm=slip_bsm)
+        return mid * (1.0 + slip_bsm) + OPT_COMM_PER_SH
+
+    def _sell_px(bid: float, ask: float, mid: float, src: str, slip_bsm: float = OPT_SLIP) -> float:
+        if use_real:
+            return _roc_mod.exec_sell_price(bid, ask, mid, src, slip_bsm=slip_bsm)
+        return max(0.0, mid * (1.0 - slip_bsm) - OPT_COMM_PER_SH)
 
     cc_cfg_map: dict[str, tuple[float, float, float, float | None, str | None]] = {
         "cc_d12_d35": (0.0, 0.12, 0.05, 0.35, None),
@@ -1139,20 +1239,24 @@ def simulate_m7_strategy(
             core_shares += sp_cash / denom
             sp_cash = 0.0
 
-    def _estimate_nav_open(op_px: float, vxn_o: float, r_c: float, q_c: float, cur_dt: datetime.date) -> float:
+    def _estimate_nav_exec(ex_px: float, vxn_e: float, r_c: float, q_c: float, cur_dt: datetime.date, d_str: str) -> float:
         mtm_p = 0.0
         for tr_o in active_tranches:
             rem_d_o = max(1, (tr_o["exp_dt"] - cur_dt).days)
-            t_r_o = rem_d_o / 365.0
-            sp_iv_o = bco_mod.eval_skew_iv(op_px, tr_o["kp"], t_r_o, r_c, q_c, vxn_o, coeffs)
-            mtm_p += tr_o["hedged_shares"] * bco_mod.bsm_price(op_px, tr_o["kp"], t_r_o, r_c, q_c, sp_iv_o, "put")
+            _, _, pm_o, _, _, _ = _lookup_opt(
+                d_str, "put", tr_o["exp_date"], tr_o["kp"], tr_o.get("k_cents"),
+                ex_px, rem_d_o, r_c, q_c, vxn_e, tr_o.get("last_iv"), slip_bsm=OPT_SLIP
+            )
+            mtm_p += tr_o["hedged_shares"] * pm_o
         mtm_cc_o = 0.0
         if active_cc is not None:
             rem_c_o = max(1, (active_cc["exp_dt"] - cur_dt).days)
-            t_c_o = rem_c_o / 365.0
-            sc_iv_c = bco_mod.eval_skew_iv(op_px, active_cc["kc"], t_c_o, r_c, q_c, vxn_o, coeffs)
-            mtm_cc_o = -active_cc["shares"] * bco_mod.bsm_price(op_px, active_cc["kc"], t_c_o, r_c, q_c, sc_iv_c, "call")
-        return max(1.0, (core_shares + assigned_shares) * op_px + cc_cash + sp_cash + mtm_p + mtm_cc_o)
+            _, _, cm_o, _, _, _ = _lookup_opt(
+                d_str, "call", active_cc["exp_date"], active_cc["kc"], active_cc.get("k_cents"),
+                ex_px, rem_c_o, r_c, q_c, vxn_e, active_cc.get("last_iv"), slip_bsm=OPT_SLIP
+            )
+            mtm_cc_o = -active_cc["shares"] * cm_o
+        return max(1.0, (core_shares + assigned_shares) * ex_px + cc_cash + sp_cash + mtm_p + mtm_cc_o)
 
     for i, d in enumerate(dates):
         row = rows_eval[i]
@@ -1165,6 +1269,18 @@ def simulate_m7_strategy(
         r_cur = float(row["r"])
         q_cur = float(row["div_yield"])
         dd_cur = float(row["dd_from_ath"])
+
+        if use_real:
+            exec_px = cl
+            vxn_ex = vxn_cl
+        else:
+            exec_px = op
+            if i > 0:
+                prev_vxn = float(rows_eval[i - 1]["vxn"])
+                prev_cl = float(rows_eval[i - 1]["close"])
+                vxn_ex = max(10.0, prev_vxn - 0.45 * (op / prev_cl - 1.0) * 100.0)
+            else:
+                vxn_ex = vxn_cl
 
         mult_morning = (final_bh_sh / bh_m7["pre_sh"][i]) * final_cl
         mult_eod = (final_bh_sh / bh_m7["post_sh"][i]) * final_cl
@@ -1182,28 +1298,32 @@ def simulate_m7_strategy(
                 sp_margin_interest_total += m_int
 
         if i > 0 and pending_cc_deploy and cc_cash > 1.0:
-            core_shares += cc_cash / (op * (1.0 + STOCK_REBAL_FEE))
+            core_shares += cc_cash / (exec_px * (1.0 + STOCK_REBAL_FEE))
             cc_cash = 0.0
             pending_cc_deploy = False
 
         if i > 0 and active_cc is not None and active_cc.get("pending_close"):
-            prev_vxn = float(rows_eval[i - 1]["vxn"])
-            prev_cl = float(rows_eval[i - 1]["close"])
-            vxn_op_cc = max(10.0, prev_vxn - 0.45 * (op / prev_cl - 1.0) * 100.0)
             rem_cc = max(0, (active_cc["exp_dt"] - dt_objs[i]).days)
-            t_cc = rem_cc / 365.0
-            sc_ex = bco_mod.eval_skew_iv(op, active_cc["kc"], t_cc, r_cur, q_cur, vxn_op_cc, coeffs)
-            c_ask_ex = bco_mod.bsm_price(op, active_cc["kc"], t_cc, r_cur, q_cur, sc_ex, "call") * (1.0 + OPT_SLIP)
+            if _is_exp(i, active_cc["exp_dt"]):
+                c_ask_ex = max(0.0, exec_px - active_cc["kc"])
+                src_cc_ex = active_cc.get("entry_source", "bsm_fallback")
+            else:
+                b_c, a_c, m_c, _, _, src_cc_ex = _lookup_opt(
+                    d, "call", active_cc["exp_date"], active_cc["kc"], active_cc.get("k_cents"),
+                    exec_px, rem_cc, r_cur, q_cur, vxn_ex, active_cc.get("last_iv"), slip_bsm=OPT_SLIP
+                )
+                c_ask_ex = _buy_px(b_c, a_c, m_c, src_cc_ex, slip_bsm=OPT_SLIP)
             cost_cl = active_cc["shares"] * c_ask_ex
             cc_gross_loss += cost_cl
             if cc_cash >= cost_cl:
                 cc_cash -= cost_cl
             else:
-                core_shares -= (cost_cl - cc_cash) / (op * (1.0 - STOCK_REBAL_FEE))
+                core_shares -= (cost_cl - cc_cash) / (exec_px * (1.0 - STOCK_REBAL_FEE))
                 cc_cash = 0.0
             close_reason = active_cc.get("close_reason") or "panic_close_uncap"
             old_rolls = int(active_cc.get("roll_count", 0))
             old_sh = active_cc["shares"]
+            cc_en_src = active_cc.get("entry_source", "bsm_fallback")
             cc_ledger.append(
                 {
                     "cc_id": active_cc["cc_id"],
@@ -1211,7 +1331,7 @@ def simulate_m7_strategy(
                     "exit_date": d,
                     "entry_spot": round(active_cc["entry_spot"], 2),
                     "kc": round(active_cc["kc"], 2),
-                    "exit_spot": round(op, 2),
+                    "exit_spot": round(exec_px, 2),
                     "entry_vxn": round(active_cc["entry_vxn"], 2),
                     "shares": round(old_sh, 2),
                     "prem_usd": round(active_cc["prem_usd"], 2),
@@ -1219,72 +1339,122 @@ def simulate_m7_strategy(
                     "net_pnl_usd": round(active_cc["prem_usd"] - cost_cl, 2),
                     "exit_reason": close_reason,
                     "roll_gen": old_rolls,
+                    "pricing_source": _classify_trade_source(cc_en_src, src_cc_ex),
                 }
             )
             active_cc = None
             if close_reason in ("delta_roll_up", "delta_credit_roll") and cc_roll_mode is not None and old_rolls < cc_max_rolls:
                 roll_days = 45 if cc_roll_mode == "credit_45d" else 30
-                target_r = dt_objs[i] + datetime.timedelta(days=roll_days)
-                pos_r = bisect.bisect_left(dt_objs, target_r)
-                exp_date_r, exp_dt_r = (dates[pos_r], dt_objs[pos_r]) if pos_r < n_days else (target_r.isoformat(), target_r)
-                t_r = max(1, (exp_dt_r - dt_objs[i]).days) / 365.0
-                kc_new: float | None = None
-                if cc_roll_mode == "credit_45d":
-                    kc_new = bco_mod.solve_call_strike_for_bid(op, t_r, r_cur, q_cur, vxn_op_cc, coeffs, c_ask_ex, OPT_SLIP)
-                elif cc_roll_mode == "fresh_30d":
-                    kc_new = max(
-                        op * (1.0 + cc_min_otm),
-                        bco_mod.solve_call_strike_for_delta(op, t_r, r_cur, q_cur, vxn_op_cc, coeffs, cc_target_delta),
-                    )
-                if kc_new is not None and kc_new > op * 1.01:
-                    sc_r = bco_mod.eval_skew_iv(op, kc_new, t_r, r_cur, q_cur, vxn_op_cc, coeffs)
-                    c_bid_r = bco_mod.bsm_price(op, kc_new, t_r, r_cur, q_cur, sc_r, "call") * (1.0 - OPT_SLIP)
-                    if c_bid_r >= 0.05:
-                        prem_r = old_sh * c_bid_r
-                        cc_tid += 1
-                        cc_gross_prem += prem_r
-                        cc_cash += prem_r
-                        active_cc = {
-                            "cc_id": cc_tid,
-                            "entry_date": d,
-                            "entry_dt": dt_objs[i],
-                            "exp_date": exp_date_r,
-                            "exp_dt": exp_dt_r,
-                            "entry_spot": op,
-                            "entry_vxn": vxn_op_cc,
-                            "kc": kc_new,
-                            "shares": old_sh,
-                            "prem_usd": prem_r,
-                            "pending_close": False,
-                            "roll_count": old_rolls + 1,
-                        }
+                c_roll = None
+                if use_real:
+                    if cc_roll_mode == "credit_45d":
+                        c_roll = real_store.select_call_contract_for_bid(
+                            d, exec_px, 45, c_ask_ex, exec_px * 1.01, 32, 62, r_cur, q_cur,
+                            rec_tag=f"cc_45_cr_{int(round(c_ask_ex * 100))}",
+                        )
+                    elif cc_roll_mode == "fresh_30d":
+                        c_roll = real_store.select_call_contract_delta(
+                            d, exec_px, 30, cc_target_delta, exec_px * (1.0 + cc_min_otm), 20, 42, r_cur, q_cur,
+                            rec_tag="cc_30_d12",
+                        )
+                if c_roll is not None:
+                    _rec_src(c_roll["source"])
+                    exp_date_r, exp_dt_r = c_roll["exp"], c_roll["exp_dt"]
+                    kc_new = c_roll["strike"]
+                    k_cents_r = c_roll["k_cents"]
+                    c_bid_r = _sell_px(c_roll["bid"], c_roll["ask"], c_roll["mid"], c_roll["source"], slip_bsm=OPT_SLIP)
+                    iv_r = c_roll["iv"]
+                    src_r = c_roll["source"]
+                else:
+                    target_r = dt_objs[i] + datetime.timedelta(days=roll_days)
+                    pos_r = bisect.bisect_left(dt_objs, target_r)
+                    exp_date_r, exp_dt_r = (dates[pos_r], dt_objs[pos_r]) if pos_r < n_days else (target_r.isoformat(), target_r)
+                    t_r = max(1, (exp_dt_r - dt_objs[i]).days) / 365.0
+                    kc_new = None
+                    if cc_roll_mode == "credit_45d":
+                        kc_new = bco_mod.solve_call_strike_for_bid(exec_px, t_r, r_cur, q_cur, vxn_ex, coeffs, c_ask_ex, OPT_SLIP)
+                    elif cc_roll_mode == "fresh_30d":
+                        kc_new = max(
+                            exec_px * (1.0 + cc_min_otm),
+                            bco_mod.solve_call_strike_for_delta(exec_px, t_r, r_cur, q_cur, vxn_ex, coeffs, cc_target_delta),
+                        )
+                    if kc_new is not None and kc_new > exec_px * 1.01:
+                        iv_r = bco_mod.eval_skew_iv(exec_px, kc_new, t_r, r_cur, q_cur, vxn_ex, coeffs)
+                        cm_r = bco_mod.bsm_price(exec_px, kc_new, t_r, r_cur, q_cur, iv_r, "call")
+                        c_bid_r = _sell_px(cm_r * (1.0 - OPT_SLIP), cm_r * (1.0 + OPT_SLIP), cm_r, "bsm_fallback", slip_bsm=OPT_SLIP)
+                        k_cents_r = int(round(kc_new * 100.0))
+                        src_r = "bsm_fallback"
+                        _rec_src(src_r)
+                    else:
+                        c_bid_r = 0.0
+                        k_cents_r = None
+                        iv_r = None
+                        src_r = "bsm_fallback"
+                if kc_new is not None and kc_new > exec_px * 1.01 and c_bid_r >= 0.05:
+                    prem_r = old_sh * c_bid_r
+                    cc_tid += 1
+                    cc_gross_prem += prem_r
+                    cc_cash += prem_r
+                    active_cc = {
+                        "cc_id": cc_tid,
+                        "entry_date": d,
+                        "entry_dt": dt_objs[i],
+                        "exp_date": exp_date_r,
+                        "exp_dt": exp_dt_r,
+                        "entry_spot": exec_px,
+                        "entry_vxn": vxn_ex,
+                        "kc": kc_new,
+                        "k_cents": k_cents_r,
+                        "last_iv": iv_r,
+                        "entry_source": src_r,
+                        "shares": old_sh,
+                        "prem_usd": prem_r,
+                        "pending_close": False,
+                        "roll_count": old_rolls + 1,
+                    }
 
-        # 1. Pending M7 TP Exits at T+1 Open
-        if i > 0 and any(t.get("pending_tp") for t in active_tranches):
-            prev_vxn = float(rows_eval[i - 1]["vxn"])
-            prev_cl = float(rows_eval[i - 1]["close"])
-            vxn_op = max(10.0, prev_vxn - 0.45 * (op / prev_cl - 1.0) * 100.0)
+        # 1. Pending M7 TP / 50D-Roll Exits at T+1
+        if i > 0 and any(t.get("pending_tp") or t.get("pending_roll") for t in active_tranches):
             still_open: list[dict[str, Any]] = []
+            roll_replacements: list[tuple[float, int, dict[str, Any]]] = []
             for tr in active_tranches:
-                if not tr.get("pending_tp"):
+                if not tr.get("pending_tp") and not tr.get("pending_roll"):
                     still_open.append(tr)
                     continue
                 rem_days = max(0, (tr["exp_dt"] - dt_objs[i]).days)
                 t_rem = rem_days / 365.0
-                sig_ex = bco_mod.eval_skew_iv(op, tr["kp"], t_rem, r_cur, q_cur, vxn_op, coeffs)
-                put_bid = max(0.0, bco_mod.bsm_price(op, tr["kp"], t_rem, r_cur, q_cur, sig_ex, "put") * (1.0 - OPT_SLIP) - OPT_COMM_PER_SH)
+                if _is_exp(i, tr["exp_dt"]):
+                    put_bid = max(0.0, tr["kp"] - exec_px)
+                    b_ex, a_ex = put_bid, put_bid
+                    src_ex = tr.get("entry_source", "bsm_fallback")
+                else:
+                    b_ex, a_ex, m_ex, _, _, src_ex = _lookup_opt(
+                        d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents"),
+                        exec_px, rem_days, r_cur, q_cur, vxn_ex, tr.get("last_iv"), slip_bsm=OPT_SLIP
+                    )
+                    put_bid = _sell_px(b_ex, a_ex, m_ex, src_ex, slip_bsm=OPT_SLIP)
                 exit_usd = tr["hedged_shares"] * put_bid
+                is_roll_exit = bool(tr.get("pending_roll")) and not bool(tr.get("pending_tp"))
+                exit_rsn = "roll_50d" if is_roll_exit else tr["tp_reason"]
+
+                prev_sig_d = sig_series[i - 1]
+                prev_cap = int(prev_sig_d["target_slots_m7g" if is_graded else "target_slots_m7"])
+                will_auto_roll = is_roll_exit and prev_cap > len(still_open) + len(roll_replacements)
+
                 d_sh = 0.0
-                if abs(exit_usd) > 1e-10:
-                    denom = op * (1.0 + (STOCK_REBAL_FEE if exit_usd >= 0 else -STOCK_REBAL_FEE))
+                if not will_auto_roll and abs(exit_usd) > 1e-10:
+                    denom = exec_px * (1.0 + (STOCK_REBAL_FEE if exit_usd >= 0 else -STOCK_REBAL_FEE))
                     d_sh = exit_usd / denom
                     core_shares += d_sh
+                elif will_auto_roll:
+                    roll_replacements.append((exit_usd, prev_cap, prev_sig_d))
+
                 roi_mult = (exit_usd / tr["entry_cost_usd"]) if tr["entry_cost_usd"] > 1e-6 else 0.0
                 actual_net_sh = put_bid - tr["entry_put_ask"]
                 conv = bco_mod.decompose_tranche_convexity(
                     "naked_put",
                     tr["entry_spot"],
-                    op,
+                    exec_px,
                     tr["kp"],
                     None,
                     tr["T_entry"],
@@ -1294,11 +1464,12 @@ def simulate_m7_strategy(
                     tr["entry_q"],
                     q_cur,
                     tr["entry_vxn"],
-                    vxn_op,
+                    vxn_ex,
                     coeffs,
                     actual_net_sh,
                 )
                 hs = tr["hedged_shares"]
+                en_src = tr.get("entry_source", "bsm_fallback")
                 ledger.append(
                     {
                         "tranche_id": tr["tranche_id"],
@@ -1311,13 +1482,16 @@ def simulate_m7_strategy(
                         "tp_mode": tp_code,
                         "roll_mode": roll_mode,
                         "target_dte": target_dte,
+                        "pricing_source": _classify_trade_source(en_src, src_ex),
+                        "entry_source": en_src,
+                        "exit_source": src_ex,
                         "signal_date": tr["signal_date"],
                         "entry_date": tr["entry_date"],
                         "planned_exp_date": tr["exp_date"],
                         "exit_date": d,
                         "actual_days_held": (dt_objs[i] - tr["entry_dt"]).days,
                         "rem_dte_at_exit": rem_days,
-                        "exit_reason": tr["tp_reason"],
+                        "exit_reason": exit_rsn,
                         "sig_score": tr["sig_score"],
                         "sig_ad_below50": tr["sig_ad_below50"],
                         "crisis_prob": tr["crisis_prob"],
@@ -1341,10 +1515,10 @@ def simulate_m7_strategy(
                         "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
                         "entry_cost_usd": round(tr["entry_cost_usd"], 2),
                         "entry_shares_sold": round(tr["entry_shares_sold"], 4),
-                        "exit_spot": round(op, 2),
-                        "exit_vxn": round(vxn_op, 2),
+                        "exit_spot": round(exec_px, 2),
+                        "exit_vxn": round(vxn_ex, 2),
                         "exit_vix_ratio": round(tr["tp_trigger_ratio"], 3),
-                        "underlying_ret_pct": round((op / tr["entry_spot"] - 1.0) * 100.0, 2),
+                        "underlying_ret_pct": round((exec_px / tr["entry_spot"] - 1.0) * 100.0, 2),
                         "put_exit_val_sh": round(put_bid, 4),
                         "call_exit_cost_sh": 0.0,
                         "exit_net_cash_usd": round(exit_usd, 2),
@@ -1373,30 +1547,189 @@ def simulate_m7_strategy(
                 )
             active_tranches = still_open
 
-        # 2. Pending New M7 Tranche Entry at T+1 Open
+            # Direct 50D Roll replacements using salvaged cash without double stock-fee churn
+            for salv_usd, r_cap, r_sig_d in roll_replacements:
+                r_en, q_en = r_cur, q_cur
+                vxn_en = vxn_ex
+                c_ref = None
+                c_en = None
+                if use_real:
+                    c_ref = real_store.select_put_contract(
+                        d, exec_px, ref_dte, ref_moneyness, lo_ref, hi_ref, r_en, q_en,
+                        rec_tag=f"p_{ref_dte}_10",
+                    )
+                    c_en = real_store.select_put_contract(
+                        d, exec_px, target_dte, put_moneyness, lo_put, hi_put, r_en, q_en,
+                        rec_tag=f"p_{target_dte}_{otm_pct_int}",
+                    )
+                if c_ref is not None:
+                    _rec_src(c_ref["source"])
+                    put_ask_ref = _buy_px(c_ref["bid"], c_ref["ask"], c_ref["mid"], c_ref["source"], slip_bsm=OPT_SLIP)
+                else:
+                    ref_cal = dt_objs[i] + datetime.timedelta(days=ref_dte)
+                    pos_ref = bisect.bisect_left(dt_objs, ref_cal)
+                    exp_dt_ref = dt_objs[pos_ref] if pos_ref < n_days else ref_cal
+                    t_ref = max(1, (exp_dt_ref - dt_objs[i]).days) / 365.0
+                    kp_ref = exec_px * ref_moneyness
+                    sig_ref = bco_mod.eval_skew_iv(exec_px, kp_ref, t_ref, r_en, q_en, vxn_en, coeffs)
+                    mid_ref = bco_mod.bsm_price(exec_px, kp_ref, t_ref, r_en, q_en, sig_ref, "put")
+                    put_ask_ref = _buy_px(mid_ref * (1.0 - OPT_SLIP), mid_ref * (1.0 + OPT_SLIP), mid_ref, "bsm_fallback", slip_bsm=OPT_SLIP)
+                    _rec_src("bsm_fallback")
+                if c_en is not None:
+                    _rec_src(c_en["source"])
+                    exp_date = c_en["exp"]
+                    exp_dt = c_en["exp_dt"]
+                    t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
+                    kp = c_en["strike"]
+                    k_cents_en = c_en["k_cents"]
+                    put_ask_en = _buy_px(c_en["bid"], c_en["ask"], c_en["mid"], c_en["source"], slip_bsm=OPT_SLIP)
+                    iv_en = c_en["iv"]
+                    src_en = c_en["source"]
+                else:
+                    target_cal = dt_objs[i] + datetime.timedelta(days=target_dte)
+                    pos = bisect.bisect_left(dt_objs, target_cal)
+                    exp_date, exp_dt = (dates[pos], dt_objs[pos]) if pos < n_days else (target_cal.isoformat(), target_cal)
+                    t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
+                    kp = exec_px * put_moneyness
+                    k_cents_en = int(round(kp * 100.0))
+                    iv_en = bco_mod.eval_skew_iv(exec_px, kp, t_en, r_en, q_en, vxn_en, coeffs)
+                    mid_en = bco_mod.bsm_price(exec_px, kp, t_en, r_en, q_en, iv_en, "put")
+                    put_ask_en = _buy_px(mid_en * (1.0 - OPT_SLIP), mid_en * (1.0 + OPT_SLIP), mid_en, "bsm_fallback", slip_bsm=OPT_SLIP)
+                    src_en = "bsm_fallback"
+                    _rec_src(src_en)
+
+                already_ref_cov = sum(t["ref_cov_sh"] for t in active_tranches)
+                eff_core_sh = core_shares + (salv_usd / exec_px)
+                cost_sh_frac_ref = put_ask_ref / (exec_px * (1.0 - STOCK_REBAL_FEE))
+                max_cov = eff_core_sh * (slot_coverage * max(2, r_cap))
+                avail_sh_ref = max(0.0, max_cov - already_ref_cov)
+                ref_hedged_sh = min(eff_core_sh * slot_coverage, avail_sh_ref / (1.0 + cost_sh_frac_ref))
+                ref_budget_usd = ref_hedged_sh * put_ask_ref
+                if put_ask_en >= 0.03 and ref_budget_usd > 1.0:
+                    hedged_sh = ref_budget_usd / put_ask_en
+                    entry_cost_usd = ref_budget_usd
+                    rem_need = entry_cost_usd - salv_usd
+                    d_sh_entry = 0.0
+                    if rem_need < 0.0:
+                        d_sh_entry = (-rem_need) / (exec_px * (1.0 + STOCK_REBAL_FEE))
+                        core_shares += d_sh_entry
+                    elif rem_need > 0.0:
+                        if cc_enabled and cc_cash > 0.0:
+                            use_cc = min(cc_cash, rem_need)
+                            cc_cash -= use_cc
+                            cc_funded_puts += use_cc
+                            rem_need -= use_cc
+                        if rem_need > 1e-8:
+                            d_sh_entry = -rem_need / (exec_px * (1.0 - STOCK_REBAL_FEE))
+                            core_shares += d_sh_entry
+                    tid += 1
+                    used_slots = {t["slot_num"] for t in active_tranches}
+                    slot_num = min(s for s in range(1, max(max_slots, r_cap) + 1) if s not in used_slots)
+                    hr = hedged_sh / max(core_shares, 1e-6)
+                    prev_row = rows_eval[i - 1]
+                    mods, t_code, t_en_l, t_zh_l = format_m7_trigger_labels(r_sig_d, max_slots)
+                    active_tranches.append(
+                        {
+                            "tranche_id": tid,
+                            "slot_num": slot_num,
+                            "tier": r_cap,
+                            "signal_date": dates[i - 1],
+                            "sig_score": int(prev_row["score"]),
+                            "sig_ad_below50": bool(float(prev_row["ad_line"]) < float(prev_row["ad_sma50"])),
+                            "crisis_prob": float(r_sig_d["crisis_prob"]),
+                            "p1": float(r_sig_d["p1"]),
+                            "p2": float(r_sig_d["p2"]),
+                            "p3": float(r_sig_d["p3"]),
+                            "triggered_modules": mods,
+                            "trigger_code": t_code,
+                            "trigger_en": t_en_l,
+                            "trigger_zh": t_zh_l,
+                            "entry_date": d,
+                            "entry_dt": dt_objs[i],
+                            "exp_date": exp_date,
+                            "exp_dt": exp_dt,
+                            "T_entry": t_en,
+                            "entry_spot": exec_px,
+                            "entry_vxn": vxn_en,
+                            "entry_vix_ratio": float(prev_row["vix_ratio"]),
+                            "entry_r": r_en,
+                            "entry_q": q_en,
+                            "kp": kp,
+                            "k_cents": k_cents_en,
+                            "last_iv": iv_en,
+                            "entry_source": src_en,
+                            "hedged_shares": hedged_sh,
+                            "ref_cov_sh": ref_hedged_sh,
+                            "hedged_ratio": hr,
+                            "entry_put_ask": put_ask_en,
+                            "entry_cost_usd": entry_cost_usd,
+                            "entry_shares_sold": d_sh_entry,
+                            "comp_entry_cost_usd": d_sh_entry * mult_morning,
+                            "pending_tp": False,
+                            "pending_roll": False,
+                            "tp_trigger_ratio": 0.0,
+                            "tp_reason": "",
+                        }
+                    )
+                elif salv_usd > 1e-8:
+                    core_shares += salv_usd / (exec_px * (1.0 + STOCK_REBAL_FEE))
+
+        # 2. Pending New M7 Tranche Entry at T+1
         if i > 0 and pending_sig is not None and len(active_tranches) < pending_sig["cap_slots"]:
-            vxn_en = max(10.0, pending_sig["vxn"] - 0.45 * (op / pending_sig["close"] - 1.0) * 100.0)
             r_en, q_en = pending_sig["r"], pending_sig["q"]
+            vxn_en = vxn_ex
 
-            ref_cal = dt_objs[i] + datetime.timedelta(days=ref_dte)
-            pos_ref = bisect.bisect_left(dt_objs, ref_cal)
-            exp_dt_ref = dt_objs[pos_ref] if pos_ref < n_days else ref_cal
-            t_ref = max(1, (exp_dt_ref - dt_objs[i]).days) / 365.0
-            kp_ref = op * ref_moneyness
-            sig_ref = bco_mod.eval_skew_iv(op, kp_ref, t_ref, r_en, q_en, vxn_en, coeffs)
-            put_ask_ref = bco_mod.bsm_price(op, kp_ref, t_ref, r_en, q_en, sig_ref, "put") * (1.0 + 0.025)
+            c_ref = None
+            c_en = None
+            if use_real:
+                c_ref = real_store.select_put_contract(
+                    d, exec_px, ref_dte, ref_moneyness, lo_ref, hi_ref, r_en, q_en,
+                    rec_tag=f"p_{ref_dte}_10",
+                )
+                c_en = real_store.select_put_contract(
+                    d, exec_px, target_dte, put_moneyness, lo_put, hi_put, r_en, q_en,
+                    rec_tag=f"p_{target_dte}_{otm_pct_int}",
+                )
 
-            target_cal = dt_objs[i] + datetime.timedelta(days=target_dte)
-            pos = bisect.bisect_left(dt_objs, target_cal)
-            exp_date, exp_dt = (dates[pos], dt_objs[pos]) if pos < n_days else (target_cal.isoformat(), target_cal)
-            t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
-            kp = op * put_moneyness
-            sig_p_en = bco_mod.eval_skew_iv(op, kp, t_en, r_en, q_en, vxn_en, coeffs)
-            mid_en = bco_mod.bsm_price(op, kp, t_en, r_en, q_en, sig_p_en, "put")
-            put_ask_en = mid_en * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH
+            if c_ref is not None:
+                _rec_src(c_ref["source"])
+                put_ask_ref = _buy_px(c_ref["bid"], c_ref["ask"], c_ref["mid"], c_ref["source"], slip_bsm=OPT_SLIP)
+            else:
+                ref_cal = dt_objs[i] + datetime.timedelta(days=ref_dte)
+                pos_ref = bisect.bisect_left(dt_objs, ref_cal)
+                exp_dt_ref = dt_objs[pos_ref] if pos_ref < n_days else ref_cal
+                t_ref = max(1, (exp_dt_ref - dt_objs[i]).days) / 365.0
+                kp_ref = exec_px * ref_moneyness
+                sig_ref = bco_mod.eval_skew_iv(exec_px, kp_ref, t_ref, r_en, q_en, vxn_en, coeffs)
+                mid_ref = bco_mod.bsm_price(exec_px, kp_ref, t_ref, r_en, q_en, sig_ref, "put")
+                put_ask_ref = _buy_px(mid_ref * (1.0 - OPT_SLIP), mid_ref * (1.0 + OPT_SLIP), mid_ref, "bsm_fallback", slip_bsm=OPT_SLIP)
+                _rec_src("bsm_fallback")
+
+            if c_en is not None:
+                _rec_src(c_en["source"])
+                exp_date = c_en["exp"]
+                exp_dt = c_en["exp_dt"]
+                t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
+                kp = c_en["strike"]
+                k_cents_en = c_en["k_cents"]
+                put_ask_en = _buy_px(c_en["bid"], c_en["ask"], c_en["mid"], c_en["source"], slip_bsm=OPT_SLIP)
+                iv_en = c_en["iv"]
+                src_en = c_en["source"]
+            else:
+                target_cal = dt_objs[i] + datetime.timedelta(days=target_dte)
+                pos = bisect.bisect_left(dt_objs, target_cal)
+                exp_date, exp_dt = (dates[pos], dt_objs[pos]) if pos < n_days else (target_cal.isoformat(), target_cal)
+                t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
+                kp = exec_px * put_moneyness
+                k_cents_en = int(round(kp * 100.0))
+                iv_en = bco_mod.eval_skew_iv(exec_px, kp, t_en, r_en, q_en, vxn_en, coeffs)
+                mid_en = bco_mod.bsm_price(exec_px, kp, t_en, r_en, q_en, iv_en, "put")
+                put_ask_en = _buy_px(mid_en * (1.0 - OPT_SLIP), mid_en * (1.0 + OPT_SLIP), mid_en, "bsm_fallback", slip_bsm=OPT_SLIP)
+                src_en = "bsm_fallback"
+                _rec_src(src_en)
 
             already_ref_cov = sum(t["ref_cov_sh"] for t in active_tranches)
-            cost_sh_frac_ref = put_ask_ref / (op * (1.0 - STOCK_REBAL_FEE))
+            cost_sh_frac_ref = put_ask_ref / (exec_px * (1.0 - STOCK_REBAL_FEE))
             max_cov = core_shares * (slot_coverage * max(2, pending_sig["cap_slots"]))
             avail_sh_ref = max(0.0, max_cov - already_ref_cov)
             ref_hedged_sh = min(core_shares * slot_coverage, avail_sh_ref / (1.0 + cost_sh_frac_ref))
@@ -1414,10 +1747,10 @@ def simulate_m7_strategy(
                     cc_funded_puts += paid_cc
                     rem_cost = entry_cost_usd - paid_cc
                     cc_cash = 0.0
-                    d_sh_entry = -rem_cost / (op * (1.0 - STOCK_REBAL_FEE))
+                    d_sh_entry = -rem_cost / (exec_px * (1.0 - STOCK_REBAL_FEE))
                     core_shares += d_sh_entry
                 else:
-                    d_sh_entry = -entry_cost_usd / (op * (1.0 - STOCK_REBAL_FEE))
+                    d_sh_entry = -entry_cost_usd / (exec_px * (1.0 - STOCK_REBAL_FEE))
                     core_shares += d_sh_entry
 
                 tid += 1
@@ -1445,12 +1778,15 @@ def simulate_m7_strategy(
                         "exp_date": exp_date,
                         "exp_dt": exp_dt,
                         "T_entry": t_en,
-                        "entry_spot": op,
+                        "entry_spot": exec_px,
                         "entry_vxn": vxn_en,
                         "entry_vix_ratio": pending_sig["vix_ratio"],
                         "entry_r": r_en,
                         "entry_q": q_en,
                         "kp": kp,
+                        "k_cents": k_cents_en,
+                        "last_iv": iv_en,
+                        "entry_source": src_en,
                         "hedged_shares": hedged_sh,
                         "ref_cov_sh": ref_hedged_sh,
                         "hedged_ratio": hr,
@@ -1459,29 +1795,49 @@ def simulate_m7_strategy(
                         "entry_shares_sold": d_sh_entry,
                         "comp_entry_cost_usd": d_sh_entry * mult_morning,
                         "pending_tp": False,
+                        "pending_roll": False,
                         "tp_trigger_ratio": 0.0,
                         "tp_reason": "",
                     }
                 )
             pending_sig = None
 
-        # 2b. Engine 2 Covered Call & Engine 3 Wheel T+1 Open executions
+        # 2b. Engine 2 Covered Call & Engine 3 Wheel T+1 executions
         if i > 0 and cc_enabled and pending_cc is not None and active_cc is None:
-            vxn_cc = max(10.0, pending_cc["vxn"] - 0.45 * (op / pending_cc["close"] - 1.0) * 100.0)
             r_cc, q_cc = pending_cc["r"], pending_cc["q"]
+            vxn_cc = vxn_ex
             cc_sh = max(0.0, core_shares)
             if cc_sh > 1e-6:
-                target_cc = dt_objs[i] + datetime.timedelta(days=cc_dte)
-                pos_cc = bisect.bisect_left(dt_objs, target_cc)
-                exp_date_cc, exp_dt_cc = (dates[pos_cc], dt_objs[pos_cc]) if pos_cc < n_days else (target_cc.isoformat(), target_cc)
-                t_cc = max(1, (exp_dt_cc - dt_objs[i]).days) / 365.0
-                kc_cc = max(
-                    op * (1.0 + cc_min_otm),
-                    bco_mod.solve_call_strike_for_delta(op, t_cc, r_cc, q_cc, vxn_cc, coeffs, cc_target_delta),
-                )
-                sc_cc = bco_mod.eval_skew_iv(op, kc_cc, t_cc, r_cc, q_cc, vxn_cc, coeffs)
-                c_bid_cc = bco_mod.bsm_price(op, kc_cc, t_cc, r_cc, q_cc, sc_cc, "call") * (1.0 - OPT_SLIP)
-                if c_bid_cc >= 0.05:
+                c_cc = None
+                if use_real:
+                    c_cc = real_store.select_call_contract_delta(
+                        d, exec_px, cc_dte, cc_target_delta, exec_px * (1.0 + cc_min_otm), 17, 36, r_cc, q_cc,
+                        rec_tag="cc_25_d12",
+                    )
+                if c_cc is not None:
+                    _rec_src(c_cc["source"])
+                    exp_date_cc, exp_dt_cc = c_cc["exp"], c_cc["exp_dt"]
+                    kc_cc = c_cc["strike"]
+                    k_cents_cc = c_cc["k_cents"]
+                    c_bid_cc = _sell_px(c_cc["bid"], c_cc["ask"], c_cc["mid"], c_cc["source"], slip_bsm=OPT_SLIP)
+                    iv_cc = c_cc["iv"]
+                    src_cc = c_cc["source"]
+                else:
+                    target_cc = dt_objs[i] + datetime.timedelta(days=cc_dte)
+                    pos_cc = bisect.bisect_left(dt_objs, target_cc)
+                    exp_date_cc, exp_dt_cc = (dates[pos_cc], dt_objs[pos_cc]) if pos_cc < n_days else (target_cc.isoformat(), target_cc)
+                    t_cc = max(1, (exp_dt_cc - dt_objs[i]).days) / 365.0
+                    kc_cc = max(
+                        exec_px * (1.0 + cc_min_otm),
+                        bco_mod.solve_call_strike_for_delta(exec_px, t_cc, r_cc, q_cc, vxn_cc, coeffs, cc_target_delta),
+                    )
+                    iv_cc = bco_mod.eval_skew_iv(exec_px, kc_cc, t_cc, r_cc, q_cc, vxn_cc, coeffs)
+                    cm_cc = bco_mod.bsm_price(exec_px, kc_cc, t_cc, r_cc, q_cc, iv_cc, "call")
+                    c_bid_cc = _sell_px(cm_cc * (1.0 - OPT_SLIP), cm_cc * (1.0 + OPT_SLIP), cm_cc, "bsm_fallback", slip_bsm=OPT_SLIP)
+                    k_cents_cc = int(round(kc_cc * 100.0))
+                    src_cc = "bsm_fallback"
+                    _rec_src(src_cc)
+                if c_bid_cc >= 0.04:
                     prem_usd = cc_sh * c_bid_cc
                     cc_tid += 1
                     cc_gross_prem += prem_usd
@@ -1492,9 +1848,12 @@ def simulate_m7_strategy(
                         "entry_dt": dt_objs[i],
                         "exp_date": exp_date_cc,
                         "exp_dt": exp_dt_cc,
-                        "entry_spot": op,
+                        "entry_spot": exec_px,
                         "entry_vxn": vxn_cc,
                         "kc": kc_cc,
+                        "k_cents": k_cents_cc,
+                        "last_iv": iv_cc,
+                        "entry_source": src_cc,
                         "shares": cc_sh,
                         "prem_usd": prem_usd,
                         "pending_close": False,
@@ -1505,27 +1864,65 @@ def simulate_m7_strategy(
         if i > 0 and sp_enabled and pending_wc is not None and assigned_shares > 1e-6 and active_wc is None:
             pw = pending_wc
             pending_wc = None
-            vxn_wc = max(10.0, pw["vxn"] - 0.45 * (op / pw["close"] - 1.0) * 100.0)
-            if wc_mode == "wc_reclaim_30d_d35":
-                target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
-                pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
-                exp_date_wc, exp_dt_wc = (dates[pos_wc], dt_objs[pos_wc]) if pos_wc < n_days else (target_wc_dt.isoformat(), target_wc_dt)
+            vxn_wc = vxn_ex
+            c_wc = None
+            if use_real:
+                if wc_mode == "wc_reclaim_30d_d35":
+                    c_wc = real_store.select_call_contract_delta(
+                        d, exec_px, 30, 0.35, assigned_cost_k, 20, 42, pw["r"], pw["q"],
+                        rec_tag=f"wc_30_d35_{int(round(assigned_cost_k * 100))}",
+                    )
+                elif wc_mode == "wc_30d_c5s5":
+                    min_k_wc = max(assigned_cost_k * 1.05, exec_px * 1.05)
+                    c_wc = real_store.select_call_contract_strike(
+                        d, exec_px, 30, min_k_wc, 20, 42, pw["r"], pw["q"],
+                        rec_tag=f"wc_30_k_{int(round(min_k_wc * 100))}",
+                    )
+                else:
+                    min_k_wc = max(assigned_cost_k, exec_px * 1.02)
+                    lo_w, hi_w = (6, 14) if sp_dte <= 10 else (8, 17)
+                    c_wc = real_store.select_call_contract_strike(
+                        d, exec_px, sp_dte, min_k_wc, lo_w, hi_w, pw["r"], pw["q"],
+                        rec_tag=f"wc_{sp_dte}_k_{int(round(min_k_wc * 100))}",
+                    )
+            if c_wc is not None:
+                _rec_src(c_wc["source"])
+                exp_date_wc, exp_dt_wc = c_wc["exp"], c_wc["exp_dt"]
                 act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
-                k_d35 = bco_mod.solve_call_strike_for_delta(op, act_dte_wc / 365.0, pw["r"], pw["q"], vxn_wc, coeffs, 0.35)
-                kc_wc = max(assigned_cost_k, k_d35)
-            elif wc_mode == "wc_30d_c5s5":
-                target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
-                pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
-                exp_date_wc, exp_dt_wc = (dates[pos_wc], dt_objs[pos_wc]) if pos_wc < n_days else (target_wc_dt.isoformat(), target_wc_dt)
-                act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
-                kc_wc = max(assigned_cost_k * 1.05, op * 1.05)
+                kc_wc = c_wc["strike"]
+                k_cents_wc = c_wc["k_cents"]
+                c_bid_wc = _sell_px(c_wc["bid"], c_wc["ask"], c_wc["mid"], c_wc["source"], slip_bsm=OPT_SLIP_SP)
+                iv_wc = c_wc["iv"]
+                src_wc = c_wc["source"]
             else:
-                exp_date_wc, exp_dt_wc, act_dte_wc = bco_mod._pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
-                kc_wc = max(assigned_cost_k, op * 1.02)
-            c_bid_wc, _ = bco_mod._opt_exec_price_sp(op, kc_wc, act_dte_wc / 365.0, pw["r"], pw["q"], vxn_wc, coeffs, "call", "sell", OPT_SLIP)
+                if wc_mode == "wc_reclaim_30d_d35":
+                    target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
+                    pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
+                    exp_date_wc, exp_dt_wc = (dates[pos_wc], dt_objs[pos_wc]) if pos_wc < n_days else (target_wc_dt.isoformat(), target_wc_dt)
+                    act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
+                    k_d35 = bco_mod.solve_call_strike_for_delta(exec_px, act_dte_wc / 365.0, pw["r"], pw["q"], vxn_wc, coeffs, 0.35)
+                    kc_wc = max(assigned_cost_k, k_d35)
+                elif wc_mode == "wc_30d_c5s5":
+                    target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
+                    pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
+                    exp_date_wc, exp_dt_wc = (dates[pos_wc], dt_objs[pos_wc]) if pos_wc < n_days else (target_wc_dt.isoformat(), target_wc_dt)
+                    act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
+                    kc_wc = max(assigned_cost_k * 1.05, exec_px * 1.05)
+                else:
+                    exp_date_wc, exp_dt_wc, act_dte_wc = bco_mod._pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
+                    kc_wc = max(assigned_cost_k, exec_px * 1.02)
+                c_bid_wc, _ = bco_mod._opt_exec_price_sp(exec_px, kc_wc, act_dte_wc / 365.0, pw["r"], pw["q"], vxn_wc, coeffs, "call", "sell", OPT_SLIP_SP)
+                k_cents_wc = int(round(kc_wc * 100.0))
+                iv_wc = None
+                src_wc = "bsm_fallback"
+                _rec_src(src_wc)
             if c_bid_wc >= MIN_OPT_BID:
                 prem_wc = assigned_shares * c_bid_wc
-                sp_comm_total += assigned_shares * OPT_COMM_PER_SH
+                if not use_real:
+                    sp_comm_total += assigned_shares * OPT_COMM_PER_SH
+                else:
+                    # Commission already deducted in _sell_px; track separately for telemetry
+                    sp_comm_total += assigned_shares * OPT_COMM_PER_SH
                 sp_cash += prem_wc
                 wc_tid += 1
                 active_wc = {
@@ -1537,8 +1934,11 @@ def simulate_m7_strategy(
                     "exp_date": exp_date_wc,
                     "exp_dt": exp_dt_wc,
                     "dte": act_dte_wc,
-                    "entry_spot": op,
+                    "entry_spot": exec_px,
                     "kc": kc_wc,
+                    "k_cents": k_cents_wc,
+                    "last_iv": iv_wc,
+                    "entry_source": src_wc,
                     "assigned_cost_k": assigned_cost_k,
                     "shares": assigned_shares,
                     "prem_usd": prem_wc,
@@ -1547,12 +1947,34 @@ def simulate_m7_strategy(
         if i > 0 and sp_enabled and pending_sp is not None and active_sp is None and assigned_shares <= 1e-6:
             ps = pending_sp
             pending_sp = None
-            vxn_sp = max(10.0, ps["vxn"] - 0.45 * (op / ps["close"] - 1.0) * 100.0)
-            exp_date_sp, exp_dt_sp, act_dte_sp = bco_mod._pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
-            kp_sp = op * (1.0 - sp_otm_pct)
-            p_bid_sp, _ = bco_mod._opt_exec_price_sp(op, kp_sp, act_dte_sp / 365.0, ps["r"], ps["q"], vxn_sp, coeffs, "put", "sell", OPT_SLIP)
+            vxn_sp = vxn_ex
+            c_sp = None
+            if use_real:
+                lo_sp, hi_sp = (6, 14) if sp_dte <= 10 else (8, 17)
+                c_sp = real_store.select_put_contract(
+                    d, exec_px, sp_dte, 1.0 - sp_otm_pct, lo_sp, hi_sp, ps["r"], ps["q"],
+                    require_bid=MIN_OPT_BID,
+                    rec_tag=f"sp_{sp_dte}_5",
+                )
+            if c_sp is not None:
+                _rec_src(c_sp["source"])
+                exp_date_sp, exp_dt_sp = c_sp["exp"], c_sp["exp_dt"]
+                act_dte_sp = max(1, (exp_dt_sp - dt_objs[i]).days)
+                kp_sp = c_sp["strike"]
+                k_cents_sp = c_sp["k_cents"]
+                p_bid_sp = _sell_px(c_sp["bid"], c_sp["ask"], c_sp["mid"], c_sp["source"], slip_bsm=OPT_SLIP_SP)
+                iv_sp = c_sp["iv"]
+                src_sp = c_sp["source"]
+            else:
+                exp_date_sp, exp_dt_sp, act_dte_sp = bco_mod._pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
+                kp_sp = exec_px * (1.0 - sp_otm_pct)
+                p_bid_sp, _ = bco_mod._opt_exec_price_sp(exec_px, kp_sp, act_dte_sp / 365.0, ps["r"], ps["q"], vxn_sp, coeffs, "put", "sell", OPT_SLIP_SP)
+                k_cents_sp = int(round(kp_sp * 100.0))
+                iv_sp = None
+                src_sp = "bsm_fallback"
+                _rec_src(src_sp)
             if p_bid_sp >= MIN_OPT_BID:
-                nav_open = _estimate_nav_open(op, vxn_sp, ps["r"], ps["q"], dt_objs[i])
+                nav_open = _estimate_nav_exec(exec_px, vxn_sp, ps["r"], ps["q"], dt_objs[i], d)
                 put_sh = (sp_max_lev * nav_open) / kp_sp
                 prem_sp = put_sh * p_bid_sp
                 sp_comm_total += put_sh * OPT_COMM_PER_SH
@@ -1569,16 +1991,19 @@ def simulate_m7_strategy(
                     "exp_date": exp_date_sp,
                     "exp_dt": exp_dt_sp,
                     "dte": act_dte_sp,
-                    "entry_spot": op,
+                    "entry_spot": exec_px,
                     "kp": kp_sp,
+                    "k_cents": k_cents_sp,
+                    "last_iv": iv_sp,
+                    "entry_source": src_sp,
                     "shares": put_sh,
                     "prem_usd": prem_sp,
                     "entry_vix_ratio": ps["vix_ratio"],
                 }
 
-        # 3. Dividends DRIP (exact run_put_engine parity)
-        if div > 0.0 and core_shares > 0.0:
-            core_shares += (core_shares * div) / (cl * (1.0 + STOCK_REBAL_FEE))
+        # 3. Dividends DRIP
+        if div > 0.0 and core_shares > 0.0 and (not use_real or i > 0):
+            core_shares += (core_shares * div) / (cl if use_real else cl * (1.0 + STOCK_REBAL_FEE))
             if assigned_shares > 0.0:
                 sp_cash += assigned_shares * div
 
@@ -1588,7 +2013,7 @@ def simulate_m7_strategy(
         # 4. EOD Expiries
         still_open_exp: list[dict[str, Any]] = []
         for tr in active_tranches:
-            if dt_objs[i] >= tr["exp_dt"]:
+            if _is_exp(i, tr["exp_dt"]):
                 put_intr = max(0.0, tr["kp"] - cl)
                 settle_usd = tr["hedged_shares"] * put_intr
                 d_sh = 0.0
@@ -1615,6 +2040,7 @@ def simulate_m7_strategy(
                     actual_net_sh,
                 )
                 hs = tr["hedged_shares"]
+                en_src = tr.get("entry_source", "bsm_fallback")
                 ledger.append(
                     {
                         "tranche_id": tr["tranche_id"],
@@ -1627,6 +2053,9 @@ def simulate_m7_strategy(
                         "tp_mode": tp_code,
                         "roll_mode": roll_mode,
                         "target_dte": target_dte,
+                        "pricing_source": _classify_trade_source(en_src, en_src),
+                        "entry_source": en_src,
+                        "exit_source": en_src,
                         "signal_date": tr["signal_date"],
                         "entry_date": tr["entry_date"],
                         "planned_exp_date": tr["exp_date"],
@@ -1695,9 +2124,12 @@ def simulate_m7_strategy(
         put_mtm = 0.0
         for tr in active_tranches:
             rem_days = max(1, (tr["exp_dt"] - dt_objs[i]).days)
-            t_rem = rem_days / 365.0
-            sig_p = bco_mod.eval_skew_iv(cl, tr["kp"], t_rem, r_cur, q_cur, vxn_cl, coeffs)
-            put_mid = bco_mod.bsm_price(cl, tr["kp"], t_rem, r_cur, q_cur, sig_p, "put")
+            _, _, put_mid, iv_m, _, _ = _lookup_opt(
+                d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents"),
+                cl, rem_days, r_cur, q_cur, vxn_cl, tr.get("last_iv"), slip_bsm=OPT_SLIP
+            )
+            if math.isfinite(iv_m) and 0.03 <= iv_m <= 2.5:
+                tr["last_iv"] = iv_m
             put_mtm += tr["hedged_shares"] * put_mid
             if not tr["pending_tp"]:
                 vix_ok = (vix_r >= vix_ratio_tp) and ((cl <= tr["kp"]) if require_itm_tp else True)
@@ -1709,15 +2141,15 @@ def simulate_m7_strategy(
                     tr["pending_tp"] = True
                     tr["tp_trigger_ratio"] = vix_r
                     tr["tp_reason"] = "put_5x_dte75_tp" if is_roll50 else "put_5x_dte45_tp"
-                elif is_roll50 and rem_days <= roll_dte_thr:
-                    tr["pending_tp"] = True
+                elif is_roll50 and rem_days <= roll_dte_thr and not tr.get("pending_roll"):
+                    tr["pending_roll"] = True
                     tr["tp_trigger_ratio"] = vix_r
                     tr["tp_reason"] = "roll_50d"
 
         # 5b. Engine 2 & Engine 3 EOD MTM/Expiries
         cc_mtm = 0.0
         if active_cc is not None:
-            if d == active_cc["exp_date"]:
+            if _is_exp(i, active_cc["exp_dt"]):
                 pay_cc = max(0.0, cl - active_cc["kc"])
                 loss_cc = active_cc["shares"] * pay_cc
                 if pay_cc > 0.0:
@@ -1728,6 +2160,7 @@ def simulate_m7_strategy(
                     else:
                         core_shares -= (loss_cc - cc_cash) / (cl * (1.0 - STOCK_REBAL_FEE))
                         cc_cash = 0.0
+                cc_en_src = active_cc.get("entry_source", "bsm_fallback")
                 cc_ledger.append(
                     {
                         "cc_id": active_cc["cc_id"],
@@ -1743,16 +2176,19 @@ def simulate_m7_strategy(
                         "net_pnl_usd": round(active_cc["prem_usd"] - loss_cc, 2),
                         "exit_reason": "assigned_breach" if pay_cc > 0.0 else "expired_worthless",
                         "roll_gen": int(active_cc.get("roll_count", 0)),
+                        "pricing_source": _classify_trade_source(cc_en_src, cc_en_src),
                     }
                 )
                 active_cc = None
             else:
                 rem_cc = max(1, (active_cc["exp_dt"] - dt_objs[i]).days)
-                t_cc = rem_cc / 365.0
-                sc_cc = bco_mod.eval_skew_iv(cl, active_cc["kc"], t_cc, r_cur, q_cur, vxn_cl, coeffs)
-                cm_cc = bco_mod.bsm_price(cl, active_cc["kc"], t_cc, r_cur, q_cur, sc_cc, "call")
+                _, _, cm_cc, iv_cc_m, cur_delta, _ = _lookup_opt(
+                    d, "call", active_cc["exp_date"], active_cc["kc"], active_cc.get("k_cents"),
+                    cl, rem_cc, r_cur, q_cur, vxn_cl, active_cc.get("last_iv"), slip_bsm=OPT_SLIP
+                )
+                if math.isfinite(iv_cc_m) and 0.03 <= iv_cc_m <= 2.5:
+                    active_cc["last_iv"] = iv_cc_m
                 cc_mtm = -active_cc["shares"] * cm_cc
-                cur_delta = bco_mod.bsm_call_delta(cl, active_cc["kc"], t_cc, r_cur, q_cur, sc_cc)
                 if rem_cc >= 3 and vix_r >= 1.10:
                     active_cc["pending_close"] = True
                     active_cc["close_reason"] = "panic_close_uncap"
@@ -1765,7 +2201,8 @@ def simulate_m7_strategy(
         sp_mtm = 0.0
         if active_sp is not None:
             days_short_put_open += 1
-            if d == active_sp["exp_date"]:
+            if _is_exp(i, active_sp["exp_dt"]):
+                sp_en_src = active_sp.get("entry_source", "bsm_fallback")
                 if cl >= active_sp["kp"]:
                     sp_closed_ledger.append(
                         {
@@ -1774,6 +2211,7 @@ def simulate_m7_strategy(
                             "cycle_id": active_sp["cycle_id"],
                             "leg_type": "short_put",
                             "is_open_live": False,
+                            "pricing_source": _classify_trade_source(sp_en_src, sp_en_src),
                             "signal_date": active_sp["signal_date"],
                             "entry_date": active_sp["entry_date"],
                             "exit_date": d,
@@ -1806,6 +2244,7 @@ def simulate_m7_strategy(
                             "cycle_id": active_sp["cycle_id"],
                             "leg_type": "short_put",
                             "is_open_live": False,
+                            "pricing_source": _classify_trade_source(sp_en_src, sp_en_src),
                             "signal_date": active_sp["signal_date"],
                             "entry_date": active_sp["entry_date"],
                             "exit_date": d,
@@ -1824,12 +2263,18 @@ def simulate_m7_strategy(
                     active_sp = None
             else:
                 rem_sp = max(1, (active_sp["exp_dt"] - dt_objs[i]).days)
-                _, pm_sp = bco_mod._opt_exec_price_sp(cl, active_sp["kp"], rem_sp / 365.0, r_cur, q_cur, vxn_cl, coeffs, "put", "buy", OPT_SLIP)
+                _, _, pm_sp, iv_sp_m, _, _ = _lookup_opt(
+                    d, "put", active_sp["exp_date"], active_sp["kp"], active_sp.get("k_cents"),
+                    cl, rem_sp, r_cur, q_cur, vxn_cl, active_sp.get("last_iv"), slip_bsm=OPT_SLIP_SP
+                )
+                if math.isfinite(iv_sp_m) and 0.03 <= iv_sp_m <= 2.5:
+                    active_sp["last_iv"] = iv_sp_m
                 sp_mtm = -active_sp["shares"] * pm_sp
 
         wc_mtm = 0.0
         if active_wc is not None:
-            if d == active_wc["exp_date"]:
+            if _is_exp(i, active_wc["exp_dt"]):
+                wc_en_src = active_wc.get("entry_source", "bsm_fallback")
                 if cl > active_wc["kc"]:
                     sp_cash += assigned_shares * active_wc["kc"]
                     stock_gain = active_wc["shares"] * (active_wc["kc"] - active_wc["assigned_cost_k"])
@@ -1840,6 +2285,7 @@ def simulate_m7_strategy(
                             "cycle_id": active_wc["cycle_id"],
                             "leg_type": "wheel_call",
                             "is_open_live": False,
+                            "pricing_source": _classify_trade_source(wc_en_src, wc_en_src),
                             "signal_date": active_wc["signal_date"],
                             "entry_date": active_wc["entry_date"],
                             "exit_date": d,
@@ -1872,6 +2318,7 @@ def simulate_m7_strategy(
                             "cycle_id": active_wc["cycle_id"],
                             "leg_type": "wheel_call",
                             "is_open_live": False,
+                            "pricing_source": _classify_trade_source(wc_en_src, wc_en_src),
                             "signal_date": active_wc["signal_date"],
                             "entry_date": active_wc["entry_date"],
                             "exit_date": d,
@@ -1892,7 +2339,12 @@ def simulate_m7_strategy(
                     active_wc = None
             else:
                 rem_wc = max(1, (active_wc["exp_dt"] - dt_objs[i]).days)
-                _, cm_wc = bco_mod._opt_exec_price_sp(cl, active_wc["kc"], rem_wc / 365.0, r_cur, q_cur, vxn_cl, coeffs, "call", "buy", OPT_SLIP)
+                _, _, cm_wc, iv_wc_m, _, _ = _lookup_opt(
+                    d, "call", active_wc["exp_date"], active_wc["kc"], active_wc.get("k_cents"),
+                    cl, rem_wc, r_cur, q_cur, vxn_cl, active_wc.get("last_iv"), slip_bsm=OPT_SLIP_SP
+                )
+                if math.isfinite(iv_wc_m) and 0.03 <= iv_wc_m <= 2.5:
+                    active_wc["last_iv"] = iv_wc_m
                 wc_mtm = -active_wc["shares"] * cm_wc
 
         nav = (core_shares + assigned_shares) * cl + cc_cash + sp_cash + put_mtm + cc_mtm + sp_mtm + wc_mtm
@@ -1999,8 +2451,8 @@ def simulate_m7_strategy(
             coeffs,
             actual_net_sh,
         )
-        is_armed = bool(tr.get("pending_tp"))
-        armed_reason = tr.get("tp_reason") or ""
+        is_armed = bool(tr.get("pending_tp")) or bool(tr.get("pending_roll"))
+        armed_reason = tr.get("tp_reason") or ("roll_50d" if tr.get("pending_roll") else "")
         if is_armed and armed_reason == "roll_50d":
             live_reason = "live_roll50_armed_next_open"
         elif is_armed:
@@ -2030,6 +2482,9 @@ def simulate_m7_strategy(
                 "actual_days_held": (last_dt - tr["entry_dt"]).days,
                 "rem_dte_at_exit": rem_d,
                 "exit_reason": live_reason,
+                "pricing_source": _classify_trade_source(tr.get("entry_source", "bsm_fallback"), tr.get("entry_source", "bsm_fallback")),
+                "entry_source": tr.get("entry_source", "bsm_fallback"),
+                "exit_source": "bsm_fallback",
                 "sig_score": tr["sig_score"],
                 "sig_ad_below50": tr["sig_ad_below50"],
                 "crisis_prob": tr["crisis_prob"],
@@ -2238,9 +2693,34 @@ def simulate_m7_strategy(
     end_put_notional = (active_sp["shares"] * active_sp["kp"]) if active_sp is not None else 0.0
     end_notional_lev = ((core_shares + assigned_shares) * last_cl + end_put_notional) / max(nav_list[-1], 1.0)
 
+    all_leg_sources = (
+        [str(x.get("pricing_source") or "bsm_fallback") for x in ledger]
+        + [str(x.get("pricing_source") or "bsm_fallback") for x in cc_ledger]
+        + [str(x.get("pricing_source") or "bsm_fallback") for x in sp_combined_ledger]
+    )
+    real_opra_tr_cnt = sum(1 for s in all_leg_sources if s == "real_opra")
+    real_poly_tr_cnt = sum(1 for s in all_leg_sources if s == "real_polygon")
+    real_tr_cnt = real_opra_tr_cnt + real_poly_tr_cnt
+    sim_tr_cnt = len(all_leg_sources) - real_tr_cnt
+    real_tr_pct = (real_tr_cnt / len(all_leg_sources) * 100.0) if all_leg_sources else 0.0
+    tot_lk = q_stats["total_lookups"]
+    real_lk = q_stats["real_opra_hits"] + q_stats["real_polygon_hits"]
+    real_hit_pct = (real_lk / tot_lk * 100.0) if tot_lk > 0 else 0.0
+
     summary = {
         "id": strategy_id,
         "arch": "m7_equal_dollar",
+        "pricing_basis": "hybrid_real_opra_polygon_bsm" if use_real else "bsm_simulated",
+        "real_trades_count": real_tr_cnt,
+        "real_opra_trades_count": real_opra_tr_cnt,
+        "real_polygon_trades_count": real_poly_tr_cnt,
+        "sim_trades_count": sim_tr_cnt,
+        "real_trades_pct": round(real_tr_pct, 1),
+        "real_quote_lookups": tot_lk,
+        "real_quote_hits": real_lk,
+        "real_quote_hit_pct": round(real_hit_pct, 1),
+        "opra_window_end": real_store.opra_date_max if use_real else "",
+        "polygon_window_end": real_store.polygon_date_max if use_real else "",
         "put_otm": put_otm,
         "put_otm_pct": otm_pct_int,
         "m7_tp_mode": m7_tp_mode,

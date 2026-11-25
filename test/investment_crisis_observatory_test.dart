@@ -135,7 +135,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       final strat = qp['strategy'] ?? 'M7G_Graded';
       final putOtm = qp['putOtm'] ?? raw['default_put_otm'] ?? 'otm15';
       final m7TpMode = qp['m7TpMode'] ?? raw['default_m7_tp_mode'] ?? 'standard';
-      final rollMode = qp['rollMode'] ?? raw['default_roll_mode'] ?? '90d_hold';
+      final rollMode = qp['rollMode'] ?? raw['default_roll_mode'] ?? '120d_roll50';
       final m0Enabled = (qp['m0Enabled'] ?? 'true') != 'false';
       final tpMode = qp['tpMode'] ?? raw['default_tp_mode'] ?? 'layered_itm';
       final ccMode = qp['ccMode'] ?? raw['default_cc_mode'] ?? 'cc_off';
@@ -255,7 +255,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
           eventsByStrat[e.key] = _synthesizeEvents(e.key, e.value);
         }
       }
-      final ledgerStrat = strat == 'BH_Pure_QQQ' ? 'U1_PureOptions' : strat;
+      final ledgerStrat = strat == 'BH_Pure_QQQ' ? 'M7G_Graded' : strat;
 
       Map<String, dynamic>? resolveBundle(
         String tp,
@@ -562,7 +562,7 @@ void main() {
       expect(find.textContaining('T-Bill'), findsNothing);
       expect(find.textContaining('FactOS'), findsNothing);
 
-      // 1. Default flagship = M7G_Graded (otm15 + 90d_hold + standard + M0 ON)
+      // 1. Default flagship = M7G_Graded (otm15 + 120d_roll50 + standard + M0 ON · Real-OPRA #1)
       expect(
         find.byKey(const ValueKey('crisis-observatory-command-center')),
         findsOneWidget,
@@ -595,21 +595,34 @@ void main() {
       expect(find.byKey(const ValueKey('crisis-m7-pillar-P2')), findsOneWidget);
       expect(find.byKey(const ValueKey('crisis-m7-pillar-P3')), findsOneWidget);
       expect(find.byKey(const ValueKey('crisis-m0-toggle')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('crisis-real-data-provenance-pill')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Real Option Chain: 95.7%'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-legacy-upgrade-banner')),
+        findsNothing,
+      );
 
-      // Penny-exact M7G_Graded default metrics ($1,682,250 · +$404,543 · 2,764.8 sh · +31.7% · -28.0% MDD · Calmar 0.701)
-      expect(find.text('\$1,682,250'), findsOneWidget);
-      expect(find.text('+\$404,543'), findsWidgets);
-      expect(find.text('2,764.8 sh'), findsOneWidget);
-      expect(find.textContaining('+31.7%'), findsWidgets);
-      expect(find.text('-28.0%'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.701'), findsWidgets);
+      // Penny-exact Real-OPRA M7G_Graded default metrics ($1,462,058 · +$173,753 · 2,402.9 sh · +13.5% · -29.2% MDD · Calmar 0.624)
+      expect(find.text('\$1,462,058'), findsOneWidget);
+      expect(find.text('+\$173,753'), findsWidgets);
+      expect(find.text('2,402.9 sh'), findsOneWidget);
+      expect(find.textContaining('+13.5%'), findsWidgets);
+      expect(find.text('-29.2%'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.624'), findsWidgets);
+      expect(find.text('50D Roll / Salvage'), findsOneWidget);
 
-      // Interactive QQQ Shares calculator updates per-slot budget live
+      // Interactive QQQ Shares calculator updates per-slot budget live (default 120D tenor)
       final sharesField = find.byKey(const ValueKey('crisis-qqq-shares-input'));
       await tester.ensureVisible(sharesField);
       await tester.enterText(sharesField, '5000');
       await tester.pumpAndSettle();
-      expect(find.textContaining('ctr (90D K=\$'), findsOneWidget);
+      expect(find.textContaining('ctr (120D K=\$'), findsOneWidget);
 
       // Expand & collapse classic Six Crisis Lights reference panel
       await tapVisible(
@@ -621,31 +634,31 @@ void main() {
         findsOneWidget,
       );
 
-      // Switch Tenor/Roll to 120D -> 50D Roll (120d_roll50 -> $1,625,935 · -28.4% MDD · 50D Roll / Salvage legend)
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-roll-pill-120d_roll50')),
-      );
-      expect(find.text('\$1,625,935'), findsOneWidget);
-      expect(find.text('-28.4%'), findsOneWidget);
-      expect(find.text('50D Roll / Salvage'), findsOneWidget);
-
-      // Switch Strike to -20% OTM while on 120d_roll50 ($1,823,635)
-      await tapVisible(
-        tester,
-        find.byKey(const ValueKey('crisis-otm-pill-otm20')),
-      );
-      expect(find.text('\$1,823,635'), findsOneWidget);
-
-      // Switch back to 90d_hold while on -20% OTM ($1,856,309 · +45.3% · Calmar 0.737)
+      // Switch Tenor/Roll to 90D Hold (90d_hold -> $1,356,201 · -28.1% MDD · Calmar 0.623)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
       );
-      expect(find.text('\$1,856,309'), findsOneWidget);
-      expect(find.textContaining('+45.3%'), findsWidgets);
+      expect(find.text('\$1,356,201'), findsOneWidget);
+      expect(find.text('-28.1%'), findsOneWidget);
 
-      // Switch back to -15% OTM and test ITM_TP ($1,523,801 · -24.4% MDD · Calmar 0.763)
+      // Switch Strike to -20% OTM while on 90d_hold ($1,289,101 · +0.1%)
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-otm-pill-otm20')),
+      );
+      expect(find.text('\$1,289,101'), findsOneWidget);
+      expect(find.textContaining('+0.1%'), findsWidgets);
+
+      // Switch back to 120D -> 50D Roll while on -20% OTM ($1,453,499 · +12.8%)
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-roll-pill-120d_roll50')),
+      );
+      expect(find.text('\$1,453,499'), findsOneWidget);
+      expect(find.textContaining('+12.8%'), findsWidgets);
+
+      // Switch back to -15% OTM and test ITM_TP ($1,328,139 · -29.2% MDD · Calmar 0.592)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-otm-pill-otm15')),
@@ -654,11 +667,11 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-m7-tp-pill-itm_tp')),
       );
-      expect(find.text('\$1,523,801'), findsOneWidget);
-      expect(find.text('-24.4%'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.763'), findsWidgets);
+      expect(find.text('\$1,328,139'), findsOneWidget);
+      expect(find.text('-29.2%'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.592'), findsWidgets);
 
-      // Restore standard TP and verify M7_Ensemble ($1,676,747) + M0 switch
+      // Restore standard TP and verify M7_Ensemble ($1,429,845) + M0 switch
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-m7-tp-pill-standard')),
@@ -667,7 +680,7 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-strategy-pill-M7_Ensemble')),
       );
-      expect(find.text('\$1,676,747'), findsOneWidget);
+      expect(find.text('\$1,429,845'), findsOneWidget);
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-m0-toggle')),
@@ -678,46 +691,48 @@ void main() {
         find.byKey(const ValueKey('crisis-m0-toggle')),
       );
 
-      // 2. Switch to Legacy U1_PureOptions and verify 100% compatibility with all 3 Orthogonal Engines
+      // 2. Switch to Legacy U1_PureOptions and verify upgrade banner + 100% compatibility with all 3 Orthogonal Engines
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-strategy-pill-U1_PureOptions')),
       );
       expect(
-        find.text(
-          'Deep-ITM Panic Harvest Armed · Monetize Put Next Open (6/6 Lights)',
-        ),
+        find.byKey(const ValueKey('crisis-legacy-upgrade-banner')),
         findsOneWidget,
       );
-      expect(find.text('\$1,654,577'), findsOneWidget);
-      expect(find.text('+\$366,272'), findsOneWidget);
-      expect(find.text('2,719.3 sh'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('crisis-switch-to-m7g-btn')),
+        findsOneWidget,
+      );
+      expect(find.text('\$1,325,413'), findsOneWidget);
+      expect(find.text('+\$37,108'), findsWidgets);
+      expect(find.text('2,178.3 sh'), findsOneWidget);
       expect(find.byKey(const ValueKey('crisis-tp-mode-bar')), findsOneWidget);
 
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-cc-mode-pill-cc_d12_d35')),
       );
-      expect(find.text('\$1,714,947'), findsOneWidget);
+      expect(find.text('\$1,308,725'), findsOneWidget);
 
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_cap10')),
       );
       expect(find.byKey(const ValueKey('crisis-wc-mode-bar')), findsOneWidget);
-      expect(find.text('\$1,805,856'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.657'), findsWidgets);
+      expect(find.text('\$1,396,670'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.557'), findsWidgets);
 
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-wc-mode-pill-wc_30d_c5s5')),
       );
-      expect(find.text('\$1,819,738'), findsOneWidget);
+      expect(find.text('\$1,386,350'), findsOneWidget);
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-wc-mode-pill-wc_14d_c0s2')),
       );
-      expect(find.text('\$1,779,823'), findsOneWidget);
+      expect(find.text('\$1,366,059'), findsOneWidget);
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-wc-mode-pill-wc_reclaim_30d_d35')),
@@ -768,13 +783,24 @@ void main() {
       expect(
         find.descendant(
           of: tooltipFinder,
-          matching: find.textContaining('M7 Crisis Prob:'),
+          matching: find.textContaining('Target 0 / Held 0'),
         ),
         findsOneWidget,
       );
 
       await gesture.moveTo(Offset.zero);
       await tester.pumpAndSettle();
+
+      // One-click upgrade banner jumps straight back to flagship M7G_Graded (120D->50D Roll)
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-switch-to-m7g-btn')),
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-legacy-upgrade-banner')),
+        findsNothing,
+      );
+      expect(find.text('\$1,462,058'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -814,25 +840,28 @@ void main() {
           findsOneWidget,
         );
         expect(find.textContaining('单槽等金额预算：'), findsOneWidget);
-        expect(find.text('90D 持有到期（默认）'), findsOneWidget);
-        expect(find.text('120D 建仓 · 50D 剩余滚仓'), findsOneWidget);
-        expect(find.text('-15% OTM（默认）'), findsOneWidget);
-        expect(find.text('-20% OTM（高凸性）'), findsOneWidget);
+        expect(find.text('120D 建仓 · 50D 滚仓（真实 OPRA 冠军）'), findsOneWidget);
+        expect(find.text('90D 持有到期'), findsOneWidget);
+        expect(find.text('-15% OTM（真实 OPRA 冠军）'), findsOneWidget);
+        expect(find.text('-20% OTM（深虚值对照）'), findsOneWidget);
+        expect(find.textContaining('真实期权盘口覆盖 95.7%'), findsOneWidget);
+        expect(find.text('50D 残值滚仓'), findsOneWidget);
         expect(find.text('历史保护策略 vs 死拿 QQQ'), findsOneWidget);
-        expect(find.textContaining('+31.7%'), findsWidgets);
+        expect(find.textContaining('+13.5%'), findsWidgets);
         expect(find.textContaining('短债'), findsNothing);
 
-        // Toggle 120D -> 50D Roll on Chinese Desktop & Mobile (390x844) and verify zero overflow
-        await tapVisible(
-          tester,
-          find.byKey(const ValueKey('crisis-roll-pill-120d_roll50')),
-        );
-        expect(find.text('50D 残值滚仓'), findsOneWidget);
-        expect(tester.takeException(), isNull);
+        // Toggle 90D Hold and back to 120D -> 50D Roll on Chinese Desktop & Mobile (390x844) with zero overflow
         await tapVisible(
           tester,
           find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
         );
+        expect(find.text('\$1,356,201'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('crisis-roll-pill-120d_roll50')),
+        );
+        expect(find.text('\$1,462,058'), findsOneWidget);
       }
 
       addTearDown(tester.view.resetPhysicalSize);
@@ -878,14 +907,14 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('\$1,823,635'), findsOneWidget);
+      expect(find.text('\$1,453,499'), findsOneWidget);
       expect(find.text('50D Roll / Salvage'), findsOneWidget);
 
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
       );
-      expect(find.text('\$1,856,309'), findsOneWidget);
+      expect(find.text('\$1,289,101'), findsOneWidget);
       expect(latestSelection['strategy'], 'M7G_Graded');
       expect(latestSelection['putOtm'], 'otm20');
       expect(latestSelection['rollMode'], '90d_hold');
