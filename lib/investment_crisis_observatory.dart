@@ -756,6 +756,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final pillarScores = <String, int>{'P1': p1, 'P2': p2, 'P3': p3};
 
     final baseDash = _resolveM7LiveDashboard(doc);
+    final optStress = _numVal(
+      bar['live_stress'],
+      _numVal(baseDash['live_stress_index']),
+    ).round();
     final optPillars = asList(baseDash['pillars']).map((pil) {
       final pid = text(pil['id']);
       final mods = asList(pil['modules']).map((mod) {
@@ -782,6 +786,20 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       'p1_score': p1,
       'p2_score': p2,
       'p3_score': p3,
+      'live_stress_index': optStress,
+      'live_stress_level': optStress >= 75
+          ? 'crisis'
+          : (optStress >= 50
+                ? 'elevated'
+                : (optStress >= 25 ? 'building' : 'calm')),
+      'live_stress_label_en': _stressLevelFallbackEn(optStress),
+      'live_stress_label_zh': _stressLevelFallbackZh(optStress),
+      'data_freshness': <String, dynamic>{
+        ...asMap(baseDash['data_freshness']),
+        'yahoo_eod_date': pitDate,
+        'ad_line_date': pitDate,
+        'is_pit_replay': true,
+      },
       'target_slots': tgtSlots,
       'active_slots': actSlots,
       'redline': <String, dynamic>{
@@ -2753,6 +2771,30 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final p1Score = _numVal(m7Dash['p1_score']).round();
     final p2Score = _numVal(m7Dash['p2_score']).round();
     final p3Score = _numVal(m7Dash['p3_score']).round();
+    final liveStress = _numVal(m7Dash['live_stress_index']).round();
+    final stressLblEn = text(m7Dash['live_stress_label_en']).isNotEmpty
+        ? text(m7Dash['live_stress_label_en'])
+        : _stressLevelFallbackEn(liveStress);
+    final stressLblZh = text(m7Dash['live_stress_label_zh']).isNotEmpty
+        ? text(m7Dash['live_stress_label_zh'])
+        : _stressLevelFallbackZh(liveStress);
+    final stressBreakdown = asMap(m7Dash['live_stress_breakdown']);
+    final rvPts = _numVal(stressBreakdown['regime_vol']);
+    final tdPts = _numVal(stressBreakdown['trend_dd']);
+    final cmPts = _numVal(stressBreakdown['credit_macro']);
+    final btPts = _numVal(stressBreakdown['breadth_tail']);
+    final volBlockedCount = _numVal(m7Dash['vol_blocked_sensor_count']).round();
+    final warmingCount = _numVal(m7Dash['warming_count']).round();
+    final freshness = asMap(m7Dash['data_freshness']);
+    final yahooDate = text(freshness['yahoo_eod_date']).isNotEmpty
+        ? text(freshness['yahoo_eod_date'])
+        : asOfDate;
+    final baaDate = text(freshness['fred_baa_date']);
+    final nfciDate = text(freshness['fred_nfci_date']);
+    final adDate = text(freshness['ad_line_date']);
+    final isPitFresh =
+        freshness['is_pit_replay'] == true || pinnedPitDate != null;
+
     final targetSlots = _numVal(m7Dash['target_slots']).round();
     final activeSlots = _numVal(m7Dash['active_slots']).round();
     final maxSlots = math.max(1, _numVal(m7Dash['max_slots'], 3).round());
@@ -2768,11 +2810,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
     final Color statusColor = t1Code.contains('TP') || t1Code.contains('HARVEST')
         ? _emerald
-        : (redlineBlocked
+        : (liveStress >= 75 || redlineBlocked
               ? _coral
-              : (crisisProb >= 45 || activeSlots >= 2
+              : (liveStress >= 50 || crisisProb >= 45 || activeSlots >= 2
                     ? _amber
-                    : (crisisProb >= 35 || activeSlots >= 1 ? _sky : _emerald)));
+                    : (liveStress >= 25 || crisisProb >= 35 || activeSlots >= 1
+                          ? _sky
+                          : _emerald)));
 
     final totalShares = _numVal(stratSummary['final_shares'], 2764.81);
     final bhShares = _numVal(
@@ -2796,53 +2840,295 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       45,
     ).round();
 
+    final stressAccent = _stressAccent(liveStress);
     final probAccent = crisisProb >= 65
         ? _coral
-        : (crisisProb >= 35 ? _amber : _emerald);
-    final probCard = Column(
-      key: const ValueKey('crisis-m7-prob-card'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          w('Composite Crisis Probability', '综合危机概率（三支柱加总）'),
+        : (crisisProb >= 35
+              ? _amber
+              : (redlineBlocked ? _coral : _emerald));
+
+    Widget buildBreakdownChip(String lbl, Color chipColor) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6.5, vertical: 2.5),
+        decoration: BoxDecoration(
+          color: p.text.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(color: p.border.withValues(alpha: 0.85)),
+        ),
+        child: Text(
+          lbl,
           style: TextStyle(
-            color: p.muted,
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
+            color: chipColor,
+            fontSize: 10.8,
+            fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(height: 5),
-        Row(
-          children: [
-            Text(
-              '$crisisProb%',
-              style: TextStyle(
-                color: probAccent,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.4,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(999),
-                child: LinearProgressIndicator(
-                  value: (crisisProb / 100.0).clamp(0.0, 1.0),
-                  minHeight: 5,
-                  backgroundColor: p.border,
-                  color: probAccent,
+      );
+    }
+
+    final stressTrackCard = Container(
+      key: const ValueKey('crisis-m7-stress-track'),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: stressAccent.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: stressAccent.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                w(
+                  'Real-Time Crisis Stress (0–100)',
+                  '实时危机压力指数（连续 0–100 · 不受低波门控清零）',
+                ),
+                style: TextStyle(
+                  color: p.muted,
+                  fontSize: 11.8,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: stressAccent.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: stressAccent.withValues(alpha: 0.5)),
+                ),
+                child: Text(
+                  w(stressLblEn, stressLblZh),
+                  style: TextStyle(
+                    color: stressAccent,
+                    fontSize: 10.8,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Text(
+                '$liveStress%',
+                style: TextStyle(
+                  color: stressAccent,
+                  fontSize: 23,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: (liveStress / 100.0).clamp(0.0, 1.0),
+                    minHeight: 6,
+                    backgroundColor: p.border,
+                    color: stressAccent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (stressBreakdown.isNotEmpty) ...[
+            const SizedBox(height: 7),
+            Wrap(
+              spacing: 6,
+              runSpacing: 5,
+              children: [
+                buildBreakdownChip(
+                  w(
+                    'Vol/HMM ${rvPts.toStringAsFixed(0)}/30',
+                    '状态波动 ${rvPts.toStringAsFixed(0)}/30',
+                  ),
+                  rvPts >= 15 ? stressAccent : p.muted,
+                ),
+                buildBreakdownChip(
+                  w(
+                    'Trend/DD ${tdPts.toStringAsFixed(0)}/25',
+                    '趋势回撤 ${tdPts.toStringAsFixed(0)}/25',
+                  ),
+                  tdPts >= 12 ? stressAccent : p.muted,
+                ),
+                buildBreakdownChip(
+                  w(
+                    'Credit/Macro ${cmPts.toStringAsFixed(0)}/25',
+                    '信用宏观 ${cmPts.toStringAsFixed(0)}/25',
+                  ),
+                  cmPts >= 12 ? stressAccent : p.muted,
+                ),
+                buildBreakdownChip(
+                  w(
+                    'Breadth/Tail ${btPts.toStringAsFixed(0)}/20',
+                    '宽度尾部 ${btPts.toStringAsFixed(0)}/20',
+                  ),
+                  btPts >= 10 ? stressAccent : p.muted,
+                ),
+              ],
             ),
           ],
+        ],
+      ),
+    );
+
+    final String gateBadgeText = redlineBlocked
+        ? w('High-IV Freeze · No Chasing', '高波红线冻结防追高')
+        : (crisisProb >= 35
+              ? w(
+                  'Low-Vol Entry Armed · Target $targetSlots/$maxSlots',
+                  '低波击球激活 · 目标 $targetSlots/$maxSlots 槽',
+                )
+              : w('Low-Vol Gate Open · Standby', '低波窗口开放 · 0槽待命'));
+    final Color gateBadgeColor = redlineBlocked
+        ? _coral
+        : (crisisProb >= 35 ? _amber : _emerald);
+
+    final String readinessNote = volBlockedCount > 0 || warmingCount > 0
+        ? w(
+            '${volBlockedCount > 0 ? '$volBlockedCount Sensor Red (IV Blocked) · ' : ''}$warmingCount Warming',
+            '${volBlockedCount > 0 ? '$volBlockedCount核预警已亮(高波禁追) · ' : ''}$warmingCount核蓄力预热',
+          )
+        : w('All sensors calm', '各子核平静待命');
+
+    final gateTrackCard = Container(
+      key: const ValueKey('crisis-m7-gate-track'),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: p.text.withValues(alpha: 0.025),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: redlineBlocked
+              ? _coral.withValues(alpha: 0.32)
+              : (crisisProb >= 35
+                    ? _amber.withValues(alpha: 0.4)
+                    : p.border),
         ),
-        const SizedBox(height: 4),
-        Text(
-          'P1 $p1Score/45 · P2 $p2Score/40 · P3 $p3Score/45',
-          style: TextStyle(color: p.muted, fontSize: 11.5),
-        ),
-      ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                w(
+                  'Low-Vol Put Entry Gate (P1+P2+P3)',
+                  '低波买盾执行分（三支柱加总 · 仅低波潜伏买盾）',
+                ),
+                style: TextStyle(
+                  color: p.muted,
+                  fontSize: 11.8,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: gateBadgeColor.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: gateBadgeColor.withValues(alpha: 0.48),
+                  ),
+                ),
+                child: Text(
+                  gateBadgeText,
+                  style: TextStyle(
+                    color: gateBadgeColor,
+                    fontSize: 10.8,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Text(
+                '$crisisProb%',
+                style: TextStyle(
+                  color: probAccent,
+                  fontSize: 23,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: (crisisProb / 100.0).clamp(0.0, 1.0),
+                    minHeight: 6,
+                    backgroundColor: p.border,
+                    color: probAccent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                'P1 $p1Score/45 · P2 $p2Score/40 · P3 $p3Score/45',
+                style: TextStyle(
+                  color: p.muted,
+                  fontSize: 11.3,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                '· $readinessNote',
+                style: TextStyle(
+                  color: volBlockedCount > 0
+                      ? _coral
+                      : (warmingCount > 0 ? _amber : p.muted),
+                  fontSize: 11.2,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    final probCard = Container(
+      key: const ValueKey('crisis-m7-prob-card'),
+      child: !compact
+          ? IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: stressTrackCard),
+                  const SizedBox(width: 12),
+                  Expanded(child: gateTrackCard),
+                ],
+              ),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                stressTrackCard,
+                const SizedBox(height: 10),
+                gateTrackCard,
+              ],
+            ),
     );
 
     final slotsCard = Column(
@@ -3167,7 +3453,51 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               height: 1.48,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
+          Wrap(
+            key: const ValueKey('crisis-m7-freshness-strip'),
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (isPitFresh)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1.5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _sky.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: _sky.withValues(alpha: 0.45)),
+                  ),
+                  child: Text(
+                    w('PIT Replay', 'PIT 历史回放'),
+                    style: const TextStyle(
+                      color: _sky,
+                      fontSize: 10.2,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              Text(
+                [
+                  'Yahoo EOD $yahooDate',
+                  if (baaDate.isNotEmpty)
+                    w('FRED Baa/2Y $baaDate (+1D)', 'FRED 利差/2Y $baaDate (+1D)'),
+                  if (nfciDate.isNotEmpty) 'NFCI $nfciDate (+5D)',
+                  if (adDate.isNotEmpty) 'A-D $adDate',
+                ].join(' · '),
+                style: TextStyle(
+                  color: p.muted.withValues(alpha: 0.85),
+                  fontSize: 11.0,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          probCard,
+          const SizedBox(height: 14),
           Container(height: 1, color: p.border),
           const SizedBox(height: 14),
           if (desktop)
@@ -3175,12 +3505,6 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: probCard),
-                  Container(
-                    width: 1,
-                    margin: const EdgeInsets.symmetric(horizontal: 16),
-                    color: p.border,
-                  ),
                   Expanded(child: slotsCard),
                   Container(
                     width: 1,
@@ -3201,11 +3525,6 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                probCard,
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 11),
-                  child: Container(height: 1, color: p.border),
-                ),
                 slotsCard,
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 11),
@@ -3576,6 +3895,27 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     );
   }
 
+  Color _stressAccent(int stress) {
+    if (stress >= 75) return _coral;
+    if (stress >= 50) return const Color(0xFFF97316);
+    if (stress >= 25) return _amber;
+    return _emerald;
+  }
+
+  String _stressLevelFallbackEn(int stress) {
+    if (stress >= 75) return 'Active Crisis';
+    if (stress >= 50) return 'Elevated Stress';
+    if (stress >= 25) return 'Stress Building';
+    return 'Calm Low-Vol';
+  }
+
+  String _stressLevelFallbackZh(int stress) {
+    if (stress >= 75) return '危机爆发中';
+    if (stress >= 50) return '高压警戒';
+    if (stress >= 25) return '隐患蓄力';
+    return '平静低波';
+  }
+
   // ===========================================================================
   // BLOCK 2A: M7-Graded Three-Pillar & 6 Sub-Module Status Matrix
   // ===========================================================================
@@ -3592,6 +3932,29 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final p1 = _numVal(m7Dash['p1_score']).round();
     final p2 = _numVal(m7Dash['p2_score']).round();
     final p3 = _numVal(m7Dash['p3_score']).round();
+    final liveStress = _numVal(m7Dash['live_stress_index']).round();
+    final stressAccent = _stressAccent(liveStress);
+    final stressLbl = w(
+      text(m7Dash['live_stress_label_en']).isNotEmpty
+          ? text(m7Dash['live_stress_label_en'])
+          : _stressLevelFallbackEn(liveStress),
+      text(m7Dash['live_stress_label_zh']).isNotEmpty
+          ? text(m7Dash['live_stress_label_zh'])
+          : _stressLevelFallbackZh(liveStress),
+    );
+    final redlineBlocked = asMap(m7Dash['redline'])['blocked'] == true;
+    final Color gatePillColor = redlineBlocked && crisisProb == 0
+        ? _coral
+        : (crisisProb >= 35 ? _amber : _emerald);
+    final String gatePillText = redlineBlocked && crisisProb == 0
+        ? w(
+            'Put Gate 0% (High-IV Freeze)',
+            '低波买盾分 0%（高波红线冻结防追高）',
+          )
+        : w(
+            'Put Gate $crisisProb% ($p1+$p2+$p3)',
+            '低波买盾分 $crisisProb%（$p1+$p2+$p3）',
+          );
 
     return Container(
       key: _threePillarsAnchorKey,
@@ -3662,27 +4025,48 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Container(
+                      key: const ValueKey('crisis-pillars-stress-pill'),
                       padding: const EdgeInsets.symmetric(
                         horizontal: 9,
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: (crisisProb >= 35 ? _amber : _emerald)
-                            .withValues(alpha: 0.12),
+                        color: stressAccent.withValues(alpha: 0.14),
                         borderRadius: BorderRadius.circular(999),
                         border: Border.all(
-                          color: (crisisProb >= 35 ? _amber : _emerald)
-                              .withValues(alpha: 0.45),
+                          color: stressAccent.withValues(alpha: 0.5),
                         ),
                       ),
                       child: Text(
                         w(
-                          'Total $crisisProb% ($p1 + $p2 + $p3)',
-                          '总分 $crisisProb%（$p1 + $p2 + $p3）',
+                          'Stress $liveStress% ($stressLbl)',
+                          '实时危机压力 $liveStress%（$stressLbl）',
                         ),
                         style: TextStyle(
-                          color: crisisProb >= 35 ? _amber : _emerald,
-                          fontSize: 11.5,
+                          color: stressAccent,
+                          fontSize: 11.4,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      key: const ValueKey('crisis-pillars-gate-pill'),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: gatePillColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: gatePillColor.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      child: Text(
+                        gatePillText,
+                        style: TextStyle(
+                          color: gatePillColor,
+                          fontSize: 11.4,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -3820,6 +4204,140 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final enabled = !disabledInCore3 && mod['enabled'] != false;
     final volOk = !disabledInCore3 && mod['vol_gate_passed'] == true;
     final metrics = asList(mod['metrics']);
+    final statusCode = text(mod['status_code']);
+    final sensorTrig = !disabledInCore3 && mod['sensor_triggered'] == true;
+    final rMet = _numVal(mod['readiness_met']).round();
+    final rTot = _numVal(
+      mod['readiness_total'],
+      metrics.length.toDouble(),
+    ).round();
+    final hintText = w(
+      text(mod['next_trigger_hint_en']),
+      text(mod['next_trigger_hint_zh']),
+    );
+    final isVolBlockedRed =
+        enabled &&
+        !triggered &&
+        (statusCode == 'SENSOR_RED_VOL_BLOCKED' || (sensorTrig && !volOk));
+    final isWarming =
+        enabled &&
+        !triggered &&
+        !isVolBlockedRed &&
+        (statusCode == 'WARMING_UP' || rMet > 0);
+
+    final Color dotColor = !enabled
+        ? p.muted.withValues(alpha: 0.35)
+        : (triggered
+              ? accent
+              : (isVolBlockedRed
+                    ? _coral
+                    : (isWarming ? _amber : p.muted.withValues(alpha: 0.45))));
+    final Color cardBorderColor = triggered
+        ? accent.withValues(alpha: 0.58)
+        : (isVolBlockedRed
+              ? _coral.withValues(alpha: 0.52)
+              : (isWarming
+                    ? _amber.withValues(alpha: 0.36)
+                    : p.border.withValues(alpha: 0.8)));
+
+    Widget buildModuleRightBadge() {
+      if (disabledInCore3) {
+        return Container(
+          key: ValueKey('crisis-mod-core3-off-$mid'),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+          decoration: BoxDecoration(
+            color: p.text.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: p.border),
+          ),
+          child: Text(
+            w('Off in Core-3', '精简模式已关闭'),
+            style: TextStyle(
+              color: p.muted,
+              fontSize: 10.2,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        );
+      }
+      if (!enabled) {
+        return Text(
+          w('OFF', '已关'),
+          key: ValueKey('crisis-mod-status-$mid'),
+          style: TextStyle(
+            color: p.muted,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        );
+      }
+      if (triggered) {
+        return Container(
+          key: ValueKey('crisis-mod-status-$mid'),
+          padding: const EdgeInsets.symmetric(horizontal: 6.5, vertical: 1.5),
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: accent.withValues(alpha: 0.5)),
+          ),
+          child: Text(
+            w('+$earned% BUY', '已触发 +$earned%'),
+            style: TextStyle(
+              color: accent,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        );
+      }
+      if (isVolBlockedRed) {
+        return Container(
+          key: ValueKey('crisis-mod-status-$mid'),
+          padding: const EdgeInsets.symmetric(horizontal: 6.5, vertical: 1.5),
+          decoration: BoxDecoration(
+            color: _coral.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: _coral.withValues(alpha: 0.48)),
+          ),
+          child: Text(
+            w('Alert $rMet/$rTot · IV Freeze', '预警 $rMet/$rTot · 高波禁追'),
+            style: const TextStyle(
+              color: _coral,
+              fontSize: 10.3,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        );
+      }
+      if (isWarming) {
+        return Container(
+          key: ValueKey('crisis-mod-status-$mid'),
+          padding: const EdgeInsets.symmetric(horizontal: 6.5, vertical: 1.5),
+          decoration: BoxDecoration(
+            color: _amber.withValues(alpha: 0.13),
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: _amber.withValues(alpha: 0.42)),
+          ),
+          child: Text(
+            w('Warming $rMet/$rTot', '预热 $rMet/$rTot'),
+            style: const TextStyle(
+              color: _amber,
+              fontSize: 10.3,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        );
+      }
+      return Text(
+        rTot > 0 ? '$rMet/$rTot · 0/+$pts' : '0 / +$pts',
+        key: ValueKey('crisis-mod-status-$mid'),
+        style: TextStyle(
+          color: p.muted,
+          fontSize: 10.8,
+          fontWeight: FontWeight.w700,
+        ),
+      );
+    }
 
     final card = Container(
       key: ValueKey('crisis-m7-module-$mid'),
@@ -3827,11 +4345,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       decoration: BoxDecoration(
         color: p.card,
         borderRadius: BorderRadius.circular(9),
-        border: Border.all(
-          color: triggered
-              ? accent.withValues(alpha: 0.55)
-              : p.border.withValues(alpha: 0.8),
-        ),
+        border: Border.all(color: cardBorderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3849,11 +4363,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     width: 7,
                     height: 7,
                     decoration: BoxDecoration(
-                      color: !enabled
-                          ? p.muted.withValues(alpha: 0.35)
-                          : (triggered
-                                ? accent
-                                : p.muted.withValues(alpha: 0.45)),
+                      color: dotColor,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -3877,38 +4387,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     _buildCalmM0Switch(compactPill: true),
                     const SizedBox(width: 5),
                   ],
-                  if (disabledInCore3)
-                    Container(
-                      key: ValueKey('crisis-mod-core3-off-$mid'),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 1.5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: p.text.withValues(alpha: 0.05),
-                        borderRadius: BorderRadius.circular(5),
-                        border: Border.all(color: p.border),
-                      ),
-                      child: Text(
-                        w('Off in Core-3', '精简模式已关闭'),
-                        style: TextStyle(
-                          color: p.muted,
-                          fontSize: 10.2,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    )
-                  else
-                    Text(
-                      !enabled
-                          ? w('OFF', '已关')
-                          : (triggered ? '+$earned' : '0 / +$pts'),
-                      style: TextStyle(
-                        color: triggered ? accent : p.muted,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
+                  buildModuleRightBadge(),
                 ],
               ),
             ],
@@ -3919,7 +4398,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               Icon(
                 volOk ? Icons.check_circle_outline : Icons.shield_outlined,
                 size: 12,
-                color: volOk ? _emerald : p.muted,
+                color: volOk
+                    ? _emerald
+                    : (isVolBlockedRed ? _coral : p.muted),
               ),
               const SizedBox(width: 4),
               Expanded(
@@ -3928,7 +4409,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: volOk ? _emerald : p.muted,
+                    color: volOk
+                        ? _emerald
+                        : (isVolBlockedRed ? _coral : p.muted),
                     fontSize: 10.8,
                   ),
                 ),
@@ -3983,6 +4466,27 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 ],
               ),
             ),
+          if (hintText.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              hintText,
+              key: ValueKey('crisis-mod-hint-$mid'),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: triggered
+                    ? accent
+                    : (isVolBlockedRed
+                          ? _coral
+                          : (isWarming ? _amber : p.muted)),
+                fontSize: 10.4,
+                height: 1.32,
+                fontWeight: isVolBlockedRed || triggered
+                    ? FontWeight.w600
+                    : FontWeight.w400,
+              ),
+            ),
+          ],
         ],
       ),
     );

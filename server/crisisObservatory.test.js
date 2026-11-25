@@ -17,6 +17,7 @@ import {
   loadCrisisObservatoryDashboardLive,
   loadCrisisObservatoryPitSnapshot,
 } from './crisisObservatory.js';
+import { parseFredCsvText, computeLiveStressIndexJS } from './crisisObservatoryM7.js';
 import { registerInvestmentRoutes } from './investmentRoutes.js';
 
 test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload with MIT Real-OPRA (2015-2025) + Calibrated BSM & Adaptive Roll', () => {
@@ -660,4 +661,204 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.equal(pit2025.m7_live_dashboard.active_slots, 1);
   assert.equal(pit2025.m7_live_dashboard.tp_monitor.open_slots[0].kp, 440);
   assert.equal(pit2025.m7_live_dashboard.tp_monitor.open_slots[0].pending_tp, true);
+});
+
+test('parseFredCsvText skips US holiday empty/dot cells without zero corruption and Dual-Track scorer + live six_crisis_lights work end-to-end', () => {
+  const fredCsvSample = [
+    'observation_date,BAA10Y',
+    '2026-08-25,1.42',
+    '2026-10-12,', // Columbus Day empty cell (previously Number("") === 0 bug!)
+    '2026-11-11,', // Veterans Day empty cell
+    '2026-11-20,1.62',
+    '2026-11-23,1.59',
+    '2026-11-26,.', // FRED dot missing value
+    '',
+  ].join('\n');
+  const parsedBaa = parseFredCsvText(fredCsvSample);
+  assert.equal('2026-10-12' in parsedBaa, false, 'Empty holiday cell must NEVER become 0.0');
+  assert.equal('2026-11-11' in parsedBaa, false, 'Empty holiday cell must NEVER become 0.0');
+  assert.equal('2026-11-26' in parsedBaa, false, 'Dot cell must NEVER become NaN/0.0');
+  assert.equal(parsedBaa['2026-08-25'], 1.42);
+  assert.equal(parsedBaa['2026-11-23'], 1.59);
+
+  // Calm vs Crisis unit check on computeLiveStressIndexJS
+  const calmStress = computeLiveStressIndexJS({
+    hmm_p: 0.02,
+    vxn: 14.5,
+    vix_ratio: 0.84,
+    dd_from_ath: -0.005,
+    close: 650,
+    sma200: 590,
+    ewmac: 0.9,
+    hyg_lqd: 0.74,
+    hyg_sma50: 0.73,
+    baa_rise63: -0.04,
+    dgs2_jump63: -0.1,
+    nfci_jump20: -0.03,
+    def_ret20: -0.02,
+    rsp_spy: 0.31,
+    rsp_sma50: 0.3,
+    iwm_qqq: 0.42,
+    iwm_sma50: 0.41,
+    ad_below50: false,
+    vvix: 85,
+    vvix_p75: 105,
+    skew10: 2.1,
+    skew_p75: 3.4,
+    vr_jump5: -0.01,
+  });
+  assert.ok(calmStress.live_stress_index < 25);
+  assert.equal(calmStress.live_stress_level, 'calm');
+
+  // Historical PIT Dual-Track parity: calm 2017 bull vs 2020 COVID crash
+  const pitCalm = loadCrisisObservatoryPitSnapshot({ date: '2017-07-14' });
+  assert.ok(pitCalm.m7_live_dashboard.live_stress_index < 25);
+  assert.equal(pitCalm.m7_live_dashboard.live_stress_level, 'calm');
+  assert.equal(pitCalm.m7_live_dashboard.data_freshness.is_pit_replay, true);
+
+  const pitCrash = loadCrisisObservatoryPitSnapshot({ date: '2020-03-20' });
+  assert.ok(pitCrash.m7_live_dashboard.live_stress_index >= 75);
+  assert.equal(pitCrash.m7_live_dashboard.live_stress_level, 'crisis');
+  assert.equal(pitCrash.m7_live_dashboard.crisis_prob, 0, 'Low-vol entry gate stays 0% during peak IV');
+  assert.equal(pitCrash.m7_live_dashboard.data_freshness.is_pit_replay, true);
+
+  // Post-artifact live feed (2026-11-23 & 2026-11-24) with holiday-clean FRED & sector ETFs
+  const mkMap = entries =>
+    new Map(entries.map(([d, c]) => [d, { open: c, close: c }]));
+  const syntheticLiveFeed = {
+    yahoo: {
+      QQQ: mkMap([
+        ['2026-11-20', 608.45],
+        ['2026-11-23', 626.7],
+        ['2026-11-24', 638.1],
+      ]),
+      VIX: mkMap([
+        ['2026-11-20', 35.89],
+        ['2026-11-23', 29.8],
+        ['2026-11-24', 28.4],
+      ]),
+      VIX3M: mkMap([
+        ['2026-11-20', 30.94],
+        ['2026-11-23', 28.1],
+        ['2026-11-24', 27.44],
+      ]),
+      VXN: mkMap([
+        ['2026-11-20', 45.25],
+        ['2026-11-23', 38.2],
+        ['2026-11-24', 36.4],
+      ]),
+      SKEW: mkMap([
+        ['2026-11-20', 132.0],
+        ['2026-11-23', 133.0],
+        ['2026-11-24', 134.0],
+      ]),
+      VVIX: mkMap([
+        ['2026-11-20', 112.0],
+        ['2026-11-23', 106.0],
+        ['2026-11-24', 102.0],
+      ]),
+      HYG: mkMap([
+        ['2026-11-20', 77.2],
+        ['2026-11-23', 75.2],
+        ['2026-11-24', 75.0],
+      ]),
+      LQD: mkMap([
+        ['2026-11-20', 108.5],
+        ['2026-11-23', 109.4],
+        ['2026-11-24', 109.5],
+      ]),
+      RSP: mkMap([
+        ['2026-11-20', 175.0],
+        ['2026-11-23', 177.0],
+        ['2026-11-24', 178.5],
+      ]),
+      SPY: mkMap([
+        ['2026-11-20', 605.0],
+        ['2026-11-23', 618.0],
+        ['2026-11-24', 626.0],
+      ]),
+      IWM: mkMap([
+        ['2026-11-20', 222.0],
+        ['2026-11-23', 226.0],
+        ['2026-11-24', 228.0],
+      ]),
+      XLP: mkMap([
+        ['2026-11-20', 82.0],
+        ['2026-11-23', 82.4],
+        ['2026-11-24', 82.6],
+      ]),
+      XLU: mkMap([
+        ['2026-11-20', 80.0],
+        ['2026-11-23', 80.5],
+        ['2026-11-24', 80.8],
+      ]),
+      XLV: mkMap([
+        ['2026-11-20', 146.0],
+        ['2026-11-23', 146.5],
+        ['2026-11-24', 147.0],
+      ]),
+      XLK: mkMap([
+        ['2026-11-20', 225.0],
+        ['2026-11-23', 231.0],
+        ['2026-11-24', 235.0],
+      ]),
+      HG_F: mkMap([
+        ['2026-11-20', 4.12],
+        ['2026-11-23', 4.08],
+        ['2026-11-24', 4.05],
+      ]),
+      XLY: mkMap([
+        ['2026-11-20', 202.0],
+        ['2026-11-23', 205.0],
+        ['2026-11-24', 207.0],
+      ]),
+      XLI: mkMap([
+        ['2026-11-20', 136.0],
+        ['2026-11-23', 137.0],
+        ['2026-11-24', 138.0],
+      ]),
+      XLB: mkMap([
+        ['2026-11-20', 89.0],
+        ['2026-11-23', 89.5],
+        ['2026-11-24', 90.0],
+      ]),
+      XLF: mkMap([
+        ['2026-11-20', 49.0],
+        ['2026-11-23', 49.4],
+        ['2026-11-24', 49.8],
+      ]),
+    },
+    fred: {
+      BAA10Y: parsedBaa,
+      DGS2: parseFredCsvText('DATE,DGS2\n2026-08-25,3.38\n2026-10-12,\n2026-11-11,\n2026-11-20,4.61\n2026-11-23,4.63\n'),
+      NFCI: parseFredCsvText('DATE,NFCI\n2026-11-13,-0.48\n'),
+      DFF: parseFredCsvText('DATE,DFF\n2026-11-20,4.58\n2026-11-23,4.58\n'),
+      T10Y2Y: parseFredCsvText('DATE,T10Y2Y\n2026-11-20,0.27\n2026-11-23,0.29\n'),
+    },
+  };
+
+  const live24 = loadCrisisObservatoryDashboard({
+    asOf: '2026-11-24',
+    liveM7Feed: syntheticLiveFeed,
+  });
+  assert.equal(live24.as_of_date, '2026-11-24');
+  assert.equal(live24.liveExtended, true);
+  const d24 = live24.m7_live_dashboard;
+  assert.ok(d24.live_stress_index >= 75, `Expected Active Crisis >=75 on 2026-11-24, got ${d24.live_stress_index}`);
+  assert.equal(d24.live_stress_level, 'crisis');
+  assert.equal(d24.crisis_prob, 0);
+  assert.equal(d24.data_freshness.yahoo_eod_date, '2026-11-24');
+  assert.equal(d24.data_freshness.fred_baa_date, '2026-11-23');
+  assert.equal(d24.data_freshness.ad_line_date, '2026-11-20');
+  assert.equal(d24.data_freshness.is_pit_replay, false);
+
+  const mods24 = Object.fromEntries(d24.pillars.flatMap(p => p.modules).map(m => [m.id, m]));
+  assert.equal(mods24.M3.status_code, 'SENSOR_RED_VOL_BLOCKED');
+  assert.equal(mods24.M4.status_code, 'WARMING_UP');
+  const baaMetric = mods24.M3.metrics.find(m => /baa/i.test(m.label_en));
+  assert.ok(baaMetric && !baaMetric.value.includes('+159bp'), `Baa 63D rise must not be holiday-corrupted: ${baaMetric?.value}`);
+
+  // Verify live six_crisis_lights dynamically recomputes post-artifact sig2_credit to 1.59% (not frozen 1.62%)
+  const sig2 = live24.six_crisis_lights.find(l => l.key === 'sig2_credit');
+  assert.ok(sig2.reading_value.startsWith('1.59%'), `Expected live sig2_credit 1.59%, got ${sig2.reading_value}`);
 });

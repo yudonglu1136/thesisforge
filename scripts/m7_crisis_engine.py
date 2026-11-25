@@ -516,12 +516,12 @@ def _fetch_fred_series(series_id: str, start_date: str = "2025-01-01", timeout: 
         txt = resp.read().decode("utf-8")
     out: dict[str, float] = {}
     for row in csv.DictReader(io.StringIO(txt)):
-        d = (row.get("DATE") or row.get("observation_date") or row.get("date") or "")[:10]
-        v = row.get(series_id, "")
-        if d and v not in ("", "."):
+        d = (row.get("DATE") or row.get("observation_date") or row.get("date") or "").strip()[:10]
+        v = (row.get(series_id) or "").strip()
+        if d and v and v != ".":
             try:
                 fv = float(v)
-                if not math.isnan(fv):
+                if math.isfinite(fv):
                     out[d] = fv
             except ValueError:
                 pass
@@ -665,6 +665,102 @@ def load_m7_seed_and_optional_live(
     return {"yf_dates": yf_dates, "yf_series": yf_series, "fred_raw": fred_raw}, rows_all
 
 
+def _clamp01(v: float) -> float:
+    return 0.0 if v <= 0.0 else (1.0 if v >= 1.0 else v)
+
+
+def _round_half_up_int(v: float) -> int:
+    return int(math.floor(v + 0.5))
+
+
+def compute_live_stress_index(
+    *,
+    hmm_p: float = 0.0,
+    vxn: float = 0.0,
+    vix_ratio: float = 0.0,
+    dd_from_ath: float = 0.0,
+    close: float = 0.0,
+    sma200: float = 0.0,
+    ewmac: float = 0.0,
+    hyg_lqd: float = 0.0,
+    hyg_sma50: float = 0.0,
+    baa_rise63: float | None = 0.0,
+    dgs2_jump63: float | None = 0.0,
+    nfci_jump20: float | None = 0.0,
+    def_ret20: float = 0.0,
+    rsp_spy: float = 0.0,
+    rsp_sma50: float = 0.0,
+    iwm_qqq: float = 0.0,
+    iwm_sma50: float = 0.0,
+    ad_below50: bool = False,
+    vvix: float = 0.0,
+    vvix_p75: float = 0.0,
+    skew10: float = 0.0,
+    skew_p75: float = 0.0,
+    vr_jump5: float = 0.0,
+) -> dict[str, Any]:
+    """Track A continuous Real-Time Market Stress Index (0..100).
+
+    Strictly causal, never zeroed out by the low-vol Put-entry redline.
+    """
+    baa_eff = 0.0 if (baa_rise63 is None or baa_rise63 <= -900.0) else float(baa_rise63)
+    dgs2_eff = 0.0 if (dgs2_jump63 is None or dgs2_jump63 <= -900.0) else float(dgs2_jump63)
+    nfci_eff = 0.0 if (nfci_jump20 is None or nfci_jump20 <= -900.0) else float(nfci_jump20)
+
+    regime_vol = (
+        _clamp01(float(hmm_p)) * 18.0
+        + _clamp01((float(vxn) - 20.0) / 20.0) * 7.0
+        + _clamp01((float(vix_ratio) - 0.90) / 0.20) * 5.0
+    )
+    trend_dd = (
+        _clamp01((-float(dd_from_ath) - 0.03) / 0.17) * 12.0
+        + (6.0 if (float(sma200) > 0.0 and float(close) < float(sma200)) else 0.0)
+        + _clamp01(-float(ewmac) / 0.80) * 7.0
+    )
+    credit_macro = (
+        (8.0 if (float(hyg_sma50) > 0.0 and float(hyg_lqd) < float(hyg_sma50)) else 0.0)
+        + _clamp01(max(0.0, baa_eff) / 0.25) * 8.0
+        + _clamp01(max(max(0.0, dgs2_eff) / 0.50, max(0.0, nfci_eff) / 0.15)) * 9.0
+    )
+    breadth_tail = (
+        _clamp01(max(0.0, float(def_ret20)) / 0.10) * 8.0
+        + (2.0 if (float(rsp_sma50) > 0.0 and float(rsp_spy) < float(rsp_sma50)) else 0.0)
+        + (2.0 if (float(iwm_sma50) > 0.0 and float(iwm_qqq) < float(iwm_sma50)) else 0.0)
+        + (2.0 if bool(ad_below50) else 0.0)
+        + (2.0 if (float(vvix_p75) > 0.0 and float(vvix) >= float(vvix_p75)) else 0.0)
+        + (2.0 if (float(skew_p75) > 0.0 and float(skew10) >= float(skew_p75)) else 0.0)
+        + (2.0 if float(vr_jump5) >= 0.06 else 0.0)
+    )
+
+    raw_total = max(0.0, min(100.0, regime_vol + trend_dd + credit_macro + breadth_tail))
+    idx_int = _round_half_up_int(raw_total)
+    if idx_int >= 75:
+        level, lbl_en, lbl_zh = "crisis", "Active Crisis", "危机爆发中"
+    elif idx_int >= 50:
+        level, lbl_en, lbl_zh = "elevated", "Elevated Stress", "高压警戒"
+    elif idx_int >= 25:
+        level, lbl_en, lbl_zh = "building", "Stress Building", "隐患蓄力"
+    else:
+        level, lbl_en, lbl_zh = "calm", "Calm Low-Vol", "平静低波"
+
+    return {
+        "live_stress_index": idx_int,
+        "live_stress_level": level,
+        "live_stress_label_en": lbl_en,
+        "live_stress_label_zh": lbl_zh,
+        "live_stress_breakdown": {
+            "regime_vol": round(regime_vol, 1),
+            "regime_vol_cap": 30,
+            "trend_dd": round(trend_dd, 1),
+            "trend_dd_cap": 25,
+            "credit_macro": round(credit_macro, 1),
+            "credit_macro_cap": 25,
+            "breadth_tail": round(breadth_tail, 1),
+            "breadth_tail_cap": 20,
+        },
+    }
+
+
 def compute_m7_signals_and_tail(
     rows_all: list[dict[str, Any]],
     m7_data: dict[str, Any],
@@ -683,20 +779,25 @@ def compute_m7_signals_and_tail(
                 last_v[k] = float(raw_v)
             yf_ffill[k].append(last_v[k])
 
-    def align_and_lag(src: dict[str, float], lag: int) -> list[float | None]:
+    def align_and_lag_with_dates(src: dict[str, float], lag: int) -> tuple[list[float | None], list[str | None]]:
         union_dates = sorted(set(cal) | set(src.keys()))
         ff_map: dict[str, float | None] = {}
+        dt_map: dict[str, str | None] = {}
         cur: float | None = None
+        cur_dt: str | None = None
         for d in union_dates:
             if d in src:
                 cur = float(src[d])
+                cur_dt = d
             ff_map[d] = cur
-        aligned = [ff_map[d] for d in cal]
-        return [None] * lag + aligned[:-lag]
+            dt_map[d] = cur_dt
+        aligned_v = [ff_map[d] for d in cal]
+        aligned_d = [dt_map[d] for d in cal]
+        return ([None] * lag + aligned_v[:-lag]), ([None] * lag + aligned_d[:-lag])
 
-    baa_lag1 = align_and_lag(m7_data["fred_raw"]["BAA10Y"], 1)
-    dgs2_lag1 = align_and_lag(m7_data["fred_raw"]["DGS2"], 1)
-    nfci_lag5 = align_and_lag(m7_data["fred_raw"]["NFCI"], 5)
+    baa_lag1, baa_obs_dt = align_and_lag_with_dates(m7_data["fred_raw"]["BAA10Y"], 1)
+    dgs2_lag1, dgs2_obs_dt = align_and_lag_with_dates(m7_data["fred_raw"]["DGS2"], 1)
+    nfci_lag5, nfci_obs_dt = align_and_lag_with_dates(m7_data["fred_raw"]["NFCI"], 5)
 
     qqq_cl = [float(bco_map[d]["close"]) if d in bco_map else yf_ffill["QQQ"][i] for i, d in enumerate(cal)]
     vix_r = [
@@ -835,6 +936,9 @@ def compute_m7_signals_and_tail(
         "iwm_qqq",
         "iwm_sma50",
         "def_ret20",
+        "baa_obs_date",
+        "dgs2_obs_date",
+        "nfci_obs_date",
     ]
     feat_rows: list[list[Any]] = []
 
@@ -913,6 +1017,33 @@ def compute_m7_signals_and_tail(
         m6_on = bool(rsp_weak and (iwm_weak or ad_weak) and def_r20 >= 0.025 and vx <= 25.0 and vr <= 0.92)
         m6_off = bool(rsp_weak and iwm_weak and def_r20 >= 0.025 and vx <= 25.0 and vr <= 0.92)
 
+        stress_day = compute_live_stress_index(
+            hmm_p=_r4(hp_cur) or 0.0,
+            vxn=float(b_row["vxn"]),
+            vix_ratio=float(b_row["vix_ratio"]),
+            dd_from_ath=float(b_row["dd_from_ath"]),
+            close=float(b_row["close"]),
+            sma200=_r4(sma200[i]) or 0.0,
+            ewmac=_r4(ewmac[i]) or 0.0,
+            hyg_lqd=_r4(hyg_lqd[i]) or 0.0,
+            hyg_sma50=_r4(hyg_lqd_sma50[i]) or 0.0,
+            baa_rise63=_r4(baa_r if baa_r > -900 else None),
+            dgs2_jump63=_r4(dgs2_j if dgs2_j > -900 else None),
+            nfci_jump20=_r4(nfci_j if nfci_j > -900 else None),
+            def_ret20=_r4(def_r20) or 0.0,
+            rsp_spy=_r4(rsp_spy[i]) or 0.0,
+            rsp_sma50=_r4(rsp_sma50[i]) or 0.0,
+            iwm_qqq=_r4(iwm_qqq[i]) or 0.0,
+            iwm_sma50=_r4(iwm_sma50[i]) or 0.0,
+            ad_below50=ad_weak,
+            vvix=_r4(vvix[i]) or 0.0,
+            vvix_p75=_r4(vvix_p75[i]) or 0.0,
+            skew10=_r4(skew10[i]) or 0.0,
+            skew_p75=_r4(skew_p75[i]) or 0.0,
+            vr_jump5=_r4(vr_j5) or 0.0,
+        )
+        live_stress_idx = int(stress_day["live_stress_index"])
+
         for is_on, m0_b, m6_b, dest in (
             (True, m0_val, m6_on, signals_m0_on),
             (False, False, m6_off, signals_m0_off),
@@ -964,6 +1095,7 @@ def compute_m7_signals_and_tail(
                     "mask_c3": mask_c3,
                     "redline_blocked": bool(vx > 27.0 or vr >= 1.02),
                     "hmm_p": round(float(hp_cur), 4) if hp_cur is not None else 0.0,
+                    "live_stress": live_stress_idx,
                 }
             )
 
@@ -993,6 +1125,9 @@ def compute_m7_signals_and_tail(
                 _r4(iwm_qqq[i]),
                 _r4(iwm_sma50[i]),
                 _r4(def_r20),
+                baa_obs_dt[i] or d,
+                dgs2_obs_dt[i] or d,
+                nfci_obs_dt[i] or d,
             ]
         )
 
@@ -1002,10 +1137,40 @@ def compute_m7_signals_and_tail(
         fid: {d: round(float(v), 6) for d, v in m7_data["fred_raw"][fid].items() if d >= fred_cutoff_dt}
         for fid in FRED_LAGS
     }
+    rows_recent_fred = [r for r in rows_all if r["date"] >= fred_cutoff_dt]
+    fred_tail["DFF"] = {
+        r["date"]: round(float(r["dff"]), 6) for r in rows_recent_fred if r.get("dff") is not None
+    }
+    fred_tail["T10Y2Y"] = {
+        r["date"]: round(float(r["t10y2y"]), 6) for r in rows_recent_fred if r.get("t10y2y") is not None
+    }
+    rows_252 = rows_all[-min(252, len(rows_all)) :]
+    last_bco = rows_all[-1]
+    six_lights_tail = {
+        "dgs2": [round(float(r.get("dgs2") or 0.0), 4) for r in rows_252],
+        "dff": [round(float(r.get("dff") or 0.0), 4) for r in rows_252],
+        "baa10y": [round(float(r.get("baa10y") or 0.0), 4) for r in rows_252],
+        "copper": [round(float(r.get("copper") or 0.0), 4) for r in rows_252],
+        "def_cyc": [round(float(r.get("def_cyc") or 0.0), 5) for r in rows_252],
+        "t10y2y": [round(float(r.get("t10y2y") or 0.0), 4) for r in rows_252],
+        "nfci": [round(float(r.get("nfci") or 0.0), 4) for r in rows_252],
+        "scores": [int(r.get("score") or 0) for r in rows_all[-5:]],
+        "breadth_fallback": {
+            "as_of_date": str(last_bco["date"]),
+            "ad_line": round(float(last_bco.get("ad_line") or 0.0), 2),
+            "ad_sma50": round(float(last_bco.get("ad_sma50") or 0.0), 2),
+            "ad_sma63": round(float(last_bco.get("ad_sma63") or 0.0), 2),
+            "ad_hi252": round(float(last_bco.get("ad_hi252") or 0.0), 2),
+            "pct_200d": round(float(last_bco.get("pct_200d") or 0.0), 6),
+            "pct200_hi252": round(float(last_bco.get("pct200_hi252") or 0.0), 6),
+            "sig3_breadth": bool(last_bco.get("sig3_breadth")),
+        },
+    }
     live_tail_state = {
         "tail_dates": cal[-tail_len:],
         "yf_tail": {k: [round(float(x), 6) for x in yf_ffill[k][-tail_len:]] for k in YF_ALL_KEYS},
         "fred_tail": fred_tail,
+        "six_lights_tail": six_lights_tail,
         "base_2013": {
             "XLP": round(xlp0, 8),
             "XLU": round(xlu0, 8),
@@ -3171,6 +3336,61 @@ def build_m7_live_dashboard(
 
     mods_active, trig_code, _, _ = format_m7_trigger_labels(sig_day, max_slots, core3_only=is_core3)
 
+    def _fv(key: str, default: float = 0.0) -> float:
+        v = feat_row_dict.get(key)
+        return default if v is None else float(v)
+
+    def _fv_opt(key: str) -> float | None:
+        v = feat_row_dict.get(key)
+        return None if v is None else float(v)
+
+    rsp_spy_v, rsp_sma_v = _fv("rsp_spy"), _fv("rsp_sma50")
+    iwm_qqq_v, iwm_sma_v = _fv("iwm_qqq"), _fv("iwm_sma50")
+    def_ret20_raw = _fv("def_ret20")
+    def_ret20_pct = def_ret20_raw * 100.0
+    skew10_v, skew_p75_v = _fv("skew10"), _fv("skew_p75")
+    vvix_v, vvix_p75_v = _fv("vvix"), _fv("vvix_p75")
+    vr_j5_v = _fv("vr_jump5")
+    hmm_p_v, hmm_p5_v = _fv("hmm_p"), _fv("hmm_p5")
+    ewmac_v, ema20_v, sma200_v = _fv("ewmac"), _fv("ema20"), _fv("sma200")
+    hyg_v, hyg_sma_v = _fv("hyg_lqd"), _fv("hyg_sma50")
+    baa_v = _fv("baa_lag1")
+    baa_r_opt = _fv_opt("baa_rise63")
+    baa_r_v = baa_r_opt if baa_r_opt is not None else 0.0
+    dgs2_j_opt = _fv_opt("dgs2_jump63")
+    dgs2_j_v = dgs2_j_opt if dgs2_j_opt is not None else 0.0
+    nfci_j_opt = _fv_opt("nfci_jump20")
+    nfci_j_v = nfci_j_opt if nfci_j_opt is not None else 0.0
+
+    stress_pack = compute_live_stress_index(
+        hmm_p=hmm_p_v,
+        vxn=vxn,
+        vix_ratio=vr,
+        dd_from_ath=float(row["dd_from_ath"]),
+        close=cl,
+        sma200=sma200_v,
+        ewmac=ewmac_v,
+        hyg_lqd=hyg_v,
+        hyg_sma50=hyg_sma_v,
+        baa_rise63=baa_r_opt,
+        dgs2_jump63=dgs2_j_opt,
+        nfci_jump20=nfci_j_opt,
+        def_ret20=def_ret20_raw,
+        rsp_spy=rsp_spy_v,
+        rsp_sma50=rsp_sma_v,
+        iwm_qqq=iwm_qqq_v,
+        iwm_sma50=iwm_sma_v,
+        ad_below50=ad_below,
+        vvix=vvix_v,
+        vvix_p75=vvix_p75_v,
+        skew10=skew10_v,
+        skew_p75=skew_p75_v,
+        vr_jump5=vr_j5_v,
+    )
+    stress_idx = int(stress_pack["live_stress_index"])
+    stress_lbl_en = str(stress_pack["live_stress_label_en"])
+    stress_lbl_zh = str(stress_pack["live_stress_label_zh"])
+
     # T+1 Open Execution Order Verdict
     any_tp_armed = any(bool(t.get("pending_tp")) and not str(t.get("tp_reason", "")).startswith("roll_") for t in active_tr)
     any_roll_armed = any(bool(t.get("pending_tp")) and str(t.get("tp_reason", "")).startswith("roll_") for t in active_tr)
@@ -3201,38 +3421,38 @@ def build_m7_live_dashboard(
         t1_tone = "armed"
         t1_badge_en = f"T+1 OPEN: {armed_roll_d}-DTE ROLL -> HARVEST RESIDUAL & OPEN {entry_dte}D {otm_lbl} PUT"
         t1_badge_zh = f"T+1 开盘指令：剩 <={armed_roll_d} DTE 触发滚仓 · 回收残值并换入新 {entry_dte}D {otm_lbl} Put"
-        t1_title_en = f"Score {prob:.0f}% ({trig_code}) Active at <={armed_roll_d} DTE — Salvage Expiring Slot & Roll Into Fresh {entry_dte}-DTE {otm_lbl} Put"
-        t1_title_zh = f"在途槽位剩 <={armed_roll_d} DTE 且综合概率 {prob:.0f}%（{trig_code}）仍亮 —— 次日开盘回收残值并滚入新 {entry_dte}D {otm_lbl} Put"
+        t1_title_en = f"Low-Vol Entry Gate {prob:.0f}% ({trig_code}) Active at <={armed_roll_d} DTE — Salvage Expiring Slot & Roll Into Fresh {entry_dte}-DTE {otm_lbl} Put"
+        t1_title_zh = f"在途槽位剩 <={armed_roll_d} DTE 且买盾执行分 {prob:.0f}%（{trig_code}）仍亮 —— 次日开盘回收残值并滚入新 {entry_dte}D {otm_lbl} Put"
     elif any_roll_armed:
         t1_code = "SALVAGE_50D_EXIT"
         t1_tone = "active"
         t1_badge_en = f"T+1 OPEN: {armed_roll_d}-DTE SALVAGE EXIT -> HARVEST RESIDUAL TO QQQ"
         t1_badge_zh = f"T+1 开盘指令：剩 <={armed_roll_d} DTE 信号熄灭 · 平仓回收残值复投 QQQ"
-        t1_title_en = f"Slot Reached <={armed_roll_d} DTE With Signal Off — Exit Before Theta Cliff & Reinvest Residual Cash Into QQQ"
-        t1_title_zh = f"在途槽位剩 <={armed_roll_d} DTE 且危机信号已解除 —— 在 Theta 悬崖前平仓回收残值并复投 QQQ"
+        t1_title_en = f"Slot Reached <={armed_roll_d} DTE With Entry Gate Off — Exit Before Theta Cliff & Reinvest Residual Cash Into QQQ"
+        t1_title_zh = f"在途槽位剩 <={armed_roll_d} DTE 且买盾执行信号已解除 —— 在 Theta 悬崖前平仓回收残值并复投 QQQ"
     elif pend_sig is not None:
         next_slot_idx = len(eff_active_tr) + 1
         t1_code = "OPEN_NEW_SLOT"
         t1_tone = "armed"
         t1_badge_en = f"T+1 OPEN: BUY 1 NEW SLOT (SLOT {next_slot_idx}/{max_slots} · {tenor_lbl_en} {otm_lbl} PUT)"
         t1_badge_zh = f"T+1 开盘指令：新开 1 槽保护（第 {next_slot_idx}/{max_slots} 槽 · {tenor_lbl_zh} {otm_lbl} Put）"
-        t1_title_en = f"Score {prob:.0f}% ({trig_code}) -> Open Slot {next_slot_idx}/{max_slots} Equal-Dollar {entry_dte}-DTE {otm_lbl} Put"
-        t1_title_zh = f"综合概率 {prob:.0f}%（{trig_code}）-> 次日开盘按等金额预算买入第 {next_slot_idx}/{max_slots} 槽 {tenor_lbl_zh} {otm_lbl} Put"
+        t1_title_en = f"Real-Time Stress {stress_idx}% · Low-Vol Gate {prob:.0f}% ({trig_code}) -> Open Slot {next_slot_idx}/{max_slots} Equal-Dollar {entry_dte}-DTE {otm_lbl} Put"
+        t1_title_zh = f"实时压力 {stress_idx}% · 低波买盾执行分 {prob:.0f}%（{trig_code}）-> 次日开盘按等金额预算买入第 {next_slot_idx}/{max_slots} 槽 {tenor_lbl_zh} {otm_lbl} Put"
     elif target_slots > len(eff_active_tr) and redline_blocked:
         t1_code = "REDLINE_BLOCKED"
         t1_tone = "blocked"
         t1_badge_en = "T+1 OPEN: HARD REDLINE BLOCKED (NO NEW PUTS IN HIGH IV)"
         t1_badge_zh = "T+1 开盘指令：风控红线锁死禁开新仓（拒绝高波追买天价 Put）"
-        t1_title_en = f"Hard Risk Redline Active (VXN {vxn:.2f} > 27 or VIX/3M {vr:.3f} >= 1.02) — New Entries Strictly Forbidden"
-        t1_title_zh = f"绝对风控红线生效（VXN {vxn:.2f} > 27 或 VIX/3M {vr:.3f} >= 1.02）—— 严禁在恐慌高波区新开任何槽位"
+        t1_title_en = f"Real-Time Stress {stress_idx}% ({stress_lbl_en}) · Hard Redline Active (VXN {vxn:.1f} > 27 or VIX/3M {vr:.3f} >= 1.02) — Chasing Expensive Puts Forbidden"
+        t1_title_zh = f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· 绝对风控红线生效（VXN {vxn:.1f} > 27 或 VIX/3M {vr:.3f} >= 1.02）—— 严禁高波追高买贵盾"
     elif target_slots > len(eff_active_tr) and not cooldown_passed:
         rem_wait = max(1, req_gap - (days_since_last or 0))
         t1_code = "COOLDOWN_WAIT"
         t1_tone = "cooldown"
         t1_badge_en = f"T+1 OPEN: COOLDOWN WAIT ({days_since_last}D / {req_gap}D · {rem_wait}D LEFT)"
         t1_badge_zh = f"T+1 开盘指令：加仓冷却期等待中（距上槽 {days_since_last}/{req_gap} 天 · 还需 {rem_wait} 天）"
-        t1_title_en = f"Score {prob:.0f}% Wants {target_slots} Slots, Waiting {rem_wait} Calendar Days for {req_gap}D Step Cooldown"
-        t1_title_zh = f"综合概率 {prob:.0f}% 指向 {target_slots} 槽，当前距上一槽仅 {days_since_last} 天（未满 {req_gap} 天冷却期，暂缓加槽）"
+        t1_title_en = f"Low-Vol Entry Gate {prob:.0f}% Wants {target_slots} Slots, Waiting {rem_wait} Calendar Days for {req_gap}D Step Cooldown"
+        t1_title_zh = f"低波买盾执行分 {prob:.0f}% 指向 {target_slots} 槽，当前距上一槽仅 {days_since_last} 天（未满 {req_gap} 天冷却期，暂缓加槽）"
     elif active_slots > 0:
         t1_code = "HOLD_ACTIVE_SLOTS"
         t1_tone = "active"
@@ -3240,8 +3460,8 @@ def build_m7_live_dashboard(
         roll_note_zh = f" · 剩<={roll_dte}天滚仓" if roll_dte > 0 else ""
         t1_badge_en = f"T+1 OPEN: HOLD {active_slots}/{max_slots} ACTIVE PUT SLOT(S) · MONITOR TP{roll_note_en}"
         t1_badge_zh = f"T+1 开盘指令：继续持有 {active_slots}/{max_slots} 槽在途 Put · 盯紧止盈线{roll_note_zh}"
-        t1_title_en = f"{active_slots}/{max_slots} Equal-Dollar Put Slot(s) Shielding 100% Uncapped QQQ Core"
-        t1_title_zh = f"当前 {active_slots}/{max_slots} 槽等金额裸 Put 在途护航 · 100% QQQ 底仓无封顶持有"
+        t1_title_en = f"Real-Time Stress {stress_idx}% ({stress_lbl_en}) · {active_slots}/{max_slots} Equal-Dollar Put Slot(s) Shielding 100% Uncapped QQQ Core"
+        t1_title_zh = f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· 当前 {active_slots}/{max_slots} 槽等金额裸 Put 在途护航（100% QQQ 底仓无封顶持有）"
     else:
         t1_code = "STANDBY"
         t1_tone = "standby"
@@ -3249,14 +3469,26 @@ def build_m7_live_dashboard(
         prof_lbl_zh = "精简3核" if is_core3 else "全套M7护盾"
         if redline_blocked:
             t1_badge_en = "T+1 OPEN: STANDBY (100% QQQ · HIGH-VOL REDLINE FREEZE)"
-            t1_badge_zh = "T+1 开盘指令：空盾待命（100% 满仓 QQQ · 恐慌高波红线冻结禁买）"
-            t1_title_en = f"{prof_lbl_en} Score {prob:.0f}% (<35%) & High-IV Redline Active (VXN {vxn:.1f}, VIX/3M {vr:.3f}) — Hold 100% QQQ Uncapped"
-            t1_title_zh = f"{prof_lbl_zh}概率 {prob:.0f}% (<35%) 且处于高波红线区（VXN {vxn:.1f}、VIX/3M {vr:.3f}）—— 100% QQQ 零损耗待弹"
+            t1_badge_zh = "T+1 开盘指令：空盾待命（100% 满仓 QQQ · 高波红线冻结禁追买贵盾）"
+            t1_title_en = (
+                f"Real-Time Stress {stress_idx}% ({stress_lbl_en}) · {prof_lbl_en} Low-Vol Entry Gate {prob:.0f}% "
+                f"(High-IV Redline VXN {vxn:.1f} / VIX/3M {vr:.3f} Freezes Chasing Expensive Puts — Hold 100% QQQ Uncapped)"
+            )
+            t1_title_zh = (
+                f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· {prof_lbl_zh}低波买盾执行分 {prob:.0f}% "
+                f"（高波红线 VXN {vxn:.1f} / VIX/3M {vr:.3f} 冻结禁追高买贵盾 —— 100% QQQ 零损耗待弹）"
+            )
         else:
             t1_badge_en = "T+1 OPEN: STANDBY · ZERO PUT SPEND (100% QQQ CRUISE)"
             t1_badge_zh = "T+1 开盘指令：静默待命 · 零保费损耗（100% 满仓 QQQ 复利巡航）"
-            t1_title_en = f"{prof_lbl_en} Score {prob:.0f}% (< 35% Threshold) — Zero Option Drag, 100% QQQ Compounding"
-            t1_title_zh = f"{prof_lbl_zh}综合危机概率 {prob:.0f}%（低于 35% 开仓线）—— 零期权保费损耗，100% QQQ 顺风复利"
+            t1_title_en = (
+                f"Real-Time Stress {stress_idx}% ({stress_lbl_en}) · {prof_lbl_en} Low-Vol Entry Gate {prob:.0f}% "
+                f"(< 35% Threshold) — Zero Option Drag, 100% QQQ Compounding"
+            )
+            t1_title_zh = (
+                f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· {prof_lbl_zh}低波买盾执行分 {prob:.0f}% "
+                f"（低于 35% 开仓线）—— 零期权保费损耗，100% QQQ 顺风复利"
+            )
 
     # Equal-Dollar Strike & Budget Calculator (90-DTE or 120-DTE matched reference)
     tau_calc = float(entry_dte) / 365.0
@@ -3424,22 +3656,196 @@ def build_m7_live_dashboard(
     }
 
     # Three-Pillar & 6 Sub-Module Status Grid (dimming M2/M5/M3 cleanly when Core-3 Minimal is active)
-    def _fv(key: str, default: float = 0.0) -> float:
-        v = feat_row_dict.get(key)
-        return default if v is None else float(v)
+    # Compute per-module real-time readiness, sensor_triggered (ignoring low-vol VXN/VIX3M gate), status_code & next_trigger_hint
+    m0_ath_ok = bool(dd_pct >= -5.0)
+    m0_ad_ok = bool(m0_enabled and ad_below)
+    m0_sc_ok = bool(m0_enabled and sc >= 4)
+    m0_vg_ok = bool(vxn <= 22.0)
+    m0_trig = bool(sig_day["M0"])
+    m0_sensor = bool(m0_enabled and m0_ath_ok and (m0_ad_ok or m0_sc_ok))
+    if not m0_enabled:
+        m0_met = 0
+        m0_status = "DISABLED_M0_OFF"
+        m0_hint_en = "M0 Six-Lights baseline switch disabled by user"
+        m0_hint_zh = "用户已手动关闭 M0 六灯基线开关"
+    elif m0_trig:
+        m0_met = int(m0_ath_ok) + int(m0_ad_ok) + int(m0_sc_ok)
+        m0_status = "ARMED_BUY"
+        m0_hint_en = "Near-ATH fragility active & VXN <= 22 — contributing +35% to P1"
+        m0_hint_zh = "高位顶背离确认且 VXN <= 22 —— 已为 P1 贡献 +35% 买盾分"
+    elif m0_sensor and not m0_vg_ok:
+        m0_met = int(m0_ath_ok) + int(m0_ad_ok) + int(m0_sc_ok)
+        m0_status = "SENSOR_RED_VOL_BLOCKED"
+        m0_hint_en = f"Breadth/Macro warning lit near highs · Blocked by VXN {vxn:.1f} > 22.0"
+        m0_hint_zh = f"高位宽度/六灯预警已亮 · 因 VXN {vxn:.1f} > 22.0 暂禁追买"
+    elif m0_ad_ok or m0_sc_ok:
+        m0_met = int(m0_ath_ok) + int(m0_ad_ok) + int(m0_sc_ok)
+        m0_status = "WARMING_UP"
+        m0_hint_en = f"Macro/AD warning lit ({m0_met}/3) · M0 only arms near highs (QQQ {dd_pct:+.1f}% < -5% ATH)"
+        m0_hint_zh = f"宽度/六灯已亮 ({m0_met}/3) · M0 仅在距前高 -5% 内潜伏（当前 {dd_pct:+.1f}%）"
+    elif sc == 3:
+        m0_met = 1
+        m0_status = "WARMING_UP"
+        m0_hint_en = f"Macro lights warming ({sc}/6) · Needs >=4/6 lights or AD < 50DMA"
+        m0_hint_zh = f"宏观六灯预热中 ({sc}/6) · 需亮满 >=4/6 灯或 AD 跌破 50DMA"
+    else:
+        m0_met = 0
+        m0_status = "CALM"
+        m0_hint_en = f"Breadth healthy & macro lights {sc}/6 — calm regime"
+        m0_hint_zh = f"市场宽度健康且宏观六灯 {sc}/6 —— 平静巡航"
 
-    rsp_spy_v, rsp_sma_v = _fv("rsp_spy"), _fv("rsp_sma50")
-    iwm_qqq_v, iwm_sma_v = _fv("iwm_qqq"), _fv("iwm_sma50")
-    def_ret20_pct = _fv("def_ret20") * 100.0
-    skew10_v, skew_p75_v = _fv("skew10"), _fv("skew_p75")
-    vvix_v, vvix_p75_v = _fv("vvix"), _fv("vvix_p75")
-    vr_j5_v = _fv("vr_jump5")
-    hmm_p_v, hmm_p5_v = _fv("hmm_p"), _fv("hmm_p5")
-    ewmac_v, ema20_v, sma200_v = _fv("ewmac"), _fv("ema20"), _fv("sma200")
-    hyg_v, hyg_sma_v = _fv("hyg_lqd"), _fv("hyg_sma50")
-    baa_v, baa_r_v = _fv("baa_lag1"), _fv("baa_rise63")
-    dgs2_v, dgs2_j_v = _fv("dgs2_lag1"), _fv("dgs2_jump63")
-    nfci_v, nfci_j_v = _fv("nfci_lag5"), _fv("nfci_jump20")
+    m6_rsp_ok = bool(rsp_sma_v > 0 and rsp_spy_v < rsp_sma_v)
+    m6_iwm_ok = bool((iwm_sma_v > 0 and iwm_qqq_v < iwm_sma_v) or (m0_enabled and ad_below))
+    m6_def_ok = bool(def_ret20_pct >= 2.50)
+    m6_vg_ok = bool(vxn <= 25.0 and vr <= 0.92)
+    m6_trig = bool(sig_day["M6"])
+    m6_sensor = bool(m6_rsp_ok and m6_iwm_ok and m6_def_ok)
+    m6_met = int(m6_rsp_ok) + int(m6_iwm_ok) + int(m6_def_ok)
+    if m6_trig:
+        m6_status = "ARMED_BUY"
+        m6_hint_en = "All 3 breadth + defensive rotation checks lit in low vol (+20%)"
+        m6_hint_zh = "宽度恶化 + 防御轮动 3/3 全亮且低波达标（+20% 买盾分）"
+    elif m6_sensor and not m6_vg_ok:
+        m6_status = "SENSOR_RED_VOL_BLOCKED"
+        m6_hint_en = f"Breadth + defensive rotation 3/3 lit · Vol gate VXN {vxn:.1f} / VIX/3M {vr:.3f} freezes chasing"
+        m6_hint_zh = "宽度恶化与防御抢跑 3/3 预警已亮 · 因高波红线暂缓追高买贵盾"
+    elif m6_met > 0:
+        m6_status = "WARMING_UP"
+        m6_miss_en: list[str] = []
+        m6_miss_zh: list[str] = []
+        if not m6_rsp_ok:
+            m6_miss_en.append("RSP/SPY<SMA50")
+            m6_miss_zh.append("等权走弱")
+        if not m6_iwm_ok:
+            m6_miss_en.append("IWM/QQQ<SMA50")
+            m6_miss_zh.append("小盘走弱")
+        if not m6_def_ok:
+            m6_miss_en.append("Def/XLK>=+2.5%")
+            m6_miss_zh.append("防御轮动>=+2.5%")
+        m6_hint_en = f"Breadth/Rotation {m6_met}/3 lit · Awaiting {' & '.join(m6_miss_en)} (& VXN<=25)"
+        m6_hint_zh = f"宽度/防御已亮 {m6_met}/3 · 待触发{'、'.join(m6_miss_zh)}（且低波达标）"
+    else:
+        m6_status = "CALM"
+        m6_hint_en = "Equal-weight, small-caps & tech leadership intact (0/3)"
+        m6_hint_zh = "等权、小盘与科技领涨结构完好（0/3 平静）"
+
+    m2_core_a = bool(skew_p75_v > 0 and vvix_p75_v > 0 and skew10_v >= skew_p75_v and vvix_v >= vvix_p75_v)
+    m2_core_b = bool(vr_j5_v >= 0.06 and vvix_v >= 100.0)
+    m2_vg_ok = bool(vxn <= 24.0 and vr <= 1.02)
+    m2_trig = False if is_core3 else bool(sig_day["M2"])
+    m2_sensor = False if is_core3 else bool(m2_trig or (m2_core_a and vr >= 0.85) or (m2_core_b and vr >= 0.92))
+    m2_met = 0 if is_core3 else (int(bool(sig_day["M2_silent_tail"]) or m2_core_a) + int(bool(sig_day["M2_term_inflection"]) or m2_core_b))
+    if is_core3:
+        m2_status = "DISABLED_IN_CORE3"
+        m2_hint_en = "Omitted in Core-3 Minimal (switch to Full M7 Shield to enable)"
+        m2_hint_zh = "精简 3 核模式下已关闭（切换全套 M7 护盾可启用外生预警）"
+    elif m2_trig:
+        m2_status = "ARMED_BUY"
+        m2_hint_en = "Options desk skew/VVIX tail warning active in calm IV (+20%)"
+        m2_hint_zh = "期权台偏度/VVIX 买尾预警在低波区触发（+20% 买盾分）"
+    elif m2_sensor and not m2_vg_ok:
+        m2_status = "SENSOR_RED_VOL_BLOCKED"
+        m2_hint_en = f"Options tail stress {m2_met}/2 active · High-IV gate (VXN {vxn:.1f} > 24) blocks chasing"
+        m2_hint_zh = f"期权台尾部异动 {m2_met}/2 已亮 · 因高波门控（VXN {vxn:.1f} > 24）禁追高"
+    elif m2_met > 0:
+        m2_status = "WARMING_UP"
+        m2_hint_en = f"Tail skew/VVIX warming ({m2_met}/2) · Awaiting calm term-structure window"
+        m2_hint_zh = f"偏度/VVIX 异动预热 ({m2_met}/2) · 等待期限结构落入低波击球区"
+    else:
+        m2_status = "CALM"
+        m2_hint_en = "SKEW & VVIX below tail alert thresholds (0/2)"
+        m2_hint_zh = "SKEW 偏度与 VVIX 均未触发买尾异动（0/2 平静）"
+
+    m5_cur_ok = bool(hmm_p_v >= 0.55)
+    m5_fresh_ok = bool(hmm_p5_v < 0.40)
+    m5_vg_ok = bool(vxn <= 24.0 and vr < 1.02)
+    m5_trig = False if is_core3 else bool(sig_day["M5"])
+    m5_sensor = False if is_core3 else bool(m5_cur_ok and m5_fresh_ok)
+    m5_met = 0 if is_core3 else (2 if (m5_cur_ok and m5_fresh_ok) else (1 if (m5_cur_ok or hmm_p_v >= 0.25) else 0))
+    if is_core3:
+        m5_status = "DISABLED_IN_CORE3"
+        m5_hint_en = "Omitted in Core-3 Minimal (switch to Full M7 Shield to enable)"
+        m5_hint_zh = "精简 3 核模式下已关闭（切换全套 M7 护盾可启用外生预警）"
+    elif m5_trig:
+        m5_status = "ARMED_BUY"
+        m5_hint_en = "Fresh HMM stress regime jump in calm IV (+20%)"
+        m5_hint_zh = "因果 HMM 初入高压跃迁且低波达标（+20% 买盾分）"
+    elif m5_sensor and not m5_vg_ok:
+        m5_status = "SENSOR_RED_VOL_BLOCKED"
+        m5_hint_en = f"Fresh HMM regime jump 2/2 lit · High-IV gate (VXN {vxn:.1f}) blocks chasing"
+        m5_hint_zh = f"HMM 状态跃迁 2/2 已亮 · 因高波红线（VXN {vxn:.1f}）暂禁追买"
+    elif m5_cur_ok and not m5_fresh_ok:
+        m5_status = "WARMING_UP"
+        m5_hint_en = f"HMM already in persistent stress ({hmm_p_v * 100.0:.0f}% · 1/2) · M5 only fires on fresh jump (P_t-5 < 40%)"
+        m5_hint_zh = f"HMM 已处于持续高压态 ({hmm_p_v * 100.0:.0f}% · 1/2) · M5 仅在初入跃迁瞬间（5日前<40%）买盾"
+    elif m5_met > 0:
+        m5_status = "WARMING_UP"
+        m5_hint_en = f"HMM stress rising ({hmm_p_v * 100.0:.1f}%) · Needs >= 55% with VXN <= 24"
+        m5_hint_zh = f"HMM 高压概率抬头 ({hmm_p_v * 100.0:.1f}%) · 达 >=55% 且 VXN<=24 触发"
+    else:
+        m5_status = "CALM"
+        m5_hint_en = f"Hamilton stress probability {hmm_p_v * 100.0:.1f}% < 55% — calm regime"
+        m5_hint_zh = f"因果 HMM 高压后验概率 {hmm_p_v * 100.0:.1f}% < 55% —— 平静低波态"
+
+    m4_below200 = bool(sma200_v > 0 and cl < sma200_v)
+    m4_ewmac = bool(ewmac_v < 0.0)
+    m4_ema20 = bool(ema20_v > 0 and cl > ema20_v)
+    m4_vg_ok = bool(vxn <= 27.0 and vr <= 0.88)
+    m4_trig = bool(sig_day["M4"])
+    m4_sensor = bool(m4_below200 and m4_ewmac and m4_ema20)
+    m4_met = (int(m4_below200) + int(m4_ewmac) + int(m4_ema20)) if (m4_below200 or m4_ewmac) else 0
+    if m4_trig:
+        m4_status = "ARMED_BUY"
+        m4_hint_en = "Bear rally above EMA20 with cheap IV — buying Put shield (+35%)"
+        m4_hint_zh = "熊市死猫跳上穿 EMA20 且波动率回落 —— 触发买盾（+35%）"
+    elif m4_sensor and not m4_vg_ok:
+        m4_status = "SENSOR_RED_VOL_BLOCKED"
+        m4_hint_en = f"Bear bounce 3/3 met · Waiting for IV crush (VXN {vxn:.1f}<=27 & VIX/3M {vr:.3f}<=0.88)"
+        m4_hint_zh = f"熊市反抽 3/3 已满足 · 等待波动率回落（VXN<=27 且 VIX/3M<=0.88）再低买"
+    elif m4_below200 and m4_ewmac and not m4_ema20:
+        m4_status = "WARMING_UP"
+        m4_hint_en = f"Bear trend broken (2/3) · Awaiting bounce > EMA20 (${ema20_v:.1f}) & VXN <= 27"
+        m4_hint_zh = f"趋势已破位 2/3 · 等待反抽 EMA20 (${ema20_v:.1f}) 且 VXN <= 27"
+    elif m4_met > 0:
+        m4_status = "WARMING_UP"
+        m4_hint_en = f"Trend weakening ({m4_met}/3) · Needs QQQ < SMA200 (${sma200_v:.1f}), EWMAC < 0 & > EMA20"
+        m4_hint_zh = f"趋势转弱预热 ({m4_met}/3) · 需跌破 200DMA (${sma200_v:.1f}) 且 EWMAC<0 后反抽 EMA20"
+    else:
+        m4_status = "CALM"
+        m4_hint_en = f"Uptrend intact above SMA200 (${sma200_v:.1f}) & EWMAC >= 0"
+        m4_hint_zh = f"牛市主趋势完好（站稳 200DMA ${sma200_v:.1f} 且 EWMAC>=0）"
+
+    m3_hyg = bool(hyg_sma_v > 0 and hyg_v < hyg_sma_v)
+    m3_baa = bool(baa_r_opt is not None and baa_r_v >= 0.15)
+    m3_macro = bool((dgs2_j_opt is not None and dgs2_j_v >= 0.40) or (nfci_j_opt is not None and nfci_j_v >= 0.10))
+    m3_vg_ok = bool(vxn <= 26.0 and vr <= 0.92)
+    m3_trig = False if is_core3 else bool(sig_day["M3"])
+    m3_sensor = False if is_core3 else bool(m3_hyg and (m3_baa or m3_macro))
+    m3_met = 0 if is_core3 else (int(m3_hyg) + int(m3_baa) + int(m3_macro))
+    if is_core3:
+        m3_status = "DISABLED_IN_CORE3"
+        m3_hint_en = "Omitted in Core-3 Minimal (switch to Full M7 Shield to enable)"
+        m3_hint_zh = "精简 3 核模式下已关闭（切换全套 M7 护盾可启用信用雷达）"
+    elif m3_trig:
+        m3_status = "ARMED_BUY"
+        m3_hint_en = "Credit spread + macro stress lit in low vol (+20%)"
+        m3_hint_zh = "信用利差与宏观紧缩共振且低波达标（+20% 买盾分）"
+    elif m3_sensor and not m3_vg_ok:
+        m3_status = "SENSOR_RED_VOL_BLOCKED"
+        m3_hint_en = f"Credit/Macro {m3_met}/3 warning lit · High-vol redline pauses chasing expensive puts"
+        m3_hint_zh = f"信用与宏观 {m3_met}/3 预警已亮 · 因高波红线暂缓追高买贵盾"
+    elif m3_met > 0:
+        m3_status = "WARMING_UP"
+        if not m3_hyg:
+            m3_hint_en = f"Macro leg lit ({m3_met}/3) · Needs HYG/LQD < SMA50 ({hyg_sma_v:.4f})"
+            m3_hint_zh = f"宏观分项已亮 ({m3_met}/3) · 待 HYG/LQD 跌破 50DMA ({hyg_sma_v:.4f})"
+        else:
+            m3_hint_en = f"HYG/LQD weak ({m3_met}/3) · Needs Baa >=+15bp, 2Y >=+40bp or NFCI >=+0.10"
+            m3_hint_zh = f"高收益债走弱 ({m3_met}/3) · 待 Baa走阔>=15bp 或 2Y>=40bp / NFCI>=0.10"
+    else:
+        m3_status = "CALM"
+        m3_hint_en = "Credit spreads & financial conditions benign (0/3)"
+        m3_hint_zh = "高收益债利差与金融条件平稳（0/3 平静）"
 
     pillars = [
         {
@@ -3456,13 +3862,19 @@ def build_m7_live_dashboard(
                     "name_en": "M0 Six Lights Baseline",
                     "name_zh": "M0 六灯基线开关",
                     "points": 35,
-                    "earned_points": 35 if sig_day["M0"] else 0,
-                    "triggered": bool(sig_day["M0"]),
+                    "earned_points": 35 if m0_trig else 0,
+                    "triggered": m0_trig,
                     "raw_triggered": bool(sig_day["M0"]),
+                    "sensor_triggered": m0_sensor,
+                    "readiness_met": m0_met,
+                    "readiness_total": 3,
+                    "status_code": m0_status,
+                    "next_trigger_hint_en": m0_hint_en,
+                    "next_trigger_hint_zh": m0_hint_zh,
                     "pluggable": True,
                     "enabled": m0_enabled,
                     "disabled_in_core3": False,
-                    "vol_gate_passed": bool(vxn <= 22.0),
+                    "vol_gate_passed": m0_vg_ok,
                     "vol_gate_en": f"VXN {vxn:.2f} <= 22.0",
                     "vol_gate_zh": f"VXN {vxn:.2f} <= 22.0 低波门控",
                     "metrics": [
@@ -3471,21 +3883,21 @@ def build_m7_live_dashboard(
                             "label_zh": "QQQ 距历史前高",
                             "value": f"{dd_pct:+.2f}% (${cl:.2f})",
                             "threshold": ">= -5.00% (0.95*ATH)",
-                            "passed": bool(dd_pct >= -5.0),
+                            "passed": m0_ath_ok,
                         },
                         {
                             "label_en": "A-D Line < SMA50",
                             "label_zh": "腾落线 AD < 50DMA",
                             "value": f"{ad_line - ad_sma50:+,.0f}",
                             "threshold": "< 0",
-                            "passed": bool(m0_enabled and ad_below),
+                            "passed": m0_ad_ok,
                         },
                         {
                             "label_en": "Macro Crisis Lights",
                             "label_zh": "宏观六灯亮灯数",
                             "value": f"{sc} / 6",
                             "threshold": ">= 4 / 6",
-                            "passed": bool(m0_enabled and sc >= 4),
+                            "passed": m0_sc_ok,
                         },
                     ],
                 },
@@ -3494,13 +3906,19 @@ def build_m7_live_dashboard(
                     "name_en": "M6 Breadth + Defensive Rotation",
                     "name_zh": "M6 宽度恶化 + 防御轮动",
                     "points": 20,
-                    "earned_points": 20 if sig_day["M6"] else 0,
-                    "triggered": bool(sig_day["M6"]),
+                    "earned_points": 20 if m6_trig else 0,
+                    "triggered": m6_trig,
                     "raw_triggered": bool(sig_day["M6"]),
+                    "sensor_triggered": m6_sensor,
+                    "readiness_met": m6_met,
+                    "readiness_total": 3,
+                    "status_code": m6_status,
+                    "next_trigger_hint_en": m6_hint_en,
+                    "next_trigger_hint_zh": m6_hint_zh,
                     "pluggable": False,
                     "enabled": True,
                     "disabled_in_core3": False,
-                    "vol_gate_passed": bool(vxn <= 25.0 and vr <= 0.92),
+                    "vol_gate_passed": m6_vg_ok,
                     "vol_gate_en": f"VXN {vxn:.1f}<=25 & VIX/3M {vr:.3f}<=0.92",
                     "vol_gate_zh": f"VXN {vxn:.1f}<=25 且 VIX/3M {vr:.3f}<=0.92",
                     "metrics": [
@@ -3509,21 +3927,21 @@ def build_m7_live_dashboard(
                             "label_zh": "等权 RSP/SPY vs 50DMA",
                             "value": f"{rsp_spy_v:.4f} vs {rsp_sma_v:.4f}",
                             "threshold": "< SMA50",
-                            "passed": bool(rsp_sma_v > 0 and rsp_spy_v < rsp_sma_v),
+                            "passed": m6_rsp_ok,
                         },
                         {
                             "label_en": "IWM/QQQ (<SMA50 or AD)",
                             "label_zh": "小盘 IWM/QQQ (<50DMA 或 AD弱)",
                             "value": f"{iwm_qqq_v:.4f} vs {iwm_sma_v:.4f}",
                             "threshold": "< SMA50" + (" or AD<50D" if m0_enabled else ""),
-                            "passed": bool((iwm_sma_v > 0 and iwm_qqq_v < iwm_sma_v) or (m0_enabled and ad_below)),
+                            "passed": m6_iwm_ok,
                         },
                         {
                             "label_en": "(XLP+XLU+XLV)/XLK 20D",
                             "label_zh": "防御/科技 20日超额轮动",
                             "value": f"{def_ret20_pct:+.2f}%",
                             "threshold": ">= +2.50%",
-                            "passed": bool(def_ret20_pct >= 2.50),
+                            "passed": m6_def_ok,
                         },
                     ],
                 },
@@ -3552,29 +3970,35 @@ def build_m7_live_dashboard(
                     "name_en": "M2 Options Desk Warning",
                     "name_zh": "M2 期权台尾部预警",
                     "points": 20,
-                    "earned_points": 0 if is_core3 else (20 if sig_day["M2"] else 0),
-                    "triggered": False if is_core3 else bool(sig_day["M2"]),
+                    "earned_points": 20 if m2_trig else 0,
+                    "triggered": m2_trig,
                     "raw_triggered": bool(sig_day["M2"]),
+                    "sensor_triggered": m2_sensor,
+                    "readiness_met": m2_met,
+                    "readiness_total": 2,
+                    "status_code": m2_status,
+                    "next_trigger_hint_en": m2_hint_en,
+                    "next_trigger_hint_zh": m2_hint_zh,
                     "pluggable": False,
                     "enabled": not is_core3,
                     "disabled_in_core3": is_core3,
-                    "vol_gate_passed": bool(vxn <= 24.0),
-                    "vol_gate_en": f"VXN {vxn:.2f} <= 24.0",
-                    "vol_gate_zh": f"VXN {vxn:.2f} <= 24.0",
+                    "vol_gate_passed": m2_vg_ok,
+                    "vol_gate_en": f"VXN {vxn:.1f}<=24 & VIX/3M {vr:.3f}<=1.02",
+                    "vol_gate_zh": f"VXN {vxn:.1f}<=24 且 VIX/3M {vr:.3f}<=1.02",
                     "metrics": [
                         {
                             "label_en": "A) Silent Tail (SKEW10 & VVIX)",
                             "label_zh": "A) 静默买尾 (SKEW10 & VVIX>=P75)",
                             "value": f"SKEW {skew10_v:.1f}/{skew_p75_v:.1f} · VVIX {vvix_v:.1f}/{vvix_p75_v:.1f}",
                             "threshold": ">=252D P75 & 0.85<=V/V3M<=0.98",
-                            "passed": bool(sig_day["M2_silent_tail"]),
+                            "passed": bool(sig_day["M2_silent_tail"]) or m2_core_a,
                         },
                         {
                             "label_en": "B) Term Inflection (5D Jump)",
                             "label_zh": "B) 期限拐点 (5日跃升 & VVIX>=100)",
                             "value": f"Δ5D {vr_j5_v:+.3f} · VVIX {vvix_v:.1f}",
                             "threshold": "0.92..1.02 & Δ>=+0.06 & VVIX>=100",
-                            "passed": bool(sig_day["M2_term_inflection"]),
+                            "passed": bool(sig_day["M2_term_inflection"]) or m2_core_b,
                         },
                     ],
                 },
@@ -3583,13 +4007,19 @@ def build_m7_live_dashboard(
                     "name_en": "M5 Causal HMM Regime Transition",
                     "name_zh": "M5 因果 HMM 状态跃迁",
                     "points": 20,
-                    "earned_points": 0 if is_core3 else (20 if sig_day["M5"] else 0),
-                    "triggered": False if is_core3 else bool(sig_day["M5"]),
+                    "earned_points": 20 if m5_trig else 0,
+                    "triggered": m5_trig,
                     "raw_triggered": bool(sig_day["M5"]),
+                    "sensor_triggered": m5_sensor,
+                    "readiness_met": m5_met,
+                    "readiness_total": 2,
+                    "status_code": m5_status,
+                    "next_trigger_hint_en": m5_hint_en,
+                    "next_trigger_hint_zh": m5_hint_zh,
                     "pluggable": False,
                     "enabled": not is_core3,
                     "disabled_in_core3": is_core3,
-                    "vol_gate_passed": bool(vxn <= 24.0 and vr < 1.02),
+                    "vol_gate_passed": m5_vg_ok,
                     "vol_gate_en": f"VXN {vxn:.1f}<=24 & VIX/3M {vr:.3f}<1.02",
                     "vol_gate_zh": f"VXN {vxn:.1f}<=24 且 VIX/3M {vr:.3f}<1.02",
                     "metrics": [
@@ -3598,14 +4028,14 @@ def build_m7_live_dashboard(
                             "label_zh": "当前高压态后验概率 P_t",
                             "value": f"{hmm_p_v * 100.0:.1f}%",
                             "threshold": ">= 55.0%",
-                            "passed": bool(hmm_p_v >= 0.55),
+                            "passed": m5_cur_ok,
                         },
                         {
                             "label_en": "5D Prior P_{t-5}(Stress)",
                             "label_zh": "5日前后验概率 P_{t-5}（新鲜跃迁）",
                             "value": f"{hmm_p5_v * 100.0:.1f}%",
                             "threshold": "< 40.0%",
-                            "passed": bool(hmm_p5_v < 0.40),
+                            "passed": m5_fresh_ok,
                         },
                     ],
                 },
@@ -3625,13 +4055,19 @@ def build_m7_live_dashboard(
                     "name_en": "M4 CTA Bear-Rally Complacency",
                     "name_zh": "M4 CTA 熊市反弹自满",
                     "points": 35,
-                    "earned_points": 35 if sig_day["M4"] else 0,
-                    "triggered": bool(sig_day["M4"]),
+                    "earned_points": 35 if m4_trig else 0,
+                    "triggered": m4_trig,
                     "raw_triggered": bool(sig_day["M4"]),
+                    "sensor_triggered": m4_sensor,
+                    "readiness_met": m4_met,
+                    "readiness_total": 3,
+                    "status_code": m4_status,
+                    "next_trigger_hint_en": m4_hint_en,
+                    "next_trigger_hint_zh": m4_hint_zh,
                     "pluggable": False,
                     "enabled": True,
                     "disabled_in_core3": False,
-                    "vol_gate_passed": bool(vxn <= 27.0 and vr <= 0.88),
+                    "vol_gate_passed": m4_vg_ok,
                     "vol_gate_en": f"VXN {vxn:.1f}<=27 & VIX/3M {vr:.3f}<=0.88",
                     "vol_gate_zh": f"VXN {vxn:.1f}<=27 且 VIX/3M {vr:.3f}<=0.88",
                     "metrics": [
@@ -3640,21 +4076,21 @@ def build_m7_live_dashboard(
                             "label_zh": "熊市主趋势 QQQ < 200DMA",
                             "value": f"${cl:.2f} vs ${sma200_v:.2f}",
                             "threshold": "< SMA200",
-                            "passed": bool(sma200_v > 0 and cl < sma200_v),
+                            "passed": m4_below200,
                         },
                         {
                             "label_en": "3-Speed EWMAC (16/32/64)",
                             "label_zh": "三速 EWMAC 趋势均值",
                             "value": f"{ewmac_v:+.2f}",
                             "threshold": "< 0.00",
-                            "passed": bool(ewmac_v < 0.0),
+                            "passed": m4_ewmac,
                         },
                         {
                             "label_en": "Bear Bounce QQQ > EMA20",
                             "label_zh": "死猫跳反弹 QQQ > EMA20",
                             "value": f"${cl:.2f} vs ${ema20_v:.2f}",
                             "threshold": "> EMA20",
-                            "passed": bool(ema20_v > 0 and cl > ema20_v),
+                            "passed": m4_ema20,
                         },
                     ],
                 },
@@ -3663,13 +4099,19 @@ def build_m7_live_dashboard(
                     "name_en": "M3 Credit & Macro Stress (FRED PIT)",
                     "name_zh": "M3 信用利差与宏观压力 (FRED 严格滞后)",
                     "points": 20,
-                    "earned_points": 0 if is_core3 else (20 if sig_day["M3"] else 0),
-                    "triggered": False if is_core3 else bool(sig_day["M3"]),
+                    "earned_points": 20 if m3_trig else 0,
+                    "triggered": m3_trig,
                     "raw_triggered": bool(sig_day["M3"]),
+                    "sensor_triggered": m3_sensor,
+                    "readiness_met": m3_met,
+                    "readiness_total": 3,
+                    "status_code": m3_status,
+                    "next_trigger_hint_en": m3_hint_en,
+                    "next_trigger_hint_zh": m3_hint_zh,
                     "pluggable": False,
                     "enabled": not is_core3,
                     "disabled_in_core3": is_core3,
-                    "vol_gate_passed": bool(vxn <= 26.0 and vr <= 0.92),
+                    "vol_gate_passed": m3_vg_ok,
                     "vol_gate_en": f"VXN {vxn:.1f}<=26 & VIX/3M {vr:.3f}<=0.92",
                     "vol_gate_zh": f"VXN {vxn:.1f}<=26 且 VIX/3M {vr:.3f}<=0.92",
                     "metrics": [
@@ -3678,27 +4120,44 @@ def build_m7_live_dashboard(
                             "label_zh": "高收益/投资级 HYG/LQD < 50DMA",
                             "value": f"{hyg_v:.4f} vs {hyg_sma_v:.4f}",
                             "threshold": "< SMA50",
-                            "passed": bool(hyg_sma_v > 0 and hyg_v < hyg_sma_v),
+                            "passed": m3_hyg,
                         },
                         {
                             "label_en": "BAA10Y (+1d lag) 63D Widening",
                             "label_zh": "Baa利差 (+1日滞后) 63D走阔",
-                            "value": f"{baa_v:.2f}% ({baa_r_v * 100.0:+.0f}bp)",
+                            "value": f"{baa_v:.2f}% ({(baa_r_v * 100.0 if baa_r_opt is not None else 0.0):+.0f}bp)",
                             "threshold": ">= +15bp (+0.15)",
-                            "passed": bool(baa_r_v >= 0.15),
+                            "passed": m3_baa,
                         },
                         {
                             "label_en": "DGS2 (+1d) 63D / NFCI (+5d) 20D",
                             "label_zh": "2Y美债(+1日)63D / NFCI(+5日)20D",
-                            "value": f"2Y {dgs2_j_v * 100.0:+.0f}bp · NFCI {nfci_j_v:+.2f}",
+                            "value": f"2Y {(dgs2_j_v * 100.0 if dgs2_j_opt is not None else 0.0):+.0f}bp · NFCI {(nfci_j_v if nfci_j_opt is not None else 0.0):+.2f}",
                             "threshold": "2Y>=+40bp OR NFCI>=+0.10",
-                            "passed": bool(dgs2_j_v >= 0.40 or nfci_j_v >= 0.10),
+                            "passed": m3_macro,
                         },
                     ],
                 },
             ],
         },
     ]
+
+    all_mods_flat = [m for p in pillars for m in p["modules"]]
+    sensor_red_count = sum(1 for m in all_mods_flat if bool(m["enabled"]) and bool(m["sensor_triggered"]))
+    vol_blocked_sensor_count = sum(1 for m in all_mods_flat if m["status_code"] == "SENSOR_RED_VOL_BLOCKED")
+    warming_count = sum(1 for m in all_mods_flat if m["status_code"] == "WARMING_UP")
+
+    data_freshness = {
+        "yahoo_eod_date": d,
+        "fred_baa_date": str(feat_row_dict.get("baa_obs_date") or ""),
+        "fred_baa_lag_days": 1,
+        "fred_dgs2_date": str(feat_row_dict.get("dgs2_obs_date") or ""),
+        "fred_dgs2_lag_days": 1,
+        "fred_nfci_date": str(feat_row_dict.get("nfci_obs_date") or ""),
+        "fred_nfci_lag_days": 5,
+        "ad_line_date": str(row.get("ad_line_date") or d),
+        "is_pit_replay": bool(row.get("_is_pit_replay", False)),
+    }
 
     return {
         "as_of_date": d,
@@ -3712,6 +4171,15 @@ def build_m7_live_dashboard(
         "p1_score": round(p1, 0),
         "p2_score": round(p2, 0),
         "p3_score": round(p3, 0),
+        "live_stress_index": stress_idx,
+        "live_stress_level": str(stress_pack["live_stress_level"]),
+        "live_stress_label_en": stress_lbl_en,
+        "live_stress_label_zh": stress_lbl_zh,
+        "live_stress_breakdown": dict(stress_pack["live_stress_breakdown"]),
+        "sensor_red_count": sensor_red_count,
+        "vol_blocked_sensor_count": vol_blocked_sensor_count,
+        "warming_count": warming_count,
+        "data_freshness": data_freshness,
         "target_slots": target_slots,
         "active_slots": active_slots,
         "max_slots": max_slots,

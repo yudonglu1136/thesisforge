@@ -4546,6 +4546,7 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
                 "c3_target_slots": int(sd_i["target_slots_c3"]),
                 "c3_active_slots": def_m7_bundle["c3_active_slots"][i],
                 "c3_mask": int(sd_i["mask_c3"]),
+                "live_stress": int(sd_i["live_stress"]),
                 "hmm_p": round(float(sd_i["hmm_p"]), 3),
                 "crisis_lights": int(r["score"]),
                 "smooth_lights": round(float(r["score_5d"]), 2),
@@ -4843,12 +4844,34 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     c3_90 = doc["m7_bundles"]["otm15__standard__90d_hold__m0on"]["summaries"]["Core3_Adaptive"]
     assert c3_90["roll_mode"] == "adaptive_120_90" and c3_90["end_nav"] == c3_def["end_nav"]
 
-    # Core-3 sensor dimming check
+    # Core-3 sensor dimming + Dual-Track readiness check
     c3_dash = doc["m7_live_dashboards_by_strategy"]["Core3_Adaptive"]
+    m7_dash = doc["m7_live_dashboards_by_strategy"]["M7G_Graded"]
+    for dash_chk in (m7_dash, c3_dash):
+        assert 0 <= int(dash_chk["live_stress_index"]) <= 100, dash_chk["live_stress_index"]
+        assert dash_chk["live_stress_level"] in ("calm", "building", "elevated", "crisis")
+        assert {"regime_vol", "trend_dd", "credit_macro", "breadth_tail"}.issubset(dash_chk["live_stress_breakdown"].keys())
+        assert "data_freshness" in dash_chk and dash_chk["data_freshness"]["yahoo_eod_date"] == doc["as_of_date"]
+        for pil in dash_chk["pillars"]:
+            for mod in pil["modules"]:
+                assert mod["status_code"] in (
+                    "DISABLED_IN_CORE3",
+                    "DISABLED_M0_OFF",
+                    "ARMED_BUY",
+                    "SENSOR_RED_VOL_BLOCKED",
+                    "WARMING_UP",
+                    "CALM",
+                ), mod
+                assert 0 <= int(mod["readiness_met"]) <= int(mod["readiness_total"]), mod
+                assert mod["next_trigger_hint_en"] and mod["next_trigger_hint_zh"]
+    if doc["as_of_date"] == "2026-11-20":
+        assert m7_dash["live_stress_index"] >= 75, m7_dash["live_stress_index"]
+        assert m7_dash["live_stress_level"] == "crisis", m7_dash["live_stress_level"]
+    assert "six_lights_tail" in doc["m7_live_tail_state"]
     for pil in c3_dash["pillars"]:
         for mod in pil["modules"]:
             if mod["id"] in ("M2", "M5", "M3"):
-                assert mod["enabled"] is False and mod["disabled_in_core3"] is True and mod["earned_points"] == 0
+                assert mod["enabled"] is False and mod["disabled_in_core3"] is True and mod["earned_points"] == 0 and mod["status_code"] == "DISABLED_IN_CORE3"
 
     assert doc["as_of_date"] >= "2026-11-20"
     if doc["as_of_date"] == "2026-11-20":

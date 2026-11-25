@@ -192,6 +192,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       final vxn = (bar['vxn'] as num?)?.toDouble() ?? 0.0;
       final vr = (bar['vix_ratio'] as num?)?.toDouble() ?? 0.0;
       final dd = (bar['dd_ath_pct'] as num?)?.toDouble() ?? 0.0;
+      final pitStress = (bar['live_stress'] as num?)?.round() ?? 0;
       final pitDash = <String, dynamic>{
         ...baseDash,
         'as_of_date': pitDate,
@@ -199,6 +200,30 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         'p1_score': pScores['P1'],
         'p2_score': pScores['P2'],
         'p3_score': pScores['P3'],
+        'live_stress_index': pitStress,
+        'live_stress_level': pitStress >= 75
+            ? 'crisis'
+            : (pitStress >= 50
+                  ? 'elevated'
+                  : (pitStress >= 25 ? 'building' : 'calm')),
+        'live_stress_label_en': pitStress >= 75
+            ? 'Active Crisis'
+            : (pitStress >= 50
+                  ? 'Elevated Stress'
+                  : (pitStress >= 25 ? 'Stress Building' : 'Calm Low-Vol')),
+        'live_stress_label_zh': pitStress >= 75
+            ? '危机爆发中'
+            : (pitStress >= 50
+                  ? '高压警戒'
+                  : (pitStress >= 25 ? '隐患蓄力' : '平静低波')),
+        'data_freshness': {
+          ...Map<String, dynamic>.from(
+            (baseDash['data_freshness'] as Map?) ?? const {},
+          ),
+          'yahoo_eod_date': pitDate,
+          'ad_line_date': pitDate,
+          'is_pit_replay': pitDate != latestDate,
+        },
         'target_slots': (bar['m7_target_slots'] as num?)?.round() ?? 0,
         'active_slots': (bar['m7_active_slots'] as num?)?.round() ?? 0,
         'redline': {
@@ -800,6 +825,36 @@ void main() {
         findsOneWidget,
       );
       expect(
+        find.byKey(const ValueKey('crisis-m7-stress-track')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-m7-gate-track')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-m7-freshness-strip')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-pillars-stress-pill')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-pillars-gate-pill')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-mod-status-M3')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-mod-hint-M3')),
+        findsOneWidget,
+      );
+      expect(find.text('Active Crisis'), findsWidgets);
+      expect(find.textContaining('High-IV Freeze'), findsWidgets);
+      expect(
         find.byKey(const ValueKey('crisis-m7-slots-card')),
         findsOneWidget,
       );
@@ -1129,6 +1184,10 @@ void main() {
           find.text('三支柱概率分层监控矩阵（M7-Graded · 六大子模块）'),
           findsOneWidget,
         );
+        expect(find.text('危机爆发中'), findsWidgets);
+        expect(find.textContaining('高波红线冻结防追高'), findsWidgets);
+        expect(find.textContaining('预警 3/3 · 高波禁追'), findsOneWidget);
+        expect(find.textContaining('Yahoo EOD 2026-11-20'), findsOneWidget);
         expect(find.textContaining('单槽等金额预算：'), findsOneWidget);
         expect(find.text('自适应 120/90（推荐）'), findsOneWidget);
         expect(find.text('统一 120→50'), findsOneWidget);

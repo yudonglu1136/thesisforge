@@ -294,3 +294,50 @@ def test_crisis_windows_and_4factor_convexity_identity():
                 decomp_sum = tr["delta_usd"] + tr["gamma_usd"] + tr["vega_usd"] + tr["theta_slip_usd"]
                 assert abs(decomp_sum - tr["net_pnl_usd"]) <= 0.05
                 assert tr.get("pricing_source") in ("real_opra", "real_polygon", "real_hybrid", "bsm_fallback")
+
+
+def test_dual_track_live_stress_and_module_readiness_in_artifact():
+    doc = json.loads(ARTIFACT_PATH.read_text(encoding="utf-8"))
+    dash = doc["m7_live_dashboard"]
+    assert dash["live_stress_index"] >= 75
+    assert dash["live_stress_level"] == "crisis"
+    assert dash["live_stress_label_en"] == "Active Crisis"
+    assert dash["live_stress_label_zh"] == "危机爆发中"
+    bd = dash["live_stress_breakdown"]
+    for k in ("regime_vol", "trend_dd", "credit_macro", "breadth_tail"):
+        assert k in bd and bd[k] >= 0
+
+    fresh = dash["data_freshness"]
+    assert fresh["yahoo_eod_date"] == "2026-11-20"
+    assert fresh["fred_baa_lag_days"] == 1
+    assert fresh["fred_dgs2_lag_days"] == 1
+    assert fresh["fred_nfci_lag_days"] == 5
+    assert fresh["ad_line_date"] == "2026-11-20"
+    assert fresh["is_pit_replay"] is False
+
+    mods = {m["id"]: m for p in dash["pillars"] for m in p["modules"]}
+    assert set(mods.keys()) == {"M0", "M6", "M2", "M5", "M4", "M3"}
+    for m in mods.values():
+        assert isinstance(m["sensor_triggered"], bool)
+        assert isinstance(m["readiness_met"], int)
+        assert isinstance(m["readiness_total"], int)
+        assert m["status_code"] in (
+            "DISABLED_IN_CORE3",
+            "DISABLED_M0_OFF",
+            "ARMED_BUY",
+            "SENSOR_RED_VOL_BLOCKED",
+            "WARMING_UP",
+            "CALM",
+        )
+        assert m["next_trigger_hint_en"]
+        assert m["next_trigger_hint_zh"]
+    assert mods["M3"]["status_code"] == "SENSOR_RED_VOL_BLOCKED"
+    assert dash["vol_blocked_sensor_count"] >= 1
+    assert dash["warming_count"] >= 1
+
+    series_by_date = {r["date"]: r for r in doc["daily_series"]}
+    assert all("live_stress" in r for r in doc["daily_series"])
+    assert series_by_date["2017-07-14"]["live_stress"] < 25
+    assert series_by_date["2020-03-20"]["live_stress"] >= 75
+    assert series_by_date["2026-11-20"]["live_stress"] == dash["live_stress_index"]
+

@@ -127,11 +127,137 @@ const YF_SYMBOL_MAP = Object.freeze({
   SKEW: '^SKEW',
 });
 
+const YF_OPTIONAL_SIX_LIGHTS_MAP = Object.freeze({
+  HG_F: 'HG=F',
+  XLY: 'XLY',
+  XLI: 'XLI',
+  XLB: 'XLB',
+  XLF: 'XLF',
+});
+
 const FRED_LAGS = Object.freeze({
   BAA10Y: 1,
   DGS2: 1,
   NFCI: 5,
 });
+
+const FRED_SIX_LIGHTS_LAGS = Object.freeze({
+  BAA10Y: 1,
+  DGS2: 1,
+  NFCI: 5,
+  DFF: 1,
+  T10Y2Y: 1,
+});
+
+function clamp01(v) {
+  if (!Number.isFinite(v) || v <= 0.0) return 0.0;
+  if (v >= 1.0) return 1.0;
+  return v;
+}
+
+function roundHalfUpInt(v) {
+  return Math.floor(v + 0.5);
+}
+
+export function computeLiveStressIndexJS({
+  hmm_p = 0.0,
+  vxn = 0.0,
+  vix_ratio = 0.0,
+  dd_from_ath = 0.0,
+  close = 0.0,
+  sma200 = 0.0,
+  ewmac = 0.0,
+  hyg_lqd = 0.0,
+  hyg_sma50 = 0.0,
+  baa_rise63 = null,
+  dgs2_jump63 = null,
+  nfci_jump20 = null,
+  def_ret20 = 0.0,
+  rsp_spy = 0.0,
+  rsp_sma50 = 0.0,
+  iwm_qqq = 0.0,
+  iwm_sma50 = 0.0,
+  ad_below50 = false,
+  vvix = 0.0,
+  vvix_p75 = 0.0,
+  skew10 = 0.0,
+  skew_p75 = 0.0,
+  vr_jump5 = 0.0,
+} = {}) {
+  const baaEff =
+    baa_rise63 === null || baa_rise63 === undefined || !Number.isFinite(Number(baa_rise63)) || Number(baa_rise63) <= -900
+      ? 0.0
+      : Number(baa_rise63);
+  const dgs2Eff =
+    dgs2_jump63 === null || dgs2_jump63 === undefined || !Number.isFinite(Number(dgs2_jump63)) || Number(dgs2_jump63) <= -900
+      ? 0.0
+      : Number(dgs2_jump63);
+  const nfciEff =
+    nfci_jump20 === null || nfci_jump20 === undefined || !Number.isFinite(Number(nfci_jump20)) || Number(nfci_jump20) <= -900
+      ? 0.0
+      : Number(nfci_jump20);
+
+  const regimeVol =
+    clamp01(Number(hmm_p)) * 18.0 +
+    clamp01((Number(vxn) - 20.0) / 20.0) * 7.0 +
+    clamp01((Number(vix_ratio) - 0.9) / 0.2) * 5.0;
+
+  const trendDd =
+    clamp01((-Number(dd_from_ath) - 0.03) / 0.17) * 12.0 +
+    (Number(sma200) > 0.0 && Number(close) < Number(sma200) ? 6.0 : 0.0) +
+    clamp01(-Number(ewmac) / 0.8) * 7.0;
+
+  const creditMacro =
+    (Number(hyg_sma50) > 0.0 && Number(hyg_lqd) < Number(hyg_sma50) ? 8.0 : 0.0) +
+    clamp01(Math.max(0.0, baaEff) / 0.25) * 8.0 +
+    clamp01(Math.max(Math.max(0.0, dgs2Eff) / 0.5, Math.max(0.0, nfciEff) / 0.15)) * 9.0;
+
+  const breadthTail =
+    clamp01(Math.max(0.0, Number(def_ret20)) / 0.1) * 8.0 +
+    (Number(rsp_sma50) > 0.0 && Number(rsp_spy) < Number(rsp_sma50) ? 2.0 : 0.0) +
+    (Number(iwm_sma50) > 0.0 && Number(iwm_qqq) < Number(iwm_sma50) ? 2.0 : 0.0) +
+    (ad_below50 ? 2.0 : 0.0) +
+    (Number(vvix_p75) > 0.0 && Number(vvix) >= Number(vvix_p75) ? 2.0 : 0.0) +
+    (Number(skew_p75) > 0.0 && Number(skew10) >= Number(skew_p75) ? 2.0 : 0.0) +
+    (Number(vr_jump5) >= 0.06 ? 2.0 : 0.0);
+
+  const rawTotal = Math.max(0.0, Math.min(100.0, regimeVol + trendDd + creditMacro + breadthTail));
+  const idxInt = roundHalfUpInt(rawTotal);
+  let level = 'calm';
+  let lblEn = 'Calm Low-Vol';
+  let lblZh = '平静低波';
+  if (idxInt >= 75) {
+    level = 'crisis';
+    lblEn = 'Active Crisis';
+    lblZh = '危机爆发中';
+  } else if (idxInt >= 50) {
+    level = 'elevated';
+    lblEn = 'Elevated Stress';
+    lblZh = '高压警戒';
+  } else if (idxInt >= 25) {
+    level = 'building';
+    lblEn = 'Stress Building';
+    lblZh = '隐患蓄力';
+  }
+
+  const r1 = x => Math.round(x * 10) / 10;
+  return {
+    live_stress_index: idxInt,
+    live_stress_level: level,
+    live_stress_label_en: lblEn,
+    live_stress_label_zh: lblZh,
+    live_stress_breakdown: {
+      regime_vol: r1(regimeVol),
+      regime_vol_cap: 30,
+      trend_dd: r1(trendDd),
+      trend_dd_cap: 25,
+      credit_macro: r1(creditMacro),
+      credit_macro_cap: 25,
+      breadth_tail: r1(breadthTail),
+      breadth_tail_cap: 20,
+    },
+  };
+}
 
 const M7_TP_SPECS = Object.freeze({
   standard: {
@@ -2541,6 +2667,7 @@ export function buildM7LiveDashboardJS(
     m7TpMode = 'standard',
     rollMode = 'adaptive_120_90',
     m0Enabled = true,
+    isPitReplay = false,
   } = {},
 ) {
   const d = String(row.date);
@@ -2613,6 +2740,71 @@ export function buildM7LiveDashboardJS(
   const cooldownPassed = daysSinceLast === null || daysSinceLast >= reqGap;
   const { mods: modsActive, codeStr: trigCode } = formatM7TriggerLabels(sigDay, maxSlots, isCore3);
 
+  const fv = (k, defVal = 0.0) => {
+    const v = featRow?.[k];
+    return v === null || v === undefined || !Number.isFinite(Number(v)) ? defVal : Number(v);
+  };
+  const fvOpt = k => {
+    const v = featRow?.[k];
+    return v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v);
+  };
+  const fmtSigned = (n, dec = 2) => `${n >= 0 ? '+' : ''}${n.toFixed(dec)}`;
+  const rspSpyV = fv('rsp_spy');
+  const rspSmaV = fv('rsp_sma50');
+  const iwmQqqV = fv('iwm_qqq');
+  const iwmSmaV = fv('iwm_sma50');
+  const defRet20Raw = fv('def_ret20');
+  const defRet20Pct = defRet20Raw * 100.0;
+  const skew10V = fv('skew10');
+  const skewP75V = fv('skew_p75');
+  const vvixV = fv('vvix');
+  const vvixP75V = fv('vvix_p75');
+  const vrJ5V = fv('vr_jump5');
+  const hmmPV = fv('hmm_p');
+  const hmmP5V = fv('hmm_p5');
+  const ewmacV = fv('ewmac');
+  const ema20V = fv('ema20');
+  const sma200V = fv('sma200');
+  const hygV = fv('hyg_lqd');
+  const hygSmaV = fv('hyg_sma50');
+  const baaV = fv('baa_lag1');
+  const baaROpt = fvOpt('baa_rise63');
+  const baaRV = baaROpt ?? 0.0;
+  const dgs2JOpt = fvOpt('dgs2_jump63');
+  const dgs2JV = dgs2JOpt ?? 0.0;
+  const nfciJOpt = fvOpt('nfci_jump20');
+  const nfciJV = nfciJOpt ?? 0.0;
+  const adDiffInt = Math.round(adLine - adSma50);
+
+  const stressPack = computeLiveStressIndexJS({
+    hmm_p: hmmPV,
+    vxn,
+    vix_ratio: vr,
+    dd_from_ath: Number(row.dd_from_ath),
+    close: cl,
+    sma200: sma200V,
+    ewmac: ewmacV,
+    hyg_lqd: hygV,
+    hyg_sma50: hygSmaV,
+    baa_rise63: baaROpt,
+    dgs2_jump63: dgs2JOpt,
+    nfci_jump20: nfciJOpt,
+    def_ret20: defRet20Raw,
+    rsp_spy: rspSpyV,
+    rsp_sma50: rspSmaV,
+    iwm_qqq: iwmQqqV,
+    iwm_sma50: iwmSmaV,
+    ad_below50: adBelow,
+    vvix: vvixV,
+    vvix_p75: vvixP75V,
+    skew10: skew10V,
+    skew_p75: skewP75V,
+    vr_jump5: vrJ5V,
+  });
+  const stressIdx = stressPack.live_stress_index;
+  const stressLblEn = stressPack.live_stress_label_en;
+  const stressLblZh = stressPack.live_stress_label_zh;
+
   const anyTpArmed = activeTr.some(
     t => Boolean(t.pending_tp) && !String(t.tp_reason || '').startsWith('roll_'),
   );
@@ -2654,38 +2846,38 @@ export function buildM7LiveDashboardJS(
     t1Tone = 'armed';
     t1BadgeEn = `T+1 OPEN: ${armedRollD}-DTE ROLL -> HARVEST RESIDUAL & OPEN ${entryDte}D ${otmLbl} PUT`;
     t1BadgeZh = `T+1 开盘指令：剩 <=${armedRollD} DTE 触发滚仓 · 回收残值并换入新 ${entryDte}D ${otmLbl} Put`;
-    t1TitleEn = `Score ${Math.round(prob)}% (${trigCode}) Active at <=${armedRollD} DTE — Salvage Expiring Slot & Roll Into Fresh ${entryDte}-DTE ${otmLbl} Put`;
-    t1TitleZh = `在途槽位剩 <=${armedRollD} DTE 且综合概率 ${Math.round(prob)}%（${trigCode}）仍亮 —— 次日开盘回收残值并滚入新 ${entryDte}D ${otmLbl} Put`;
+    t1TitleEn = `Low-Vol Entry Gate ${Math.round(prob)}% (${trigCode}) Active at <=${armedRollD} DTE — Salvage Expiring Slot & Roll Into Fresh ${entryDte}-DTE ${otmLbl} Put`;
+    t1TitleZh = `在途槽位剩 <=${armedRollD} DTE 且买盾执行分 ${Math.round(prob)}%（${trigCode}）仍亮 —— 次日开盘回收残值并滚入新 ${entryDte}D ${otmLbl} Put`;
   } else if (anyRollArmed) {
     t1Code = 'SALVAGE_50D_EXIT';
     t1Tone = 'active';
     t1BadgeEn = `T+1 OPEN: ${armedRollD}-DTE SALVAGE EXIT -> HARVEST RESIDUAL TO QQQ`;
     t1BadgeZh = `T+1 开盘指令：剩 <=${armedRollD} DTE 信号熄灭 · 平仓回收残值复投 QQQ`;
-    t1TitleEn = `Slot Reached <=${armedRollD} DTE With Signal Off — Exit Before Theta Cliff & Reinvest Residual Cash Into QQQ`;
-    t1TitleZh = `在途槽位剩 <=${armedRollD} DTE 且危机信号已解除 —— 在 Theta 悬崖前平仓回收残值并复投 QQQ`;
+    t1TitleEn = `Slot Reached <=${armedRollD} DTE With Entry Gate Off — Exit Before Theta Cliff & Reinvest Residual Cash Into QQQ`;
+    t1TitleZh = `在途槽位剩 <=${armedRollD} DTE 且买盾执行信号已解除 —— 在 Theta 悬崖前平仓回收残值并复投 QQQ`;
   } else if (pendSig !== null) {
     const nextSlotIdx = effActiveTr.length + 1;
     t1Code = 'OPEN_NEW_SLOT';
     t1Tone = 'armed';
     t1BadgeEn = `T+1 OPEN: BUY 1 NEW SLOT (SLOT ${nextSlotIdx}/${maxSlots} · ${tenorLblEn} ${otmLbl} PUT)`;
     t1BadgeZh = `T+1 开盘指令：新开 1 槽保护（第 ${nextSlotIdx}/${maxSlots} 槽 · ${tenorLblZh} ${otmLbl} Put）`;
-    t1TitleEn = `Score ${Math.round(prob)}% (${trigCode}) -> Open Slot ${nextSlotIdx}/${maxSlots} Equal-Dollar ${entryDte}-DTE ${otmLbl} Put`;
-    t1TitleZh = `综合概率 ${Math.round(prob)}%（${trigCode}）-> 次日开盘按等金额预算买入第 ${nextSlotIdx}/${maxSlots} 槽 ${tenorLblZh} ${otmLbl} Put`;
+    t1TitleEn = `Real-Time Stress ${stressIdx}% · Low-Vol Gate ${Math.round(prob)}% (${trigCode}) -> Open Slot ${nextSlotIdx}/${maxSlots} Equal-Dollar ${entryDte}-DTE ${otmLbl} Put`;
+    t1TitleZh = `实时压力 ${stressIdx}% · 低波买盾执行分 ${Math.round(prob)}%（${trigCode}）-> 次日开盘按等金额预算买入第 ${nextSlotIdx}/${maxSlots} 槽 ${tenorLblZh} ${otmLbl} Put`;
   } else if (targetSlots > effActiveTr.length && redlineBlocked) {
     t1Code = 'REDLINE_BLOCKED';
     t1Tone = 'blocked';
     t1BadgeEn = 'T+1 OPEN: HARD REDLINE BLOCKED (NO NEW PUTS IN HIGH IV)';
     t1BadgeZh = 'T+1 开盘指令：风控红线锁死禁开新仓（拒绝高波追买天价 Put）';
-    t1TitleEn = `Hard Risk Redline Active (VXN ${vxn.toFixed(2)} > 27 or VIX/3M ${vr.toFixed(3)} >= 1.02) — New Entries Strictly Forbidden`;
-    t1TitleZh = `绝对风控红线生效（VXN ${vxn.toFixed(2)} > 27 或 VIX/3M ${vr.toFixed(3)} >= 1.02）—— 严禁在恐慌高波区新开任何槽位`;
+    t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · Hard Redline Active (VXN ${vxn.toFixed(1)} > 27 or VIX/3M ${vr.toFixed(3)} >= 1.02) — Chasing Expensive Puts Forbidden`;
+    t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· 绝对风控红线生效（VXN ${vxn.toFixed(1)} > 27 或 VIX/3M ${vr.toFixed(3)} >= 1.02）—— 严禁高波追高买贵盾`;
   } else if (targetSlots > effActiveTr.length && !cooldownPassed) {
     const remWait = Math.max(1, reqGap - (daysSinceLast ?? 0));
     t1Code = 'COOLDOWN_WAIT';
     t1Tone = 'cooldown';
     t1BadgeEn = `T+1 OPEN: COOLDOWN WAIT (${daysSinceLast}D / ${reqGap}D · ${remWait}D LEFT)`;
     t1BadgeZh = `T+1 开盘指令：加仓冷却期等待中（距上槽 ${daysSinceLast}/${reqGap} 天 · 还需 ${remWait} 天）`;
-    t1TitleEn = `Score ${Math.round(prob)}% Wants ${targetSlots} Slots, Waiting ${remWait} Calendar Days for ${reqGap}D Step Cooldown`;
-    t1TitleZh = `综合概率 ${Math.round(prob)}% 指向 ${targetSlots} 槽，当前距上一槽仅 ${daysSinceLast} 天（未满 ${reqGap} 天冷却期，暂缓加槽）`;
+    t1TitleEn = `Low-Vol Entry Gate ${Math.round(prob)}% Wants ${targetSlots} Slots, Waiting ${remWait} Calendar Days for ${reqGap}D Step Cooldown`;
+    t1TitleZh = `低波买盾执行分 ${Math.round(prob)}% 指向 ${targetSlots} 槽，当前距上一槽仅 ${daysSinceLast} 天（未满 ${reqGap} 天冷却期，暂缓加槽）`;
   } else if (activeSlots > 0) {
     const rollNoteEn = rollDte > 0 ? ` · ROLL @ <=${rollDte} DTE` : '';
     const rollNoteZh = rollDte > 0 ? ` · 剩<=${rollDte}天滚仓` : '';
@@ -2693,8 +2885,8 @@ export function buildM7LiveDashboardJS(
     t1Tone = 'active';
     t1BadgeEn = `T+1 OPEN: HOLD ${activeSlots}/${maxSlots} ACTIVE PUT SLOT(S) · MONITOR TP${rollNoteEn}`;
     t1BadgeZh = `T+1 开盘指令：继续持有 ${activeSlots}/${maxSlots} 槽在途 Put · 盯紧止盈线${rollNoteZh}`;
-    t1TitleEn = `${activeSlots}/${maxSlots} Equal-Dollar Put Slot(s) Shielding 100% Uncapped QQQ Core`;
-    t1TitleZh = `当前 ${activeSlots}/${maxSlots} 槽等金额裸 Put 在途护航 · 100% QQQ 底仓无封顶持有`;
+    t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · ${activeSlots}/${maxSlots} Equal-Dollar Put Slot(s) Shielding 100% Uncapped QQQ Core`;
+    t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· 当前 ${activeSlots}/${maxSlots} 槽等金额裸 Put 在途护航（100% QQQ 底仓无封顶持有）`;
   } else {
     const profLblEn = isCore3 ? 'Core-3 Minimal' : 'Full M7 Shield';
     const profLblZh = isCore3 ? '精简3核' : '全套M7护盾';
@@ -2702,14 +2894,14 @@ export function buildM7LiveDashboardJS(
     t1Tone = 'standby';
     if (redlineBlocked) {
       t1BadgeEn = 'T+1 OPEN: STANDBY (100% QQQ · HIGH-VOL REDLINE FREEZE)';
-      t1BadgeZh = 'T+1 开盘指令：空盾待命（100% 满仓 QQQ · 恐慌高波红线冻结禁买）';
-      t1TitleEn = `${profLblEn} Score ${Math.round(prob)}% (<35%) & High-IV Redline Active (VXN ${vxn.toFixed(1)}, VIX/3M ${vr.toFixed(3)}) — Hold 100% QQQ Uncapped`;
-      t1TitleZh = `${profLblZh}概率 ${Math.round(prob)}% (<35%) 且处于高波红线区（VXN ${vxn.toFixed(1)}、VIX/3M ${vr.toFixed(3)}）—— 100% QQQ 零损耗待弹`;
+      t1BadgeZh = 'T+1 开盘指令：空盾待命（100% 满仓 QQQ · 高波红线冻结禁追买贵盾）';
+      t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · ${profLblEn} Low-Vol Entry Gate ${Math.round(prob)}% (High-IV Redline VXN ${vxn.toFixed(1)} / VIX/3M ${vr.toFixed(3)} Freezes Chasing Expensive Puts — Hold 100% QQQ Uncapped)`;
+      t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· ${profLblZh}低波买盾执行分 ${Math.round(prob)}%（高波红线 VXN ${vxn.toFixed(1)} / VIX/3M ${vr.toFixed(3)} 冻结禁追高买贵盾 —— 100% QQQ 零损耗待弹）`;
     } else {
       t1BadgeEn = 'T+1 OPEN: STANDBY · ZERO PUT SPEND (100% QQQ CRUISE)';
       t1BadgeZh = 'T+1 开盘指令：静默待命 · 零保费损耗（100% 满仓 QQQ 复利巡航）';
-      t1TitleEn = `${profLblEn} Score ${Math.round(prob)}% (< 35% Threshold) — Zero Option Drag, 100% QQQ Compounding`;
-      t1TitleZh = `${profLblZh}综合危机概率 ${Math.round(prob)}%（低于 35% 开仓线）—— 零期权保费损耗，100% QQQ 顺风复利`;
+      t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · ${profLblEn} Low-Vol Entry Gate ${Math.round(prob)}% (< 35% Threshold) — Zero Option Drag, 100% QQQ Compounding`;
+      t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· ${profLblZh}低波买盾执行分 ${Math.round(prob)}%（低于 35% 开仓线）—— 零期权保费损耗，100% QQQ 顺风复利`;
     }
   }
 
@@ -2845,33 +3037,202 @@ export function buildM7LiveDashboardJS(
     open_slots: tpSlotsLive,
   };
 
-  const fv = (k, defVal = 0.0) => {
-    const v = featRow?.[k];
-    return v === null || v === undefined || !Number.isFinite(Number(v)) ? defVal : Number(v);
-  };
-  const fmtSigned = (n, dec = 2) => `${n >= 0 ? '+' : ''}${n.toFixed(dec)}`;
-  const rspSpyV = fv('rsp_spy');
-  const rspSmaV = fv('rsp_sma50');
-  const iwmQqqV = fv('iwm_qqq');
-  const iwmSmaV = fv('iwm_sma50');
-  const defRet20Pct = fv('def_ret20') * 100.0;
-  const skew10V = fv('skew10');
-  const skewP75V = fv('skew_p75');
-  const vvixV = fv('vvix');
-  const vvixP75V = fv('vvix_p75');
-  const vrJ5V = fv('vr_jump5');
-  const hmmPV = fv('hmm_p');
-  const hmmP5V = fv('hmm_p5');
-  const ewmacV = fv('ewmac');
-  const ema20V = fv('ema20');
-  const sma200V = fv('sma200');
-  const hygV = fv('hyg_lqd');
-  const hygSmaV = fv('hyg_sma50');
-  const baaV = fv('baa_lag1');
-  const baaRV = fv('baa_rise63');
-  const dgs2JV = fv('dgs2_jump63');
-  const nfciJV = fv('nfci_jump20');
-  const adDiffInt = Math.round(adLine - adSma50);
+  const m0AthOk = ddPct >= -5.0;
+  const m0AdOk = Boolean(m0Enabled && adBelow);
+  const m0ScOk = Boolean(m0Enabled && sc >= 4);
+  const m0VgOk = vxn <= 22.0;
+  const m0Trig = Boolean(sigDay.M0);
+  const m0Sensor = Boolean(m0Enabled && m0AthOk && (m0AdOk || m0ScOk));
+  let m0Met = 0;
+  let m0Status = 'CALM';
+  let m0HintEn = `Breadth healthy & macro lights ${sc}/6 — calm regime`;
+  let m0HintZh = `市场宽度健康且宏观六灯 ${sc}/6 —— 平静巡航`;
+  if (!m0Enabled) {
+    m0Met = 0;
+    m0Status = 'DISABLED_M0_OFF';
+    m0HintEn = 'M0 Six-Lights baseline switch disabled by user';
+    m0HintZh = '用户已手动关闭 M0 六灯基线开关';
+  } else if (m0Trig) {
+    m0Met = Number(m0AthOk) + Number(m0AdOk) + Number(m0ScOk);
+    m0Status = 'ARMED_BUY';
+    m0HintEn = 'Near-ATH fragility active & VXN <= 22 — contributing +35% to P1';
+    m0HintZh = '高位顶背离确认且 VXN <= 22 —— 已为 P1 贡献 +35% 买盾分';
+  } else if (m0Sensor && !m0VgOk) {
+    m0Met = Number(m0AthOk) + Number(m0AdOk) + Number(m0ScOk);
+    m0Status = 'SENSOR_RED_VOL_BLOCKED';
+    m0HintEn = `Breadth/Macro warning lit near highs · Blocked by VXN ${vxn.toFixed(1)} > 22.0`;
+    m0HintZh = `高位宽度/六灯预警已亮 · 因 VXN ${vxn.toFixed(1)} > 22.0 暂禁追买`;
+  } else if (m0AdOk || m0ScOk) {
+    m0Met = Number(m0AthOk) + Number(m0AdOk) + Number(m0ScOk);
+    m0Status = 'WARMING_UP';
+    m0HintEn = `Macro/AD warning lit (${m0Met}/3) · M0 only arms near highs (QQQ ${fmtSigned(ddPct, 1)}% < -5% ATH)`;
+    m0HintZh = `宽度/六灯已亮 (${m0Met}/3) · M0 仅在距前高 -5% 内潜伏（当前 ${fmtSigned(ddPct, 1)}%）`;
+  } else if (sc === 3) {
+    m0Met = 1;
+    m0Status = 'WARMING_UP';
+    m0HintEn = `Macro lights warming (${sc}/6) · Needs >=4/6 lights or AD < 50DMA`;
+    m0HintZh = `宏观六灯预热中 (${sc}/6) · 需亮满 >=4/6 灯或 AD 跌破 50DMA`;
+  }
+
+  const m6RspOk = rspSmaV > 0 && rspSpyV < rspSmaV;
+  const m6IwmOk = (iwmSmaV > 0 && iwmQqqV < iwmSmaV) || (m0Enabled && adBelow);
+  const m6DefOk = defRet20Pct >= 2.5;
+  const m6VgOk = vxn <= 25.0 && vr <= 0.92;
+  const m6Trig = Boolean(sigDay.M6);
+  const m6Sensor = Boolean(m6RspOk && m6IwmOk && m6DefOk);
+  const m6Met = Number(m6RspOk) + Number(m6IwmOk) + Number(m6DefOk);
+  let m6Status = 'CALM';
+  let m6HintEn = 'Equal-weight, small-caps & tech leadership intact (0/3)';
+  let m6HintZh = '等权、小盘与科技领涨结构完好（0/3 平静）';
+  if (m6Trig) {
+    m6Status = 'ARMED_BUY';
+    m6HintEn = 'All 3 breadth + defensive rotation checks lit in low vol (+20%)';
+    m6HintZh = '宽度恶化 + 防御轮动 3/3 全亮且低波达标（+20% 买盾分）';
+  } else if (m6Sensor && !m6VgOk) {
+    m6Status = 'SENSOR_RED_VOL_BLOCKED';
+    m6HintEn = `Breadth + defensive rotation 3/3 lit · Vol gate VXN ${vxn.toFixed(1)} / VIX/3M ${vr.toFixed(3)} freezes chasing`;
+    m6HintZh = '宽度恶化与防御抢跑 3/3 预警已亮 · 因高波红线暂缓追高买贵盾';
+  } else if (m6Met > 0) {
+    m6Status = 'WARMING_UP';
+    const missEn = [];
+    const missZh = [];
+    if (!m6RspOk) {
+      missEn.push('RSP/SPY<SMA50');
+      missZh.push('等权走弱');
+    }
+    if (!m6IwmOk) {
+      missEn.push('IWM/QQQ<SMA50');
+      missZh.push('小盘走弱');
+    }
+    if (!m6DefOk) {
+      missEn.push('Def/XLK>=+2.5%');
+      missZh.push('防御轮动>=+2.5%');
+    }
+    m6HintEn = `Breadth/Rotation ${m6Met}/3 lit · Awaiting ${missEn.join(' & ')} (& VXN<=25)`;
+    m6HintZh = `宽度/防御已亮 ${m6Met}/3 · 待触发${missZh.join('、')}（且低波达标）`;
+  }
+
+  const m2CoreA = skewP75V > 0 && vvixP75V > 0 && skew10V >= skewP75V && vvixV >= vvixP75V;
+  const m2CoreB = vrJ5V >= 0.06 && vvixV >= 100.0;
+  const m2VgOk = vxn <= 24.0 && vr <= 1.02;
+  const m2Trig = isCore3 ? false : Boolean(sigDay.M2);
+  const m2Sensor = isCore3 ? false : Boolean(m2Trig || (m2CoreA && vr >= 0.85) || (m2CoreB && vr >= 0.92));
+  const m2Met = isCore3
+    ? 0
+    : Number(Boolean(sigDay.M2_silent_tail) || m2CoreA) +
+      Number(Boolean(sigDay.M2_term_inflection) || m2CoreB);
+  let m2Status = 'CALM';
+  let m2HintEn = 'SKEW & VVIX below tail alert thresholds (0/2)';
+  let m2HintZh = 'SKEW 偏度与 VVIX 均未触发买尾异动（0/2 平静）';
+  if (isCore3) {
+    m2Status = 'DISABLED_IN_CORE3';
+    m2HintEn = 'Omitted in Core-3 Minimal (switch to Full M7 Shield to enable)';
+    m2HintZh = '精简 3 核模式下已关闭（切换全套 M7 护盾可启用外生预警）';
+  } else if (m2Trig) {
+    m2Status = 'ARMED_BUY';
+    m2HintEn = 'Options desk skew/VVIX tail warning active in calm IV (+20%)';
+    m2HintZh = '期权台偏度/VVIX 买尾预警在低波区触发（+20% 买盾分）';
+  } else if (m2Sensor && !m2VgOk) {
+    m2Status = 'SENSOR_RED_VOL_BLOCKED';
+    m2HintEn = `Options tail stress ${m2Met}/2 active · High-IV gate (VXN ${vxn.toFixed(1)} > 24) blocks chasing`;
+    m2HintZh = `期权台尾部异动 ${m2Met}/2 已亮 · 因高波门控（VXN ${vxn.toFixed(1)} > 24）禁追高`;
+  } else if (m2Met > 0) {
+    m2Status = 'WARMING_UP';
+    m2HintEn = `Tail skew/VVIX warming (${m2Met}/2) · Awaiting calm term-structure window`;
+    m2HintZh = `偏度/VVIX 异动预热 (${m2Met}/2) · 等待期限结构落入低波击球区`;
+  }
+
+  const m5CurOk = hmmPV >= 0.55;
+  const m5FreshOk = hmmP5V < 0.4;
+  const m5VgOk = vxn <= 24.0 && vr < 1.02;
+  const m5Trig = isCore3 ? false : Boolean(sigDay.M5);
+  const m5Sensor = isCore3 ? false : Boolean(m5CurOk && m5FreshOk);
+  const m5Met = isCore3 ? 0 : m5CurOk && m5FreshOk ? 2 : m5CurOk || hmmPV >= 0.25 ? 1 : 0;
+  let m5Status = 'CALM';
+  let m5HintEn = `Hamilton stress probability ${(hmmPV * 100.0).toFixed(1)}% < 55% — calm regime`;
+  let m5HintZh = `因果 HMM 高压后验概率 ${(hmmPV * 100.0).toFixed(1)}% < 55% —— 平静低波态`;
+  if (isCore3) {
+    m5Status = 'DISABLED_IN_CORE3';
+    m5HintEn = 'Omitted in Core-3 Minimal (switch to Full M7 Shield to enable)';
+    m5HintZh = '精简 3 核模式下已关闭（切换全套 M7 护盾可启用外生预警）';
+  } else if (m5Trig) {
+    m5Status = 'ARMED_BUY';
+    m5HintEn = 'Fresh HMM stress regime jump in calm IV (+20%)';
+    m5HintZh = '因果 HMM 初入高压跃迁且低波达标（+20% 买盾分）';
+  } else if (m5Sensor && !m5VgOk) {
+    m5Status = 'SENSOR_RED_VOL_BLOCKED';
+    m5HintEn = `Fresh HMM regime jump 2/2 lit · High-IV gate (VXN ${vxn.toFixed(1)}) blocks chasing`;
+    m5HintZh = `HMM 状态跃迁 2/2 已亮 · 因高波红线（VXN ${vxn.toFixed(1)}）暂禁追买`;
+  } else if (m5CurOk && !m5FreshOk) {
+    m5Status = 'WARMING_UP';
+    m5HintEn = `HMM already in persistent stress (${(hmmPV * 100.0).toFixed(0)}% · 1/2) · M5 only fires on fresh jump (P_t-5 < 40%)`;
+    m5HintZh = `HMM 已处于持续高压态 (${(hmmPV * 100.0).toFixed(0)}% · 1/2) · M5 仅在初入跃迁瞬间（5日前<40%）买盾`;
+  } else if (m5Met > 0) {
+    m5Status = 'WARMING_UP';
+    m5HintEn = `HMM stress rising (${(hmmPV * 100.0).toFixed(1)}%) · Needs >= 55% with VXN <= 24`;
+    m5HintZh = `HMM 高压概率抬头 (${(hmmPV * 100.0).toFixed(1)}%) · 达 >=55% 且 VXN<=24 触发`;
+  }
+
+  const m4Below200 = sma200V > 0 && cl < sma200V;
+  const m4Ewmac = ewmacV < 0.0;
+  const m4Ema20 = ema20V > 0 && cl > ema20V;
+  const m4VgOk = vxn <= 27.0 && vr <= 0.88;
+  const m4Trig = Boolean(sigDay.M4);
+  const m4Sensor = Boolean(m4Below200 && m4Ewmac && m4Ema20);
+  const m4Met = m4Below200 || m4Ewmac ? Number(m4Below200) + Number(m4Ewmac) + Number(m4Ema20) : 0;
+  let m4Status = 'CALM';
+  let m4HintEn = `Uptrend intact above SMA200 ($${sma200V.toFixed(1)}) & EWMAC >= 0`;
+  let m4HintZh = `牛市主趋势完好（站稳 200DMA $${sma200V.toFixed(1)} 且 EWMAC>=0）`;
+  if (m4Trig) {
+    m4Status = 'ARMED_BUY';
+    m4HintEn = 'Bear rally above EMA20 with cheap IV — buying Put shield (+35%)';
+    m4HintZh = '熊市死猫跳上穿 EMA20 且波动率回落 —— 触发买盾（+35%）';
+  } else if (m4Sensor && !m4VgOk) {
+    m4Status = 'SENSOR_RED_VOL_BLOCKED';
+    m4HintEn = `Bear bounce 3/3 met · Waiting for IV crush (VXN ${vxn.toFixed(1)}<=27 & VIX/3M ${vr.toFixed(3)}<=0.88)`;
+    m4HintZh = '熊市反抽 3/3 已满足 · 等待波动率回落（VXN<=27 且 VIX/3M<=0.88）再低买';
+  } else if (m4Below200 && m4Ewmac && !m4Ema20) {
+    m4Status = 'WARMING_UP';
+    m4HintEn = `Bear trend broken (2/3) · Awaiting bounce > EMA20 ($${ema20V.toFixed(1)}) & VXN <= 27`;
+    m4HintZh = `趋势已破位 2/3 · 等待反抽 EMA20 ($${ema20V.toFixed(1)}) 且 VXN <= 27`;
+  } else if (m4Met > 0) {
+    m4Status = 'WARMING_UP';
+    m4HintEn = `Trend weakening (${m4Met}/3) · Needs QQQ < SMA200 ($${sma200V.toFixed(1)}), EWMAC < 0 & > EMA20`;
+    m4HintZh = `趋势转弱预热 (${m4Met}/3) · 需跌破 200DMA ($${sma200V.toFixed(1)}) 且 EWMAC<0 后反抽 EMA20`;
+  }
+
+  const m3Hyg = hygSmaV > 0 && hygV < hygSmaV;
+  const m3Baa = baaROpt !== null && baaRV >= 0.15;
+  const m3Macro = (dgs2JOpt !== null && dgs2JV >= 0.4) || (nfciJOpt !== null && nfciJV >= 0.1);
+  const m3VgOk = vxn <= 26.0 && vr <= 0.92;
+  const m3Trig = isCore3 ? false : Boolean(sigDay.M3);
+  const m3Sensor = isCore3 ? false : Boolean(m3Hyg && (m3Baa || m3Macro));
+  const m3Met = isCore3 ? 0 : Number(m3Hyg) + Number(m3Baa) + Number(m3Macro);
+  let m3Status = 'CALM';
+  let m3HintEn = 'Credit spreads & financial conditions benign (0/3)';
+  let m3HintZh = '高收益债利差与金融条件平稳（0/3 平静）';
+  if (isCore3) {
+    m3Status = 'DISABLED_IN_CORE3';
+    m3HintEn = 'Omitted in Core-3 Minimal (switch to Full M7 Shield to enable)';
+    m3HintZh = '精简 3 核模式下已关闭（切换全套 M7 护盾可启用信用雷达）';
+  } else if (m3Trig) {
+    m3Status = 'ARMED_BUY';
+    m3HintEn = 'Credit spread + macro stress lit in low vol (+20%)';
+    m3HintZh = '信用利差与宏观紧缩共振且低波达标（+20% 买盾分）';
+  } else if (m3Sensor && !m3VgOk) {
+    m3Status = 'SENSOR_RED_VOL_BLOCKED';
+    m3HintEn = `Credit/Macro ${m3Met}/3 warning lit · High-vol redline pauses chasing expensive puts`;
+    m3HintZh = `信用与宏观 ${m3Met}/3 预警已亮 · 因高波红线暂缓追高买贵盾`;
+  } else if (m3Met > 0) {
+    m3Status = 'WARMING_UP';
+    if (!m3Hyg) {
+      m3HintEn = `Macro leg lit (${m3Met}/3) · Needs HYG/LQD < SMA50 (${hygSmaV.toFixed(4)})`;
+      m3HintZh = `宏观分项已亮 (${m3Met}/3) · 待 HYG/LQD 跌破 50DMA (${hygSmaV.toFixed(4)})`;
+    } else {
+      m3HintEn = `HYG/LQD weak (${m3Met}/3) · Needs Baa >=+15bp, 2Y >=+40bp or NFCI >=+0.10`;
+      m3HintZh = `高收益债走弱 (${m3Met}/3) · 待 Baa走阔>=15bp 或 2Y>=40bp / NFCI>=0.10`;
+    }
+  }
 
   const pillars = [
     {
@@ -2889,13 +3250,19 @@ export function buildM7LiveDashboardJS(
           name_en: 'M0 Six Lights Baseline',
           name_zh: 'M0 六灯基线开关',
           points: 35,
-          earned_points: sigDay.M0 ? 35 : 0,
-          triggered: Boolean(sigDay.M0),
+          earned_points: m0Trig ? 35 : 0,
+          triggered: m0Trig,
           raw_triggered: Boolean(sigDay.M0),
+          sensor_triggered: m0Sensor,
+          readiness_met: m0Met,
+          readiness_total: 3,
+          status_code: m0Status,
+          next_trigger_hint_en: m0HintEn,
+          next_trigger_hint_zh: m0HintZh,
           pluggable: true,
           enabled: m0Enabled,
           disabled_in_core3: false,
-          vol_gate_passed: vxn <= 22.0,
+          vol_gate_passed: m0VgOk,
           vol_gate_en: `VXN ${vxn.toFixed(2)} <= 22.0`,
           vol_gate_zh: `VXN ${vxn.toFixed(2)} <= 22.0 低波门控`,
           metrics: [
@@ -2904,21 +3271,21 @@ export function buildM7LiveDashboardJS(
               label_zh: 'QQQ 距历史前高',
               value: `${fmtSigned(ddPct, 2)}% ($${cl.toFixed(2)})`,
               threshold: '>= -5.00% (0.95*ATH)',
-              passed: ddPct >= -5.0,
+              passed: m0AthOk,
             },
             {
               label_en: 'A-D Line < SMA50',
               label_zh: '腾落线 AD < 50DMA',
               value: `${adDiffInt >= 0 ? '+' : ''}${adDiffInt.toLocaleString('en-US')}`,
               threshold: '< 0',
-              passed: Boolean(m0Enabled && adBelow),
+              passed: m0AdOk,
             },
             {
               label_en: 'Macro Crisis Lights',
               label_zh: '宏观六灯亮灯数',
               value: `${sc} / 6`,
               threshold: '>= 4 / 6',
-              passed: Boolean(m0Enabled && sc >= 4),
+              passed: m0ScOk,
             },
           ],
         },
@@ -2927,13 +3294,19 @@ export function buildM7LiveDashboardJS(
           name_en: 'M6 Breadth + Defensive Rotation',
           name_zh: 'M6 宽度恶化 + 防御轮动',
           points: 20,
-          earned_points: sigDay.M6 ? 20 : 0,
-          triggered: Boolean(sigDay.M6),
+          earned_points: m6Trig ? 20 : 0,
+          triggered: m6Trig,
           raw_triggered: Boolean(sigDay.M6),
+          sensor_triggered: m6Sensor,
+          readiness_met: m6Met,
+          readiness_total: 3,
+          status_code: m6Status,
+          next_trigger_hint_en: m6HintEn,
+          next_trigger_hint_zh: m6HintZh,
           pluggable: false,
           enabled: true,
           disabled_in_core3: false,
-          vol_gate_passed: vxn <= 25.0 && vr <= 0.92,
+          vol_gate_passed: m6VgOk,
           vol_gate_en: `VXN ${vxn.toFixed(1)}<=25 & VIX/3M ${vr.toFixed(3)}<=0.92`,
           vol_gate_zh: `VXN ${vxn.toFixed(1)}<=25 且 VIX/3M ${vr.toFixed(3)}<=0.92`,
           metrics: [
@@ -2942,21 +3315,21 @@ export function buildM7LiveDashboardJS(
               label_zh: '等权 RSP/SPY vs 50DMA',
               value: `${rspSpyV.toFixed(4)} vs ${rspSmaV.toFixed(4)}`,
               threshold: '< SMA50',
-              passed: rspSmaV > 0 && rspSpyV < rspSmaV,
+              passed: m6RspOk,
             },
             {
               label_en: 'IWM/QQQ (<SMA50 or AD)',
               label_zh: '小盘 IWM/QQQ (<50DMA 或 AD弱)',
               value: `${iwmQqqV.toFixed(4)} vs ${iwmSmaV.toFixed(4)}`,
               threshold: `< SMA50${m0Enabled ? ' or AD<50D' : ''}`,
-              passed: (iwmSmaV > 0 && iwmQqqV < iwmSmaV) || (m0Enabled && adBelow),
+              passed: m6IwmOk,
             },
             {
               label_en: '(XLP+XLU+XLV)/XLK 20D',
               label_zh: '防御/科技 20日超额轮动',
               value: `${fmtSigned(defRet20Pct, 2)}%`,
               threshold: '>= +2.50%',
-              passed: defRet20Pct >= 2.5,
+              passed: m6DefOk,
             },
           ],
         },
@@ -2981,29 +3354,35 @@ export function buildM7LiveDashboardJS(
           name_en: 'M2 Options Desk Warning',
           name_zh: 'M2 期权台尾部预警',
           points: 20,
-          earned_points: isCore3 ? 0 : sigDay.M2 ? 20 : 0,
-          triggered: isCore3 ? false : Boolean(sigDay.M2),
+          earned_points: m2Trig ? 20 : 0,
+          triggered: m2Trig,
           raw_triggered: Boolean(sigDay.M2),
+          sensor_triggered: m2Sensor,
+          readiness_met: m2Met,
+          readiness_total: 2,
+          status_code: m2Status,
+          next_trigger_hint_en: m2HintEn,
+          next_trigger_hint_zh: m2HintZh,
           pluggable: false,
           enabled: !isCore3,
           disabled_in_core3: isCore3,
-          vol_gate_passed: vxn <= 24.0,
-          vol_gate_en: `VXN ${vxn.toFixed(2)} <= 24.0`,
-          vol_gate_zh: `VXN ${vxn.toFixed(2)} <= 24.0`,
+          vol_gate_passed: m2VgOk,
+          vol_gate_en: `VXN ${vxn.toFixed(1)}<=24 & VIX/3M ${vr.toFixed(3)}<=1.02`,
+          vol_gate_zh: `VXN ${vxn.toFixed(1)}<=24 且 VIX/3M ${vr.toFixed(3)}<=1.02`,
           metrics: [
             {
               label_en: 'A) Silent Tail (SKEW10 & VVIX)',
               label_zh: 'A) 静默买尾 (SKEW10 & VVIX>=P75)',
               value: `SKEW ${skew10V.toFixed(1)}/${skewP75V.toFixed(1)} · VVIX ${vvixV.toFixed(1)}/${vvixP75V.toFixed(1)}`,
               threshold: '>=252D P75 & 0.85<=V/V3M<=0.98',
-              passed: Boolean(sigDay.M2_silent_tail),
+              passed: Boolean(sigDay.M2_silent_tail) || m2CoreA,
             },
             {
               label_en: 'B) Term Inflection (5D Jump)',
               label_zh: 'B) 期限拐点 (5日跃升 & VVIX>=100)',
               value: `Δ5D ${fmtSigned(vrJ5V, 3)} · VVIX ${vvixV.toFixed(1)}`,
               threshold: '0.92..1.02 & Δ>=+0.06 & VVIX>=100',
-              passed: Boolean(sigDay.M2_term_inflection),
+              passed: Boolean(sigDay.M2_term_inflection) || m2CoreB,
             },
           ],
         },
@@ -3012,13 +3391,19 @@ export function buildM7LiveDashboardJS(
           name_en: 'M5 Causal HMM Regime Transition',
           name_zh: 'M5 因果 HMM 状态跃迁',
           points: 20,
-          earned_points: isCore3 ? 0 : sigDay.M5 ? 20 : 0,
-          triggered: isCore3 ? false : Boolean(sigDay.M5),
+          earned_points: m5Trig ? 20 : 0,
+          triggered: m5Trig,
           raw_triggered: Boolean(sigDay.M5),
+          sensor_triggered: m5Sensor,
+          readiness_met: m5Met,
+          readiness_total: 2,
+          status_code: m5Status,
+          next_trigger_hint_en: m5HintEn,
+          next_trigger_hint_zh: m5HintZh,
           pluggable: false,
           enabled: !isCore3,
           disabled_in_core3: isCore3,
-          vol_gate_passed: vxn <= 24.0 && vr < 1.02,
+          vol_gate_passed: m5VgOk,
           vol_gate_en: `VXN ${vxn.toFixed(1)}<=24 & VIX/3M ${vr.toFixed(3)}<1.02`,
           vol_gate_zh: `VXN ${vxn.toFixed(1)}<=24 且 VIX/3M ${vr.toFixed(3)}<1.02`,
           metrics: [
@@ -3027,14 +3412,14 @@ export function buildM7LiveDashboardJS(
               label_zh: '当前高压态后验概率 P_t',
               value: `${(hmmPV * 100.0).toFixed(1)}%`,
               threshold: '>= 55.0%',
-              passed: hmmPV >= 0.55,
+              passed: m5CurOk,
             },
             {
               label_en: '5D Prior P_{t-5}(Stress)',
               label_zh: '5日前后验概率 P_{t-5}（新鲜跃迁）',
               value: `${(hmmP5V * 100.0).toFixed(1)}%`,
               threshold: '< 40.0%',
-              passed: hmmP5V < 0.4,
+              passed: m5FreshOk,
             },
           ],
         },
@@ -3055,13 +3440,19 @@ export function buildM7LiveDashboardJS(
           name_en: 'M4 CTA Bear-Rally Complacency',
           name_zh: 'M4 CTA 熊市反弹自满',
           points: 35,
-          earned_points: sigDay.M4 ? 35 : 0,
-          triggered: Boolean(sigDay.M4),
+          earned_points: m4Trig ? 35 : 0,
+          triggered: m4Trig,
           raw_triggered: Boolean(sigDay.M4),
+          sensor_triggered: m4Sensor,
+          readiness_met: m4Met,
+          readiness_total: 3,
+          status_code: m4Status,
+          next_trigger_hint_en: m4HintEn,
+          next_trigger_hint_zh: m4HintZh,
           pluggable: false,
           enabled: true,
           disabled_in_core3: false,
-          vol_gate_passed: vxn <= 27.0 && vr <= 0.88,
+          vol_gate_passed: m4VgOk,
           vol_gate_en: `VXN ${vxn.toFixed(1)}<=27 & VIX/3M ${vr.toFixed(3)}<=0.88`,
           vol_gate_zh: `VXN ${vxn.toFixed(1)}<=27 且 VIX/3M ${vr.toFixed(3)}<=0.88`,
           metrics: [
@@ -3070,21 +3461,21 @@ export function buildM7LiveDashboardJS(
               label_zh: '熊市主趋势 QQQ < 200DMA',
               value: `$${cl.toFixed(2)} vs $${sma200V.toFixed(2)}`,
               threshold: '< SMA200',
-              passed: sma200V > 0 && cl < sma200V,
+              passed: m4Below200,
             },
             {
               label_en: '3-Speed EWMAC (16/32/64)',
               label_zh: '三速 EWMAC 趋势均值',
               value: fmtSigned(ewmacV, 2),
               threshold: '< 0.00',
-              passed: ewmacV < 0.0,
+              passed: m4Ewmac,
             },
             {
               label_en: 'Bear Bounce QQQ > EMA20',
               label_zh: '死猫跳反弹 QQQ > EMA20',
               value: `$${cl.toFixed(2)} vs $${ema20V.toFixed(2)}`,
               threshold: '> EMA20',
-              passed: ema20V > 0 && cl > ema20V,
+              passed: m4Ema20,
             },
           ],
         },
@@ -3093,13 +3484,19 @@ export function buildM7LiveDashboardJS(
           name_en: 'M3 Credit & Macro Stress (FRED PIT)',
           name_zh: 'M3 信用利差与宏观压力 (FRED 严格滞后)',
           points: 20,
-          earned_points: isCore3 ? 0 : sigDay.M3 ? 20 : 0,
-          triggered: isCore3 ? false : Boolean(sigDay.M3),
+          earned_points: m3Trig ? 20 : 0,
+          triggered: m3Trig,
           raw_triggered: Boolean(sigDay.M3),
+          sensor_triggered: m3Sensor,
+          readiness_met: m3Met,
+          readiness_total: 3,
+          status_code: m3Status,
+          next_trigger_hint_en: m3HintEn,
+          next_trigger_hint_zh: m3HintZh,
           pluggable: false,
           enabled: !isCore3,
           disabled_in_core3: isCore3,
-          vol_gate_passed: vxn <= 26.0 && vr <= 0.92,
+          vol_gate_passed: m3VgOk,
           vol_gate_en: `VXN ${vxn.toFixed(1)}<=26 & VIX/3M ${vr.toFixed(3)}<=0.92`,
           vol_gate_zh: `VXN ${vxn.toFixed(1)}<=26 且 VIX/3M ${vr.toFixed(3)}<=0.92`,
           metrics: [
@@ -3108,27 +3505,44 @@ export function buildM7LiveDashboardJS(
               label_zh: '高收益/投资级 HYG/LQD < 50DMA',
               value: `${hygV.toFixed(4)} vs ${hygSmaV.toFixed(4)}`,
               threshold: '< SMA50',
-              passed: hygSmaV > 0 && hygV < hygSmaV,
+              passed: m3Hyg,
             },
             {
               label_en: 'BAA10Y (+1d lag) 63D Widening',
               label_zh: 'Baa利差 (+1日滞后) 63D走阔',
-              value: `${baaV.toFixed(2)}% (${fmtSigned(baaRV * 100.0, 0)}bp)`,
+              value: `${baaV.toFixed(2)}% (${fmtSigned(baaROpt !== null ? baaRV * 100.0 : 0.0, 0)}bp)`,
               threshold: '>= +15bp (+0.15)',
-              passed: baaRV >= 0.15,
+              passed: m3Baa,
             },
             {
               label_en: 'DGS2 (+1d) 63D / NFCI (+5d) 20D',
               label_zh: '2Y美债(+1日)63D / NFCI(+5日)20D',
-              value: `2Y ${fmtSigned(dgs2JV * 100.0, 0)}bp · NFCI ${fmtSigned(nfciJV, 2)}`,
+              value: `2Y ${fmtSigned(dgs2JOpt !== null ? dgs2JV * 100.0 : 0.0, 0)}bp · NFCI ${fmtSigned(nfciJOpt !== null ? nfciJV : 0.0, 2)}`,
               threshold: '2Y>=+40bp OR NFCI>=+0.10',
-              passed: dgs2JV >= 0.4 || nfciJV >= 0.1,
+              passed: m3Macro,
             },
           ],
         },
       ],
     },
   ];
+
+  const allModsFlat = pillars.flatMap(p => p.modules);
+  const sensorRedCount = allModsFlat.filter(m => m.enabled && m.sensor_triggered).length;
+  const volBlockedSensorCount = allModsFlat.filter(m => m.status_code === 'SENSOR_RED_VOL_BLOCKED').length;
+  const warmingCount = allModsFlat.filter(m => m.status_code === 'WARMING_UP').length;
+
+  const dataFreshness = {
+    yahoo_eod_date: d,
+    fred_baa_date: String(featRow?.baa_obs_date || ''),
+    fred_baa_lag_days: 1,
+    fred_dgs2_date: String(featRow?.dgs2_obs_date || ''),
+    fred_dgs2_lag_days: 1,
+    fred_nfci_date: String(featRow?.nfci_obs_date || ''),
+    fred_nfci_lag_days: 5,
+    ad_line_date: String(row.ad_line_date || d),
+    is_pit_replay: Boolean(isPitReplay || row._is_pit_replay),
+  };
 
   return {
     as_of_date: d,
@@ -3142,6 +3556,15 @@ export function buildM7LiveDashboardJS(
     p1_score: Math.round(p1),
     p2_score: Math.round(p2),
     p3_score: Math.round(p3),
+    live_stress_index: stressIdx,
+    live_stress_level: stressPack.live_stress_level,
+    live_stress_label_en: stressLblEn,
+    live_stress_label_zh: stressLblZh,
+    live_stress_breakdown: stressPack.live_stress_breakdown,
+    sensor_red_count: sensorRedCount,
+    vol_blocked_sensor_count: volBlockedSensorCount,
+    warming_count: warmingCount,
+    data_freshness: dataFreshness,
     target_slots: targetSlots,
     active_slots: activeSlots,
     max_slots: maxSlots,
@@ -3255,18 +3678,171 @@ function hamiltonStepJS(stateP, xRow, A, means, vars) {
   return [w0 / s, w1 / s];
 }
 
-function alignFredLagForIndex(fredMap, calDates, idx, lagDays) {
+function alignFredLagWithMeta(fredMap, calDates, idx, lagDays) {
   const srcIdx = Math.max(0, idx - lagDays);
   const targetDate = calDates[srcIdx];
   let bestDate = '';
   let bestVal = null;
-  for (const [dt, val] of Object.entries(fredMap)) {
-    if (dt <= targetDate && dt > bestDate && Number.isFinite(val)) {
-      bestDate = dt;
-      bestVal = val;
+  if (fredMap && typeof fredMap === 'object') {
+    for (const [dt, val] of Object.entries(fredMap)) {
+      if (dt <= targetDate && dt > bestDate && Number.isFinite(val)) {
+        bestDate = dt;
+        bestVal = val;
+      }
     }
   }
-  return bestVal;
+  return { value: bestVal, obsDate: bestDate };
+}
+
+function alignFredLagForIndex(fredMap, calDates, idx, lagDays) {
+  return alignFredLagWithMeta(fredMap, calDates, idx, lagDays).value;
+}
+
+function fmtSignedFixed(val, dec = 1) {
+  return `${val >= 0 ? '+' : ''}${val.toFixed(dec)}`;
+}
+
+function fmtSignedInt(val) {
+  const n = Math.round(val);
+  return `${n >= 0 ? '+' : ''}${n}`;
+}
+
+function buildSixCrisisLightsJS({
+  dgs2,
+  dgs2Lo,
+  dgs2Ma,
+  dff,
+  dffLo,
+  sig1,
+  baa,
+  baaLo,
+  baaMa,
+  sig2,
+  ad,
+  adMa63,
+  pct200Frac,
+  pct200HiFrac,
+  sig3,
+  cop,
+  copHi,
+  copMa,
+  sig4,
+  dc,
+  dcLo,
+  dcMa,
+  sig5,
+  yc,
+  ycHi,
+  nfci,
+  nfciLo,
+  sig6,
+}) {
+  const dgs2Bps = Math.round((dgs2 - dgs2Lo) * 100.0);
+  const dffBps = Math.round((dff - dffLo) * 100.0);
+  const baaBps = Math.round((baa - baaLo) * 100.0);
+  const baaRel = baaLo > 0 ? (baa / baaLo - 1.0) * 100.0 : 0.0;
+  const pct200 = pct200Frac * 100.0;
+  const pct200Hi = pct200HiFrac * 100.0;
+  const pct200Drop = pct200Hi - pct200;
+  const copDd = copHi > 0 ? (cop / copHi - 1.0) * 100.0 : 0.0;
+  const dcGain = dcLo > 0 ? (dc / dcLo - 1.0) * 100.0 : 0.0;
+  const ycFlatBps = Math.round((ycHi - yc) * 100.0);
+  const nfciChg = nfci - nfciLo;
+  const adStr = Math.round(ad).toLocaleString('en-US');
+  const adMa63Str = Math.round(adMa63).toLocaleString('en-US');
+
+  return [
+    {
+      key: 'sig1_fed',
+      index: 1,
+      lit: Boolean(sig1),
+      name_en: 'Fed Policy & Front-End Rates Tightening',
+      name_zh: '联储政策与前端利率紧缩',
+      short_en: 'Fed / 2Y Yield',
+      short_zh: '前端利率紧缩',
+      reading_value: `2Y ${dgs2.toFixed(2)}% (${fmtSignedInt(dgs2Bps)} bps)`,
+      secondary_value: `DFF ${dff.toFixed(2)}% (${fmtSignedInt(dffBps)} bps)`,
+      threshold_en: '2Y >= +50 bps off 12M low & > 63DMA, OR Fed Funds >= +20 bps',
+      threshold_zh: '2Y 美债较12月低点回升 >= 50bp 且高于63日均线，或联邦基金利率抬升 >= 20bp',
+      diagnostic_en: `2Y UST at ${dgs2.toFixed(2)}% vs 12M low ${dgs2Lo.toFixed(2)}% (63DMA ${dgs2Ma.toFixed(2)}%); Fed Funds ${dff.toFixed(2)}%.`,
+      diagnostic_zh: `2Y 美债 ${dgs2.toFixed(2)}%（较12月低点 ${dgs2Lo.toFixed(2)}% 抬升 ${fmtSignedInt(dgs2Bps)}bp，63DMA ${dgs2Ma.toFixed(2)}%）；DFF ${dff.toFixed(2)}%。`,
+    },
+    {
+      key: 'sig2_credit',
+      index: 2,
+      lit: Boolean(sig2),
+      name_en: 'Corporate Credit Spread Widening',
+      name_zh: '企业信用利差走阔',
+      short_en: 'Baa-10Y Credit',
+      short_zh: '信用利差走阔',
+      reading_value: `${baa.toFixed(2)}% (${fmtSignedFixed(baaRel, 1)}%)`,
+      secondary_value: `${fmtSignedInt(baaBps)} bps vs 12M low`,
+      threshold_en: "Moody's Baa-10Y widens >= +20 bps or >= +12% off 12M low & > 63DMA",
+      threshold_zh: '穆迪 Baa-10Y 利差较12月低点走阔 >= 20bp 或相对走阔 >= 12%，且高于63日均线',
+      diagnostic_en: `Baa-10Y spread at ${baa.toFixed(2)}% vs 12M tightest ${baaLo.toFixed(2)}% (${fmtSignedFixed(baaRel, 1)}%, 63DMA ${baaMa.toFixed(2)}%).`,
+      diagnostic_zh: `Baa-10Y 信用利差 ${baa.toFixed(2)}%（较12月最低 ${baaLo.toFixed(2)}% 相对走阔 ${fmtSignedFixed(baaRel, 1)}%，高于 63DMA ${baaMa.toFixed(2)}%）。`,
+    },
+    {
+      key: 'sig3_breadth',
+      index: 3,
+      lit: Boolean(sig3),
+      name_en: 'Market Breadth & >200DMA Breakdown',
+      name_zh: '全美市场宽度与年线占比塌缩',
+      short_en: 'Breadth / >200D',
+      short_zh: '市场宽度塌缩',
+      reading_value: `${pct200.toFixed(1)}% >200D (-${pct200Drop.toFixed(1)}pp)`,
+      secondary_value: `AD ${adStr} vs 63D ${adMa63Str}`,
+      threshold_en: 'US Liquid AD Line < 63DMA & < 12M high AND Stocks >200DMA down >= 8pp',
+      threshold_zh: '全美高流动性普通股 AD Line 跌破63日均线，且站上200日均线个股占比回落 >= 8个百分点',
+      diagnostic_en: `Only ${pct200.toFixed(1)}% of liquid stocks above 200DMA (down ${pct200Drop.toFixed(1)}pp from ${pct200Hi.toFixed(1)}% 12M peak); AD < 63DMA.`,
+      diagnostic_zh: `仅 ${pct200.toFixed(1)}% 股票站上200DMA（较12月峰值 ${pct200Hi.toFixed(1)}% 骤降 ${pct200Drop.toFixed(1)}pp），AD 跌破 63DMA。`,
+    },
+    {
+      key: 'sig4_copper',
+      index: 4,
+      lit: Boolean(sig4),
+      name_en: 'Dr. Copper Industrial Demand Breakdown',
+      name_zh: '铜博士实体工业需求破位',
+      short_en: 'Dr. Copper',
+      short_zh: '铜博士破位',
+      reading_value: `$${cop.toFixed(2)}/lb (${fmtSignedFixed(copDd, 1)}%)`,
+      secondary_value: `63DMA $${copMa.toFixed(2)}/lb`,
+      threshold_en: 'HG Copper falls <= -10% off 12M high AND trades below 63DMA',
+      threshold_zh: 'COMEX 铜价较过去12个月高点回撤 >= 10% 且跌破 63 日均线',
+      diagnostic_en: `Copper at $${cop.toFixed(3)}/lb, ${copDd.toFixed(1)}% below 12M high $${copHi.toFixed(3)} and below 63DMA $${copMa.toFixed(3)}.`,
+      diagnostic_zh: `铜价报 $${cop.toFixed(2)}/磅，较12月高点 $${copHi.toFixed(2)} 下跌 ${Math.abs(copDd).toFixed(1)}% 且位于 63DMA ($${copMa.toFixed(2)}) 下方。`,
+    },
+    {
+      key: 'sig5_defensive',
+      index: 5,
+      lit: Boolean(sig5),
+      name_en: 'Defensives Outperforming Cyclicals',
+      name_zh: '防御板块显著跑赢周期板块',
+      short_en: 'DEF / CYC Ratio',
+      short_zh: '防御跑赢周期',
+      reading_value: `${dc.toFixed(3)} (${fmtSignedFixed(dcGain, 1)}%)`,
+      secondary_value: `63DMA ${dcMa.toFixed(3)}`,
+      threshold_en: '(XLU+XLP+XLV)/(XLY+XLI+XLB+XLF) rises >= +5% off 12M low & > 63DMA',
+      threshold_zh: '公用事业/必选/医疗相对可选/工业/材料/金融比值较12月低点反弹 >= 5% 且站上63日均线',
+      diagnostic_en: `Defensive/Cyclical ratio at ${dc.toFixed(3)}, +${dcGain.toFixed(1)}% off 12M trough ${dcLo.toFixed(3)} (63DMA ${dcMa.toFixed(3)}).`,
+      diagnostic_zh: `防御/周期相对强弱比升至 ${dc.toFixed(3)}，较12月低点 ${dcLo.toFixed(3)} 走强 +${dcGain.toFixed(1)}%（高于 63DMA ${dcMa.toFixed(3)}）。`,
+    },
+    {
+      key: 'sig6_macro',
+      index: 6,
+      lit: Boolean(sig6),
+      name_en: 'Yield Curve & Financial Conditions Squeeze',
+      name_zh: '收益率曲线熊平与金融条件收紧',
+      short_en: '10Y-2Y / NFCI',
+      short_zh: '曲线与金融条件',
+      reading_value: `10Y-2Y ${fmtSignedFixed(yc, 2)}% (-${ycFlatBps}bp)`,
+      secondary_value: `NFCI ${fmtSignedFixed(nfci, 3)} (${fmtSignedFixed(nfciChg, 3)})`,
+      threshold_en: '10Y-2Y flattens >= 40 bps (<0.75%) OR < 0%, OR Chicago Fed NFCI +0.12',
+      threshold_zh: '10Y-2Y 利差较12月峰值走平 >= 40bp（且<0.75%）或倒挂 < 0%，或芝加哥联储 NFCI 收紧 >= 0.12',
+      diagnostic_en: `10Y-2Y at ${fmtSignedFixed(yc, 2)}% (flattened ${ycFlatBps} bps from 12M high ${fmtSignedFixed(ycHi, 2)}%); NFCI ${fmtSignedFixed(nfci, 3)}.`,
+      diagnostic_zh: `10Y-2Y 报 ${fmtSignedFixed(yc, 2)}%（较12月高点 ${fmtSignedFixed(ycHi, 2)}% 熊平压窄 ${ycFlatBps}bp）；NFCI 报 ${fmtSignedFixed(nfci, 3)}。`,
+    },
+  ];
 }
 
 export function extendM7LiveFromFeed(rawData, liveFeed, requestedAsOf) {
@@ -3291,8 +3867,10 @@ export function extendM7LiveFromFeed(rawData, liveFeed, requestedAsOf) {
     BAA10Y: { ...(tail.fred_tail?.BAA10Y ?? {}) },
     DGS2: { ...(tail.fred_tail?.DGS2 ?? {}) },
     NFCI: { ...(tail.fred_tail?.NFCI ?? {}) },
+    DFF: { ...(tail.fred_tail?.DFF ?? {}) },
+    T10Y2Y: { ...(tail.fred_tail?.T10Y2Y ?? {}) },
   };
-  for (const fid of Object.keys(FRED_LAGS)) {
+  for (const fid of Object.keys(FRED_SIX_LIGHTS_LAGS)) {
     const incoming = liveFeed?.fred?.[fid];
     if (incoming && typeof incoming === 'object') {
       for (const [dt, val] of Object.entries(incoming)) {
@@ -3300,6 +3878,17 @@ export function extendM7LiveFromFeed(rawData, liveFeed, requestedAsOf) {
       }
     }
   }
+
+  const slTail = tail.six_lights_tail ?? null;
+  const slDgs2 = (slTail?.dgs2 ?? []).slice();
+  const slDff = (slTail?.dff ?? []).slice();
+  const slBaa = (slTail?.baa10y ?? []).slice();
+  const slCopper = (slTail?.copper ?? []).slice();
+  const slDefCyc = (slTail?.def_cyc ?? []).slice();
+  const slT10y2y = (slTail?.t10y2y ?? []).slice();
+  const slNfci = (slTail?.nfci ?? []).slice();
+  const slScores = (slTail?.scores ?? []).slice();
+  const breadthFb = slTail?.breadth_fallback ?? null;
 
   let ema20 = Number(tail.ewm_state.ema20);
   let e16 = Number(tail.ewm_state.e16);
@@ -3343,8 +3932,10 @@ export function extendM7LiveFromFeed(rawData, liveFeed, requestedAsOf) {
   const sigM0Off = unpackColsRows(rawData.m7_signals.m0off);
   const featRows = unpackColsRows(rawData.m7_feature_table);
   const newDailyRowsMeta = [];
+  const sixCrisisLightsByDate = {};
 
   for (const d of newDates) {
+    const prevCalDate = calDates[calDates.length - 1];
     calDates.push(d);
     const idx = calDates.length - 1;
     for (const k of Object.keys(YF_SYMBOL_MAP)) {
@@ -3378,10 +3969,15 @@ export function extendM7LiveFromFeed(rawData, liveFeed, requestedAsOf) {
     const vvixWin = yf.VVIX.slice(Math.max(0, yf.VVIX.length - 252)).filter(Number.isFinite);
     const vvixP75Now = vvixWin.length >= 126 ? quantileLinear(vvixWin, 0.75) : vvixNow;
 
-    // FRED lagged values
-    const baaNow = alignFredLagForIndex(fredRaw.BAA10Y, calDates, idx, 1);
-    const dgs2Now = alignFredLagForIndex(fredRaw.DGS2, calDates, idx, 1);
-    const nfciNow = alignFredLagForIndex(fredRaw.NFCI, calDates, idx, 5);
+    // FRED lagged values + causal observation dates
+    const baaMeta = alignFredLagWithMeta(fredRaw.BAA10Y, calDates, idx, 1);
+    const dgs2Meta = alignFredLagWithMeta(fredRaw.DGS2, calDates, idx, 1);
+    const nfciMeta = alignFredLagWithMeta(fredRaw.NFCI, calDates, idx, 5);
+    const dffMeta = alignFredLagWithMeta(fredRaw.DFF, calDates, idx, 1);
+    const ycMeta = alignFredLagWithMeta(fredRaw.T10Y2Y, calDates, idx, 1);
+    const baaNow = baaMeta.value;
+    const dgs2Now = dgs2Meta.value;
+    const nfciNow = nfciMeta.value;
     baaLagHist.push(baaNow);
     dgs2LagHist.push(dgs2Now);
     nfciLagHist.push(nfciNow);
@@ -3393,6 +3989,135 @@ export function extendM7LiveFromFeed(rawData, liveFeed, requestedAsOf) {
     const dgs2Jump = dgs2Now !== null && dgs2Prev63 !== null ? dgs2Now - dgs2Prev63 : -999.0;
     const nfciPrev20 = idx >= 20 ? nfciLagHist[idx - 20] : null;
     const nfciJump = nfciNow !== null && nfciPrev20 !== null ? nfciNow - nfciPrev20 : -999.0;
+
+    // Dynamically recompute post-artifact Six Crisis Lights from Yahoo + FRED
+    let sc = Number(prevEval.score);
+    let score5d = sc;
+    let lightsMask = null;
+    const adLineDate = String(breadthFb?.date || prevEval.ad_line_date || lastArtifactDate);
+    if (slDgs2.length > 0 && slBaa.length > 0 && slCopper.length > 0 && slDefCyc.length > 0) {
+      const dgs2Cur = dgs2Now ?? slDgs2[slDgs2.length - 1];
+      const dffCur = dffMeta.value ?? slDff[slDff.length - 1];
+      const baaCur = baaNow ?? slBaa[slBaa.length - 1];
+      const ycCur = ycMeta.value ?? slT10y2y[slT10y2y.length - 1];
+      const nfciCur = nfciNow ?? slNfci[slNfci.length - 1];
+
+      const copPrev = slCopper[slCopper.length - 1];
+      const hgCur = liveFeed?.yahoo?.HG_F?.get(d)?.close;
+      const hgPrev = liveFeed?.yahoo?.HG_F?.get(prevCalDate)?.close;
+      const copCur =
+        Number.isFinite(hgCur) && hgCur > 0 && Number.isFinite(hgPrev) && hgPrev > 0
+          ? copPrev * (Number(hgCur) / Number(hgPrev))
+          : copPrev;
+
+      const dcPrev = slDefCyc[slDefCyc.length - 1];
+      const cycSyms = ['XLY', 'XLI', 'XLB', 'XLF'];
+      const hasLiveCyc = cycSyms.every(
+        sym =>
+          Number.isFinite(liveFeed?.yahoo?.[sym]?.get(d)?.close) &&
+          liveFeed.yahoo[sym].get(d).close > 0 &&
+          Number.isFinite(liveFeed?.yahoo?.[sym]?.get(prevCalDate)?.close) &&
+          liveFeed.yahoo[sym].get(prevCalDate).close > 0,
+      );
+      let dcCur = dcPrev;
+      if (hasLiveCyc) {
+        const defSumCur = yf.XLU[idx] + yf.XLP[idx] + yf.XLV[idx];
+        const defSumPrev = yf.XLU[idx - 1] + yf.XLP[idx - 1] + yf.XLV[idx - 1];
+        const cycSumCur = cycSyms.reduce((s, sym) => s + Number(liveFeed.yahoo[sym].get(d).close), 0);
+        const cycSumPrev = cycSyms.reduce(
+          (s, sym) => s + Number(liveFeed.yahoo[sym].get(prevCalDate).close),
+          0,
+        );
+        if (defSumPrev > 0 && cycSumCur > 0 && cycSumPrev > 0) {
+          dcCur = dcPrev * ((defSumCur / cycSumCur) / (defSumPrev / cycSumPrev));
+        }
+      }
+
+      slDgs2.push(dgs2Cur);
+      slDff.push(dffCur);
+      slBaa.push(baaCur);
+      slCopper.push(copCur);
+      slDefCyc.push(dcCur);
+      slT10y2y.push(ycCur);
+      slNfci.push(nfciCur);
+
+      const min252 = arr => Math.min(...arr.slice(-252));
+      const max252 = arr => Math.max(...arr.slice(-252));
+      const ma63 = arr => meanTail(arr, Math.min(63, arr.length)) ?? arr[arr.length - 1];
+
+      const dgs2Lo = min252(slDgs2);
+      const dgs2Ma = ma63(slDgs2);
+      const dffLo = min252(slDff);
+      const sig1 = (dgs2Cur - dgs2Lo >= 0.5 && dgs2Cur > dgs2Ma) || dffCur - dffLo >= 0.2;
+
+      const baaLo = min252(slBaa);
+      const baaMa = ma63(slBaa);
+      const sig2 =
+        (baaCur - baaLo >= 0.2 || (baaLo > 0 && baaCur / baaLo - 1.0 >= 0.12)) && baaCur > baaMa;
+
+      const sig3 = Boolean(breadthFb?.sig3_breadth ?? sc >= 6);
+
+      const copHi = max252(slCopper);
+      const copMa = ma63(slCopper);
+      const sig4 = copHi > 0 && copCur / copHi - 1.0 <= -0.1 && copCur < copMa;
+
+      const dcLo = min252(slDefCyc);
+      const dcMa = ma63(slDefCyc);
+      const sig5 = dcLo > 0 && dcCur / dcLo - 1.0 >= 0.05 && dcCur > dcMa;
+
+      const ycHi = max252(slT10y2y);
+      const nfciLo = min252(slNfci);
+      const sig6 = (ycHi - ycCur >= 0.4 && ycCur < 0.75) || ycCur < 0.0 || nfciCur - nfciLo >= 0.12;
+
+      lightsMask =
+        (sig1 ? 1 : 0) |
+        (sig2 ? 2 : 0) |
+        (sig3 ? 4 : 0) |
+        (sig4 ? 8 : 0) |
+        (sig5 ? 16 : 0) |
+        (sig6 ? 32 : 0);
+      sc =
+        Number(sig1) + Number(sig2) + Number(sig3) + Number(sig4) + Number(sig5) + Number(sig6);
+      slScores.push(sc);
+      score5d = meanTail(slScores, Math.min(5, slScores.length)) ?? sc;
+
+      const liveLights = buildSixCrisisLightsJS({
+        dgs2: dgs2Cur,
+        dgs2Lo,
+        dgs2Ma,
+        dff: dffCur,
+        dffLo,
+        sig1,
+        baa: baaCur,
+        baaLo,
+        baaMa,
+        sig2,
+        ad: Number(breadthFb?.ad_line ?? prevEval.ad_line ?? 0),
+        adMa63: Number(breadthFb?.ad_sma63 ?? prevEval.ad_sma50 ?? 0),
+        pct200Frac: Number(breadthFb?.pct_200d ?? 0),
+        pct200HiFrac: Number(breadthFb?.pct200_hi252 ?? 0),
+        sig3,
+        cop: copCur,
+        copHi,
+        copMa,
+        sig4,
+        dc: dcCur,
+        dcLo,
+        dcMa,
+        sig5,
+        yc: ycCur,
+        ycHi,
+        nfci: nfciCur,
+        nfciLo,
+        sig6,
+      });
+      sixCrisisLightsByDate[d] = {
+        lights: liveLights,
+        score: sc,
+        score_5d: r2(score5d),
+        lights_mask: lightsMask,
+      };
+    }
 
     // SMA200, EMA20, 3-speed EWMAC
     const sma200Now = meanTail(yf.QQQ, 200) ?? cl;
@@ -3474,8 +4199,33 @@ export function extendM7LiveFromFeed(rawData, liveFeed, requestedAsOf) {
 
     const athOk = ddFromAth >= -0.05;
     const adBelow = Boolean(prevEval.ad_below50);
-    const sc = Number(prevEval.score);
     const m0Raw = athOk && (adBelow || sc >= 4) && vxn <= 22.0;
+
+    const liveStressDay = computeLiveStressIndexJS({
+      hmm_p: r5(hpCur),
+      vxn,
+      vix_ratio: vr,
+      dd_from_ath: ddFromAth,
+      close: cl,
+      sma200: r5(sma200Now),
+      ewmac: r5(ewmacNow),
+      hyg_lqd: r5(hygNow),
+      hyg_sma50: r5(hygSma50),
+      baa_rise63: baaRise > -900 ? r5(baaRise) : null,
+      dgs2_jump63: dgs2Jump > -900 ? r5(dgs2Jump) : null,
+      nfci_jump20: nfciJump > -900 ? r5(nfciJump) : null,
+      def_ret20: r5(defRet20),
+      rsp_spy: r5(rspNow),
+      rsp_sma50: r5(rspSma50),
+      iwm_qqq: r5(iwmNow),
+      iwm_sma50: r5(iwmSma50),
+      ad_below50: adBelow,
+      vvix: r5(vvixNow),
+      vvix_p75: r5(vvixP75Now),
+      skew10: r5(skew10Now),
+      skew_p75: r5(skewP75Now),
+      vr_jump5: r5(vrJ5),
+    });
 
     const makeSigObj = m0On => {
       const m0 = m0On ? m0Raw : false;
@@ -3520,6 +4270,7 @@ export function extendM7LiveFromFeed(rawData, liveFeed, requestedAsOf) {
         mask_c3: maskC3,
         redline_blocked: vxn > 27.0 || vr >= 1.02,
         hmm_p: r4(hpCur),
+        live_stress: liveStressDay.live_stress_index,
       };
     };
 
@@ -3545,6 +4296,7 @@ export function extendM7LiveFromFeed(rawData, liveFeed, requestedAsOf) {
       vix_falling: vixFalling,
       ad_line: Number(prevEval.ad_line),
       ad_sma50: Number(prevEval.ad_sma50),
+      ad_line_date: adLineDate,
       running_ath: runAth,
     };
     evalBars.push(nextEvalBar);
@@ -3574,12 +4326,15 @@ export function extendM7LiveFromFeed(rawData, liveFeed, requestedAsOf) {
       iwm_qqq: r5(iwmNow),
       iwm_sma50: r5(iwmSma50),
       def_ret20: r5(defRet20),
+      baa_obs_date: baaMeta.obsDate,
+      dgs2_obs_date: dgs2Meta.obsDate,
+      nfci_obs_date: nfciMeta.obsDate,
     };
     featRows.push(featObj);
     newDailyRowsMeta.push({ evalBar: nextEvalBar, sigOn: sOn, sigOff: sOff, feat: featObj, sma200Now });
   }
 
-  return { evalBars, sigM0On, sigM0Off, featRows, newDailyRowsMeta };
+  return { evalBars, sigM0On, sigM0Off, featRows, newDailyRowsMeta, sixCrisisLightsByDate };
 }
 
 async function fetchYahooChart15d(symbol) {
@@ -3614,28 +4369,39 @@ async function fetchYahooChart15d(symbol) {
   }
 }
 
+export function parseFredCsvText(txt) {
+  if (typeof txt !== 'string' || !txt) return {};
+  const tailTxt = txt.length > 16000 ? txt.slice(-16000) : txt;
+  const lines = tailTxt.split(/\r?\n/);
+  const out = {};
+  for (const line of lines) {
+    const parts = line.split(',');
+    if (parts.length < 2) continue;
+    const d = parts[0].trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    const rawVal = parts[1].trim();
+    if (!rawVal || rawVal === '.') continue;
+    const v = Number(rawVal);
+    if (Number.isFinite(v)) out[d] = v;
+  }
+  return out;
+}
+
 async function fetchFredRecent(seriesId) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5500);
   try {
-    const resp = await fetch(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      signal: controller.signal,
-    });
+    const enc = encodeURIComponent(seriesId);
+    const resp = await fetch(
+      `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${enc}&cosd=2025-06-01`,
+      {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: controller.signal,
+      },
+    );
     if (!resp.ok) return null;
     const txt = await resp.text();
-    const tailTxt = txt.length > 6000 ? txt.slice(-6000) : txt;
-    const lines = tailTxt.split(/\r?\n/);
-    const out = {};
-    for (const line of lines) {
-      const parts = line.split(',');
-      if (parts.length < 2) continue;
-      const d = parts[0].trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
-      const v = Number(parts[1].trim());
-      if (Number.isFinite(v)) out[d] = v;
-    }
-    return out;
+    return parseFredCsvText(txt);
   } catch {
     return null;
   } finally {
@@ -3655,10 +4421,11 @@ export async function getLiveM7MarketFeed() {
 
   liveM7Cache.inFlight = (async () => {
     try {
-      const yfKeys = Object.keys(YF_SYMBOL_MAP);
-      const fredKeys = Object.keys(FRED_LAGS);
+      const allYfMap = { ...YF_SYMBOL_MAP, ...YF_OPTIONAL_SIX_LIGHTS_MAP };
+      const yfKeys = Object.keys(allYfMap);
+      const fredKeys = Object.keys(FRED_SIX_LIGHTS_LAGS);
       const [yfResults, fredResults] = await Promise.all([
-        Promise.all(yfKeys.map(k => fetchYahooChart15d(YF_SYMBOL_MAP[k]))),
+        Promise.all(yfKeys.map(k => fetchYahooChart15d(allYfMap[k]))),
         Promise.all(fredKeys.map(fid => fetchFredRecent(fid))),
       ]);
       const yahoo = {};

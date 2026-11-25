@@ -2143,11 +2143,20 @@ export function loadCrisisObservatoryDashboard({
       if (!hit || row.date <= data.as_of_date) return row;
       const { s, idx } = hit;
       const c3Sig = evalCore3Signal(s, rawM0Enabled);
+      const slObj = extendedM7.sixCrisisLightsByDate?.[row.date] ?? null;
       return {
         ...row,
+        ...(slObj
+          ? {
+              crisis_lights: Number(slObj.score ?? row.crisis_lights ?? 0),
+              smooth_lights: r2(Number(slObj.score_5d ?? row.smooth_lights ?? 0)),
+              lights_mask: Number(slObj.lights_mask ?? row.lights_mask ?? 0),
+            }
+          : {}),
         nav_m7g: r2(simM7g.nav[idx]),
         nav_c3: r2(simC3.nav[idx]),
         nav_m7: r2(simM7.nav[idx]),
+        live_stress: Math.round(Number(s.live_stress ?? 0)),
         m7_prob: Math.round(Number(s.crisis_prob ?? 0)),
         m7_p1: Math.round(Number(s.p1 ?? 0)),
         m7_p2: Math.round(Number(s.p2 ?? 0)),
@@ -2276,6 +2285,7 @@ export function loadCrisisObservatoryDashboard({
             m7TpMode: rawM7TpMode,
             rollMode: sidRoll,
             m0Enabled: rawM0Enabled,
+            isPitReplay: true,
           },
         );
       }
@@ -2306,10 +2316,16 @@ export function loadCrisisObservatoryDashboard({
   }
   const openU1Tranches = openTranchesForStrat('U1_PureOptions');
   const maskBits = Number(lastBar.lights_mask ?? 0);
-  const lightsAtCutoff = data.six_crisis_lights.map((light, idx) => ({
-    ...light,
-    lit: effDate === data.as_of_date ? light.lit : Boolean((maskBits >> idx) & 1),
-  }));
+  const liveSixLightsAtEff =
+    isPostArtifactLive && Array.isArray(extendedM7?.sixCrisisLightsByDate?.[effDate]?.lights)
+      ? extendedM7.sixCrisisLightsByDate[effDate].lights
+      : null;
+  const lightsAtCutoff = liveSixLightsAtEff
+    ? liveSixLightsAtEff
+    : data.six_crisis_lights.map((light, idx) => ({
+        ...light,
+        lit: effDate === data.as_of_date ? light.lit : Boolean((maskBits >> idx) & 1),
+      }));
 
   let streakBelow50 = 0;
   for (let i = slicedSeries.length - 1; i >= 0; i -= 1) {
@@ -2587,6 +2603,21 @@ export function loadCrisisObservatoryPitSnapshot({
       : {}),
   }));
 
+  const stampPitFreshness = dash =>
+    dash && typeof dash === 'object'
+      ? {
+          ...dash,
+          data_freshness: {
+            ...(dash.data_freshness ?? {}),
+            is_pit_replay: isHistoricalPit,
+          },
+        }
+      : dash;
+  const pitM7ByStrategy = {};
+  for (const [k, v] of Object.entries(slicedDoc.m7_live_dashboards_by_strategy ?? {})) {
+    pitM7ByStrategy[k] = stampPitFreshness(v);
+  }
+
   const payload = {
     version: CRISIS_OBSERVATORY_VERSION,
     snapshotId: slicedDoc.snapshotId,
@@ -2614,8 +2645,8 @@ export function loadCrisisObservatoryPitSnapshot({
     liveExtended: Boolean(slicedDoc.liveExtended),
     pit_bar: lastBar,
     live_market_snapshot: slicedDoc.live_market_snapshot,
-    m7_live_dashboard: slicedDoc.m7_live_dashboard,
-    m7_live_dashboards_by_strategy: slicedDoc.m7_live_dashboards_by_strategy,
+    m7_live_dashboard: stampPitFreshness(slicedDoc.m7_live_dashboard),
+    m7_live_dashboards_by_strategy: pitM7ByStrategy,
     six_crisis_lights: lightsPit,
     ad_line_signal: slicedDoc.ad_line_signal,
     live_signal_state: slicedDoc.live_signal_state,
