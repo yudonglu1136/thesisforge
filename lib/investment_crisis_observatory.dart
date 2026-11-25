@@ -105,7 +105,6 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String activeForensicWindowId = '2026-08_11_LIVE';
   bool useLogScale = true;
   bool showRulesDisclosure = false;
-  bool showClassicSixLights = false;
   bool showSignalSubTrack = true;
   bool showFullLedger = false;
   bool showCcLedger = false;
@@ -1685,7 +1684,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               desktop: desktop,
             ),
             SizedBox(height: gap),
-            if (m7Dash.isNotEmpty) ...[
+            if (m7Dash.isNotEmpty)
               _buildThreePillarBlock(
                 topDoc,
                 fullDoc: doc,
@@ -1693,20 +1692,6 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 maxWidth: constraints.maxWidth,
                 compact: compact,
                 desktop: desktop,
-              ),
-              if (showClassicSixLights || !_isM7Strategy) ...[
-                const SizedBox(height: 14),
-                _buildSixSignalsBlock(
-                  topDoc,
-                  maxWidth: constraints.maxWidth,
-                  compact: compact,
-                ),
-              ],
-            ] else
-              _buildSixSignalsBlock(
-                topDoc,
-                maxWidth: constraints.maxWidth,
-                compact: compact,
               ),
             SizedBox(height: gap),
             _buildHeroChartBlock(doc, compact: compact, desktop: desktop),
@@ -3202,8 +3187,6 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final p1 = _numVal(m7Dash['p1_score']).round();
     final p2 = _numVal(m7Dash['p2_score']).round();
     final p3 = _numVal(m7Dash['p3_score']).round();
-    final lights = asList(doc['six_crisis_lights']);
-    final litCount = lights.where((item) => item['lit'] == true).length;
 
     return Container(
       key: _threePillarsAnchorKey,
@@ -3291,40 +3274,6 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                       ),
                     ),
                   ),
-                  if (_isM7Strategy)
-                    InkWell(
-                      key: const ValueKey('crisis-classic-lights-toggle'),
-                      borderRadius: BorderRadius.circular(999),
-                      onTap: () => setState(
-                        () => showClassicSixLights = !showClassicSixLights,
-                      ),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: p.border),
-                        ),
-                        child: Text(
-                          showClassicSixLights
-                              ? w(
-                                  'Hide M0 6-Lights ($litCount/6)',
-                                  '收起 M0 六灯明细 ($litCount/6)',
-                                )
-                              : w(
-                                  'M0 6-Lights Detail ($litCount/6)',
-                                  '展开 M0 六灯明细 ($litCount/6)',
-                                ),
-                          style: TextStyle(
-                            color: p.muted,
-                            fontSize: 11.2,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
                 ],
               ),
             ],
@@ -3705,248 +3654,6 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             fontWeight: FontWeight.w600,
           ),
         ),
-      ),
-    );
-  }
-
-  // ===========================================================================
-  // BLOCK 2: Minimalist 6 Crisis Signals Strip (六大危机信号状态)
-  // ===========================================================================
-  Widget _buildSixSignalsBlock(
-    Map<String, dynamic> doc, {
-    required double maxWidth,
-    required bool compact,
-  }) {
-    final lights = asList(doc['six_crisis_lights']);
-    final ad = asMap(doc['ad_line_signal']);
-    final litCount = lights.where((item) => item['lit'] == true).length;
-    final adBelow = ad['below_50ma'] == true;
-    final adTopDiv = ad['top_divergence_active'] == true;
-
-    final int cols = maxWidth >= 900 ? 3 : (maxWidth >= 560 ? 2 : 1);
-    final rowsCount =
-        cols == 0 ? 0 : ((lights.length + cols - 1) / cols).floor();
-
-    return Container(
-      key: const ValueKey('crisis-observatory-six-lights'),
-      padding: EdgeInsets.all(compact ? 16 : 22),
-      decoration: _calmSurfaceDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  w('Six Macro Crisis Signals', '六大危机信号状态'),
-                  style: TextStyle(
-                    color: p.text,
-                    fontSize: compact ? 15.5 : 16.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                w('$litCount / 6 Active', '$litCount / 6 亮灯'),
-                style: TextStyle(
-                  color: litCount >= 4
-                      ? _coral
-                      : (litCount >= 2 ? _amber : _emerald),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Container(height: 1, color: p.border),
-          for (var r = 0; r < rowsCount; r++) ...[
-            if (r > 0) Container(height: 1, color: p.border),
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var c = 0; c < cols; c++) ...[
-                    if (c > 0) Container(width: 1, color: p.border),
-                    Expanded(
-                      child: (r * cols + c < lights.length)
-                          ? _buildCleanLightCell(
-                              lights[r * cols + c],
-                              compact: compact,
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-          Container(height: 1, color: p.border),
-          const SizedBox(height: 12),
-          Row(
-            key: const ValueKey('crisis-observatory-ad-banner'),
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: adTopDiv ? _amber : (adBelow ? _coral : _emerald),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  adBelow
-                      ? w(
-                          'US Stock Advance-Decline Line (AD Line): Below 50DMA (${_numVal(ad['ad_line']).toStringAsFixed(0)} vs ${_numVal(ad['ad_sma50']).toStringAsFixed(0)}${text(ad['last_top_divergence_date']).isNotEmpty ? ' · Top divergence ${text(ad['last_top_divergence_date'])}' : ''})',
-                          '全美股票涨跌线（AD Line）：低于 50 日均线（${_numVal(ad['ad_line']).toStringAsFixed(0)} vs ${_numVal(ad['ad_sma50']).toStringAsFixed(0)}${text(ad['last_top_divergence_date']).isNotEmpty ? ' · 顶背离预警 ${text(ad['last_top_divergence_date'])}' : ''}）',
-                        )
-                      : w(
-                          'US Stock Advance-Decline Line (AD Line): Above 50DMA (Healthy Breadth)',
-                          '全美股票涨跌线（AD Line）：站上 50 日均线（宽度健康）',
-                        ),
-                  style: TextStyle(color: p.muted, fontSize: 12.5),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  (String, String, String) _cleanLightDisplay(Map<String, dynamic> light) {
-    final keyStr = text(light['key']);
-    final isPitHist = light['pit_historical'] == true;
-    final rawReading = text(light['reading_value']);
-    var primary = isPitHist &&
-            (rawReading.isEmpty ||
-                rawReading == 'PIT ON' ||
-                rawReading == 'PIT OFF')
-        ? (light['lit'] == true
-              ? w('PIT Lit', '历史亮灯')
-              : w('PIT Off', '历史未亮'))
-        : rawReading;
-    final parenIdx = primary.indexOf('(');
-    if (parenIdx > 0) {
-      primary = primary.substring(0, parenIdx).trim();
-    }
-    primary = primary
-        .replaceFirst('2Y ', '')
-        .replaceFirst('10Y-2Y ', '')
-        .replaceFirst(' >200D', '');
-
-    return switch (keyStr) {
-      'sig1_fed' => (
-        w('Front-End Rates', '短端利率'),
-        primary,
-        w('2Y Treasury vs 12M low & 63DMA', '2年期美债较年内低点显著抬升'),
-      ),
-      'sig2_credit' => (
-        w('Credit Spread', '信用利差'),
-        primary,
-        w('Corporate Baa-10Y spread widening', '企业信用利差走阔破季线'),
-      ),
-      'sig3_breadth' => (
-        w('Market Breadth', '市场宽度'),
-        primary,
-        w('Share of stocks above 200DMA', '站上年线个股占比显著回落'),
-      ),
-      'sig4_copper' => (
-        w('Industrial Copper', '工业铜价'),
-        primary,
-        w('COMEX copper vs 12M high & 63DMA', '铜价较年内高点回撤破季线'),
-      ),
-      'sig5_defensive' => (
-        w('Defensive Rotation', '防御抱团'),
-        primary,
-        w('Utilities/Staples/Health vs Cyclicals', '防御板块相对周期板块走强'),
-      ),
-      'sig6_macro' => (
-        w('Yield Curve', '收益率曲线'),
-        primary,
-        w('10Y-2Y curve flattening / NFCI', '期限利差压平与金融条件收紧'),
-      ),
-      _ => (
-        w(text(light['short_en']), text(light['short_zh'])),
-        primary,
-        w(text(light['threshold_en']), text(light['threshold_zh'])),
-      ),
-    };
-  }
-
-  Widget _buildCleanLightCell(
-    Map<String, dynamic> light, {
-    required bool compact,
-  }) {
-    final lit = light['lit'] == true;
-    final keyStr = text(light['key']);
-    final info = _cleanLightDisplay(light);
-
-    return Padding(
-      key: ValueKey('crisis-light-card-$keyStr'),
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 4 : 14,
-        vertical: 14,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: lit ? _coral : Colors.transparent,
-                  shape: BoxShape.circle,
-                  border: lit
-                      ? null
-                      : Border.all(
-                          color: p.muted.withValues(alpha: 0.5),
-                          width: 1.4,
-                        ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  info.$1,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: p.text,
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                info.$2,
-                style: TextStyle(
-                  color: lit ? _coral : p.text,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 5),
-          Padding(
-            padding: const EdgeInsets.only(left: 16),
-            child: Text(
-              info.$3,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: p.muted, fontSize: 11.5),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -4941,14 +4648,14 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   ),
                 ),
                 const SizedBox(height: 2),
-              ],
-              Text(
-                w(
-                  'Crisis Lights: $lights / 6 active',
-                  '当日危机灯：$lights / 6 亮起',
+              ] else
+                Text(
+                  w(
+                    'Crisis Lights: $lights / 6 active',
+                    '当日危机灯：$lights / 6 亮起',
+                  ),
+                  style: TextStyle(color: p.muted, fontSize: 11),
                 ),
-                style: TextStyle(color: p.muted, fontSize: 11),
-              ),
               if (hasAnyMarkerEvent) ...[
                 const SizedBox(height: 6),
                 Container(height: 1, color: p.border),

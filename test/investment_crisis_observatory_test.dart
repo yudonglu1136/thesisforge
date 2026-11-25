@@ -760,14 +760,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('ctr (120D K=\$'), findsOneWidget);
 
-      // Expand & collapse classic Six Crisis Lights reference panel
-      await tapVisible(
-        tester,
+      // Standalone Six Crisis Lights panel & toggle are retired (covered by Three-Pillar Matrix)
+      expect(
         find.byKey(const ValueKey('crisis-classic-lights-toggle')),
+        findsNothing,
       );
       expect(
-        find.byKey(const ValueKey('crisis-light-card-sig1_fed')),
-        findsOneWidget,
+        find.byKey(const ValueKey('crisis-observatory-six-lights')),
+        findsNothing,
       );
 
       // Switch Tenor/Roll to 90D Hold (90d_hold -> $1,356,201 · -28.1% MDD · Calmar 0.623)
