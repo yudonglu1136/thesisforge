@@ -154,6 +154,7 @@ export function registerInvestmentRoutes(app,service) {
   }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   const readCrisisObservatory=(_,r)=>loadCrisisObservatoryDashboardLive({
     asOf:service.date(r.query.asOf),
+    profile:r.query.profile??r.query.co_profile??null,
     strategy:r.query.strategy??null,
     putOtm:r.query.putOtm??r.query.put_otm??r.query.otm??null,
     m7TpMode:r.query.m7TpMode??r.query.m7_tp_mode??null,
@@ -169,6 +170,7 @@ export function registerInvestmentRoutes(app,service) {
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   const readCrisisObservatoryPit=(_,r)=>loadCrisisObservatoryPitSnapshotLive({
     date:r.query.date??r.query.pitDate??r.query.asOf??null,
+    profile:r.query.profile??r.query.co_profile??null,
     strategy:r.query.strategy??null,
     putOtm:r.query.putOtm??r.query.put_otm??r.query.otm??null,
     m7TpMode:r.query.m7TpMode??r.query.m7_tp_mode??null,

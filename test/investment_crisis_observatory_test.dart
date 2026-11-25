@@ -80,10 +80,13 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       });
       final exitReason = (tr['exit_reason'] ?? '').toString();
       final isOpenLive = tr['is_open_live'] == true;
-      final isLiveRollArmed = exitReason == 'live_roll50_armed_next_open';
+      final isLiveRollArmed =
+          exitReason == 'live_roll50_armed_next_open' ||
+          exitReason == 'live_roll30_armed_next_open';
       final isLiveArmed =
           exitReason == 'live_tp_armed_next_open' || isLiveRollArmed;
-      final isRoll50 = exitReason == 'roll_50d';
+      final isRoll30 = exitReason == 'roll_30d';
+      final isRoll50 = exitReason == 'roll_50d' || isRoll30;
       final evExitDate = !isOpenLive ? tr['exit_date'] : tr['mtm_date'];
       if ((!isOpenLive || isLiveArmed) && evExitDate != null) {
         final isPut5x = exitReason.contains('put_5x');
@@ -91,20 +94,24 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         final is4xTp = exitReason.contains('4x_tp');
         final isTp = exitReason.contains('tp') && !isOpenLive;
         final evTypeExit = isLiveRollArmed
-            ? 'live_roll50_armed'
+            ? (exitReason.contains('30')
+                  ? 'live_roll30_armed'
+                  : 'live_roll50_armed')
             : (isLiveArmed
                   ? 'live_tp_armed'
-                  : (isRoll50
-                        ? 'roll_50d'
-                        : (isPut5x
-                              ? 'put5x_dte45_tp'
-                              : (isItmTp
-                                    ? 'vix110_itm_tp'
-                                    : (is4xTp
-                                          ? 'vix110_4x_tp'
-                                          : (isTp
-                                                ? 'vix110_tp'
-                                                : 'option_expiry'))))));
+                  : (isRoll30
+                        ? 'roll_30d'
+                        : (isRoll50
+                              ? 'roll_50d'
+                              : (isPut5x
+                                    ? 'put5x_dte45_tp'
+                                    : (isItmTp
+                                          ? 'vix110_itm_tp'
+                                          : (is4xTp
+                                                ? 'vix110_4x_tp'
+                                                : (isTp
+                                                      ? 'vix110_tp'
+                                                      : 'option_expiry')))))));
         events.add({
           'event_id': '${strategyId}_tr${tr['tranche_id']}_exit',
           'tranche_id': tr['tranche_id'],
@@ -223,6 +230,42 @@ class CrisisObservatoryFixtureApi extends ApiClient {
             };
           })
           .toList();
+      final c3Pillars = pitPillars.map((pm) {
+        final pid = pm['id'].toString();
+        final mods = ((pm['modules'] as List?) ?? const []).map((m) {
+          final mm = Map<String, dynamic>.from(m as Map);
+          final mid = mm['id'].toString();
+          final disabled = mid == 'M2' || mid == 'M5' || mid == 'M3';
+          return <String, dynamic>{
+            ...mm,
+            'disabled_in_core3': disabled,
+            if (disabled) 'triggered': false,
+            if (disabled) 'earned_points': 0,
+            if (disabled) 'points': 0,
+          };
+        }).toList();
+        return <String, dynamic>{
+          ...pm,
+          'disabled_in_core3': pid == 'P2',
+          'score': pid == 'P1'
+              ? ((bar['c3_p1'] as num?)?.round() ?? 0)
+              : (pid == 'P3' ? ((bar['c3_p3'] as num?)?.round() ?? 0) : 0),
+          'modules': mods,
+        };
+      }).toList();
+      final pitC3Dash = <String, dynamic>{
+        ...pitDash,
+        'strategy_id': 'Core3_Adaptive',
+        'crisis_prob': (bar['c3_prob'] as num?)?.round() ?? 0,
+        'p1_score': (bar['c3_p1'] as num?)?.round() ?? 0,
+        'p2_score': 0,
+        'p3_score': (bar['c3_p3'] as num?)?.round() ?? 0,
+        'target_slots': (bar['c3_target_slots'] as num?)?.round() ?? 0,
+        'active_slots': (bar['c3_active_slots'] as num?)?.round() ?? 0,
+        'pillars': c3Pillars,
+      };
+      final reqStrat = qp['strategy'] ??
+          (qp['profile'] == 'core3_adaptive' ? 'Core3_Adaptive' : 'M7G_Graded');
       return {
         'pit_mode': true,
         'pit_date': pitDate,
@@ -245,9 +288,10 @@ class CrisisObservatoryFixtureApi extends ApiClient {
           'vix_vix3m_ratio': vr,
           'raw_crisis_score': bar['crisis_lights'],
         },
-        'm7_live_dashboard': pitDash,
+        'm7_live_dashboard': reqStrat == 'Core3_Adaptive' ? pitC3Dash : pitDash,
         'm7_live_dashboards_by_strategy': {
           'M7G_Graded': pitDash,
+          'Core3_Adaptive': pitC3Dash,
           'M7_Ensemble': pitDash,
         },
         'six_crisis_lights': pitLights,
@@ -268,10 +312,20 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         uri.path == '/api/discover/crisis-observatory') {
       final raw = Map<String, dynamic>.from(artifact);
       final qp = uri.queryParameters;
-      final strat = qp['strategy'] ?? 'M7G_Graded';
+      final rawProfile = (qp['profile'] ?? qp['co_profile'] ?? '').toString();
+      final strat = qp['strategy'] ??
+          (rawProfile == 'core3_adaptive' ? 'Core3_Adaptive' : 'M7G_Graded');
+      final profile = strat == 'Core3_Adaptive'
+          ? 'core3_adaptive'
+          : 'full_m7_adaptive';
       final putOtm = qp['putOtm'] ?? raw['default_put_otm'] ?? 'otm15';
       final m7TpMode = qp['m7TpMode'] ?? raw['default_m7_tp_mode'] ?? 'standard';
-      final rollMode = qp['rollMode'] ?? raw['default_roll_mode'] ?? '120d_roll50';
+      final rawRoll =
+          (qp['rollMode'] ?? raw['default_roll_mode'] ?? 'adaptive_120_90')
+              .toString();
+      final rollMode = (strat == 'Core3_Adaptive' && rawRoll == '90d_hold')
+          ? 'adaptive_120_90'
+          : rawRoll;
       final m0Enabled = (qp['m0Enabled'] ?? 'true') != 'false';
       final tpMode = qp['tpMode'] ?? raw['default_tp_mode'] ?? 'layered_itm';
       final ccMode = qp['ccMode'] ?? raw['default_cc_mode'] ?? 'cc_off';
@@ -311,8 +365,10 @@ class CrisisObservatoryFixtureApi extends ApiClient {
           final row = Map<String, dynamic>.from(baseSeries[i] as Map);
           if (m7Base != null) {
             final navM7g = m7Base['nav_m7g'] as List?;
+            final navC3 = m7Base['nav_c3'] as List?;
             final navM7 = m7Base['nav_m7'] as List?;
             if (navM7g != null && i < navM7g.length) row['nav_m7g'] = navM7g[i];
+            if (navC3 != null && i < navC3.length) row['nav_c3'] = navC3[i];
             if (navM7 != null && i < navM7.length) row['nav_m7'] = navM7[i];
           }
           if (bundle != null) {
@@ -346,7 +402,11 @@ class CrisisObservatoryFixtureApi extends ApiClient {
                 );
                 if (m7Base != null && m7Base['window_stats'] is Map) {
                   final ws = m7Base['window_stats'] as Map;
-                  for (final m7Sid in ['M7G_Graded', 'M7_Ensemble']) {
+                  for (final m7Sid in [
+                    'M7G_Graded',
+                    'Core3_Adaptive',
+                    'M7_Ensemble',
+                  ]) {
                     final sidWs = ws[m7Sid];
                     if (sidWs is Map && sidWs[id] is Map) {
                       byStrat[m7Sid] = Map<String, dynamic>.from(
@@ -378,7 +438,9 @@ class CrisisObservatoryFixtureApi extends ApiClient {
 
       final eventsByStrat = <String, dynamic>{};
       for (final e in tradeLedgers.entries) {
-        if ((e.key == 'M7G_Graded' || e.key == 'M7_Ensemble') &&
+        if ((e.key == 'M7G_Graded' ||
+                e.key == 'Core3_Adaptive' ||
+                e.key == 'M7_Ensemble') &&
             m7Base != null &&
             m7Base['events'] is Map &&
             (m7Base['events'] as Map)[e.key] is List) {
@@ -422,7 +484,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         };
         if (m7Base != null && m7Base['summaries'] is Map) {
           final m7Sums = m7Base['summaries'] as Map;
-          for (final sid in ['M7G_Graded', 'M7_Ensemble']) {
+          for (final sid in ['M7G_Graded', 'Core3_Adaptive', 'M7_Ensemble']) {
             if (m7Sums[sid] is Map) {
               baseMap[sid] = Map<String, dynamic>.from(m7Sums[sid] as Map);
             }
@@ -445,6 +507,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       final engineAttrByStrat = <String, dynamic>{};
       for (final sid in [
         'M7G_Graded',
+        'Core3_Adaptive',
         'M7_Ensemble',
         'U1_PureOptions',
         'B1c_PureAD',
@@ -453,7 +516,10 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         'NoPut_CallOnly',
         'BH_Pure_QQQ',
       ]) {
-        final isM7Strat = sid == 'M7G_Graded' || sid == 'M7_Ensemble';
+        final isM7Strat =
+            sid == 'M7G_Graded' ||
+            sid == 'Core3_Adaptive' ||
+            sid == 'M7_Ensemble';
         final hasE1 = sid != 'NoPut_CallOnly' && sid != 'BH_Pure_QQQ';
         final hasE2 = ccMode != 'cc_off' && sid != 'BH_Pure_QQQ';
         final hasE3 = spMode != 'sp_off' && sid != 'BH_Pure_QQQ';
@@ -578,12 +644,15 @@ class CrisisObservatoryFixtureApi extends ApiClient {
           ((bundle?['strategies_summary'] ?? raw['strategies_summary']) as List)
               .where((s) {
                 final id = (s as Map)['id']?.toString() ?? '';
-                return id != 'M7G_Graded' && id != 'M7_Ensemble';
+                return id != 'M7G_Graded' &&
+                    id != 'Core3_Adaptive' &&
+                    id != 'M7_Ensemble';
               })
               .toList();
       final m7Sums = m7Base?['summaries'] as Map?;
       final mergedSummaries = <dynamic>[
         if (m7Sums?['M7G_Graded'] != null) m7Sums!['M7G_Graded'],
+        if (m7Sums?['Core3_Adaptive'] != null) m7Sums!['Core3_Adaptive'],
         if (m7Sums?['M7_Ensemble'] != null) m7Sums!['M7_Ensemble'],
         ...legacySummaries,
       ];
@@ -592,9 +661,11 @@ class CrisisObservatoryFixtureApi extends ApiClient {
           (m7Base?['m7_live_dashboards'] as Map<String, dynamic>?) ??
           (raw['m7_live_dashboards_by_strategy'] as Map<String, dynamic>?) ??
           const <String, dynamic>{};
-      final activeM7Dash = strat == 'M7_Ensemble'
-          ? (m7LiveDashByStrat['M7_Ensemble'] ?? raw['m7_live_dashboard'])
-          : (m7LiveDashByStrat['M7G_Graded'] ?? raw['m7_live_dashboard']);
+      final activeM7Dash = strat == 'Core3_Adaptive'
+          ? (m7LiveDashByStrat['Core3_Adaptive'] ?? raw['m7_live_dashboard'])
+          : (strat == 'M7_Ensemble'
+                ? (m7LiveDashByStrat['M7_Ensemble'] ?? raw['m7_live_dashboard'])
+                : (m7LiveDashByStrat['M7G_Graded'] ?? raw['m7_live_dashboard']));
 
       final out = Map<String, dynamic>.from(raw)
         ..remove('tp_modes')
@@ -620,6 +691,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         'crisis_windows': hydratedWindows,
         'daily_series': projectedSeries,
         'engine_attribution_by_strategy': engineAttrByStrat,
+        'profile': profile,
         'put_otm': putOtm,
         'm7_tp_mode': m7TpMode,
         'roll_mode': rollMode,
@@ -628,7 +700,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         'cc_mode': ccMode,
         'sp_mode': spMode,
         'wc_mode': spMode == 'sp_off' ? defaultWc : wcMode,
-        'snapshotId': 'fixture-crisis-v4-m7-graded',
+        'snapshotId': 'fixture-crisis-v5-real-opra',
         'requestedAsOf': qp['asOf'] ?? raw['as_of_date'],
         'selected_strategy_id': strat,
         'liveExtended': false,
@@ -698,7 +770,27 @@ void main() {
       expect(find.textContaining('T-Bill'), findsNothing);
       expect(find.textContaining('FactOS'), findsNothing);
 
-      // 1. Default flagship = M7G_Graded (otm15 + 120d_roll50 + standard + M0 ON · Real-OPRA #1)
+      // 1. Top 2-Card Strategy Switcher + MIT Real OPRA Provenance Strip + Default Full M7 Shield (Adaptive 120->50 / CTA 90->30)
+      expect(
+        find.byKey(const ValueKey('crisis-profile-switcher')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-profile-full_m7_adaptive')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-profile-core3_adaptive')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-data-provenance-strip')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('MIT Real QQQ OPRA Chain (9.88M Quotes, 0 Fallbacks)'),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('crisis-observatory-command-center')),
         findsOneWidget,
@@ -736,7 +828,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('Real Option Chain: 95.7%'),
+        find.textContaining('Real OPRA Chain 95.7%'),
         findsOneWidget,
       );
       expect(
@@ -744,16 +836,17 @@ void main() {
         findsNothing,
       );
 
-      // Penny-exact Real-OPRA M7G_Graded default metrics ($1,462,058 · +$173,753 · 2,402.9 sh · +13.5% · -29.2% MDD · Calmar 0.624)
-      expect(find.text('\$1,462,058'), findsOneWidget);
-      expect(find.text('+\$173,753'), findsWidgets);
-      expect(find.text('2,402.9 sh'), findsOneWidget);
-      expect(find.textContaining('+13.5%'), findsWidgets);
-      expect(find.text('-29.2%'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.624'), findsWidgets);
-      expect(find.text('50D Roll / Salvage'), findsOneWidget);
+      // Penny-exact Real-OPRA Full M7 Shield Adaptive default metrics ($1,466,143 · +$178,258 · 2,409.6 sh · +13.8% · -28.3% MDD · Calmar 0.645)
+      expect(find.text('\$1,466,143'), findsOneWidget);
+      expect(find.text('+\$178,258'), findsWidgets);
+      expect(find.text('2,409.6 sh'), findsOneWidget);
+      expect(find.textContaining('+13.8%'), findsWidgets);
+      expect(find.text('-28.3%'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.645'), findsWidgets);
+      expect(find.text('50D/30D Roll Salvage'), findsOneWidget);
+      expect(find.text('BSM* Calib.'), findsWidgets);
 
-      // Interactive QQQ Shares calculator updates per-slot budget live (default 120D tenor)
+      // Interactive QQQ Shares calculator updates per-slot budget live
       final sharesField = find.byKey(const ValueKey('crisis-qqq-shares-input'));
       await tester.ensureVisible(sharesField);
       await tester.enterText(sharesField, '5000');
@@ -770,31 +863,85 @@ void main() {
         findsNothing,
       );
 
-      // Switch Tenor/Roll to 90D Hold (90d_hold -> $1,356,201 · -28.1% MDD · Calmar 0.623)
+      // 2. Switch to Option 2: Core-3 Minimal · Low Freq · High PF (co_profile=core3_adaptive)
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-profile-core3_adaptive')),
+      );
+      expect(find.text('\$1,497,023'), findsOneWidget);
+      expect(find.text('+\$209,138'), findsWidgets);
+      expect(find.text('2,460.4 sh'), findsOneWidget);
+      expect(find.textContaining('+16.2%'), findsWidgets);
+      expect(find.text('-28.6%'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.646'), findsWidgets);
+      // Safety guardrail: 90D Hold is NEVER exposed on Core-3 Minimal
+      expect(
+        find.byKey(const ValueKey('crisis-core3-roll-locked-badge')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-e1-roll-90d_hold')),
+        findsNothing,
+      );
+      // M2, M5, and M3 sensor cards are visually dimmed & badged Off in Core-3
+      expect(
+        find.byKey(const ValueKey('crisis-mod-core3-off-M2')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-mod-core3-off-M5')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-mod-core3-off-M3')),
+        findsOneWidget,
+      );
+      expect(find.text('Off in Core-3'), findsWidgets);
+
+      // Switch back to Option 1: Full M7 Shield · Recommended
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-profile-full_m7_adaptive')),
+      );
+      expect(find.text('\$1,466,143'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('crisis-mod-core3-off-M2')),
+        findsNothing,
+      );
+
+      // Switch Tenor/Roll to 90D Hold on Full M7 Shield (90d_hold -> $1,343,816 · -28.1% MDD · Calmar 0.620)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
       );
-      expect(find.text('\$1,356,201'), findsOneWidget);
+      expect(find.text('\$1,343,816'), findsOneWidget);
       expect(find.text('-28.1%'), findsOneWidget);
 
-      // Switch Strike to -20% OTM while on 90d_hold ($1,289,101 · +0.1%)
+      // Switch Strike to -20% OTM while on 90d_hold ($1,274,910 · -1.0%)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-otm-pill-otm20')),
       );
-      expect(find.text('\$1,289,101'), findsOneWidget);
-      expect(find.textContaining('+0.1%'), findsWidgets);
+      expect(find.text('\$1,274,910'), findsOneWidget);
+      expect(find.textContaining('-1.0%'), findsWidgets);
 
-      // Switch back to 120D -> 50D Roll while on -20% OTM ($1,453,499 · +12.8%)
+      // Switch to 120D -> 50D Roll while on -20% OTM ($1,420,675 · +10.3%)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-roll-pill-120d_roll50')),
       );
-      expect(find.text('\$1,453,499'), findsOneWidget);
-      expect(find.textContaining('+12.8%'), findsWidgets);
+      expect(find.text('\$1,420,675'), findsOneWidget);
+      expect(find.textContaining('+10.3%'), findsWidgets);
 
-      // Switch back to -15% OTM and test ITM_TP ($1,328,139 · -29.2% MDD · Calmar 0.592)
+      // Switch back to Adaptive 120/90 + -15% OTM and test ITM_TP ($1,335,192 · -28.3% MDD · Calmar 0.612)
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-roll-pill-adaptive_120_90')),
+      );
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-otm-pill-otm15')),
@@ -803,11 +950,11 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-m7-tp-pill-itm_tp')),
       );
-      expect(find.text('\$1,328,139'), findsOneWidget);
-      expect(find.text('-29.2%'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.592'), findsWidgets);
+      expect(find.text('\$1,335,192'), findsOneWidget);
+      expect(find.text('-28.3%'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.612'), findsWidgets);
 
-      // Restore standard TP and verify M7_Ensemble ($1,429,845) + M0 switch
+      // Restore standard TP and verify M7_Ensemble ($1,437,261) + M0 switch
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-m7-tp-pill-standard')),
@@ -816,7 +963,7 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-strategy-pill-M7_Ensemble')),
       );
-      expect(find.text('\$1,429,845'), findsOneWidget);
+      expect(find.text('\$1,437,261'), findsOneWidget);
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-m0-toggle')),
@@ -827,7 +974,7 @@ void main() {
         find.byKey(const ValueKey('crisis-m0-toggle')),
       );
 
-      // 2. Switch to Legacy U1_PureOptions and verify upgrade banner + 100% compatibility with all 3 Orthogonal Engines
+      // 3. Switch to Legacy U1_PureOptions and verify upgrade banner + 100% compatibility with all 3 Orthogonal Engines
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-strategy-pill-U1_PureOptions')),
@@ -840,35 +987,35 @@ void main() {
         find.byKey(const ValueKey('crisis-switch-to-m7g-btn')),
         findsOneWidget,
       );
-      expect(find.text('\$1,325,413'), findsOneWidget);
-      expect(find.text('+\$37,108'), findsWidgets);
-      expect(find.text('2,178.3 sh'), findsOneWidget);
+      expect(find.text('\$1,322,402'), findsOneWidget);
+      expect(find.text('+\$34,098'), findsWidgets);
+      expect(find.text('2,173.4 sh'), findsOneWidget);
       expect(find.byKey(const ValueKey('crisis-tp-mode-bar')), findsOneWidget);
 
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-cc-mode-pill-cc_d12_d35')),
       );
-      expect(find.text('\$1,308,725'), findsOneWidget);
+      expect(find.text('\$1,287,946'), findsOneWidget);
 
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-sp-mode-pill-sp_14d_cap10')),
       );
       expect(find.byKey(const ValueKey('crisis-wc-mode-bar')), findsOneWidget);
-      expect(find.text('\$1,396,670'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.557'), findsWidgets);
+      expect(find.text('\$1,357,245'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.537'), findsWidgets);
 
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-wc-mode-pill-wc_30d_c5s5')),
       );
-      expect(find.text('\$1,386,350'), findsOneWidget);
+      expect(find.text('\$1,350,632'), findsOneWidget);
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-wc-mode-pill-wc_14d_c0s2')),
       );
-      expect(find.text('\$1,366,059'), findsOneWidget);
+      expect(find.text('\$1,336,321'), findsOneWidget);
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-wc-mode-pill-wc_reclaim_30d_d35')),
@@ -888,6 +1035,7 @@ void main() {
         find.byKey(const ValueKey('crisis-zoom-pill-2025-04')),
       );
       expect(find.text('2025 April Tariff Crash'), findsWidgets);
+      expect(find.text('OPRA Real'), findsWidgets);
 
       final canvasFinder = find.byKey(
         const ValueKey('crisis-observatory-canvas'),
@@ -927,7 +1075,7 @@ void main() {
       await gesture.moveTo(Offset.zero);
       await tester.pumpAndSettle();
 
-      // One-click upgrade banner jumps straight back to flagship M7G_Graded (120D->50D Roll)
+      // One-click upgrade banner jumps straight back to Full M7 Shield Adaptive ($1,466,143)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-switch-to-m7g-btn')),
@@ -936,13 +1084,13 @@ void main() {
         find.byKey(const ValueKey('crisis-legacy-upgrade-banner')),
         findsNothing,
       );
-      expect(find.text('\$1,462,058'), findsOneWidget);
+      expect(find.text('\$1,466,143'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'Crisis Observatory renders calm localized Chinese M7-Graded UI cleanly on both Desktop (1440x1200) and Mobile (390x844) without overflow',
+    'Crisis Observatory renders calm localized Chinese 2-Profile Real-OPRA UI cleanly on both Desktop (1440x1200) and Mobile (390x844) without overflow',
     (tester) async {
       final api = CrisisObservatoryFixtureApi();
 
@@ -971,33 +1119,46 @@ void main() {
         );
         await tester.pumpAndSettle();
 
+        expect(find.text('🛡️ 全套 M7 护盾 · 默认推荐'), findsOneWidget);
+        expect(find.text('⚡ 精简 3 核 · 低频高赔率'), findsOneWidget);
+        expect(
+          find.textContaining('2015-01-02 至 2025-12-15：MIT 真实 QQQ OPRA 期权盘口'),
+          findsOneWidget,
+        );
         expect(
           find.text('三支柱概率分层监控矩阵（M7-Graded · 六大子模块）'),
           findsOneWidget,
         );
         expect(find.textContaining('单槽等金额预算：'), findsOneWidget);
-        expect(find.text('120D 建仓 · 50D 滚仓（真实 OPRA 冠军）'), findsOneWidget);
-        expect(find.text('90D 持有到期'), findsOneWidget);
+        expect(find.text('自适应 120/90（推荐）'), findsOneWidget);
+        expect(find.text('统一 120→50'), findsOneWidget);
+        expect(find.text('90D 持有'), findsOneWidget);
         expect(find.text('-15% OTM（真实 OPRA 冠军）'), findsOneWidget);
         expect(find.text('-20% OTM（深虚值对照）'), findsOneWidget);
-        expect(find.textContaining('真实期权盘口覆盖 95.7%'), findsOneWidget);
-        expect(find.text('50D 残值滚仓'), findsOneWidget);
+        expect(find.textContaining('真实盘口覆盖 95.7%'), findsOneWidget);
+        expect(find.text('50D/30D 残值滚仓'), findsOneWidget);
         expect(find.text('历史保护策略 vs 死拿 QQQ'), findsOneWidget);
-        expect(find.textContaining('+13.5%'), findsWidgets);
+        expect(find.textContaining('+13.8%'), findsWidgets);
+        expect(find.text('BSM* 校准'), findsWidgets);
         expect(find.textContaining('短债'), findsNothing);
 
-        // Toggle 90D Hold and back to 120D -> 50D Roll on Chinese Desktop & Mobile (390x844) with zero overflow
+        // Switch to Chinese Core-3 Minimal and back on Desktop & Mobile (390x844) with zero overflow
         await tapVisible(
           tester,
-          find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
+          find.byKey(const ValueKey('crisis-profile-core3_adaptive')),
         );
-        expect(find.text('\$1,356,201'), findsOneWidget);
+        expect(find.text('\$1,497,023'), findsOneWidget);
+        expect(find.text('精简模式已关闭'), findsWidgets);
+        expect(
+          find.text('已锁定最优自适应滚仓 120→50 / CTA 90→30（禁用 90D 持有）'),
+          findsOneWidget,
+        );
         expect(tester.takeException(), isNull);
         await tapVisible(
           tester,
-          find.byKey(const ValueKey('crisis-roll-pill-120d_roll50')),
+          find.byKey(const ValueKey('crisis-profile-full_m7_adaptive')),
         );
-        expect(find.text('\$1,462,058'), findsOneWidget);
+        expect(find.text('\$1,466,143'), findsOneWidget);
       }
 
       addTearDown(tester.view.resetPhysicalSize);
@@ -1006,7 +1167,7 @@ void main() {
   );
 
   testWidgets(
-    'Crisis Observatory honors M7 rollMode/putOtm/m7TpMode and Engine 3 co_wcMode deep-link initialization and emits full state in onSelection',
+    'Crisis Observatory enforces Core-3 90D Hold safety guardrail on deep-link init and emits co_profile + rollMode cleanly in onSelection',
     (tester) async {
       tester.view.physicalSize = const Size(1440, 1000);
       tester.view.devicePixelRatio = 1.0;
@@ -1028,9 +1189,9 @@ void main() {
                   asOf: '2026-11-20',
                   onCompany: (_) {},
                   initialSelection: const {
-                    'strategy': 'M7G_Graded',
-                    'putOtm': 'otm20',
-                    'rollMode': '120d_roll50',
+                    'profile': 'core3_adaptive',
+                    'rollMode': '90d_hold',
+                    'putOtm': 'otm15',
                     'm7TpMode': 'standard',
                     'm0Enabled': true,
                   },
@@ -1043,16 +1204,33 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('\$1,453,499'), findsOneWidget);
-      expect(find.text('50D Roll / Salvage'), findsOneWidget);
+      // Even when initialized with rollMode=90d_hold on core3_adaptive, safety guardrail locks it to adaptive_120_90 ($1,497,023)!
+      expect(find.text('\$1,497,023'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('crisis-core3-roll-locked-badge')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
+        findsNothing,
+      );
+
+      // Switch to Full M7 Shield and toggle 90D Hold to verify full state emission
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-profile-full_m7_adaptive')),
+      );
+      expect(latestSelection['profile'], 'full_m7_adaptive');
+      expect(latestSelection['strategy'], 'M7G_Graded');
+      expect(latestSelection['rollMode'], 'adaptive_120_90');
 
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
       );
-      expect(find.text('\$1,289,101'), findsOneWidget);
+      expect(find.text('\$1,343,816'), findsOneWidget);
       expect(latestSelection['strategy'], 'M7G_Graded');
-      expect(latestSelection['putOtm'], 'otm20');
+      expect(latestSelection['putOtm'], 'otm15');
       expect(latestSelection['rollMode'], '90d_hold');
       expect(latestSelection['m7TpMode'], 'standard');
       expect(latestSelection['m0Enabled'], 'true');
@@ -1100,7 +1278,7 @@ void main() {
         await tester.ensureVisible(canvasFinder);
         await tester.pumpAndSettle();
         final rect = tester.getRect(canvasFinder);
-        // Tap ~25% into the 2020 COVID window to pin a historical date
+        // Tap 25% into the 2020 COVID window to pin a historical date
         final tapPoint = Offset(
           rect.left + 52.0 + (rect.width - 64.0) * 0.25,
           rect.top + 120.0,

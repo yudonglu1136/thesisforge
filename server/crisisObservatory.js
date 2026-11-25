@@ -3,11 +3,13 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
+  CRISIS_OBSERVATORY_PROFILES,
   CRISIS_OBSERVATORY_PUT_OTMS,
   CRISIS_OBSERVATORY_M7_TP_MODES,
   CRISIS_OBSERVATORY_ROLL_MODES,
   evalSkewIv,
   bsmPrice,
+  evalCore3Signal,
   simulateM7StrategyJS,
   buildM7LiveDashboardJS,
   extendM7LiveFromFeed,
@@ -16,6 +18,7 @@ import {
 } from './crisisObservatoryM7.js';
 
 export {
+  CRISIS_OBSERVATORY_PROFILES,
   CRISIS_OBSERVATORY_PUT_OTMS,
   CRISIS_OBSERVATORY_M7_TP_MODES,
   CRISIS_OBSERVATORY_ROLL_MODES,
@@ -24,6 +27,7 @@ export {
 export const CRISIS_OBSERVATORY_VERSION = 'crisis-observatory-v3-m7';
 export const CRISIS_OBSERVATORY_STRATEGIES = Object.freeze([
   'M7G_Graded',
+  'Core3_Adaptive',
   'M7_Ensemble',
   'U1_PureOptions',
   'B1c_PureAD',
@@ -73,7 +77,21 @@ const M7_TP_ALIASES = Object.freeze({
   ITM_TP: 'itm_tp',
 });
 
+const PROFILE_ALIASES = Object.freeze({
+  full_m7: 'full_m7_adaptive',
+  full: 'full_m7_adaptive',
+  m7: 'full_m7_adaptive',
+  m7g: 'full_m7_adaptive',
+  default: 'full_m7_adaptive',
+  core3: 'core3_adaptive',
+  core_3: 'core3_adaptive',
+  minimal: 'core3_adaptive',
+});
+
 const ROLL_MODE_ALIASES = Object.freeze({
+  adaptive: 'adaptive_120_90',
+  '120_90': 'adaptive_120_90',
+  adaptive_roll: 'adaptive_120_90',
   '90d': '90d_hold',
   hold: '90d_hold',
   '120d': '120d_roll50',
@@ -114,6 +132,7 @@ const LEGACY_CC_MODE_ALIASES = Object.freeze({
 
 const STRATEGY_NAV_KEYS = Object.freeze({
   M7G_Graded: 'nav_m7g',
+  Core3_Adaptive: 'nav_c3',
   M7_Ensemble: 'nav_m7',
   U1_PureOptions: 'nav_u1',
   B1c_PureAD: 'nav_b1c',
@@ -127,6 +146,10 @@ const LEGACY_STRATEGY_ALIASES = Object.freeze({
   U4_DualEngine: 'U1_PureOptions',
   M7G: 'M7G_Graded',
   M7: 'M7_Ensemble',
+  Core3: 'Core3_Adaptive',
+  CORE3: 'Core3_Adaptive',
+  full_m7_adaptive: 'M7G_Graded',
+  core3_adaptive: 'Core3_Adaptive',
 });
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -210,11 +233,35 @@ function unpackTable(val) {
   return [];
 }
 
+function normalizeTradeQuoteRow(tr) {
+  if (!tr || typeof tr !== 'object') return tr;
+  const pricingSrc = String(tr.pricing_source ?? tr.entry_source ?? '');
+  const quoteSource =
+    tr.quoteSource ||
+    tr.quote_source ||
+    (pricingSrc.startsWith('real_opra') ||
+    (tr.entry_date && String(tr.entry_date) <= '2025-12-15')
+      ? 'REAL_OPRA'
+      : 'CALIBRATED_BSM');
+  return {
+    ...tr,
+    quoteSource,
+    quote_source: quoteSource,
+    occSymbol: tr.occSymbol ?? tr.occ_symbol ?? null,
+    exp: tr.exp ?? tr.planned_exp_date ?? null,
+    strike: tr.strike ?? tr.kp ?? null,
+    entryBid: tr.entryBid ?? null,
+    entryAsk: tr.entryAsk ?? null,
+    exitBid: tr.exitBid ?? null,
+    exitAsk: tr.exitAsk ?? null,
+  };
+}
+
 function unpackLedgerMap(rawMap) {
   if (!rawMap || typeof rawMap !== 'object') return {};
   const out = {};
   for (const [sid, val] of Object.entries(rawMap)) {
-    out[sid] = unpackTable(val);
+    out[sid] = unpackTable(val).map(normalizeTradeQuoteRow);
   }
   return out;
 }
@@ -226,7 +273,9 @@ const EVENT_ORDER_RANK = Object.freeze({
   put5x_dte45_tp: 1,
   live_tp_armed: 1,
   live_roll50_armed: 1,
+  live_roll30_armed: 1,
   roll_50d: 2,
+  roll_30d: 2,
   option_expiry: 2,
   shield_enter: 3,
   shield_exit: 4,
@@ -240,7 +289,8 @@ const EVENT_ORDER_RANK = Object.freeze({
 
 function synthesizeUnifiedEvents(strategyId, ledger) {
   const events = [];
-  for (const tr of ledger ?? []) {
+  for (const rawTr of ledger ?? []) {
+    const tr = normalizeTradeQuoteRow(rawTr);
     const isNk = tr.tranche_type === 'naked_put';
     const sNum = Number(tr.slot_num || 1);
     const evType = isNk
@@ -278,6 +328,16 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
       gamma_usd: tr.gamma_usd,
       vega_usd: tr.vega_usd,
       theta_slip_usd: tr.theta_slip_usd,
+      quoteSource: tr.quoteSource,
+      occSymbol: tr.occSymbol,
+      exp: tr.exp,
+      strike: tr.strike,
+      entryBid: tr.entryBid,
+      entryAsk: tr.entryAsk,
+      exitBid: tr.exitBid,
+      exitAsk: tr.exitAsk,
+      is_cta: Boolean(tr.is_cta),
+      roll_dte: tr.roll_dte ?? null,
     };
     if (tr.crisis_prob !== undefined && tr.crisis_prob !== null) {
       Object.assign(openEv, {
@@ -301,8 +361,13 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
 
     const exitReason = String(tr.exit_reason ?? '');
     const isOpenLive = Boolean(tr.is_open_live);
-    const isLiveRollArmed = exitReason === 'live_roll50_armed_next_open';
+    const isLiveRoll30Armed =
+      exitReason === 'live_roll_30d_armed_next_open' || exitReason === 'live_roll30_armed_next_open';
+    const isLiveRoll50Armed =
+      exitReason === 'live_roll_50d_armed_next_open' || exitReason === 'live_roll50_armed_next_open';
+    const isLiveRollArmed = isLiveRoll30Armed || isLiveRoll50Armed;
     const isLiveArmed = exitReason === 'live_tp_armed_next_open' || isLiveRollArmed;
+    const isRoll30 = exitReason === 'roll_30d';
     const isRoll50 = exitReason === 'roll_50d';
     const isTp = exitReason.includes('tp') && !isOpenLive;
     const isPut5x = exitReason.includes('put_5x');
@@ -317,7 +382,11 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
       let evTypeExit;
       let trigEnExit;
       let trigZhExit;
-      if (isLiveRollArmed) {
+      if (isLiveRoll30Armed) {
+        evTypeExit = 'live_roll30_armed';
+        trigEnExit = `30-DTE CTA Roll/Salvage Armed (${tr.rem_dte_at_exit} DTE left · Next Open)`;
+        trigZhExit = `30-DTE CTA 残值滚仓已触发（剩 ${tr.rem_dte_at_exit} 天 · 待次日开盘执行）`;
+      } else if (isLiveRoll50Armed) {
         evTypeExit = 'live_roll50_armed';
         trigEnExit = `50-DTE Roll/Salvage Armed (${tr.rem_dte_at_exit} DTE left · Next Open)`;
         trigZhExit = `50-DTE 残值滚仓已触发（剩 ${tr.rem_dte_at_exit} 天 · 待次日开盘执行）`;
@@ -325,6 +394,11 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
         evTypeExit = 'live_tp_armed';
         trigEnExit = `Deep-ITM Panic TP Armed (${tr.rem_dte_at_exit} DTE left · VIX/3M ${vrStr} · Next Open)`;
         trigZhExit = `实值恐慌止盈已触发（剩余 ${tr.rem_dte_at_exit} 天 · VIX/3M ${vrStr} · 待次日开盘换股）`;
+      } else if (isRoll30) {
+        evTypeExit = 'roll_30d';
+        const salvPct = Math.round(Number(tr.roi_mult ?? 0) * 100);
+        trigEnExit = `30-DTE CTA Residual Roll/Salvage (${tr.rem_dte_at_exit} DTE left · ${salvPct}% Value Saved)`;
+        trigZhExit = `30-DTE CTA 剩余残值滚仓/回收（剩 ${tr.rem_dte_at_exit} 天 · 回收 ${salvPct}% 残值）`;
       } else if (isRoll50) {
         evTypeExit = 'roll_50d';
         const salvPct = Math.round(Number(tr.roi_mult ?? 0) * 100);
@@ -384,6 +458,16 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
         vega_usd: tr.vega_usd,
         theta_slip_usd: tr.theta_slip_usd,
         convexity_mult: tr.convexity_mult,
+        quoteSource: tr.quoteSource,
+        occSymbol: tr.occSymbol,
+        exp: tr.exp,
+        strike: tr.strike,
+        entryBid: tr.entryBid,
+        entryAsk: tr.entryAsk,
+        exitBid: tr.exitBid,
+        exitAsk: tr.exitAsk,
+        is_cta: Boolean(tr.is_cta),
+        roll_dte: tr.roll_dte ?? null,
       };
       if (tr.crisis_prob !== undefined && tr.crisis_prob !== null) {
         Object.assign(exitEv, {
@@ -488,7 +572,7 @@ function resolveM7EffectiveBundle(
   {
     putOtm = 'otm15',
     m7TpMode = 'standard',
-    rollMode = '120d_roll50',
+    rollMode = 'adaptive_120_90',
     m0Enabled = true,
     ccMode = 'cc_off',
     spMode = 'sp_off',
@@ -509,16 +593,18 @@ function resolveM7EffectiveBundle(
       m0Enabled,
       summaries: baseM7.summaries ?? {},
       ledgers: unpackLedgerMap(baseM7.ledgers),
-      ccLedgers: { M7G_Graded: [], M7_Ensemble: [] },
-      spLedgers: { M7G_Graded: [], M7_Ensemble: [] },
+      ccLedgers: { M7G_Graded: [], Core3_Adaptive: [], M7_Ensemble: [] },
+      spLedgers: { M7G_Graded: [], Core3_Adaptive: [], M7_Ensemble: [] },
       events: baseM7.events ?? {},
       m7LiveDashboards: baseM7.m7_live_dashboards ?? {},
       liveSignalStates: baseM7.live_signal_states ?? {},
       liveSpStates: baseM7.live_sp_states ?? {},
       windowStats: baseM7.window_stats ?? {},
       nav_m7g: baseM7.nav_m7g ?? [],
+      nav_c3: baseM7.nav_c3 ?? [],
       nav_m7: baseM7.nav_m7 ?? [],
       m7g_active_slots: baseM7.m7g_active_slots ?? [],
+      c3_active_slots: baseM7.c3_active_slots ?? [],
       m7_active_slots: baseM7.m7_active_slots ?? [],
     };
   }
@@ -547,11 +633,12 @@ function resolveM7EffectiveBundle(
   const windowStats = {};
   const sims = {};
 
-  for (const sid of ['M7G_Graded', 'M7_Ensemble']) {
+  for (const sid of ['M7G_Graded', 'Core3_Adaptive', 'M7_Ensemble']) {
+    const sidRollMode = sid === 'Core3_Adaptive' ? 'adaptive_120_90' : rollMode;
     const sim = simulateM7StrategyJS(evalBars, coeffs, sid, sigSeries, {
       putOtm,
       m7TpMode,
-      rollMode,
+      rollMode: sidRollMode,
       m0Enabled,
       ccMode,
       spMode,
@@ -570,7 +657,7 @@ function resolveM7EffectiveBundle(
     m7LiveDashboards[sid] = buildM7LiveDashboardJS(lastEval, lastSig, lastFeat, sim, coeffs, {
       putOtm,
       m7TpMode,
-      rollMode,
+      rollMode: sidRollMode,
       m0Enabled,
     });
     const openTrs = sim.active_tranches_eod ?? [];
@@ -606,8 +693,10 @@ function resolveM7EffectiveBundle(
     liveSpStates,
     windowStats,
     nav_m7g: sims.M7G_Graded.nav.map(r2),
+    nav_c3: sims.Core3_Adaptive.nav.map(r2),
     nav_m7: sims.M7_Ensemble.nav.map(r2),
     m7g_active_slots: sims.M7G_Graded.active_slots,
+    c3_active_slots: sims.Core3_Adaptive.active_slots,
     m7_active_slots: sims.M7_Ensemble.active_slots,
   };
   if (m7SimComboCache.size >= 64) {
@@ -631,21 +720,28 @@ function hydrateCrisisWindows(baseWindows, bundleWindows, m7Bundle = null) {
   if (!m7Bundle?.windowStats) return merged;
   return merged.map((w, idx) => {
     const m7gSt = m7Bundle.windowStats.M7G_Graded?.[idx];
+    const c3St = m7Bundle.windowStats.Core3_Adaptive?.[idx];
     const m7St = m7Bundle.windowStats.M7_Ensemble?.[idx];
-    if (!m7gSt && !m7St) return w;
+    if (!m7gSt && !c3St && !m7St) return w;
     return {
       ...w,
       strategy_stats: {
         ...(w.strategy_stats ?? {}),
         ...(m7gSt ? { M7G_Graded: m7gSt } : {}),
+        ...(c3St ? { Core3_Adaptive: c3St } : {}),
         ...(m7St ? { M7_Ensemble: m7St } : {}),
       },
       m7g_mdd: m7gSt?.mdd_pct ?? w.m7g_mdd,
+      c3_mdd: c3St?.mdd_pct ?? w.c3_mdd,
       m7_mdd: m7St?.mdd_pct ?? w.m7_mdd,
       excess_ret_m7g: m7gSt?.excess_ret_pct ?? w.excess_ret_m7g,
       dd_cushion_m7g: m7gSt?.dd_cushion_pct ?? w.dd_cushion_m7g,
       harvested_usd_m7g: m7gSt?.harvested_tp_usd ?? w.harvested_usd_m7g,
       shares_added_m7g: m7gSt?.shares_added_tp ?? w.shares_added_m7g,
+      excess_ret_c3: c3St?.excess_ret_pct ?? w.excess_ret_c3,
+      dd_cushion_c3: c3St?.dd_cushion_pct ?? w.dd_cushion_c3,
+      harvested_usd_c3: c3St?.harvested_tp_usd ?? w.harvested_usd_c3,
+      shares_added_c3: c3St?.shares_added_tp ?? w.shares_added_c3,
     };
   });
 }
@@ -763,7 +859,7 @@ function buildEngineAttributionByStrategy(
   {
     putOtm = 'otm15',
     m7TpMode = 'standard',
-    rollMode = '120d_roll50',
+    rollMode = 'adaptive_120_90',
     m0Enabled = true,
     cutoffSeries = null,
     liveScale = 1.0,
@@ -849,9 +945,12 @@ function buildEngineAttributionByStrategy(
   const exE3Solo = selectedSpMode !== 'sp_off' ? computeDailyExcessReturns(navE3SoloArr, bhArr, effLen) : [];
   const corrE2E3 = exE2Solo.length && exE3Solo.length ? pearsonCorr(exE2Solo, exE3Solo) : null;
 
+  const isM7Sid = sid =>
+    sid === 'M7G_Graded' || sid === 'Core3_Adaptive' || sid === 'M7_Ensemble';
+
   const navArrayFor = (bundle, m7B, sid) => {
     const navKey = STRATEGY_NAV_KEYS[sid] ?? 'nav_bh';
-    if ((sid === 'M7G_Graded' || sid === 'M7_Ensemble') && m7B && Array.isArray(m7B[navKey]) && m7B[navKey].length) {
+    if (isM7Sid(sid) && m7B && Array.isArray(m7B[navKey]) && m7B[navKey].length) {
       return m7B[navKey];
     }
     return getBundleNavArray(rawData, bundle, navKey);
@@ -875,7 +974,7 @@ function buildEngineAttributionByStrategy(
   const out = {};
 
   for (const sid of CRISIS_OBSERVATORY_STRATEGIES) {
-    const isM7Strat = sid === 'M7G_Graded' || sid === 'M7_Ensemble';
+    const isM7Strat = isM7Sid(sid);
     const hasE1 = sid !== 'NoPut_CallOnly' && sid !== 'BH_Pure_QQQ';
     const hasE2 = selectedCcMode !== 'cc_off' && sid !== 'BH_Pure_QQQ';
     const hasE3 = selectedSpMode !== 'sp_off' && sid !== 'BH_Pure_QQQ';
@@ -955,6 +1054,8 @@ function buildEngineAttributionByStrategy(
         tranches_total: Number(e1Meta.tranches_total ?? 0),
         tp_count: Number(e1Meta.tp_count ?? 0),
         roll_50d_count: Number(e1Meta.roll_50d_count ?? 0),
+        roll_30d_count: Number(e1Meta.roll_30d_count ?? 0),
+        roll_salvage_count: Number(e1Meta.roll_salvage_count ?? e1Meta.roll_50d_count ?? 0),
         avg_roll_salvage_pct: r2(Number(e1Meta.avg_roll_salvage_pct ?? 0)),
         naked_prem_spent_usd: r2(Number(e1Meta.naked_prem_spent_usd ?? 0)),
         gross_put_monetized_usd: r2(Number(e1Meta.gross_put_monetized_usd ?? 0)),
@@ -1017,7 +1118,7 @@ function projectArtifactForModes(
   selectedWcMode = 'wc_reclaim_30d_d35',
   selectedPutOtm = 'otm15',
   selectedM7TpMode = 'standard',
-  selectedRollMode = '120d_roll50',
+  selectedRollMode = 'adaptive_120_90',
   selectedM0Enabled = true,
 ) {
   const defaultWcMode = data.default_wc_mode ?? 'wc_reclaim_30d_d35';
@@ -1065,6 +1166,8 @@ function projectArtifactForModes(
   if (!bundle && !m7Eff) {
     const fallback = {
       ...baseWithoutModes,
+      default_profile: data.default_profile ?? 'full_m7_adaptive',
+      profiles_meta: data.profiles_meta ?? [],
       put_otm: selectedPutOtm,
       m7_tp_mode: selectedM7TpMode,
       roll_mode: selectedRollMode,
@@ -1089,7 +1192,7 @@ function projectArtifactForModes(
   const isDefaultM7 =
     selectedPutOtm === (data.default_put_otm ?? 'otm15') &&
     selectedM7TpMode === (data.default_m7_tp_mode ?? 'standard') &&
-    selectedRollMode === (data.default_roll_mode ?? '120d_roll50') &&
+    selectedRollMode === (data.default_roll_mode ?? 'adaptive_120_90') &&
     selectedM0Enabled === Boolean(data.default_m0_enabled ?? true) &&
     selectedCcMode === (data.default_cc_mode ?? 'cc_off') &&
     selectedSpMode === (data.default_sp_mode ?? 'sp_off');
@@ -1103,9 +1206,11 @@ function projectArtifactForModes(
       ? data.daily_series
       : data.daily_series.map((row, idx) => {
           const sdOff = sigAltSeries?.[idx];
+          const c3Off = sdOff ? evalCore3Signal(sdOff, false) : null;
           return {
             ...row,
             nav_m7g: m7Eff?.nav_m7g?.[idx] ?? row.nav_m7g,
+            nav_c3: m7Eff?.nav_c3?.[idx] ?? row.nav_c3,
             nav_m7: m7Eff?.nav_m7?.[idx] ?? row.nav_m7,
             m7_prob: sdOff ? Math.round(Number(sdOff.crisis_prob ?? 0)) : row.m7_prob,
             m7_p1: sdOff ? Math.round(Number(sdOff.p1 ?? 0)) : row.m7_p1,
@@ -1114,6 +1219,13 @@ function projectArtifactForModes(
             m7_target_slots: sdOff ? Number(sdOff.target_slots_m7g ?? 0) : row.m7_target_slots,
             m7_active_slots: m7Eff?.m7g_active_slots?.[idx] ?? row.m7_active_slots,
             m7_mask: sdOff ? Number(sdOff.mask ?? 0) : row.m7_mask,
+            c3_prob: c3Off ? Math.round(Number(c3Off.crisis_prob ?? 0)) : row.c3_prob,
+            c3_p1: c3Off ? Math.round(Number(c3Off.p1 ?? 0)) : row.c3_p1,
+            c3_p2: c3Off ? 0 : row.c3_p2,
+            c3_p3: c3Off ? Math.round(Number(c3Off.p3 ?? 0)) : row.c3_p3,
+            c3_target_slots: c3Off ? Number(c3Off.target_slots ?? 0) : row.c3_target_slots,
+            c3_active_slots: m7Eff?.c3_active_slots?.[idx] ?? row.c3_active_slots,
+            c3_mask: c3Off ? Number(c3Off.mask ?? 0) : row.c3_mask,
             nav_u1: bundle?.nav_u1?.[idx] ?? row.nav_u1,
             nav_b1c: bundle?.nav_b1c?.[idx] ?? row.nav_b1c,
             nav_d2: bundle?.nav_d2?.[idx] ?? row.nav_d2,
@@ -1131,6 +1243,7 @@ function projectArtifactForModes(
     ...(m7Eff?.ledgers ?? {}),
     ...legacyTradeLedgers,
     ...(m7Eff?.ledgers?.M7G_Graded ? { M7G_Graded: m7Eff.ledgers.M7G_Graded } : {}),
+    ...(m7Eff?.ledgers?.Core3_Adaptive ? { Core3_Adaptive: m7Eff.ledgers.Core3_Adaptive } : {}),
     ...(m7Eff?.ledgers?.M7_Ensemble ? { M7_Ensemble: m7Eff.ledgers.M7_Ensemble } : {}),
   };
 
@@ -1152,7 +1265,7 @@ function projectArtifactForModes(
 
   const eventsByStrategy = {};
   for (const [sid, led] of Object.entries(unpackedTradeLedgers)) {
-    if (sid === 'M7G_Graded' || sid === 'M7_Ensemble') {
+    if (sid === 'M7G_Graded' || sid === 'Core3_Adaptive' || sid === 'M7_Ensemble') {
       eventsByStrategy[sid] = m7Eff?.events?.[sid] ?? synthesizeUnifiedEvents(sid, led);
     } else {
       eventsByStrategy[sid] =
@@ -1161,10 +1274,11 @@ function projectArtifactForModes(
   }
 
   const legacySummaries = (bundle?.strategies_summary ?? data.strategies_summary ?? []).filter(
-    s => s.id !== 'M7G_Graded' && s.id !== 'M7_Ensemble',
+    s => s.id !== 'M7G_Graded' && s.id !== 'Core3_Adaptive' && s.id !== 'M7_Ensemble',
   );
   const strategiesSummary = [
     ...(m7Eff?.summaries?.M7G_Graded ? [m7Eff.summaries.M7G_Graded] : []),
+    ...(m7Eff?.summaries?.Core3_Adaptive ? [m7Eff.summaries.Core3_Adaptive] : []),
     ...(m7Eff?.summaries?.M7_Ensemble ? [m7Eff.summaries.M7_Ensemble] : []),
     ...legacySummaries,
   ];
@@ -1204,6 +1318,8 @@ function projectArtifactForModes(
 
   const projected = {
     ...baseWithoutModes,
+    default_profile: data.default_profile ?? 'full_m7_adaptive',
+    profiles_meta: data.profiles_meta ?? [],
     put_otm: selectedPutOtm,
     default_put_otm: data.default_put_otm ?? 'otm15',
     put_otm_meta: data.put_otm_meta ?? [],
@@ -1211,7 +1327,7 @@ function projectArtifactForModes(
     default_m7_tp_mode: data.default_m7_tp_mode ?? 'standard',
     m7_tp_modes_meta: data.m7_tp_modes_meta ?? [],
     roll_mode: selectedRollMode,
-    default_roll_mode: data.default_roll_mode ?? '120d_roll50',
+    default_roll_mode: data.default_roll_mode ?? 'adaptive_120_90',
     m7_roll_modes_meta: data.m7_roll_modes_meta ?? [],
     m0_enabled: selectedM0Enabled,
     default_m0_enabled: data.default_m0_enabled ?? true,
@@ -1481,6 +1597,7 @@ function extendLiveBars(baseData, extraDailyBars, requestedAsOf) {
       running_ath: r2(runAth),
       dd_ath_pct: r2(ddAthPct),
       nav_m7g: r2(Number(prev.nav_m7g ?? prev.nav_bh) * (1 + qqqRet)),
+      nav_c3: r2(Number(prev.nav_c3 ?? prev.nav_bh) * (1 + qqqRet)),
       nav_m7: r2(Number(prev.nav_m7 ?? prev.nav_bh) * (1 + qqqRet)),
       nav_bh: r2(Number(prev.nav_bh) * (1 + qqqRet)),
       nav_u1: r2(Number(prev.nav_u1) * (1 + qqqRet)),
@@ -1760,6 +1877,7 @@ function buildCutoffSpState(
 
 export function loadCrisisObservatoryDashboard({
   asOf = null,
+  profile = null,
   strategy = null,
   putOtm = null,
   m7TpMode = null,
@@ -1777,6 +1895,53 @@ export function loadCrisisObservatoryDashboard({
   const { data: rawData, snapshotId } = readArtifact(file);
   if (expectedSnapshotId && expectedSnapshotId !== snapshotId) {
     fail('crisis_observatory_snapshot_changed', 409);
+  }
+
+  let explicitProfile = null;
+  if (profile !== null && profile !== undefined && String(profile).trim() !== '') {
+    const trimmedProf = String(profile).trim();
+    const mappedProf = PROFILE_ALIASES[trimmedProf] ?? trimmedProf;
+    if (!CRISIS_OBSERVATORY_PROFILES.includes(mappedProf)) {
+      fail('invalid_crisis_observatory_profile', 400);
+    }
+    explicitProfile = mappedProf;
+  }
+
+  let explicitStrategy = null;
+  if (strategy !== null && strategy !== undefined && String(strategy).trim() !== '') {
+    const rawS = String(strategy).trim();
+    explicitStrategy = LEGACY_STRATEGY_ALIASES[rawS] ?? rawS;
+    if (!CRISIS_OBSERVATORY_STRATEGIES.includes(explicitStrategy)) {
+      fail('invalid_crisis_observatory_strategy', 400);
+    }
+  }
+
+  let effectiveProfile = explicitProfile ?? rawData.default_profile ?? 'full_m7_adaptive';
+  let selectedStrategy;
+  if (explicitProfile) {
+    if (explicitProfile === 'core3_adaptive') {
+      selectedStrategy =
+        !explicitStrategy || explicitStrategy === 'M7G_Graded'
+          ? 'Core3_Adaptive'
+          : explicitStrategy;
+    } else {
+      selectedStrategy =
+        !explicitStrategy || explicitStrategy === 'Core3_Adaptive'
+          ? 'M7G_Graded'
+          : explicitStrategy;
+    }
+    if (selectedStrategy === 'Core3_Adaptive') effectiveProfile = 'core3_adaptive';
+  } else if (explicitStrategy) {
+    selectedStrategy = explicitStrategy;
+    effectiveProfile =
+      explicitStrategy === 'Core3_Adaptive'
+        ? 'core3_adaptive'
+        : rawData.default_profile ?? 'full_m7_adaptive';
+  } else {
+    selectedStrategy =
+      effectiveProfile === 'core3_adaptive'
+        ? 'Core3_Adaptive'
+        : rawData.default_strategy_id ?? 'M7G_Graded';
   }
 
   const requestedPutOtm = putOtm ? String(putOtm).trim() : rawData.default_put_otm ?? 'otm15';
@@ -1807,10 +1972,18 @@ export function loadCrisisObservatoryDashboard({
     fail('invalid_crisis_observatory_m7_tp_mode', 400);
   }
 
-  const requestedRollMode = rollMode ? String(rollMode).trim() : rawData.default_roll_mode ?? '120d_roll50';
-  const rawRollMode = ROLL_MODE_ALIASES[requestedRollMode] ?? requestedRollMode;
+  const requestedRollMode = rollMode
+    ? String(rollMode).trim()
+    : rawData.default_roll_mode ?? 'adaptive_120_90';
+  let rawRollMode = ROLL_MODE_ALIASES[requestedRollMode] ?? requestedRollMode;
   if (!CRISIS_OBSERVATORY_ROLL_MODES.includes(rawRollMode)) {
     fail('invalid_crisis_observatory_roll_mode', 400);
+  }
+  const core3RollLocked =
+    effectiveProfile === 'core3_adaptive' || selectedStrategy === 'Core3_Adaptive';
+  if (core3RollLocked) {
+    // SAFETY GUARDRAIL: Never allow 90D Hold on Core-3; lock Core-3 cleanly to adaptive_120_90
+    rawRollMode = 'adaptive_120_90';
   }
 
   const rawM0Enabled = parseM0EnabledParam(m0Enabled, rawData);
@@ -1844,14 +2017,6 @@ export function loadCrisisObservatoryDashboard({
     rawM0Enabled,
   );
 
-  const rawStrategy = strategy
-    ? String(strategy).trim()
-    : data.default_strategy_id ?? 'M7G_Graded';
-  const selectedStrategy = LEGACY_STRATEGY_ALIASES[rawStrategy] ?? rawStrategy;
-  if (!CRISIS_OBSERVATORY_STRATEGIES.includes(selectedStrategy)) {
-    fail('invalid_crisis_observatory_strategy', 400);
-  }
-
   const requestedAsOf = asOf ? String(asOf).trim() : data.as_of_date;
   if (!isIsoDate(requestedAsOf)) fail('invalid_as_of_date', 400);
 
@@ -1877,7 +2042,12 @@ export function loadCrisisObservatoryDashboard({
       ? extendM7LiveFromFeed(rawData, effectiveFeed, requestedAsOf)
       : null;
 
-  const m7TargetStrat = selectedStrategy === 'M7_Ensemble' ? 'M7_Ensemble' : 'M7G_Graded';
+  const m7TargetStrat =
+    selectedStrategy === 'Core3_Adaptive'
+      ? 'Core3_Adaptive'
+      : selectedStrategy === 'M7_Ensemble'
+        ? 'M7_Ensemble'
+        : 'M7G_Graded';
 
   // Fast path: exact audited snapshot when requestedAsOf >= artifact.as_of_date and no live tail
   if (!extendedSeries && !extendedM7 && requestedAsOf >= data.as_of_date) {
@@ -1888,6 +2058,9 @@ export function loadCrisisObservatoryDashboard({
       snapshotId,
       requestedAsOf,
       liveExtended: false,
+      profile: effectiveProfile,
+      selected_profile: effectiveProfile,
+      core3_roll_locked: core3RollLocked,
       selected_strategy_id: selectedStrategy,
       put_otm: rawPutOtm,
       m7_tp_mode: rawM7TpMode,
@@ -1924,6 +2097,15 @@ export function loadCrisisObservatoryDashboard({
       spMode: rawSpMode,
       wcMode: rawWcMode,
     });
+    const simC3 = simulateM7StrategyJS(extendedM7.evalBars, coeffs, 'Core3_Adaptive', sigSeriesLive, {
+      putOtm: rawPutOtm,
+      m7TpMode: rawM7TpMode,
+      rollMode: 'adaptive_120_90',
+      m0Enabled: rawM0Enabled,
+      ccMode: rawCcMode,
+      spMode: rawSpMode,
+      wcMode: rawWcMode,
+    });
     const simM7 = simulateM7StrategyJS(extendedM7.evalBars, coeffs, 'M7_Ensemble', sigSeriesLive, {
       putOtm: rawPutOtm,
       m7TpMode: rawM7TpMode,
@@ -1942,6 +2124,12 @@ export function loadCrisisObservatoryDashboard({
       rollMode: rawRollMode,
       m0Enabled: rawM0Enabled,
     });
+    const dashC3 = buildM7LiveDashboardJS(lastEvalLive, lastSigLive, lastFeatLive, simC3, coeffs, {
+      putOtm: rawPutOtm,
+      m7TpMode: rawM7TpMode,
+      rollMode: 'adaptive_120_90',
+      m0Enabled: rawM0Enabled,
+    });
     const dashM7 = buildM7LiveDashboardJS(lastEvalLive, lastSigLive, lastFeatLive, simM7, coeffs, {
       putOtm: rawPutOtm,
       m7TpMode: rawM7TpMode,
@@ -1954,9 +2142,11 @@ export function loadCrisisObservatoryDashboard({
       const hit = sigByDate.get(row.date);
       if (!hit || row.date <= data.as_of_date) return row;
       const { s, idx } = hit;
+      const c3Sig = evalCore3Signal(s, rawM0Enabled);
       return {
         ...row,
         nav_m7g: r2(simM7g.nav[idx]),
+        nav_c3: r2(simC3.nav[idx]),
         nav_m7: r2(simM7.nav[idx]),
         m7_prob: Math.round(Number(s.crisis_prob ?? 0)),
         m7_p1: Math.round(Number(s.p1 ?? 0)),
@@ -1965,13 +2155,20 @@ export function loadCrisisObservatoryDashboard({
         m7_target_slots: Number(s.target_slots_m7g ?? 0),
         m7_active_slots: Number(simM7g.active_slots[idx] ?? 0),
         m7_mask: Number(s.mask ?? 0),
+        c3_prob: Math.round(Number(c3Sig.crisis_prob ?? 0)),
+        c3_p1: Math.round(Number(c3Sig.p1 ?? 0)),
+        c3_p2: 0,
+        c3_p3: Math.round(Number(c3Sig.p3 ?? 0)),
+        c3_target_slots: Number(c3Sig.target_slots ?? 0),
+        c3_active_slots: Number(simC3.active_slots[idx] ?? 0),
+        c3_mask: Number(c3Sig.mask ?? 0),
         hmm_p: r3(Number(s.hmm_p ?? 0)),
       };
     });
 
     liveM7SimOverrides = {
-      sims: { M7G_Graded: simM7g, M7_Ensemble: simM7 },
-      dashboards: { M7G_Graded: dashM7g, M7_Ensemble: dashM7 },
+      sims: { M7G_Graded: simM7g, Core3_Adaptive: simC3, M7_Ensemble: simM7 },
+      dashboards: { M7G_Graded: dashM7g, Core3_Adaptive: dashC3, M7_Ensemble: dashM7 },
     };
   }
 
@@ -2020,7 +2217,10 @@ export function loadCrisisObservatoryDashboard({
   for (const [sid, evs] of Object.entries(data.events_by_strategy ?? {})) {
     if (liveM7SimOverrides?.sims?.[sid]) {
       slicedEventsByStrategy[sid] = synthesizeUnifiedEvents(sid, liveM7SimOverrides.sims[sid].ledger);
-    } else if (effDate < data.as_of_date && (sid === 'M7G_Graded' || sid === 'M7_Ensemble')) {
+    } else if (
+      effDate < data.as_of_date &&
+      (sid === 'M7G_Graded' || sid === 'Core3_Adaptive' || sid === 'M7_Ensemble')
+    ) {
       slicedEventsByStrategy[sid] = synthesizeUnifiedEvents(sid, maskedLedgersByStrategy[sid]);
     } else {
       slicedEventsByStrategy[sid] = (evs ?? []).filter(e => e.date <= effDate);
@@ -2054,11 +2254,12 @@ export function loadCrisisObservatoryDashboard({
       const subSig = (rawM0Enabled ? sigM0On : sigM0Off).slice(0, cutIdx + 1);
       const featAtCut = featRows[cutIdx] ?? {};
       const rebuilt = {};
-      for (const sid of ['M7G_Graded', 'M7_Ensemble']) {
+      for (const sid of ['M7G_Graded', 'Core3_Adaptive', 'M7_Ensemble']) {
+        const sidRoll = sid === 'Core3_Adaptive' ? 'adaptive_120_90' : rawRollMode;
         const subSim = simulateM7StrategyJS(subEval, coeffs, sid, subSig, {
           putOtm: rawPutOtm,
           m7TpMode: rawM7TpMode,
-          rollMode: rawRollMode,
+          rollMode: sidRoll,
           m0Enabled: rawM0Enabled,
           ccMode: rawCcMode,
           spMode: rawSpMode,
@@ -2073,7 +2274,7 @@ export function loadCrisisObservatoryDashboard({
           {
             putOtm: rawPutOtm,
             m7TpMode: rawM7TpMode,
-            rollMode: rawRollMode,
+            rollMode: sidRoll,
             m0Enabled: rawM0Enabled,
           },
         );
@@ -2206,6 +2407,9 @@ export function loadCrisisObservatoryDashboard({
     dataThrough: effDate,
     requestedAsOf,
     liveExtended: Boolean(extendedSeries || extendedM7),
+    profile: effectiveProfile,
+    selected_profile: effectiveProfile,
+    core3_roll_locked: core3RollLocked,
     selected_strategy_id: selectedStrategy,
     put_otm: rawPutOtm,
     m7_tp_mode: rawM7TpMode,
@@ -2282,6 +2486,7 @@ function writeCachedPitSnapshot(cacheKey, value) {
 export function loadCrisisObservatoryPitSnapshot({
   date = null,
   asOf = null,
+  profile = null,
   strategy = null,
   putOtm = null,
   m7TpMode = null,
@@ -2307,6 +2512,7 @@ export function loadCrisisObservatoryPitSnapshot({
     : [
         snapshotId,
         targetDate,
+        profile ?? '',
         strategy ?? '',
         putOtm ?? '',
         m7TpMode ?? '',
@@ -2325,6 +2531,7 @@ export function loadCrisisObservatoryPitSnapshot({
 
   const slicedDoc = loadCrisisObservatoryDashboard({
     asOf: targetDate,
+    profile,
     strategy,
     putOtm,
     m7TpMode,
@@ -2392,6 +2599,9 @@ export function loadCrisisObservatoryPitSnapshot({
     next_date: nextDate,
     as_of_date: effDate,
     asOfDate: effDate,
+    profile: slicedDoc.profile,
+    selected_profile: slicedDoc.selected_profile,
+    core3_roll_locked: slicedDoc.core3_roll_locked,
     selected_strategy_id: slicedDoc.selected_strategy_id,
     put_otm: slicedDoc.put_otm,
     m7_tp_mode: slicedDoc.m7_tp_mode,
@@ -2424,6 +2634,7 @@ export function loadCrisisObservatoryPitSnapshot({
 export async function loadCrisisObservatoryPitSnapshotLive({
   date = null,
   asOf = null,
+  profile = null,
   strategy = null,
   putOtm = null,
   m7TpMode = null,
@@ -2467,6 +2678,7 @@ export async function loadCrisisObservatoryPitSnapshotLive({
 
   return loadCrisisObservatoryPitSnapshot({
     date: targetDate,
+    profile,
     strategy,
     putOtm,
     m7TpMode,
@@ -2484,6 +2696,7 @@ export async function loadCrisisObservatoryPitSnapshotLive({
 
 export async function loadCrisisObservatoryDashboardLive({
   asOf = null,
+  profile = null,
   strategy = null,
   putOtm = null,
   m7TpMode = null,
@@ -2526,6 +2739,7 @@ export async function loadCrisisObservatoryDashboardLive({
   }
   return loadCrisisObservatoryDashboard({
     asOf: requestedAsOf,
+    profile,
     strategy,
     putOtm,
     m7TpMode,

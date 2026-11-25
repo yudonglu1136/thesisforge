@@ -19,9 +19,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+DEFAULT_M7_PROFILE = "full_m7_adaptive"
 DEFAULT_PUT_OTM = "otm15"
 DEFAULT_M7_TP_MODE = "standard"
-DEFAULT_ROLL_MODE = "120d_roll50"
+DEFAULT_ROLL_MODE = "adaptive_120_90"
 DEFAULT_M0_ENABLED = True
 
 INITIAL_CAPITAL = 200_000.0
@@ -104,32 +105,85 @@ M7_TP_MODE_SPECS: list[dict[str, Any]] = [
     },
 ]
 
+M7_PROFILE_SPECS: list[dict[str, Any]] = [
+    {
+        "id": "full_m7_adaptive",
+        "strategy_id": "M7G_Graded",
+        "default_roll_mode": "adaptive_120_90",
+        "locked_roll_mode": None,
+        "title_en": "Full M7 Shield · Recommended",
+        "title_zh": "全套 M7 护盾 · 默认推荐",
+        "badge_en": "RECOMMENDED · 6-MODULE SHIELD",
+        "badge_zh": "默认推荐 · 6维全天候护盾",
+        "summary_en": "6-Module Radar + Adaptive Roll 120->50 / CTA 90->30 · Shields 2020-type exogenous black swans, #1 in 2021-2025",
+        "summary_zh": "6维雷达 + 自适应滚仓 120→50 / CTA 90→30 · 抗2020型外生黑天鹅，2021–2025后半程更强",
+        "active_modules": ["M0", "M6", "M2", "M5", "M4", "M3"],
+        "disabled_modules": [],
+    },
+    {
+        "id": "core3_adaptive",
+        "strategy_id": "Core3_Adaptive",
+        "default_roll_mode": "adaptive_120_90",
+        "locked_roll_mode": "adaptive_120_90",
+        "title_en": "Core-3 Minimal · Low Freq · High PF",
+        "title_zh": "精简 3 核 · 低频高赔率",
+        "badge_en": "MINIMAL 3-CORE · 2.23x PF",
+        "badge_zh": "低频高赔率 · 11年30笔",
+        "summary_en": "Only M0+M6+M4 + Adaptive Roll · Just 30 trades in 11 yrs, 2.23x Profit Factor; Note: omits exogenous shock sensors",
+        "summary_zh": "仅保留 M0+M6+M4 + 自适应滚仓 · 11年仅30笔、利润因子2.23x；提示：不含外生突发预警",
+        "active_modules": ["M0", "M6", "M4"],
+        "disabled_modules": ["M2", "M5", "M3"],
+    },
+]
+
 M7_ROLL_MODE_SPECS: list[dict[str, Any]] = [
+    {
+        "id": "adaptive_120_90",
+        "target_dte": 120,
+        "cta_target_dte": 90,
+        "ref_dte": 120,
+        "cta_ref_dte": 90,
+        "roll_dte": 50,
+        "cta_roll_dte": 30,
+        "five_x_max_dte": 45,
+        "label_en": "Adaptive 120->50 / CTA 90->30 (Recommended)",
+        "label_zh": "自适应 120→50 / CTA 90→30（推荐）",
+        "short_en": "Adaptive 120/90",
+        "short_zh": "自适应 120/90",
+        "summary_en": "Pillar-Adaptive Real-OPRA Champion: P1/P2 fragility & shock signals buy 120D Puts and roll/salvage at <=50 DTE; P3 M4 CTA bear-rally bounces buy faster 90D Puts and roll/salvage at <=30 DTE.",
+        "summary_zh": "真实 OPRA 分支柱自适应冠军：P1/P2 高位背离与外生预警买 120D Put、剩 <=50D 滚仓；P3 M4 熊市死猫跳反弹买更敏捷的 90D Put、剩 <=30D 滚仓回收。",
+    },
     {
         "id": "120d_roll50",
         "target_dte": 120,
+        "cta_target_dte": 120,
         "ref_dte": 120,
+        "cta_ref_dte": 120,
         "roll_dte": 50,
-        "five_x_max_dte": 75,
-        "label_en": "120D Entry · 50D Roll/Salvage (Real OPRA #1 · Default)",
-        "label_zh": "120D 建仓 · 50D 剩余滚仓（实盘 OPRA 总冠军 · 默认）",
-        "short_en": "120D -> 50D Roll",
-        "short_zh": "120D · 50D滚仓",
-        "summary_en": "Real-OPRA #1 Champion: buys 120-DTE Puts sized to 120D -10% Put Ask; at <= 50 DTE exits at real bid before the Theta cliff (salvaging approx. 58% residual value on real OPRA quotes) and auto-rolls into a fresh 120D Put if M7 remains active.",
-        "summary_zh": "真实 OPRA 盘口收益与夏普双料总冠军：按 120D -10% Put 基准保费建仓 120D Put；剩 <=50 DTE 在 Theta 悬崖前按实盘买价回收残值（OPRA 实盘均值约 58%），若 M7 仍亮同步滚入新 120D Put，熄灭则落袋归股。",
+        "cta_roll_dte": 50,
+        "five_x_max_dte": 45,
+        "label_en": "Uniform 120D -> 50D Roll",
+        "label_zh": "统一 120→50 滚仓",
+        "short_en": "Uniform 120->50",
+        "short_zh": "统一 120→50",
+        "summary_en": "Uniform 120D->50D Roll: buys 120-DTE Puts sized to 120D -10% Put Ask across all pillars and salvages/rolls at <= 50 DTE before the Theta cliff.",
+        "summary_zh": "统一 120D→50D 滚仓：所有支柱统一建仓 120D Put，剩 <=50 DTE 在 Theta 悬崖前按实盘买一价回收残值或滚入新仓。",
     },
     {
         "id": "90d_hold",
         "target_dte": 90,
+        "cta_target_dte": 90,
         "ref_dte": 90,
+        "cta_ref_dte": 90,
         "roll_dte": 0,
+        "cta_roll_dte": 0,
         "five_x_max_dte": 45,
-        "label_en": "90D Hold-to-Expiry (Calmar #1 Compare)",
-        "label_zh": "90D 持有到期（卡玛冠军对照）",
+        "label_en": "90D Hold-to-Expiry",
+        "label_zh": "90D 持有到期",
         "short_en": "90D Hold",
-        "short_zh": "90D 持有到期",
-        "summary_en": "Real-OPRA Calmar Champion: buys 90-DTE OTM Puts sized to 90D -10% Put Ask and holds to panic TP or expiry with minimum annual premium spend.",
-        "summary_zh": "真实 OPRA 盘口卡玛冠军对照：按 90D -10% Put 基准保费买入 90D Put，持有至恐慌止盈或到期，年均保费开支最低。",
+        "short_zh": "90D 持有",
+        "summary_en": "90D Hold-to-Expiry baseline (Full M7 only): buys 90-DTE OTM Puts sized to 90D -10% Put Ask and holds to panic TP or expiry.",
+        "summary_zh": "90D 持有到期对照（仅全套 M7 可选）：按 90D -10% Put 基准保费买入 90D Put，持有至恐慌止盈或到期。",
     },
 ]
 
@@ -869,6 +923,11 @@ def compute_m7_signals_and_tail(
             prob = min(100.0, p1 + p2 + p3)
             t_m7g = 3 if prob >= 65.0 else (2 if prob >= 45.0 else (1 if prob >= 35.0 else 0))
             t_m7 = 2 if prob >= 35.0 else 0
+            p1_c3 = p1
+            p2_c3 = 0.0
+            p3_c3 = 35.0 if m4 else 0.0
+            prob_c3 = min(100.0, p1_c3 + p3_c3)
+            t_c3 = 3 if prob_c3 >= 65.0 else (2 if prob_c3 >= 45.0 else (1 if prob_c3 >= 35.0 else 0))
             mask = (
                 (1 if m0_b else 0)
                 | (2 if m6_b else 0)
@@ -877,6 +936,7 @@ def compute_m7_signals_and_tail(
                 | (16 if m4 else 0)
                 | (32 if m3 else 0)
             )
+            mask_c3 = (1 if m0_b else 0) | (2 if m6_b else 0) | (16 if m4 else 0)
             dest.append(
                 {
                     "date": d,
@@ -895,7 +955,13 @@ def compute_m7_signals_and_tail(
                     "crisis_prob": prob,
                     "target_slots_m7g": t_m7g,
                     "target_slots_m7": t_m7,
+                    "p1_c3": p1_c3,
+                    "p2_c3": p2_c3,
+                    "p3_c3": p3_c3,
+                    "crisis_prob_c3": prob_c3,
+                    "target_slots_c3": t_c3,
                     "mask": mask,
+                    "mask_c3": mask_c3,
                     "redline_blocked": bool(vx > 27.0 or vr >= 1.02),
                     "hmm_p": round(float(hp_cur), 4) if hp_cur is not None else 0.0,
                 }
@@ -971,7 +1037,9 @@ def compute_m7_signals_and_tail(
     }
 
 
-def format_m7_trigger_labels(sig_day: dict[str, Any], max_slots: int) -> tuple[list[str], str, str, str]:
+def format_m7_trigger_labels(
+    sig_day: dict[str, Any], max_slots: int, core3_only: bool = False
+) -> tuple[list[str], str, str, str]:
     mods: list[str] = []
     p1_parts: list[str] = []
     p2_parts: list[str] = []
@@ -982,16 +1050,16 @@ def format_m7_trigger_labels(sig_day: dict[str, Any], max_slots: int) -> tuple[l
     if sig_day.get("M6"):
         mods.append("M6")
         p1_parts.append("M6(+20)")
-    if sig_day.get("M2"):
+    if not core3_only and sig_day.get("M2"):
         mods.append("M2")
         p2_parts.append("M2(+20)")
-    if sig_day.get("M5"):
+    if not core3_only and sig_day.get("M5"):
         mods.append("M5")
         p2_parts.append("M5(+20)")
     if sig_day.get("M4"):
         mods.append("M4")
         p3_parts.append("M4(+35)")
-    if sig_day.get("M3"):
+    if not core3_only and sig_day.get("M3"):
         mods.append("M3")
         p3_parts.append("M3(+20)")
 
@@ -1002,9 +1070,13 @@ def format_m7_trigger_labels(sig_day: dict[str, Any], max_slots: int) -> tuple[l
         pillar_tags.append("P2:" + "+".join(m.split("(")[0] for m in p2_parts))
     if p3_parts:
         pillar_tags.append("P3:" + "+".join(m.split("(")[0] for m in p3_parts))
-    code = " + ".join(pillar_tags) if pillar_tags else "M7"
-    prob = int(round(float(sig_day.get("crisis_prob") or 0.0)))
-    tslots = int(sig_day.get("target_slots_m7g" if max_slots == 3 else "target_slots_m7") or 1)
+    code = " + ".join(pillar_tags) if pillar_tags else ("Core-3" if core3_only else "M7")
+    if core3_only:
+        prob = int(round(float(sig_day.get("crisis_prob_c3") or 0.0)))
+        tslots = int(sig_day.get("target_slots_c3") or 1)
+    else:
+        prob = int(round(float(sig_day.get("crisis_prob") or 0.0)))
+        tslots = int(sig_day.get("target_slots_m7g" if max_slots == 3 else "target_slots_m7") or 1)
     trig_en = f"{code} · Score {prob}% (Target {tslots}/{max_slots} Slots)"
     trig_zh = f"{code} · 概率 {prob}%（目标 {tslots}/{max_slots} 槽）"
     return mods, code, trig_en, trig_zh
@@ -1012,16 +1084,16 @@ def format_m7_trigger_labels(sig_day: dict[str, Any], max_slots: int) -> tuple[l
 
 def compute_m7_bh_parity(rows_eval: list[dict[str, Any]], use_close_start: bool = True) -> dict[str, Any]:
     px0 = float(rows_eval[0]["close"]) if use_close_start else float(rows_eval[0]["open"])
-    sh = INITIAL_CAPITAL / px0 if use_close_start else INITIAL_CAPITAL / (px0 * (1.0 + STOCK_REBAL_FEE))
+    sh = INITIAL_CAPITAL / (px0 * (1.0 + STOCK_REBAL_FEE))
     navs: list[float] = []
     post_sh: list[float] = []
     pre_sh: list[float] = []
-    for idx_r, r in enumerate(rows_eval):
+    for r in rows_eval:
         pre_sh.append(sh)
         div = float(r["dividends"])
         cl = float(r["close"])
-        if div > 0.0 and (not use_close_start or idx_r > 0):
-            sh += (sh * div) / cl if use_close_start else (sh * div) / (cl * (1.0 + STOCK_REBAL_FEE))
+        if div > 0.0:
+            sh += (sh * div) / (cl * (1.0 + STOCK_REBAL_FEE))
         post_sh.append(sh)
         navs.append(sh * cl)
     return {
@@ -1034,11 +1106,25 @@ def compute_m7_bh_parity(rows_eval: list[dict[str, Any]], use_close_start: bool 
 
 
 def _classify_trade_source(entry_src: str, exit_src: str) -> str:
-    if entry_src.startswith("real_opra") or exit_src.startswith("real_opra"):
+    if entry_src.startswith("real_opra") and exit_src.startswith("real_opra"):
         return "real_opra"
     if entry_src.startswith("real_polygon") or exit_src.startswith("real_polygon"):
         return "real_polygon"
     return "bsm_fallback"
+
+
+def _classify_quote_source_tag(
+    entry_src: str,
+    exit_src: str,
+    entry_date: str | None = None,
+    exit_date: str | None = None,
+    opra_max_date: str = "2025-12-15",
+) -> str:
+    in_opra_en = entry_src.startswith("real_opra") and (not entry_date or entry_date <= opra_max_date)
+    in_opra_ex = exit_src.startswith("real_opra") and (exit_date is not None and exit_date <= opra_max_date)
+    if in_opra_en and in_opra_ex:
+        return "REAL_OPRA"
+    return "CALIBRATED_BSM"
 
 
 def simulate_m7_strategy(
@@ -1055,19 +1141,61 @@ def simulate_m7_strategy(
     sp_mode: str = "sp_off",
     wc_mode: str = "wc_reclaim_30d_d35",
     real_store: Any = None,
+    fill_mode: str = "ask_bid",
 ) -> dict[str, Any]:
-    """Simulate M7G_Graded (0-1-2-3 slots) or M7_Ensemble (2 slots) using Hybrid 3-Tier Real Option
-    Quotes (2015-2025 OPRA Bid/Ask + 2026Q1 Polygon Real EOD + BSM simulation fallback where real
-    quotes do not exist), plus full Engine 2 Covered Call & Engine 3 Panic Put Reverse Wheel overlays.
+    """Simulate M7G_Graded (Full 6-Module Adaptive), Core3_Adaptive (M0+M6+M4 Minimal Adaptive),
+    or M7_Ensemble (2 slots) using MIT Real QQQ OPRA Option Chain (2015-01-02..2025-12-15, strict
+    Ask/Bid by default) + OPRA-Calibrated BSM (2025-12-16..Live with real-IV seam continuity),
+    plus full Engine 2 Covered Call & Engine 3 Panic Put Reverse Wheel overlays.
     """
     use_real = real_store is not None and _roc_mod is not None
-    is_graded = strategy_id == "M7G_Graded"
+    is_core3 = strategy_id == "Core3_Adaptive"
+    is_graded = strategy_id in ("M7G_Graded", "Core3_Adaptive")
     max_slots = 3 if is_graded else 2
+    if is_core3 and roll_mode == "90d_hold":
+        # Safety guardrail: never allow 90D Hold on Core-3 (degrades to 0.87x PF)
+        roll_mode = "adaptive_120_90"
+    if roll_mode not in ("adaptive_120_90", "120d_roll50", "90d_hold"):
+        roll_mode = DEFAULT_ROLL_MODE
+
     put_moneyness = 0.80 if put_otm == "otm20" else 0.85
     otm_pct_int = 20 if put_otm == "otm20" else 15
     require_itm_tp = m7_tp_mode == "itm_tp"
     tp_code = "ITM_TP" if require_itm_tp else "STANDARD"
+    is_adaptive = roll_mode == "adaptive_120_90"
     is_roll50 = roll_mode == "120d_roll50"
+    opra_max_d = str(getattr(real_store, "opra_date_max", "2025-12-15") or "2025-12-15") if use_real else ""
+
+    def _slots_for_sig(sd: dict[str, Any]) -> int:
+        if is_core3:
+            return int(sd["target_slots_c3"])
+        if is_graded:
+            return int(sd["target_slots_m7g"])
+        return int(sd["target_slots_m7"])
+
+    def _prob_tuple(sd: dict[str, Any]) -> tuple[float, float, float, float]:
+        if is_core3:
+            return (
+                float(sd["crisis_prob_c3"]),
+                float(sd["p1_c3"]),
+                float(sd["p2_c3"]),
+                float(sd["p3_c3"]),
+            )
+        return (
+            float(sd["crisis_prob"]),
+            float(sd["p1"]),
+            float(sd["p2"]),
+            float(sd["p3"]),
+        )
+
+    def _tenor_for_sig(is_cta_flag: bool) -> tuple[int, int, int, tuple[int, int], tuple[int, int]]:
+        if is_adaptive:
+            if is_cta_flag:
+                return 90, 90, 30, (65, 120), (65, 120)
+            return 120, 120, 50, (90, 155), (90, 155)
+        if is_roll50:
+            return 120, 120, 50, (90, 155), (90, 155)
+        return 90, 90, 0, (65, 120), (65, 120)
 
     dates = [r["date"] for r in rows_eval]
     dt_objs = [datetime.date.fromisoformat(d) for d in dates]
@@ -1077,19 +1205,13 @@ def simulate_m7_strategy(
     final_bh_sh = bh_m7["final_shares"]
     final_cl = float(rows_eval[-1]["close"])
 
-    if use_real:
-        core_shares = INITIAL_CAPITAL / float(rows_eval[0]["close"])
-    else:
-        init_op = float(rows_eval[0]["open"])
-        core_shares = INITIAL_CAPITAL / (init_op * (1.0 + STOCK_REBAL_FEE))
+    px0 = float(rows_eval[0]["close"]) if use_real else float(rows_eval[0]["open"])
+    core_shares = INITIAL_CAPITAL / (px0 * (1.0 + STOCK_REBAL_FEE))
 
     slot_coverage = 0.50
     ref_moneyness = 0.90
-    ref_dte = 120 if is_roll50 else 90
-    target_dte = 120 if is_roll50 else 90
-    roll_dte_thr = 50 if is_roll50 else 0
-    lo_put, hi_put = (90, 155) if is_roll50 else (65, 120)
-    lo_ref, hi_ref = (90, 155) if is_roll50 else (65, 120)
+    target_dte = 120 if (is_adaptive or is_roll50) else 90
+    roll_dte_thr = 50 if (is_adaptive or is_roll50) else 0
     step_cal_days = 30
     escalate_min_days = 21
     vix_ratio_tp = 1.10
@@ -1101,9 +1223,10 @@ def simulate_m7_strategy(
         "real_opra_hits": 0,
         "real_polygon_hits": 0,
         "bsm_fallbacks": 0,
+        "opra_window_fallbacks": 0,
     }
 
-    def _rec_src(src: str) -> None:
+    def _rec_src(src: str, d_str: str = "") -> None:
         q_stats["total_lookups"] += 1
         if src.startswith("real_opra"):
             q_stats["real_opra_hits"] += 1
@@ -1111,11 +1234,18 @@ def simulate_m7_strategy(
             q_stats["real_polygon_hits"] += 1
         else:
             q_stats["bsm_fallbacks"] += 1
+            if opra_max_d and d_str and d_str <= opra_max_d:
+                q_stats["opra_window_fallbacks"] += 1
 
     def _is_exp(idx: int, exp_dt: datetime.date) -> bool:
         if use_real:
             return _roc_mod.is_expiry_day(idx, dt_objs, exp_dt)
         return dt_objs[idx] >= exp_dt
+
+    def _occ(exp_str: str, opt_type: str, k_val: float) -> str:
+        if _roc_mod is not None and hasattr(_roc_mod, "format_occ_symbol"):
+            return _roc_mod.format_occ_symbol("QQQ", exp_str, opt_type, k_val)
+        return f"QQQ-{exp_str}-{opt_type[0].upper()}-{k_val:.2f}"
 
     def _lookup_opt(
         d_str: str,
@@ -1130,6 +1260,7 @@ def simulate_m7_strategy(
         vxn_c: float,
         last_iv: float | None,
         slip_bsm: float = OPT_SLIP,
+        iv_ratio_anchor: float | None = None,
     ) -> tuple[float, float, float, float, float, str]:
         if use_real and k_cents is not None:
             b, a, m, iv, dl, src = real_store.lookup_contract(
@@ -1147,24 +1278,27 @@ def simulate_m7_strategy(
                 bco_mod.eval_skew_iv,
                 bco_mod.bsm_price,
                 slip_bsm=slip_bsm,
+                iv_ratio_anchor=iv_ratio_anchor,
             )
-            _rec_src(src)
+            _rec_src(src, d_str)
             return b, a, m, iv, dl, src
         t_r = max(0, rem_days) / 365.0
         sig = bco_mod.eval_skew_iv(spot_px, k_val, max(t_r, 1.0 / 365.0), r_c, q_c, vxn_c, coeffs)
+        if iv_ratio_anchor is not None and math.isfinite(iv_ratio_anchor) and 0.4 <= iv_ratio_anchor <= 2.5:
+            sig = max(0.05, min(2.5, sig * iv_ratio_anchor))
         mid = bco_mod.bsm_price(spot_px, k_val, t_r, r_c, q_c, sig, opt_type)
         dl = bco_mod.bsm_call_delta(spot_px, k_val, t_r, r_c, q_c, sig) if opt_type == "call" else (bco_mod.bsm_call_delta(spot_px, k_val, t_r, r_c, q_c, sig) - math.exp(-q_c * t_r))
-        _rec_src("bsm_fallback")
+        _rec_src("bsm_fallback", d_str)
         return max(0.0, mid * (1.0 - slip_bsm)), mid * (1.0 + slip_bsm), mid, sig, dl, "bsm_fallback"
 
     def _buy_px(bid: float, ask: float, mid: float, src: str, slip_bsm: float = OPT_SLIP) -> float:
         if use_real:
-            return _roc_mod.exec_buy_price(bid, ask, mid, src, slip_bsm=slip_bsm)
+            return _roc_mod.exec_buy_price(bid, ask, mid, src, slip_bsm=slip_bsm, fill_mode=fill_mode)
         return mid * (1.0 + slip_bsm) + OPT_COMM_PER_SH
 
     def _sell_px(bid: float, ask: float, mid: float, src: str, slip_bsm: float = OPT_SLIP) -> float:
         if use_real:
-            return _roc_mod.exec_sell_price(bid, ask, mid, src, slip_bsm=slip_bsm)
+            return _roc_mod.exec_sell_price(bid, ask, mid, src, slip_bsm=slip_bsm, fill_mode=fill_mode)
         return max(0.0, mid * (1.0 - slip_bsm) - OPT_COMM_PER_SH)
 
     cc_cfg_map: dict[str, tuple[float, float, float, float | None, str | None]] = {
@@ -1413,7 +1547,7 @@ def simulate_m7_strategy(
                         "roll_count": old_rolls + 1,
                     }
 
-        # 1. Pending M7 TP / 50D-Roll Exits at T+1
+        # 1. Pending M7 TP / Adaptive-Roll Exits at T+1
         if i > 0 and any(t.get("pending_tp") or t.get("pending_roll") for t in active_tranches):
             still_open: list[dict[str, Any]] = []
             roll_replacements: list[tuple[float, int, dict[str, Any]]] = []
@@ -1430,15 +1564,17 @@ def simulate_m7_strategy(
                 else:
                     b_ex, a_ex, m_ex, _, _, src_ex = _lookup_opt(
                         d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents"),
-                        exec_px, rem_days, r_cur, q_cur, vxn_ex, tr.get("last_iv"), slip_bsm=OPT_SLIP
+                        exec_px, rem_days, r_cur, q_cur, vxn_ex, tr.get("last_iv"),
+                        slip_bsm=OPT_SLIP, iv_ratio_anchor=tr.get("iv_ratio_anchor"),
                     )
                     put_bid = _sell_px(b_ex, a_ex, m_ex, src_ex, slip_bsm=OPT_SLIP)
                 exit_usd = tr["hedged_shares"] * put_bid
                 is_roll_exit = bool(tr.get("pending_roll")) and not bool(tr.get("pending_tp"))
-                exit_rsn = "roll_50d" if is_roll_exit else tr["tp_reason"]
+                tr_roll_thr_val = int(tr.get("roll_dte_thr") or 50)
+                exit_rsn = (tr.get("tp_reason") or f"roll_{tr_roll_thr_val}d") if is_roll_exit else tr["tp_reason"]
 
                 prev_sig_d = sig_series[i - 1]
-                prev_cap = int(prev_sig_d["target_slots_m7g" if is_graded else "target_slots_m7"])
+                prev_cap = _slots_for_sig(prev_sig_d)
                 will_auto_roll = is_roll_exit and prev_cap > len(still_open) + len(roll_replacements)
 
                 d_sh = 0.0
@@ -1470,6 +1606,8 @@ def simulate_m7_strategy(
                 )
                 hs = tr["hedged_shares"]
                 en_src = tr.get("entry_source", "bsm_fallback")
+                q_tag = _classify_quote_source_tag(en_src, src_ex, tr["entry_date"], d, opra_max_d or "2025-12-15")
+                occ_sym = str(tr.get("occ_symbol") or _occ(tr["exp_date"], "put", tr["kp"]))
                 ledger.append(
                     {
                         "tranche_id": tr["tranche_id"],
@@ -1481,7 +1619,19 @@ def simulate_m7_strategy(
                         "put_otm_pct": otm_pct_int,
                         "tp_mode": tp_code,
                         "roll_mode": roll_mode,
-                        "target_dte": target_dte,
+                        "target_dte": int(tr.get("target_dte") or target_dte),
+                        "roll_dte": int(tr.get("roll_dte_thr") or 0),
+                        "is_cta": bool(tr.get("is_cta", False)),
+                        "quoteSource": q_tag,
+                        "quote_source": q_tag,
+                        "occSymbol": occ_sym,
+                        "occ_symbol": occ_sym,
+                        "exp": tr["exp_date"],
+                        "strike": round(tr["kp"], 2),
+                        "entryBid": round(float(tr.get("entry_bid_raw", tr["entry_put_ask"])), 3),
+                        "entryAsk": round(float(tr.get("entry_ask_raw", tr["entry_put_ask"])), 3),
+                        "exitBid": round(float(b_ex), 3),
+                        "exitAsk": round(float(a_ex), 3),
                         "pricing_source": _classify_trade_source(en_src, src_ex),
                         "entry_source": en_src,
                         "exit_source": src_ex,
@@ -1547,26 +1697,32 @@ def simulate_m7_strategy(
                 )
             active_tranches = still_open
 
-            # Direct 50D Roll replacements using salvaged cash without double stock-fee churn
+            # Direct Adaptive Roll replacements using salvaged cash without double stock-fee churn
             for salv_usd, r_cap, r_sig_d in roll_replacements:
                 r_en, q_en = r_cur, q_cur
                 vxn_en = vxn_ex
+                is_cta_r = bool(r_sig_d.get("M4", False))
+                tr_tgt_dte, tr_ref_dte, tr_roll_thr, (lo_put_r, hi_put_r), (lo_ref_r, hi_ref_r) = _tenor_for_sig(is_cta_r)
                 c_ref = None
                 c_en = None
                 if use_real:
                     c_ref = real_store.select_put_contract(
-                        d, exec_px, ref_dte, ref_moneyness, lo_ref, hi_ref, r_en, q_en,
-                        rec_tag=f"p_{ref_dte}_10",
+                        d, exec_px, tr_ref_dte, ref_moneyness, lo_ref_r, hi_ref_r, r_en, q_en,
+                        rec_tag=f"p_{tr_ref_dte}_10",
                     )
                     c_en = real_store.select_put_contract(
-                        d, exec_px, target_dte, put_moneyness, lo_put, hi_put, r_en, q_en,
-                        rec_tag=f"p_{target_dte}_{otm_pct_int}",
+                        d, exec_px, tr_tgt_dte, put_moneyness, lo_put_r, hi_put_r, r_en, q_en,
+                        rec_tag=f"p_{tr_tgt_dte}_{otm_pct_int}",
                     )
+                    if opra_max_d and d <= opra_max_d and (c_ref is None or c_en is None):
+                        if salv_usd > 1e-8:
+                            core_shares += salv_usd / (exec_px * (1.0 + STOCK_REBAL_FEE))
+                        continue
                 if c_ref is not None:
-                    _rec_src(c_ref["source"])
+                    _rec_src(c_ref["source"], d)
                     put_ask_ref = _buy_px(c_ref["bid"], c_ref["ask"], c_ref["mid"], c_ref["source"], slip_bsm=OPT_SLIP)
                 else:
-                    ref_cal = dt_objs[i] + datetime.timedelta(days=ref_dte)
+                    ref_cal = dt_objs[i] + datetime.timedelta(days=tr_ref_dte)
                     pos_ref = bisect.bisect_left(dt_objs, ref_cal)
                     exp_dt_ref = dt_objs[pos_ref] if pos_ref < n_days else ref_cal
                     t_ref = max(1, (exp_dt_ref - dt_objs[i]).days) / 365.0
@@ -1574,46 +1730,56 @@ def simulate_m7_strategy(
                     sig_ref = bco_mod.eval_skew_iv(exec_px, kp_ref, t_ref, r_en, q_en, vxn_en, coeffs)
                     mid_ref = bco_mod.bsm_price(exec_px, kp_ref, t_ref, r_en, q_en, sig_ref, "put")
                     put_ask_ref = _buy_px(mid_ref * (1.0 - OPT_SLIP), mid_ref * (1.0 + OPT_SLIP), mid_ref, "bsm_fallback", slip_bsm=OPT_SLIP)
-                    _rec_src("bsm_fallback")
+                    _rec_src("bsm_fallback", d)
                 if c_en is not None:
-                    _rec_src(c_en["source"])
+                    _rec_src(c_en["source"], d)
                     exp_date = c_en["exp"]
                     exp_dt = c_en["exp_dt"]
                     t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
                     kp = c_en["strike"]
                     k_cents_en = c_en["k_cents"]
-                    put_ask_en = _buy_px(c_en["bid"], c_en["ask"], c_en["mid"], c_en["source"], slip_bsm=OPT_SLIP)
+                    en_bid_raw = float(c_en["bid"])
+                    en_ask_raw = float(c_en["ask"])
+                    put_ask_en = _buy_px(en_bid_raw, en_ask_raw, c_en["mid"], c_en["source"], slip_bsm=OPT_SLIP)
                     iv_en = c_en["iv"]
                     src_en = c_en["source"]
+                    occ_en = str(c_en.get("occ_symbol") or _occ(exp_date, "put", kp))
                 else:
-                    target_cal = dt_objs[i] + datetime.timedelta(days=target_dte)
+                    target_cal = dt_objs[i] + datetime.timedelta(days=tr_tgt_dte)
                     pos = bisect.bisect_left(dt_objs, target_cal)
                     exp_date, exp_dt = (dates[pos], dt_objs[pos]) if pos < n_days else (target_cal.isoformat(), target_cal)
                     t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
-                    kp = exec_px * put_moneyness
+                    kp = round(exec_px * put_moneyness, 2)
                     k_cents_en = int(round(kp * 100.0))
                     iv_en = bco_mod.eval_skew_iv(exec_px, kp, t_en, r_en, q_en, vxn_en, coeffs)
                     mid_en = bco_mod.bsm_price(exec_px, kp, t_en, r_en, q_en, iv_en, "put")
-                    put_ask_en = _buy_px(mid_en * (1.0 - OPT_SLIP), mid_en * (1.0 + OPT_SLIP), mid_en, "bsm_fallback", slip_bsm=OPT_SLIP)
+                    en_bid_raw = max(0.0, mid_en * (1.0 - OPT_SLIP))
+                    en_ask_raw = mid_en * (1.0 + OPT_SLIP)
+                    put_ask_en = _buy_px(en_bid_raw, en_ask_raw, mid_en, "bsm_fallback", slip_bsm=OPT_SLIP)
                     src_en = "bsm_fallback"
-                    _rec_src(src_en)
+                    occ_en = _occ(exp_date, "put", kp)
+                    _rec_src(src_en, d)
+
+                iv_anchor_en = None
+                if src_en.startswith("real_opra") and iv_en is not None and math.isfinite(iv_en) and 0.02 <= iv_en <= 3.0:
+                    bsm_iv_ref = bco_mod.eval_skew_iv(exec_px, kp, max(t_en, 1.0 / 365.0), r_en, q_en, vxn_en, coeffs)
+                    iv_anchor_en = max(0.5, min(2.0, iv_en / max(bsm_iv_ref, 0.05)))
 
                 already_ref_cov = sum(t["ref_cov_sh"] for t in active_tranches)
-                eff_core_sh = core_shares + (salv_usd / exec_px)
                 cost_sh_frac_ref = put_ask_ref / (exec_px * (1.0 - STOCK_REBAL_FEE))
-                max_cov = eff_core_sh * (slot_coverage * max(2, r_cap))
+                max_cov = core_shares * (slot_coverage * max(2, r_cap))
                 avail_sh_ref = max(0.0, max_cov - already_ref_cov)
-                ref_hedged_sh = min(eff_core_sh * slot_coverage, avail_sh_ref / (1.0 + cost_sh_frac_ref))
+                ref_hedged_sh = min(core_shares * slot_coverage, avail_sh_ref / (1.0 + cost_sh_frac_ref))
                 ref_budget_usd = ref_hedged_sh * put_ask_ref
                 if put_ask_en >= 0.03 and ref_budget_usd > 1.0:
                     hedged_sh = ref_budget_usd / put_ask_en
                     entry_cost_usd = ref_budget_usd
                     rem_need = entry_cost_usd - salv_usd
                     d_sh_entry = 0.0
-                    if rem_need < 0.0:
+                    if rem_need < -1e-8:
                         d_sh_entry = (-rem_need) / (exec_px * (1.0 + STOCK_REBAL_FEE))
                         core_shares += d_sh_entry
-                    elif rem_need > 0.0:
+                    elif rem_need > 1e-8:
                         if cc_enabled and cc_cash > 0.0:
                             use_cc = min(cc_cash, rem_need)
                             cc_cash -= use_cc
@@ -1627,19 +1793,24 @@ def simulate_m7_strategy(
                     slot_num = min(s for s in range(1, max(max_slots, r_cap) + 1) if s not in used_slots)
                     hr = hedged_sh / max(core_shares, 1e-6)
                     prev_row = rows_eval[i - 1]
-                    mods, t_code, t_en_l, t_zh_l = format_m7_trigger_labels(r_sig_d, max_slots)
+                    mods, t_code, t_en_l, t_zh_l = format_m7_trigger_labels(r_sig_d, max_slots, core3_only=is_core3)
+                    c_prob_r, p1_r, p2_r, p3_r = _prob_tuple(r_sig_d)
                     active_tranches.append(
                         {
                             "tranche_id": tid,
                             "slot_num": slot_num,
                             "tier": r_cap,
+                            "is_cta": is_cta_r,
+                            "target_dte": tr_tgt_dte,
+                            "roll_dte_thr": tr_roll_thr,
+                            "occ_symbol": occ_en,
                             "signal_date": dates[i - 1],
                             "sig_score": int(prev_row["score"]),
                             "sig_ad_below50": bool(float(prev_row["ad_line"]) < float(prev_row["ad_sma50"])),
-                            "crisis_prob": float(r_sig_d["crisis_prob"]),
-                            "p1": float(r_sig_d["p1"]),
-                            "p2": float(r_sig_d["p2"]),
-                            "p3": float(r_sig_d["p3"]),
+                            "crisis_prob": c_prob_r,
+                            "p1": p1_r,
+                            "p2": p2_r,
+                            "p3": p3_r,
                             "triggered_modules": mods,
                             "trigger_code": t_code,
                             "trigger_en": t_en_l,
@@ -1656,8 +1827,11 @@ def simulate_m7_strategy(
                             "entry_q": q_en,
                             "kp": kp,
                             "k_cents": k_cents_en,
-                            "last_iv": iv_en,
+                            "last_iv": iv_en if (iv_en is not None and math.isfinite(iv_en)) else None,
+                            "iv_ratio_anchor": iv_anchor_en,
                             "entry_source": src_en,
+                            "entry_bid_raw": en_bid_raw,
+                            "entry_ask_raw": en_ask_raw,
                             "hedged_shares": hedged_sh,
                             "ref_cov_sh": ref_hedged_sh,
                             "hedged_ratio": hr,
@@ -1678,128 +1852,153 @@ def simulate_m7_strategy(
         if i > 0 and pending_sig is not None and len(active_tranches) < pending_sig["cap_slots"]:
             r_en, q_en = pending_sig["r"], pending_sig["q"]
             vxn_en = vxn_ex
+            is_cta_en = bool(pending_sig.get("is_cta", False))
+            tr_tgt_dte, tr_ref_dte, tr_roll_thr, (lo_put_e, hi_put_e), (lo_ref_e, hi_ref_e) = _tenor_for_sig(is_cta_en)
 
             c_ref = None
             c_en = None
             if use_real:
                 c_ref = real_store.select_put_contract(
-                    d, exec_px, ref_dte, ref_moneyness, lo_ref, hi_ref, r_en, q_en,
-                    rec_tag=f"p_{ref_dte}_10",
+                    d, exec_px, tr_ref_dte, ref_moneyness, lo_ref_e, hi_ref_e, r_en, q_en,
+                    rec_tag=f"p_{tr_ref_dte}_10",
                 )
                 c_en = real_store.select_put_contract(
-                    d, exec_px, target_dte, put_moneyness, lo_put, hi_put, r_en, q_en,
-                    rec_tag=f"p_{target_dte}_{otm_pct_int}",
+                    d, exec_px, tr_tgt_dte, put_moneyness, lo_put_e, hi_put_e, r_en, q_en,
+                    rec_tag=f"p_{tr_tgt_dte}_{otm_pct_int}",
                 )
 
-            if c_ref is not None:
-                _rec_src(c_ref["source"])
-                put_ask_ref = _buy_px(c_ref["bid"], c_ref["ask"], c_ref["mid"], c_ref["source"], slip_bsm=OPT_SLIP)
+            if use_real and opra_max_d and d <= opra_max_d and (c_ref is None or c_en is None):
+                pending_sig = None
             else:
-                ref_cal = dt_objs[i] + datetime.timedelta(days=ref_dte)
-                pos_ref = bisect.bisect_left(dt_objs, ref_cal)
-                exp_dt_ref = dt_objs[pos_ref] if pos_ref < n_days else ref_cal
-                t_ref = max(1, (exp_dt_ref - dt_objs[i]).days) / 365.0
-                kp_ref = exec_px * ref_moneyness
-                sig_ref = bco_mod.eval_skew_iv(exec_px, kp_ref, t_ref, r_en, q_en, vxn_en, coeffs)
-                mid_ref = bco_mod.bsm_price(exec_px, kp_ref, t_ref, r_en, q_en, sig_ref, "put")
-                put_ask_ref = _buy_px(mid_ref * (1.0 - OPT_SLIP), mid_ref * (1.0 + OPT_SLIP), mid_ref, "bsm_fallback", slip_bsm=OPT_SLIP)
-                _rec_src("bsm_fallback")
-
-            if c_en is not None:
-                _rec_src(c_en["source"])
-                exp_date = c_en["exp"]
-                exp_dt = c_en["exp_dt"]
-                t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
-                kp = c_en["strike"]
-                k_cents_en = c_en["k_cents"]
-                put_ask_en = _buy_px(c_en["bid"], c_en["ask"], c_en["mid"], c_en["source"], slip_bsm=OPT_SLIP)
-                iv_en = c_en["iv"]
-                src_en = c_en["source"]
-            else:
-                target_cal = dt_objs[i] + datetime.timedelta(days=target_dte)
-                pos = bisect.bisect_left(dt_objs, target_cal)
-                exp_date, exp_dt = (dates[pos], dt_objs[pos]) if pos < n_days else (target_cal.isoformat(), target_cal)
-                t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
-                kp = exec_px * put_moneyness
-                k_cents_en = int(round(kp * 100.0))
-                iv_en = bco_mod.eval_skew_iv(exec_px, kp, t_en, r_en, q_en, vxn_en, coeffs)
-                mid_en = bco_mod.bsm_price(exec_px, kp, t_en, r_en, q_en, iv_en, "put")
-                put_ask_en = _buy_px(mid_en * (1.0 - OPT_SLIP), mid_en * (1.0 + OPT_SLIP), mid_en, "bsm_fallback", slip_bsm=OPT_SLIP)
-                src_en = "bsm_fallback"
-                _rec_src(src_en)
-
-            already_ref_cov = sum(t["ref_cov_sh"] for t in active_tranches)
-            cost_sh_frac_ref = put_ask_ref / (exec_px * (1.0 - STOCK_REBAL_FEE))
-            max_cov = core_shares * (slot_coverage * max(2, pending_sig["cap_slots"]))
-            avail_sh_ref = max(0.0, max_cov - already_ref_cov)
-            ref_hedged_sh = min(core_shares * slot_coverage, avail_sh_ref / (1.0 + cost_sh_frac_ref))
-            ref_budget_usd = ref_hedged_sh * put_ask_ref
-
-            if put_ask_en >= 0.03 and ref_budget_usd > 1.0:
-                hedged_sh = ref_budget_usd / put_ask_en
-                entry_cost_usd = ref_budget_usd
-                if cc_enabled and cc_cash >= entry_cost_usd:
-                    cc_cash -= entry_cost_usd
-                    cc_funded_puts += entry_cost_usd
-                    d_sh_entry = 0.0
-                elif cc_enabled and cc_cash > 0.0:
-                    paid_cc = cc_cash
-                    cc_funded_puts += paid_cc
-                    rem_cost = entry_cost_usd - paid_cc
-                    cc_cash = 0.0
-                    d_sh_entry = -rem_cost / (exec_px * (1.0 - STOCK_REBAL_FEE))
-                    core_shares += d_sh_entry
+                if c_ref is not None:
+                    _rec_src(c_ref["source"], d)
+                    put_ask_ref = _buy_px(c_ref["bid"], c_ref["ask"], c_ref["mid"], c_ref["source"], slip_bsm=OPT_SLIP)
                 else:
-                    d_sh_entry = -entry_cost_usd / (exec_px * (1.0 - STOCK_REBAL_FEE))
-                    core_shares += d_sh_entry
+                    ref_cal = dt_objs[i] + datetime.timedelta(days=tr_ref_dte)
+                    pos_ref = bisect.bisect_left(dt_objs, ref_cal)
+                    exp_dt_ref = dt_objs[pos_ref] if pos_ref < n_days else ref_cal
+                    t_ref = max(1, (exp_dt_ref - dt_objs[i]).days) / 365.0
+                    kp_ref = exec_px * ref_moneyness
+                    sig_ref = bco_mod.eval_skew_iv(exec_px, kp_ref, t_ref, r_en, q_en, vxn_en, coeffs)
+                    mid_ref = bco_mod.bsm_price(exec_px, kp_ref, t_ref, r_en, q_en, sig_ref, "put")
+                    put_ask_ref = _buy_px(mid_ref * (1.0 - OPT_SLIP), mid_ref * (1.0 + OPT_SLIP), mid_ref, "bsm_fallback", slip_bsm=OPT_SLIP)
+                    _rec_src("bsm_fallback", d)
 
-                tid += 1
-                used_slots = {t["slot_num"] for t in active_tranches}
-                slot_num = min(s for s in range(1, max(max_slots, pending_sig["cap_slots"]) + 1) if s not in used_slots)
-                hr = hedged_sh / max(core_shares, 1e-6)
-                active_tranches.append(
-                    {
-                        "tranche_id": tid,
-                        "slot_num": slot_num,
-                        "tier": pending_sig["tier"],
-                        "signal_date": pending_sig["signal_date"],
-                        "sig_score": pending_sig["sig_score"],
-                        "sig_ad_below50": pending_sig["sig_ad_below50"],
-                        "crisis_prob": pending_sig["crisis_prob"],
-                        "p1": pending_sig["p1"],
-                        "p2": pending_sig["p2"],
-                        "p3": pending_sig["p3"],
-                        "triggered_modules": pending_sig["triggered_modules"],
-                        "trigger_code": pending_sig["trigger_code"],
-                        "trigger_en": pending_sig["trigger_en"],
-                        "trigger_zh": pending_sig["trigger_zh"],
-                        "entry_date": d,
-                        "entry_dt": dt_objs[i],
-                        "exp_date": exp_date,
-                        "exp_dt": exp_dt,
-                        "T_entry": t_en,
-                        "entry_spot": exec_px,
-                        "entry_vxn": vxn_en,
-                        "entry_vix_ratio": pending_sig["vix_ratio"],
-                        "entry_r": r_en,
-                        "entry_q": q_en,
-                        "kp": kp,
-                        "k_cents": k_cents_en,
-                        "last_iv": iv_en,
-                        "entry_source": src_en,
-                        "hedged_shares": hedged_sh,
-                        "ref_cov_sh": ref_hedged_sh,
-                        "hedged_ratio": hr,
-                        "entry_put_ask": put_ask_en,
-                        "entry_cost_usd": entry_cost_usd,
-                        "entry_shares_sold": d_sh_entry,
-                        "comp_entry_cost_usd": d_sh_entry * mult_morning,
-                        "pending_tp": False,
-                        "pending_roll": False,
-                        "tp_trigger_ratio": 0.0,
-                        "tp_reason": "",
-                    }
-                )
+                if c_en is not None:
+                    _rec_src(c_en["source"], d)
+                    exp_date = c_en["exp"]
+                    exp_dt = c_en["exp_dt"]
+                    t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
+                    kp = c_en["strike"]
+                    k_cents_en = c_en["k_cents"]
+                    en_bid_raw = float(c_en["bid"])
+                    en_ask_raw = float(c_en["ask"])
+                    put_ask_en = _buy_px(en_bid_raw, en_ask_raw, c_en["mid"], c_en["source"], slip_bsm=OPT_SLIP)
+                    iv_en = c_en["iv"]
+                    src_en = c_en["source"]
+                    occ_en = str(c_en.get("occ_symbol") or _occ(exp_date, "put", kp))
+                else:
+                    target_cal = dt_objs[i] + datetime.timedelta(days=tr_tgt_dte)
+                    pos = bisect.bisect_left(dt_objs, target_cal)
+                    exp_date, exp_dt = (dates[pos], dt_objs[pos]) if pos < n_days else (target_cal.isoformat(), target_cal)
+                    t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
+                    kp = round(exec_px * put_moneyness, 2)
+                    k_cents_en = int(round(kp * 100.0))
+                    iv_en = bco_mod.eval_skew_iv(exec_px, kp, t_en, r_en, q_en, vxn_en, coeffs)
+                    mid_en = bco_mod.bsm_price(exec_px, kp, t_en, r_en, q_en, iv_en, "put")
+                    en_bid_raw = max(0.0, mid_en * (1.0 - OPT_SLIP))
+                    en_ask_raw = mid_en * (1.0 + OPT_SLIP)
+                    put_ask_en = _buy_px(en_bid_raw, en_ask_raw, mid_en, "bsm_fallback", slip_bsm=OPT_SLIP)
+                    src_en = "bsm_fallback"
+                    occ_en = _occ(exp_date, "put", kp)
+                    _rec_src(src_en, d)
+
+                iv_anchor_en = None
+                if src_en.startswith("real_opra") and iv_en is not None and math.isfinite(iv_en) and 0.02 <= iv_en <= 3.0:
+                    bsm_iv_ref = bco_mod.eval_skew_iv(exec_px, kp, max(t_en, 1.0 / 365.0), r_en, q_en, vxn_en, coeffs)
+                    iv_anchor_en = max(0.5, min(2.0, iv_en / max(bsm_iv_ref, 0.05)))
+
+                already_ref_cov = sum(t["ref_cov_sh"] for t in active_tranches)
+                cost_sh_frac_ref = put_ask_ref / (exec_px * (1.0 - STOCK_REBAL_FEE))
+                max_cov = core_shares * (slot_coverage * max(2, pending_sig["cap_slots"]))
+                avail_sh_ref = max(0.0, max_cov - already_ref_cov)
+                ref_hedged_sh = min(core_shares * slot_coverage, avail_sh_ref / (1.0 + cost_sh_frac_ref))
+                ref_budget_usd = ref_hedged_sh * put_ask_ref
+
+                if put_ask_en >= 0.03 and ref_budget_usd > 1.0:
+                    hedged_sh = ref_budget_usd / put_ask_en
+                    entry_cost_usd = ref_budget_usd
+                    if cc_enabled and cc_cash >= entry_cost_usd:
+                        cc_cash -= entry_cost_usd
+                        cc_funded_puts += entry_cost_usd
+                        d_sh_entry = 0.0
+                    elif cc_enabled and cc_cash > 0.0:
+                        paid_cc = cc_cash
+                        cc_funded_puts += paid_cc
+                        rem_cost = entry_cost_usd - paid_cc
+                        cc_cash = 0.0
+                        d_sh_entry = -rem_cost / (exec_px * (1.0 - STOCK_REBAL_FEE))
+                        core_shares += d_sh_entry
+                    else:
+                        d_sh_entry = -entry_cost_usd / (exec_px * (1.0 - STOCK_REBAL_FEE))
+                        core_shares += d_sh_entry
+
+                    tid += 1
+                    used_slots = {t["slot_num"] for t in active_tranches}
+                    slot_num = min(s for s in range(1, max(max_slots, pending_sig["cap_slots"]) + 1) if s not in used_slots)
+                    hr = hedged_sh / max(core_shares, 1e-6)
+                    active_tranches.append(
+                        {
+                            "tranche_id": tid,
+                            "slot_num": slot_num,
+                            "tier": pending_sig["tier"],
+                            "is_cta": is_cta_en,
+                            "target_dte": tr_tgt_dte,
+                            "roll_dte_thr": tr_roll_thr,
+                            "occ_symbol": occ_en,
+                            "signal_date": pending_sig["signal_date"],
+                            "sig_score": pending_sig["sig_score"],
+                            "sig_ad_below50": pending_sig["sig_ad_below50"],
+                            "crisis_prob": pending_sig["crisis_prob"],
+                            "p1": pending_sig["p1"],
+                            "p2": pending_sig["p2"],
+                            "p3": pending_sig["p3"],
+                            "triggered_modules": pending_sig["triggered_modules"],
+                            "trigger_code": pending_sig["trigger_code"],
+                            "trigger_en": pending_sig["trigger_en"],
+                            "trigger_zh": pending_sig["trigger_zh"],
+                            "entry_date": d,
+                            "entry_dt": dt_objs[i],
+                            "exp_date": exp_date,
+                            "exp_dt": exp_dt,
+                            "T_entry": t_en,
+                            "entry_spot": exec_px,
+                            "entry_vxn": vxn_en,
+                            "entry_vix_ratio": pending_sig["vix_ratio"],
+                            "entry_r": r_en,
+                            "entry_q": q_en,
+                            "kp": kp,
+                            "k_cents": k_cents_en,
+                            "last_iv": iv_en if (iv_en is not None and math.isfinite(iv_en)) else None,
+                            "iv_ratio_anchor": iv_anchor_en,
+                            "entry_source": src_en,
+                            "entry_bid_raw": en_bid_raw,
+                            "entry_ask_raw": en_ask_raw,
+                            "hedged_shares": hedged_sh,
+                            "ref_cov_sh": ref_hedged_sh,
+                            "hedged_ratio": hr,
+                            "entry_put_ask": put_ask_en,
+                            "entry_cost_usd": entry_cost_usd,
+                            "entry_shares_sold": d_sh_entry,
+                            "comp_entry_cost_usd": d_sh_entry * mult_morning,
+                            "pending_tp": False,
+                            "pending_roll": False,
+                            "tp_trigger_ratio": 0.0,
+                            "tp_reason": "",
+                        }
+                    )
+                pending_sig = None
+        else:
             pending_sig = None
 
         # 2b. Engine 2 Covered Call & Engine 3 Wheel T+1 executions
@@ -2001,9 +2200,9 @@ def simulate_m7_strategy(
                     "entry_vix_ratio": ps["vix_ratio"],
                 }
 
-        # 3. Dividends DRIP
-        if div > 0.0 and core_shares > 0.0 and (not use_real or i > 0):
-            core_shares += (core_shares * div) / (cl if use_real else cl * (1.0 + STOCK_REBAL_FEE))
+        # 3. Dividends DRIP (exact STOCK_REBAL_FEE parity with 05_cta_shorter_dte_real_opra_study.py)
+        if div > 0.0 and core_shares > 0.0:
+            core_shares += (core_shares * div) / (cl * (1.0 + STOCK_REBAL_FEE))
             if assigned_shares > 0.0:
                 sp_cash += assigned_shares * div
 
@@ -2041,6 +2240,10 @@ def simulate_m7_strategy(
                 )
                 hs = tr["hedged_shares"]
                 en_src = tr.get("entry_source", "bsm_fallback")
+                ex_src_exp = "real_opra_exact" if (use_real and opra_max_d and d <= opra_max_d) else en_src
+                q_tag_exp = _classify_quote_source_tag(en_src, ex_src_exp, tr["entry_date"], d, opra_max_d or "2025-12-15")
+                occ_sym = str(tr.get("occ_symbol") or _occ(tr["exp_date"], "put", tr["kp"]))
+                tr_tgt_d = int(tr.get("target_dte") or target_dte)
                 ledger.append(
                     {
                         "tranche_id": tr["tranche_id"],
@@ -2052,17 +2255,29 @@ def simulate_m7_strategy(
                         "put_otm_pct": otm_pct_int,
                         "tp_mode": tp_code,
                         "roll_mode": roll_mode,
-                        "target_dte": target_dte,
-                        "pricing_source": _classify_trade_source(en_src, en_src),
+                        "target_dte": tr_tgt_d,
+                        "roll_dte": int(tr.get("roll_dte_thr") or 0),
+                        "is_cta": bool(tr.get("is_cta", False)),
+                        "quoteSource": q_tag_exp,
+                        "quote_source": q_tag_exp,
+                        "occSymbol": occ_sym,
+                        "occ_symbol": occ_sym,
+                        "exp": tr["exp_date"],
+                        "strike": round(tr["kp"], 2),
+                        "entryBid": round(float(tr.get("entry_bid_raw", tr["entry_put_ask"])), 3),
+                        "entryAsk": round(float(tr.get("entry_ask_raw", tr["entry_put_ask"])), 3),
+                        "exitBid": round(float(put_intr), 3),
+                        "exitAsk": round(float(put_intr), 3),
+                        "pricing_source": _classify_trade_source(en_src, ex_src_exp),
                         "entry_source": en_src,
-                        "exit_source": en_src,
+                        "exit_source": ex_src_exp,
                         "signal_date": tr["signal_date"],
                         "entry_date": tr["entry_date"],
                         "planned_exp_date": tr["exp_date"],
                         "exit_date": d,
                         "actual_days_held": (dt_objs[i] - tr["entry_dt"]).days,
                         "rem_dte_at_exit": 0,
-                        "exit_reason": "expiry_120dte" if is_roll50 else "expiry_90dte",
+                        "exit_reason": f"expiry_{tr_tgt_d}dte",
                         "sig_score": tr["sig_score"],
                         "sig_ad_below50": tr["sig_ad_below50"],
                         "crisis_prob": tr["crisis_prob"],
@@ -2120,17 +2335,22 @@ def simulate_m7_strategy(
                 still_open_exp.append(tr)
         active_tranches = still_open_exp
 
-        # 5. EOD MTM & Unified TP Check
+        # 5. EOD MTM & Unified TP / Adaptive Roll Check
         put_mtm = 0.0
         for tr in active_tranches:
             rem_days = max(1, (tr["exp_dt"] - dt_objs[i]).days)
-            _, _, put_mid, iv_m, _, _ = _lookup_opt(
+            _, _, put_mid, iv_m, _, src_mtm = _lookup_opt(
                 d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents"),
-                cl, rem_days, r_cur, q_cur, vxn_cl, tr.get("last_iv"), slip_bsm=OPT_SLIP
+                cl, rem_days, r_cur, q_cur, vxn_cl, tr.get("last_iv"),
+                slip_bsm=OPT_SLIP, iv_ratio_anchor=tr.get("iv_ratio_anchor"),
             )
-            if math.isfinite(iv_m) and 0.03 <= iv_m <= 2.5:
+            if math.isfinite(iv_m) and 0.02 <= iv_m <= 3.0:
                 tr["last_iv"] = iv_m
+                if src_mtm.startswith("real_opra"):
+                    bsm_iv_m = bco_mod.eval_skew_iv(cl, tr["kp"], max(rem_days / 365.0, 1.0 / 365.0), r_cur, q_cur, vxn_cl, coeffs)
+                    tr["iv_ratio_anchor"] = max(0.5, min(2.0, iv_m / max(bsm_iv_m, 0.05)))
             put_mtm += tr["hedged_shares"] * put_mid
+            tr_roll_thr_cur = int(tr.get("roll_dte_thr") or 0)
             if not tr["pending_tp"]:
                 vix_ok = (vix_r >= vix_ratio_tp) and ((cl <= tr["kp"]) if require_itm_tp else True)
                 if vix_ok:
@@ -2140,11 +2360,11 @@ def simulate_m7_strategy(
                 elif rem_days <= put_mult_max_dte and tr["entry_put_ask"] > 1e-6 and put_mid >= tr["entry_put_ask"] * put_mult_tp:
                     tr["pending_tp"] = True
                     tr["tp_trigger_ratio"] = vix_r
-                    tr["tp_reason"] = "put_5x_dte75_tp" if is_roll50 else "put_5x_dte45_tp"
-                elif is_roll50 and rem_days <= roll_dte_thr and not tr.get("pending_roll"):
+                    tr["tp_reason"] = "put_5x_dte45_tp"
+                elif tr_roll_thr_cur > 0 and rem_days <= tr_roll_thr_cur and not tr.get("pending_roll"):
                     tr["pending_roll"] = True
                     tr["tp_trigger_ratio"] = vix_r
-                    tr["tp_reason"] = "roll_50d"
+                    tr["tp_reason"] = f"roll_{tr_roll_thr_cur}d"
 
         # 5b. Engine 2 & Engine 3 EOD MTM/Expiries
         cc_mtm = 0.0
@@ -2362,17 +2582,19 @@ def simulate_m7_strategy(
         any_active_list.append(1 if (was_active_today or len(active_tranches) > 0) else 0)
         active_slots_list.append(max(active_slots_today, len(active_tranches)))
 
-        # 6. EOD M7 Signal & Hard Redline Gate for T+1 Open
-        cap_slots = int(sig_d["target_slots_m7g" if is_graded else "target_slots_m7"])
+        # 6. EOD M7 Signal & Hard Redline Gate for T+1 Open (exact parity with 05_cta_shorter_dte_real_opra_study.py)
+        cap_slots = _slots_for_sig(sig_d)
         redline_blocked = bool(vxn_cl > 27.0 or vix_r >= 1.02)
-        eff_open = [t for t in active_tranches if not t.get("pending_tp")] if is_roll50 else active_tranches
+        eff_open = active_tranches
         if cap_slots > 0 and not redline_blocked and len(eff_open) < cap_slots:
             min_gap = step_cal_days if cap_slots <= 2 else escalate_min_days
             recent = any((dt_objs[i] - t["entry_dt"]).days < min_gap for t in eff_open)
             if not recent:
-                mods, t_code, t_en, t_zh = format_m7_trigger_labels(sig_d, max_slots)
+                mods, t_code, t_en, t_zh = format_m7_trigger_labels(sig_d, max_slots, core3_only=is_core3)
+                c_prob_s, p1_s, p2_s, p3_s = _prob_tuple(sig_d)
                 pending_sig = {
                     "signal_date": d,
+                    "is_cta": bool(sig_d.get("M4", False)),
                     "vxn": vxn_cl,
                     "close": cl,
                     "vix_ratio": vix_r,
@@ -2382,10 +2604,10 @@ def simulate_m7_strategy(
                     "tier": cap_slots,
                     "sig_score": int(row["score"]),
                     "sig_ad_below50": bool(float(row["ad_line"]) < float(row["ad_sma50"])),
-                    "crisis_prob": float(sig_d["crisis_prob"]),
-                    "p1": float(sig_d["p1"]),
-                    "p2": float(sig_d["p2"]),
-                    "p3": float(sig_d["p3"]),
+                    "crisis_prob": c_prob_s,
+                    "p1": p1_s,
+                    "p2": p2_s,
+                    "p3": p3_s,
                     "triggered_modules": mods,
                     "trigger_code": t_code,
                     "trigger_en": t_en,
@@ -2410,7 +2632,7 @@ def simulate_m7_strategy(
 
     closed_trades_count = len(ledger)
 
-    # Serialize any open live tranches at final EOD (e.g. ITM_TP Slot 1 on 2026-11-20!)
+    # Serialize any open live tranches at final EOD
     last_r = rows_eval[-1]
     last_d = dates[-1]
     last_dt = dt_objs[-1]
@@ -2425,8 +2647,11 @@ def simulate_m7_strategy(
     for tr in active_tranches:
         rem_d = max(1, (tr["exp_dt"] - last_dt).days)
         t_rem = rem_d / 365.0
-        sp_iv = bco_mod.eval_skew_iv(last_cl, tr["kp"], t_rem, last_rf, last_q, last_vxn, coeffs)
-        pm = bco_mod.bsm_price(last_cl, tr["kp"], t_rem, last_rf, last_q, sp_iv, "put")
+        b_live, a_live, pm, _, _, src_live = _lookup_opt(
+            last_d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents"),
+            last_cl, rem_d, last_rf, last_q, last_vxn, tr.get("last_iv"),
+            slip_bsm=OPT_SLIP, iv_ratio_anchor=tr.get("iv_ratio_anchor"),
+        )
         hs = tr["hedged_shares"]
         mtm_cash_usd = hs * pm
         mtm_net_pnl = mtm_cash_usd - tr["entry_cost_usd"]
@@ -2451,14 +2676,19 @@ def simulate_m7_strategy(
             coeffs,
             actual_net_sh,
         )
+        tr_tgt_d = int(tr.get("target_dte") or target_dte)
+        tr_roll_d = int(tr.get("roll_dte_thr") or 0)
         is_armed = bool(tr.get("pending_tp")) or bool(tr.get("pending_roll"))
-        armed_reason = tr.get("tp_reason") or ("roll_50d" if tr.get("pending_roll") else "")
-        if is_armed and armed_reason == "roll_50d":
-            live_reason = "live_roll50_armed_next_open"
+        armed_reason = tr.get("tp_reason") or (f"roll_{tr_roll_d}d" if tr.get("pending_roll") else "")
+        if is_armed and str(armed_reason).startswith("roll_"):
+            live_reason = f"live_{armed_reason}_armed_next_open"
         elif is_armed:
             live_reason = "live_tp_armed_next_open"
         else:
             live_reason = "open_live_mtm"
+        en_src_l = tr.get("entry_source", "bsm_fallback")
+        q_tag_live = _classify_quote_source_tag(en_src_l, src_live, tr["entry_date"], last_d, opra_max_d or "2025-12-15")
+        occ_sym = str(tr.get("occ_symbol") or _occ(tr["exp_date"], "put", tr["kp"]))
         ledger.append(
             {
                 "tranche_id": tr["tranche_id"],
@@ -2470,7 +2700,19 @@ def simulate_m7_strategy(
                 "put_otm_pct": otm_pct_int,
                 "tp_mode": tp_code,
                 "roll_mode": roll_mode,
-                "target_dte": target_dte,
+                "target_dte": tr_tgt_d,
+                "roll_dte": tr_roll_d,
+                "is_cta": bool(tr.get("is_cta", False)),
+                "quoteSource": q_tag_live,
+                "quote_source": q_tag_live,
+                "occSymbol": occ_sym,
+                "occ_symbol": occ_sym,
+                "exp": tr["exp_date"],
+                "strike": round(tr["kp"], 2),
+                "entryBid": round(float(tr.get("entry_bid_raw", tr["entry_put_ask"])), 3),
+                "entryAsk": round(float(tr.get("entry_ask_raw", tr["entry_put_ask"])), 3),
+                "exitBid": round(float(b_live), 3),
+                "exitAsk": round(float(a_live), 3),
                 "signal_date": tr["signal_date"],
                 "entry_date": tr["entry_date"],
                 "planned_exp_date": tr["exp_date"],
@@ -2482,9 +2724,9 @@ def simulate_m7_strategy(
                 "actual_days_held": (last_dt - tr["entry_dt"]).days,
                 "rem_dte_at_exit": rem_d,
                 "exit_reason": live_reason,
-                "pricing_source": _classify_trade_source(tr.get("entry_source", "bsm_fallback"), tr.get("entry_source", "bsm_fallback")),
-                "entry_source": tr.get("entry_source", "bsm_fallback"),
-                "exit_source": "bsm_fallback",
+                "pricing_source": _classify_trade_source(en_src_l, src_live),
+                "entry_source": en_src_l,
+                "exit_source": src_live,
                 "sig_score": tr["sig_score"],
                 "sig_ad_below50": tr["sig_ad_below50"],
                 "crisis_prob": tr["crisis_prob"],
@@ -2546,9 +2788,13 @@ def simulate_m7_strategy(
                 "tranche_type": "naked_put",
                 "put_otm_pct": otm_pct_int,
                 "roll_mode": roll_mode,
-                "target_dte": target_dte,
-                "roll_dte": roll_dte_thr,
-                "days_to_roll50": max(0, rem_d - 50) if is_roll50 else None,
+                "target_dte": tr_tgt_d,
+                "roll_dte": tr_roll_d,
+                "is_cta": bool(tr.get("is_cta", False)),
+                "occSymbol": occ_sym,
+                "quoteSource": q_tag_live,
+                "days_to_roll": max(0, rem_d - tr_roll_d) if tr_roll_d > 0 else None,
+                "days_to_roll50": max(0, rem_d - tr_roll_d) if tr_roll_d > 0 else None,
                 "entry_date": tr["entry_date"],
                 "exp_date": tr["exp_date"],
                 "rem_dte": rem_d,
@@ -2575,7 +2821,7 @@ def simulate_m7_strategy(
             }
         )
 
-    # Metrics (matching run_8models_crisis_study.py identically!)
+    # Metrics (matching 02_run_real_quotes_backtest.py & 09_core3_pruned_ablation_real_opra.py!)
     yrs = (dt_objs[-1] - dt_objs[0]).days / 365.25
     cagr = (nav_list[-1] / INITIAL_CAPITAL) ** (1.0 / yrs) - 1.0
     rets = [nav_list[j] / nav_list[j - 1] - 1.0 for j in range(1, n_days)]
@@ -2601,22 +2847,34 @@ def simulate_m7_strategy(
             mdd = dd
     calmar = cagr / abs(mdd) if mdd < 0 else 0.0
 
-    n_tp = sum(1 for x in ledger if "tp" in x["exit_reason"] and not x.get("is_open_live"))
-    roll_exits = [x for x in ledger if x["exit_reason"] == "roll_50d" and not x.get("is_open_live")]
+    closed_rows = [x for x in ledger if not x.get("is_open_live")]
+    n_closed = len(closed_rows)
+    closed_pnls = [float(x["exit_net_cash_usd"]) - float(x["entry_cost_usd"]) for x in closed_rows]
+    win_cnt = sum(1 for p in closed_pnls if p > 0.0)
+    win_rate_pct = (win_cnt / n_closed * 100.0) if n_closed > 0 else 0.0
+    gross_win_usd = sum(p for p in closed_pnls if p > 0.0)
+    gross_loss_usd = sum(-p for p in closed_pnls if p <= 0.0)
+    profit_factor = (gross_win_usd / gross_loss_usd) if gross_loss_usd > 1e-6 else 0.0
+
+    n_tp = sum(1 for x in closed_rows if "tp" in str(x["exit_reason"]))
+    roll_exits = [x for x in closed_rows if str(x["exit_reason"]).startswith("roll_")]
     roll_salvage_count = len(roll_exits)
+    roll_30d_count = sum(1 for x in closed_rows if x["exit_reason"] == "roll_30d")
+    roll_50d_count = sum(1 for x in closed_rows if x["exit_reason"] == "roll_50d")
     avg_roll_salvage_pct = (
         (sum(float(x.get("roi_mult") or 0.0) for x in roll_exits) / roll_salvage_count) * 100.0
         if roll_salvage_count > 0
         else 0.0
     )
     naked_spent = sum(x["entry_cost_usd"] for x in ledger)
-    gross_put = sum(x["exit_net_cash_usd"] for x in ledger if not x.get("is_open_live"))
+    gross_put = sum(x["exit_net_cash_usd"] for x in closed_rows)
+    payout_to_cost = (gross_put / sum(x["entry_cost_usd"] for x in closed_rows)) if closed_rows else 0.0
     net_alpha = nav_list[-1] - bh_m7["end_nav"]
     pct_active = (sum(any_active_list) / n_days) * 100.0
     active_days = max(1, sum(any_active_list))
     extra_sh_vs_bh = equiv_sh_list[-1] - final_bh_sh
     extra_sh_pct = (extra_sh_vs_bh / final_bh_sh) * 100.0 if final_bh_sh > 0 else 0.0
-    max_roi = max((float(x.get("roi_mult") or 0.0) for x in ledger if not x.get("is_open_live")), default=0.0)
+    max_roi = max((float(x.get("roi_mult") or 0.0) for x in closed_rows), default=0.0)
 
     sp_wins = sum(1 for x in sp_closed_ledger if x["net_pnl_usd"] > 0)
     sp_win_rate = (sp_wins / len(sp_closed_ledger) * 100.0) if sp_closed_ledger else 0.0
@@ -2709,8 +2967,10 @@ def simulate_m7_strategy(
 
     summary = {
         "id": strategy_id,
+        "profile": "core3_adaptive" if is_core3 else "full_m7_adaptive",
         "arch": "m7_equal_dollar",
-        "pricing_basis": "hybrid_real_opra_polygon_bsm" if use_real else "bsm_simulated",
+        "pricing_basis": "real_opra_2015_2025_calibrated_bsm" if use_real else "bsm_simulated",
+        "fill_mode": fill_mode,
         "real_trades_count": real_tr_cnt,
         "real_opra_trades_count": real_opra_tr_cnt,
         "real_polygon_trades_count": real_poly_tr_cnt,
@@ -2719,6 +2979,7 @@ def simulate_m7_strategy(
         "real_quote_lookups": tot_lk,
         "real_quote_hits": real_lk,
         "real_quote_hit_pct": round(real_hit_pct, 1),
+        "opra_window_fallbacks": q_stats["opra_window_fallbacks"],
         "opra_window_end": real_store.opra_date_max if use_real else "",
         "polygon_window_end": real_store.polygon_date_max if use_real else "",
         "put_otm": put_otm,
@@ -2739,6 +3000,9 @@ def simulate_m7_strategy(
         "sharpe": round(sharpe, 3),
         "sortino": round(sortino, 3),
         "calmar": round(calmar, 3),
+        "win_rate_pct": round(win_rate_pct, 1),
+        "profit_factor": round(profit_factor, 3),
+        "payout_to_cost": round(payout_to_cost, 3),
         "final_shares": round(equiv_sh_list[-1], 2),
         "bh_final_shares": round(final_bh_sh, 2),
         "extra_shares_vs_bh": round(extra_sh_vs_bh, 2),
@@ -2751,7 +3015,8 @@ def simulate_m7_strategy(
         "collar_count": 0,
         "tp_count": n_tp,
         "roll_salvage_count": roll_salvage_count,
-        "roll_50d_count": roll_salvage_count,
+        "roll_30d_count": roll_30d_count,
+        "roll_50d_count": roll_50d_count,
         "avg_roll_salvage_pct": round(avg_roll_salvage_pct, 1),
         "max_roi_mult": round(max_roi, 2),
         "naked_prem_spent_usd": round(naked_spent, 2),
@@ -2853,22 +3118,42 @@ def build_m7_live_dashboard(
     ad_sma50 = float(row["ad_sma50"])
     ad_below = ad_line < ad_sma50
 
+    strategy_id = str(m7_sim["summary"]["id"])
+    is_core3 = strategy_id == "Core3_Adaptive"
+    if is_core3 and roll_mode == "90d_hold":
+        roll_mode = "adaptive_120_90"
+    is_adaptive = roll_mode == "adaptive_120_90"
     is_roll50 = roll_mode == "120d_roll50"
-    entry_dte = 120 if is_roll50 else 90
-    five_x_dte = 75 if is_roll50 else 45
-    roll_dte = 50 if is_roll50 else 0
+    is_cta_now = bool(sig_day.get("M4", False))
+    if is_adaptive:
+        entry_dte = 90 if is_cta_now else 120
+        roll_dte = 30 if is_cta_now else 50
+    elif is_roll50:
+        entry_dte = 120
+        roll_dte = 50
+    else:
+        entry_dte = 90
+        roll_dte = 0
+    five_x_dte = 45
 
     max_slots = int(m7_sim["summary"]["max_slots"])
     is_graded = max_slots == 3
-    prob = float(sig_day["crisis_prob"])
-    p1 = float(sig_day["p1"])
-    p2 = float(sig_day["p2"])
-    p3 = float(sig_day["p3"])
-    target_slots = int(sig_day["target_slots_m7g" if is_graded else "target_slots_m7"])
+    if is_core3:
+        prob = float(sig_day["crisis_prob_c3"])
+        p1 = float(sig_day["p1_c3"])
+        p2 = 0.0
+        p3 = float(sig_day["p3_c3"])
+        target_slots = int(sig_day["target_slots_c3"])
+    else:
+        prob = float(sig_day["crisis_prob"])
+        p1 = float(sig_day["p1"])
+        p2 = float(sig_day["p2"])
+        p3 = float(sig_day["p3"])
+        target_slots = int(sig_day["target_slots_m7g" if is_graded else "target_slots_m7"])
 
     active_tr = m7_sim["active_tranches_eod"]
     active_slots = len(active_tr)
-    eff_active_tr = [t for t in active_tr if not bool(t.get("pending_tp"))] if is_roll50 else active_tr
+    eff_active_tr = active_tr
     pend_sig = m7_sim["pending_sig_eod"]
 
     vxn_red_ok = vxn <= 27.0
@@ -2884,14 +3169,25 @@ def build_m7_live_dashboard(
         days_since_last = (cur_dt - datetime.date.fromisoformat(last_entry_dt_str)).days
     cooldown_passed = (days_since_last is None) or (days_since_last >= req_gap)
 
-    mods_active, trig_code, _, _ = format_m7_trigger_labels(sig_day, max_slots)
+    mods_active, trig_code, _, _ = format_m7_trigger_labels(sig_day, max_slots, core3_only=is_core3)
 
     # T+1 Open Execution Order Verdict
-    any_tp_armed = any(bool(t.get("pending_tp")) and (t.get("tp_reason") != "roll_50d") for t in active_tr)
-    any_roll50_armed = any(bool(t.get("pending_tp")) and (t.get("tp_reason") == "roll_50d") for t in active_tr)
+    any_tp_armed = any(bool(t.get("pending_tp")) and not str(t.get("tp_reason", "")).startswith("roll_") for t in active_tr)
+    any_roll_armed = any(bool(t.get("pending_tp")) and str(t.get("tp_reason", "")).startswith("roll_") for t in active_tr)
+    armed_roll_d = next(
+        (int(t.get("roll_dte") or 50) for t in active_tr if bool(t.get("pending_tp")) and str(t.get("tp_reason", "")).startswith("roll_")),
+        roll_dte if roll_dte > 0 else 50,
+    )
     otm_lbl = "-20% OTM" if put_otm == "otm20" else "-15% OTM"
-    tenor_lbl_en = "120D (Roll@50D)" if is_roll50 else "90D"
-    tenor_lbl_zh = "120D（剩50天滚仓）" if is_roll50 else "90D"
+    if is_adaptive:
+        tenor_lbl_en = f"{entry_dte}D (Roll@{roll_dte}D)"
+        tenor_lbl_zh = f"{entry_dte}D（剩{roll_dte}天滚仓）"
+    elif is_roll50:
+        tenor_lbl_en = "120D (Roll@50D)"
+        tenor_lbl_zh = "120D（剩50天滚仓）"
+    else:
+        tenor_lbl_en = "90D"
+        tenor_lbl_zh = "90D"
 
     if any_tp_armed:
         t1_code = "TP_ARMED_NEXT_OPEN"
@@ -2900,21 +3196,20 @@ def build_m7_live_dashboard(
         t1_badge_zh = "T+1 开盘指令：触发恐慌止盈 · 变现 Put 抄底加仓 QQQ"
         t1_title_en = "Panic Take-Profit Triggered — Monetize Active Put Slot(s) at Next Open"
         t1_title_zh = "恐慌止盈阈值已触发 —— 次日开盘全额平仓变现并复投 QQQ 正股"
-    elif any_roll50_armed and pend_sig is not None:
-        next_slot_idx = len(eff_active_tr) + 1
+    elif any_roll_armed and target_slots > 0:
         t1_code = "ROLL_50D_AND_REOPEN"
         t1_tone = "armed"
-        t1_badge_en = f"T+1 OPEN: 50-DTE ROLL -> HARVEST RESIDUAL & OPEN 120D {otm_lbl} PUT"
-        t1_badge_zh = f"T+1 开盘指令：剩 <=50 DTE 触发滚仓 · 回收残值并换入新 120D {otm_lbl} Put"
-        t1_title_en = f"Score {prob:.0f}% ({trig_code}) Active at <=50 DTE — Salvage Expiring Slot & Roll Into Fresh 120-DTE {otm_lbl} Put"
-        t1_title_zh = f"在途槽位剩 <=50 DTE 且综合概率 {prob:.0f}%（{trig_code}）仍亮 —— 次日开盘回收残值并滚入新 120D {otm_lbl} Put"
-    elif any_roll50_armed:
+        t1_badge_en = f"T+1 OPEN: {armed_roll_d}-DTE ROLL -> HARVEST RESIDUAL & OPEN {entry_dte}D {otm_lbl} PUT"
+        t1_badge_zh = f"T+1 开盘指令：剩 <={armed_roll_d} DTE 触发滚仓 · 回收残值并换入新 {entry_dte}D {otm_lbl} Put"
+        t1_title_en = f"Score {prob:.0f}% ({trig_code}) Active at <={armed_roll_d} DTE — Salvage Expiring Slot & Roll Into Fresh {entry_dte}-DTE {otm_lbl} Put"
+        t1_title_zh = f"在途槽位剩 <={armed_roll_d} DTE 且综合概率 {prob:.0f}%（{trig_code}）仍亮 —— 次日开盘回收残值并滚入新 {entry_dte}D {otm_lbl} Put"
+    elif any_roll_armed:
         t1_code = "SALVAGE_50D_EXIT"
         t1_tone = "active"
-        t1_badge_en = "T+1 OPEN: 50-DTE SALVAGE EXIT -> HARVEST RESIDUAL TO QQQ"
-        t1_badge_zh = "T+1 开盘指令：剩 <=50 DTE 信号熄灭 · 平仓回收残值复投 QQQ"
-        t1_title_en = "Slot Reached <=50 DTE With M7 Signal Off — Exit Before Theta Cliff & Reinvest Residual Cash Into QQQ"
-        t1_title_zh = "在途槽位剩 <=50 DTE 且 M7 信号已解除 —— 在 Theta 悬崖前平仓回收残值并复投 QQQ"
+        t1_badge_en = f"T+1 OPEN: {armed_roll_d}-DTE SALVAGE EXIT -> HARVEST RESIDUAL TO QQQ"
+        t1_badge_zh = f"T+1 开盘指令：剩 <={armed_roll_d} DTE 信号熄灭 · 平仓回收残值复投 QQQ"
+        t1_title_en = f"Slot Reached <={armed_roll_d} DTE With Signal Off — Exit Before Theta Cliff & Reinvest Residual Cash Into QQQ"
+        t1_title_zh = f"在途槽位剩 <={armed_roll_d} DTE 且危机信号已解除 —— 在 Theta 悬崖前平仓回收残值并复投 QQQ"
     elif pend_sig is not None:
         next_slot_idx = len(eff_active_tr) + 1
         t1_code = "OPEN_NEW_SLOT"
@@ -2941,25 +3236,27 @@ def build_m7_live_dashboard(
     elif active_slots > 0:
         t1_code = "HOLD_ACTIVE_SLOTS"
         t1_tone = "active"
-        roll_note_en = " · ROLL @ <=50 DTE" if is_roll50 else ""
-        roll_note_zh = " · 剩<=50天滚仓" if is_roll50 else ""
+        roll_note_en = f" · ROLL @ <={roll_dte} DTE" if roll_dte > 0 else ""
+        roll_note_zh = f" · 剩<={roll_dte}天滚仓" if roll_dte > 0 else ""
         t1_badge_en = f"T+1 OPEN: HOLD {active_slots}/{max_slots} ACTIVE PUT SLOT(S) · MONITOR TP{roll_note_en}"
         t1_badge_zh = f"T+1 开盘指令：继续持有 {active_slots}/{max_slots} 槽在途 Put · 盯紧止盈线{roll_note_zh}"
-        t1_title_en = f"{active_slots}/{max_slots} Equal-Dollar {entry_dte}D Put Slot(s) Shielding 100% Uncapped QQQ Core"
-        t1_title_zh = f"当前 {active_slots}/{max_slots} 槽等金额 {entry_dte}D 裸 Put 在途护航 · 100% QQQ 底仓无封顶持有"
+        t1_title_en = f"{active_slots}/{max_slots} Equal-Dollar Put Slot(s) Shielding 100% Uncapped QQQ Core"
+        t1_title_zh = f"当前 {active_slots}/{max_slots} 槽等金额裸 Put 在途护航 · 100% QQQ 底仓无封顶持有"
     else:
         t1_code = "STANDBY"
         t1_tone = "standby"
+        prof_lbl_en = "Core-3 Minimal" if is_core3 else "Full M7 Shield"
+        prof_lbl_zh = "精简3核" if is_core3 else "全套M7护盾"
         if redline_blocked:
             t1_badge_en = "T+1 OPEN: STANDBY (100% QQQ · HIGH-VOL REDLINE FREEZE)"
             t1_badge_zh = "T+1 开盘指令：空盾待命（100% 满仓 QQQ · 恐慌高波红线冻结禁买）"
-            t1_title_en = f"Score {prob:.0f}% (<35%) & High-IV Redline Active (VXN {vxn:.1f}, VIX/3M {vr:.3f}) — Hold 100% QQQ Uncapped"
-            t1_title_zh = f"危机概率 {prob:.0f}% (<35%) 且处于高波红线区（VXN {vxn:.1f}、VIX/3M {vr:.3f}）—— 100% QQQ 零损耗待弹"
+            t1_title_en = f"{prof_lbl_en} Score {prob:.0f}% (<35%) & High-IV Redline Active (VXN {vxn:.1f}, VIX/3M {vr:.3f}) — Hold 100% QQQ Uncapped"
+            t1_title_zh = f"{prof_lbl_zh}概率 {prob:.0f}% (<35%) 且处于高波红线区（VXN {vxn:.1f}、VIX/3M {vr:.3f}）—— 100% QQQ 零损耗待弹"
         else:
             t1_badge_en = "T+1 OPEN: STANDBY · ZERO PUT SPEND (100% QQQ CRUISE)"
             t1_badge_zh = "T+1 开盘指令：静默待命 · 零保费损耗（100% 满仓 QQQ 复利巡航）"
-            t1_title_en = f"Composite Crisis Score {prob:.0f}% (< 35% Threshold) — Zero Option Drag, 100% QQQ Compounding"
-            t1_title_zh = f"三支柱综合危机概率 {prob:.0f}%（低于 35% 开仓线）—— 零期权保费损耗，100% QQQ 顺风复利"
+            t1_title_en = f"{prof_lbl_en} Score {prob:.0f}% (< 35% Threshold) — Zero Option Drag, 100% QQQ Compounding"
+            t1_title_zh = f"{prof_lbl_zh}综合危机概率 {prob:.0f}%（低于 35% 开仓线）—— 零期权保费损耗，100% QQQ 顺风复利"
 
     # Equal-Dollar Strike & Budget Calculator (90-DTE or 120-DTE matched reference)
     tau_calc = float(entry_dte) / 365.0
@@ -2972,7 +3269,7 @@ def build_m7_live_dashboard(
     mid10 = bco_mod.bsm_price(cl, k10, tau_calc, r_cur, q_cur, iv10, "put")
     mid15 = bco_mod.bsm_price(cl, k15, tau_calc, r_cur, q_cur, iv15, "put")
     mid20 = bco_mod.bsm_price(cl, k20, tau_calc, r_cur, q_cur, iv20, "put")
-    ask10_ref = mid10 * 1.025
+    ask10_ref = mid10 * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH
     ask15 = mid15 * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH
     ask20 = mid20 * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH
     skew_ratio = iv20 / max(iv10, 1e-6)
@@ -2984,6 +3281,17 @@ def build_m7_live_dashboard(
     budget_per_1000_sh = (ref_sh_1000 * 0.50) * ask10_ref
     contracts_per_1000_sh = (budget_per_1000_sh / max(sel_ask, 1e-6)) / 100.0
 
+    roll_formula_en = (
+        " · Adaptive Roll: P1/P2 120D->50D, CTA M4 90D->30D"
+        if is_adaptive
+        else (" · Salvage/Roll at <= 50 DTE" if is_roll50 else "")
+    )
+    roll_formula_zh = (
+        " · 自适应滚仓：P1/P2 120D->50D、CTA(M4) 90D->30D"
+        if is_adaptive
+        else (" · 剩 <=50 DTE 残值滚仓/平仓" if is_roll50 else "")
+    )
+
     sizing_calc = {
         "qqq_spot": round(cl, 2),
         "vxn": round(vxn, 2),
@@ -2991,14 +3299,8 @@ def build_m7_live_dashboard(
         "roll_dte": roll_dte,
         "roll_mode": roll_mode,
         "selected_otm": put_otm,
-        "formula_en": (
-            f"Per-Slot Budget = Current QQQ Shares × 50% × Ask({entry_dte}D -10% OTM Put)"
-            + (" · Salvage/Roll at <= 50 DTE" if is_roll50 else "")
-        ),
-        "formula_zh": (
-            f"单槽美元预算 = 当前持有 QQQ 股数 × 50% × {entry_dte}-DTE -10% OTM Put 卖一价(Ask)"
-            + (" · 剩 <=50 DTE 残值滚仓/平仓" if is_roll50 else "")
-        ),
+        "formula_en": f"Per-Slot Budget = Current QQQ Shares × 50% × Ask({entry_dte}D -10% OTM Put){roll_formula_en}",
+        "formula_zh": f"单槽美元预算 = 当前持有 QQQ 股数 × 50% × {entry_dte}-DTE -10% OTM Put 卖一价(Ask){roll_formula_zh}",
         "ref_otm10": {
             "otm_pct": 10,
             "strike": round(k10, 2),
@@ -3043,13 +3345,23 @@ def build_m7_live_dashboard(
 
     # TP Monitor
     tp_spec = next((x for x in M7_TP_MODE_SPECS if x["id"] == m7_tp_mode), M7_TP_MODE_SPECS[0])
+    roll_rule_en = (
+        "; else salvage/roll at DTE <= 50 (Non-CTA 120D) or DTE <= 30 (CTA M4 90D)."
+        if is_adaptive
+        else ("; else at DTE <= 50 salvage residual (and roll into fresh 120D Put if M7 stays active)." if is_roll50 else ".")
+    )
+    roll_rule_zh = (
+        "；未止盈则在非CTA槽 DTE<=50 / CTA(M4)槽 DTE<=30 时回收残值（信号仍亮则自动滚仓）。"
+        if is_adaptive
+        else ("；未止盈且 DTE <= 50 时次日开盘回收残值（信号仍亮则同步滚入新 120D Put）。" if is_roll50 else "。")
+    )
     tp_rule_en = (
         (
             f"Exit at T+1 Open when EOD (VIX/VIX3M >= 1.10 AND QQQ <= Strike Kp) OR (DTE <= {five_x_dte} AND Put Mid >= 5x Cost)"
             if m7_tp_mode == "itm_tp"
             else f"Exit at T+1 Open when EOD VIX/VIX3M >= 1.10 OR (DTE <= {five_x_dte} AND Put Mid >= 5x Cost)"
         )
-        + ("; else at DTE <= 50 salvage residual (and roll into fresh 120D Put if M7 stays active)." if is_roll50 else ".")
+        + roll_rule_en
     )
     tp_rule_zh = (
         (
@@ -3057,23 +3369,25 @@ def build_m7_live_dashboard(
             if m7_tp_mode == "itm_tp"
             else f"收盘触发 VIX/VIX3M >= 1.10 恐慌倒挂，或（DTE <= {five_x_dte} 且期权中间价 >= 5 倍成本）次日开盘止盈"
         )
-        + ("；未止盈且 DTE <= 50 时次日开盘回收残值（信号仍亮则同步滚入新 120D Put）。" if is_roll50 else "。")
+        + roll_rule_zh
     )
     tp_slots_live: list[dict[str, Any]] = []
     for tr in active_tr:
         kp_tr = float(tr["kp"])
         rem_tr = int(tr["rem_dte"])
+        tr_rd = int(tr.get("roll_dte") or 0)
         is_itm = cl <= kp_tr
         tp_vix_ok = (vr >= 1.10) and (is_itm if m7_tp_mode == "itm_tp" else True)
         tp_5x_ok = rem_tr <= five_x_dte and float(tr["mtm_put_val_sh"]) >= float(tr["tp_target_5x_sh"])
-        roll50_due = bool(is_roll50 and rem_tr <= 50 and not tp_vix_ok and not tp_5x_ok)
+        roll50_due = bool(tr_rd > 0 and rem_tr <= tr_rd and not tp_vix_ok and not tp_5x_ok)
         tp_slots_live.append(
             {
                 "slot_num": tr["slot_num"],
                 "entry_date": tr["entry_date"],
                 "exp_date": tr["exp_date"],
                 "rem_dte": rem_tr,
-                "days_to_roll50": max(0, rem_tr - 50) if is_roll50 else None,
+                "roll_dte": tr_rd,
+                "days_to_roll50": max(0, rem_tr - tr_rd) if tr_rd > 0 else None,
                 "roll50_due": roll50_due,
                 "kp": kp_tr,
                 "spot_vs_kp_pct": round((cl / kp_tr - 1.0) * 100.0, 2),
@@ -3109,7 +3423,7 @@ def build_m7_live_dashboard(
         "open_slots": tp_slots_live,
     }
 
-    # Three-Pillar & 6 Sub-Module Status Grid
+    # Three-Pillar & 6 Sub-Module Status Grid (dimming M2/M5/M3 cleanly when Core-3 Minimal is active)
     def _fv(key: str, default: float = 0.0) -> float:
         v = feat_row_dict.get(key)
         return default if v is None else float(v)
@@ -3144,8 +3458,10 @@ def build_m7_live_dashboard(
                     "points": 35,
                     "earned_points": 35 if sig_day["M0"] else 0,
                     "triggered": bool(sig_day["M0"]),
+                    "raw_triggered": bool(sig_day["M0"]),
                     "pluggable": True,
                     "enabled": m0_enabled,
+                    "disabled_in_core3": False,
                     "vol_gate_passed": bool(vxn <= 22.0),
                     "vol_gate_en": f"VXN {vxn:.2f} <= 22.0",
                     "vol_gate_zh": f"VXN {vxn:.2f} <= 22.0 低波门控",
@@ -3180,8 +3496,10 @@ def build_m7_live_dashboard(
                     "points": 20,
                     "earned_points": 20 if sig_day["M6"] else 0,
                     "triggered": bool(sig_day["M6"]),
+                    "raw_triggered": bool(sig_day["M6"]),
                     "pluggable": False,
                     "enabled": True,
+                    "disabled_in_core3": False,
                     "vol_gate_passed": bool(vxn <= 25.0 and vr <= 0.92),
                     "vol_gate_en": f"VXN {vxn:.1f}<=25 & VIX/3M {vr:.3f}<=0.92",
                     "vol_gate_zh": f"VXN {vxn:.1f}<=25 且 VIX/3M {vr:.3f}<=0.92",
@@ -3215,20 +3533,31 @@ def build_m7_live_dashboard(
             "id": "P2",
             "title_en": "Pillar 2 · Exogenous Shock Ignition",
             "title_zh": "第二支柱 P2 · 外生黑天鹅启爆",
-            "subtitle_en": "Requires dual-sensor consensus (M2 + M5 = 40% >= 35%) to catch sudden shocks like 2020-01-28",
-            "subtitle_zh": "要求期权台偏度与因果 HMM 双传感器共振（20+20=40% >= 35%），精准捕获 2020-01-28 等突发黑天鹅",
+            "subtitle_en": (
+                "Off in Core-3 Minimal (omits exogenous shock sensors M2 & M5 for low-frequency purity)"
+                if is_core3
+                else "Requires dual-sensor consensus (M2 + M5 = 40% >= 35%) to catch sudden shocks like 2020-01-28"
+            ),
+            "subtitle_zh": (
+                "精简 3 核模式下已关闭（剔除外生预警 M2 & M5，专注低频高赔率主趋势崩盘）"
+                if is_core3
+                else "要求期权台偏度与因果 HMM 双传感器共振（20+20=40% >= 35%），精准捕获 2020-01-28 等突发黑天鹅"
+            ),
             "score": round(p2, 0),
-            "cap": 40,
+            "cap": 0 if is_core3 else 40,
+            "disabled_in_core3": is_core3,
             "modules": [
                 {
                     "id": "M2",
                     "name_en": "M2 Options Desk Warning",
                     "name_zh": "M2 期权台尾部预警",
                     "points": 20,
-                    "earned_points": 20 if sig_day["M2"] else 0,
-                    "triggered": bool(sig_day["M2"]),
+                    "earned_points": 0 if is_core3 else (20 if sig_day["M2"] else 0),
+                    "triggered": False if is_core3 else bool(sig_day["M2"]),
+                    "raw_triggered": bool(sig_day["M2"]),
                     "pluggable": False,
-                    "enabled": True,
+                    "enabled": not is_core3,
+                    "disabled_in_core3": is_core3,
                     "vol_gate_passed": bool(vxn <= 24.0),
                     "vol_gate_en": f"VXN {vxn:.2f} <= 24.0",
                     "vol_gate_zh": f"VXN {vxn:.2f} <= 24.0",
@@ -3254,10 +3583,12 @@ def build_m7_live_dashboard(
                     "name_en": "M5 Causal HMM Regime Transition",
                     "name_zh": "M5 因果 HMM 状态跃迁",
                     "points": 20,
-                    "earned_points": 20 if sig_day["M5"] else 0,
-                    "triggered": bool(sig_day["M5"]),
+                    "earned_points": 0 if is_core3 else (20 if sig_day["M5"] else 0),
+                    "triggered": False if is_core3 else bool(sig_day["M5"]),
+                    "raw_triggered": bool(sig_day["M5"]),
                     "pluggable": False,
-                    "enabled": True,
+                    "enabled": not is_core3,
+                    "disabled_in_core3": is_core3,
                     "vol_gate_passed": bool(vxn <= 24.0 and vr < 1.02),
                     "vol_gate_en": f"VXN {vxn:.1f}<=24 & VIX/3M {vr:.3f}<1.02",
                     "vol_gate_zh": f"VXN {vxn:.1f}<=24 且 VIX/3M {vr:.3f}<1.02",
@@ -3287,7 +3618,7 @@ def build_m7_live_dashboard(
             "subtitle_en": "Buys cheap puts on bear-market dead-cat rallies (>EMA20 while <SMA200 & EWMAC<0) + lagged FRED credit stress",
             "subtitle_zh": "专抓 2022 式慢熊死猫跳自满期（跌破年线且 EWMAC<0 但反弹上穿 EMA20 压低波动率）叠加滞后信用压力",
             "score": round(p3, 0),
-            "cap": 45,
+            "cap": 35 if is_core3 else 45,
             "modules": [
                 {
                     "id": "M4",
@@ -3296,8 +3627,10 @@ def build_m7_live_dashboard(
                     "points": 35,
                     "earned_points": 35 if sig_day["M4"] else 0,
                     "triggered": bool(sig_day["M4"]),
+                    "raw_triggered": bool(sig_day["M4"]),
                     "pluggable": False,
                     "enabled": True,
+                    "disabled_in_core3": False,
                     "vol_gate_passed": bool(vxn <= 27.0 and vr <= 0.88),
                     "vol_gate_en": f"VXN {vxn:.1f}<=27 & VIX/3M {vr:.3f}<=0.88",
                     "vol_gate_zh": f"VXN {vxn:.1f}<=27 且 VIX/3M {vr:.3f}<=0.88",
@@ -3330,10 +3663,12 @@ def build_m7_live_dashboard(
                     "name_en": "M3 Credit & Macro Stress (FRED PIT)",
                     "name_zh": "M3 信用利差与宏观压力 (FRED 严格滞后)",
                     "points": 20,
-                    "earned_points": 20 if sig_day["M3"] else 0,
-                    "triggered": bool(sig_day["M3"]),
+                    "earned_points": 0 if is_core3 else (20 if sig_day["M3"] else 0),
+                    "triggered": False if is_core3 else bool(sig_day["M3"]),
+                    "raw_triggered": bool(sig_day["M3"]),
                     "pluggable": False,
-                    "enabled": True,
+                    "enabled": not is_core3,
+                    "disabled_in_core3": is_core3,
                     "vol_gate_passed": bool(vxn <= 26.0 and vr <= 0.92),
                     "vol_gate_en": f"VXN {vxn:.1f}<=26 & VIX/3M {vr:.3f}<=0.92",
                     "vol_gate_zh": f"VXN {vxn:.1f}<=26 且 VIX/3M {vr:.3f}<=0.92",
@@ -3367,7 +3702,8 @@ def build_m7_live_dashboard(
 
     return {
         "as_of_date": d,
-        "strategy_id": m7_sim["summary"]["id"],
+        "strategy_id": strategy_id,
+        "profile": "core3_adaptive" if is_core3 else "full_m7_adaptive",
         "put_otm": put_otm,
         "m7_tp_mode": m7_tp_mode,
         "roll_mode": roll_mode,
@@ -3381,8 +3717,16 @@ def build_m7_live_dashboard(
         "max_slots": max_slots,
         "triggered_modules": mods_active,
         "trigger_code": trig_code if mods_active else "NONE",
-        "tier_rule_en": "<35%: 0 Slots · 35-44%: 1 Slot · 45-64%: 2 Slots · >=65%: 3 Slots",
-        "tier_rule_zh": "<35%：0槽 · 35–44%：1槽 · 45–64%：2槽 · >=65%：3槽满配",
+        "tier_rule_en": (
+            "Core-3 Minimal: M0=35% (1 Slot) · M0+M6=45% (2 Slots) · M4=35% (1 Slot) · M0+M4=70% (3 Slots); M6 alone=20% (0 Slots)"
+            if is_core3
+            else "<35%: 0 Slots · 35-44%: 1 Slot · 45-64%: 2 Slots · >=65%: 3 Slots"
+        ),
+        "tier_rule_zh": (
+            "精简3核权重：M0=35%（1槽）· M0+M6=45%（2槽）· M4=35%（1槽）· M0+M4=70%（3槽）；M6单亮=20%不单发"
+            if is_core3
+            else "<35%：0槽 · 35–44%：1槽 · 45–64%：2槽 · >=65%：3槽满配"
+        ),
         "redline": {
             "blocked": redline_blocked,
             "vxn": round(vxn, 2),

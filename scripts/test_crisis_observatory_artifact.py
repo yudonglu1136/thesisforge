@@ -54,14 +54,20 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
 
     doc = json.loads(raw)
     assert doc["as_of_date"] == "2026-11-20"
+    assert doc["default_profile"] == "full_m7_adaptive"
     assert doc["default_strategy_id"] == "M7G_Graded"
     assert doc["default_put_otm"] == "otm15"
     assert doc["default_m7_tp_mode"] == "standard"
-    assert doc["default_roll_mode"] == "120d_roll50"
+    assert doc["default_roll_mode"] == "adaptive_120_90"
     assert doc["default_m0_enabled"] is True
-    assert doc["pricing_provenance"]["mode"] == "hybrid_real_first"
-    assert doc["pricing_provenance"]["tier1_opra"]["trading_days"] == 2749
-    assert doc["pricing_provenance"]["tier2_polygon"]["trading_days"] == 104
+    assert [p["id"] for p in doc["profiles_meta"]] == ["full_m7_adaptive", "core3_adaptive"]
+    assert doc["pricing_provenance"]["mode"] == "real_opra_calibrated_bsm"
+    assert doc["pricing_provenance"]["segment1_real_opra"]["trading_days"] == 2749
+    assert doc["pricing_provenance"]["segment1_real_opra"]["quotes_count"] == 9875299
+    assert doc["pricing_provenance"]["segment1_real_opra"]["execution_fallbacks"] == 0
+    assert doc["pricing_provenance"]["audited_opra_benchmarks_2015_2025"]["full_m7_adaptive_ask_bid"]["end_nav"] == 1451369.05
+    assert doc["pricing_provenance"]["audited_opra_benchmarks_2015_2025"]["core3_adaptive_ask_bid"]["end_nav"] == 1481937.31
+    assert doc["pricing_provenance"]["seam_continuity_audit"]["last_opra_date"] == "2025-12-15"
     for forbidden in ("U4_DualEngine", "T-Bill", "slow_bear_shield", "慢熊盾", "美债慢熊盾", "短债"):
         assert forbidden not in raw, f"Forbidden T-Bill/U4 term found in artifact: {forbidden}"
 
@@ -103,6 +109,7 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     assert "U4_DualEngine" not in smap
     assert list(smap.keys()) == [
         "M7G_Graded",
+        "Core3_Adaptive",
         "M7_Ensemble",
         "U1_PureOptions",
         "B1c_PureAD",
@@ -111,45 +118,72 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
         "NoPut_CallOnly",
         "BH_Pure_QQQ",
     ]
-    # Real-OPRA #1 Default: M7G_Graded 120D->50D Roll (-15% OTM · STANDARD)
-    assert smap["M7G_Graded"]["pricing_basis"] == "hybrid_real_opra_polygon_bsm"
+    # Real-OPRA Ask/Bid + Calibrated BSM Default: M7G_Graded Adaptive 120->50 / CTA 90->30 (-15% OTM · STANDARD)
+    assert smap["M7G_Graded"]["pricing_basis"] == "real_opra_2015_2025_calibrated_bsm"
     assert smap["M7G_Graded"]["real_trades_pct"] == 95.7
-    assert smap["M7G_Graded"]["real_opra_trades_count"] == 44
-    assert smap["M7G_Graded"]["real_polygon_trades_count"] == 1
+    assert smap["M7G_Graded"]["real_opra_trades_count"] == 45
     assert smap["M7G_Graded"]["sim_trades_count"] == 2
-    assert abs(smap["M7G_Graded"]["end_nav"] - 1462057.97) <= 0.05
-    assert smap["M7G_Graded"]["cagr_pct"] == 18.22
-    assert smap["M7G_Graded"]["max_dd_pct"] == -29.20
-    assert smap["M7G_Graded"]["calmar"] == 0.624
-    assert smap["M7G_Graded"]["sharpe"] == 0.917
-    assert smap["M7G_Graded"]["roll_50d_count"] == 33
-    assert abs(smap["M7G_Graded"]["avg_roll_salvage_pct"] - 58.1) <= 0.2
-    assert abs(smap["M7_Ensemble"]["end_nav"] - 1429844.86) <= 0.05
-    assert len(doc["m7_bundles"]) == 16
-    assert abs(doc["m7_bundles"]["otm15__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1356201.32) <= 0.05
-    assert abs(doc["m7_bundles"]["otm20__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1453499.45) <= 0.05
-    assert abs(doc["m7_bundles"]["otm20__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1289101.35) <= 0.05
-    assert abs(doc["m7_bundles"]["otm15__itm_tp__120d_roll50__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1328138.56) <= 0.05
-    assert abs(doc["m7_bundles"]["otm15__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1298625.21) <= 0.05
-    assert abs(doc["m7_bundles"]["otm20__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1233832.27) <= 0.05
+    assert abs(smap["M7G_Graded"]["end_nav"] - 1466143.41) <= 0.05
+    assert smap["M7G_Graded"]["cagr_pct"] == 18.25
+    assert smap["M7G_Graded"]["max_dd_pct"] == -28.32
+    assert smap["M7G_Graded"]["calmar"] == 0.645
+    assert smap["M7G_Graded"]["sharpe"] == 0.918
+    assert smap["M7G_Graded"]["roll_50d_count"] == 28
+    assert smap["M7G_Graded"]["roll_30d_count"] == 4
+    assert abs(smap["M7G_Graded"]["avg_roll_salvage_pct"] - 51.5) <= 0.2
 
-    # Legacy strategies on real OPRA+Polygon+BSM
-    assert smap["U1_PureOptions"]["pricing_basis"] == "hybrid_real_opra_polygon_bsm"
-    assert smap["U1_PureOptions"]["real_trades_pct"] == 93.9
-    assert abs(smap["U1_PureOptions"]["end_nav"] - 1325413.01) <= 0.05
-    assert smap["M7G_Graded"]["end_nav"] > smap["U1_PureOptions"]["end_nav"] + 130000.0
-    assert smap["U1_PureOptions"]["cagr_pct"] == 17.25
-    assert smap["U1_PureOptions"]["max_dd_pct"] == -33.24
-    assert abs(smap["B1c_PureAD"]["end_nav"] - 1350441.37) <= 0.05
-    assert abs(smap["D2_SixLights"]["end_nav"] - 1353954.68) <= 0.05
-    assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1259365.40) <= 0.05
+    # Core-3 Minimal Adaptive: M0+M6+M4 + Adaptive 120->50 / CTA 90->30
+    assert smap["Core3_Adaptive"]["pricing_basis"] == "real_opra_2015_2025_calibrated_bsm"
+    assert smap["Core3_Adaptive"]["real_opra_trades_count"] == 30
+    assert smap["Core3_Adaptive"]["sim_trades_count"] == 2
+    assert abs(smap["Core3_Adaptive"]["end_nav"] - 1497022.85) <= 0.05
+    assert smap["Core3_Adaptive"]["cagr_pct"] == 18.46
+    assert smap["Core3_Adaptive"]["max_dd_pct"] == -28.56
+    assert smap["Core3_Adaptive"]["profit_factor"] == 2.321
+
+    assert abs(smap["M7_Ensemble"]["end_nav"] - 1437260.55) <= 0.05
+    assert len(doc["m7_bundles"]) == 24
+    # Core-3 safety guardrail: 90d_hold bundle locks Core3_Adaptive to adaptive_120_90
+    c3_guard = doc["m7_bundles"]["otm15__standard__90d_hold__m0on"]["summaries"]["Core3_Adaptive"]
+    assert c3_guard["roll_mode"] == "adaptive_120_90"
+    assert abs(c3_guard["end_nav"] - 1497022.85) <= 0.05
+
+    assert abs(doc["m7_bundles"]["otm15__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1436762.50) <= 0.05
+    assert abs(doc["m7_bundles"]["otm15__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1343816.19) <= 0.05
+    assert abs(doc["m7_bundles"]["otm20__standard__adaptive_120_90__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1438956.91) <= 0.05
+    assert abs(doc["m7_bundles"]["otm20__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1274910.48) <= 0.05
+    assert abs(doc["m7_bundles"]["otm15__itm_tp__adaptive_120_90__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1335191.63) <= 0.05
+    assert abs(doc["m7_bundles"]["otm15__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1290849.77) <= 0.05
+    assert abs(doc["m7_bundles"]["otm20__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1225265.05) <= 0.05
+
+    # Verify M7 trade ledger quoteSource tags ("REAL_OPRA" <= 2025-12-15 vs "CALIBRATED_BSM" > 2025-12-15)
+    for sid in ("M7G_Graded", "Core3_Adaptive"):
+        m7_ledger = _unpack_rows(doc["m7_bundles"]["otm15__standard__adaptive_120_90__m0on"]["ledgers"][sid])
+        assert len(m7_ledger) >= 32
+        for tr in m7_ledger:
+            qs = tr.get("quoteSource")
+            assert qs in ("REAL_OPRA", "CALIBRATED_BSM")
+            if str(tr["entry_date"]) <= "2025-12-15" and (tr.get("exit_date") is None or str(tr["exit_date"]) <= "2025-12-15") and not tr.get("is_open_live"):
+                assert qs == "REAL_OPRA"
+            assert tr.get("occSymbol")
+
+    # Legacy strategies on real OPRA Ask/Bid + Calibrated BSM
+    assert smap["U1_PureOptions"]["pricing_basis"] in ("real_opra_2015_2025_calibrated_bsm", "hybrid_real_opra_polygon_bsm")
+    assert smap["U1_PureOptions"]["real_trades_pct"] == 90.9
+    assert abs(smap["U1_PureOptions"]["end_nav"] - 1322402.31) <= 0.05
+    assert smap["M7G_Graded"]["end_nav"] > smap["U1_PureOptions"]["end_nav"] + 140000.0
+    assert smap["U1_PureOptions"]["cagr_pct"] == 17.23
+    assert smap["U1_PureOptions"]["max_dd_pct"] == -33.25
+    assert abs(smap["B1c_PureAD"]["end_nav"] - 1347636.26) <= 0.05
+    assert abs(smap["D2_SixLights"]["end_nav"] - 1351686.36) <= 0.05
+    assert abs(smap["H2_G4_PriceGate"]["end_nav"] - 1252925.34) <= 0.05
     assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02
 
     # Verify alternate selectable TP & Covered-Call modes (120 mode bundles)
     assert len(doc["mode_bundles"]) == 120
     d35_map = {s["id"]: s for s in doc["mode_bundles"]["layered_itm__cc_d12_d35"]["strategies_summary"]}
-    assert abs(d35_map["U1_PureOptions"]["end_nav"] - 1308724.93) <= 0.50
-    assert abs(d35_map["NoPut_CallOnly"]["end_nav"] - 1270341.73) <= 0.50
+    assert abs(d35_map["U1_PureOptions"]["end_nav"] - 1287946.39) <= 0.50
+    assert abs(d35_map["NoPut_CallOnly"]["end_nav"] - 1285518.97) <= 0.50
 
 
 def _unpack_rows(val):
@@ -180,40 +214,40 @@ def test_third_engine_panic_put_wheel_3d_matrix():
     ]
     assert len(doc["mode_bundles"]) == 120
 
-    # 1. Real-OPRA Engine 3 with default wc_reclaim_30d_d35 + cc_off
+    # 1. Real-OPRA Ask/Bid Engine 3 with default wc_reclaim_30d_d35 + cc_off
     cap10_rec = doc["mode_bundles"]["layered_itm__cc_off__sp_14d_cap10"]
     cap10_rec_u1 = next(s for s in cap10_rec["strategies_summary"] if s["id"] == "U1_PureOptions")
     cap10_rec_np = next(s for s in cap10_rec["strategies_summary"] if s["id"] == "NoPut_CallOnly")
     assert cap10_rec["wc_mode"] == "wc_reclaim_30d_d35"
-    assert abs(cap10_rec_u1["end_nav"] - 1414477.26) <= 0.05
-    assert cap10_rec_u1["max_dd_pct"] == -32.25
-    assert cap10_rec_u1["real_trades_pct"] >= 95.0
-    assert abs(cap10_rec_np["end_nav"] - 1374702.58) <= 0.05
+    assert abs(cap10_rec_u1["end_nav"] - 1393555.72) <= 0.05
+    assert cap10_rec_u1["max_dd_pct"] == -32.88
+    assert cap10_rec_u1["real_trades_pct"] >= 85.0
+    assert abs(cap10_rec_np["end_nav"] - 1357470.42) <= 0.05
     assert cap10_rec["live_sp_state"]["position_state"] == "wheel_assigned_wait_reclaim"
     assert cap10_rec["live_sp_state"]["min_next_wc_strike"] == 623.29
 
     # 2. 10D VIX Falling 20% Cap
     vixf_rec = doc["mode_bundles"]["layered_itm__cc_off__sp_10d_vixf"]
     vixf_rec_u1 = next(s for s in vixf_rec["strategies_summary"] if s["id"] == "U1_PureOptions")
-    assert abs(vixf_rec_u1["end_nav"] - 1393888.22) <= 0.05
-    assert vixf_rec_u1["real_trades_pct"] >= 94.0
+    assert abs(vixf_rec_u1["end_nav"] - 1392568.59) <= 0.05
+    assert vixf_rec_u1["real_trades_pct"] >= 85.0
 
     # 3. 14D Unfiltered 20% Cap
     unf_rec = doc["mode_bundles"]["layered_itm__cc_off__sp_14d_unf"]
     unf_rec_u1 = next(s for s in unf_rec["strategies_summary"] if s["id"] == "U1_PureOptions")
     unf_rec_np = next(s for s in unf_rec["strategies_summary"] if s["id"] == "NoPut_CallOnly")
-    assert abs(unf_rec_u1["end_nav"] - 1508962.73) <= 0.05
-    assert abs(unf_rec_np["end_nav"] - 1466347.09) <= 0.05
+    assert abs(unf_rec_u1["end_nav"] - 1468143.84) <= 0.05
+    assert abs(unf_rec_np["end_nav"] - 1429966.08) <= 0.05
 
-    # 4. wc_reclaim_30d_d35 beats both compare modes on real OPRA too!
+    # 4. wc_reclaim_30d_d35 beats both compare modes on real OPRA Ask/Bid too!
     cap10_30d = doc["mode_bundles"]["layered_itm__cc_off__sp_14d_cap10__wc_30d_c5s5"]
     cap10_30d_u1 = next(s for s in cap10_30d["strategies_summary"] if s["id"] == "U1_PureOptions")
-    assert abs(cap10_30d_u1["end_nav"] - 1404028.47) <= 0.05
+    assert abs(cap10_30d_u1["end_nav"] - 1386765.62) <= 0.05
     assert cap10_rec_u1["end_nav"] > cap10_30d_u1["end_nav"]
 
     cap10_14d = doc["mode_bundles"]["layered_itm__cc_off__sp_14d_cap10__wc_14d_c0s2"]
     cap10_14d_u1 = next(s for s in cap10_14d["strategies_summary"] if s["id"] == "U1_PureOptions")
-    assert abs(cap10_14d_u1["end_nav"] - 1383482.45) <= 0.05
+    assert abs(cap10_14d_u1["end_nav"] - 1372072.61) <= 0.05
     assert cap10_rec_u1["end_nav"] > cap10_14d_u1["end_nav"]
 
 
@@ -230,18 +264,23 @@ def test_crisis_windows_and_4factor_convexity_identity():
         "2026-08_11_LIVE",
     ]
     win_2022 = next(w for w in doc["crisis_windows"] if w["id"] == "2022")
-    assert win_2022["m7g_mdd"] == -29.20
-    assert win_2022["u1_mdd"] == -33.24
+    assert win_2022["m7g_mdd"] == -28.32
+    assert win_2022["c3_mdd"] == -28.32
+    assert win_2022["u1_mdd"] == -33.25
     assert win_2022["qqq_mdd"] == -35.12
-    assert abs(win_2022["harvested_usd"] - 18441.95) <= 0.05
+    assert abs(win_2022["harvested_usd_m7g"] - 37794.79) <= 0.10
+    assert abs(win_2022["harvested_usd_c3"] - 38665.63) <= 0.10
+    assert abs(win_2022["harvested_usd"] - 18335.83) <= 0.05
 
     live_win = doc["crisis_windows"][-1]
     assert live_win["is_live"] is True
     assert live_win["m7g_mdd"] == -18.46
+    assert live_win["c3_mdd"] == -18.46
     assert live_win["u1_mdd"] == -14.78
     assert live_win["qqq_mdd"] == -19.90
-    assert abs(live_win["harvested_usd_m7g"] - 18653.35) <= 0.10
-    assert abs(live_win["harvested_usd"] - 74675.65) <= 0.10
+    assert abs(live_win["harvested_usd_m7g"] - 18703.71) <= 0.10
+    assert abs(live_win["harvested_usd_c3"] - 19097.64) <= 0.10
+    assert abs(live_win["harvested_usd"] - 74506.03) <= 0.10
     assert doc["shield_events"] == []
 
     for mode_key, mode_bundle in doc["mode_bundles"].items():

@@ -26,8 +26,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import pandas as pd
+try:
+    import numpy as np
+    import pandas as pd
+except ImportError:  # pragma: no cover - stdlib-only runtime import fallback
+    np = None  # type: ignore[assignment]
+    pd = None  # type: ignore[assignment]
 
 DEFAULT_OPRA_PARQUET = Path(
     "/Users/yudonglu/Documents/gemini/qqq-options-backtest/output/"
@@ -41,6 +45,16 @@ OPT_SLIP_BSM = 0.025
 OPT_SLIP_SP_BSM = 0.030
 OPT_COMM_PER_SH = 0.0065
 IBKR_LIMIT_FRAC = 0.35
+DEFAULT_REAL_FILL_MODE = "ask_bid"
+
+
+def format_occ_symbol(ticker: str, exp_str: str, opt_type: str, strike: float) -> str:
+    """Format OCC option symbol, e.g. QQQ250620P00440000."""
+    clean_exp = (exp_str or "").replace("-", "")
+    yymmdd = clean_exp[2:8] if len(clean_exp) >= 8 else clean_exp
+    cp = "P" if str(opt_type).lower().startswith("p") else "C"
+    k_int = max(0, int(round(float(strike) * 1000.0)))
+    return f"{ticker.upper()}{yymmdd}{cp}{k_int:08d}"
 
 # Compact integer source codes for compact JSON export
 SRC_TO_CODE = {
@@ -102,20 +116,38 @@ def _solve_iv_from_mid(
     return 0.5 * (lo + hi)
 
 
-def exec_buy_price(bid: float, ask: float, mid: float, source: str, slip_bsm: float = OPT_SLIP_BSM) -> float:
+def exec_buy_price(
+    bid: float,
+    ask: float,
+    mid: float,
+    source: str,
+    slip_bsm: float = OPT_SLIP_BSM,
+    fill_mode: str = DEFAULT_REAL_FILL_MODE,
+) -> float:
     if source in ("real_opra", "real_opra_interp"):
-        hs = 0.5 * max(0.0, ask - bid)
-        return mid + IBKR_LIMIT_FRAC * hs + OPT_COMM_PER_SH
-    # real_polygon or bsm_fallback (mid-only): apply half-spread + comm
+        if fill_mode == "ibkr_limit":
+            hs = 0.5 * max(0.0, ask - bid)
+            return mid + IBKR_LIMIT_FRAC * hs + OPT_COMM_PER_SH
+        return ask + OPT_COMM_PER_SH
+    # CALIBRATED_BSM (2025-12-16 -> Live) or mid-only quote: apply +/-2.5% half-spread + comm
     return mid * (1.0 + slip_bsm) + OPT_COMM_PER_SH
 
 
-def exec_sell_price(bid: float, ask: float, mid: float, source: str, slip_bsm: float = OPT_SLIP_BSM) -> float:
+def exec_sell_price(
+    bid: float,
+    ask: float,
+    mid: float,
+    source: str,
+    slip_bsm: float = OPT_SLIP_BSM,
+    fill_mode: str = DEFAULT_REAL_FILL_MODE,
+) -> float:
     if source in ("real_opra", "real_opra_interp"):
         if bid <= 0.0:
             return 0.0
-        hs = 0.5 * max(0.0, ask - bid)
-        return max(0.0, mid - IBKR_LIMIT_FRAC * hs - OPT_COMM_PER_SH)
+        if fill_mode == "ibkr_limit":
+            hs = 0.5 * max(0.0, ask - bid)
+            return max(0.0, mid - IBKR_LIMIT_FRAC * hs - OPT_COMM_PER_SH)
+        return max(0.0, bid - OPT_COMM_PER_SH)
     if mid <= 0.0:
         return 0.0
     return max(0.0, mid * (1.0 - slip_bsm) - OPT_COMM_PER_SH)
@@ -137,7 +169,7 @@ class HybridRealOptionChainStore:
         self,
         opra_parquet: Path = DEFAULT_OPRA_PARQUET,
         polygon_sqlite: Path = DEFAULT_POLYGON_SQLITE,
-        include_polygon_2026: bool = True,
+        include_polygon_2026: bool = False,
     ):
         # by_date[d][(opt_type, exp_str)] = (k_cents, bid, ask, iv, delta, oi, dte_int, tier_code)
         self.by_date: dict[str, dict[tuple[str, str], tuple[Any, ...]]] = {}
@@ -148,6 +180,7 @@ class HybridRealOptionChainStore:
         self.polygon_date_min = ""
         self.polygon_date_max = ""
         self.opra_days = 0
+        self.opra_quotes_count = 0
         self.polygon_days = 0
 
         # Recorder for Node.js compact export
@@ -161,6 +194,8 @@ class HybridRealOptionChainStore:
             self._load_polygon_2026(polygon_sqlite)
 
     def _load_opra_parquet(self, pq_path: Path) -> None:
+        if pd is None or np is None:
+            raise RuntimeError("numpy and pandas are required to load OPRA parquet")
         df = pd.read_parquet(pq_path)
         df = df[(df["ask"] > 0.0) & (df["bid"] >= 0.0) & (df["ask"] >= df["bid"])].copy()
         df["k_cents"] = np.round(df["strike"].values * 100.0).astype(np.int64)
@@ -178,6 +213,7 @@ class HybridRealOptionChainStore:
         ois = df["open_interest"].values.astype(np.int64)
 
         n = len(df)
+        self.opra_quotes_count = int(n)
         if n > 0:
             self.opra_date_min = str(dates[0])
             self.opra_date_max = str(dates[-1])
@@ -379,15 +415,22 @@ class HybridRealOptionChainStore:
             return None
         cands = [m for m in metas if lo_dte <= m[1] <= hi_dte and m[2] >= min_strikes]
         if not cands:
-            cands = [
-                m
-                for m in metas
-                if max(3, lo_dte - 12) <= m[1] <= hi_dte + 20 and m[2] >= 2
-            ]
+            if min_strikes >= 5 and target_dte >= 40:
+                cands = [
+                    m
+                    for m in metas
+                    if max(14, lo_dte - 20) <= m[1] <= hi_dte + 30 and m[2] >= 3
+                ]
+            else:
+                cands = [
+                    m
+                    for m in metas
+                    if max(3, lo_dte - 12) <= m[1] <= hi_dte + 20 and m[2] >= 2
+                ]
         if not cands:
             return None
         min_dist = min(abs(m[1] - target_dte) for m in cands)
-        tol = 5 if target_dte >= 40 else 3
+        tol = 5 if (target_dte >= 40 or min_strikes >= 5) else 3
         near = [m for m in cands if abs(m[1] - target_dte) <= min_dist + tol]
         near.sort(key=lambda m: (-m[3], abs(m[1] - target_dte)))
         return near[0][0], near[0][1], near[0][4]
@@ -405,7 +448,8 @@ class HybridRealOptionChainStore:
         require_bid: float = 0.0,
         rec_tag: str | None = None,
     ) -> dict[str, Any] | None:
-        picked = self._pick_expiry(d, "put", target_dte, lo_dte, hi_dte, min_strikes=3)
+        min_str = 5 if require_bid <= 0.0 else 3
+        picked = self._pick_expiry(d, "put", target_dte, lo_dte, hi_dte, min_strikes=min_str)
         if picked is None:
             return None
         exp_str, dte_val, tier_code = picked
@@ -443,6 +487,7 @@ class HybridRealOptionChainStore:
             "dte": dte_val,
             "strike": strike,
             "k_cents": int(k_arr[idx]),
+            "occ_symbol": format_occ_symbol("QQQ", exp_str, "put", strike),
             "bid": bid,
             "ask": ask,
             "mid": mid,
@@ -672,8 +717,9 @@ class HybridRealOptionChainStore:
         eval_skew_fn: Any,
         bsm_price_fn: Any,
         slip_bsm: float = OPT_SLIP_BSM,
+        iv_ratio_anchor: float | None = None,
     ) -> tuple[float, float, float, float, float, str]:
-        """Return (bid, ask, mid, iv, delta, source) with 3-tier priority."""
+        """Return (bid, ask, mid, iv, delta, source) with Real-OPRA -> OPRA-Calibrated BSM priority."""
         entry = self.by_date.get(d, {}).get((opt_type, exp_str))
         if entry is not None:
             k_arr, b_arr, a_arr, iv_arr, dl_arr, _, _, tier_code = entry
@@ -721,13 +767,17 @@ class HybridRealOptionChainStore:
                         self._rec_quote(d, opt_type, exp_str, k_cents, bid, ask, iv, dl, interp_src)
                         return bid, ask, mid, iv, dl, interp_src
 
-        # Tier 3 fallback: calibrated OPRA-skew BSM (or last observed real IV on same contract)
+        # Tier 2 (2025-12-16 -> Live): OPRA-Calibrated BSM with seam IV-ratio continuity
         K = k_cents / 100.0
         t_rem = max(0, rem_days) / 365.0
         if last_iv is not None and math.isfinite(last_iv) and 0.04 <= last_iv <= 2.5 and d <= (self.opra_date_max or "2025-12-15"):
             sig = float(last_iv)
         else:
-            sig = float(eval_skew_fn(spot, K, max(t_rem, 1.0 / 365.0), r_cur, q_cur, vxn_cl, coeffs))
+            base_sig = float(eval_skew_fn(spot, K, max(t_rem, 1.0 / 365.0), r_cur, q_cur, vxn_cl, coeffs))
+            if iv_ratio_anchor is not None and math.isfinite(iv_ratio_anchor) and 0.5 <= iv_ratio_anchor <= 2.0:
+                sig = max(0.04, min(2.50, base_sig * max(0.70, min(1.40, float(iv_ratio_anchor)))))
+            else:
+                sig = base_sig
         px = float(bsm_price_fn(spot, K, t_rem, r_cur, q_cur, sig, opt_type))
         dl = _bsm_delta(spot, K, t_rem, r_cur, q_cur, sig, opt_type)
         bid = max(0.0, px * (1.0 - slip_bsm))

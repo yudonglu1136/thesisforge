@@ -222,6 +222,7 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
       for (final key in ['asset', 'horizon'])
         'cta_$key': ctaRadarSelection[key]?.toString(),
       for (final key in [
+        'profile',
         'strategy',
         'window',
         'putOtm',
