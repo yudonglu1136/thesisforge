@@ -124,10 +124,10 @@ def exec_buy_price(
     slip_bsm: float = OPT_SLIP_BSM,
     fill_mode: str = DEFAULT_REAL_FILL_MODE,
 ) -> float:
+    if fill_mode == "ibkr_limit":
+        hs = 0.5 * max(0.0, ask - bid)
+        return mid + IBKR_LIMIT_FRAC * hs + OPT_COMM_PER_SH
     if source in ("real_opra", "real_opra_interp"):
-        if fill_mode == "ibkr_limit":
-            hs = 0.5 * max(0.0, ask - bid)
-            return mid + IBKR_LIMIT_FRAC * hs + OPT_COMM_PER_SH
         return ask + OPT_COMM_PER_SH
     # CALIBRATED_BSM (2025-12-16 -> Live) or mid-only quote: apply +/-2.5% half-spread + comm
     return mid * (1.0 + slip_bsm) + OPT_COMM_PER_SH
@@ -141,12 +141,14 @@ def exec_sell_price(
     slip_bsm: float = OPT_SLIP_BSM,
     fill_mode: str = DEFAULT_REAL_FILL_MODE,
 ) -> float:
+    if fill_mode == "ibkr_limit":
+        if bid <= 0.0 or mid <= 0.0:
+            return 0.0
+        hs = 0.5 * max(0.0, ask - bid)
+        return max(0.0, mid - IBKR_LIMIT_FRAC * hs - OPT_COMM_PER_SH)
     if source in ("real_opra", "real_opra_interp"):
         if bid <= 0.0:
             return 0.0
-        if fill_mode == "ibkr_limit":
-            hs = 0.5 * max(0.0, ask - bid)
-            return max(0.0, mid - IBKR_LIMIT_FRAC * hs - OPT_COMM_PER_SH)
         return max(0.0, bid - OPT_COMM_PER_SH)
     if mid <= 0.0:
         return 0.0
@@ -335,10 +337,10 @@ class HybridRealOptionChainStore:
             self._rec_selections[sel_key] = [
                 res["exp"],
                 int(res["k_cents"]),
-                round(float(res["bid"]), 4),
-                round(float(res["ask"]), 4),
-                round(float(iv_v), 4) if iv_v is not None and math.isfinite(iv_v) else None,
-                round(float(dl_v), 4) if dl_v is not None and math.isfinite(dl_v) else None,
+                round(float(res["bid"]), 6),
+                round(float(res["ask"]), 6),
+                round(float(iv_v), 8) if iv_v is not None and math.isfinite(iv_v) else None,
+                round(float(dl_v), 8) if dl_v is not None and math.isfinite(dl_v) else None,
                 SRC_TO_CODE.get(src, 1),
             ]
         # Also record the entry day quote in contract trajectory
@@ -349,10 +351,10 @@ class HybridRealOptionChainStore:
             iv_v = res.get("iv")
             dl_v = res.get("delta")
             cmap[d] = [
-                round(float(res["bid"]), 4),
-                round(float(res["ask"]), 4),
-                round(float(iv_v), 4) if iv_v is not None and math.isfinite(iv_v) else None,
-                round(float(dl_v), 4) if dl_v is not None and math.isfinite(dl_v) else None,
+                round(float(res["bid"]), 6),
+                round(float(res["ask"]), 6),
+                round(float(iv_v), 8) if iv_v is not None and math.isfinite(iv_v) else None,
+                round(float(dl_v), 8) if dl_v is not None and math.isfinite(dl_v) else None,
                 SRC_TO_CODE.get(src, 1),
             ]
 
@@ -374,10 +376,10 @@ class HybridRealOptionChainStore:
         cmap = self._rec_contracts.setdefault(ckey, {})
         if d not in cmap:
             cmap[d] = [
-                round(float(bid), 4),
-                round(float(ask), 4),
-                round(float(iv), 4) if math.isfinite(iv) else None,
-                round(float(delta), 4) if math.isfinite(delta) else None,
+                round(float(bid), 6),
+                round(float(ask), 6),
+                round(float(iv), 8) if math.isfinite(iv) else None,
+                round(float(delta), 8) if math.isfinite(delta) else None,
                 SRC_TO_CODE.get(src, 1),
             ]
 

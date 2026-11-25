@@ -7,6 +7,9 @@ import {
   CRISIS_OBSERVATORY_PUT_OTMS,
   CRISIS_OBSERVATORY_M7_TP_MODES,
   CRISIS_OBSERVATORY_ROLL_MODES,
+  CRISIS_OBSERVATORY_FILL_MODES,
+  DEFAULT_M7_FILL_MODE,
+  HARDCODED_RULESET_SPEC,
   evalSkewIv,
   bsmPrice,
   evalCore3Signal,
@@ -22,6 +25,9 @@ export {
   CRISIS_OBSERVATORY_PUT_OTMS,
   CRISIS_OBSERVATORY_M7_TP_MODES,
   CRISIS_OBSERVATORY_ROLL_MODES,
+  CRISIS_OBSERVATORY_FILL_MODES,
+  DEFAULT_M7_FILL_MODE,
+  HARDCODED_RULESET_SPEC,
 };
 
 export const CRISIS_OBSERVATORY_VERSION = 'crisis-observatory-v3-m7';
@@ -91,6 +97,8 @@ const PROFILE_ALIASES = Object.freeze({
 const ROLL_MODE_ALIASES = Object.freeze({
   adaptive: 'adaptive_120_90',
   '120_90': 'adaptive_120_90',
+  '125_90': 'adaptive_120_90',
+  adaptive_125_90: 'adaptive_120_90',
   adaptive_roll: 'adaptive_120_90',
   '90d': '90d_hold',
   hold: '90d_hold',
@@ -98,6 +106,15 @@ const ROLL_MODE_ALIASES = Object.freeze({
   roll50: '120d_roll50',
   '50d': '120d_roll50',
   '120d_50d': '120d_roll50',
+});
+
+const FILL_MODE_ALIASES = Object.freeze({
+  limit: 'ibkr_limit',
+  ibkr: 'ibkr_limit',
+  default: 'ibkr_limit',
+  strict: 'ask_bid',
+  askbid: 'ask_bid',
+  'ask-bid': 'ask_bid',
 });
 
 const LEGACY_SP_MODE_ALIASES = Object.freeze({
@@ -267,15 +284,20 @@ function unpackLedgerMap(rawMap) {
 }
 
 const EVENT_ORDER_RANK = Object.freeze({
+  vix110_near_itm_tp: 1,
   vix110_tp: 1,
   vix110_itm_tp: 1,
   vix110_4x_tp: 1,
   put5x_dte45_tp: 1,
   live_tp_armed: 1,
+  live_roll75_armed: 1,
   live_roll50_armed: 1,
   live_roll30_armed: 1,
+  roll_75d: 2,
   roll_50d: 2,
   roll_30d: 2,
+  base_roll_75d: 2,
+  base_salvage_75d: 2,
   option_expiry: 2,
   shield_enter: 3,
   shield_exit: 4,
@@ -285,6 +307,7 @@ const EVENT_ORDER_RANK = Object.freeze({
   slot1_collar: 6,
   slot2_collar: 7,
   slot3_collar: 8,
+  base_020_put: 9,
 });
 
 function synthesizeUnifiedEvents(strategyId, ledger) {
@@ -292,12 +315,21 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
   for (const rawTr of ledger ?? []) {
     const tr = normalizeTradeQuoteRow(rawTr);
     const isNk = tr.tranche_type === 'naked_put';
-    const sNum = Number(tr.slot_num || 1);
-    const evType = isNk
-      ? sNum === 1
-        ? 'slot1_naked_put'
-        : `slot${sNum}_naked_put`
-      : `slot${sNum}_collar`;
+    const bookTag = String(tr.book ?? '');
+    const isBaseBook = bookTag === 'base';
+    const sNum =
+      tr.slot_num !== null && tr.slot_num !== undefined
+        ? Number(tr.slot_num)
+        : isBaseBook
+          ? 0
+          : 1;
+    const evType = isBaseBook
+      ? 'base_020_put'
+      : isNk
+        ? sNum <= 1
+          ? 'slot1_naked_put'
+          : `slot${sNum}_naked_put`
+        : `slot${Math.max(1, sNum)}_collar`;
     const openEv = {
       event_id: `${strategyId}_tr${tr.tranche_id}_open`,
       tranche_id: tr.tranche_id,
@@ -341,6 +373,12 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
     };
     if (tr.crisis_prob !== undefined && tr.crisis_prob !== null) {
       Object.assign(openEv, {
+        book: tr.book ?? null,
+        book_label_en: tr.book_label_en ?? null,
+        book_label_zh: tr.book_label_zh ?? null,
+        budget_pct_nav: tr.budget_pct_nav ?? null,
+        entry_pct_nav: tr.entry_pct_nav ?? null,
+        near_itm_strike_105: tr.near_itm_strike_105 ?? null,
         crisis_prob: tr.crisis_prob,
         p1: tr.p1,
         p2: tr.p2,
@@ -361,17 +399,24 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
 
     const exitReason = String(tr.exit_reason ?? '');
     const isOpenLive = Boolean(tr.is_open_live);
-    const isLiveRoll30Armed =
-      exitReason === 'live_roll_30d_armed_next_open' || exitReason === 'live_roll30_armed_next_open';
-    const isLiveRoll50Armed =
-      exitReason === 'live_roll_50d_armed_next_open' || exitReason === 'live_roll50_armed_next_open';
-    const isLiveRollArmed = isLiveRoll30Armed || isLiveRoll50Armed;
+    const isLiveRollArmed = [
+      'live_roll_75d_armed_next_open',
+      'live_roll_50d_armed_next_open',
+      'live_roll_30d_armed_next_open',
+      'live_salvage_vix_expensive_armed_next_open',
+      'live_roll50_armed_next_open',
+      'live_roll30_armed_next_open',
+    ].includes(exitReason);
     const isLiveArmed = exitReason === 'live_tp_armed_next_open' || isLiveRollArmed;
+    const isRoll75 = exitReason === 'roll_75d';
+    const isSalvVix = exitReason === 'salvage_vix_expensive';
     const isRoll30 = exitReason === 'roll_30d';
     const isRoll50 = exitReason === 'roll_50d';
     const isTp = exitReason.includes('tp') && !isOpenLive;
-    const isPut5x = exitReason.includes('put_5x');
-    const isItmTp = exitReason.includes('itm_tp');
+    const isNearItmTp = exitReason === 'tp_near_itm' || exitReason === 'base_tp_near_itm';
+    const isPut5x =
+      exitReason.includes('put_5x') || exitReason === 'tp_5x_late' || exitReason === 'base_tp_5x_late';
+    const isItmTp = exitReason.includes('itm_tp') && !isNearItmTp;
     const is4xTp = exitReason.includes('4x_tp');
     const evExitDate = !isOpenLive ? tr.exit_date : tr.mtm_date;
 
@@ -382,30 +427,40 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
       let evTypeExit;
       let trigEnExit;
       let trigZhExit;
-      if (isLiveRoll30Armed) {
-        evTypeExit = 'live_roll30_armed';
-        trigEnExit = `30-DTE CTA Roll/Salvage Armed (${tr.rem_dte_at_exit} DTE left · Next Open)`;
-        trigZhExit = `30-DTE CTA 残值滚仓已触发（剩 ${tr.rem_dte_at_exit} 天 · 待次日开盘执行）`;
-      } else if (isLiveRoll50Armed) {
-        evTypeExit = 'live_roll50_armed';
-        trigEnExit = `50-DTE Roll/Salvage Armed (${tr.rem_dte_at_exit} DTE left · Next Open)`;
-        trigZhExit = `50-DTE 残值滚仓已触发（剩 ${tr.rem_dte_at_exit} 天 · 待次日开盘执行）`;
+      if (isLiveRollArmed) {
+        const rlLbl = exitReason.includes('30') ? 30 : exitReason.includes('50') ? 50 : 75;
+        evTypeExit = `live_roll${rlLbl}_armed`;
+        trigEnExit = `${rlLbl}-DTE Hard Roll/Salvage Armed (${tr.rem_dte_at_exit} DTE left · Next Close)`;
+        trigZhExit = `${rlLbl}-DTE 硬换/残值退出已触发（剩 ${tr.rem_dte_at_exit} 天 · 待次日执行）`;
       } else if (isLiveArmed) {
         evTypeExit = 'live_tp_armed';
-        trigEnExit = `Deep-ITM Panic TP Armed (${tr.rem_dte_at_exit} DTE left · VIX/3M ${vrStr} · Next Open)`;
-        trigZhExit = `实值恐慌止盈已触发（剩余 ${tr.rem_dte_at_exit} 天 · VIX/3M ${vrStr} · 待次日开盘换股）`;
-      } else if (isRoll30) {
-        evTypeExit = 'roll_30d';
+        trigEnExit = `Near-ITM Panic TP Armed (${tr.rem_dte_at_exit} DTE left · VIX/3M ${vrStr} · Next Exec)`;
+        trigZhExit = `准实值恐慌止盈已触发（剩余 ${tr.rem_dte_at_exit} 天 · VIX/3M ${vrStr} · 待次日换股）`;
+      } else if (isSalvVix) {
+        evTypeExit = isBaseBook ? 'base_salvage_75d' : 'roll_75d';
         const salvPct = Math.round(Number(tr.roi_mult ?? 0) * 100);
-        trigEnExit = `30-DTE CTA Residual Roll/Salvage (${tr.rem_dte_at_exit} DTE left · ${salvPct}% Value Saved)`;
-        trigZhExit = `30-DTE CTA 剩余残值滚仓/回收（剩 ${tr.rem_dte_at_exit} 天 · 回收 ${salvPct}% 残值）`;
-      } else if (isRoll50) {
-        evTypeExit = 'roll_50d';
+        trigEnExit = `75-DTE Salvage Exit (VIX > 20 Gate Closed · ${salvPct}% Value Saved)`;
+        trigZhExit = `75-DTE 残值退出（VIX > 20 门控关闭禁续买 · 回收 ${salvPct}% 残值）`;
+      } else if (isRoll75 || isRoll30 || isRoll50) {
+        const rlLbl = isRoll30 ? 30 : isRoll50 ? 50 : 75;
+        evTypeExit = isBaseBook
+          ? 'base_roll_75d'
+          : isRoll30
+            ? 'roll_30d'
+            : isRoll50
+              ? 'roll_50d'
+              : 'roll_75d';
         const salvPct = Math.round(Number(tr.roi_mult ?? 0) * 100);
-        trigEnExit = `50-DTE Residual Roll/Salvage (${tr.rem_dte_at_exit} DTE left · ${salvPct}% Value Saved)`;
-        trigZhExit = `50-DTE 剩余残值滚仓/回收（剩 ${tr.rem_dte_at_exit} 天 · 回收 ${salvPct}% 残值）`;
+        trigEnExit = `${rlLbl}-DTE Hard Roll/Salvage (${tr.rem_dte_at_exit} DTE left · ${salvPct}% Value Saved)`;
+        trigZhExit = `${rlLbl}-DTE 硬换/残值回收（剩 ${tr.rem_dte_at_exit} 天 · 回收 ${salvPct}% 残值）`;
+      } else if (isNearItmTp) {
+        evTypeExit = 'vix110_near_itm_tp';
+        const bkTagEn = isBaseBook ? 'Book B 0.20% ' : '';
+        const bkTagZh = isBaseBook ? 'B账本0.20% ' : '';
+        trigEnExit = `${bkTagEn}Near-ITM Bottom Clearance TP (QQQ $${Number(tr.exit_spot ?? 0).toFixed(2)} <= 1.05xK · VIX/3M ${vrStr})`;
+        trigZhExit = `${bkTagZh}准实值底部出清止盈（QQQ $${Number(tr.exit_spot ?? 0).toFixed(2)} <= 1.05×K · VIX/3M ${vrStr} · 启动5D锁死）`;
       } else if (isPut5x) {
-        const dteCapLbl = exitReason.includes('dte75') ? 75 : 45;
+        const dteCapLbl = isBaseBook ? 60 : exitReason.includes('dte75') ? 75 : 45;
         evTypeExit = 'put5x_dte45_tp';
         trigEnExit = `5x Put Slow-Bear TP (${tr.rem_dte_at_exit} DTE <= ${dteCapLbl}, Deep ITM Lock)`;
         trigZhExit = `后半程 Put >= 5x 慢熊止盈（剩余 ${tr.rem_dte_at_exit} 天 <= ${dteCapLbl} · 深实值锁利）`;
@@ -422,7 +477,7 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
         trigEnExit = `VIX/VIX3M ${vrStr} >= 1.10 Panic TP`;
         trigZhExit = `VIX/VIX3M ${vrStr} >= 1.10 恐慌止盈抄底`;
       } else {
-        const tenorExp = exitReason.includes('120dte') ? 120 : 90;
+        const tenorExp = exitReason.includes('125dte') ? 125 : exitReason.includes('120dte') ? 120 : 90;
         evTypeExit = 'option_expiry';
         trigEnExit = `${tenorExp}-DTE Expiry (${retStr} spot)`;
         trigZhExit = `${tenorExp}-DTE 到期结算（期间正股 ${retStr}）`;
@@ -471,6 +526,11 @@ function synthesizeUnifiedEvents(strategyId, ledger) {
       };
       if (tr.crisis_prob !== undefined && tr.crisis_prob !== null) {
         Object.assign(exitEv, {
+          book: tr.book ?? null,
+          book_label_en: tr.book_label_en ?? null,
+          book_label_zh: tr.book_label_zh ?? null,
+          budget_pct_nav: tr.budget_pct_nav ?? null,
+          near_itm_strike_105: tr.near_itm_strike_105 ?? null,
           crisis_prob: tr.crisis_prob,
           trigger_code: tr.trigger_code,
           triggered_modules: tr.triggered_modules,
@@ -574,6 +634,7 @@ function resolveM7EffectiveBundle(
     m7TpMode = 'standard',
     rollMode = 'adaptive_120_90',
     m0Enabled = true,
+    fillMode = DEFAULT_M7_FILL_MODE,
     ccMode = 'cc_off',
     spMode = 'sp_off',
     wcMode = 'wc_reclaim_30d_d35',
@@ -584,13 +645,16 @@ function resolveM7EffectiveBundle(
   const baseM7 = rawData.m7_bundles?.[baseKey];
   const defaultWc = rawData.default_wc_mode || 'wc_reclaim_30d_d35';
   const effWc = spMode === 'sp_off' ? defaultWc : wcMode || defaultWc;
+  const effFill = CRISIS_OBSERVATORY_FILL_MODES.includes(fillMode) ? fillMode : DEFAULT_M7_FILL_MODE;
+  const artifactFill = rawData.default_fill_mode || DEFAULT_M7_FILL_MODE;
 
-  if (ccMode === 'cc_off' && spMode === 'sp_off' && baseM7) {
+  if (ccMode === 'cc_off' && spMode === 'sp_off' && effFill === artifactFill && baseM7) {
     return {
       putOtm,
       m7TpMode,
       rollMode,
       m0Enabled,
+      fillMode: effFill,
       summaries: baseM7.summaries ?? {},
       ledgers: unpackLedgerMap(baseM7.ledgers),
       ccLedgers: { M7G_Graded: [], Core3_Adaptive: [], M7_Ensemble: [] },
@@ -609,7 +673,7 @@ function resolveM7EffectiveBundle(
     };
   }
 
-  const comboKey = `${snapshotId}:${baseKey}:${ccMode}:${spMode}:${effWc}`;
+  const comboKey = `${snapshotId}:${baseKey}:${effFill}:${ccMode}:${spMode}:${effWc}`;
   const cachedCombo = m7SimComboCache.get(comboKey);
   if (cachedCombo) return cachedCombo;
 
@@ -640,6 +704,7 @@ function resolveM7EffectiveBundle(
       m7TpMode,
       rollMode: sidRollMode,
       m0Enabled,
+      fillMode: effFill,
       ccMode,
       spMode,
       wcMode: effWc,
@@ -683,6 +748,7 @@ function resolveM7EffectiveBundle(
     m7TpMode,
     rollMode,
     m0Enabled,
+    fillMode: effFill,
     summaries,
     ledgers,
     ccLedgers,
@@ -861,6 +927,7 @@ function buildEngineAttributionByStrategy(
     m7TpMode = 'standard',
     rollMode = 'adaptive_120_90',
     m0Enabled = true,
+    fillMode = DEFAULT_M7_FILL_MODE,
     cutoffSeries = null,
     liveScale = 1.0,
   } = {},
@@ -888,6 +955,7 @@ function buildEngineAttributionByStrategy(
     m7TpMode,
     rollMode,
     m0Enabled,
+    fillMode,
     ccMode: 'cc_off',
     spMode: 'sp_off',
     wcMode: defaultWc,
@@ -900,6 +968,7 @@ function buildEngineAttributionByStrategy(
           m7TpMode,
           rollMode,
           m0Enabled,
+          fillMode,
           ccMode: selectedCcMode,
           spMode: 'sp_off',
           wcMode: defaultWc,
@@ -912,6 +981,7 @@ function buildEngineAttributionByStrategy(
           m7TpMode,
           rollMode,
           m0Enabled,
+          fillMode,
           ccMode: selectedCcMode,
           spMode: selectedSpMode,
           wcMode: selectedWcMode,
@@ -1120,12 +1190,16 @@ function projectArtifactForModes(
   selectedM7TpMode = 'standard',
   selectedRollMode = 'adaptive_120_90',
   selectedM0Enabled = true,
+  selectedFillMode = DEFAULT_M7_FILL_MODE,
 ) {
   const defaultWcMode = data.default_wc_mode ?? 'wc_reclaim_30d_d35';
   const effectiveWcMode = selectedWcMode || defaultWcMode;
   const cacheWcKey = selectedSpMode === 'sp_off' ? defaultWcMode : effectiveWcMode;
   const m0Tag = selectedM0Enabled ? 'm0on' : 'm0off';
-  const cacheKey = `${snapshotId}:${selectedPutOtm}:${selectedM7TpMode}:${selectedRollMode}:${m0Tag}:${selectedTpMode}:${selectedCcMode}:${selectedSpMode}:${cacheWcKey}`;
+  const effFillMode = CRISIS_OBSERVATORY_FILL_MODES.includes(selectedFillMode)
+    ? selectedFillMode
+    : DEFAULT_M7_FILL_MODE;
+  const cacheKey = `${snapshotId}:${selectedPutOtm}:${selectedM7TpMode}:${selectedRollMode}:${m0Tag}:${effFillMode}:${selectedTpMode}:${selectedCcMode}:${selectedSpMode}:${cacheWcKey}`;
   const hit = projectedModeCache.get(cacheKey);
   if (hit) return hit;
 
@@ -1158,6 +1232,7 @@ function projectArtifactForModes(
     m7TpMode: selectedM7TpMode,
     rollMode: selectedRollMode,
     m0Enabled: selectedM0Enabled,
+    fillMode: effFillMode,
     ccMode: selectedCcMode,
     spMode: selectedSpMode,
     wcMode: effectiveWcMode,
@@ -1168,6 +1243,14 @@ function projectArtifactForModes(
       ...baseWithoutModes,
       default_profile: data.default_profile ?? 'full_m7_adaptive',
       profiles_meta: data.profiles_meta ?? [],
+      fill_mode: effFillMode,
+      selected_fill_mode: effFillMode,
+      default_fill_mode: data.default_fill_mode ?? DEFAULT_M7_FILL_MODE,
+      available_fill_modes: data.available_fill_modes ?? CRISIS_OBSERVATORY_FILL_MODES,
+      hardcoded_ruleset: {
+        ...(data.hardcoded_ruleset ?? HARDCODED_RULESET_SPEC),
+        fill_mode: effFillMode,
+      },
       put_otm: selectedPutOtm,
       m7_tp_mode: selectedM7TpMode,
       roll_mode: selectedRollMode,
@@ -1194,6 +1277,7 @@ function projectArtifactForModes(
     selectedM7TpMode === (data.default_m7_tp_mode ?? 'standard') &&
     selectedRollMode === (data.default_roll_mode ?? 'adaptive_120_90') &&
     selectedM0Enabled === Boolean(data.default_m0_enabled ?? true) &&
+    effFillMode === (data.default_fill_mode ?? DEFAULT_M7_FILL_MODE) &&
     selectedCcMode === (data.default_cc_mode ?? 'cc_off') &&
     selectedSpMode === (data.default_sp_mode ?? 'sp_off');
 
@@ -1300,6 +1384,7 @@ function projectArtifactForModes(
       m7TpMode: selectedM7TpMode,
       rollMode: selectedRollMode,
       m0Enabled: selectedM0Enabled,
+      fillMode: effFillMode,
     },
   );
 
@@ -1320,6 +1405,15 @@ function projectArtifactForModes(
     ...baseWithoutModes,
     default_profile: data.default_profile ?? 'full_m7_adaptive',
     profiles_meta: data.profiles_meta ?? [],
+    fill_mode: effFillMode,
+    selected_fill_mode: effFillMode,
+    default_fill_mode: data.default_fill_mode ?? DEFAULT_M7_FILL_MODE,
+    available_fill_modes: data.available_fill_modes ?? CRISIS_OBSERVATORY_FILL_MODES,
+    fill_modes_meta: data.fill_modes_meta ?? [],
+    hardcoded_ruleset: {
+      ...(data.hardcoded_ruleset ?? HARDCODED_RULESET_SPEC),
+      fill_mode: effFillMode,
+    },
     put_otm: selectedPutOtm,
     default_put_otm: data.default_put_otm ?? 'otm15',
     put_otm_meta: data.put_otm_meta ?? [],
@@ -1883,6 +1977,7 @@ export function loadCrisisObservatoryDashboard({
   m7TpMode = null,
   rollMode = null,
   m0Enabled = null,
+  fillMode = null,
   tpMode = null,
   ccMode = null,
   spMode = null,
@@ -1988,6 +2083,14 @@ export function loadCrisisObservatoryDashboard({
 
   const rawM0Enabled = parseM0EnabledParam(m0Enabled, rawData);
 
+  const requestedFillMode = fillMode
+    ? String(fillMode).trim().toLowerCase()
+    : rawData.default_fill_mode ?? DEFAULT_M7_FILL_MODE;
+  const rawFillMode = FILL_MODE_ALIASES[requestedFillMode] ?? requestedFillMode;
+  if (!CRISIS_OBSERVATORY_FILL_MODES.includes(rawFillMode)) {
+    fail('invalid_crisis_observatory_fill_mode', 400);
+  }
+
   const requestedCcMode = ccMode ? String(ccMode).trim() : rawData.default_cc_mode ?? 'cc_off';
   const rawCcMode = LEGACY_CC_MODE_ALIASES[requestedCcMode] ?? requestedCcMode;
   if (!CRISIS_OBSERVATORY_CC_MODES.includes(rawCcMode)) {
@@ -2015,6 +2118,7 @@ export function loadCrisisObservatoryDashboard({
     rawM7TpMode,
     rawRollMode,
     rawM0Enabled,
+    rawFillMode,
   );
 
   const requestedAsOf = asOf ? String(asOf).trim() : data.as_of_date;
@@ -2062,6 +2166,8 @@ export function loadCrisisObservatoryDashboard({
       selected_profile: effectiveProfile,
       core3_roll_locked: core3RollLocked,
       selected_strategy_id: selectedStrategy,
+      fill_mode: rawFillMode,
+      selected_fill_mode: rawFillMode,
       put_otm: rawPutOtm,
       m7_tp_mode: rawM7TpMode,
       roll_mode: rawRollMode,
@@ -2093,6 +2199,7 @@ export function loadCrisisObservatoryDashboard({
       m7TpMode: rawM7TpMode,
       rollMode: rawRollMode,
       m0Enabled: rawM0Enabled,
+      fillMode: rawFillMode,
       ccMode: rawCcMode,
       spMode: rawSpMode,
       wcMode: rawWcMode,
@@ -2102,6 +2209,7 @@ export function loadCrisisObservatoryDashboard({
       m7TpMode: rawM7TpMode,
       rollMode: 'adaptive_120_90',
       m0Enabled: rawM0Enabled,
+      fillMode: rawFillMode,
       ccMode: rawCcMode,
       spMode: rawSpMode,
       wcMode: rawWcMode,
@@ -2111,6 +2219,7 @@ export function loadCrisisObservatoryDashboard({
       m7TpMode: rawM7TpMode,
       rollMode: rawRollMode,
       m0Enabled: rawM0Enabled,
+      fillMode: rawFillMode,
       ccMode: rawCcMode,
       spMode: rawSpMode,
       wcMode: rawWcMode,
@@ -2236,25 +2345,9 @@ export function loadCrisisObservatoryDashboard({
     }
   }
 
-  const strategiesSummary = data.strategies_summary.map(item => {
-    if (liveM7SimOverrides?.sims?.[item.id]) {
-      return {
-        ...item,
-        ...liveM7SimOverrides.sims[item.id].summary,
-      };
-    }
-    const navKey = STRATEGY_NAV_KEYS[item.id];
-    const metrics = computeSeriesMetrics(slicedSeries, navKey, bhEndNav);
-    const maskedLed = maskedLedgersByStrategy[item.id] ?? [];
-    return {
-      ...item,
-      ...(metrics ?? {}),
-      tranche_count: maskedLed.length,
-    };
-  });
-
-  // Leak-free historical cutoff M7 live dashboard reconstruction when effDate < artifact.as_of_date
+  // Leak-free historical cutoff M7 simulation & live dashboard reconstruction when effDate < artifact.as_of_date
   let cutoffM7Dashboards = liveM7SimOverrides?.dashboards ?? data.m7_live_dashboards_by_strategy ?? {};
+  const cutoffM7Sims = {};
   if (!isPostArtifactLive && effDate < data.as_of_date) {
     const { evalBars, sigM0On, sigM0Off, featRows, dateToIdx, coeffs } = getUnpackedM7Tables(rawData);
     const cutIdx = dateToIdx.get(effDate);
@@ -2270,10 +2363,12 @@ export function loadCrisisObservatoryDashboard({
           m7TpMode: rawM7TpMode,
           rollMode: sidRoll,
           m0Enabled: rawM0Enabled,
+          fillMode: rawFillMode,
           ccMode: rawCcMode,
           spMode: rawSpMode,
           wcMode: rawWcMode,
         });
+        cutoffM7Sims[sid] = subSim;
         rebuilt[sid] = buildM7LiveDashboardJS(
           subEval[cutIdx],
           subSig[cutIdx],
@@ -2292,6 +2387,31 @@ export function loadCrisisObservatoryDashboard({
       cutoffM7Dashboards = rebuilt;
     }
   }
+
+  const strategiesSummary = data.strategies_summary.map(item => {
+    if (liveM7SimOverrides?.sims?.[item.id]) {
+      return {
+        ...item,
+        ...liveM7SimOverrides.sims[item.id].summary,
+      };
+    }
+    if (cutoffM7Sims[item.id]) {
+      const maskedLed = maskedLedgersByStrategy[item.id] ?? [];
+      return {
+        ...item,
+        ...cutoffM7Sims[item.id].summary,
+        tranche_count: maskedLed.length,
+      };
+    }
+    const navKey = STRATEGY_NAV_KEYS[item.id];
+    const metrics = computeSeriesMetrics(slicedSeries, navKey, bhEndNav);
+    const maskedLed = maskedLedgersByStrategy[item.id] ?? [];
+    return {
+      ...item,
+      ...(metrics ?? {}),
+      tranche_count: maskedLed.length,
+    };
+  });
 
   const openTranchesForStrat = sid =>
     liveM7SimOverrides?.sims?.[sid]
@@ -2410,6 +2530,7 @@ export function loadCrisisObservatoryDashboard({
       m7TpMode: rawM7TpMode,
       rollMode: rawRollMode,
       m0Enabled: rawM0Enabled,
+      fillMode: rawFillMode,
       ...(isPostArtifactLive ? { liveScale } : { cutoffSeries: slicedSeries }),
     },
   );
@@ -2427,6 +2548,8 @@ export function loadCrisisObservatoryDashboard({
     selected_profile: effectiveProfile,
     core3_roll_locked: core3RollLocked,
     selected_strategy_id: selectedStrategy,
+    fill_mode: rawFillMode,
+    selected_fill_mode: rawFillMode,
     put_otm: rawPutOtm,
     m7_tp_mode: rawM7TpMode,
     roll_mode: rawRollMode,
@@ -2508,6 +2631,7 @@ export function loadCrisisObservatoryPitSnapshot({
   m7TpMode = null,
   rollMode = null,
   m0Enabled = null,
+  fillMode = null,
   tpMode = null,
   ccMode = null,
   spMode = null,
@@ -2534,6 +2658,7 @@ export function loadCrisisObservatoryPitSnapshot({
         m7TpMode ?? '',
         rollMode ?? '',
         m0Enabled ?? '',
+        fillMode ?? '',
         tpMode ?? '',
         ccMode ?? '',
         spMode ?? '',
@@ -2553,6 +2678,7 @@ export function loadCrisisObservatoryPitSnapshot({
     m7TpMode,
     rollMode,
     m0Enabled,
+    fillMode,
     tpMode,
     ccMode,
     spMode,
@@ -2634,6 +2760,10 @@ export function loadCrisisObservatoryPitSnapshot({
     selected_profile: slicedDoc.selected_profile,
     core3_roll_locked: slicedDoc.core3_roll_locked,
     selected_strategy_id: slicedDoc.selected_strategy_id,
+    fill_mode: slicedDoc.fill_mode,
+    selected_fill_mode: slicedDoc.selected_fill_mode,
+    available_fill_modes: slicedDoc.available_fill_modes,
+    hardcoded_ruleset: slicedDoc.hardcoded_ruleset,
     put_otm: slicedDoc.put_otm,
     m7_tp_mode: slicedDoc.m7_tp_mode,
     roll_mode: slicedDoc.roll_mode,
@@ -2671,6 +2801,7 @@ export async function loadCrisisObservatoryPitSnapshotLive({
   m7TpMode = null,
   rollMode = null,
   m0Enabled = null,
+  fillMode = null,
   tpMode = null,
   ccMode = null,
   spMode = null,
@@ -2715,6 +2846,7 @@ export async function loadCrisisObservatoryPitSnapshotLive({
     m7TpMode,
     rollMode,
     m0Enabled,
+    fillMode,
     tpMode,
     ccMode,
     spMode,
@@ -2733,6 +2865,7 @@ export async function loadCrisisObservatoryDashboardLive({
   m7TpMode = null,
   rollMode = null,
   m0Enabled = null,
+  fillMode = null,
   tpMode = null,
   ccMode = null,
   spMode = null,
@@ -2776,6 +2909,7 @@ export async function loadCrisisObservatoryDashboardLive({
     m7TpMode,
     rollMode,
     m0Enabled,
+    fillMode,
     tpMode,
     ccMode,
     spMode,

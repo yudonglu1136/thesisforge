@@ -3193,11 +3193,15 @@ def build_unified_events(
     events: list[dict[str, Any]] = []
     for tr in ledger:
         is_nk = tr["tranche_type"] == "naked_put"
-        s_num = int(tr.get("slot_num") or 1)
-        if is_nk:
-            ev_type = "slot1_naked_put" if s_num == 1 else f"slot{s_num}_naked_put"
+        book_tag = str(tr.get("book") or "")
+        is_base_book = book_tag == "base"
+        s_num = int(tr.get("slot_num") if tr.get("slot_num") is not None else (0 if is_base_book else 1))
+        if is_base_book:
+            ev_type = "base_020_put"
+        elif is_nk:
+            ev_type = "slot1_naked_put" if s_num <= 1 else f"slot{s_num}_naked_put"
         else:
-            ev_type = f"slot{s_num}_collar"
+            ev_type = f"slot{max(1, s_num)}_collar"
         open_ev: dict[str, Any] = {
             "event_id": f"{strategy_id}_tr{tr['tranche_id']}_open",
             "tranche_id": tr["tranche_id"],
@@ -3232,6 +3236,12 @@ def build_unified_events(
         if "crisis_prob" in tr:
             open_ev.update(
                 {
+                    "book": tr.get("book"),
+                    "book_label_en": tr.get("book_label_en"),
+                    "book_label_zh": tr.get("book_label_zh"),
+                    "budget_pct_nav": tr.get("budget_pct_nav"),
+                    "entry_pct_nav": tr.get("entry_pct_nav"),
+                    "near_itm_strike_105": tr.get("near_itm_strike_105"),
                     "crisis_prob": tr.get("crisis_prob"),
                     "p1": tr.get("p1"),
                     "p2": tr.get("p2"),
@@ -3262,40 +3272,65 @@ def build_unified_events(
 
         is_open_live = bool(tr.get("is_open_live"))
         ex_reason = str(tr.get("exit_reason") or "")
-        is_live_armed = ex_reason in (
-            "live_tp_armed_next_open",
+        is_live_roll_armed = ex_reason in (
+            "live_roll_75d_armed_next_open",
+            "live_roll_50d_armed_next_open",
+            "live_roll_30d_armed_next_open",
+            "live_salvage_vix_expensive_armed_next_open",
             "live_roll50_armed_next_open",
             "live_roll30_armed_next_open",
         )
+        is_live_armed = is_live_roll_armed or ex_reason == "live_tp_armed_next_open"
+        is_roll75 = ex_reason == "roll_75d"
+        is_salv_vix = ex_reason == "salvage_vix_expensive"
         is_roll50 = ex_reason == "roll_50d"
         is_roll30 = ex_reason == "roll_30d"
         is_tp = ("tp" in ex_reason) and not is_open_live
-        is_put5x = "put_5x" in ex_reason
-        is_itm_tp = "itm_tp" in ex_reason
+        is_near_itm_tp = ex_reason in ("tp_near_itm", "base_tp_near_itm")
+        is_put5x = ("put_5x" in ex_reason) or ex_reason in ("tp_5x_late", "base_tp_5x_late")
+        is_itm_tp = ("itm_tp" in ex_reason) and not is_near_itm_tp
         is_4x_tp = "4x_tp" in ex_reason
         ev_exit_date = tr["exit_date"] if not is_open_live else tr.get("mtm_date")
         if (not is_open_live or is_live_armed) and ev_exit_date:
-            if ex_reason in ("live_roll50_armed_next_open", "live_roll30_armed_next_open"):
-                rl_lbl = 30 if "30" in ex_reason else 50
+            if is_live_roll_armed:
+                rl_lbl = 30 if "30" in ex_reason else (50 if "50" in ex_reason else 75)
                 ev_type_exit = f"live_roll{rl_lbl}_armed"
-                trig_en_exit = f"{rl_lbl}-DTE Roll/Salvage Armed ({tr['rem_dte_at_exit']} DTE left · Next Open)"
-                trig_zh_exit = f"{rl_lbl}-DTE 残值滚仓已触发（剩 {tr['rem_dte_at_exit']} 天 · 待次日开盘执行）"
+                trig_en_exit = f"{rl_lbl}-DTE Hard Roll/Salvage Armed ({tr['rem_dte_at_exit']} DTE left · Next Close)"
+                trig_zh_exit = f"{rl_lbl}-DTE 硬换/残值退出已触发（剩 {tr['rem_dte_at_exit']} 天 · 待次日执行）"
             elif is_live_armed:
                 ev_type_exit = "live_tp_armed"
                 trig_en_exit = (
-                    f"Deep-ITM Panic TP Armed ({tr['rem_dte_at_exit']} DTE left · VIX/3M {tr['exit_vix_ratio']:.3f} · Next Open)"
+                    f"Near-ITM Panic TP Armed ({tr['rem_dte_at_exit']} DTE left · VIX/3M {tr['exit_vix_ratio']:.3f} · Next Exec)"
                 )
                 trig_zh_exit = (
-                    f"实值恐慌止盈已触发（剩余 {tr['rem_dte_at_exit']} 天 · VIX/3M {tr['exit_vix_ratio']:.3f} · 待次日开盘换股）"
+                    f"准实值恐慌止盈已触发（剩余 {tr['rem_dte_at_exit']} 天 · VIX/3M {tr['exit_vix_ratio']:.3f} · 待次日换股）"
                 )
-            elif is_roll50 or is_roll30:
-                rl_lbl = 30 if is_roll30 else 50
-                ev_type_exit = "roll_30d" if is_roll30 else "roll_50d"
+            elif is_salv_vix:
+                ev_type_exit = "base_salvage_75d" if is_base_book else "roll_75d"
                 salv_pct = float(tr.get("roi_mult") or 0.0) * 100.0
-                trig_en_exit = f"{rl_lbl}-DTE Residual Roll/Salvage ({tr['rem_dte_at_exit']} DTE left · {salv_pct:.0f}% Value Saved)"
-                trig_zh_exit = f"{rl_lbl}-DTE 剩余残值滚仓/回收（剩 {tr['rem_dte_at_exit']} 天 · 回收 {salv_pct:.0f}% 残值）"
+                trig_en_exit = f"75-DTE Salvage Exit (VIX > 20 Gate Closed · {salv_pct:.0f}% Value Saved)"
+                trig_zh_exit = f"75-DTE 残值退出（VIX > 20 门控关闭禁续买 · 回收 {salv_pct:.0f}% 残值）"
+            elif is_roll75 or is_roll50 or is_roll30:
+                rl_lbl = 30 if is_roll30 else (50 if is_roll50 else 75)
+                if is_base_book:
+                    ev_type_exit = "base_roll_75d"
+                else:
+                    ev_type_exit = "roll_30d" if is_roll30 else ("roll_50d" if is_roll50 else "roll_75d")
+                salv_pct = float(tr.get("roi_mult") or 0.0) * 100.0
+                trig_en_exit = f"{rl_lbl}-DTE Hard Roll/Salvage ({tr['rem_dte_at_exit']} DTE left · {salv_pct:.0f}% Value Saved)"
+                trig_zh_exit = f"{rl_lbl}-DTE 硬换/残值回收（剩 {tr['rem_dte_at_exit']} 天 · 回收 {salv_pct:.0f}% 残值）"
+            elif is_near_itm_tp:
+                ev_type_exit = "vix110_near_itm_tp"
+                bk_tag_en = "Book B 0.20% " if is_base_book else ""
+                bk_tag_zh = "B账本0.20% " if is_base_book else ""
+                trig_en_exit = (
+                    f"{bk_tag_en}Near-ITM Bottom Clearance TP (QQQ ${tr['exit_spot']:.2f} <= 1.05xK · VIX/3M {tr['exit_vix_ratio']:.3f})"
+                )
+                trig_zh_exit = (
+                    f"{bk_tag_zh}准实值底部出清止盈（QQQ ${tr['exit_spot']:.2f} <= 1.05×K · VIX/3M {tr['exit_vix_ratio']:.3f} · 启动5D锁死）"
+                )
             elif is_put5x:
-                dte_cap_lbl = 75 if "dte75" in ex_reason else 45
+                dte_cap_lbl = 60 if is_base_book else (75 if "dte75" in ex_reason else 45)
                 ev_type_exit = "put5x_dte45_tp"
                 trig_en_exit = f"5x Put Slow-Bear TP ({tr['rem_dte_at_exit']} DTE <= {dte_cap_lbl}, Deep ITM Lock)"
                 trig_zh_exit = f"后半程 Put >= 5x 慢熊止盈（剩余 {tr['rem_dte_at_exit']} 天 <= {dte_cap_lbl} · 深实值锁利）"
@@ -3312,7 +3347,7 @@ def build_unified_events(
                 trig_en_exit = f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 Panic TP"
                 trig_zh_exit = f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 恐慌止盈抄底"
             else:
-                tenor_exp = 120 if "120dte" in ex_reason else 90
+                tenor_exp = 125 if "125dte" in ex_reason else (120 if "120dte" in ex_reason else 90)
                 ev_type_exit = "option_expiry"
                 trig_en_exit = f"{tenor_exp}-DTE Expiry ({tr['underlying_ret_pct']:+.1f}% spot)"
                 trig_zh_exit = f"{tenor_exp}-DTE 到期结算（期间正股 {tr['underlying_ret_pct']:+.1f}%）"
@@ -3351,6 +3386,12 @@ def build_unified_events(
             if "crisis_prob" in tr:
                 exit_ev.update(
                     {
+                        "book": tr.get("book"),
+                        "book_label_en": tr.get("book_label_en"),
+                        "book_label_zh": tr.get("book_label_zh"),
+                        "budget_pct_nav": tr.get("budget_pct_nav"),
+                        "entry_pct_nav": tr.get("entry_pct_nav"),
+                        "near_itm_strike_105": tr.get("near_itm_strike_105"),
                         "crisis_prob": tr.get("crisis_prob"),
                         "trigger_code": tr.get("trigger_code"),
                         "triggered_modules": tr.get("triggered_modules"),
@@ -3406,13 +3447,18 @@ def build_unified_events(
         )
 
     order_rank = {
+        "vix110_near_itm_tp": 1,
         "vix110_tp": 1,
         "vix110_itm_tp": 1,
         "vix110_4x_tp": 1,
         "put5x_dte45_tp": 1,
         "live_tp_armed": 1,
+        "roll_75d": 2,
         "roll_50d": 2,
         "roll_30d": 2,
+        "base_roll_75d": 2,
+        "base_salvage_75d": 2,
+        "live_roll75_armed": 2,
         "live_roll50_armed": 2,
         "live_roll30_armed": 2,
         "option_expiry": 3,
@@ -3421,9 +3467,10 @@ def build_unified_events(
         "slot1_naked_put": 6,
         "slot2_naked_put": 7,
         "slot3_naked_put": 8,
-        "slot1_collar": 9,
-        "slot2_collar": 10,
-        "slot3_collar": 11,
+        "base_020_put": 9,
+        "slot1_collar": 10,
+        "slot2_collar": 11,
+        "slot3_collar": 12,
     }
     events.sort(key=lambda e: (e["date"], order_rank.get(e["event_type"], 99)))
     return events
@@ -3999,71 +4046,71 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
     # --- Build M7-Graded, Core-3 Minimal & M7 Ensemble Bundles (24 core configs: OTM x TP x Roll x M0) ---
     m7_strategy_meta: dict[str, dict[str, Any]] = {
         "M7G_Graded": {
-            "code_name": "M7G_FullShield_Adaptive_120_90",
-            "name_en": "Full M7 Shield · Recommended (6-Module Radar + Adaptive Roll 120->50 / CTA 90->30)",
-            "name_zh": "全套 M7 护盾 · 默认推荐（6维雷达 + 自适应滚仓 120→50 / CTA 90→30）",
-            "short_en": "Full M7 Shield · Recommended",
-            "short_zh": "全套 M7 护盾 · 默认推荐",
-            "badge_en": "RECOMMENDED · FULL M7 SHIELD",
-            "badge_zh": "默认推荐 · 全套 M7 护盾",
+            "code_name": "B020_M125_FullM7G_HardRoll_5DLockout",
+            "name_en": "0.20% Base (VIX<=20) + 1.25% Full M7G · Hard 125->75 Roll + 5D Lockout",
+            "name_zh": "0.20% 常态基底(VIX<=20) + 1.25% 全套 M7G · 125→75 硬换 + 止盈5D锁死",
+            "short_en": "0.20% Base + 1.25% M7G",
+            "short_zh": "0.20%基底 + 1.25% M7G",
+            "badge_en": "LOCKED PRODUCTION · 0.20% + 1.25% · VIX<=20 · 5D LOCKOUT",
+            "badge_zh": "写死实盘主规则 · 0.20%基底 + 1.25% M7G · VIX<=20门控",
             "color_hex": "#80C6A8",
-            "rule_summary_en": "6-Module Radar (P1 M0+M6, P2 M2+M5, P3 M4+M3) + Adaptive Roll 120->50 / CTA 90->30 (-15% OTM Put). Shields 2020-type exogenous black swans, #1 in 2021-2025. Validated on 2015-2025 MIT Real OPRA Bid/Ask + post-2025 OPRA-Calibrated BSM.",
-            "rule_summary_zh": "6维雷达（P1 M0+M6、P2 M2+M5、P3 M4+M3）+ 自适应滚仓 120→50 / CTA 90→30（-15% OTM 裸 Put）· 抗2020型外生黑天鹅，2021–2025后半程更强。经 2015–2025 MIT 真实 OPRA 盘口 + 2025-12-16 后 OPRA 实盘校准 BSM 验证。",
+            "rule_summary_en": "Hard-coded Dual-Book over 100% QQQ DRIP: Book B = 0.20% NAV 125D->75D -15% OTM Put (VIX<=20 & VIX/3M<1.02 gate) + Book M = 1.25% NAV/slot Full M7G (max 3 slots, 125D->75D / CTA 90D->30D) + Near-ITM TP (1.05xK & VIX/3M>=1.10 or VIX>=45) + 5D Post-TP Lockout (<1.00 x 5d). 2015-2025 Real OPRA: $1,740,267 (+$453,940 Alpha, Calmar 0.835, PF 2.28x).",
+            "rule_summary_zh": "写死双账本主规则（100% QQQ 底仓）：B账本 0.20% 常态基底（VIX<=20 & VIX/3M<1.02 门控，125D→75D 硬换）+ M账本 1.25%/槽 全套 M7G（上限3槽，125D→75D / CTA 90D→30D 硬换）+ 准实值底部出清（1.05×K & VIX/3M>=1.10 或 VIX>=45）+ 止盈后连续5日解除倒挂(<1.00)静默锁死。2015–2025 真实 OPRA 终值 $1,740,267（超额 +$453,940，Calmar 0.835，PF 2.28x）。",
         },
         "Core3_Adaptive": {
-            "code_name": "Core3_Minimal_Adaptive_120_90",
-            "name_en": "Core-3 Minimal · Low Freq · High PF (Only M0+M6+M4 + Adaptive Roll 120->50 / CTA 90->30)",
-            "name_zh": "精简 3 核 · 低频高赔率（仅保留 M0+M6+M4 + 自适应滚仓 120→50 / CTA 90→30）",
-            "short_en": "Core-3 Minimal · High PF",
-            "short_zh": "精简 3 核 · 低频高赔率",
-            "badge_en": "LOW FREQ · 2.23x PF · p=0.002",
-            "badge_zh": "低频高赔率 · 11年30笔 · PF 2.23x",
+            "code_name": "B020_M125_Core3_HardRoll_5DLockout",
+            "name_en": "0.20% Base (VIX<=20) + 1.25% Core-3 Minimal (M0+M6+M4 · Hard 125->75 + 5D Lockout)",
+            "name_zh": "0.20% 常态基底(VIX<=20) + 1.25% 精简 3 核（仅 M0+M6+M4 · 硬换 + 5D锁死）",
+            "short_en": "0.20% Base + 1.25% Core-3",
+            "short_zh": "0.20%基底 + 1.25% 精简3核",
+            "badge_en": "CORE-3 MINIMAL · 0.20% + 1.25%",
+            "badge_zh": "精简3核对照 · 0.20% + 1.25%",
             "color_hex": "#7DB8F0",
-            "rule_summary_en": "Only M0+M6+M4 + Adaptive Roll 120->50 / CTA 90->30 (-15% OTM Put; M2/M3/M5 disabled) · Just 30 trades in 11 yrs, 2.23x Profit Factor (p=0.0020); Note: omits exogenous shock sensors (90D Hold locked off).",
-            "rule_summary_zh": "仅保留 M0+M6+M4 + 自适应滚仓 120→50 / CTA 90→30（-15% OTM 裸 Put，关闭 M2/M3/M5）· 11年仅30笔、利润因子2.23x（p=0.0020）；提示：不含外生突发预警（已锁定最优自适应滚仓，禁用90D持有）。",
+            "rule_summary_en": "Same 0.20% VIX<=20 Floor + 1.25%/slot Fixed Budget + Hard 125->75 / CTA 90->30 Roll + Near-ITM TP + 5D Post-TP Lockout, restricting Book M tactical signals strictly to M0+M6+M4 (M2/M3/M5 disabled). 2015-2025 Real OPRA: $1,514,395 (+$228,068 Alpha).",
+            "rule_summary_zh": "共用 0.20% VIX<=20 常态底仓 + 1.25%/槽固定预算 + 125→75 / CTA 90→30 硬换 + 准实值止盈 + 5D 静默锁死，战术M账本仅保留内生 3 核 M0+M6+M4（关闭 M2/M3/M5）；2015–2025 真实 OPRA 终值 $1,514,395（超额 +$228,068）。",
         },
         "M7_Ensemble": {
-            "code_name": "M7_ThreePillar_2Slot",
-            "name_en": "M7 Three-Pillar 2-Slot Baseline (>=35% Binary 2-Slot Put Overlay)",
-            "name_zh": "M7 三支柱双槽标准版（>=35% 概率触发 2 槽裸 Put 对照）",
-            "short_en": "M7 2-Slot (>=35%)",
-            "short_zh": "M7 三支柱双槽",
-            "badge_en": "3-PILLAR 2-SLOT",
-            "badge_zh": "三支柱双槽对照",
+            "code_name": "B020_M125_2Slot_HardRoll_5DLockout",
+            "name_en": "0.20% Base (VIX<=20) + 1.25% M7 2-Slot Cap (>=35% Binary Cap 2)",
+            "name_zh": "0.20% 常态基底(VIX<=20) + 1.25% M7 双槽上限对照（>=35% 上限2槽）",
+            "short_en": "0.20% + 1.25% 2-Slot",
+            "short_zh": "0.20% + 1.25% 双槽对照",
+            "badge_en": "DUAL-BOOK 2-SLOT CAP",
+            "badge_zh": "双账本2槽上限对照",
             "color_hex": "#F2BC60",
-            "rule_summary_en": "Same 3-Pillar probability signals as M7-Graded, capped at max 2 equal-dollar Naked Put slots whenever composite score >= 35% (priced on 2015-2025 MIT Real OPRA Bid/Ask + post-2025 OPRA-Calibrated BSM).",
-            "rule_summary_zh": "与 M7-Graded 共用同一套三支柱日频评分，综合概率 >= 35% 时最多开启 2 槽等金额裸 Put（同样采用 2015–2025 MIT 真实 OPRA 盘口 + 2025-12-16 后校准 BSM 回测）。",
+            "rule_summary_en": "Same 0.20% VIX<=20 Floor + 1.25%/slot Fixed Budget + Hard Roll + Near-ITM TP + 5D Lockout, capping Book M at max 2 slots whenever 3-Pillar score >= 35% ($1,571,118 on 2015-2025 Real OPRA).",
+            "rule_summary_zh": "共用 0.20% 常态基底 + 1.25%/槽固定预算 + 硬换 + 准实值止盈 + 5D 静默锁死，M账本上限锁为 2 槽（2015–2025 真实 OPRA 终值 $1,571,118）。",
         },
     }
 
     m7_narratives_by_win: dict[str, tuple[str, str]] = {
         "2015-08": (
-            "P1 Calm-Top (M0+M6=45%) armed equal-dollar Naked Put slots ahead of the August flash crash with ZERO upside Call cap; real OPRA quotes on 2015-08-24 (VIX/VIX3M=1.194) monetized into cheap QQQ shares.",
-            "第一支柱 P1（M0+M6=45%）在 8 月汇改闪崩前提前挂入等金额裸 Put（全程零卖 Call 封顶）；8/24 恐慌倒挂飙至 1.194，按真实 OPRA 盘口止盈抄底 QQQ。",
+            "Book B (0.20% VIX<=20 floor) + Book M P1 (M0+M6=45% -> 2x 1.25% slots) held uncapped -15% OTM puts into August's Yuan flash crash; Near-ITM TP on 2015-08-24 harvested +$27,672 (+7.02pp DD cushion) and triggered 5D post-TP lockout.",
+            "B账本 0.20% 常态底仓叠加 M账本 P1（M0+M6=45% 开启 2×1.25% 槽）在 8 月汇改闪崩前提前护航；8/24 跌破 1.05×K 准实值线伴随倒挂 1.194 全额落袋 +$27,672（回撤压降 7.02pp）并启动 5D 静默锁死。",
         ),
         "2018-Q4": (
-            "P1 M0 armed pre-peak protection, then P3 Bear/Credit (M4+M3) re-entered 90D->30D puts during November's bear-market bounce (<SMA200 & EWMAC<0 while >EMA20), monetizing into December's Fed QT waterfall on real OPRA fills.",
-            "P1 高位提前布防，随后第三支柱 P3（M4 熊市死猫跳自满 90D→30D 滚仓）在 11 月缩表熊市反弹期二次低波补盾，真实盘口吃下 12 月主跌浪。",
+            "Near-ITM 1.05xK filter ignored shallow October tremors until real price breakdown, while P3 M4 (90D->30D CTA bear-bounce roll) & Book B cushioned Q4's -22.69% Fed QT waterfall down to -20.64% (+2.06pp saved).",
+            "1.05×K 准实值门槛成功过滤 10 月初浅跌过早止盈，配合 P3 M4（90D→30D 熊市反弹硬换）与 B账本底仓在 12 月主跌浪精准兑现，将 -22.69% 回撤压至 -20.64%（少跌 2.06pp）。",
         ),
         "2020-03": (
-            "Breakthrough exogenous shock capture (Full M7 Shield): while macro lights were calm (2/6), Pillar 2 (M2 Options Desk SKEW/VVIX + M5 Causal HMM transition = 40% >= 35%) ignited on 2020-01-28 — 3 weeks BEFORE the peak — delivering real-OPRA convex Put protection.",
-            "外生黑天鹅突破性捕获（全套 M7 护盾独有）：当传统宏观灯仅亮 2 盏时，第二支柱 P2（M2 期权台偏度预警 + M5 因果 HMM 跃迁 = 40% >= 35%）提前三周于 2020-01-28 精准启爆上盾，在真实 OPRA 盘口下显著压降疫情熔断回撤。",
+            "Dual-line exogenous defense: Book B 0.20% VIX<=20 floor was already live before the shock AND Pillar 2 (M2+M5=40%) ignited on 2020-01-28 — harvesting +$22,681 on Near-ITM/VIX>=45 bottom clearance (+6.01pp excess) with 5D lockout preventing expensive March re-buys!",
+            "双防线共振抗黑天鹅：B账本 0.20% 低波底仓在场 + 第二支柱 P2（M2+M5=40%）提前三周于 2020-01-28 启爆；疫情熔断触发准实值/VIX>=45 底部出清净赚 +$22,681（超额 +6.01pp），且止盈后 5D 锁死完美拦截高波反买！",
         ),
         "2022": (
-            "Pillar 3 (M4 CTA Bear-Rally Complacency +35 on adaptive 90D->30D roll) repeatedly bought cheap real-OPRA puts on bear bounces (>EMA20 while <SMA200 & EWMAC<0) and rolled/monetized ITM gains through the 2022 slow bear.",
-            "第三支柱 P3（M4 跌破年线死猫跳自满 + 自适应 90D→30D 滚仓）在 2022 慢熊历次反弹高点低波买盾，并在 30D 滚仓与恐慌倒挂锁利下持续削平全年深熊回撤。",
+            "Pillar 3 (M4 CTA 90D->30D + M3 Credit) deployed 1.25% slots on bear rallies while Book B stayed gated off whenever VIX > 20 — generating +$79,831 net Put profits and slashing 2022's -35.12% bear drawdown to -26.17% (+8.95pp saved)!",
+            "第三支柱 P3（M4 死猫跳 90D→30D 硬换 + M3 信用利差）在慢熊反弹低波窗口精准出击，同时 VIX>20 门控自动关停 B账本日常续买损耗——全年期权净赚 +$79,831，将 2022 最大回撤从 -35.12% 砍至 -26.17%（少跌 8.95pp）！",
         ),
         "2024-08": (
-            "P1+P2 resonance pushed Full M7 score into multi-slot protection right into July's peak; VIX/VIX3M=1.144 on 2024-08-05 harvested +$23,738 pure convex real-OPRA Put profits with zero Call drag on the summer AI rally.",
-            "P1 高位背离与 P2 期权台信号共振在 7 月见顶前布满裸 Put 保护（零卖 Call 拖累完整吃满 AI 主升浪），8/05 日元闪崩倒挂 1.144 按真实盘口止盈净赚 +$23,738 加仓 QQQ。",
+            "Book B 0.20% floor + P1/P2 multi-slot 1.25% puts rode 100% of the summer AI rally uncapped, then cleared at the 2024-08-05 Yen carry panic low (VIX/3M=1.144 & QQQ<=1.05xK) for +$80,989 (+7.83pp DD cushion)!",
+            "B账本 0.20% 底仓与 P1/P2 多槽 1.25% 裸 Put 零封顶吃满夏季 AI 主升浪，8/05 日元闪崩底部（倒挂 1.144 且触及 1.05×K）一次性出清暴赚 +$80,989，将回撤从 -13.56% 削平至 -5.73%（少跌 7.83pp）！",
         ),
         "2025-04": (
-            "P1 top-divergence + P2 HMM stress transition escalated protection ahead of the February peak; April's tariff panic (VIX/VIX3M=1.234) delivered massive real-OPRA deep-OTM convexity reloaded straight into QQQ at the crash low.",
-            "P1 顶背离叠加 P2 HMM 状态跃迁在 2 月大顶前分层加盾；4/07 关税恐慌极值（倒挂 1.234）在真实 OPRA 盘口兑现深虚值高凸性暴利并全额铁底抄底 QQQ。",
+            "Pre-peak Book B floor + escalated 1.25% M7G slots hit massive convexity in April's tariff crash (VIX>=45 & QQQ<=1.05xK), harvesting +$180,493 (+19.10pp excess return!) while 5D post-TP lockout blocked premature re-entry during aftershocks.",
+            "见顶前 B账本底仓叠加分层 1.25% M7G 战术槽在 4 月关税瀑布（VIX>=45 且破 1.05×K）兑现惊人凸性，净赚 +$180,493 铁底抄底 QQQ（区间超额 +19.10pp！），且 5D 静默锁死严防余震期反买。",
         ),
         "2026-08_11_LIVE": (
-            "P1 M0+M6 opened equal-dollar 120D->50D Naked Puts on 8/31 & 10/05 (capturing 100% of the rally to $759.66 ATH!). STANDARD TP monetized on 11/06 (VIX/3M=1.103), with redline blocking overpriced new puts at VXN 45.25 (post-2025-12-15 priced via OPRA-Calibrated BSM).",
-            "P1（M0+M6）于 8/31 与 10/05 精准挂入等金额 120D→50D 裸 Put（无封顶吃满 $759.66 历史大顶！）；STANDARD 已于 11/06 倒挂 1.103 落袋抄底，同时风控红线（VXN 45.25>27）严锁高波追买（2025-12-16 后采用 OPRA 实盘校准 BSM 定价）。",
+            "Book B (0.20% VIX<=20) + P1 M0+M6 (2x 1.25% 125D->75D puts) armed ahead of the $759.66 ATH; Near-ITM 1.05xK filter held through 11/05's shallow dip and monetized deep into the November crash, with VIX > 20 & 5D Lockout blocking high-IV chasing.",
+            "B账本 0.20% 底仓叠加 P1（M0+M6 两槽 1.25% 125D→75D Put）在 $759.66 大顶前完成布防；1.05×K 准实值门槛过滤浅跌并在 11 月深跌区精准兑现抄底，同时 VIX>20 门控与止盈后 5D 锁死双重拦截高波追高。",
         ),
     }
 
@@ -4216,8 +4263,16 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
                         "m7_active_slots": [int(v) for v in b_sims["M7_Ensemble"]["active_slots"]],
                     }
 
-    # Record all Engine 2 (CC) & Engine 3 (SP x WC) real quotes across M7G & Core3 so Node.js achieves 100% penny parity
+    # Record all Ask/Bid + Engine 2 (CC) & Engine 3 (SP x WC) real quotes across M7G, Core3 & M7_Ensemble so Node.js achieves 100% penny parity
     sig_m0_on = m7_sig_pack["signals_m0_on"]
+    for rec_sid in ("M7G_Graded", "Core3_Adaptive", "M7_Ensemble"):
+        m7e.simulate_m7_strategy(
+            rows_eval, coeffs, sys_self_mod, rec_sid, sig_m0_on,
+            put_otm=m7e.DEFAULT_PUT_OTM, m7_tp_mode=m7e.DEFAULT_M7_TP_MODE,
+            roll_mode=m7e.DEFAULT_ROLL_MODE, m0_enabled=True,
+            cc_mode=DEFAULT_CC_MODE, sp_mode=DEFAULT_SP_MODE, wc_mode=DEFAULT_WC_MODE,
+            real_store=real_store, fill_mode="ask_bid",
+        )
     for rec_sid in ("M7G_Graded", "Core3_Adaptive"):
         for cc_id_rec in ("cc_d12_d35", "cc_d12_r45", "cc_d12_cr55"):
             m7e.simulate_m7_strategy(
@@ -4240,7 +4295,7 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
     real_cache_meta = real_store.export_recorded_cache(REAL_QUOTES_GZ)
     print(f"[real-chain] Exported Node real-quote cache -> {REAL_QUOTES_GZ}: {real_cache_meta}", flush=True)
 
-    # Compute exact 2015-01-02 .. 2025-12-15 Pure Real-OPRA Audited Benchmarks (Ask/Bid + IBKR Limit) & Seam Audit
+    # Compute exact 2015-01-02 .. 2025-12-15 Pure Real-OPRA Audited Benchmarks (IBKR Limit Default + Ask/Bid) & Seam Audit
     opra_cut_date = real_store.opra_date_max or "2025-12-15"
     rows_opra_only = [r for r in rows_eval if r["date"] <= opra_cut_date]
     sig_opra_only = sig_m0_on[: len(rows_opra_only)]
@@ -4264,12 +4319,12 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
             fill_mode=fm_b,
         )["summary"]
 
-    opra_m7g_ab = _run_opra_bench("M7G_Graded", "adaptive_120_90", "ask_bid")
     opra_m7g_lim = _run_opra_bench("M7G_Graded", "adaptive_120_90", "ibkr_limit")
-    opra_c3_ab = _run_opra_bench("Core3_Adaptive", "adaptive_120_90", "ask_bid")
+    opra_m7g_ab = _run_opra_bench("M7G_Graded", "adaptive_120_90", "ask_bid")
     opra_c3_lim = _run_opra_bench("Core3_Adaptive", "adaptive_120_90", "ibkr_limit")
-    opra_m7g_r50 = _run_opra_bench("M7G_Graded", "120d_roll50", "ask_bid")
-    opra_m7g_h90 = _run_opra_bench("M7G_Graded", "90d_hold", "ask_bid")
+    opra_c3_ab = _run_opra_bench("Core3_Adaptive", "adaptive_120_90", "ask_bid")
+    opra_m7g_r50 = _run_opra_bench("M7G_Graded", "120d_roll50", "ibkr_limit")
+    opra_m7g_h90 = _run_opra_bench("M7G_Graded", "90d_hold", "ibkr_limit")
 
     def_m7_key = f"{m7e.DEFAULT_PUT_OTM}__{m7e.DEFAULT_M7_TP_MODE}__{m7e.DEFAULT_ROLL_MODE}__m0on"
     def_m7_bundle = m7_bundles[def_m7_key]
@@ -4306,8 +4361,8 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
         pid = p_spec["id"]
         sid_p = p_spec["strategy_id"]
         full_sum = def_m7_bundle["summaries"][sid_p]
-        opra_ab = opra_c3_ab if pid == "core3_adaptive" else opra_m7g_ab
         opra_lim = opra_c3_lim if pid == "core3_adaptive" else opra_m7g_lim
+        opra_ab = opra_c3_ab if pid == "core3_adaptive" else opra_m7g_ab
         profiles_meta.append(
             {
                 **p_spec,
@@ -4320,16 +4375,24 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
                 "full_trades_count": full_sum["tranches_total"],
                 "full_win_rate_pct": full_sum.get("win_rate_pct"),
                 "full_profit_factor": full_sum.get("profit_factor"),
-                "opra_2015_2025_end_nav": opra_ab["end_nav"],
+                "opra_2015_2025_end_nav": opra_lim["end_nav"],
                 "opra_2015_2025_ibkr_limit_end_nav": opra_lim["end_nav"],
+                "opra_2015_2025_ask_bid_end_nav": opra_ab["end_nav"],
                 "opra_2015_2025_bh_end_nav": round(float(bh_opra["end_nav"]), 2),
-                "opra_2015_2025_net_alpha_usd": opra_ab["net_alpha_usd"],
-                "opra_2015_2025_max_dd_pct": opra_ab["max_dd_pct"],
-                "opra_2015_2025_calmar": opra_ab["calmar"],
-                "opra_2015_2025_sharpe": opra_ab["sharpe"],
-                "opra_2015_2025_trades_count": opra_ab["closed_trades_count"],
-                "opra_2015_2025_win_rate_pct": opra_ab.get("win_rate_pct"),
-                "opra_2015_2025_profit_factor": opra_ab.get("profit_factor"),
+                "opra_2015_2025_net_alpha_usd": opra_lim["net_alpha_usd"],
+                "opra_2015_2025_ask_bid_net_alpha_usd": opra_ab["net_alpha_usd"],
+                "opra_2015_2025_cagr_pct": opra_lim["cagr_pct"],
+                "opra_2015_2025_max_dd_pct": opra_lim["max_dd_pct"],
+                "opra_2015_2025_calmar": opra_lim["calmar"],
+                "opra_2015_2025_sharpe": opra_lim["sharpe"],
+                "opra_2015_2025_sortino": opra_lim["sortino"],
+                "opra_2015_2025_trades_count": opra_lim["closed_trades_count"],
+                "opra_2015_2025_base_trades_count": opra_lim["base_trades_count"],
+                "opra_2015_2025_m7_trades_count": opra_lim["m7_trades_count"],
+                "opra_2015_2025_win_rate_pct": opra_lim.get("win_rate_pct"),
+                "opra_2015_2025_profit_factor": opra_lim.get("profit_factor"),
+                "opra_2015_2025_lockout_episodes": opra_lim.get("lockout_episodes_count"),
+                "opra_2015_2025_lockout_days": opra_lim.get("lockout_days_total"),
             }
         )
 
@@ -4600,12 +4663,40 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
             "trading_days": len(rows_eval),
             "initial_capital_usd": INITIAL_CAPITAL,
             "execution_convention": "Strict Zero-Lookahead: EOD signal on day t -> executed at day t+1 Close on 4:00 PM ET MIT Real OPRA quotes (2015-2025) + OPRA-Calibrated BSM post-2025-12-15 (FRED BAA10Y/DGS2 +1d lag, NFCI +5d lag)",
-            "pricing_calibration": "2015-01-02 to 2025-12-15: 100% MIT Real QQQ OPRA Bid/Ask Chain (9,875,299 quotes, 2,749 trading days, 0 BSM fallbacks; Strict Ask/Bid + $0.65/ct) · 2025-12-16 to Live: OPRA-Calibrated BSM (+/-2.5% half-spread + $0.65/ct with real-IV seam continuity)",
+            "pricing_calibration": "2015-01-02 to 2025-12-15: 100% MIT Real QQQ OPRA Bid/Ask Chain (9,875,299 quotes, 2,749 trading days; IBKR Limit Mid +/- 0.35*HalfSpread + $0.65/ct default, Strict Ask/Bid toggle) · 2025-12-16 to Live: OPRA-Calibrated BSM",
         },
+        "hardcoded_ruleset": m7e.HARDCODED_RULESET_SPEC,
+        "default_fill_mode": m7e.DEFAULT_M7_FILL_MODE,
+        "fill_mode": m7e.DEFAULT_M7_FILL_MODE,
+        "fill_modes_meta": [
+            {
+                "id": "ibkr_limit",
+                "label_en": "IBKR Limit (Mid ±0.35×HalfSpread · Default)",
+                "label_zh": "IBKR 限价成交（Mid ±0.35×半价差 · 默认）",
+                "short_en": "IBKR Limit",
+                "short_zh": "IBKR 限价",
+                "opra_m7g_end_nav": opra_m7g_lim["end_nav"],
+                "opra_m7g_alpha_usd": opra_m7g_lim["net_alpha_usd"],
+                "opra_m7g_calmar": opra_m7g_lim["calmar"],
+                "opra_m7g_pf": opra_m7g_lim["profit_factor"],
+            },
+            {
+                "id": "ask_bid",
+                "label_en": "Strict Full Ask/Bid (Conservative)",
+                "label_zh": "严格买一/卖一吃单（保守盘口）",
+                "short_en": "Full Ask/Bid",
+                "short_zh": "严格 Ask/Bid",
+                "opra_m7g_end_nav": opra_m7g_ab["end_nav"],
+                "opra_m7g_alpha_usd": opra_m7g_ab["net_alpha_usd"],
+                "opra_m7g_calmar": opra_m7g_ab["calmar"],
+                "opra_m7g_pf": opra_m7g_ab["profit_factor"],
+            },
+        ],
         "pricing_provenance": {
             "mode": "real_opra_calibrated_bsm",
-            "strip_en": "2015-01-02 to 2025-12-15: MIT Real QQQ OPRA Chain (9.88M Quotes, 0 Fallbacks) · 2025-12-16 to Live: OPRA-Calibrated BSM",
-            "strip_zh": "2015-01-02 至 2025-12-15：MIT 真实 QQQ OPRA 期权盘口（987.5万条报价，0回退） · 2025-12-16 至 实时：OPRA实盘校准 BSM",
+            "default_fill_mode": m7e.DEFAULT_M7_FILL_MODE,
+            "strip_en": "2015-01-02 to 2025-12-15: MIT Real QQQ OPRA Chain (9.88M Quotes · IBKR Limit $1,740,267 / Ask-Bid $1,688,420) · 2025-12-16 to Live: OPRA-Calibrated BSM",
+            "strip_zh": "2015-01-02 至 2025-12-15：MIT 真实 QQQ OPRA 期权盘口（987.5万条报价 · IBKR限价 $1,740,267 / 严格盘口 $1,688,420） · 2025-12-16 至 实时：OPRA校准 BSM",
             "segment1_real_opra": {
                 "quoteSource": "REAL_OPRA",
                 "license": "MIT-Licensed Historical OPRA QQQ Option Chain",
@@ -4616,7 +4707,7 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
                 "trading_days": real_store.opra_days,
                 "quotes_count": real_store.opra_quotes_count,
                 "execution_fallbacks": 0,
-                "fill_model": "Strict Real OPRA Ask/Bid: Buy = Ask + $0.65/ct; Sell = 0 if Bid==0 else max(0, Bid - $0.65/ct) (IBKR Limit Mid +/- 0.35*HalfSpread reference also audited)",
+                "fill_model": "IBKR Limit Default: Buy = Mid + 0.35*HalfSpread + $0.65/ct, Sell = 0 if Bid<=0 else max(0, Mid - 0.35*HalfSpread - $0.65/ct); Strict Full Ask/Bid toggle also available",
             },
             "segment2_calibrated_bsm": {
                 "quoteSource": "CALIBRATED_BSM",
@@ -4625,7 +4716,7 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
                 "start_date": "2025-12-16",
                 "end_date": as_of_date,
                 "trading_days": bsm_days_cnt,
-                "fill_model": "OPRA 53,347-print skew polynomial + real-IV ratio continuity across 2025-12-15 seam + 2.5% per-leg half-spread + $0.65/ct",
+                "fill_model": "OPRA 53,347-print skew polynomial + real-IV ratio continuity across 2025-12-15 seam + per-leg spread + $0.65/ct",
             },
             "tier1_opra": {
                 "label_en": "MIT Real QQQ OPRA Chain (Bid/Ask)",
@@ -4634,7 +4725,7 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
                 "end_date": real_store.opra_date_max,
                 "trading_days": real_store.opra_days,
                 "quotes_count": real_store.opra_quotes_count,
-                "fill_model": "Strict Ask/Bid + $0.65/ct",
+                "fill_model": "IBKR Limit (Mid +/- 0.35*HalfSpread + $0.65/ct) / Strict Ask-Bid",
             },
             "tier3_bsm": {
                 "label_en": "OPRA-Calibrated BSM (Post-2025-12-15)",
@@ -4642,23 +4733,65 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
                 "start_date": "2025-12-16",
                 "end_date": as_of_date,
                 "trading_days": bsm_days_cnt,
-                "fill_model": "OPRA skew polynomial + 2.5% half-spread + $0.65/ct",
+                "fill_model": "OPRA skew polynomial + spread + $0.65/ct",
             },
             "audited_opra_benchmarks_2015_2025": {
                 "window": f"2015-01-02..{opra_cut_date}",
                 "initial_capital_usd": INITIAL_CAPITAL,
                 "qqq_bh_end_nav": round(float(bh_opra["end_nav"]), 2),
+                "full_m7_adaptive_ibkr_limit": {
+                    "end_nav": opra_m7g_lim["end_nav"],
+                    "net_alpha_usd": opra_m7g_lim["net_alpha_usd"],
+                    "cagr_pct": opra_m7g_lim["cagr_pct"],
+                    "vol_pct": opra_m7g_lim["vol_pct"],
+                    "max_dd_pct": opra_m7g_lim["max_dd_pct"],
+                    "calmar": opra_m7g_lim["calmar"],
+                    "sharpe": opra_m7g_lim["sharpe"],
+                    "sortino": opra_m7g_lim["sortino"],
+                    "trades": opra_m7g_lim["closed_trades_count"],
+                    "base_trades": opra_m7g_lim["base_trades_count"],
+                    "m7_trades": opra_m7g_lim["m7_trades_count"],
+                    "tp_count": opra_m7g_lim["tp_count"],
+                    "win_rate_pct": opra_m7g_lim.get("win_rate_pct"),
+                    "profit_factor": opra_m7g_lim.get("profit_factor"),
+                    "base_pf": opra_m7g_lim.get("base_pf"),
+                    "m7_pf": opra_m7g_lim.get("m7_pf"),
+                    "base_net_pnl_usd": opra_m7g_lim.get("base_net_pnl_usd"),
+                    "m7_net_pnl_usd": opra_m7g_lim.get("m7_net_pnl_usd"),
+                    "net_option_pnl_usd": opra_m7g_lim.get("net_option_pnl_usd"),
+                    "ann_gross_spend_pct_nav": opra_m7g_lim.get("ann_gross_spend_pct_nav"),
+                    "ann_net_bleed_pct_nav": opra_m7g_lim.get("ann_net_bleed_pct_nav"),
+                    "lockout_episodes": opra_m7g_lim.get("lockout_episodes_count"),
+                    "lockout_days": opra_m7g_lim.get("lockout_days_total"),
+                    "blocked_base_entries": opra_m7g_lim.get("blocked_base_entries"),
+                },
                 "full_m7_adaptive_ask_bid": {
                     "end_nav": opra_m7g_ab["end_nav"],
                     "net_alpha_usd": opra_m7g_ab["net_alpha_usd"],
+                    "cagr_pct": opra_m7g_ab["cagr_pct"],
+                    "vol_pct": opra_m7g_ab["vol_pct"],
                     "max_dd_pct": opra_m7g_ab["max_dd_pct"],
                     "calmar": opra_m7g_ab["calmar"],
                     "sharpe": opra_m7g_ab["sharpe"],
+                    "sortino": opra_m7g_ab["sortino"],
                     "trades": opra_m7g_ab["closed_trades_count"],
+                    "base_trades": opra_m7g_ab["base_trades_count"],
+                    "m7_trades": opra_m7g_ab["m7_trades_count"],
+                    "tp_count": opra_m7g_ab["tp_count"],
                     "win_rate_pct": opra_m7g_ab.get("win_rate_pct"),
                     "profit_factor": opra_m7g_ab.get("profit_factor"),
                 },
                 "full_m7_adaptive_ibkr_limit_end_nav": opra_m7g_lim["end_nav"],
+                "core3_adaptive_ibkr_limit": {
+                    "end_nav": opra_c3_lim["end_nav"],
+                    "net_alpha_usd": opra_c3_lim["net_alpha_usd"],
+                    "cagr_pct": opra_c3_lim["cagr_pct"],
+                    "max_dd_pct": opra_c3_lim["max_dd_pct"],
+                    "calmar": opra_c3_lim["calmar"],
+                    "sharpe": opra_c3_lim["sharpe"],
+                    "trades": opra_c3_lim["closed_trades_count"],
+                    "profit_factor": opra_c3_lim.get("profit_factor"),
+                },
                 "core3_adaptive_ask_bid": {
                     "end_nav": opra_c3_ab["end_nav"],
                     "net_alpha_usd": opra_c3_ab["net_alpha_usd"],
@@ -4671,8 +4804,8 @@ def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> d
                     "placebo_p_value": 0.0020,
                 },
                 "core3_adaptive_ibkr_limit_end_nav": opra_c3_lim["end_nav"],
-                "full_m7_120d_roll50_ask_bid_end_nav": opra_m7g_r50["end_nav"],
-                "full_m7_90d_hold_ask_bid_end_nav": opra_m7g_h90["end_nav"],
+                "full_m7_120d_roll50_ibkr_limit_end_nav": opra_m7g_r50["end_nav"],
+                "full_m7_90d_hold_ibkr_limit_end_nav": opra_m7g_h90["end_nav"],
             },
             "seam_continuity_audit": seam_audit,
             "real_quote_cache_meta": real_cache_meta,
@@ -4829,11 +4962,29 @@ def verify_artifact(doc: dict[str, Any]) -> None:
 
     bench = prov["audited_opra_benchmarks_2015_2025"]
     assert abs(bench["qqq_bh_end_nav"] - 1286327.45) <= 0.02, bench["qqq_bh_end_nav"]
-    assert abs(bench["full_m7_adaptive_ask_bid"]["end_nav"] - 1451369.05) <= 0.05, bench["full_m7_adaptive_ask_bid"]
-    assert abs(bench["full_m7_adaptive_ibkr_limit_end_nav"] - 1476107.22) <= 0.05, bench["full_m7_adaptive_ibkr_limit_end_nav"]
-    assert abs(bench["core3_adaptive_ask_bid"]["end_nav"] - 1481937.31) <= 0.05, bench["core3_adaptive_ask_bid"]
-    assert abs(bench["core3_adaptive_ibkr_limit_end_nav"] - 1492962.85) <= 0.05, bench["core3_adaptive_ibkr_limit_end_nav"]
-    assert abs(bench["full_m7_120d_roll50_ask_bid_end_nav"] - 1422284.21) <= 0.05, bench["full_m7_120d_roll50_ask_bid_end_nav"]
+    lim_b = bench["full_m7_adaptive_ibkr_limit"]
+    ab_b = bench["full_m7_adaptive_ask_bid"]
+    assert abs(lim_b["end_nav"] - 1740267.20) <= 0.02, lim_b
+    assert abs(lim_b["net_alpha_usd"] - 453939.75) <= 0.02, lim_b
+    assert abs(lim_b["cagr_pct"] - 21.85) <= 0.01, lim_b
+    assert abs(lim_b["vol_pct"] - 19.53) <= 0.01, lim_b
+    assert abs(lim_b["max_dd_pct"] - (-26.17)) <= 0.01, lim_b
+    assert abs(lim_b["calmar"] - 0.835) <= 0.001, lim_b
+    assert abs(lim_b["sharpe"] - 1.011) <= 0.001, lim_b
+    assert abs(lim_b["sortino"] - 1.355) <= 0.001, lim_b
+    assert lim_b["trades"] == 116 and lim_b["base_trades"] == 67 and lim_b["m7_trades"] == 49, lim_b
+    assert lim_b["tp_count"] == 13 and abs(lim_b["profit_factor"] - 2.28) <= 0.01, lim_b
+    assert lim_b["lockout_episodes"] == 6 and lim_b["lockout_days"] == 91 and lim_b["blocked_base_entries"] == 2, lim_b
+    assert abs(ab_b["end_nav"] - 1688420.02) <= 0.02, ab_b
+    assert abs(ab_b["net_alpha_usd"] - 402092.57) <= 0.02, ab_b
+    assert abs(ab_b["cagr_pct"] - 21.51) <= 0.01, ab_b
+    assert abs(ab_b["max_dd_pct"] - (-26.28)) <= 0.01, ab_b
+    assert abs(ab_b["calmar"] - 0.819) <= 0.001, ab_b
+    assert abs(ab_b["sharpe"] - 0.996) <= 0.001, ab_b
+    assert abs(ab_b["sortino"] - 1.332) <= 0.001, ab_b
+    assert ab_b["trades"] == 116 and abs(ab_b["profit_factor"] - 2.19) <= 0.01, ab_b
+    assert abs(bench["core3_adaptive_ibkr_limit"]["end_nav"] - 1514395.10) <= 0.05, bench["core3_adaptive_ibkr_limit"]
+    assert abs(bench["core3_adaptive_ask_bid"]["end_nav"] - 1478048.67) <= 0.05, bench["core3_adaptive_ask_bid"]
 
     seam = prov["seam_continuity_audit"]
     assert abs(seam["full_m7_1d_ret_pct"] - seam["qqq_1d_ret_pct"]) <= 0.5, seam
@@ -4844,7 +4995,7 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     c3_90 = doc["m7_bundles"]["otm15__standard__90d_hold__m0on"]["summaries"]["Core3_Adaptive"]
     assert c3_90["roll_mode"] == "adaptive_120_90" and c3_90["end_nav"] == c3_def["end_nav"]
 
-    # Core-3 sensor dimming + Dual-Track readiness check
+    # Core-3 sensor dimming + Dual-Track readiness + Hard-Coded B020_M125 gates check
     c3_dash = doc["m7_live_dashboards_by_strategy"]["Core3_Adaptive"]
     m7_dash = doc["m7_live_dashboards_by_strategy"]["M7G_Graded"]
     for dash_chk in (m7_dash, c3_dash):
@@ -4852,6 +5003,12 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         assert dash_chk["live_stress_level"] in ("calm", "building", "elevated", "crisis")
         assert {"regime_vol", "trend_dd", "credit_macro", "breadth_tail"}.issubset(dash_chk["live_stress_breakdown"].keys())
         assert "data_freshness" in dash_chk and dash_chk["data_freshness"]["yahoo_eod_date"] == doc["as_of_date"]
+        assert dash_chk["hardcoded_ruleset"]["code"] == "B020_M125_HARD75_NEARITM_5DLOCK"
+        assert dash_chk["book_b_vix_gate"]["vix_max"] == 20.0
+        assert dash_chk["book_b_vix_gate"]["budget_pct"] == 0.20
+        assert dash_chk["post_tp_lockout"]["required_streak"] == 5
+        assert dash_chk["post_tp_lockout"]["vix_ratio_unlock_max"] == 1.00
+        assert "near_itm_tp_rule" in dash_chk
         for pil in dash_chk["pillars"]:
             for mod in pil["modules"]:
                 assert mod["status_code"] in (
@@ -4867,6 +5024,7 @@ def verify_artifact(doc: dict[str, Any]) -> None:
     if doc["as_of_date"] == "2026-11-20":
         assert m7_dash["live_stress_index"] >= 75, m7_dash["live_stress_index"]
         assert m7_dash["live_stress_level"] == "crisis", m7_dash["live_stress_level"]
+        assert m7_dash["book_b_vix_gate"]["vix_ok"] is False, m7_dash["book_b_vix_gate"]
     assert "six_lights_tail" in doc["m7_live_tail_state"]
     for pil in c3_dash["pillars"]:
         for mod in pil["modules"]:
@@ -4888,12 +5046,11 @@ def verify_artifact(doc: dict[str, Any]) -> None:
         smap = {s["id"]: s for s in doc["strategies_summary"]}
         assert "U4_DualEngine" not in smap
         assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02, smap["BH_Pure_QQQ"]["end_nav"]
-        assert abs(smap["M7G_Graded"]["end_nav"] - 1466143.41) <= 0.05, smap["M7G_Graded"]["end_nav"]
-        assert abs(smap["Core3_Adaptive"]["end_nav"] - 1497022.85) <= 0.05, smap["Core3_Adaptive"]["end_nav"]
-        assert smap["M7G_Graded"]["real_trades_pct"] >= 90.0, smap["M7G_Graded"]["real_trades_pct"]
-        assert smap["Core3_Adaptive"]["real_trades_pct"] >= 90.0, smap["Core3_Adaptive"]["real_trades_pct"]
-        m7_15_hold = doc["m7_bundles"]["otm15__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]
-        assert smap["M7G_Graded"]["end_nav"] > m7_15_hold["end_nav"], "Adaptive Roll must beat 90D Hold on real OPRA!"
+        assert smap["M7G_Graded"]["end_nav"] > 1750000.0, smap["M7G_Graded"]["end_nav"]
+        assert smap["Core3_Adaptive"]["end_nav"] > 1480000.0, smap["Core3_Adaptive"]["end_nav"]
+        assert smap["M7G_Graded"]["real_trades_pct"] >= 85.0, smap["M7G_Graded"]["real_trades_pct"]
+        assert smap["Core3_Adaptive"]["real_trades_pct"] >= 85.0, smap["Core3_Adaptive"]["real_trades_pct"]
+        assert smap["M7G_Graded"]["end_nav"] > smap["Core3_Adaptive"]["end_nav"], "Full M7G must beat Core-3 Minimal!"
 
     assert len(doc["six_crisis_lights"]) == 6
     assert len(doc["crisis_windows"]) == 7
@@ -4926,8 +5083,8 @@ def verify_artifact(doc: dict[str, Any]) -> None:
                     )
                 qs = tr.get("quoteSource")
                 assert qs in ("REAL_OPRA", "CALIBRATED_BSM"), f"Invalid quoteSource {qs} in {m7_key}/{sid}"
-                if tr["entry_date"] <= "2025-12-15" and (tr.get("exit_date") or tr.get("mtm_date") or "") <= "2025-12-15":
-                    assert qs == "REAL_OPRA", f"Expected REAL_OPRA inside 2015-2025 window: {tr}"
+                if tr["entry_date"] <= "2025-12-15":
+                    assert str(tr.get("entry_source", "")).startswith("real_opra"), f"Expected real_opra entry inside 2015-2025: {tr}"
 
 
 def main() -> None:

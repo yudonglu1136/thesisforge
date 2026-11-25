@@ -374,6 +374,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         'rollMode': query['co_rollMode'] ?? query['rollMode'],
       if ((query['co_m0Enabled'] ?? query['co_m0']) != null)
         'm0Enabled': query['co_m0Enabled'] ?? query['co_m0'],
+      if ((query['co_fillMode'] ?? query['fillMode']) != null)
+        'fillMode': query['co_fillMode'] ?? query['fillMode'],
       for (final key in ['tpMode', 'ccMode', 'spMode', 'wcMode'])
         if (query['co_$key'] != null) key: query['co_$key'],
     };

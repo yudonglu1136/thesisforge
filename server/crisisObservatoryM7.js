@@ -18,6 +18,64 @@ export const CRISIS_OBSERVATORY_PROFILES = Object.freeze(['full_m7_adaptive', 'c
 export const CRISIS_OBSERVATORY_PUT_OTMS = Object.freeze(['otm15', 'otm20']);
 export const CRISIS_OBSERVATORY_M7_TP_MODES = Object.freeze(['standard', 'itm_tp']);
 export const CRISIS_OBSERVATORY_ROLL_MODES = Object.freeze(['adaptive_120_90', '120d_roll50', '90d_hold']);
+export const CRISIS_OBSERVATORY_FILL_MODES = Object.freeze(['ibkr_limit', 'ask_bid']);
+export const DEFAULT_M7_FILL_MODE = 'ibkr_limit';
+
+const IBKR_LIMIT_FRAC = 0.35;
+const HARDCODED_BASE_BUDGET_PCT = 0.002;
+const HARDCODED_M7_BUDGET_PCT = 0.0125;
+const HARDCODED_BASE_DTE = 125;
+const HARDCODED_BASE_ROLL_DTE = 75;
+const HARDCODED_BASE_MONEYNESS = 0.85;
+const HARDCODED_BASE_VIX_MAX = 20.0;
+const HARDCODED_BASE_VR_MAX = 1.02;
+const HARDCODED_M7_BASE_DTE = 125;
+const HARDCODED_M7_BASE_ROLL_DTE = 75;
+const HARDCODED_M7_CTA_DTE = 90;
+const HARDCODED_M7_CTA_ROLL_DTE = 30;
+const HARDCODED_NEAR_ITM_MULT = 1.05;
+const HARDCODED_EXTREME_VIX_TP = 45.0;
+const HARDCODED_LOCKOUT_DAYS = 5;
+const HARDCODED_LOCKOUT_INV_THRESH = 1.0;
+
+export const HARDCODED_RULESET_SPEC = Object.freeze({
+  code: 'B020_M125_HARD75_NEARITM_5DLOCK',
+  locked: true,
+  base_book: {
+    budget_pct_nav: 0.2,
+    target_dte: 125,
+    roll_dte: 75,
+    otm_pct: 15,
+    vix_max: 20.0,
+    vix_ratio_max: 1.02,
+  },
+  m7_book: {
+    budget_pct_nav_per_slot: 1.25,
+    max_slots: 3,
+    non_cta_target_dte: 125,
+    non_cta_roll_dte: 75,
+    cta_target_dte: 90,
+    cta_roll_dte: 30,
+    otm_pct: 15,
+    vxn_max: 27.0,
+    vix_ratio_max: 1.02,
+    step_cooldown_days: 30,
+    escalate_slot3_days: 21,
+  },
+  near_itm_tp: {
+    vix_ratio_min: 1.1,
+    near_itm_strike_mult: 1.05,
+    vix_extreme_override: 45.0,
+    late_5x_mult: 5.0,
+    late_5x_max_dte_base: 60,
+    late_5x_max_dte_m7: 45,
+  },
+  post_tp_lockout: {
+    consecutive_days: 5,
+    vix_ratio_unlock_max: 1.0,
+    scope: 'both_books',
+  },
+});
 
 const _m7Dir = path.dirname(fileURLToPath(import.meta.url));
 const REAL_QUOTES_GZ = path.resolve(_m7Dir, 'config/crisis-observatory-real-quotes.json.gz');
@@ -49,12 +107,9 @@ export function getRealQuoteCache(file = REAL_QUOTES_GZ) {
 }
 
 export function formatOccSymbol(root, expStr, optType, strike) {
-  const r = String(root || 'QQQ').toUpperCase().padEnd(6, ' ').slice(0, 6);
-  const parts = String(expStr || '').split('-');
-  const yymmdd =
-    parts.length === 3
-      ? `${parts[0].slice(-2)}${parts[1].padStart(2, '0')}${parts[2].padStart(2, '0')}`
-      : '000000';
+  const r = String(root || 'QQQ').trim().toUpperCase();
+  const cleanExp = String(expStr || '').replace(/-/g, '');
+  const yymmdd = cleanExp.length >= 8 ? cleanExp.slice(2, 8) : cleanExp.padStart(6, '0');
   const cp = String(optType || 'P').toLowerCase().startsWith('c') ? 'C' : 'P';
   const mills = Math.max(0, Math.round(Number(strike || 0) * 1000));
   return `${r}${yymmdd}${cp}${String(mills).padStart(8, '0')}`;
@@ -81,25 +136,27 @@ function classifyQuoteSourceTag(entrySrc, exitSrc, entryDate, exitDate, opraMaxD
 }
 
 function execBuyPrice(bid, ask, mid, src, slipBsm = OPT_SLIP, fillMode = 'ask_bid') {
-  if (String(src).startsWith('real_opra')) {
-    if (fillMode === 'ibkr_limit') {
-      const hs = Math.max(0.0, 0.5 * (ask - bid));
-      return mid + 0.35 * hs + OPT_COMM_PER_SH;
-    }
+  if (fillMode === 'ibkr_limit') {
+    const hs = 0.5 * Math.max(0.0, ask - bid);
+    return mid + IBKR_LIMIT_FRAC * hs + OPT_COMM_PER_SH;
+  }
+  if (src === 'real_opra' || src === 'real_opra_interp') {
     return ask + OPT_COMM_PER_SH;
   }
   return mid * (1.0 + slipBsm) + OPT_COMM_PER_SH;
 }
 
 function execSellPrice(bid, ask, mid, src, slipBsm = OPT_SLIP, fillMode = 'ask_bid') {
-  if (String(src).startsWith('real_opra')) {
+  if (fillMode === 'ibkr_limit') {
+    if (bid <= 0.0 || mid <= 0.0) return 0.0;
+    const hs = 0.5 * Math.max(0.0, ask - bid);
+    return Math.max(0.0, mid - IBKR_LIMIT_FRAC * hs - OPT_COMM_PER_SH);
+  }
+  if (src === 'real_opra' || src === 'real_opra_interp') {
     if (bid <= 0.0) return 0.0;
-    if (fillMode === 'ibkr_limit') {
-      const hs = Math.max(0.0, 0.5 * (ask - bid));
-      return Math.max(0.0, mid - 0.35 * hs - OPT_COMM_PER_SH);
-    }
     return Math.max(0.0, bid - OPT_COMM_PER_SH);
   }
+  if (mid <= 0.0) return 0.0;
   return Math.max(0.0, mid * (1.0 - slipBsm) - OPT_COMM_PER_SH);
 }
 
@@ -262,15 +319,15 @@ export function computeLiveStressIndexJS({
 const M7_TP_SPECS = Object.freeze({
   standard: {
     id: 'standard',
-    code: 'STANDARD',
-    label_en: 'Standard (VIX/3M >= 1.10 OR 5x)',
-    label_zh: '标准止盈（VIX/3M >= 1.10 或 5x）',
+    code: 'NEAR_ITM_105_5DLOCK',
+    label_en: 'Near-ITM (VIX/3M>=1.10 & QQQ<=1.05×K | VIX>=45 | >=5x Late)',
+    label_zh: '准实值止盈（倒挂>=1.10且<=1.05×K | VIX>=45 | 临期>=5x）',
   },
   itm_tp: {
     id: 'itm_tp',
-    code: 'ITM_TP',
-    label_en: 'ITM_TP (VIX/3M >= 1.10 & ITM OR 5x)',
-    label_zh: '实值止盈 ITM_TP（倒挂>=1.10且进实值 或 5x）',
+    code: 'STRICT_ITM_100_5DLOCK',
+    label_en: 'Strict ITM (VIX/3M>=1.10 & QQQ<=1.00×K | VIX>=45 | >=5x Late)',
+    label_zh: '严格实值止盈（倒挂>=1.10且<=1.00×K | VIX>=45 | 临期>=5x）',
   },
 });
 
@@ -582,11 +639,12 @@ export function simulateM7StrategyJS(
     spMode = 'sp_off',
     wcMode = 'wc_reclaim_30d_d35',
     realQuoteCache = undefined,
-    fillMode = 'ask_bid',
+    fillMode = DEFAULT_M7_FILL_MODE,
   } = {},
 ) {
   const realCache = realQuoteCache === undefined ? getRealQuoteCache() : realQuoteCache;
   const useReal = Boolean(realCache && realCache.selections && realCache.contracts);
+  const effFillMode = CRISIS_OBSERVATORY_FILL_MODES.includes(fillMode) ? fillMode : DEFAULT_M7_FILL_MODE;
   const isCore3 = strategyId === 'Core3_Adaptive';
   const isGraded = strategyId === 'M7G_Graded' || isCore3;
   const maxSlots = isGraded ? 3 : 2;
@@ -596,26 +654,38 @@ export function simulateM7StrategyJS(
   if (isCore3 && effRollMode === '90d_hold') {
     effRollMode = 'adaptive_120_90';
   }
-  if (!['adaptive_120_90', '120d_roll50', '90d_hold'].includes(effRollMode)) {
+  if (!['adaptive_120_90', 'adaptive_125_90', '120d_roll50', '90d_hold'].includes(effRollMode)) {
     effRollMode = 'adaptive_120_90';
   }
 
-  const slotCoverage = 0.5;
+  const baseEnabled = true;
+  const baseBudgetPct = 0.002;
+  const m7FixedBudgetPct = 0.0125;
+  const baseDte = 125;
+  const baseRollDte = 75;
+  const baseMoneyness = 0.85;
+  const baseVixMax = 20.0;
+  const baseVrMax = 1.02;
+  const extremeVixTp = 45.0;
+
   const otmPctInt = putOtm === 'otm20' ? 20 : 15;
   const putMoneyness = putOtm === 'otm20' ? 0.8 : 0.85;
   const requireItmTp = m7TpMode === 'itm_tp';
-  const tpCode = requireItmTp ? 'ITM_TP' : 'STANDARD';
-  const isAdaptive = effRollMode === 'adaptive_120_90';
+  const nearItmMult = requireItmTp ? 1.0 : 1.05;
+  const tpCode = requireItmTp ? 'STRICT_ITM_100_5DLOCK' : 'NEAR_ITM_105_5DLOCK';
+  const isAdaptive = effRollMode === 'adaptive_120_90' || effRollMode === 'adaptive_125_90';
   const isRoll50 = effRollMode === '120d_roll50';
-  const targetDte = isAdaptive || isRoll50 ? 120 : 90;
-  const rollDteThr = isAdaptive || isRoll50 ? 50 : 0;
-  const putMultMaxDte = 45;
-  const refMoneyness = 0.9;
+  const targetDte = isAdaptive ? 125 : isRoll50 ? 120 : 90;
+  const rollDteThr = isAdaptive ? 75 : isRoll50 ? 50 : 0;
+  const putMultMaxDteBase = 60;
+  const putMultMaxDteM7 = 45;
   const vixRatioTp = 1.1;
   const putMultTp = 5.0;
   const stepCalDays = 30;
   const escalateMinDays = 21;
-  const opraMaxD = useReal ? String(realCache?.opra_range?.[1] || '2025-12-15') : '';
+  const lockoutDays = 5;
+  const lockoutInvThresh = 1.0;
+  const opraMaxD = useReal ? String(realCache?.opra_range?.[1] || realCache?.opra_date_max || '2025-12-15') : '';
 
   const slotsForSig = sd => {
     if (isCore3) return evalCore3Signal(sd).targetSlots;
@@ -631,12 +701,12 @@ export function simulateM7StrategyJS(
   };
   const tenorForSig = isCtaFlag => {
     if (isAdaptive) {
-      return isCtaFlag ? [90, 90, 30] : [120, 120, 50];
+      return isCtaFlag ? [90, 30] : [125, 75];
     }
     if (isRoll50) {
-      return [120, 120, 50];
+      return [120, 50];
     }
-    return [90, 90, 0];
+    return [90, 0];
   };
 
   const bhM7 = computeM7BhBaseline(evalBars, useReal);
@@ -767,16 +837,30 @@ export function simulateM7StrategyJS(
   };
 
   const buyPx = (bid, ask, mid, src, slipBsm = OPT_SLIP) =>
-    useReal ? execBuyPrice(bid, ask, mid, src, slipBsm, fillMode) : mid * (1.0 + slipBsm) + OPT_COMM_PER_SH;
+    useReal ? execBuyPrice(bid, ask, mid, src, slipBsm, effFillMode) : mid * (1.0 + slipBsm) + OPT_COMM_PER_SH;
   const sellPx = (bid, ask, mid, src, slipBsm = OPT_SLIP) =>
     useReal
-      ? execSellPrice(bid, ask, mid, src, slipBsm, fillMode)
+      ? execSellPrice(bid, ask, mid, src, slipBsm, effFillMode)
       : Math.max(0.0, mid * (1.0 - slipBsm) - OPT_COMM_PER_SH);
 
   const px0 = useReal ? Number(evalBars[0].close) : Number(evalBars[0].open);
   let coreShares = INITIAL_CAPITAL / (px0 * (1.0 + STOCK_REBAL_FEE));
-  let activeTranches = [];
+  let m7Active = [];
+  let baseActive = [];
   let pendingSig = null;
+  let pendingBaseOpen = false;
+  let baseDaysHedged = 0;
+  let baseGateOpenDays = 0;
+
+  let postTpLockout = false;
+  let nonInvertedStreak = 0;
+  let m7LockedPrevEod = false;
+  let baseLockedPrevEod = false;
+  let lockoutDaysTotal = 0;
+  const lockoutEpisodes = [];
+  let curEp = null;
+  let lastTpDate = null;
+  let lastUnlockDate = null;
 
   const ccEnabled = ccMode !== 'cc_off';
   const ccDte = 25;
@@ -846,9 +930,16 @@ export function simulateM7StrategyJS(
     }
   };
 
+  const currentNavApprox = px => {
+    let navV = (coreShares + assignedShares) * px + ccCash + spCash;
+    for (const trM of m7Active) navV += Number(trM.last_mtm_usd ?? trM.entry_cost_usd);
+    for (const trB of baseActive) navV += Number(trB.last_mtm_usd ?? trB.entry_cost_usd);
+    return Math.max(navV, 1.0);
+  };
+
   const estimateNavExec = (exPx, vxnE, rC, qC, curMs, dStr) => {
     let mtmP = 0.0;
-    for (const tr of activeTranches) {
+    for (const tr of [...m7Active, ...baseActive]) {
       const remD = Math.max(1, diffDays(tr.expMs, curMs));
       const { mid: pmO } = lookupOpt(dStr, 'put', tr.exp_date, tr.kp, tr.k_cents, exPx, remD, rC, qC, vxnE, tr.last_iv, OPT_SLIP);
       mtmP += tr.hedged_shares * pmO;
@@ -862,12 +953,447 @@ export function simulateM7StrategyJS(
     return Math.max(1.0, (coreShares + assignedShares) * exPx + ccCash + spCash + mtmP + mtmCcO);
   };
 
+  const selectOrSynthPut = (idxDay, dStr, spotPx, tDte, moneynessVal, otmInt, rEn, qEn, vxnEn) => {
+    const curMs = msArr[idxDay];
+    let cEn = null;
+    if (useReal) {
+      cEn = selectRec(dStr, `p_${tDte}_${otmInt}`);
+      if (cEn === null && opraMaxD && dStr <= opraMaxD) {
+        qStats.opraWindowFallbacks += 1;
+        return null;
+      }
+    }
+    let expDate;
+    let expMs;
+    let entryDteVal;
+    let tEn;
+    let kp;
+    let kCentsEn;
+    let enBidRaw;
+    let enAskRaw;
+    let midEn;
+    let putAskEn;
+    let ivEn;
+    let srcEn;
+    let occEn;
+    if (cEn !== null) {
+      recSrc(cEn.source, dStr);
+      expDate = cEn.exp;
+      expMs = cEn.expMs;
+      entryDteVal = Math.max(1, diffDays(expMs, curMs));
+      tEn = entryDteVal / 365.0;
+      kp = cEn.strike;
+      kCentsEn = cEn.k_cents;
+      enBidRaw = cEn.bid;
+      enAskRaw = cEn.ask;
+      midEn = cEn.mid;
+      putAskEn = buyPx(enBidRaw, enAskRaw, midEn, cEn.source, OPT_SLIP);
+      ivEn = cEn.iv;
+      srcEn = cEn.source;
+      occEn = cEn.occ_symbol || formatOccSymbol('QQQ', expDate, 'put', kp);
+    } else {
+      const targetMs = curMs + tDte * 86400000;
+      const pos = bisectLeftMs(msArr, targetMs);
+      expDate = pos < nDays ? dates[pos] : new Date(targetMs).toISOString().slice(0, 10);
+      expMs = pos < nDays ? msArr[pos] : targetMs;
+      entryDteVal = Math.max(1, diffDays(expMs, curMs));
+      tEn = entryDteVal / 365.0;
+      kp = r2(spotPx * moneynessVal);
+      kCentsEn = Math.round(kp * 100.0);
+      ivEn = evalSkewIv(spotPx, kp, tEn, rEn, qEn, vxnEn, coeffs);
+      midEn = bsmPrice(spotPx, kp, tEn, rEn, qEn, ivEn, 'put');
+      enBidRaw = Math.max(0.0, midEn * (1.0 - OPT_SLIP));
+      enAskRaw = midEn * (1.0 + OPT_SLIP);
+      putAskEn = buyPx(enBidRaw, enAskRaw, midEn, 'bsm_fallback', OPT_SLIP);
+      srcEn = 'bsm_fallback';
+      occEn = formatOccSymbol('QQQ', expDate, 'put', kp);
+      recSrc('bsm_fallback', dStr);
+    }
+    let ivAnchorEn = null;
+    if (String(srcEn).startsWith('real_opra') && ivEn !== null && Number.isFinite(ivEn) && ivEn >= 0.02 && ivEn <= 3.0) {
+      const bsmIvRef = evalSkewIv(spotPx, kp, Math.max(tEn, 1.0 / 365.0), rEn, qEn, vxnEn, coeffs);
+      ivAnchorEn = clip(ivEn / Math.max(bsmIvRef, 0.05), 0.5, 2.0);
+    }
+    return {
+      expDate,
+      expMs,
+      entryDteVal,
+      tEn,
+      kp,
+      kCentsEn,
+      enBidRaw,
+      enAskRaw,
+      midEn,
+      putAskEn,
+      ivEn: ivEn !== null && Number.isFinite(ivEn) ? ivEn : null,
+      ivAnchorEn,
+      srcEn,
+      occEn,
+    };
+  };
+
+  const fundPutEntry = (entryCostUsd, cashFromSalvage, spotPx) => {
+    let remNeed = entryCostUsd - cashFromSalvage;
+    let dShEntry = 0.0;
+    if (remNeed < -1e-8) {
+      dShEntry = -remNeed / (spotPx * (1.0 + STOCK_REBAL_FEE));
+      coreShares += dShEntry;
+    } else if (remNeed > 1e-8) {
+      if (ccEnabled && ccCash > 0.0) {
+        const useCc = Math.min(ccCash, remNeed);
+        ccCash -= useCc;
+        ccFundedPuts += useCc;
+        remNeed -= useCc;
+      }
+      if (remNeed > 1e-8) {
+        dShEntry = -remNeed / (spotPx * (1.0 - STOCK_REBAL_FEE));
+        coreShares += dShEntry;
+      }
+    }
+    return dShEntry;
+  };
+
   const navList = new Array(nDays);
   const equivShList = new Array(nDays);
   const anyActiveList = new Array(nDays);
   const activeSlotsList = new Array(nDays);
   const ledger = [];
   let tid = 0;
+
+  const buildClosedLedgerRow = (
+    tr,
+    exitDateStr,
+    idxDay,
+    remDays,
+    tRem,
+    exitSpotPx,
+    exitVxnVal,
+    exitVixVal,
+    exitVrVal,
+    rC,
+    qC,
+    bEx,
+    aEx,
+    sellPxVal,
+    srcEx,
+    exitRsn,
+    dSh,
+    multComp,
+  ) => {
+    const hs = tr.hedged_shares;
+    const exitUsd = hs * sellPxVal;
+    const costPart = tr.entry_cost_usd;
+    const roiMult = costPart > 1e-6 ? exitUsd / costPart : 0.0;
+    const actualNetSh = sellPxVal - tr.entry_put_ask;
+    const conv = decomposeNakedPutConvexity(
+      tr.entry_spot,
+      exitSpotPx,
+      tr.kp,
+      tr.T_entry,
+      tRem,
+      tr.entry_r,
+      rC,
+      tr.entry_q,
+      qC,
+      tr.entry_vxn,
+      exitVxnVal,
+      coeffs,
+      actualNetSh,
+    );
+    const enSrc = tr.entry_source || 'bsm_fallback';
+    const qTag = classifyQuoteSourceTag(enSrc, srcEx, tr.entry_date, exitDateStr, opraMaxD || '2025-12-15');
+    const occSym = String(tr.occ_symbol || formatOccSymbol('QQQ', tr.exp_date, 'put', tr.kp));
+    const isBaseB = tr.book === 'base';
+    const netPnlRounded = r2(exitUsd - costPart);
+    const dUsd = r2(conv.dvDelta * hs);
+    const gUsd = r2(conv.dvGamma * hs);
+    const vUsd = r2(conv.dvVega * hs);
+    return {
+      tranche_id: tr.tranche_id,
+      strategy_id: strategyId,
+      book: tr.book,
+      book_label_en: isBaseB ? 'Book B · 0.20% Base' : 'Book M · 1.25% M7G',
+      book_label_zh: isBaseB ? 'B账本 · 0.20%常态基底' : 'M账本 · 1.25%战术M7G',
+      budget_pct_nav: isBaseB ? 0.2 : 1.25,
+      entry_pct_nav: tr.entry_pct_nav,
+      nav_at_entry: r2(tr.nav_at_entry),
+      slot_num: tr.slot_num,
+      tier: tr.tier,
+      max_slots: maxSlots,
+      tranche_type: 'naked_put',
+      put_otm_pct: Number(tr.put_otm_pct || otmPctInt),
+      tp_mode: tpCode,
+      roll_mode: effRollMode,
+      target_dte: Number(tr.target_dte || targetDte),
+      roll_dte: Number(tr.roll_dte_thr || 0),
+      is_cta: Boolean(tr.is_cta),
+      quoteSource: qTag,
+      quote_source: qTag,
+      occSymbol: occSym,
+      occ_symbol: occSym,
+      exp: tr.exp_date,
+      strike: r2(tr.kp),
+      near_itm_strike_105: r2(tr.kp * nearItmMult),
+      entryBid: r3(Number(tr.entry_bid_raw ?? tr.entry_put_ask)),
+      entryAsk: r3(Number(tr.entry_ask_raw ?? tr.entry_put_ask)),
+      exitBid: r3(bEx),
+      exitAsk: r3(aEx),
+      pricing_source: classifyTradeSource(enSrc, srcEx),
+      entry_source: enSrc,
+      exit_source: srcEx,
+      signal_date: tr.signal_date,
+      entry_date: tr.entry_date,
+      planned_exp_date: tr.exp_date,
+      exit_date: exitDateStr,
+      actual_days_held: diffDays(msArr[idxDay], tr.entryMs),
+      rem_dte_at_exit: remDays,
+      exit_reason: exitRsn,
+      sig_score: tr.sig_score,
+      sig_ad_below50: tr.sig_ad_below50,
+      crisis_prob: tr.crisis_prob,
+      p1: tr.p1,
+      p2: tr.p2,
+      p3: tr.p3,
+      triggered_modules: tr.triggered_modules,
+      trigger_code: tr.trigger_code,
+      trigger_en: tr.trigger_en,
+      trigger_zh: tr.trigger_zh,
+      entry_spot: r2(tr.entry_spot),
+      entry_vxn: r2(tr.entry_vxn),
+      entry_vix: r2(Number(tr.entry_vix || 0)),
+      entry_vix_ratio: r3(tr.entry_vix_ratio),
+      kp: r2(tr.kp),
+      kc: null,
+      call_cap_pct: null,
+      hedged_shares: r2(hs),
+      contracts_est: r2(hs / 100.0),
+      slot_coverage: r4(tr.hedged_ratio),
+      entry_put_ask_sh: r4(tr.entry_put_ask),
+      tp_target_5x_sh: r4(5.0 * tr.entry_put_ask),
+      entry_cost_usd: r2(costPart),
+      entry_shares_sold: r4(tr.entry_shares_sold),
+      exit_spot: r2(exitSpotPx),
+      exit_vxn: r2(exitVxnVal),
+      exit_vix: r2(exitVixVal),
+      exit_vix_ratio: r3(exitVrVal),
+      underlying_ret_pct: r2((exitSpotPx / tr.entry_spot - 1.0) * 100.0),
+      put_exit_val_sh: r4(sellPxVal),
+      call_exit_cost_sh: 0.0,
+      exit_net_cash_usd: r2(exitUsd),
+      net_pnl_usd: netPnlRounded,
+      roi_mult: r2(roiMult),
+      exit_shares_delta: r2(dSh),
+      shares_added: r2(tr.entry_shares_sold + dSh),
+      delta0: r4(conv.delta0),
+      delta_usd: dUsd,
+      gamma_usd: gUsd,
+      vega_usd: vUsd,
+      theta_slip_usd: r2(netPnlRounded - (dUsd + gUsd + vUsd)),
+      convexity_mult: conv.convMult !== null ? r2(conv.convMult) : null,
+      comp_entry_cost_usd: r2(tr.comp_entry_cost_usd),
+      comp_put_gain_usd: r2(dSh * multComp),
+      comp_call_drag_usd: 0.0,
+    };
+  };
+
+  const openM7Tranche = (
+    idxDay,
+    dStr,
+    spotPx,
+    vxnEn,
+    vixEn,
+    rEn,
+    qEn,
+    capSlotsVal,
+    sigPrev,
+    prevRow,
+    multMorningVal,
+    cashFromSalvage = 0.0,
+  ) => {
+    const isCtaFlag = Boolean(sigPrev?.M4);
+    const [tDte, rlDte] = tenorForSig(isCtaFlag);
+    const cPack = selectOrSynthPut(idxDay, dStr, spotPx, tDte, putMoneyness, otmPctInt, rEn, qEn, vxnEn);
+    if (cPack === null) {
+      if (cashFromSalvage > 1e-8) {
+        coreShares += cashFromSalvage / (spotPx * (1.0 + STOCK_REBAL_FEE));
+      }
+      return null;
+    }
+    const putAskEn = cPack.putAskEn;
+    const curNav = currentNavApprox(spotPx) + cashFromSalvage;
+    const budgetUsd = curNav * m7FixedBudgetPct;
+    if (putAskEn < 0.03 || budgetUsd <= 1.0) {
+      if (cashFromSalvage > 1e-8) {
+        coreShares += cashFromSalvage / (spotPx * (1.0 + STOCK_REBAL_FEE));
+      }
+      return null;
+    }
+    const hedgedSh = budgetUsd / putAskEn;
+    const entryCostUsd = budgetUsd;
+    const dShEntry = fundPutEntry(entryCostUsd, cashFromSalvage, spotPx);
+    tid += 1;
+    const usedSlots = new Set(m7Active.map(t => t.slot_num));
+    let slotNum = 1;
+    while (usedSlots.has(slotNum)) slotNum += 1;
+    const hr = hedgedSh / Math.max(coreShares, 1e-6);
+    const { mods, codeStr, trigEn, trigZh } = formatM7TriggerLabels(sigPrev, maxSlots, isCore3);
+    const [cProbR, p1R, p2R, p3R] = probTuple(sigPrev);
+    return {
+      tranche_id: tid,
+      book: 'm7',
+      slot_num: slotNum,
+      tier: capSlotsVal,
+      is_cta: isCtaFlag,
+      target_dte: tDte,
+      roll_dte_thr: rlDte,
+      put_otm_pct: otmPctInt,
+      occ_symbol: cPack.occEn,
+      signal_date: String(prevRow.date),
+      sig_score: Number(prevRow.score),
+      sig_ad_below50:
+        prevRow.ad_line !== undefined && prevRow.ad_sma50 !== undefined
+          ? Number(prevRow.ad_line) < Number(prevRow.ad_sma50)
+          : Boolean(prevRow.ad_below50),
+      crisis_prob: cProbR,
+      p1: p1R,
+      p2: p2R,
+      p3: p3R,
+      triggered_modules: mods,
+      trigger_code: codeStr,
+      trigger_en: trigEn,
+      trigger_zh: trigZh,
+      entry_date: dStr,
+      entryMs: msArr[idxDay],
+      exp_date: cPack.expDate,
+      expMs: cPack.expMs,
+      entry_dte: cPack.entryDteVal,
+      T_entry: cPack.tEn,
+      entry_spot: spotPx,
+      entry_vxn: vxnEn,
+      entry_vix: vixEn,
+      entry_vix_ratio: Number(prevRow.vix_ratio),
+      entry_r: rEn,
+      entry_q: qEn,
+      kp: cPack.kp,
+      k_cents: cPack.kCentsEn,
+      last_iv: cPack.ivEn,
+      iv_ratio_anchor: cPack.ivAnchorEn,
+      entry_source: cPack.srcEn,
+      entry_bid_raw: cPack.enBidRaw,
+      entry_ask_raw: cPack.enAskRaw,
+      hedged_shares: hedgedSh,
+      ref_cov_sh: 0.0,
+      hedged_ratio: hr,
+      entry_put_ask: putAskEn,
+      entry_cost_usd: entryCostUsd,
+      entry_pct_nav: r3((entryCostUsd / Math.max(curNav, 1.0)) * 100.0),
+      nav_at_entry: curNav,
+      last_mtm_usd: entryCostUsd,
+      entry_shares_sold: dShEntry,
+      comp_entry_cost_usd: dShEntry * multMorningVal,
+      pending_tp: false,
+      pending_roll: false,
+      tp_trigger_ratio: 0.0,
+      tp_reason: '',
+    };
+  };
+
+  const openBaseTranche = (
+    idxDay,
+    dStr,
+    spotPx,
+    vxnEn,
+    vixEn,
+    rEn,
+    qEn,
+    sigPrev,
+    prevRow,
+    multMorningVal,
+    budgetUsd,
+    cashFromSalvage = 0.0,
+  ) => {
+    const cPack = selectOrSynthPut(idxDay, dStr, spotPx, baseDte, baseMoneyness, 15, rEn, qEn, vxnEn);
+    if (cPack === null) {
+      if (cashFromSalvage > 1e-8) {
+        coreShares += cashFromSalvage / (spotPx * (1.0 + STOCK_REBAL_FEE));
+      }
+      return null;
+    }
+    const putAskEn = cPack.putAskEn;
+    if (putAskEn < 0.03 || budgetUsd <= 1.0) {
+      if (cashFromSalvage > 1e-8) {
+        coreShares += cashFromSalvage / (spotPx * (1.0 + STOCK_REBAL_FEE));
+      }
+      return null;
+    }
+    const curNav = currentNavApprox(spotPx) + cashFromSalvage;
+    const hedgedSh = budgetUsd / putAskEn;
+    const entryCostUsd = budgetUsd;
+    const dShEntry = fundPutEntry(entryCostUsd, cashFromSalvage, spotPx);
+    tid += 1;
+    const hr = hedgedSh / Math.max(coreShares, 1e-6);
+    const [cProbR, p1R, p2R, p3R] = probTuple(sigPrev);
+    const prevVix = Number(prevRow.vix ?? 0);
+    const prevVr = Number(prevRow.vix_ratio ?? 0);
+    return {
+      tranche_id: tid,
+      book: 'base',
+      slot_num: 0,
+      tier: 0,
+      is_cta: false,
+      target_dte: baseDte,
+      roll_dte_thr: baseRollDte,
+      put_otm_pct: 15,
+      occ_symbol: cPack.occEn,
+      signal_date: String(prevRow.date),
+      sig_score: Number(prevRow.score),
+      sig_ad_below50:
+        prevRow.ad_line !== undefined && prevRow.ad_sma50 !== undefined
+          ? Number(prevRow.ad_line) < Number(prevRow.ad_sma50)
+          : Boolean(prevRow.ad_below50),
+      crisis_prob: cProbR,
+      p1: p1R,
+      p2: p2R,
+      p3: p3R,
+      triggered_modules: ['B_VIX20'],
+      trigger_code: 'BASE_VIX20',
+      trigger_en: `Book B 0.20% Base Floor (VIX ${prevVix.toFixed(1)}<=20 & VIX/3M ${prevVr.toFixed(3)}<1.02 · 125D->75D)`,
+      trigger_zh: `B账本 0.20%常态基底（VIX ${prevVix.toFixed(1)}<=20 且 VIX/3M ${prevVr.toFixed(3)}<1.02 · 125D→75D硬换）`,
+      entry_date: dStr,
+      entryMs: msArr[idxDay],
+      exp_date: cPack.expDate,
+      expMs: cPack.expMs,
+      entry_dte: cPack.entryDteVal,
+      T_entry: cPack.tEn,
+      entry_spot: spotPx,
+      entry_vxn: vxnEn,
+      entry_vix: vixEn,
+      entry_vix_ratio: prevVr,
+      entry_r: rEn,
+      entry_q: qEn,
+      kp: cPack.kp,
+      k_cents: cPack.kCentsEn,
+      last_iv: cPack.ivEn,
+      iv_ratio_anchor: cPack.ivAnchorEn,
+      entry_source: cPack.srcEn,
+      entry_bid_raw: cPack.enBidRaw,
+      entry_ask_raw: cPack.enAskRaw,
+      hedged_shares: hedgedSh,
+      ref_cov_sh: 0.0,
+      hedged_ratio: hr,
+      entry_put_ask: putAskEn,
+      entry_cost_usd: entryCostUsd,
+      entry_pct_nav: r3((entryCostUsd / Math.max(curNav, 1.0)) * 100.0),
+      nav_at_entry: curNav,
+      last_mtm_usd: entryCostUsd,
+      entry_shares_sold: dShEntry,
+      comp_entry_cost_usd: dShEntry * multMorningVal,
+      pending_tp: false,
+      pending_roll: false,
+      tp_trigger_ratio: 0.0,
+      tp_reason: '',
+    };
+  };
 
   for (let i = 0; i < nDays; i += 1) {
     const row = evalBars[i];
@@ -878,6 +1404,7 @@ export function simulateM7StrategyJS(
     const cl = Number(row.close);
     const div = Number(row.dividends);
     const vxnCl = Number(row.vxn);
+    const vixCl = Number(row.vix ?? 0);
     const vixR = Number(row.vix_ratio);
     const rCur = Number(row.r);
     const qCur = Number(row.div_yield);
@@ -1030,509 +1557,220 @@ export function simulateM7StrategyJS(
       }
     }
 
-    // 1. Pending M7 TP / Adaptive-Roll Exits at T+1
-    if (i > 0 && activeTranches.some(t => t.pending_tp || t.pending_roll)) {
-      const stillOpen = [];
-      const rollReplacements = [];
-      for (const tr of activeTranches) {
+    // 1A. Pending T+1 Close Exits for Book M (1.25% M7G)
+    if (i > 0 && m7Active.length > 0) {
+      const stillM7 = [];
+      const m7RollReps = [];
+      const prevRowM = evalBars[i - 1];
+      const prevSigM = sigSeries[i - 1];
+      const prevCapM = Math.min(maxSlots, slotsForSig(prevSigM));
+      const prevAffordableM = Number(prevRowM.vxn) <= 27.0 && Number(prevRowM.vix_ratio) < 1.02;
+      for (const tr of m7Active) {
         if (!tr.pending_tp && !tr.pending_roll) {
-          stillOpen.push(tr);
+          stillM7.push(tr);
           continue;
         }
         const remDays = Math.max(0, diffDays(tr.expMs, curMs));
         const tRem = remDays / 365.0;
-        let putBid;
-        let bEx;
-        let aEx;
-        let srcEx;
-        if (isExp(i, tr.expMs)) {
-          putBid = Math.max(0.0, tr.kp - execPx);
-          bEx = putBid;
-          aEx = putBid;
-          srcEx = tr.entry_source || 'bsm_fallback';
-        } else {
-          const qEx = lookupOpt(
+        const qEx = lookupOpt(
+          d,
+          'put',
+          tr.exp_date,
+          tr.kp,
+          tr.k_cents,
+          execPx,
+          remDays,
+          rCur,
+          qCur,
+          vxnEx,
+          tr.last_iv,
+          OPT_SLIP,
+          tr.iv_ratio_anchor,
+        );
+        const putBid = sellPx(qEx.bid, qEx.ask, qEx.mid, qEx.src, OPT_SLIP);
+        const exitUsd = tr.hedged_shares * putBid;
+        const exitRsn = String(tr.tp_reason || 'roll_75d');
+        let dSh = 0.0;
+        if (exitRsn.startsWith('roll_')) {
+          if (prevCapM > stillM7.length + m7RollReps.length && prevAffordableM) {
+            if (!m7LockedPrevEod) {
+              m7RollReps.push([exitUsd, prevCapM, prevSigM]);
+            } else {
+              if (curEp !== null) curEp.blocked_m7_rolls += 1;
+              if (exitUsd > 1e-10) {
+                dSh = exitUsd / (execPx * (1.0 + STOCK_REBAL_FEE));
+                coreShares += dSh;
+              }
+            }
+          } else if (exitUsd > 1e-10) {
+            dSh = exitUsd / (execPx * (1.0 + STOCK_REBAL_FEE));
+            coreShares += dSh;
+          }
+        } else if (exitUsd > 1e-10) {
+          dSh = exitUsd / (execPx * (1.0 + STOCK_REBAL_FEE));
+          coreShares += dSh;
+        }
+
+        ledger.push(
+          buildClosedLedgerRow(
+            tr,
             d,
-            'put',
-            tr.exp_date,
-            tr.kp,
-            tr.k_cents,
-            execPx,
+            i,
             remDays,
+            tRem,
+            execPx,
+            vxnEx,
+            vixCl,
+            vixR,
             rCur,
             qCur,
-            vxnEx,
-            tr.last_iv,
-            OPT_SLIP,
-            tr.iv_ratio_anchor,
-          );
-          bEx = qEx.bid;
-          aEx = qEx.ask;
-          putBid = sellPx(qEx.bid, qEx.ask, qEx.mid, qEx.src, OPT_SLIP);
-          srcEx = qEx.src;
-        }
-        const exitUsd = tr.hedged_shares * putBid;
-        const isRollExit = Boolean(tr.pending_roll) && !Boolean(tr.pending_tp);
-        const trRollThrVal = Number(tr.roll_dte_thr || 50);
-        const exitRsn = isRollExit ? tr.tp_reason || `roll_${trRollThrVal}d` : tr.tp_reason;
-
-        const prevSigD = sigSeries[i - 1];
-        const prevCap = slotsForSig(prevSigD);
-        const willAutoRoll = isRollExit && prevCap > stillOpen.length + rollReplacements.length;
-
-        let dSh = 0.0;
-        if (!willAutoRoll && Math.abs(exitUsd) > 1e-10) {
-          const denom = execPx * (1.0 + (exitUsd >= 0 ? STOCK_REBAL_FEE : -STOCK_REBAL_FEE));
-          dSh = exitUsd / denom;
-          coreShares += dSh;
-        } else if (willAutoRoll) {
-          rollReplacements.push([exitUsd, prevCap, prevSigD]);
-        }
-
-        const roiMult = tr.entry_cost_usd > 1e-6 ? exitUsd / tr.entry_cost_usd : 0.0;
-        const actualNetSh = putBid - tr.entry_put_ask;
-        const conv = decomposeNakedPutConvexity(
-          tr.entry_spot,
-          execPx,
-          tr.kp,
-          tr.T_entry,
-          tRem,
-          tr.entry_r,
-          rCur,
-          tr.entry_q,
-          qCur,
-          tr.entry_vxn,
-          vxnEx,
-          coeffs,
-          actualNetSh,
+            qEx.bid,
+            qEx.ask,
+            putBid,
+            qEx.src,
+            exitRsn,
+            dSh,
+            multMorning,
+          ),
         );
-        const hs = tr.hedged_shares;
-        const netPnlRounded = r2(exitUsd - tr.entry_cost_usd);
-        const dUsd = r2(conv.dvDelta * hs);
-        const gUsd = r2(conv.dvGamma * hs);
-        const vUsd = r2(conv.dvVega * hs);
-        const enSrc = tr.entry_source || 'bsm_fallback';
-        const qTag = classifyQuoteSourceTag(enSrc, srcEx, tr.entry_date, d, opraMaxD || '2025-12-15');
-        const occSym = tr.occ_symbol || formatOccSymbol('QQQ', tr.exp_date, 'put', tr.kp);
-        ledger.push({
-          tranche_id: tr.tranche_id,
-          strategy_id: strategyId,
-          slot_num: tr.slot_num,
-          tier: tr.tier,
-          max_slots: maxSlots,
-          tranche_type: 'naked_put',
-          put_otm_pct: otmPctInt,
-          tp_mode: tpCode,
-          roll_mode: effRollMode,
-          target_dte: Number(tr.target_dte || targetDte),
-          roll_dte: Number(tr.roll_dte_thr || 0),
-          is_cta: Boolean(tr.is_cta),
-          quoteSource: qTag,
-          quote_source: qTag,
-          occSymbol: occSym,
-          occ_symbol: occSym,
-          exp: tr.exp_date,
-          strike: r2(tr.kp),
-          entryBid: r3(Number(tr.entry_bid_raw ?? tr.entry_put_ask)),
-          entryAsk: r3(Number(tr.entry_ask_raw ?? tr.entry_put_ask)),
-          exitBid: r3(bEx),
-          exitAsk: r3(aEx),
-          pricing_source: classifyTradeSource(enSrc, srcEx),
-          entry_source: enSrc,
-          exit_source: srcEx,
-          signal_date: tr.signal_date,
-          entry_date: tr.entry_date,
-          planned_exp_date: tr.exp_date,
-          exit_date: d,
-          actual_days_held: diffDays(curMs, tr.entryMs),
-          rem_dte_at_exit: remDays,
-          exit_reason: exitRsn,
-          sig_score: tr.sig_score,
-          sig_ad_below50: tr.sig_ad_below50,
-          crisis_prob: tr.crisis_prob,
-          p1: tr.p1,
-          p2: tr.p2,
-          p3: tr.p3,
-          triggered_modules: tr.triggered_modules,
-          trigger_code: tr.trigger_code,
-          trigger_en: tr.trigger_en,
-          trigger_zh: tr.trigger_zh,
-          entry_spot: r2(tr.entry_spot),
-          entry_vxn: r2(tr.entry_vxn),
-          entry_vix_ratio: r3(tr.entry_vix_ratio),
-          kp: r2(tr.kp),
-          kc: null,
-          call_cap_pct: null,
-          hedged_shares: r2(hs),
-          contracts_est: r2(hs / 100.0),
-          slot_coverage: r4(tr.hedged_ratio),
-          entry_put_ask_sh: r4(tr.entry_put_ask),
-          tp_target_5x_sh: r4(5.0 * tr.entry_put_ask),
-          entry_cost_usd: r2(tr.entry_cost_usd),
-          entry_shares_sold: r4(tr.entry_shares_sold),
-          exit_spot: r2(execPx),
-          exit_vxn: r2(vxnEx),
-          exit_vix_ratio: r3(tr.tp_trigger_ratio),
-          underlying_ret_pct: r2((execPx / tr.entry_spot - 1.0) * 100.0),
-          put_exit_val_sh: r4(putBid),
-          call_exit_cost_sh: 0.0,
-          exit_net_cash_usd: r2(exitUsd),
-          net_pnl_usd: netPnlRounded,
-          roi_mult: r2(roiMult),
-          exit_shares_delta: r2(dSh),
-          shares_added: r2(tr.entry_shares_sold + dSh),
-          delta0: r4(conv.delta0),
-          delta_usd: dUsd,
-          gamma_usd: gUsd,
-          vega_usd: vUsd,
-          theta_slip_usd: r2(netPnlRounded - (dUsd + gUsd + vUsd)),
-          convexity_mult: conv.convMult !== null ? r2(conv.convMult) : null,
-          comp_entry_cost_usd: r2(tr.comp_entry_cost_usd),
-          comp_put_gain_usd: r2(dSh * multMorning),
-          comp_call_drag_usd: 0.0,
-        });
       }
-      activeTranches = stillOpen;
+      m7Active = stillM7;
+      for (const [salvUsd, capSl, rSigD] of m7RollReps) {
+        const nt = openM7Tranche(i, d, execPx, vxnEx, vixCl, rCur, qCur, capSl, rSigD, prevRowM, multMorning, salvUsd);
+        if (nt !== null) m7Active.push(nt);
+      }
+    }
 
-      // Direct Adaptive Roll replacements using salvaged cash without double stock-fee churn
-      for (const [salvUsd, rCap, rSigD] of rollReplacements) {
-        const rEn = rCur;
-        const qEn = qCur;
-        const vxnEn = vxnEx;
-        const isCtaR = Boolean(rSigD.M4);
-        const [trTgtDte, trRefDte, trRollThr] = tenorForSig(isCtaR);
-        const cRef = useReal ? selectRec(d, `p_${trRefDte}_10`) : null;
-        const cEn = useReal ? selectRec(d, `p_${trTgtDte}_${otmPctInt}`) : null;
-        if (useReal && opraMaxD && d <= opraMaxD && (cRef === null || cEn === null)) {
-          if (salvUsd > 1e-8) {
-            coreShares += salvUsd / (execPx * (1.0 + STOCK_REBAL_FEE));
-          }
+    // 1B. Pending T+1 Close Exits for Book B (0.20% Base VIX<=20 Gate)
+    if (i > 0 && baseActive.length > 0) {
+      const stillBase = [];
+      let baseRollCash = 0.0;
+      let wantBaseReopen = false;
+      const prevRowB = evalBars[i - 1];
+      const prevSigB = sigSeries[i - 1];
+      const prevGateOk = Number(prevRowB.vix ?? 0) <= baseVixMax && Number(prevRowB.vix_ratio) < baseVrMax;
+      for (const tr of baseActive) {
+        if (!tr.pending_tp && !tr.pending_roll) {
+          stillBase.push(tr);
           continue;
         }
-
-        let putAskRef;
-        if (cRef !== null) {
-          recSrc(cRef.source, d);
-          putAskRef = buyPx(cRef.bid, cRef.ask, cRef.mid, cRef.source, OPT_SLIP);
-        } else {
-          const refTargetMs = curMs + trRefDte * 86400000;
-          const posRef = bisectLeftMs(msArr, refTargetMs);
-          const expMsRef = posRef < nDays ? msArr[posRef] : refTargetMs;
-          const tRef = Math.max(1, diffDays(expMsRef, curMs)) / 365.0;
-          const kpRef = execPx * refMoneyness;
-          const sigRef = evalSkewIv(execPx, kpRef, tRef, rEn, qEn, vxnEn, coeffs);
-          const midRef = bsmPrice(execPx, kpRef, tRef, rEn, qEn, sigRef, 'put');
-          putAskRef = buyPx(midRef * (1.0 - OPT_SLIP), midRef * (1.0 + OPT_SLIP), midRef, 'bsm_fallback', OPT_SLIP);
-          recSrc('bsm_fallback', d);
-        }
-
-        let expDate;
-        let expMs;
-        let tEn;
-        let kp;
-        let kCentsEn;
-        let enBidRaw;
-        let enAskRaw;
-        let putAskEn;
-        let ivEn;
-        let srcEn;
-        let occEn;
-        if (cEn !== null) {
-          recSrc(cEn.source, d);
-          expDate = cEn.exp;
-          expMs = cEn.expMs;
-          tEn = Math.max(1, diffDays(expMs, curMs)) / 365.0;
-          kp = cEn.strike;
-          kCentsEn = cEn.k_cents;
-          enBidRaw = cEn.bid;
-          enAskRaw = cEn.ask;
-          putAskEn = buyPx(cEn.bid, cEn.ask, cEn.mid, cEn.source, OPT_SLIP);
-          ivEn = cEn.iv;
-          srcEn = cEn.source;
-          occEn = cEn.occ_symbol || formatOccSymbol('QQQ', expDate, 'put', kp);
-        } else {
-          const targetMs = curMs + trTgtDte * 86400000;
-          const pos = bisectLeftMs(msArr, targetMs);
-          expDate = pos < nDays ? dates[pos] : new Date(targetMs).toISOString().slice(0, 10);
-          expMs = pos < nDays ? msArr[pos] : targetMs;
-          tEn = Math.max(1, diffDays(expMs, curMs)) / 365.0;
-          kp = r2(execPx * putMoneyness);
-          kCentsEn = Math.round(kp * 100.0);
-          ivEn = evalSkewIv(execPx, kp, tEn, rEn, qEn, vxnEn, coeffs);
-          const midEn = bsmPrice(execPx, kp, tEn, rEn, qEn, ivEn, 'put');
-          enBidRaw = Math.max(0.0, midEn * (1.0 - OPT_SLIP));
-          enAskRaw = midEn * (1.0 + OPT_SLIP);
-          putAskEn = buyPx(enBidRaw, enAskRaw, midEn, 'bsm_fallback', OPT_SLIP);
-          srcEn = 'bsm_fallback';
-          occEn = formatOccSymbol('QQQ', expDate, 'put', kp);
-          recSrc('bsm_fallback', d);
-        }
-
-        let ivAnchorEn = null;
-        if (String(srcEn).startsWith('real_opra') && ivEn !== null && Number.isFinite(ivEn) && ivEn >= 0.02 && ivEn <= 3.0) {
-          const bsmIvRef = evalSkewIv(execPx, kp, Math.max(tEn, 1.0 / 365.0), rEn, qEn, vxnEn, coeffs);
-          ivAnchorEn = clip(ivEn / Math.max(bsmIvRef, 0.05), 0.5, 2.0);
-        }
-
-        let alreadyRefCov = 0.0;
-        for (const t of activeTranches) alreadyRefCov += t.ref_cov_sh;
-        const costShFracRef = putAskRef / (execPx * (1.0 - STOCK_REBAL_FEE));
-        const maxCov = coreShares * (slotCoverage * Math.max(2, rCap));
-        const availShRef = Math.max(0.0, maxCov - alreadyRefCov);
-        const refHedgedSh = Math.min(coreShares * slotCoverage, availShRef / (1.0 + costShFracRef));
-        const refBudgetUsd = refHedgedSh * putAskRef;
-
-        if (putAskEn >= 0.03 && refBudgetUsd > 1.0) {
-          const hedgedSh = refBudgetUsd / putAskEn;
-          const entryCostUsd = refBudgetUsd;
-          let remNeed = entryCostUsd - salvUsd;
-          let dShEntry = 0.0;
-          if (remNeed < -1e-8) {
-            dShEntry = -remNeed / (execPx * (1.0 + STOCK_REBAL_FEE));
-            coreShares += dShEntry;
-          } else if (remNeed > 1e-8) {
-            if (ccEnabled && ccCash > 0.0) {
-              const useCc = Math.min(ccCash, remNeed);
-              ccCash -= useCc;
-              ccFundedPuts += useCc;
-              remNeed -= useCc;
+        const remDays = Math.max(0, diffDays(tr.expMs, curMs));
+        const tRem = remDays / 365.0;
+        const qEx = lookupOpt(
+          d,
+          'put',
+          tr.exp_date,
+          tr.kp,
+          tr.k_cents,
+          execPx,
+          remDays,
+          rCur,
+          qCur,
+          vxnEx,
+          tr.last_iv,
+          OPT_SLIP,
+          tr.iv_ratio_anchor,
+        );
+        const putBid = sellPx(qEx.bid, qEx.ask, qEx.mid, qEx.src, OPT_SLIP);
+        const exitUsd = tr.hedged_shares * putBid;
+        const exitRsn = String(tr.tp_reason || 'roll_75d');
+        let dSh = 0.0;
+        if (exitRsn === 'roll_75d') {
+          if (prevGateOk && !wantBaseReopen) {
+            if (!baseLockedPrevEod) {
+              wantBaseReopen = true;
+              baseRollCash += exitUsd;
+            } else {
+              if (curEp !== null) curEp.blocked_base_rolls += 1;
+              if (exitUsd > 1e-10) {
+                dSh = exitUsd / (execPx * (1.0 + STOCK_REBAL_FEE));
+                coreShares += dSh;
+              }
             }
-            if (remNeed > 1e-8) {
-              dShEntry = -remNeed / (execPx * (1.0 - STOCK_REBAL_FEE));
-              coreShares += dShEntry;
-            }
+          } else if (exitUsd > 1e-10) {
+            dSh = exitUsd / (execPx * (1.0 + STOCK_REBAL_FEE));
+            coreShares += dSh;
           }
-          tid += 1;
-          const usedSlots = new Set(activeTranches.map(t => t.slot_num));
-          let slotNum = 1;
-          while (usedSlots.has(slotNum)) slotNum += 1;
-          const hr = hedgedSh / Math.max(coreShares, 1e-6);
-          const prevRow = evalBars[i - 1];
-          const { mods, codeStr, trigEn, trigZh } = formatM7TriggerLabels(rSigD, maxSlots, isCore3);
-          const [cProbR, p1R, p2R, p3R] = probTuple(rSigD);
-          activeTranches.push({
-            tranche_id: tid,
-            slot_num: slotNum,
-            tier: rCap,
-            is_cta: isCtaR,
-            target_dte: trTgtDte,
-            roll_dte_thr: trRollThr,
-            occ_symbol: occEn,
-            signal_date: dates[i - 1],
-            sig_score: Number(prevRow.score),
-            sig_ad_below50:
-              prevRow.ad_line !== undefined && prevRow.ad_sma50 !== undefined
-                ? Number(prevRow.ad_line) < Number(prevRow.ad_sma50)
-                : Boolean(prevRow.ad_below50),
-            crisis_prob: cProbR,
-            p1: p1R,
-            p2: p2R,
-            p3: p3R,
-            triggered_modules: mods,
-            trigger_code: codeStr,
-            trigger_en: trigEn,
-            trigger_zh: trigZh,
-            entry_date: d,
-            entryMs: curMs,
-            exp_date: expDate,
-            expMs,
-            T_entry: tEn,
-            entry_spot: execPx,
-            entry_vxn: vxnEn,
-            entry_vix_ratio: Number(prevRow.vix_ratio),
-            entry_r: rEn,
-            entry_q: qEn,
-            kp,
-            k_cents: kCentsEn,
-            last_iv: ivEn !== null && Number.isFinite(ivEn) ? ivEn : null,
-            iv_ratio_anchor: ivAnchorEn,
-            entry_source: srcEn,
-            entry_bid_raw: enBidRaw,
-            entry_ask_raw: enAskRaw,
-            hedged_shares: hedgedSh,
-            ref_cov_sh: refHedgedSh,
-            hedged_ratio: hr,
-            entry_put_ask: putAskEn,
-            entry_cost_usd: entryCostUsd,
-            entry_shares_sold: dShEntry,
-            comp_entry_cost_usd: dShEntry * multMorning,
-            pending_tp: false,
-            pending_roll: false,
-            tp_trigger_ratio: 0.0,
-            tp_reason: '',
-          });
-        } else if (salvUsd > 1e-8) {
-          coreShares += salvUsd / (execPx * (1.0 + STOCK_REBAL_FEE));
+        } else if (exitUsd > 1e-10) {
+          dSh = exitUsd / (execPx * (1.0 + STOCK_REBAL_FEE));
+          coreShares += dSh;
         }
+
+        ledger.push(
+          buildClosedLedgerRow(
+            tr,
+            d,
+            i,
+            remDays,
+            tRem,
+            execPx,
+            vxnEx,
+            vixCl,
+            vixR,
+            rCur,
+            qCur,
+            qEx.bid,
+            qEx.ask,
+            putBid,
+            qEx.src,
+            exitRsn,
+            dSh,
+            multMorning,
+          ),
+        );
+      }
+      baseActive = stillBase;
+      if (wantBaseReopen) {
+        const curNav = currentNavApprox(execPx) + baseRollCash;
+        const bud = curNav * baseBudgetPct;
+        const ntB = openBaseTranche(i, d, execPx, vxnEx, vixCl, rCur, qCur, prevSigB, prevRowB, multMorning, bud, baseRollCash);
+        if (ntB !== null) baseActive.push(ntB);
       }
     }
 
-    // 2. Pending New M7 Tranche Entry at T+1
-    if (i > 0 && pendingSig !== null && activeTranches.length < pendingSig.cap_slots) {
-      const rEn = pendingSig.r;
-      const qEn = pendingSig.q;
-      const vxnEn = vxnEx;
-      const isCtaEn = Boolean(pendingSig.is_cta);
-      const [trTgtDte, trRefDte, trRollThr] = tenorForSig(isCtaEn);
-
-      const cRef = useReal ? selectRec(d, `p_${trRefDte}_10`) : null;
-      const cEn = useReal ? selectRec(d, `p_${trTgtDte}_${otmPctInt}`) : null;
-
-      if (useReal && opraMaxD && d <= opraMaxD && (cRef === null || cEn === null)) {
-        pendingSig = null;
-      } else {
-        let putAskRef;
-        if (cRef !== null) {
-          recSrc(cRef.source, d);
-          putAskRef = buyPx(cRef.bid, cRef.ask, cRef.mid, cRef.source, OPT_SLIP);
-        } else {
-          const refTargetMs = curMs + trRefDte * 86400000;
-          const posRef = bisectLeftMs(msArr, refTargetMs);
-          const expMsRef = posRef < nDays ? msArr[posRef] : refTargetMs;
-          const tRef = Math.max(1, diffDays(expMsRef, curMs)) / 365.0;
-          const kpRef = execPx * refMoneyness;
-          const sigRef = evalSkewIv(execPx, kpRef, tRef, rEn, qEn, vxnEn, coeffs);
-          const midRef = bsmPrice(execPx, kpRef, tRef, rEn, qEn, sigRef, 'put');
-          putAskRef = buyPx(midRef * (1.0 - OPT_SLIP), midRef * (1.0 + OPT_SLIP), midRef, 'bsm_fallback', OPT_SLIP);
-          recSrc('bsm_fallback', d);
-        }
-
-        let expDate;
-        let expMs;
-        let tEn;
-        let kp;
-        let kCentsEn;
-        let enBidRaw;
-        let enAskRaw;
-        let putAskEn;
-        let ivEn;
-        let srcEn;
-        let occEn;
-        if (cEn !== null) {
-          recSrc(cEn.source, d);
-          expDate = cEn.exp;
-          expMs = cEn.expMs;
-          tEn = Math.max(1, diffDays(expMs, curMs)) / 365.0;
-          kp = cEn.strike;
-          kCentsEn = cEn.k_cents;
-          enBidRaw = cEn.bid;
-          enAskRaw = cEn.ask;
-          putAskEn = buyPx(cEn.bid, cEn.ask, cEn.mid, cEn.source, OPT_SLIP);
-          ivEn = cEn.iv;
-          srcEn = cEn.source;
-          occEn = cEn.occ_symbol || formatOccSymbol('QQQ', expDate, 'put', kp);
-        } else {
-          const targetMs = curMs + trTgtDte * 86400000;
-          const pos = bisectLeftMs(msArr, targetMs);
-          expDate = pos < nDays ? dates[pos] : new Date(targetMs).toISOString().slice(0, 10);
-          expMs = pos < nDays ? msArr[pos] : targetMs;
-          tEn = Math.max(1, diffDays(expMs, curMs)) / 365.0;
-          kp = r2(execPx * putMoneyness);
-          kCentsEn = Math.round(kp * 100.0);
-          ivEn = evalSkewIv(execPx, kp, tEn, rEn, qEn, vxnEn, coeffs);
-          const midEn = bsmPrice(execPx, kp, tEn, rEn, qEn, ivEn, 'put');
-          enBidRaw = Math.max(0.0, midEn * (1.0 - OPT_SLIP));
-          enAskRaw = midEn * (1.0 + OPT_SLIP);
-          putAskEn = buyPx(enBidRaw, enAskRaw, midEn, 'bsm_fallback', OPT_SLIP);
-          srcEn = 'bsm_fallback';
-          occEn = formatOccSymbol('QQQ', expDate, 'put', kp);
-          recSrc('bsm_fallback', d);
-        }
-
-        let ivAnchorEn = null;
-        if (String(srcEn).startsWith('real_opra') && ivEn !== null && Number.isFinite(ivEn) && ivEn >= 0.02 && ivEn <= 3.0) {
-          const bsmIvRef = evalSkewIv(execPx, kp, Math.max(tEn, 1.0 / 365.0), rEn, qEn, vxnEn, coeffs);
-          ivAnchorEn = clip(ivEn / Math.max(bsmIvRef, 0.05), 0.5, 2.0);
-        }
-
-        let alreadyRefCov = 0.0;
-        for (const t of activeTranches) alreadyRefCov += t.ref_cov_sh;
-        const costShFracRef = putAskRef / (execPx * (1.0 - STOCK_REBAL_FEE));
-        const maxCov = coreShares * (slotCoverage * Math.max(2, pendingSig.cap_slots));
-        const availShRef = Math.max(0.0, maxCov - alreadyRefCov);
-        const refHedgedSh = Math.min(coreShares * slotCoverage, availShRef / (1.0 + costShFracRef));
-        const refBudgetUsd = refHedgedSh * putAskRef;
-
-        if (putAskEn >= 0.03 && refBudgetUsd > 1.0) {
-          const hedgedSh = refBudgetUsd / putAskEn;
-          const entryCostUsd = refBudgetUsd;
-          let dShEntry = 0.0;
-          if (ccEnabled && ccCash >= entryCostUsd) {
-            ccCash -= entryCostUsd;
-            ccFundedPuts += entryCostUsd;
-          } else if (ccEnabled && ccCash > 0.0) {
-            const paidCc = ccCash;
-            ccFundedPuts += paidCc;
-            const remCost = entryCostUsd - paidCc;
-            ccCash = 0.0;
-            dShEntry = -remCost / (execPx * (1.0 - STOCK_REBAL_FEE));
-            coreShares += dShEntry;
-          } else {
-            dShEntry = -entryCostUsd / (execPx * (1.0 - STOCK_REBAL_FEE));
-            coreShares += dShEntry;
-          }
-
-          tid += 1;
-          const usedSlots = new Set(activeTranches.map(t => t.slot_num));
-          let slotNum = 1;
-          while (usedSlots.has(slotNum)) slotNum += 1;
-          const hr = hedgedSh / Math.max(coreShares, 1e-6);
-          activeTranches.push({
-            tranche_id: tid,
-            slot_num: slotNum,
-            tier: pendingSig.tier,
-            is_cta: isCtaEn,
-            target_dte: trTgtDte,
-            roll_dte_thr: trRollThr,
-            occ_symbol: occEn,
-            signal_date: pendingSig.signal_date,
-            sig_score: pendingSig.sig_score,
-            sig_ad_below50: pendingSig.sig_ad_below50,
-            crisis_prob: pendingSig.crisis_prob,
-            p1: pendingSig.p1,
-            p2: pendingSig.p2,
-            p3: pendingSig.p3,
-            triggered_modules: pendingSig.triggered_modules,
-            trigger_code: pendingSig.trigger_code,
-            trigger_en: pendingSig.trigger_en,
-            trigger_zh: pendingSig.trigger_zh,
-            entry_date: d,
-            entryMs: curMs,
-            exp_date: expDate,
-            expMs,
-            T_entry: tEn,
-            entry_spot: execPx,
-            entry_vxn: vxnEn,
-            entry_vix_ratio: pendingSig.vix_ratio,
-            entry_r: rEn,
-            entry_q: qEn,
-            kp,
-            k_cents: kCentsEn,
-            last_iv: ivEn !== null && Number.isFinite(ivEn) ? ivEn : null,
-            iv_ratio_anchor: ivAnchorEn,
-            entry_source: srcEn,
-            entry_bid_raw: enBidRaw,
-            entry_ask_raw: enAskRaw,
-            hedged_shares: hedgedSh,
-            ref_cov_sh: refHedgedSh,
-            hedged_ratio: hr,
-            entry_put_ask: putAskEn,
-            entry_cost_usd: entryCostUsd,
-            entry_shares_sold: dShEntry,
-            comp_entry_cost_usd: dShEntry * multMorning,
-            pending_tp: false,
-            pending_roll: false,
-            tp_trigger_ratio: 0.0,
-            tp_reason: '',
-          });
-        }
-        pendingSig = null;
-      }
-    } else {
-      pendingSig = null;
+    // 2A. Pending New Book M Entry at T+1 Close
+    if (i > 0 && pendingSig !== null && m7Active.length < pendingSig.cap_slots) {
+      const ntM = openM7Tranche(
+        i,
+        d,
+        execPx,
+        vxnEx,
+        vixCl,
+        rCur,
+        qCur,
+        pendingSig.cap_slots,
+        sigSeries[i - 1],
+        evalBars[i - 1],
+        multMorning,
+        0.0,
+      );
+      if (ntM !== null) m7Active.push(ntM);
     }
+    pendingSig = null;
 
-    // 2b. Engine 2 & Engine 3 T+1 Executions
+    // 2B. Pending New Book B Entry at T+1 Close
+    if (i > 0 && pendingBaseOpen && baseActive.length === 0) {
+      const curNav = currentNavApprox(execPx);
+      const bud = curNav * baseBudgetPct;
+      const ntB = openBaseTranche(
+        i,
+        d,
+        execPx,
+        vxnEx,
+        vixCl,
+        rCur,
+        qCur,
+        sigSeries[i - 1],
+        evalBars[i - 1],
+        multMorning,
+        bud,
+        0.0,
+      );
+      if (ntB !== null) baseActive.push(ntB);
+    }
+    pendingBaseOpen = false;
+
+    // 2C. Engine 2 & Engine 3 T+1 Executions
     if (i > 0 && ccEnabled && pendingCc !== null && activeCc === null) {
       const rCc = pendingCc.r;
       const qCc = pendingCc.q;
@@ -1746,138 +1984,67 @@ export function simulateM7StrategyJS(
     }
 
     // 3. Dividends DRIP
-    if (div > 0.0 && coreShares > 0.0 && (!useReal || i > 0)) {
+    if (div > 0.0 && coreShares > 0.0) {
       coreShares += (coreShares * div) / (cl * (1.0 + STOCK_REBAL_FEE));
       if (assignedShares > 0.0) spCash += assignedShares * div;
     }
 
-    const wasActiveToday = activeTranches.length > 0;
-    const activeSlotsToday = activeTranches.length;
+    const wasActiveToday = m7Active.length > 0 || baseActive.length > 0;
+    const activeSlotsToday = m7Active.length;
 
-    // 4. EOD Expiries
-    const stillOpenExp = [];
-    for (const tr of activeTranches) {
-      if (isExp(i, tr.expMs)) {
-        const putIntr = Math.max(0.0, tr.kp - cl);
-        const settleUsd = tr.hedged_shares * putIntr;
-        let dSh = 0.0;
-        if (Math.abs(settleUsd) > 1e-10) {
-          dSh = settleUsd / (cl * (1.0 + STOCK_REBAL_FEE));
-          coreShares += dSh;
+    // 4. EOD Expiries (safety fallback for 90d_hold comparison)
+    for (const bookRef of [m7Active, baseActive]) {
+      const stillExp = [];
+      for (const tr of bookRef) {
+        if (isExp(i, tr.expMs)) {
+          const putIntr = Math.max(0.0, tr.kp - cl);
+          const settleUsd = tr.hedged_shares * putIntr;
+          let dSh = 0.0;
+          if (settleUsd > 0.0) {
+            dSh = settleUsd / (cl * (1.0 + STOCK_REBAL_FEE));
+            coreShares += dSh;
+          }
+          const enSrc = String(tr.entry_source || 'bsm_fallback');
+          const exSrcExp = useReal && opraMaxD && d <= opraMaxD ? 'real_opra' : enSrc;
+          const trTgtD = Number(tr.target_dte || targetDte);
+          ledger.push(
+            buildClosedLedgerRow(
+              tr,
+              d,
+              i,
+              0,
+              0.0,
+              cl,
+              vxnCl,
+              vixCl,
+              vixR,
+              rCur,
+              qCur,
+              putIntr,
+              putIntr,
+              putIntr,
+              exSrcExp,
+              `expiry_${trTgtD}dte`,
+              dSh,
+              multEod,
+            ),
+          );
+        } else {
+          stillExp.push(tr);
         }
-        const roiMult = tr.entry_cost_usd > 1e-6 ? settleUsd / tr.entry_cost_usd : 0.0;
-        const actualNetSh = putIntr - tr.entry_put_ask;
-        const conv = decomposeNakedPutConvexity(
-          tr.entry_spot,
-          cl,
-          tr.kp,
-          tr.T_entry,
-          0.0,
-          tr.entry_r,
-          rCur,
-          tr.entry_q,
-          qCur,
-          tr.entry_vxn,
-          vxnCl,
-          coeffs,
-          actualNetSh,
-        );
-        const hs = tr.hedged_shares;
-        const netPnlRounded = r2(settleUsd - tr.entry_cost_usd);
-        const dUsd = r2(conv.dvDelta * hs);
-        const gUsd = r2(conv.dvGamma * hs);
-        const vUsd = r2(conv.dvVega * hs);
-        const enSrc = tr.entry_source || 'bsm_fallback';
-        const exSrcExp = useReal && opraMaxD && d <= opraMaxD ? 'real_opra_exact' : enSrc;
-        const qTagExp = classifyQuoteSourceTag(enSrc, exSrcExp, tr.entry_date, d, opraMaxD || '2025-12-15');
-        const occSym = String(tr.occ_symbol || formatOccSymbol('QQQ', tr.exp_date, 'put', tr.kp));
-        const trTgtD = Number(tr.target_dte || targetDte);
-        ledger.push({
-          tranche_id: tr.tranche_id,
-          strategy_id: strategyId,
-          slot_num: tr.slot_num,
-          tier: tr.tier,
-          max_slots: maxSlots,
-          tranche_type: 'naked_put',
-          put_otm_pct: otmPctInt,
-          tp_mode: tpCode,
-          roll_mode: effRollMode,
-          target_dte: trTgtD,
-          roll_dte: Number(tr.roll_dte_thr || 0),
-          is_cta: Boolean(tr.is_cta),
-          quoteSource: qTagExp,
-          quote_source: qTagExp,
-          occSymbol: occSym,
-          occ_symbol: occSym,
-          exp: tr.exp_date,
-          strike: r2(tr.kp),
-          entryBid: r3(Number(tr.entry_bid_raw ?? tr.entry_put_ask)),
-          entryAsk: r3(Number(tr.entry_ask_raw ?? tr.entry_put_ask)),
-          exitBid: r3(putIntr),
-          exitAsk: r3(putIntr),
-          pricing_source: classifyTradeSource(enSrc, exSrcExp),
-          entry_source: enSrc,
-          exit_source: exSrcExp,
-          signal_date: tr.signal_date,
-          entry_date: tr.entry_date,
-          planned_exp_date: tr.exp_date,
-          exit_date: d,
-          actual_days_held: diffDays(curMs, tr.entryMs),
-          rem_dte_at_exit: 0,
-          exit_reason: `expiry_${trTgtD}dte`,
-          sig_score: tr.sig_score,
-          sig_ad_below50: tr.sig_ad_below50,
-          crisis_prob: tr.crisis_prob,
-          p1: tr.p1,
-          p2: tr.p2,
-          p3: tr.p3,
-          triggered_modules: tr.triggered_modules,
-          trigger_code: tr.trigger_code,
-          trigger_en: tr.trigger_en,
-          trigger_zh: tr.trigger_zh,
-          entry_spot: r2(tr.entry_spot),
-          entry_vxn: r2(tr.entry_vxn),
-          entry_vix_ratio: r3(tr.entry_vix_ratio),
-          kp: r2(tr.kp),
-          kc: null,
-          call_cap_pct: null,
-          hedged_shares: r2(hs),
-          contracts_est: r2(hs / 100.0),
-          slot_coverage: r4(tr.hedged_ratio),
-          entry_put_ask_sh: r4(tr.entry_put_ask),
-          tp_target_5x_sh: r4(5.0 * tr.entry_put_ask),
-          entry_cost_usd: r2(tr.entry_cost_usd),
-          entry_shares_sold: r4(tr.entry_shares_sold),
-          exit_spot: r2(cl),
-          exit_vxn: r2(vxnCl),
-          exit_vix_ratio: r3(vixR),
-          underlying_ret_pct: r2((cl / tr.entry_spot - 1.0) * 100.0),
-          put_exit_val_sh: r4(putIntr),
-          call_exit_cost_sh: 0.0,
-          exit_net_cash_usd: r2(settleUsd),
-          net_pnl_usd: netPnlRounded,
-          roi_mult: r2(roiMult),
-          exit_shares_delta: r2(dSh),
-          shares_added: r2(tr.entry_shares_sold + dSh),
-          delta0: r4(conv.delta0),
-          delta_usd: dUsd,
-          gamma_usd: gUsd,
-          vega_usd: vUsd,
-          theta_slip_usd: r2(netPnlRounded - (dUsd + gUsd + vUsd)),
-          convexity_mult: conv.convMult !== null ? r2(conv.convMult) : null,
-          comp_entry_cost_usd: r2(tr.comp_entry_cost_usd),
-          comp_put_gain_usd: r2(dSh * multEod),
-          comp_call_drag_usd: 0.0,
-        });
-      } else {
-        stillOpenExp.push(tr);
       }
+      bookRef.length = 0;
+      bookRef.push(...stillExp);
     }
-    activeTranches = stillOpenExp;
 
-    // 5. EOD MTM & Unified TP / Adaptive Roll Check
-    let putMtm = 0.0;
-    for (const tr of activeTranches) {
+    // 5. Daily EOD MTM & Near-ITM TP / Hard-Roll Check
+    const gateOkToday = vixCl <= baseVixMax && vixR < baseVrMax;
+    if (gateOkToday) baseGateOpenDays += 1;
+    let anyTpTriggeredToday = false;
+    const tpTriggersToday = [];
+
+    let m7MtmTotal = 0.0;
+    for (const tr of m7Active) {
       const remDays = Math.max(1, diffDays(tr.expMs, curMs));
       const qM = lookupOpt(
         d,
@@ -1894,33 +2061,93 @@ export function simulateM7StrategyJS(
         OPT_SLIP,
         tr.iv_ratio_anchor,
       );
-      if (Number.isFinite(qM.iv) && qM.iv >= 0.02 && qM.iv <= 3.0) {
+      if (Number.isFinite(qM.iv) && qM.iv > 0.05) {
         tr.last_iv = qM.iv;
-        if (String(qM.src).startsWith('real_opra')) {
+        if (String(qM.src).startsWith('real_opra') && qM.iv <= 3.0) {
           const bsmIvM = evalSkewIv(cl, tr.kp, Math.max(remDays / 365.0, 1.0 / 365.0), rCur, qCur, vxnCl, coeffs);
           tr.iv_ratio_anchor = clip(qM.iv / Math.max(bsmIvM, 0.05), 0.5, 2.0);
         }
       }
       const putMid = qM.mid;
-      putMtm += tr.hedged_shares * putMid;
+      const valUsd = tr.hedged_shares * putMid;
+      tr.last_mtm_usd = valUsd;
+      m7MtmTotal += valUsd;
       const trRollThrCur = Number(tr.roll_dte_thr || 0);
-      if (!tr.pending_tp) {
-        const vixOk = vixR >= vixRatioTp && (requireItmTp ? cl <= tr.kp : true);
-        if (vixOk) {
+      if (!tr.pending_tp && !tr.pending_roll) {
+        const nearItmOk = (vixR >= vixRatioTp && cl <= tr.kp * nearItmMult) || vixCl >= extremeVixTp;
+        if (nearItmOk) {
           tr.pending_tp = true;
           tr.tp_trigger_ratio = vixR;
-          tr.tp_reason = requireItmTp ? 'vix_inv_1.10_itm_tp' : 'vix_inv_1.10_tp';
-        } else if (remDays <= putMultMaxDte && tr.entry_put_ask > 1e-6 && putMid >= tr.entry_put_ask * putMultTp) {
+          tr.tp_reason = requireItmTp ? 'vix_inv_1.10_itm_tp' : 'tp_near_itm';
+          anyTpTriggeredToday = true;
+          tpTriggersToday.push(`m7:${tr.tp_reason}`);
+        } else if (remDays <= putMultMaxDteM7 && tr.entry_put_ask > 1e-6 && putMid >= tr.entry_put_ask * putMultTp) {
           tr.pending_tp = true;
           tr.tp_trigger_ratio = vixR;
-          tr.tp_reason = 'put_5x_dte45_tp';
-        } else if (trRollThrCur > 0 && remDays <= trRollThrCur && !tr.pending_roll) {
+          tr.tp_reason = 'tp_5x_late';
+          anyTpTriggeredToday = true;
+          tpTriggersToday.push('m7:tp_5x_late');
+        } else if (trRollThrCur > 0 && remDays <= trRollThrCur) {
           tr.pending_roll = true;
           tr.tp_trigger_ratio = vixR;
           tr.tp_reason = `roll_${trRollThrCur}d`;
         }
       }
     }
+
+    let baseMtmTotal = 0.0;
+    for (const tr of baseActive) {
+      const remDays = Math.max(1, diffDays(tr.expMs, curMs));
+      const qB = lookupOpt(
+        d,
+        'put',
+        tr.exp_date,
+        tr.kp,
+        tr.k_cents,
+        cl,
+        remDays,
+        rCur,
+        qCur,
+        vxnCl,
+        tr.last_iv,
+        OPT_SLIP,
+        tr.iv_ratio_anchor,
+      );
+      if (Number.isFinite(qB.iv) && qB.iv > 0.05) {
+        tr.last_iv = qB.iv;
+        if (String(qB.src).startsWith('real_opra') && qB.iv <= 3.0) {
+          const bsmIvB = evalSkewIv(cl, tr.kp, Math.max(remDays / 365.0, 1.0 / 365.0), rCur, qCur, vxnCl, coeffs);
+          tr.iv_ratio_anchor = clip(qB.iv / Math.max(bsmIvB, 0.05), 0.5, 2.0);
+        }
+      }
+      const putMidB = qB.mid;
+      const valUsdB = tr.hedged_shares * putMidB;
+      tr.last_mtm_usd = valUsdB;
+      baseMtmTotal += valUsdB;
+      if (!tr.pending_tp && !tr.pending_roll) {
+        const nearItmOkB = (vixR >= vixRatioTp && cl <= tr.kp * nearItmMult) || vixCl >= extremeVixTp;
+        if (nearItmOkB) {
+          tr.pending_tp = true;
+          tr.tp_trigger_ratio = vixR;
+          tr.tp_reason = requireItmTp ? 'base_vix_inv_1.10_itm_tp' : 'base_tp_near_itm';
+          anyTpTriggeredToday = true;
+          tpTriggersToday.push(`base:${tr.tp_reason}`);
+        } else if (remDays <= putMultMaxDteBase && tr.entry_put_ask > 1e-6 && putMidB >= tr.entry_put_ask * putMultTp) {
+          tr.pending_tp = true;
+          tr.tp_trigger_ratio = vixR;
+          tr.tp_reason = 'base_tp_5x_late';
+          anyTpTriggeredToday = true;
+          tpTriggersToday.push('base:tp_5x_late');
+        } else if (remDays <= baseRollDte) {
+          tr.pending_roll = true;
+          tr.tp_trigger_ratio = vixR;
+          tr.tp_reason = gateOkToday ? 'roll_75d' : 'salvage_vix_expensive';
+        }
+      }
+    }
+
+    const putMtm = m7MtmTotal + baseMtmTotal;
+    if (baseActive.length > 0) baseDaysHedged += 1;
 
     // 5b. Engine 2 & Engine 3 EOD MTM/Expiries
     let ccMtm = 0.0;
@@ -2129,43 +2356,119 @@ export function simulateM7StrategyJS(
 
     navList[i] = nav;
     equivShList[i] = nav / cl;
-    anyActiveList[i] = wasActiveToday || activeTranches.length > 0 ? 1 : 0;
-    activeSlotsList[i] = Math.max(activeSlotsToday, activeTranches.length);
+    anyActiveList[i] = wasActiveToday || m7Active.length > 0 || baseActive.length > 0 ? 1 : 0;
+    activeSlotsList[i] = Math.max(activeSlotsToday, m7Active.length);
 
-    // 6. EOD M7 Signal & Hard Redline Gate for T+1
-    const capSlots = slotsForSig(sigD);
-    const redlineBlocked = vxnCl > 27.0 || vixR >= 1.02;
-    const effOpen = activeTranches;
-    if (capSlots > 0 && !redlineBlocked && effOpen.length < capSlots) {
-      const minGap = capSlots <= 2 ? stepCalDays : escalateMinDays;
-      const recent = effOpen.some(t => diffDays(curMs, t.entryMs) < minGap);
-      if (!recent) {
-        const { mods, codeStr, trigEn, trigZh } = formatM7TriggerLabels(sigD, maxSlots, isCore3);
-        const [cProbS, p1S, p2S, p3S] = probTuple(sigD);
-        pendingSig = {
-          signal_date: d,
-          is_cta: Boolean(sigD.M4),
-          vxn: vxnCl,
-          close: cl,
-          vix_ratio: vixR,
-          r: rCur,
-          q: qCur,
-          cap_slots: capSlots,
-          tier: capSlots,
-          sig_score: Number(row.score),
-          sig_ad_below50:
-            row.ad_line !== undefined && row.ad_sma50 !== undefined
-              ? Number(row.ad_line) < Number(row.ad_sma50)
-              : Boolean(row.ad_below50),
-          crisis_prob: cProbS,
-          p1: p1S,
-          p2: p2S,
-          p3: p3S,
-          triggered_modules: mods,
-          trigger_code: codeStr,
-          trigger_en: trigEn,
-          trigger_zh: trigZh,
-        };
+    // 5.5 Strictly Causal EOD Post-TP Lockout State Machine (VIX/VIX3M < 1.00 x 5 consecutive trading days)
+    if (lockoutDays > 0) {
+      if (anyTpTriggeredToday) {
+        lastTpDate = d;
+        if (!postTpLockout) {
+          curEp = {
+            start_signal_date: d,
+            start_idx: i,
+            triggers: [...tpTriggersToday],
+            start_vix: r2(vixCl),
+            start_vr: r3(vixR),
+            start_spot: r2(cl),
+            unlock_eod_date: null,
+            trading_days_locked: 0,
+            re_inversions: 0,
+            blocked_base_entries: 0,
+            blocked_m7_entries: 0,
+            blocked_base_rolls: 0,
+            blocked_m7_rolls: 0,
+          };
+          lockoutEpisodes.push(curEp);
+        } else if (curEp !== null) {
+          curEp.triggers.push(...tpTriggersToday);
+        }
+        postTpLockout = true;
+        nonInvertedStreak = 0;
+        lockoutDaysTotal += 1;
+        if (curEp !== null) curEp.trading_days_locked += 1;
+      } else if (postTpLockout) {
+        if (vixR < lockoutInvThresh) {
+          nonInvertedStreak += 1;
+          if (nonInvertedStreak >= lockoutDays) {
+            postTpLockout = false;
+            nonInvertedStreak = 0;
+            lastUnlockDate = d;
+            if (curEp !== null) {
+              curEp.unlock_eod_date = d;
+              curEp.unlock_vix = r2(vixCl);
+              curEp.unlock_vr = r3(vixR);
+              curEp.unlock_spot = r2(cl);
+              curEp.cal_days_locked = diffDays(curMs, msArr[curEp.start_idx]);
+              curEp = null;
+            }
+          } else {
+            lockoutDaysTotal += 1;
+            if (curEp !== null) curEp.trading_days_locked += 1;
+          }
+        } else {
+          if (nonInvertedStreak > 0 && curEp !== null) curEp.re_inversions += 1;
+          nonInvertedStreak = 0;
+          lockoutDaysTotal += 1;
+          if (curEp !== null) curEp.trading_days_locked += 1;
+        }
+      }
+    }
+
+    const m7LockedToday = postTpLockout;
+    const baseLockedToday = postTpLockout;
+    m7LockedPrevEod = m7LockedToday;
+    baseLockedPrevEod = baseLockedToday;
+
+    // 6A. Book M Tactical EOD Entry Signal -> T+1 Close
+    const capSlots = Math.min(maxSlots, slotsForSig(sigD));
+    const effM7 = m7Active.filter(t => !(t.pending_tp || t.pending_roll));
+    if (capSlots > effM7.length && vxnCl <= 27.0 && vixR < 1.02) {
+      const reqGap = capSlots === 3 ? escalateMinDays : stepCalDays;
+      const lastMsM = effM7.length ? Math.max(...effM7.map(t => t.entryMs)) : null;
+      if (lastMsM === null || diffDays(curMs, lastMsM) >= reqGap) {
+        if (!m7LockedToday) {
+          const { mods, codeStr, trigEn, trigZh } = formatM7TriggerLabels(sigD, maxSlots, isCore3);
+          const [cProbS, p1S, p2S, p3S] = probTuple(sigD);
+          pendingSig = {
+            signal_date: d,
+            is_cta: Boolean(sigD.M4),
+            vxn: vxnCl,
+            close: cl,
+            vix_ratio: vixR,
+            r: rCur,
+            q: qCur,
+            cap_slots: capSlots,
+            tier: capSlots,
+            sig_score: Number(row.score),
+            sig_ad_below50:
+              row.ad_line !== undefined && row.ad_sma50 !== undefined
+                ? Number(row.ad_line) < Number(row.ad_sma50)
+                : Boolean(row.ad_below50),
+            crisis_prob: cProbS,
+            p1: p1S,
+            p2: p2S,
+            p3: p3S,
+            triggered_modules: mods,
+            trigger_code: codeStr,
+            trigger_en: trigEn,
+            trigger_zh: trigZh,
+          };
+        } else if (curEp !== null) {
+          curEp.blocked_m7_entries += 1;
+        }
+      }
+    }
+
+    // 6B. Book B Floor EOD Entry Signal (VIX <= 20 & VIX/3M < 1.02) -> T+1 Close
+    if (baseEnabled && gateOkToday) {
+      const effBase = baseActive.filter(t => !(t.pending_tp || t.pending_roll));
+      if (effBase.length === 0) {
+        if (!baseLockedToday) {
+          pendingBaseOpen = true;
+        } else if (curEp !== null) {
+          curEp.blocked_base_entries += 1;
+        }
       }
     }
 
@@ -2189,19 +2492,22 @@ export function simulateM7StrategyJS(
     }
   }
 
+  ledger.sort((a, b) =>
+    a.entry_date !== b.entry_date ? a.entry_date.localeCompare(b.entry_date) : a.tranche_id - b.tranche_id,
+  );
   const closedTradesCount = ledger.length;
   const lastR = evalBars[nDays - 1];
   const lastD = dates[nDays - 1];
   const lastMs = msArr[nDays - 1];
   const lastCl = Number(lastR.close);
   const lastVxn = Number(lastR.vxn);
+  const lastVix = Number(lastR.vix ?? 0);
   const lastVr = Number(lastR.vix_ratio);
   const lastRf = Number(lastR.r);
   const lastQ = Number(lastR.div_yield);
   const multLast = (finalBhSh / bhM7.postSh[nDays - 1]) * finalCl;
 
-  const activeTranchesSerialized = [];
-  for (const tr of activeTranches) {
+  const serializeOpenTranche = tr => {
     const remD = Math.max(1, diffDays(tr.expMs, lastMs));
     const tRem = remD / 365.0;
     const qLast = lookupOpt(
@@ -2245,9 +2551,9 @@ export function simulateM7StrategyJS(
     const trTgtD = Number(tr.target_dte || targetDte);
     const trRollD = Number(tr.roll_dte_thr || 0);
     const isArmed = Boolean(tr.pending_tp || tr.pending_roll);
-    const armedReason = tr.tp_reason || (tr.pending_roll ? `roll_${trRollD}d` : '');
+    const armedReason = String(tr.tp_reason || '');
     const liveReason =
-      isArmed && String(armedReason).startsWith('roll_')
+      isArmed && (armedReason.startsWith('roll_') || armedReason.startsWith('salvage_'))
         ? `live_${armedReason}_armed_next_open`
         : isArmed
           ? 'live_tp_armed_next_open'
@@ -2260,14 +2566,21 @@ export function simulateM7StrategyJS(
     const psL = classifyTradeSource(enSrcL, qLast.src);
     const qTagLive = classifyQuoteSourceTag(enSrcL, qLast.src, tr.entry_date, lastD, opraMaxD || '2025-12-15');
     const occSym = String(tr.occ_symbol || formatOccSymbol('QQQ', tr.exp_date, 'put', tr.kp));
-    ledger.push({
+    const isBaseB = tr.book === 'base';
+    const ledRow = {
       tranche_id: tr.tranche_id,
       strategy_id: strategyId,
+      book: tr.book,
+      book_label_en: isBaseB ? 'Book B · 0.20% Base' : 'Book M · 1.25% M7G',
+      book_label_zh: isBaseB ? 'B账本 · 0.20%常态基底' : 'M账本 · 1.25%战术M7G',
+      budget_pct_nav: isBaseB ? 0.2 : 1.25,
+      entry_pct_nav: tr.entry_pct_nav,
+      nav_at_entry: r2(tr.nav_at_entry),
       slot_num: tr.slot_num,
       tier: tr.tier,
       max_slots: maxSlots,
       tranche_type: 'naked_put',
-      put_otm_pct: otmPctInt,
+      put_otm_pct: Number(tr.put_otm_pct || otmPctInt),
       tp_mode: tpCode,
       roll_mode: effRollMode,
       target_dte: trTgtD,
@@ -2279,6 +2592,7 @@ export function simulateM7StrategyJS(
       occ_symbol: occSym,
       exp: tr.exp_date,
       strike: r2(tr.kp),
+      near_itm_strike_105: r2(tr.kp * nearItmMult),
       entryBid: r3(Number(tr.entry_bid_raw ?? tr.entry_put_ask)),
       entryAsk: r3(Number(tr.entry_ask_raw ?? tr.entry_put_ask)),
       exitBid: r3(qLast.bid),
@@ -2293,7 +2607,7 @@ export function simulateM7StrategyJS(
       mtm_date: lastD,
       is_open_live: true,
       pending_tp: isArmed,
-      pending_tp_reason: tr.tp_reason || '',
+      pending_tp_reason: armedReason,
       actual_days_held: diffDays(lastMs, tr.entryMs),
       rem_dte_at_exit: remD,
       exit_reason: liveReason,
@@ -2309,6 +2623,7 @@ export function simulateM7StrategyJS(
       trigger_zh: tr.trigger_zh,
       entry_spot: r2(tr.entry_spot),
       entry_vxn: r2(tr.entry_vxn),
+      entry_vix: r2(Number(tr.entry_vix || 0)),
       entry_vix_ratio: r3(tr.entry_vix_ratio),
       kp: r2(tr.kp),
       kc: null,
@@ -2322,6 +2637,7 @@ export function simulateM7StrategyJS(
       entry_shares_sold: r4(tr.entry_shares_sold),
       exit_spot: r2(lastCl),
       exit_vxn: r2(lastVxn),
+      exit_vix: r2(lastVix),
       exit_vix_ratio: r3(lastVr),
       underlying_ret_pct: r2((lastCl / tr.entry_spot - 1.0) * 100.0),
       put_exit_val_sh: r4(pm),
@@ -2340,13 +2656,17 @@ export function simulateM7StrategyJS(
       comp_entry_cost_usd: r2(tr.comp_entry_cost_usd),
       comp_put_gain_usd: r2(((hs * pm) / lastCl) * multLast),
       comp_call_drag_usd: 0.0,
-    });
-    activeTranchesSerialized.push({
+    };
+    const serRow = {
       tranche_id: tr.tranche_id,
+      book: tr.book,
+      book_label_en: isBaseB ? 'Book B · 0.20% Base' : 'Book M · 1.25% M7G',
+      book_label_zh: isBaseB ? 'B账本 · 0.20%常态基底' : 'M账本 · 1.25%战术M7G',
+      budget_pct_nav: isBaseB ? 0.2 : 1.25,
       slot_num: tr.slot_num,
       tier: tr.tier,
       tranche_type: 'naked_put',
-      put_otm_pct: otmPctInt,
+      put_otm_pct: Number(tr.put_otm_pct || otmPctInt),
       roll_mode: effRollMode,
       target_dte: trTgtD,
       roll_dte: trRollD,
@@ -2363,6 +2683,7 @@ export function simulateM7StrategyJS(
       mtm_spot: r2(lastCl),
       mtm_date: lastD,
       kp: r2(tr.kp),
+      near_itm_strike_105: r2(tr.kp * nearItmMult),
       kc: null,
       hedged_shares: r2(hs),
       contracts_est: r2(hs / 100.0),
@@ -2375,29 +2696,52 @@ export function simulateM7StrategyJS(
       roi_mult: r2(roiMult),
       est_shares_added: r2(estShAdded),
       pending_tp: isArmed,
-      tp_reason: tr.tp_reason || '',
+      tp_reason: armedReason,
       tp_trigger_ratio: r3(Number(tr.tp_trigger_ratio || lastVr)),
       trigger_code: tr.trigger_code,
       crisis_prob: tr.crisis_prob,
-    });
+    };
+    return [ledRow, serRow];
+  };
+
+  const baseActiveSerialized = [];
+  for (const trB of baseActive) {
+    const [lrB, srB] = serializeOpenTranche(trB);
+    ledger.push(lrB);
+    baseActiveSerialized.push(srB);
+  }
+  const activeTranchesSerialized = [];
+  for (const trM of m7Active) {
+    const [lrM, srM] = serializeOpenTranche(trM);
+    ledger.push(lrM);
+    activeTranchesSerialized.push(srM);
   }
 
   const yrs = Math.max(diffDays(lastMs, msArr[0]) / 365.25, 1 / 252);
-  const cagr = Math.pow(navList[nDays - 1] / INITIAL_CAPITAL, 1.0 / yrs) - 1.0;
+  const cagr = Math.pow(navList[nDays - 1] / navList[0], 1.0 / yrs) - 1.0;
   const rets = [];
-  for (let j = 1; j < nDays; j += 1) rets.push(navList[j] / navList[j - 1] - 1.0);
+  const exRets = [];
+  for (let j = 1; j < nDays; j += 1) {
+    const rDaily = navList[j] / navList[j - 1] - 1.0;
+    rets.push(rDaily);
+    exRets.push(rDaily - Number(evalBars[j].r || 0) / 252.0);
+  }
   const meanR = rets.length ? rets.reduce((a, b) => a + b, 0) / rets.length : 0.0;
   let sq = 0.0;
   for (let j = 0; j < rets.length; j += 1) sq += (rets[j] - meanR) ** 2;
   const vol = Math.sqrt(sq / Math.max(1, rets.length - 1)) * Math.sqrt(252.0);
-  const sharpe = vol > 0 ? (meanR * 252.0) / vol : 0.0;
-  const negRets = rets.filter(x => x < 0);
+  const meanEx = exRets.length ? exRets.reduce((a, b) => a + b, 0) / exRets.length : 0.0;
+  let sqEx = 0.0;
+  for (let j = 0; j < exRets.length; j += 1) sqEx += (exRets[j] - meanEx) ** 2;
+  const stdEx = Math.sqrt(sqEx / Math.max(1, exRets.length - 1));
+  const sharpe = stdEx > 1e-12 ? (meanEx / stdEx) * Math.sqrt(252.0) : 0.0;
+  const downEx = exRets.filter(x => x < 0);
   let sortino = 0.0;
-  if (negRets.length > 1) {
-    const muNeg = negRets.reduce((a, b) => a + b, 0) / negRets.length;
-    const sqNeg = negRets.reduce((a, x) => a + (x - muNeg) ** 2, 0);
-    const downStd = Math.sqrt(sqNeg / (negRets.length - 1)) * Math.sqrt(252.0);
-    if (downStd > 0) sortino = (meanR * 252.0) / downStd;
+  if (downEx.length > 2) {
+    const muNeg = downEx.reduce((a, b) => a + b, 0) / downEx.length;
+    const sqNeg = downEx.reduce((a, x) => a + (x - muNeg) ** 2, 0);
+    const downStd = Math.sqrt(sqNeg / (downEx.length - 1));
+    if (downStd > 1e-12) sortino = (meanEx / downStd) * Math.sqrt(252.0);
   }
 
   let peak = navList[0];
@@ -2410,22 +2754,54 @@ export function simulateM7StrategyJS(
   const calmar = mdd < 0 ? cagr / Math.abs(mdd) : 0.0;
 
   const closedRows = ledger.filter(x => !x.is_open_live);
-  const closedPnls = closedRows.map(x => Number(x.exit_net_cash_usd || 0) - Number(x.entry_cost_usd || 0));
-  const winCnt = closedPnls.filter(p => p > 0).length;
+  const closedBase = closedRows.filter(x => x.book === 'base');
+  const closedM7 = closedRows.filter(x => x.book === 'm7');
+  const bookPf = rowsSub => {
+    const w = rowsSub.filter(x => Number(x.net_pnl_usd) > 0).reduce((a, x) => a + Number(x.net_pnl_usd), 0);
+    const l = rowsSub.filter(x => Number(x.net_pnl_usd) < 0).reduce((a, x) => a - Number(x.net_pnl_usd), 0);
+    return l > 1e-6 ? r2(w / l) : w > 0 ? 99.0 : 0.0;
+  };
+  const winCnt = closedRows.filter(x => Number(x.net_pnl_usd) > 0).length;
   const winRatePct = closedRows.length > 0 ? (winCnt / closedRows.length) * 100.0 : 0.0;
-  const grossWinUsd = closedPnls.filter(p => p > 0).reduce((a, b) => a + b, 0.0);
-  const grossLossUsd = closedPnls.filter(p => p <= 0).reduce((a, b) => a - b, 0.0);
-  const profitFactor = grossLossUsd > 1e-6 ? grossWinUsd / grossLossUsd : 0.0;
+  const profitFactor = bookPf(closedRows);
+  const basePf = bookPf(closedBase);
+  const m7Pf = bookPf(closedM7);
 
   const nTp = closedRows.filter(x => String(x.exit_reason).includes('tp')).length;
-  const rollExits = closedRows.filter(x => String(x.exit_reason).startsWith('roll_'));
+  const baseTpCnt = closedBase.filter(x => String(x.exit_reason).includes('tp')).length;
+  const m7TpCnt = closedM7.filter(x => String(x.exit_reason).includes('tp')).length;
+  const rollExits = closedRows.filter(
+    x => String(x.exit_reason).startsWith('roll_') || String(x.exit_reason).startsWith('salvage_'),
+  );
   const rollSalvageCount = rollExits.length;
+  const roll75dCount = closedRows.filter(x => x.exit_reason === 'roll_75d').length;
   const roll30dCount = closedRows.filter(x => x.exit_reason === 'roll_30d').length;
   const roll50dCount = closedRows.filter(x => x.exit_reason === 'roll_50d').length;
+  const salvageVixExpCount = closedRows.filter(x => x.exit_reason === 'salvage_vix_expensive').length;
   const avgRollSalvagePct =
     rollSalvageCount > 0
       ? (rollExits.reduce((a, x) => a + Number(x.roi_mult || 0), 0) / rollSalvageCount) * 100.0
       : 0.0;
+  const annGrossSpendPct =
+    (closedRows.reduce(
+      (a, x) => a + Number(x.entry_cost_usd || 0) / Math.max(Number(x.nav_at_entry || INITIAL_CAPITAL), 1.0),
+      0.0,
+    ) /
+      yrs) *
+    100.0;
+  const annNetBleedPct =
+    (closedRows
+      .filter(x => !String(x.exit_reason).includes('tp'))
+      .reduce(
+        (a, x) =>
+          a +
+          (Number(x.entry_cost_usd || 0) - Number(x.exit_net_cash_usd || 0)) /
+            Math.max(Number(x.nav_at_entry || INITIAL_CAPITAL), 1.0),
+        0.0,
+      ) /
+      yrs) *
+    100.0;
+
   const nakedSpent = ledger.reduce((a, x) => a + Number(x.entry_cost_usd || 0), 0);
   const closedSpent = closedRows.reduce((a, x) => a + Number(x.entry_cost_usd || 0), 0);
   const grossPut = closedRows.reduce((a, x) => a + Number(x.exit_net_cash_usd || 0), 0);
@@ -2509,7 +2885,9 @@ export function simulateM7StrategyJS(
     spCombinedLedger.push(openWcSer);
   }
   spCombinedLedger.sort((a, b) =>
-    a.entry_date !== b.entry_date ? a.entry_date.localeCompare(b.entry_date) : String(a.leg_id).localeCompare(String(b.leg_id)),
+    a.entry_date !== b.entry_date
+      ? a.entry_date.localeCompare(b.entry_date)
+      : (a.leg_type === 'short_put' ? 0 : 1) - (b.leg_type === 'short_put' ? 0 : 1),
   );
   if (curCycleStartMs !== null && assignedShares > 1e-6) {
     maxWheelCycleDays = Math.max(maxWheelCycleDays, diffDays(lastMs, curCycleStartMs));
@@ -2532,12 +2910,23 @@ export function simulateM7StrategyJS(
   const realLk = qStats.realOpraHits + qStats.realPolygonHits;
   const realHitPct = qStats.totalLookups > 0 ? (realLk / qStats.totalLookups) * 100.0 : 0.0;
 
+  const blkBEn = lockoutEpisodes.reduce((a, e) => a + Number(e.blocked_base_entries || 0), 0);
+  const blkMEn = lockoutEpisodes.reduce((a, e) => a + Number(e.blocked_m7_entries || 0), 0);
+  const blkBRl = lockoutEpisodes.reduce((a, e) => a + Number(e.blocked_base_rolls || 0), 0);
+  const blkMRl = lockoutEpisodes.reduce((a, e) => a + Number(e.blocked_m7_rolls || 0), 0);
+
   const summary = {
     id: strategyId,
     profile: isCore3 ? 'core3_adaptive' : 'full_m7_adaptive',
-    arch: 'm7_equal_dollar',
+    arch: 'b020_m125_dual_book_hard_roll_5d_lockout',
+    ruleset_code: HARDCODED_RULESET_SPEC.code,
+    base_budget_pct: 0.2,
+    m7_budget_pct: 1.25,
+    base_vix_gate_max: baseVixMax,
+    lockout_days: lockoutDays,
+    lockout_inv_thresh: lockoutInvThresh,
     pricing_basis: useReal ? 'real_opra_2015_2025_calibrated_bsm' : 'bsm_simulated',
-    fill_mode: fillMode,
+    fill_mode: effFillMode,
     real_trades_count: realTrCnt,
     real_opra_trades_count: realOpraTrCnt,
     real_polygon_trades_count: realPolyTrCnt,
@@ -2568,23 +2957,44 @@ export function simulateM7StrategyJS(
     sortino: r3(sortino),
     calmar: r3(calmar),
     win_rate_pct: r1(winRatePct),
-    profit_factor: r3(profitFactor),
+    profit_factor: profitFactor,
+    base_pf: basePf,
+    m7_pf: m7Pf,
     payout_to_cost: r3(payoutToCost),
     final_shares: r2(equivShList[nDays - 1]),
     bh_final_shares: r2(finalBhSh),
     extra_shares_vs_bh: r2(extraShVsBh),
     extra_shares_pct: r2(extraShPct),
     pct_days_hedged: r1(pctActive),
+    base_days_hedged_pct: r1((baseDaysHedged / Math.max(nDays, 1)) * 100.0),
+    base_gate_open_pct: r1((baseGateOpenDays / Math.max(nDays, 1)) * 100.0),
     alpha_per_active_day_usd: r2(netAlpha / activeDays),
     tranches_total: ledger.length,
     closed_trades_count: closedTradesCount,
+    base_trades_count: closedBase.length,
+    m7_trades_count: closedM7.length,
     naked_count: ledger.length,
     collar_count: 0,
     tp_count: nTp,
+    base_tp_count: baseTpCnt,
+    m7_tp_count: m7TpCnt,
     roll_salvage_count: rollSalvageCount,
+    roll_75d_count: roll75dCount,
     roll_30d_count: roll30dCount,
     roll_50d_count: roll50dCount,
+    salvage_vix_expensive_count: salvageVixExpCount,
     avg_roll_salvage_pct: r1(avgRollSalvagePct),
+    ann_gross_spend_pct_nav: r2(annGrossSpendPct),
+    ann_net_bleed_pct_nav: r2(annNetBleedPct),
+    base_net_pnl_usd: r2(closedBase.reduce((a, x) => a + Number(x.net_pnl_usd || 0), 0)),
+    m7_net_pnl_usd: r2(closedM7.reduce((a, x) => a + Number(x.net_pnl_usd || 0), 0)),
+    net_option_pnl_usd: r2(closedRows.reduce((a, x) => a + Number(x.net_pnl_usd || 0), 0)),
+    lockout_episodes_count: lockoutEpisodes.length,
+    lockout_days_total: lockoutDaysTotal,
+    blocked_base_entries: blkBEn,
+    blocked_m7_entries: blkMEn,
+    blocked_base_rolls: blkBRl,
+    blocked_m7_rolls: blkMRl,
     max_roi_mult: r2(maxRoi),
     naked_prem_spent_usd: r2(nakedSpent),
     gross_put_monetized_usd: r2(grossPut),
@@ -2642,16 +3052,38 @@ export function simulateM7StrategyJS(
     pending_wc_next_open: pendingWc !== null && assignedShares > 1e-6 && activeWc === null,
   };
 
+  const lockoutStateEod = {
+    locked: postTpLockout,
+    non_inverted_streak: nonInvertedStreak,
+    required_streak: lockoutDays,
+    vix_ratio_unlock_max: lockoutInvThresh,
+    last_tp_date: lastTpDate,
+    last_unlock_date: lastUnlockDate,
+    episodes_count: lockoutEpisodes.length,
+    trading_days_locked: lockoutDaysTotal,
+    blocked_base_entries: blkBEn,
+    blocked_m7_entries: blkMEn,
+    blocked_base_rolls: blkBRl,
+    blocked_m7_rolls: blkMRl,
+    blocked_total: blkBEn + blkMEn + blkBRl + blkMRl,
+    episodes: lockoutEpisodes,
+  };
+
   return {
     summary,
     nav: navList,
     equiv_shares: equivShList,
+    any_active: anyActiveList,
     active_slots: activeSlotsList,
     ledger,
     cc_ledger: ccLedger,
     sp_ledger: spCombinedLedger,
     active_tranches_eod: activeTranchesSerialized,
+    base_active_tranches_eod: baseActiveSerialized,
+    all_active_tranches_eod: [...baseActiveSerialized, ...activeTranchesSerialized],
     pending_sig_eod: pendingSig,
+    pending_base_open_eod: pendingBaseOpen,
+    lockout_state_eod: lockoutStateEod,
     sp_live_eod: spLiveEod,
   };
 }
@@ -2673,6 +3105,7 @@ export function buildM7LiveDashboardJS(
   const d = String(row.date);
   const cl = Number(row.close);
   const ddPct = Number(row.dd_from_ath) * 100.0;
+  const vixNow = Number(row.vix ?? 0);
   const vxn = Number(row.vxn);
   const vr = Number(row.vix_ratio);
   const rCur = Number(row.r);
@@ -2683,6 +3116,7 @@ export function buildM7LiveDashboardJS(
   const adBelow = adLine < adSma50;
 
   const strategyId = String(m7Sim.summary.id || 'M7G_Graded');
+  const fillModeCur = String(m7Sim.summary.fill_mode || DEFAULT_M7_FILL_MODE);
   const isCore3 = strategyId === 'Core3_Adaptive';
   const effRollMode =
     isCore3 && rollMode === '90d_hold'
@@ -2696,13 +3130,14 @@ export function buildM7LiveDashboardJS(
   let entryDte = 90;
   let rollDte = 0;
   if (isAdaptive) {
-    entryDte = isCtaNow ? 90 : 120;
-    rollDte = isCtaNow ? 30 : 50;
+    entryDte = isCtaNow ? HARDCODED_M7_CTA_DTE : HARDCODED_M7_BASE_DTE;
+    rollDte = isCtaNow ? HARDCODED_M7_CTA_ROLL_DTE : HARDCODED_M7_BASE_ROLL_DTE;
   } else if (isRoll50) {
     entryDte = 120;
     rollDte = 50;
   }
   const fiveXDte = 45;
+  const nearItmMult = m7TpMode === 'itm_tp' ? 1.0 : HARDCODED_NEAR_ITM_MULT;
 
   const maxSlots = Number(m7Sim.summary.max_slots || 3);
   const isGraded = maxSlots === 3;
@@ -2718,9 +3153,31 @@ export function buildM7LiveDashboardJS(
     : Number(isGraded ? sigDay.target_slots_m7g : sigDay.target_slots_m7);
 
   const activeTr = m7Sim.active_tranches_eod ?? [];
+  const baseTr = m7Sim.base_active_tranches_eod ?? [];
+  const allOpenTr = m7Sim.all_active_tranches_eod ?? [...baseTr, ...activeTr];
   const activeSlots = activeTr.length;
-  const effActiveTr = activeTr;
+  const baseActiveSlots = baseTr.length;
+  const effActiveTr = activeTr.filter(t => !Boolean(t.pending_tp));
+  const effBaseTr = baseTr.filter(t => !Boolean(t.pending_tp));
   const pendSig = m7Sim.pending_sig_eod;
+  const pendBaseOpen = Boolean(m7Sim.pending_base_open_eod);
+  const lockEod = m7Sim.lockout_state_eod ?? {};
+
+  const lockedBy5d = Boolean(lockEod.locked);
+  const nonInvStreak = Number(lockEod.non_inverted_streak ?? 0);
+  const reqLockStreak = Number(lockEod.required_streak ?? HARDCODED_LOCKOUT_DAYS);
+  const unlockVrMax = Number(lockEod.vix_ratio_unlock_max ?? HARDCODED_LOCKOUT_INV_THRESH);
+  const isNonInvToday = vr < unlockVrMax;
+  const lastTpDtStr = lockEod.last_tp_date ?? null;
+  const lastUnlockDtStr = lockEod.last_unlock_date ?? null;
+  const lockEpCnt = Number(lockEod.episodes_count ?? 0);
+  const lockDaysTot = Number(lockEod.trading_days_locked ?? 0);
+  const lockBlkTot = Number(lockEod.blocked_total ?? 0);
+
+  const baseVixOk = vixNow <= HARDCODED_BASE_VIX_MAX;
+  const baseVrOk = vr < HARDCODED_BASE_VR_MAX;
+  const baseRawGateOpen = baseVixOk && baseVrOk;
+  const baseGateOpen = baseRawGateOpen && !lockedBy5d;
 
   const vxnRedOk = vxn <= 27.0;
   const vrRedOk = vr < 1.02;
@@ -2805,27 +3262,136 @@ export function buildM7LiveDashboardJS(
   const stressLblEn = stressPack.live_stress_label_en;
   const stressLblZh = stressPack.live_stress_label_zh;
 
-  const anyTpArmed = activeTr.some(
-    t => Boolean(t.pending_tp) && !String(t.tp_reason || '').startsWith('roll_'),
+  let bbStatus;
+  let bbLblEn;
+  let bbLblZh;
+  let bbDetEn;
+  let bbDetZh;
+  if (lockedBy5d) {
+    bbStatus = 'LOCKED_BY_5D';
+    bbLblEn = `LOCKED BY 5D POST-TP GATE (${nonInvStreak}/${reqLockStreak}d < 1.00)`;
+    bbLblZh = `止盈后 5D 静默锁死（解除倒挂进度 ${nonInvStreak}/${reqLockStreak} 天）`;
+    bbDetEn = `Book B 0.20% floor put re-entry is paused until VIX/VIX3M < ${unlockVrMax.toFixed(2)} holds for ${reqLockStreak} consecutive trading days (currently ${nonInvStreak}/${reqLockStreak}, VIX ${vixNow.toFixed(2)}).`;
+    bbDetZh = `B账本 0.20% 常态底仓在崩盘止盈后暂停新开/滚仓，须等 VIX/VIX3M < ${unlockVrMax.toFixed(2)} 连续满 ${reqLockStreak} 个交易日才解锁（当前 ${nonInvStreak}/${reqLockStreak} 天，VIX ${vixNow.toFixed(2)}）。`;
+  } else if (baseGateOpen) {
+    bbStatus = 'GATE_OPEN';
+    bbLblEn = `OPEN · VIX ${vixNow.toFixed(2)} <= 20 & VIX/3M ${vr.toFixed(3)} < 1.02`;
+    bbLblZh = `门控开启 · VIX ${vixNow.toFixed(2)} <= 20 且 VIX/3M ${vr.toFixed(3)} < 1.02`;
+    if (baseTr.length > 0) {
+      const b0 = baseTr[0];
+      bbDetEn = `Active 0.20% NAV floor put (${b0.occSymbol} · K=$${Number(b0.kp).toFixed(2)} · ${b0.rem_dte}D left) — hard-rolls cleanly at <= 75 DTE while VIX <= 20.`;
+      bbDetZh = `在途持有 0.20% 净值常态底仓（${b0.occSymbol} · 行权 $${Number(b0.kp).toFixed(2)} · 剩 ${b0.rem_dte} 天）—— VIX <= 20 期间剩 <=75 天自动硬换新 125D Put。`;
+    } else {
+      bbDetEn = 'Calm IV window open: T+1 Close deploys 0.20% NAV into 125D -15% OTM floor put.';
+      bbDetZh = '低波窗口开启：次日收盘按 0.20% 净值买入 125D -15% OTM 常态底仓 Put。';
+    }
+  } else {
+    bbStatus = 'GATE_CLOSED_HIGH_VIX';
+    bbLblEn = `CLOSED · VIX ${vixNow.toFixed(2)} > 20 or VIX/3M ${vr.toFixed(3)} >= 1.02`;
+    bbLblZh = `门控关闭 · VIX ${vixNow.toFixed(2)} > 20 或 VIX/3M ${vr.toFixed(3)} >= 1.02（禁买贵底仓）`;
+    if (baseTr.length > 0) {
+      const b0 = baseTr[0];
+      bbDetEn = `Existing floor put (${b0.occSymbol} · K=$${Number(b0.kp).toFixed(2)} · ${b0.rem_dte}D left) continues shielding; if it hits <= 75 DTE while VIX > 20, it salvages residual cash into QQQ without re-buying expensive IV.`;
+      bbDetZh = `存量底仓（${b0.occSymbol} · 行权 $${Number(b0.kp).toFixed(2)} · 剩 ${b0.rem_dte} 天）继续护航；若 VIX > 20 期间跌至 <=75 天则直接回收残值换股，绝不追买高波贵 Put。`;
+    } else {
+      bbDetEn = `VIX ${vixNow.toFixed(2)} exceeds 20.0 gate — Book B waits on standby until VIX <= 20 & VIX/3M < 1.02.`;
+      bbDetZh = `当前 VIX ${vixNow.toFixed(2)} 高于 20.0 门控线 —— B账本静默待命，待 VIX <= 20 低波回归再建底仓。`;
+    }
+  }
+
+  const bookBVixGate = {
+    open: baseGateOpen,
+    raw_gate_open: baseRawGateOpen,
+    status: bbStatus,
+    vix: r2(vixNow),
+    vix_max: HARDCODED_BASE_VIX_MAX,
+    vix_ok: baseVixOk,
+    vix_ratio: r3(vr),
+    vix_ratio_max: HARDCODED_BASE_VR_MAX,
+    vix_ratio_ok: baseVrOk,
+    locked_by_5d: lockedBy5d,
+    budget_pct: 0.2,
+    target_dte: HARDCODED_BASE_DTE,
+    roll_dte: HARDCODED_BASE_ROLL_DTE,
+    otm_pct: 15,
+    active_slots: baseActiveSlots,
+    active_tranche: baseTr.length > 0 ? baseTr[0] : null,
+    pending_open_t1: pendBaseOpen,
+    status_label_en: bbLblEn,
+    status_label_zh: bbLblZh,
+    detail_en: bbDetEn,
+    detail_zh: bbDetZh,
+  };
+
+  let lkLblEn;
+  let lkLblZh;
+  let lkDetEn;
+  let lkDetZh;
+  if (lockedBy5d) {
+    const remLk = Math.max(1, reqLockStreak - nonInvStreak);
+    lkLblEn = `LOCKED · Non-Inverted Streak ${nonInvStreak}/${reqLockStreak}D (${remLk}D left)`;
+    lkLblZh = `止盈静默锁死中 · 解除倒挂连续 ${nonInvStreak}/${reqLockStreak} 天（还需 ${remLk} 天）`;
+    lkDetEn = `Triggered by crash TP on ${lastTpDtStr || d}. Today VIX/VIX3M = ${vr.toFixed(3)} (${isNonInvToday ? '< 1.00 contango' : '>= 1.00 still inverted -> streak reset to 0'}): blocks all new puts & 75D/30D re-buys across Book B & Book M until 5 consecutive days < 1.00.`;
+    lkDetZh = `自 ${lastTpDtStr || d} 崩盘止盈起进入静默锁死；今日 VIX/VIX3M = ${vr.toFixed(3)}（${isNonInvToday ? '< 1.00 已退回正斜率' : '>= 1.00 仍在倒挂 -> 计数清零'}）—— 双账本新开与滚仓续买全面冻结，直至连续 ${reqLockStreak} 个交易日 < 1.00 解锁。`;
+  } else {
+    lkLblEn = `UNLOCKED · Clear to Execute (Last TP ${lastTpDtStr || 'None'})`;
+    lkLblZh = `已解锁就绪 · 允许正常开仓/硬换（上次止盈 ${lastTpDtStr || '无'}）`;
+    lkDetEn = `Rule: after any crash TP, freeze all new buys & roll re-buys until VIX/VIX3M < 1.00 for 5 consecutive trading days (${lockEpCnt} historical episodes / ${lockDaysTot} locked days).`;
+    lkDetZh = `铁律：任意槽位触发崩盘止盈后立即停买，须等 VIX/VIX3M < 1.00 连续满 5 个交易日且不反跳才允许再买（历史共触发 ${lockEpCnt} 轮 / 锁定 ${lockDaysTot} 个交易日）。`;
+  }
+
+  const postTpLockoutBlock = {
+    locked: lockedBy5d,
+    non_inverted_streak: nonInvStreak,
+    required_streak: reqLockStreak,
+    vix_ratio_now: r3(vr),
+    vix_ratio_unlock_max: unlockVrMax,
+    is_non_inverted_today: isNonInvToday,
+    last_tp_date: lastTpDtStr,
+    last_unlock_date: lastUnlockDtStr,
+    episodes_count: lockEpCnt,
+    trading_days_locked: lockDaysTot,
+    blocked_base_entries: Number(lockEod.blocked_base_entries ?? 0),
+    blocked_m7_entries: Number(lockEod.blocked_m7_entries ?? 0),
+    blocked_total: lockBlkTot,
+    status_label_en: lkLblEn,
+    status_label_zh: lkLblZh,
+    detail_en: lkDetEn,
+    detail_zh: lkDetZh,
+  };
+
+  const anyTpArmed = allOpenTr.some(
+    t =>
+      Boolean(t.pending_tp) &&
+      !String(t.tp_reason || '').startsWith('roll_') &&
+      !String(t.tp_reason || '').startsWith('salvage_'),
   );
-  const anyRollArmed = activeTr.some(
+  const anyM7RollArmed = activeTr.some(
     t => Boolean(t.pending_tp) && String(t.tp_reason || '').startsWith('roll_'),
+  );
+  const anyBaseRollArmed = baseTr.some(
+    t =>
+      Boolean(t.pending_tp) &&
+      (String(t.tp_reason || '').startsWith('roll_') || String(t.tp_reason || '').startsWith('salvage_')),
   );
   const armedRollSlot = activeTr.find(
     t => Boolean(t.pending_tp) && String(t.tp_reason || '').startsWith('roll_'),
   );
-  const armedRollD = armedRollSlot ? Number(armedRollSlot.roll_dte || 50) : rollDte > 0 ? rollDte : 50;
+  const armedRollD = armedRollSlot ? Number(armedRollSlot.roll_dte || 75) : rollDte > 0 ? rollDte : 75;
   const otmLbl = putOtm === 'otm20' ? '-20% OTM' : '-15% OTM';
   const tenorLblEn = isAdaptive
-    ? `${entryDte}D (Roll@${rollDte}D)`
+    ? `${entryDte}D (Hard Roll@${rollDte}D)`
     : isRoll50
       ? '120D (Roll@50D)'
       : '90D';
   const tenorLblZh = isAdaptive
-    ? `${entryDte}D（剩${rollDte}天滚仓）`
+    ? `${entryDte}D（剩${rollDte}天硬换）`
     : isRoll50
       ? '120D（剩50天滚仓）'
       : '90D';
+
+  const m7WantsEntry = targetSlots > effActiveTr.length && vxnRedOk && vrRedOk && cooldownPassed;
+  const baseWantsEntry = baseRawGateOpen && effBaseTr.length === 0;
 
   let t1Code;
   let t1Tone;
@@ -2837,129 +3403,187 @@ export function buildM7LiveDashboardJS(
   if (anyTpArmed) {
     t1Code = 'TP_ARMED_NEXT_OPEN';
     t1Tone = 'tp';
-    t1BadgeEn = 'T+1 OPEN: TAKE-PROFIT MONETIZE & RELOAD QQQ';
-    t1BadgeZh = 'T+1 开盘指令：触发恐慌止盈 · 变现 Put 抄底加仓 QQQ';
-    t1TitleEn = 'Panic Take-Profit Triggered — Monetize Active Put Slot(s) at Next Open';
-    t1TitleZh = '恐慌止盈阈值已触发 —— 次日开盘全额平仓变现并复投 QQQ 正股';
-  } else if (anyRollArmed && targetSlots > 0) {
-    t1Code = 'ROLL_50D_AND_REOPEN';
+    t1BadgeEn = 'T+1 EXEC: NEAR-ITM BOTTOM CLEARANCE -> MONETIZE PUTS & ENTER 5D LOCKOUT';
+    t1BadgeZh = 'T+1 执行指令：准实值底部出清触发 · 全额变现抄底 QQQ 并启动 5D 静默锁死';
+    t1TitleEn = 'Near-ITM Panic Take-Profit Armed — Monetize Put(s) Into QQQ & Lock Re-Entry Until 5D Non-Inverted';
+    t1TitleZh = '准实值恐慌止盈已触发 —— 次日变现全部达标 Put 换入 QQQ，并同步冻结新买直至解除倒挂满 5 天';
+  } else if (anyM7RollArmed && targetSlots > 0 && !redlineBlocked && !lockedBy5d) {
+    t1Code = 'ROLL_75D_AND_REOPEN';
     t1Tone = 'armed';
-    t1BadgeEn = `T+1 OPEN: ${armedRollD}-DTE ROLL -> HARVEST RESIDUAL & OPEN ${entryDte}D ${otmLbl} PUT`;
-    t1BadgeZh = `T+1 开盘指令：剩 <=${armedRollD} DTE 触发滚仓 · 回收残值并换入新 ${entryDte}D ${otmLbl} Put`;
-    t1TitleEn = `Low-Vol Entry Gate ${Math.round(prob)}% (${trigCode}) Active at <=${armedRollD} DTE — Salvage Expiring Slot & Roll Into Fresh ${entryDte}-DTE ${otmLbl} Put`;
-    t1TitleZh = `在途槽位剩 <=${armedRollD} DTE 且买盾执行分 ${Math.round(prob)}%（${trigCode}）仍亮 —— 次日开盘回收残值并滚入新 ${entryDte}D ${otmLbl} Put`;
-  } else if (anyRollArmed) {
-    t1Code = 'SALVAGE_50D_EXIT';
+    t1BadgeEn = `T+1 EXEC: ${armedRollD}-DTE HARD ROLL -> SALVAGE & OPEN 1.25% ${entryDte}D ${otmLbl} PUT`;
+    t1BadgeZh = `T+1 执行指令：剩 <=${armedRollD} DTE 硬换 · 回收残值并按 1.25% 预算换入新 ${entryDte}D ${otmLbl} Put`;
+    t1TitleEn = `Low-Vol Gate ${Math.round(prob)}% (${trigCode}) Active at <=${armedRollD} DTE — Hard-Roll Into Fresh 1.25% NAV ${entryDte}-DTE ${otmLbl} Put`;
+    t1TitleZh = `在途战术槽剩 <=${armedRollD} DTE 且买盾分 ${Math.round(prob)}%（${trigCode}）仍亮 —— 次日硬换入新 1.25% 净值 ${entryDte}D ${otmLbl} Put`;
+  } else if (anyM7RollArmed) {
+    t1Code = 'SALVAGE_75D_EXIT';
     t1Tone = 'active';
-    t1BadgeEn = `T+1 OPEN: ${armedRollD}-DTE SALVAGE EXIT -> HARVEST RESIDUAL TO QQQ`;
-    t1BadgeZh = `T+1 开盘指令：剩 <=${armedRollD} DTE 信号熄灭 · 平仓回收残值复投 QQQ`;
-    t1TitleEn = `Slot Reached <=${armedRollD} DTE With Entry Gate Off — Exit Before Theta Cliff & Reinvest Residual Cash Into QQQ`;
-    t1TitleZh = `在途槽位剩 <=${armedRollD} DTE 且买盾执行信号已解除 —— 在 Theta 悬崖前平仓回收残值并复投 QQQ`;
+    t1BadgeEn = `T+1 EXEC: ${armedRollD}-DTE HARD EXIT -> HARVEST RESIDUAL TO QQQ`;
+    t1BadgeZh = `T+1 执行指令：剩 <=${armedRollD} DTE 硬退回收残值复投 QQQ（信号关闭或静默锁死）`;
+    t1TitleEn = `Slot Reached <=${armedRollD} DTE With Gate Off/Locked — Exit Cleanly Before Theta Cliff & Sweep Into QQQ`;
+    t1TitleZh = `在途槽位剩 <=${armedRollD} DTE 且买盾门控关闭/锁死 —— 在 Theta 悬崖前硬退回收残值并复投 QQQ`;
   } else if (pendSig !== null) {
     const nextSlotIdx = effActiveTr.length + 1;
     t1Code = 'OPEN_NEW_SLOT';
     t1Tone = 'armed';
-    t1BadgeEn = `T+1 OPEN: BUY 1 NEW SLOT (SLOT ${nextSlotIdx}/${maxSlots} · ${tenorLblEn} ${otmLbl} PUT)`;
-    t1BadgeZh = `T+1 开盘指令：新开 1 槽保护（第 ${nextSlotIdx}/${maxSlots} 槽 · ${tenorLblZh} ${otmLbl} Put）`;
-    t1TitleEn = `Real-Time Stress ${stressIdx}% · Low-Vol Gate ${Math.round(prob)}% (${trigCode}) -> Open Slot ${nextSlotIdx}/${maxSlots} Equal-Dollar ${entryDte}-DTE ${otmLbl} Put`;
-    t1TitleZh = `实时压力 ${stressIdx}% · 低波买盾执行分 ${Math.round(prob)}%（${trigCode}）-> 次日开盘按等金额预算买入第 ${nextSlotIdx}/${maxSlots} 槽 ${tenorLblZh} ${otmLbl} Put`;
+    t1BadgeEn = `T+1 EXEC: BUY BOOK M SLOT ${nextSlotIdx}/${maxSlots} (1.25% NAV · ${tenorLblEn} ${otmLbl} PUT)`;
+    t1BadgeZh = `T+1 执行指令：新开 M账本第 ${nextSlotIdx}/${maxSlots} 槽（1.25% 净值固定预算 · ${tenorLblZh} ${otmLbl} Put）`;
+    t1TitleEn = `Real-Time Stress ${stressIdx}% · Low-Vol Gate ${Math.round(prob)}% (${trigCode}) -> Deploy 1.25% NAV Into ${entryDte}-DTE ${otmLbl} Put`;
+    t1TitleZh = `实时压力 ${stressIdx}% · 低波买盾分 ${Math.round(prob)}%（${trigCode}）-> 次日按 1.25% 净值固定预算买入第 ${nextSlotIdx}/${maxSlots} 槽 ${tenorLblZh} ${otmLbl} Put`;
+  } else if (lockedBy5d && (m7WantsEntry || baseWantsEntry || targetSlots > effActiveTr.length)) {
+    const remLkD = Math.max(1, reqLockStreak - nonInvStreak);
+    t1Code = 'POST_TP_LOCKOUT_WAIT';
+    t1Tone = 'blocked';
+    t1BadgeEn = `T+1 EXEC: 5D POST-TP LOCKOUT (${nonInvStreak}/${reqLockStreak}D VIX/3M < 1.00 · ${remLkD}D LEFT)`;
+    t1BadgeZh = `T+1 执行指令：止盈后 5D 静默锁死（解除倒挂 ${nonInvStreak}/${reqLockStreak} 天 · 还需 ${remLkD} 天）`;
+    t1TitleEn = `Post-TP Lockout Active Since ${lastTpDtStr || d} (VIX/3M ${vr.toFixed(3)}) — No Re-Buying Until 5 Consecutive Non-Inverted Days (< 1.00) Complete`;
+    t1TitleZh = `崩盘止盈后静默门控生效（上次止盈 ${lastTpDtStr || d}，今日 VIX/3M ${vr.toFixed(3)}）—— 须等连续 5 个交易日解除倒挂（< 1.00）且不反跳后才恢复买盾`;
   } else if (targetSlots > effActiveTr.length && redlineBlocked) {
     t1Code = 'REDLINE_BLOCKED';
     t1Tone = 'blocked';
-    t1BadgeEn = 'T+1 OPEN: HARD REDLINE BLOCKED (NO NEW PUTS IN HIGH IV)';
-    t1BadgeZh = 'T+1 开盘指令：风控红线锁死禁开新仓（拒绝高波追买天价 Put）';
+    t1BadgeEn = 'T+1 EXEC: HARD REDLINE BLOCKED (NO NEW PUTS IN HIGH IV)';
+    t1BadgeZh = 'T+1 执行指令：风控红线锁死禁开新仓（拒绝高波追买天价 Put）';
     t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · Hard Redline Active (VXN ${vxn.toFixed(1)} > 27 or VIX/3M ${vr.toFixed(3)} >= 1.02) — Chasing Expensive Puts Forbidden`;
     t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· 绝对风控红线生效（VXN ${vxn.toFixed(1)} > 27 或 VIX/3M ${vr.toFixed(3)} >= 1.02）—— 严禁高波追高买贵盾`;
   } else if (targetSlots > effActiveTr.length && !cooldownPassed) {
     const remWait = Math.max(1, reqGap - (daysSinceLast ?? 0));
     t1Code = 'COOLDOWN_WAIT';
     t1Tone = 'cooldown';
-    t1BadgeEn = `T+1 OPEN: COOLDOWN WAIT (${daysSinceLast}D / ${reqGap}D · ${remWait}D LEFT)`;
-    t1BadgeZh = `T+1 开盘指令：加仓冷却期等待中（距上槽 ${daysSinceLast}/${reqGap} 天 · 还需 ${remWait} 天）`;
+    t1BadgeEn = `T+1 EXEC: COOLDOWN WAIT (${daysSinceLast}D / ${reqGap}D · ${remWait}D LEFT)`;
+    t1BadgeZh = `T+1 执行指令：加仓冷却期等待中（距上槽 ${daysSinceLast}/${reqGap} 天 · 还需 ${remWait} 天）`;
     t1TitleEn = `Low-Vol Entry Gate ${Math.round(prob)}% Wants ${targetSlots} Slots, Waiting ${remWait} Calendar Days for ${reqGap}D Step Cooldown`;
     t1TitleZh = `低波买盾执行分 ${Math.round(prob)}% 指向 ${targetSlots} 槽，当前距上一槽仅 ${daysSinceLast} 天（未满 ${reqGap} 天冷却期，暂缓加槽）`;
-  } else if (activeSlots > 0) {
-    const rollNoteEn = rollDte > 0 ? ` · ROLL @ <=${rollDte} DTE` : '';
-    const rollNoteZh = rollDte > 0 ? ` · 剩<=${rollDte}天滚仓` : '';
+  } else if (anyBaseRollArmed && baseGateOpen) {
+    t1Code = 'ROLL_BASE_75D';
+    t1Tone = 'armed';
+    t1BadgeEn = 'T+1 EXEC: BOOK B 75-DTE HARD ROLL -> REFRESH 0.20% NAV 125D -15% OTM PUT';
+    t1BadgeZh = 'T+1 执行指令：B账本 <=75 DTE 硬换 -> 按 0.20% 净值续换新 125D -15% OTM 底仓 Put';
+    t1TitleEn = `VIX ${vixNow.toFixed(2)} <= 20 Calm Gate Open — Salvage 75D Floor Put & Refresh 0.20% NAV 125D -15% OTM Put`;
+    t1TitleZh = `VIX ${vixNow.toFixed(2)} <= 20 低波门控开启 —— 次日回收剩 <=75 天旧底仓残值并硬换新 125D -15% OTM 底仓 Put`;
+  } else if (anyBaseRollArmed) {
+    t1Code = 'SALVAGE_BASE_75D';
+    t1Tone = 'active';
+    t1BadgeEn = 'T+1 EXEC: BOOK B 75-DTE SALVAGE EXIT (VIX > 20 GATE CLOSED · NO RE-BUY)';
+    t1BadgeZh = 'T+1 执行指令：B账本 <=75 DTE 残值退出（VIX > 20 门控关闭 · 禁追高续买）';
+    t1TitleEn = `Book B Floor Put Reached <=75 DTE With VIX ${vixNow.toFixed(2)} > 20 — Harvest Residual Cash Into QQQ`;
+    t1TitleZh = `B账本底仓剩 <=75 天且 VIX ${vixNow.toFixed(2)} > 20 —— 次日回收残值换入 QQQ，等待低波回归再建底仓`;
+  } else if (pendBaseOpen) {
+    t1Code = 'OPEN_BASE_FLOOR';
+    t1Tone = 'armed';
+    t1BadgeEn = 'T+1 EXEC: OPEN BOOK B 0.20% BASE PUT (125D -15% OTM · VIX <= 20)';
+    t1BadgeZh = 'T+1 执行指令：开启 B账本 0.20% 常态底仓（125D -15% OTM Put · VIX <= 20）';
+    t1TitleEn = `Calm VIX Gate Open (VIX ${vixNow.toFixed(2)} <= 20 & VIX/3M ${vr.toFixed(3)} < 1.02) — Deploy 0.20% NAV Floor Put`;
+    t1TitleZh = `常态低波门控达标（VIX ${vixNow.toFixed(2)} <= 20 且 VIX/3M ${vr.toFixed(3)} < 1.02）—— 次日按 0.20% 净值建仓 125D -15% OTM 底仓 Put`;
+  } else if (activeSlots > 0 || baseActiveSlots > 0) {
     t1Code = 'HOLD_ACTIVE_SLOTS';
     t1Tone = 'active';
-    t1BadgeEn = `T+1 OPEN: HOLD ${activeSlots}/${maxSlots} ACTIVE PUT SLOT(S) · MONITOR TP${rollNoteEn}`;
-    t1BadgeZh = `T+1 开盘指令：继续持有 ${activeSlots}/${maxSlots} 槽在途 Put · 盯紧止盈线${rollNoteZh}`;
-    t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · ${activeSlots}/${maxSlots} Equal-Dollar Put Slot(s) Shielding 100% Uncapped QQQ Core`;
-    t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· 当前 ${activeSlots}/${maxSlots} 槽等金额裸 Put 在途护航（100% QQQ 底仓无封顶持有）`;
+    t1BadgeEn = `T+1 EXEC: HOLD ${baseActiveSlots} BASE (0.20%) + ${activeSlots}/${maxSlots} M7G (1.25%) PUT(S) · HARD ROLL 75D/30D`;
+    t1BadgeZh = `T+1 执行指令：持有 B账本 ${baseActiveSlots} 槽(0.20%) + M账本 ${activeSlots}/${maxSlots} 槽(1.25%) · 盯紧准实值止盈与 75D/30D 硬换`;
+    t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · Dual-Book Shield Active (${baseActiveSlots} Base + ${activeSlots}/${maxSlots} M7G Slots) Over 100% Uncapped QQQ Core`;
+    t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· 双账本在途护航（B账本 ${baseActiveSlots} 槽 + M账本 ${activeSlots}/${maxSlots} 槽 · 100% QQQ 底仓无封顶持有）`;
   } else {
-    const profLblEn = isCore3 ? 'Core-3 Minimal' : 'Full M7 Shield';
-    const profLblZh = isCore3 ? '精简3核' : '全套M7护盾';
+    const profLblEn = isCore3 ? 'Core-3 Minimal' : 'Full M7G Dual-Book';
+    const profLblZh = isCore3 ? '精简3核双账本' : '全套M7G双账本';
     t1Code = 'STANDBY';
     t1Tone = 'standby';
-    if (redlineBlocked) {
-      t1BadgeEn = 'T+1 OPEN: STANDBY (100% QQQ · HIGH-VOL REDLINE FREEZE)';
-      t1BadgeZh = 'T+1 开盘指令：空盾待命（100% 满仓 QQQ · 高波红线冻结禁追买贵盾）';
-      t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · ${profLblEn} Low-Vol Entry Gate ${Math.round(prob)}% (High-IV Redline VXN ${vxn.toFixed(1)} / VIX/3M ${vr.toFixed(3)} Freezes Chasing Expensive Puts — Hold 100% QQQ Uncapped)`;
-      t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· ${profLblZh}低波买盾执行分 ${Math.round(prob)}%（高波红线 VXN ${vxn.toFixed(1)} / VIX/3M ${vr.toFixed(3)} 冻结禁追高买贵盾 —— 100% QQQ 零损耗待弹）`;
+    if (lockedBy5d) {
+      t1BadgeEn = `T+1 EXEC: POST-TP 5D LOCKOUT STANDBY (${nonInvStreak}/${reqLockStreak}D < 1.00)`;
+      t1BadgeZh = `T+1 执行指令：止盈后 5D 静默待命（解除倒挂 ${nonInvStreak}/${reqLockStreak} 天 · 100% QQQ）`;
+      t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · Post-TP Lockout Freezes Re-Entry Until VIX/VIX3M < 1.00 Holds for 5 Consecutive Days (${nonInvStreak}/5)`;
+      t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· 崩盘止盈后静默锁死中，须等 VIX/VIX3M < 1.00 连续满 5 天（当前 ${nonInvStreak}/5）才允许再买`;
+    } else if (redlineBlocked || !baseVixOk) {
+      t1BadgeEn = `T+1 EXEC: STANDBY (100% QQQ · VIX ${vixNow.toFixed(1)} > 20 GATE FREEZE)`;
+      t1BadgeZh = `T+1 执行指令：空盾待命（100% 满仓 QQQ · VIX ${vixNow.toFixed(1)} > 20 高波门控禁追贵盾）`;
+      t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · ${profLblEn} Low-Vol Gate ${Math.round(prob)}% (VIX ${vixNow.toFixed(1)} > 20 / VXN ${vxn.toFixed(1)} Freezes Chasing Expensive Puts — Hold 100% QQQ Uncapped)`;
+      t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· ${profLblZh}低波买盾分 ${Math.round(prob)}%（VIX ${vixNow.toFixed(1)} > 20 / VXN ${vxn.toFixed(1)} 冻结禁追买高价 Put —— 100% QQQ 零损耗待弹）`;
     } else {
-      t1BadgeEn = 'T+1 OPEN: STANDBY · ZERO PUT SPEND (100% QQQ CRUISE)';
-      t1BadgeZh = 'T+1 开盘指令：静默待命 · 零保费损耗（100% 满仓 QQQ 复利巡航）';
-      t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · ${profLblEn} Low-Vol Entry Gate ${Math.round(prob)}% (< 35% Threshold) — Zero Option Drag, 100% QQQ Compounding`;
-      t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· ${profLblZh}低波买盾执行分 ${Math.round(prob)}%（低于 35% 开仓线）—— 零期权保费损耗，100% QQQ 顺风复利`;
+      t1BadgeEn = 'T+1 EXEC: STANDBY · ZERO TACTICAL DRAG (100% QQQ CRUISE)';
+      t1BadgeZh = 'T+1 执行指令：静默待命 · 100% 满仓 QQQ 复利巡航';
+      t1TitleEn = `Real-Time Stress ${stressIdx}% (${stressLblEn}) · ${profLblEn} Low-Vol Entry Gate ${Math.round(prob)}% (< 35% Threshold) — 100% QQQ Compounding`;
+      t1TitleZh = `实时危机压力 ${stressIdx}%（${stressLblZh}）· ${profLblZh}低波买盾分 ${Math.round(prob)}%（低于 35% 开仓线）—— 100% QQQ 顺风复利`;
     }
   }
 
   const tauCalc = entryDte / 365.0;
+  const tauBase = HARDCODED_BASE_DTE / 365.0;
   const k10 = cl * 0.9;
   const k15 = cl * 0.85;
   const k20 = cl * 0.8;
   const iv10 = evalSkewIv(cl, k10, tauCalc, rCur, qCur, vxn, coeffs);
   const iv15 = evalSkewIv(cl, k15, tauCalc, rCur, qCur, vxn, coeffs);
   const iv20 = evalSkewIv(cl, k20, tauCalc, rCur, qCur, vxn, coeffs);
+  const iv15Base = evalSkewIv(cl, k15, tauBase, rCur, qCur, vxn, coeffs);
   const mid10 = bsmPrice(cl, k10, tauCalc, rCur, qCur, iv10, 'put');
   const mid15 = bsmPrice(cl, k15, tauCalc, rCur, qCur, iv15, 'put');
   const mid20 = bsmPrice(cl, k20, tauCalc, rCur, qCur, iv20, 'put');
-  const ask10Ref = mid10 * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH;
-  const ask15 = mid15 * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH;
-  const ask20 = mid20 * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH;
+  const mid15Base = bsmPrice(cl, k15, tauBase, rCur, qCur, iv15Base, 'put');
+  const slipEff = fillModeCur === 'ibkr_limit' ? IBKR_LIMIT_FRAC * OPT_SLIP : OPT_SLIP;
+  const ask10Ref = mid10 * (1.0 + slipEff) + OPT_COMM_PER_SH;
+  const ask15 = mid15 * (1.0 + slipEff) + OPT_COMM_PER_SH;
+  const ask20 = mid20 * (1.0 + slipEff) + OPT_COMM_PER_SH;
+  const ask15Base = mid15Base * (1.0 + slipEff) + OPT_COMM_PER_SH;
   const skewRatio = iv20 / Math.max(iv10, 1e-6);
   const favorable20 = skewRatio <= 1.18;
   const selAsk = putOtm === 'otm20' ? ask20 : ask15;
   const selK = putOtm === 'otm20' ? k20 : k15;
-  const budget1000 = 500.0 * ask10Ref;
+  const sampleNav1000 = 1000.0 * cl;
+  const budget1000 = sampleNav1000 * HARDCODED_M7_BUDGET_PCT;
+  const baseBudget1000 = sampleNav1000 * HARDCODED_BASE_BUDGET_PCT;
   const contracts1000 = budget1000 / Math.max(selAsk, 1e-6) / 100.0;
+  const baseContracts1000 = baseBudget1000 / Math.max(ask15Base, 1e-6) / 100.0;
 
   const rollFormulaEn = isAdaptive
-    ? ' · Adaptive Roll: P1/P2 120D->50D, CTA M4 90D->30D'
+    ? ' · Hard Roll: P1/P2 & Book B 125D->75D, CTA M4 90D->30D'
     : isRoll50
       ? ' · Salvage/Roll at <= 50 DTE'
       : '';
   const rollFormulaZh = isAdaptive
-    ? ' · 自适应滚仓：P1/P2 120D->50D、CTA(M4) 90D->30D'
+    ? ' · 硬换规则：P1/P2 与 B账本 125D->75D、CTA(M4) 90D->30D'
     : isRoll50
       ? ' · 剩 <=50 DTE 残值滚仓/平仓'
       : '';
 
   const sizingCalc = {
     qqq_spot: r2(cl),
+    vix: r2(vixNow),
     vxn: r2(vxn),
     dte: entryDte,
     roll_dte: rollDte,
+    base_dte: HARDCODED_BASE_DTE,
+    base_roll_dte: HARDCODED_BASE_ROLL_DTE,
+    base_budget_pct: 0.2,
+    m7_budget_pct: 1.25,
+    fill_mode: fillModeCur,
     roll_mode: effRollMode,
     selected_otm: putOtm,
-    formula_en: `Per-Slot Budget = Current QQQ Shares × 50% × Ask(${entryDte}D -10% OTM Put)${rollFormulaEn}`,
-    formula_zh: `单槽美元预算 = 当前持有 QQQ 股数 × 50% × ${entryDte}-DTE -10% OTM Put 卖一价(Ask)${rollFormulaZh}`,
+    formula_en: `Hard-Coded Fixed-% Sizing: Book B Floor = 0.20% NAV (125D -15% OTM, VIX<=20) · Book M Tactical = 1.25% NAV / Slot (${entryDte}D ${otmLbl})${rollFormulaEn}`,
+    formula_zh: `写死双账本固定预算：B账本常态基底 = 0.20% 净值（125D -15% OTM，VIX<=20）· M账本战术槽 = 1.25% 净值/槽（${entryDte}D ${otmLbl}）${rollFormulaZh}`,
     ref_otm10: { otm_pct: 10, strike: r2(k10), iv_pct: r2(iv10 * 100.0), mid_sh: r2(mid10), ask_sh: r2(ask10Ref) },
-    otm15: { otm_pct: 15, strike: r2(k15), iv_pct: r2(iv15 * 100.0), mid_sh: r2(mid15), ask_sh: r2(ask15) },
+    otm15: {
+      otm_pct: 15,
+      strike: r2(k15),
+      iv_pct: r2(iv15 * 100.0),
+      mid_sh: r2(mid15),
+      ask_sh: r2(ask15),
+      base_125d_ask_sh: r2(ask15Base),
+    },
     otm20: { otm_pct: 20, strike: r2(k20), iv_pct: r2(iv20 * 100.0), mid_sh: r2(mid20), ask_sh: r2(ask20) },
     skew_ratio_20_10: r3(skewRatio),
     skew_switch_threshold: 1.18,
     favorable_otm20_skew: favorable20,
     skew_tip_en: favorable20
-      ? `Tail Skew Favorable: IV(-20%)/IV(-10%) = ${skewRatio.toFixed(3)} <= 1.18 — switching equal budget to -20% OTM offers superior crash convexity!`
-      : `Steep Tail Skew: IV(-20%)/IV(-10%) = ${skewRatio.toFixed(3)} > 1.18 — keep default -15% OTM to avoid overpaying deep-tail skew.`,
+      ? `Tail Skew Favorable: IV(-20%)/IV(-10%) = ${skewRatio.toFixed(3)} <= 1.18 — locked ruleset uses -15% OTM (1.05xK Near-ITM TP).`
+      : `Steep Tail Skew: IV(-20%)/IV(-10%) = ${skewRatio.toFixed(3)} > 1.18 — locked -15% OTM avoids overpaying deep-tail skew.`,
     skew_tip_zh: favorable20
-      ? `偏度性价比极佳：当前 IV(-20%)/IV(-10%) = ${skewRatio.toFixed(3)} <= 1.18 —— 等金额切换至 -20% OTM 可获更高崩盘凸性赔率！`
-      : `尾部偏度较陡：当前 IV(-20%)/IV(-10%) = ${skewRatio.toFixed(3)} > 1.18 —— 建议维持默认 -15% OTM，避免为深虚值高偏度溢价买单。`,
+      ? `当前偏度比 IV(-20%)/IV(-10%) = ${skewRatio.toFixed(3)} <= 1.18（写死规则统一采用 -15% OTM 配合 1.05×K 准实值止盈）。`
+      : `尾部偏度较陡：IV(-20%)/IV(-10%) = ${skewRatio.toFixed(3)} > 1.18 —— 写死默认 -15% OTM 规避深虚值高溢价。`,
     default_qqq_shares: 1000,
     model_qqq_shares: r2(Number(m7Sim.summary.final_shares ?? 1000)),
+    sample_1000sh_nav_usd: r2(sampleNav1000),
     sample_1000sh_budget_usd: r2(budget1000),
+    sample_1000sh_base_budget_usd: r2(baseBudget1000),
+    sample_1000sh_base_strike: r2(k15),
+    sample_1000sh_base_ask: r2(ask15Base),
+    sample_1000sh_base_contracts: r2(baseContracts1000),
     sample_1000sh_selected_strike: r2(selK),
     sample_1000sh_selected_ask: r2(selAsk),
     sample_1000sh_contracts: r2(contracts1000),
@@ -2967,45 +3591,58 @@ export function buildM7LiveDashboardJS(
 
   const tpSpec = M7_TP_SPECS[m7TpMode] ?? M7_TP_SPECS.standard;
   const rollRuleEn = isAdaptive
-    ? '; else salvage/roll at DTE <= 50 (Non-CTA 120D) or DTE <= 30 (CTA M4 90D).'
+    ? '; else hard-roll/exit at DTE <= 75 (Book B & Non-CTA 125D) or DTE <= 30 (CTA M4 90D); after any TP, lock all re-entries until 5 consecutive days VIX/VIX3M < 1.00.'
     : isRoll50
-      ? '; else at DTE <= 50 salvage residual (and roll into fresh 120D Put if M7 stays active).'
+      ? '; else at DTE <= 50 salvage residual; after any TP, lock re-entries for 5 consecutive days VIX/VIX3M < 1.00.'
       : '.';
   const rollRuleZh = isAdaptive
-    ? '；未止盈则在非CTA槽 DTE<=50 / CTA(M4)槽 DTE<=30 时回收残值（信号仍亮则自动滚仓）。'
+    ? '；未止盈则在 B账本/非CTA槽 DTE<=75、CTA(M4)槽 DTE<=30 硬换/退出；一旦触发止盈，双账本锁定禁买直至连续 5 天 VIX/VIX3M < 1.00。'
     : isRoll50
-      ? '；未止盈且 DTE <= 50 时次日开盘回收残值（信号仍亮则同步滚入新 120D Put）。'
+      ? '；未止盈且 DTE <= 50 时回收残值；止盈后连续 5 天 VIX/VIX3M < 1.00 才恢复买盾。'
       : '。';
   const tpRuleEn =
     (m7TpMode === 'itm_tp'
-      ? `Exit at T+1 Open when EOD (VIX/VIX3M >= 1.10 AND QQQ <= Strike Kp) OR (DTE <= ${fiveXDte} AND Put Mid >= 5x Cost)`
-      : `Exit at T+1 Open when EOD VIX/VIX3M >= 1.10 OR (DTE <= ${fiveXDte} AND Put Mid >= 5x Cost)`) +
+      ? 'Exit 100% at T+1 Close when EOD (VIX/VIX3M >= 1.10 AND QQQ <= Strike Kp) OR VIX >= 45 OR (Late DTE & Put Mid >= 5x Cost)'
+      : 'Exit 100% at T+1 Close when EOD (VIX/VIX3M >= 1.10 AND QQQ <= 1.05 x Strike Kp) OR VIX >= 45 OR (DTE <= 60/45 & Put Mid >= 5x Cost)') +
     rollRuleEn;
   const tpRuleZh =
     (m7TpMode === 'itm_tp'
-      ? `收盘同时满足（VIX/VIX3M >= 1.10 且 QQQ <= 行权价 Kp 实值），或（DTE <= ${fiveXDte} 且中间价 >= 5 倍成本）次日开盘止盈`
-      : `收盘触发 VIX/VIX3M >= 1.10 恐慌倒挂，或（DTE <= ${fiveXDte} 且期权中间价 >= 5 倍成本）次日开盘止盈`) +
+      ? '收盘满足（VIX/VIX3M >= 1.10 且 QQQ <= 行权价 Kp）或 VIX >= 45 或（临期中间价 >= 5 倍成本）次日 100% 出清换股'
+      : '收盘满足（VIX/VIX3M >= 1.10 且 QQQ <= 1.05×Kp 准实值）或 VIX >= 45 极值恐慌 或（DTE <= 60/45 且中间价 >= 5 倍成本）次日 100% 出清换股') +
     rollRuleZh;
 
-  const tpSlotsLive = activeTr.map(tr => {
+  const tpSlotsLive = [];
+  const nearItmOpenRows = [];
+  for (const tr of allOpenTr) {
     const kpTr = Number(tr.kp);
+    const nearKTr = r2(kpTr * nearItmMult);
     const remTr = Number(tr.rem_dte);
     const trRd = Number(tr.roll_dte || 0);
+    const isBaseT = String(tr.book || 'm7') === 'base';
+    const fiveXCapTr = isBaseT ? 60 : fiveXDte;
     const isItm = cl <= kpTr;
-    const tpVixOk = vr >= 1.1 && (m7TpMode === 'itm_tp' ? isItm : true);
-    const tp5xOk = remTr <= fiveXDte && Number(tr.mtm_put_val_sh) >= Number(tr.tp_target_5x_sh);
-    const roll50Due = Boolean(trRd > 0 && remTr <= trRd && !tpVixOk && !tp5xOk);
-    return {
+    const isNearItm = cl <= kpTr * nearItmMult;
+    const tpVixOk = (vr >= 1.1 && isNearItm) || vixNow >= HARDCODED_EXTREME_VIX_TP;
+    const tp5xOk = remTr <= fiveXCapTr && Number(tr.mtm_put_val_sh) >= Number(tr.tp_target_5x_sh);
+    const rollDue = Boolean(trRd > 0 && remTr <= trRd && !tpVixOk && !tp5xOk);
+    tpSlotsLive.push({
+      book: isBaseT ? 'base' : 'm7',
+      book_label_en: tr.book_label_en || (isBaseT ? 'Book B · 0.20% Base' : 'Book M · 1.25% M7G'),
+      book_label_zh: tr.book_label_zh || (isBaseT ? 'B账本 · 0.20%常态基底' : 'M账本 · 1.25%战术M7G'),
       slot_num: tr.slot_num,
+      occSymbol: tr.occSymbol || '',
       entry_date: tr.entry_date,
       exp_date: tr.exp_date,
       rem_dte: remTr,
       roll_dte: trRd,
+      days_to_roll: trRd > 0 ? Math.max(0, remTr - trRd) : null,
       days_to_roll50: trRd > 0 ? Math.max(0, remTr - trRd) : null,
-      roll50_due: roll50Due,
+      roll50_due: rollDue,
       kp: kpTr,
+      near_itm_strike_105: nearKTr,
       spot_vs_kp_pct: r2((cl / kpTr - 1.0) * 100.0),
       is_itm: isItm,
+      is_near_itm: isNearItm,
       entry_ask_sh: tr.entry_put_ask_sh,
       current_mid_sh: tr.mtm_put_val_sh,
       target_5x_mid_sh: tr.tp_target_5x_sh,
@@ -3015,8 +3652,36 @@ export function buildM7LiveDashboardJS(
       five_x_leg_met: tp5xOk,
       pending_tp: Boolean(tr.pending_tp),
       tp_reason: tr.tp_reason || '',
-    };
-  });
+    });
+    nearItmOpenRows.push({
+      book: isBaseT ? 'base' : 'm7',
+      slot_num: tr.slot_num,
+      occSymbol: tr.occSymbol || '',
+      kp: kpTr,
+      near_itm_strike_105: nearKTr,
+      spot_le_near_itm: isNearItm,
+      rem_dte: remTr,
+      roi_mult: tr.roi_mult,
+      triggered: Boolean(tpVixOk || tp5xOk),
+    });
+  }
+
+  const nearItmTpRule = {
+    tp_mode: m7TpMode,
+    vix_now: r2(vixNow),
+    vix_extreme: HARDCODED_EXTREME_VIX_TP,
+    vix_extreme_met: vixNow >= HARDCODED_EXTREME_VIX_TP,
+    vix_ratio_now: r3(vr),
+    vix_ratio_min: 1.1,
+    vix_ratio_met: vr >= 1.1,
+    near_itm_mult: nearItmMult,
+    qqq_spot_now: r2(cl),
+    simulated_next_kp: r2(selK),
+    simulated_next_near_itm_px: r2(selK * nearItmMult),
+    formula_en: '(VIX/VIX3M >= 1.10 & QQQ <= 1.05×K) OR VIX >= 45 OR Late >= 5x -> 100% Clear & Reload QQQ',
+    formula_zh: '(VIX/VIX3M >= 1.10 且 QQQ <= 1.05×K 准实值) 或 VIX >= 45 或 临期 >=5x -> 100% 底部出清抄底 QQQ',
+    open_tranches: nearItmOpenRows,
+  };
 
   const tpMonitor = {
     tp_mode: m7TpMode,
@@ -3028,11 +3693,16 @@ export function buildM7LiveDashboardJS(
     label_zh: tpSpec.label_zh,
     rule_en: tpRuleEn,
     rule_zh: tpRuleZh,
+    vix_now: r2(vixNow),
+    vix_extreme_target: HARDCODED_EXTREME_VIX_TP,
+    vix_extreme_met: vixNow >= HARDCODED_EXTREME_VIX_TP,
     vix_ratio_now: r3(vr),
     vix_ratio_target: 1.1,
     vix_ratio_met: vr >= 1.1,
+    near_itm_mult: nearItmMult,
     qqq_spot_now: r2(cl),
     simulated_next_slot_kp: r2(selK),
+    simulated_next_slot_near_itm_px: r2(selK * nearItmMult),
     simulated_next_slot_5x_mid: r2(5.0 * selAsk),
     open_slots: tpSlotsLive,
   };
@@ -3548,10 +4218,15 @@ export function buildM7LiveDashboardJS(
     as_of_date: d,
     strategy_id: strategyId,
     profile: isCore3 ? 'core3_adaptive' : 'full_m7_adaptive',
+    fill_mode: fillModeCur,
     put_otm: putOtm,
     m7_tp_mode: m7TpMode,
     roll_mode: effRollMode,
     m0_enabled: m0Enabled,
+    hardcoded_ruleset: { ...HARDCODED_RULESET_SPEC, fill_mode: fillModeCur },
+    book_b_vix_gate: bookBVixGate,
+    post_tp_lockout: postTpLockoutBlock,
+    near_itm_tp_rule: nearItmTpRule,
     crisis_prob: Math.round(prob),
     p1_score: Math.round(p1),
     p2_score: Math.round(p2),
@@ -3567,15 +4242,16 @@ export function buildM7LiveDashboardJS(
     data_freshness: dataFreshness,
     target_slots: targetSlots,
     active_slots: activeSlots,
+    base_active_slots: baseActiveSlots,
     max_slots: maxSlots,
     triggered_modules: modsActive,
     trigger_code: modsActive.length ? trigCode : 'NONE',
     tier_rule_en: isCore3
-      ? 'Core-3 Minimal: M0=35% (1 Slot) · M0+M6=45% (2 Slots) · M4=35% (1 Slot) · M0+M4=70% (3 Slots); M6 alone=20% (0 Slots)'
-      : '<35%: 0 Slots · 35-44%: 1 Slot · 45-64%: 2 Slots · >=65%: 3 Slots',
+      ? 'Book B: 0.20% NAV (VIX<=20, 125D->75D) + Book M Core-3 (1.25% NAV/slot): M0=35% (1) · M0+M6=45% (2) · M4=35% (1) · M0+M4=70% (3)'
+      : 'Book B: 0.20% NAV (VIX<=20, 125D->75D) + Book M Full M7G (1.25% NAV/slot): <35%=0 · 35-44%=1 · 45-64%=2 · >=65%=3 Slots',
     tier_rule_zh: isCore3
-      ? '精简3核权重：M0=35%（1槽）· M0+M6=45%（2槽）· M4=35%（1槽）· M0+M4=70%（3槽）；M6单亮=20%不单发'
-      : '<35%：0槽 · 35–44%：1槽 · 45–64%：2槽 · >=65%：3槽满配',
+      ? 'B账本：0.20%净值(VIX<=20, 125D->75D) + M账本精简3核(1.25%/槽)：M0=35%(1槽) · M0+M6=45%(2槽) · M4=35%(1槽) · M0+M4=70%(3槽)'
+      : 'B账本：0.20%净值(VIX<=20, 125D->75D) + M账本全套M7G(1.25%/槽)：<35%=0槽 · 35–44%=1槽 · 45–64%=2槽 · >=65%=3槽满配',
     redline: {
       blocked: redlineBlocked,
       vxn: r2(vxn),

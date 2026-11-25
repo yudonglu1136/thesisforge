@@ -24,6 +24,64 @@ DEFAULT_PUT_OTM = "otm15"
 DEFAULT_M7_TP_MODE = "standard"
 DEFAULT_ROLL_MODE = "adaptive_120_90"
 DEFAULT_M0_ENABLED = True
+DEFAULT_M7_FILL_MODE = "ibkr_limit"
+
+# Hard-coded Production Dual-Book Ruleset (B020_M125: 0.20% Base + 1.25% M7G Fixed Budget)
+HARDCODED_BASE_BUDGET_PCT = 0.0020
+HARDCODED_M7_BUDGET_PCT = 0.0125
+HARDCODED_BASE_DTE = 125
+HARDCODED_BASE_ROLL_DTE = 75
+HARDCODED_BASE_MONEYNESS = 0.85
+HARDCODED_BASE_VIX_MAX = 20.0
+HARDCODED_BASE_VR_MAX = 1.02
+HARDCODED_M7_BASE_DTE = 125
+HARDCODED_M7_BASE_ROLL_DTE = 75
+HARDCODED_M7_CTA_DTE = 90
+HARDCODED_M7_CTA_ROLL_DTE = 30
+HARDCODED_NEAR_ITM_MULT = 1.05
+HARDCODED_EXTREME_VIX_TP = 45.0
+HARDCODED_LOCKOUT_DAYS = 5
+HARDCODED_LOCKOUT_INV_THRESH = 1.00
+HARDCODED_LOCKOUT_SCOPE = "both"
+
+HARDCODED_RULESET_SPEC: dict[str, Any] = {
+    "code": "B020_M125_HARD75_NEARITM_5DLOCK",
+    "locked": True,
+    "base_book": {
+        "budget_pct_nav": 0.20,
+        "target_dte": 125,
+        "roll_dte": 75,
+        "otm_pct": 15,
+        "vix_max": 20.0,
+        "vix_ratio_max": 1.02,
+    },
+    "m7_book": {
+        "budget_pct_nav_per_slot": 1.25,
+        "max_slots": 3,
+        "non_cta_target_dte": 125,
+        "non_cta_roll_dte": 75,
+        "cta_target_dte": 90,
+        "cta_roll_dte": 30,
+        "otm_pct": 15,
+        "vxn_max": 27.0,
+        "vix_ratio_max": 1.02,
+        "step_cooldown_days": 30,
+        "escalate_slot3_days": 21,
+    },
+    "near_itm_tp": {
+        "vix_ratio_min": 1.10,
+        "near_itm_strike_mult": 1.05,
+        "vix_extreme_override": 45.0,
+        "late_5x_mult": 5.0,
+        "late_5x_max_dte_base": 60,
+        "late_5x_max_dte_m7": 45,
+    },
+    "post_tp_lockout": {
+        "consecutive_days": 5,
+        "vix_ratio_unlock_max": 1.00,
+        "scope": "both_books",
+    },
+}
 
 INITIAL_CAPITAL = 200_000.0
 STOCK_REBAL_FEE = 0.0003
@@ -56,52 +114,52 @@ PUT_OTM_SPECS: list[dict[str, Any]] = [
         "id": "otm15",
         "moneyness": 0.85,
         "otm_pct": 15,
-        "label_en": "-15% OTM (Default · Core Shield)",
-        "label_zh": "-15% OTM（默认主力 · 稳健均衡）",
+        "label_en": "-15% OTM (Locked Core · 0.20% Base + 1.25% M7G)",
+        "label_zh": "-15% OTM（锁定核心 · 0.20%基底 + 1.25%战术）",
         "short_en": "-15% OTM",
         "short_zh": "-15% OTM",
-        "summary_en": "Spends the 50% -10% OTM reference dollar budget on 90-DTE -15% OTM Puts ($1,682,250 NAV, -28.02% MDD, -24.44% 2022 Bear MDD, Calmar 0.701).",
-        "summary_zh": "以等金额预算（50% 仓位 90D -10% Put 基准保费）买入 90-DTE -15% OTM Put（终值 $1,682,250、最大回撤 -28.02%、2022 慢熊回撤 -24.44%、Calmar 0.701）。",
+        "summary_en": "Hard-coded 0.20% Base (VIX<=20, 125D->75D) + 1.25% M7G per slot (125D->75D / CTA 90D->30D) on -15% OTM Puts: $1,740,267 Real-OPRA IBKR Limit ($1,688,420 Full Ask/Bid), 21.85% CAGR, -26.17% MDD, Calmar 0.835, Sharpe 1.011.",
+        "summary_zh": "写死 0.20% 常态基底（VIX<=20 门控 · 125D->75D 硬换）+ 1.25%/槽 M7G 固定预算（125D->75D / CTA 90D->30D）买入 -15% OTM Put：2015–2025 真实 OPRA IBKR 限价终值 $1,740,267（全价差 Ask/Bid $1,688,420），年化 21.85%、回撤 -26.17%、Calmar 0.835、Sharpe 1.011。",
     },
     {
         "id": "otm20",
         "moneyness": 0.80,
         "otm_pct": 20,
-        "label_en": "-20% OTM (High Convexity · NAV #1)",
-        "label_zh": "-20% OTM（高凸性进攻 · 终值冠军）",
+        "label_en": "-20% OTM (Deep-Tail M7G Comparison)",
+        "label_zh": "-20% OTM（深虚值 M7G 对照）",
         "short_en": "-20% OTM",
         "short_zh": "-20% OTM",
-        "summary_en": "Spends the exact same dollar budget on deeper 90-DTE -20% OTM Puts for higher crash convexity when tail skew IV(-20%)/IV(-10%) <= 1.18 ($1,856,309 NAV, 20.62% CAGR, Calmar 0.737).",
-        "summary_zh": "在同等美元保费预算下切换至更深虚值 90-DTE -20% OTM Put，在尾部偏度 IV(-20%)/IV(-10%) <= 1.18 时具备极佳赔率（终值 $1,856,309、年化 20.62%、Calmar 0.737）。",
+        "summary_en": "Applies the same 0.20% Base (-15% OTM) + 1.25% M7G fixed NAV budget to deeper -20% OTM M7G Puts when tail skew IV(-20%)/IV(-10%) <= 1.18.",
+        "summary_zh": "保持 0.20% 常态基底（-15% OTM）不变，将 1.25%/槽 M7G 固定预算切换至更深虚值 -20% OTM Put，供尾部偏度平坦期（IV(-20%)/IV(-10%) <= 1.18）对照。",
     },
 ]
 
 M7_TP_MODE_SPECS: list[dict[str, Any]] = [
     {
         "id": "standard",
-        "code": "STANDARD",
+        "code": "NEAR_ITM",
         "require_itm": False,
-        "label_en": "STANDARD (VIX/3M >= 1.10 · Default)",
-        "label_zh": "STANDARD 标准止盈（VIX/3M >= 1.10 · 默认）",
-        "short_en": "STANDARD",
-        "short_zh": "标准止盈",
-        "rule_en": "Exit at T+1 Open when EOD VIX/VIX3M >= 1.10 OR (DTE <= 45 AND Put Mid >= 5x Entry Cost).",
-        "rule_zh": "收盘触发 VIX/VIX3M >= 1.10 恐慌倒挂，或（DTE <= 45 且期权中间价 >= 5 倍建仓成本）时次日开盘止盈换股。",
-        "summary_en": "Unified fast monetization on panic term-structure inversion (VIX/VIX3M >= 1.10) plus 5x second-half slow-bear profit lock ($1,682,250 on -15% OTM).",
-        "summary_zh": "见 VIX/VIX3M >= 1.10 恐慌倒挂即刻次日开盘落袋抄底 QQQ，配合后半程 DTE<=45 & 5x 慢熊锁利（-15% OTM 终值 $1,682,250）。",
+        "label_en": "NEAR-ITM + 5D LOCKOUT (QQQ <= 1.05xK & VIX/3M >= 1.10 | VIX >= 45 · Locked)",
+        "label_zh": "准实值铁底清仓 + 5日锁死（QQQ<=1.05×K & VIX/3M>=1.10 | VIX>=45 · 默认写死）",
+        "short_en": "Near-ITM + 5D Lock",
+        "short_zh": "准实值铁底 + 5日锁",
+        "rule_en": "Exit 100% at T+1 Close when EOD (VIX/VIX3M >= 1.10 AND QQQ <= 1.05*K) OR VIX >= 45 OR (DTE <= 45/60 AND Mid >= 5x Cost); then lock out all buys until VIX/VIX3M < 1.00 for 5 consecutive trading days.",
+        "rule_zh": "收盘满足（VIX/VIX3M >= 1.10 且 QQQ <= 1.05×K 准实值）或 VIX >= 45 极端恐慌，或后半程（DTE <= 45/60 且中间价 >= 5x 成本）次日平仓抄底；随后双账本禁买直至 VIX/VIX3M < 1.00 连续满 5 个交易日。",
+        "summary_en": "Prevents selling puts too early on shallow panic spikes while capturing deep crash convexity, then enforces a 5-day post-inversion cooldown before re-entering.",
+        "summary_zh": "拒绝浅跌早鸟倒挂过早卖飞，精准咬住深跌主浪兑现高凸性赔付，并在止盈后强制等待解除倒挂连续 5 日才允许重新买盾。",
     },
     {
         "id": "itm_tp",
         "code": "ITM_TP",
         "require_itm": True,
-        "label_en": "ITM_TP (QQQ <= Kp + VIX/3M >= 1.10)",
-        "label_zh": "ITM_TP 分层实值止盈（跌破 Kp 才平 · 低回撤）",
-        "short_en": "ITM_TP",
-        "short_zh": "分层实值 ITM",
-        "rule_en": "Exit at T+1 Open when EOD (VIX/VIX3M >= 1.10 AND QQQ <= Strike Kp) OR (DTE <= 45 AND Put Mid >= 5x Entry Cost).",
-        "rule_zh": "收盘同时满足（VIX/VIX3M >= 1.10 且 QQQ <= 行权价 Kp 进入实值），或（DTE <= 45 且中间价 >= 5 倍成本）才止盈。",
-        "summary_en": "Refuses premature exit on early panic spikes while Put is still OTM (e.g., 2020-02-27), slashing 2020 COVID MDD to -23.33% and full-cycle MDD to -24.44% (Calmar 0.763).",
-        "summary_zh": "过滤暴跌初期尚未跌破行权价 Kp 的早鸟倒挂（如 2020-02-27），死拿吃满主跌浪——将 2020 疫情回撤压至 -23.33%、全周期最大回撤压至 -24.44%（Calmar 0.763）。",
+        "label_en": "STRICT ITM + 5D LOCKOUT (QQQ <= 1.00xK & VIX/3M >= 1.10 | VIX >= 45)",
+        "label_zh": "严格实值 + 5日锁死（QQQ <= 1.00×K 跌破行权价才平 · 对照）",
+        "short_en": "Strict ITM",
+        "short_zh": "严格实值 ITM",
+        "rule_en": "Exit at T+1 Close when EOD (VIX/VIX3M >= 1.10 AND QQQ <= 1.00*K) OR VIX >= 45 OR (DTE <= 45/60 AND Mid >= 5x Cost) + 5D Post-Inversion Lockout.",
+        "rule_zh": "要求 QQQ 严格跌破 1.00×K 实值线（且 VIX/3M >= 1.10）或 VIX >= 45 才触发清仓 + 止盈后解除倒挂满 5 日锁死对照。",
+        "summary_en": "Strict 1.00x strike ITM variant for side-by-side comparison against the default 1.05x Near-ITM clearance rule.",
+        "summary_zh": "严格 1.00×K 实值止盈对照档，用于与默认 1.05×K 准实值铁底清仓规则做透明对比。",
     },
 ]
 
@@ -111,12 +169,12 @@ M7_PROFILE_SPECS: list[dict[str, Any]] = [
         "strategy_id": "M7G_Graded",
         "default_roll_mode": "adaptive_120_90",
         "locked_roll_mode": None,
-        "title_en": "Full M7 Shield · Recommended",
-        "title_zh": "全套 M7 护盾 · 默认推荐",
-        "badge_en": "RECOMMENDED · 6-MODULE SHIELD",
-        "badge_zh": "默认推荐 · 6维全天候护盾",
-        "summary_en": "6-Module Radar + Adaptive Roll 120->50 / CTA 90->30 · Shields 2020-type exogenous black swans, #1 in 2021-2025",
-        "summary_zh": "6维雷达 + 自适应滚仓 120→50 / CTA 90→30 · 抗2020型外生黑天鹅，2021–2025后半程更强",
+        "title_en": "0.20% Base + 1.25% Full M7G · Locked",
+        "title_zh": "0.20%常态基底 + 1.25%全套M7G · 默认写死",
+        "badge_en": "LOCKED · 0.20% BASE + 1.25% M7G · VIX<=20 GATE",
+        "badge_zh": "写死主引擎 · 0.20%基底 + 1.25%M7G · VIX<=20门控",
+        "summary_en": "Book B 0.20% NAV (VIX<=20 & VIX/3M<1.02, 125D->75D) + Book M 1.25% NAV/slot (6-Module Radar, 125D->75D / CTA 90D->30D) + Near-ITM TP + 5D Post-Inversion Lockout",
+        "summary_zh": "B账本 0.20%常态基底（VIX<=20门控 · 125D→75D硬换）+ M账本 1.25%/槽全套6维M7G（125D→75D / CTA 90D→30D硬换）+ 准实值铁底清仓 + 解除倒挂5日锁死",
         "active_modules": ["M0", "M6", "M2", "M5", "M4", "M3"],
         "disabled_modules": [],
     },
@@ -125,12 +183,12 @@ M7_PROFILE_SPECS: list[dict[str, Any]] = [
         "strategy_id": "Core3_Adaptive",
         "default_roll_mode": "adaptive_120_90",
         "locked_roll_mode": "adaptive_120_90",
-        "title_en": "Core-3 Minimal · Low Freq · High PF",
-        "title_zh": "精简 3 核 · 低频高赔率",
-        "badge_en": "MINIMAL 3-CORE · 2.23x PF",
-        "badge_zh": "低频高赔率 · 11年30笔",
-        "summary_en": "Only M0+M6+M4 + Adaptive Roll · Just 30 trades in 11 yrs, 2.23x Profit Factor; Note: omits exogenous shock sensors",
-        "summary_zh": "仅保留 M0+M6+M4 + 自适应滚仓 · 11年仅30笔、利润因子2.23x；提示：不含外生突发预警",
+        "title_en": "0.20% Base + 1.25% Core-3 Minimal",
+        "title_zh": "0.20%常态基底 + 1.25%精简3核",
+        "badge_en": "0.20% BASE + 1.25% CORE-3 (M0+M6+M4)",
+        "badge_zh": "0.20%基底 + 1.25%精简3核（M0+M6+M4）",
+        "summary_en": "Book B 0.20% NAV (VIX<=20 Gate, 125D->75D) covers sudden shocks while Book M 1.25% NAV/slot runs only M0+M6+M4 + Hard Roll + Near-ITM TP + 5D Lockout",
+        "summary_zh": "B账本 0.20%常态基底（VIX<=20门控）兜底突发黑天鹅 + M账本 1.25%/槽仅保留 M0+M6+M4 低频三核 + 75D/30D硬换 + 准实值止盈 + 5日锁死",
         "active_modules": ["M0", "M6", "M4"],
         "disabled_modules": ["M2", "M5", "M3"],
     },
@@ -139,19 +197,19 @@ M7_PROFILE_SPECS: list[dict[str, Any]] = [
 M7_ROLL_MODE_SPECS: list[dict[str, Any]] = [
     {
         "id": "adaptive_120_90",
-        "target_dte": 120,
+        "target_dte": 125,
         "cta_target_dte": 90,
-        "ref_dte": 120,
+        "ref_dte": 125,
         "cta_ref_dte": 90,
-        "roll_dte": 50,
+        "roll_dte": 75,
         "cta_roll_dte": 30,
         "five_x_max_dte": 45,
-        "label_en": "Adaptive 120->50 / CTA 90->30 (Recommended)",
-        "label_zh": "自适应 120→50 / CTA 90→30（推荐）",
-        "short_en": "Adaptive 120/90",
-        "short_zh": "自适应 120/90",
-        "summary_en": "Pillar-Adaptive Real-OPRA Champion: P1/P2 fragility & shock signals buy 120D Puts and roll/salvage at <=50 DTE; P3 M4 CTA bear-rally bounces buy faster 90D Puts and roll/salvage at <=30 DTE.",
-        "summary_zh": "真实 OPRA 分支柱自适应冠军：P1/P2 高位背离与外生预警买 120D Put、剩 <=50D 滚仓；P3 M4 熊市死猫跳反弹买更敏捷的 90D Put、剩 <=30D 滚仓回收。",
+        "label_en": "Hard Roll 125->75 / CTA 90->30 (Locked Default)",
+        "label_zh": "硬换 125→75 / CTA 90→30（写死默认）",
+        "short_en": "Hard 125->75 / 90->30",
+        "short_zh": "硬换 125→75 / 90→30",
+        "summary_en": "Hard-Roll Production Standard: Book B (0.20% NAV, VIX<=20) and Non-CTA M7G slots (1.25% NAV) buy 125D Puts and hard-roll/exit at <=75 DTE; CTA M4 slots buy 90D Puts and hard-roll/exit at <=30 DTE (zero crash-hold past <=75D/30D).",
+        "summary_zh": "硬换实盘标准：B账本（0.20%净值，VIX<=20）与非CTA战术槽（1.25%净值）买 125D Put、剩 <=75D 强制硬换/平仓；CTA(M4) 熊市反弹槽买 90D Put、剩 <=30D 强制硬换（绝不死扛过期）。",
     },
     {
         "id": "120d_roll50",
@@ -162,12 +220,12 @@ M7_ROLL_MODE_SPECS: list[dict[str, Any]] = [
         "roll_dte": 50,
         "cta_roll_dte": 50,
         "five_x_max_dte": 45,
-        "label_en": "Uniform 120D -> 50D Roll",
-        "label_zh": "统一 120→50 滚仓",
+        "label_en": "Uniform 120D -> 50D Roll (Compare)",
+        "label_zh": "统一 120→50 滚仓（对照）",
         "short_en": "Uniform 120->50",
         "short_zh": "统一 120→50",
-        "summary_en": "Uniform 120D->50D Roll: buys 120-DTE Puts sized to 120D -10% Put Ask across all pillars and salvages/rolls at <= 50 DTE before the Theta cliff.",
-        "summary_zh": "统一 120D→50D 滚仓：所有支柱统一建仓 120D Put，剩 <=50 DTE 在 Theta 悬崖前按实盘买一价回收残值或滚入新仓。",
+        "summary_en": "Comparison tenor: Book M uses uniform 120D->50D roll across all pillars alongside Book B 125D->75D.",
+        "summary_zh": "对照期限：M账本所有支柱统一采用 120D→50D 滚仓（配合 B账本 125D→75D 常态基底）。",
     },
     {
         "id": "90d_hold",
@@ -178,12 +236,12 @@ M7_ROLL_MODE_SPECS: list[dict[str, Any]] = [
         "roll_dte": 0,
         "cta_roll_dte": 0,
         "five_x_max_dte": 45,
-        "label_en": "90D Hold-to-Expiry",
-        "label_zh": "90D 持有到期",
+        "label_en": "90D Hold-to-Expiry (Legacy Compare)",
+        "label_zh": "90D 持有到期（旧版对照）",
         "short_en": "90D Hold",
         "short_zh": "90D 持有",
-        "summary_en": "90D Hold-to-Expiry baseline (Full M7 only): buys 90-DTE OTM Puts sized to 90D -10% Put Ask and holds to panic TP or expiry.",
-        "summary_zh": "90D 持有到期对照（仅全套 M7 可选）：按 90D -10% Put 基准保费买入 90D Put，持有至恐慌止盈或到期。",
+        "summary_en": "Legacy comparison (Full M7 only): Book M holds 90-DTE Puts to TP or expiry without pre-cliff roll, demonstrating the theta-salvage advantage of Hard 125D->75D Roll.",
+        "summary_zh": "旧版对照（仅全套 M7 可选）：M账本买入 90D Put 持有至止盈或到期不提前滚仓，用于直观对比 125D→75D 硬换的残值回收优势。",
     },
 ]
 
@@ -1292,6 +1350,18 @@ def _classify_quote_source_tag(
     return "CALIBRATED_BSM"
 
 
+def _dte_bounds(dte_tgt: int) -> tuple[int, int]:
+    if dte_tgt <= 65:
+        return max(28, dte_tgt - 15), dte_tgt + 18
+    if dte_tgt == 90:
+        return 65, 120
+    if dte_tgt == 120:
+        return 90, 155
+    if dte_tgt == 125:
+        return 95, 160
+    return int(dte_tgt * 0.78), int(dte_tgt * 1.25)
+
+
 def simulate_m7_strategy(
     rows_eval: list[dict[str, Any]],
     coeffs: list[float],
@@ -1306,30 +1376,45 @@ def simulate_m7_strategy(
     sp_mode: str = "sp_off",
     wc_mode: str = "wc_reclaim_30d_d35",
     real_store: Any = None,
-    fill_mode: str = "ask_bid",
+    fill_mode: str = DEFAULT_M7_FILL_MODE,
 ) -> dict[str, Any]:
-    """Simulate M7G_Graded (Full 6-Module Adaptive), Core3_Adaptive (M0+M6+M4 Minimal Adaptive),
-    or M7_Ensemble (2 slots) using MIT Real QQQ OPRA Option Chain (2015-01-02..2025-12-15, strict
-    Ask/Bid by default) + OPRA-Calibrated BSM (2025-12-16..Live with real-IV seam continuity),
-    plus full Engine 2 Covered Call & Engine 3 Panic Put Reverse Wheel overlays.
+    """Simulate hard-coded B020_M125 Dual-Book Overlay (0.20% Base VIX<=20 Gate + 1.25%/slot M7G)
+    with Hard 125D->75D / CTA 90D->30D Roll, Near-ITM Bottom Clearance ((VIX/3M>=1.10 & QQQ<=1.05*K)
+    | VIX>=45 | >=5x late), and Strictly Causal 5-Day Post-Inversion Lockout (VIX/3M < 1.00 x 5d)
+    across MIT Real QQQ OPRA Option Chain (2015-01-02..2025-12-15) + OPRA-Calibrated BSM (2025-12-16..Live).
     """
     use_real = real_store is not None and _roc_mod is not None
     is_core3 = strategy_id == "Core3_Adaptive"
     is_graded = strategy_id in ("M7G_Graded", "Core3_Adaptive")
     max_slots = 3 if is_graded else 2
+    if roll_mode == "adaptive_125_75":
+        roll_mode = "adaptive_120_90"
+    if m7_tp_mode == "near_itm":
+        m7_tp_mode = "standard"
     if is_core3 and roll_mode == "90d_hold":
-        # Safety guardrail: never allow 90D Hold on Core-3 (degrades to 0.87x PF)
         roll_mode = "adaptive_120_90"
     if roll_mode not in ("adaptive_120_90", "120d_roll50", "90d_hold"):
         roll_mode = DEFAULT_ROLL_MODE
+    if fill_mode not in ("ibkr_limit", "ask_bid"):
+        fill_mode = DEFAULT_M7_FILL_MODE
 
     put_moneyness = 0.80 if put_otm == "otm20" else 0.85
     otm_pct_int = 20 if put_otm == "otm20" else 15
     require_itm_tp = m7_tp_mode == "itm_tp"
-    tp_code = "ITM_TP" if require_itm_tp else "STANDARD"
+    near_itm_mult = 1.00 if require_itm_tp else HARDCODED_NEAR_ITM_MULT
+    tp_code = "ITM_TP" if require_itm_tp else "NEAR_ITM"
     is_adaptive = roll_mode == "adaptive_120_90"
     is_roll50 = roll_mode == "120d_roll50"
     opra_max_d = str(getattr(real_store, "opra_date_max", "2025-12-15") or "2025-12-15") if use_real else ""
+
+    base_enabled = True
+    base_budget_pct = HARDCODED_BASE_BUDGET_PCT
+    base_dte = HARDCODED_BASE_DTE
+    base_roll_dte = HARDCODED_BASE_ROLL_DTE
+    base_moneyness = HARDCODED_BASE_MONEYNESS
+    m7_fixed_budget_pct = HARDCODED_M7_BUDGET_PCT
+    lockout_days = HARDCODED_LOCKOUT_DAYS
+    lockout_inv_thresh = HARDCODED_LOCKOUT_INV_THRESH
 
     def _slots_for_sig(sd: dict[str, Any]) -> int:
         if is_core3:
@@ -1353,18 +1438,19 @@ def simulate_m7_strategy(
             float(sd["p3"]),
         )
 
-    def _tenor_for_sig(is_cta_flag: bool) -> tuple[int, int, int, tuple[int, int], tuple[int, int]]:
+    def _tenor_for_sig(is_cta_flag: bool) -> tuple[int, int, tuple[int, int]]:
         if is_adaptive:
             if is_cta_flag:
-                return 90, 90, 30, (65, 120), (65, 120)
-            return 120, 120, 50, (90, 155), (90, 155)
+                return HARDCODED_M7_CTA_DTE, HARDCODED_M7_CTA_ROLL_DTE, _dte_bounds(HARDCODED_M7_CTA_DTE)
+            return HARDCODED_M7_BASE_DTE, HARDCODED_M7_BASE_ROLL_DTE, _dte_bounds(HARDCODED_M7_BASE_DTE)
         if is_roll50:
-            return 120, 120, 50, (90, 155), (90, 155)
-        return 90, 90, 0, (65, 120), (65, 120)
+            return 120, 50, _dte_bounds(120)
+        return 90, 0, _dte_bounds(90)
 
     dates = [r["date"] for r in rows_eval]
     dt_objs = [datetime.date.fromisoformat(d) for d in dates]
     n_days = len(rows_eval)
+    r_arr = [float(r["r"]) for r in rows_eval]
 
     bh_m7 = compute_m7_bh_parity(rows_eval, use_close_start=use_real)
     final_bh_sh = bh_m7["final_shares"]
@@ -1373,15 +1459,14 @@ def simulate_m7_strategy(
     px0 = float(rows_eval[0]["close"]) if use_real else float(rows_eval[0]["open"])
     core_shares = INITIAL_CAPITAL / (px0 * (1.0 + STOCK_REBAL_FEE))
 
-    slot_coverage = 0.50
-    ref_moneyness = 0.90
-    target_dte = 120 if (is_adaptive or is_roll50) else 90
-    roll_dte_thr = 50 if (is_adaptive or is_roll50) else 0
+    target_dte = HARDCODED_M7_BASE_DTE if is_adaptive else (120 if is_roll50 else 90)
+    roll_dte_thr = HARDCODED_M7_BASE_ROLL_DTE if is_adaptive else (50 if is_roll50 else 0)
     step_cal_days = 30
     escalate_min_days = 21
     vix_ratio_tp = 1.10
     put_mult_tp = 5.0
-    put_mult_max_dte = 45
+    put_mult_max_dte_m7 = 45
+    put_mult_max_dte_base = 60
 
     q_stats = {
         "total_lookups": 0,
@@ -1489,8 +1574,24 @@ def simulate_m7_strategy(
         sp_mode, (14, 0.05, 0.0, 1.00, False)
     )
 
-    active_tranches: list[dict[str, Any]] = []
+    m7_active: list[dict[str, Any]] = []
+    base_active: list[dict[str, Any]] = []
     pending_sig: dict[str, Any] | None = None
+    pending_base_open = False
+
+    # Post-TP Lockout state machine (strictly EOD causal across BOTH Book B and Book M)
+    post_tp_lockout = False
+    non_inverted_streak = 0
+    m7_locked_prev_eod = False
+    base_locked_prev_eod = False
+    lockout_days_total = 0
+    lockout_episodes: list[dict[str, Any]] = []
+    cur_ep: dict[str, Any] | None = None
+    last_tp_date: str | None = None
+    last_unlock_date: str | None = None
+    base_days_hedged = 0
+    base_gate_open_days = 0
+
     active_cc: dict[str, Any] | None = None
     pending_cc: dict[str, Any] | None = None
     pending_cc_deploy = False
@@ -1538,9 +1639,17 @@ def simulate_m7_strategy(
             core_shares += sp_cash / denom
             sp_cash = 0.0
 
+    def _current_nav_approx(px: float) -> float:
+        nav_v = (core_shares + assigned_shares) * px + cc_cash + sp_cash
+        for tr_m in m7_active:
+            nav_v += tr_m.get("last_mtm_usd", tr_m["entry_cost_usd"])
+        for tr_b in base_active:
+            nav_v += tr_b.get("last_mtm_usd", tr_b["entry_cost_usd"])
+        return max(nav_v, 1.0)
+
     def _estimate_nav_exec(ex_px: float, vxn_e: float, r_c: float, q_c: float, cur_dt: datetime.date, d_str: str) -> float:
         mtm_p = 0.0
-        for tr_o in active_tranches:
+        for tr_o in m7_active + base_active:
             rem_d_o = max(1, (tr_o["exp_dt"] - cur_dt).days)
             _, _, pm_o, _, _, _ = _lookup_opt(
                 d_str, "put", tr_o["exp_date"], tr_o["kp"], tr_o.get("k_cents"),
@@ -1557,6 +1666,433 @@ def simulate_m7_strategy(
             mtm_cc_o = -active_cc["shares"] * cm_o
         return max(1.0, (core_shares + assigned_shares) * ex_px + cc_cash + sp_cash + mtm_p + mtm_cc_o)
 
+    def _select_or_synth_put(
+        idx_day: int,
+        d_str: str,
+        spot_px: float,
+        t_dte: int,
+        moneyness_val: float,
+        otm_int: int,
+        lo_dte: int,
+        hi_dte: int,
+        r_en: float,
+        q_en: float,
+        vxn_en: float,
+    ) -> dict[str, Any] | None:
+        c_en = None
+        if use_real:
+            c_en = real_store.select_put_contract(
+                d_str,
+                spot_px,
+                t_dte,
+                moneyness_val,
+                lo_dte,
+                hi_dte,
+                r_en,
+                q_en,
+                rec_tag=f"p_{t_dte}_{otm_int}",
+            )
+            if c_en is None and opra_max_d and d_str <= opra_max_d:
+                q_stats["opra_window_fallbacks"] += 1
+                return None
+        if c_en is not None:
+            _rec_src(c_en["source"], d_str)
+            exp_date = c_en["exp"]
+            exp_dt = c_en["exp_dt"]
+            t_en = max(1, (exp_dt - dt_objs[idx_day]).days) / 365.0
+            kp = float(c_en["strike"])
+            k_cents_en = int(c_en["k_cents"])
+            en_bid_raw = float(c_en["bid"])
+            en_ask_raw = float(c_en["ask"])
+            mid_en = float(c_en["mid"])
+            put_ask_en = _buy_px(en_bid_raw, en_ask_raw, mid_en, c_en["source"], slip_bsm=OPT_SLIP)
+            iv_en = c_en["iv"]
+            src_en = str(c_en["source"])
+            occ_en = str(c_en.get("occ_symbol") or _occ(exp_date, "put", kp))
+            entry_dte_val = int(c_en["dte"])
+        else:
+            target_cal = dt_objs[idx_day] + datetime.timedelta(days=t_dte)
+            pos = bisect.bisect_left(dt_objs, target_cal)
+            exp_date, exp_dt = (dates[pos], dt_objs[pos]) if pos < n_days else (target_cal.isoformat(), target_cal)
+            entry_dte_val = max(1, (exp_dt - dt_objs[idx_day]).days)
+            t_en = entry_dte_val / 365.0
+            kp = round(spot_px * moneyness_val, 2)
+            k_cents_en = int(round(kp * 100.0))
+            iv_en = bco_mod.eval_skew_iv(spot_px, kp, t_en, r_en, q_en, vxn_en, coeffs)
+            mid_en = bco_mod.bsm_price(spot_px, kp, t_en, r_en, q_en, iv_en, "put")
+            en_bid_raw = max(0.0, mid_en * (1.0 - OPT_SLIP))
+            en_ask_raw = mid_en * (1.0 + OPT_SLIP)
+            put_ask_en = _buy_px(en_bid_raw, en_ask_raw, mid_en, "bsm_fallback", slip_bsm=OPT_SLIP)
+            src_en = "bsm_fallback"
+            occ_en = _occ(exp_date, "put", kp)
+            _rec_src(src_en, d_str)
+
+        iv_anchor_en = None
+        if src_en.startswith("real_opra") and iv_en is not None and math.isfinite(iv_en) and 0.02 <= iv_en <= 3.0:
+            bsm_iv_ref = bco_mod.eval_skew_iv(spot_px, kp, max(t_en, 1.0 / 365.0), r_en, q_en, vxn_en, coeffs)
+            iv_anchor_en = max(0.5, min(2.0, iv_en / max(bsm_iv_ref, 0.05)))
+        return {
+            "exp_date": exp_date,
+            "exp_dt": exp_dt,
+            "entry_dte": entry_dte_val,
+            "T_entry": t_en,
+            "kp": kp,
+            "k_cents": k_cents_en,
+            "en_bid_raw": en_bid_raw,
+            "en_ask_raw": en_ask_raw,
+            "mid_en": mid_en,
+            "put_ask_en": put_ask_en,
+            "iv_en": iv_en if (iv_en is not None and math.isfinite(iv_en)) else None,
+            "iv_anchor_en": iv_anchor_en,
+            "src_en": src_en,
+            "occ_en": occ_en,
+        }
+
+    def _fund_put_entry(entry_cost_usd: float, cash_from_salvage: float, spot_px: float) -> float:
+        nonlocal core_shares, cc_cash, cc_funded_puts
+        rem_need = entry_cost_usd - cash_from_salvage
+        d_sh_entry = 0.0
+        if rem_need < -1e-8:
+            d_sh_entry = (-rem_need) / (spot_px * (1.0 + STOCK_REBAL_FEE))
+            core_shares += d_sh_entry
+        elif rem_need > 1e-8:
+            if cc_enabled and cc_cash > 0.0:
+                use_cc = min(cc_cash, rem_need)
+                cc_cash -= use_cc
+                cc_funded_puts += use_cc
+                rem_need -= use_cc
+            if rem_need > 1e-8:
+                d_sh_entry = -rem_need / (spot_px * (1.0 - STOCK_REBAL_FEE))
+                core_shares += d_sh_entry
+        return d_sh_entry
+
+    def _build_closed_ledger_row(
+        tr: dict[str, Any],
+        exit_date_str: str,
+        idx_day: int,
+        rem_days: int,
+        t_rem: float,
+        exit_spot_px: float,
+        exit_vxn_val: float,
+        exit_vix_val: float,
+        exit_vr_val: float,
+        r_c: float,
+        q_c: float,
+        b_ex: float,
+        a_ex: float,
+        sell_px: float,
+        src_ex: str,
+        exit_rsn: str,
+        d_sh: float,
+        mult_comp: float,
+    ) -> dict[str, Any]:
+        hs = float(tr["hedged_shares"])
+        exit_usd = hs * sell_px
+        cost_part = float(tr["entry_cost_usd"])
+        roi_mult = (exit_usd / cost_part) if cost_part > 1e-6 else 0.0
+        actual_net_sh = sell_px - float(tr["entry_put_ask"])
+        conv = bco_mod.decompose_tranche_convexity(
+            "naked_put",
+            tr["entry_spot"],
+            exit_spot_px,
+            tr["kp"],
+            None,
+            tr["T_entry"],
+            t_rem,
+            tr["entry_r"],
+            r_c,
+            tr["entry_q"],
+            q_c,
+            tr["entry_vxn"],
+            exit_vxn_val,
+            coeffs,
+            actual_net_sh,
+        )
+        en_src = str(tr.get("entry_source", "bsm_fallback"))
+        q_tag = _classify_quote_source_tag(en_src, src_ex, tr["entry_date"], exit_date_str, opra_max_d or "2025-12-15")
+        occ_sym = str(tr.get("occ_symbol") or _occ(tr["exp_date"], "put", tr["kp"]))
+        is_base_b = tr["book"] == "base"
+        net_pnl_val = round(exit_usd - cost_part, 2)
+        d_usd = round(float(conv["dV_delta_sh"]) * hs, 2)
+        g_usd = round(float(conv["dV_gamma_sh"]) * hs, 2)
+        v_usd = round(float(conv["dV_vega_sh"]) * hs, 2)
+        th_usd = round(net_pnl_val - (d_usd + g_usd + v_usd), 2)
+        return {
+            "tranche_id": tr["tranche_id"],
+            "strategy_id": strategy_id,
+            "book": tr["book"],
+            "book_label_en": "Book B · 0.20% Base" if is_base_b else "Book M · 1.25% M7G",
+            "book_label_zh": "B账本 · 0.20%常态基底" if is_base_b else "M账本 · 1.25%战术M7G",
+            "budget_pct_nav": 0.20 if is_base_b else 1.25,
+            "entry_pct_nav": tr["entry_pct_nav"],
+            "nav_at_entry": round(float(tr["nav_at_entry"]), 2),
+            "slot_num": tr["slot_num"],
+            "tier": tr["tier"],
+            "max_slots": max_slots,
+            "tranche_type": "naked_put",
+            "put_otm_pct": int(tr.get("put_otm_pct") or otm_pct_int),
+            "tp_mode": tp_code,
+            "roll_mode": roll_mode,
+            "target_dte": int(tr.get("target_dte") or target_dte),
+            "roll_dte": int(tr.get("roll_dte_thr") or 0),
+            "is_cta": bool(tr.get("is_cta", False)),
+            "quoteSource": q_tag,
+            "quote_source": q_tag,
+            "occSymbol": occ_sym,
+            "occ_symbol": occ_sym,
+            "exp": tr["exp_date"],
+            "strike": round(tr["kp"], 2),
+            "near_itm_strike_105": round(tr["kp"] * near_itm_mult, 2),
+            "entryBid": round(float(tr.get("entry_bid_raw", tr["entry_put_ask"])), 3),
+            "entryAsk": round(float(tr.get("entry_ask_raw", tr["entry_put_ask"])), 3),
+            "exitBid": round(float(b_ex), 3),
+            "exitAsk": round(float(a_ex), 3),
+            "pricing_source": _classify_trade_source(en_src, src_ex),
+            "entry_source": en_src,
+            "exit_source": src_ex,
+            "signal_date": tr["signal_date"],
+            "entry_date": tr["entry_date"],
+            "planned_exp_date": tr["exp_date"],
+            "exit_date": exit_date_str,
+            "actual_days_held": (dt_objs[idx_day] - tr["entry_dt"]).days,
+            "rem_dte_at_exit": rem_days,
+            "exit_reason": exit_rsn,
+            "sig_score": tr["sig_score"],
+            "sig_ad_below50": tr["sig_ad_below50"],
+            "crisis_prob": tr["crisis_prob"],
+            "p1": tr["p1"],
+            "p2": tr["p2"],
+            "p3": tr["p3"],
+            "triggered_modules": tr["triggered_modules"],
+            "trigger_code": tr["trigger_code"],
+            "trigger_en": tr["trigger_en"],
+            "trigger_zh": tr["trigger_zh"],
+            "entry_spot": round(tr["entry_spot"], 2),
+            "entry_vxn": round(tr["entry_vxn"], 2),
+            "entry_vix": round(float(tr.get("entry_vix", 0.0)), 2),
+            "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
+            "kp": round(tr["kp"], 2),
+            "kc": None,
+            "call_cap_pct": None,
+            "hedged_shares": round(hs, 2),
+            "contracts_est": round(hs / 100.0, 2),
+            "slot_coverage": round(tr["hedged_ratio"], 4),
+            "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
+            "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
+            "entry_cost_usd": round(cost_part, 2),
+            "entry_shares_sold": round(tr["entry_shares_sold"], 4),
+            "exit_spot": round(exit_spot_px, 2),
+            "exit_vxn": round(exit_vxn_val, 2),
+            "exit_vix": round(exit_vix_val, 2),
+            "exit_vix_ratio": round(exit_vr_val, 3),
+            "underlying_ret_pct": round((exit_spot_px / tr["entry_spot"] - 1.0) * 100.0, 2),
+            "put_exit_val_sh": round(sell_px, 4),
+            "call_exit_cost_sh": 0.0,
+            "exit_net_cash_usd": round(exit_usd, 2),
+            "net_pnl_usd": net_pnl_val,
+            "roi_mult": round(roi_mult, 2),
+            "exit_shares_delta": round(d_sh, 2),
+            "shares_added": round(tr["entry_shares_sold"] + d_sh, 2),
+            "delta0": round(float(conv["delta0"]), 4),
+            "delta_usd": d_usd,
+            "gamma_usd": g_usd,
+            "vega_usd": v_usd,
+            "theta_slip_usd": th_usd,
+            "convexity_mult": round(float(conv["conv_mult"]), 2) if conv["conv_mult"] is not None else None,
+            "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
+            "comp_put_gain_usd": round(d_sh * mult_comp, 2),
+            "comp_call_drag_usd": 0.0,
+        }
+
+    def _open_m7_tranche(
+        idx_day: int,
+        d_str: str,
+        spot_px: float,
+        vxn_en: float,
+        vix_en: float,
+        r_en: float,
+        q_en: float,
+        cap_slots_val: int,
+        sig_prev: dict[str, Any],
+        prev_row: dict[str, Any],
+        mult_morning_val: float,
+        cash_from_salvage: float = 0.0,
+    ) -> dict[str, Any] | None:
+        nonlocal core_shares, tid
+        is_cta_flag = bool(sig_prev.get("M4", False))
+        t_dte, rl_dte, (lo_b, hi_b) = _tenor_for_sig(is_cta_flag)
+        c_pack = _select_or_synth_put(
+            idx_day, d_str, spot_px, t_dte, put_moneyness, otm_pct_int, lo_b, hi_b, r_en, q_en, vxn_en
+        )
+        if c_pack is None:
+            if cash_from_salvage > 1e-8:
+                core_shares += cash_from_salvage / (spot_px * (1.0 + STOCK_REBAL_FEE))
+            return None
+        put_ask_en = float(c_pack["put_ask_en"])
+        cur_nav = _current_nav_approx(spot_px) + cash_from_salvage
+        budget_usd = cur_nav * m7_fixed_budget_pct
+        if put_ask_en < 0.03 or budget_usd <= 1.0:
+            if cash_from_salvage > 1e-8:
+                core_shares += cash_from_salvage / (spot_px * (1.0 + STOCK_REBAL_FEE))
+            return None
+        hedged_sh = budget_usd / put_ask_en
+        entry_cost_usd = budget_usd
+        d_sh_entry = _fund_put_entry(entry_cost_usd, cash_from_salvage, spot_px)
+        tid += 1
+        used_slots = {t["slot_num"] for t in m7_active}
+        slot_num = min(s for s in range(1, max(max_slots, cap_slots_val) + 1) if s not in used_slots)
+        hr = hedged_sh / max(core_shares, 1e-6)
+        mods, t_code, t_en_l, t_zh_l = format_m7_trigger_labels(sig_prev, max_slots, core3_only=is_core3)
+        c_prob_r, p1_r, p2_r, p3_r = _prob_tuple(sig_prev)
+        return {
+            "tranche_id": tid,
+            "book": "m7",
+            "slot_num": slot_num,
+            "tier": cap_slots_val,
+            "is_cta": is_cta_flag,
+            "target_dte": t_dte,
+            "roll_dte_thr": rl_dte,
+            "put_otm_pct": otm_pct_int,
+            "occ_symbol": c_pack["occ_en"],
+            "signal_date": str(prev_row["date"]),
+            "sig_score": int(prev_row["score"]),
+            "sig_ad_below50": bool(float(prev_row["ad_line"]) < float(prev_row["ad_sma50"])),
+            "crisis_prob": c_prob_r,
+            "p1": p1_r,
+            "p2": p2_r,
+            "p3": p3_r,
+            "triggered_modules": mods,
+            "trigger_code": t_code,
+            "trigger_en": t_en_l,
+            "trigger_zh": t_zh_l,
+            "entry_date": d_str,
+            "entry_dt": dt_objs[idx_day],
+            "exp_date": c_pack["exp_date"],
+            "exp_dt": c_pack["exp_dt"],
+            "entry_dte": c_pack["entry_dte"],
+            "T_entry": c_pack["T_entry"],
+            "entry_spot": spot_px,
+            "entry_vxn": vxn_en,
+            "entry_vix": vix_en,
+            "entry_vix_ratio": float(prev_row["vix_ratio"]),
+            "entry_r": r_en,
+            "entry_q": q_en,
+            "kp": c_pack["kp"],
+            "k_cents": c_pack["k_cents"],
+            "last_iv": c_pack["iv_en"],
+            "iv_ratio_anchor": c_pack["iv_anchor_en"],
+            "entry_source": c_pack["src_en"],
+            "entry_bid_raw": c_pack["en_bid_raw"],
+            "entry_ask_raw": c_pack["en_ask_raw"],
+            "hedged_shares": hedged_sh,
+            "ref_cov_sh": 0.0,
+            "hedged_ratio": hr,
+            "entry_put_ask": put_ask_en,
+            "entry_cost_usd": entry_cost_usd,
+            "entry_pct_nav": round(entry_cost_usd / max(cur_nav, 1.0) * 100.0, 3),
+            "nav_at_entry": cur_nav,
+            "last_mtm_usd": entry_cost_usd,
+            "entry_shares_sold": d_sh_entry,
+            "comp_entry_cost_usd": d_sh_entry * mult_morning_val,
+            "pending_tp": False,
+            "pending_roll": False,
+            "tp_trigger_ratio": 0.0,
+            "tp_reason": "",
+        }
+
+    def _open_base_tranche(
+        idx_day: int,
+        d_str: str,
+        spot_px: float,
+        vxn_en: float,
+        vix_en: float,
+        r_en: float,
+        q_en: float,
+        sig_prev: dict[str, Any],
+        prev_row: dict[str, Any],
+        mult_morning_val: float,
+        budget_usd: float,
+        cash_from_salvage: float = 0.0,
+    ) -> dict[str, Any] | None:
+        nonlocal core_shares, tid
+        lo_b, hi_b = _dte_bounds(base_dte)
+        c_pack = _select_or_synth_put(
+            idx_day, d_str, spot_px, base_dte, base_moneyness, 15, lo_b, hi_b, r_en, q_en, vxn_en
+        )
+        if c_pack is None:
+            if cash_from_salvage > 1e-8:
+                core_shares += cash_from_salvage / (spot_px * (1.0 + STOCK_REBAL_FEE))
+            return None
+        put_ask_en = float(c_pack["put_ask_en"])
+        if put_ask_en < 0.03 or budget_usd <= 1.0:
+            if cash_from_salvage > 1e-8:
+                core_shares += cash_from_salvage / (spot_px * (1.0 + STOCK_REBAL_FEE))
+            return None
+        cur_nav = _current_nav_approx(spot_px) + cash_from_salvage
+        hedged_sh = budget_usd / put_ask_en
+        entry_cost_usd = budget_usd
+        d_sh_entry = _fund_put_entry(entry_cost_usd, cash_from_salvage, spot_px)
+        tid += 1
+        hr = hedged_sh / max(core_shares, 1e-6)
+        c_prob_r, p1_r, p2_r, p3_r = _prob_tuple(sig_prev)
+        prev_vix = float(prev_row["vix"])
+        prev_vr = float(prev_row["vix_ratio"])
+        return {
+            "tranche_id": tid,
+            "book": "base",
+            "slot_num": 0,
+            "tier": 0,
+            "is_cta": False,
+            "target_dte": base_dte,
+            "roll_dte_thr": base_roll_dte,
+            "put_otm_pct": 15,
+            "occ_symbol": c_pack["occ_en"],
+            "signal_date": str(prev_row["date"]),
+            "sig_score": int(prev_row["score"]),
+            "sig_ad_below50": bool(float(prev_row["ad_line"]) < float(prev_row["ad_sma50"])),
+            "crisis_prob": c_prob_r,
+            "p1": p1_r,
+            "p2": p2_r,
+            "p3": p3_r,
+            "triggered_modules": ["B_VIX20"],
+            "trigger_code": "BASE_VIX20",
+            "trigger_en": f"Book B 0.20% Base Floor (VIX {prev_vix:.1f}<=20 & VIX/3M {prev_vr:.3f}<1.02 · 125D->75D)",
+            "trigger_zh": f"B账本 0.20%常态基底（VIX {prev_vix:.1f}<=20 且 VIX/3M {prev_vr:.3f}<1.02 · 125D→75D硬换）",
+            "entry_date": d_str,
+            "entry_dt": dt_objs[idx_day],
+            "exp_date": c_pack["exp_date"],
+            "exp_dt": c_pack["exp_dt"],
+            "entry_dte": c_pack["entry_dte"],
+            "T_entry": c_pack["T_entry"],
+            "entry_spot": spot_px,
+            "entry_vxn": vxn_en,
+            "entry_vix": vix_en,
+            "entry_vix_ratio": prev_vr,
+            "entry_r": r_en,
+            "entry_q": q_en,
+            "kp": c_pack["kp"],
+            "k_cents": c_pack["k_cents"],
+            "last_iv": c_pack["iv_en"],
+            "iv_ratio_anchor": c_pack["iv_anchor_en"],
+            "entry_source": c_pack["src_en"],
+            "entry_bid_raw": c_pack["en_bid_raw"],
+            "entry_ask_raw": c_pack["en_ask_raw"],
+            "hedged_shares": hedged_sh,
+            "ref_cov_sh": 0.0,
+            "hedged_ratio": hr,
+            "entry_put_ask": put_ask_en,
+            "entry_cost_usd": entry_cost_usd,
+            "entry_pct_nav": round(entry_cost_usd / max(cur_nav, 1.0) * 100.0, 3),
+            "nav_at_entry": cur_nav,
+            "last_mtm_usd": entry_cost_usd,
+            "entry_shares_sold": d_sh_entry,
+            "comp_entry_cost_usd": d_sh_entry * mult_morning_val,
+            "pending_tp": False,
+            "pending_roll": False,
+            "tp_trigger_ratio": 0.0,
+            "tp_reason": "",
+        }
+
     for i, d in enumerate(dates):
         row = rows_eval[i]
         sig_d = sig_series[i]
@@ -1564,6 +2100,7 @@ def simulate_m7_strategy(
         cl = float(row["close"])
         div = float(row["dividends"])
         vxn_cl = float(row["vxn"])
+        vix_cl = float(row["vix"])
         vix_r = float(row["vix_ratio"])
         r_cur = float(row["r"])
         q_cur = float(row["div_yield"])
@@ -1712,461 +2249,146 @@ def simulate_m7_strategy(
                         "roll_count": old_rolls + 1,
                     }
 
-        # 1. Pending M7 TP / Adaptive-Roll Exits at T+1
-        if i > 0 and any(t.get("pending_tp") or t.get("pending_roll") for t in active_tranches):
-            still_open: list[dict[str, Any]] = []
-            roll_replacements: list[tuple[float, int, dict[str, Any]]] = []
-            for tr in active_tranches:
+        # 1A. Execute Pending T+1 Close Exits for Book M (1.25% M7G)
+        if i > 0 and m7_active:
+            still_m7: list[dict[str, Any]] = []
+            m7_roll_reps: list[tuple[float, int, dict[str, Any]]] = []
+            prev_row_m = rows_eval[i - 1]
+            prev_sig_m = sig_series[i - 1]
+            prev_cap_m = min(max_slots, _slots_for_sig(prev_sig_m))
+            prev_affordable_m = float(prev_row_m["vxn"]) <= 27.0 and float(prev_row_m["vix_ratio"]) < 1.02
+            for tr in m7_active:
                 if not tr.get("pending_tp") and not tr.get("pending_roll"):
-                    still_open.append(tr)
+                    still_m7.append(tr)
                     continue
                 rem_days = max(0, (tr["exp_dt"] - dt_objs[i]).days)
                 t_rem = rem_days / 365.0
-                if _is_exp(i, tr["exp_dt"]):
-                    put_bid = max(0.0, tr["kp"] - exec_px)
-                    b_ex, a_ex = put_bid, put_bid
-                    src_ex = tr.get("entry_source", "bsm_fallback")
-                else:
-                    b_ex, a_ex, m_ex, _, _, src_ex = _lookup_opt(
-                        d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents"),
-                        exec_px, rem_days, r_cur, q_cur, vxn_ex, tr.get("last_iv"),
-                        slip_bsm=OPT_SLIP, iv_ratio_anchor=tr.get("iv_ratio_anchor"),
-                    )
-                    put_bid = _sell_px(b_ex, a_ex, m_ex, src_ex, slip_bsm=OPT_SLIP)
-                exit_usd = tr["hedged_shares"] * put_bid
-                is_roll_exit = bool(tr.get("pending_roll")) and not bool(tr.get("pending_tp"))
-                tr_roll_thr_val = int(tr.get("roll_dte_thr") or 50)
-                exit_rsn = (tr.get("tp_reason") or f"roll_{tr_roll_thr_val}d") if is_roll_exit else tr["tp_reason"]
-
-                prev_sig_d = sig_series[i - 1]
-                prev_cap = _slots_for_sig(prev_sig_d)
-                will_auto_roll = is_roll_exit and prev_cap > len(still_open) + len(roll_replacements)
-
+                b_ex, a_ex, m_ex, _, _, src_ex = _lookup_opt(
+                    d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents"),
+                    exec_px, rem_days, r_cur, q_cur, vxn_ex, tr.get("last_iv"),
+                    slip_bsm=OPT_SLIP, iv_ratio_anchor=tr.get("iv_ratio_anchor"),
+                )
+                sell_px = _sell_px(b_ex, a_ex, m_ex, src_ex, slip_bsm=OPT_SLIP)
+                exit_usd = tr["hedged_shares"] * sell_px
+                exit_rsn = str(tr.get("tp_reason") or "roll_75d")
+                will_roll_m = False
                 d_sh = 0.0
-                if not will_auto_roll and abs(exit_usd) > 1e-10:
-                    denom = exec_px * (1.0 + (STOCK_REBAL_FEE if exit_usd >= 0 else -STOCK_REBAL_FEE))
-                    d_sh = exit_usd / denom
-                    core_shares += d_sh
-                elif will_auto_roll:
-                    roll_replacements.append((exit_usd, prev_cap, prev_sig_d))
+                if exit_rsn.startswith("roll_"):
+                    if prev_cap_m > len(still_m7) + len(m7_roll_reps) and prev_affordable_m:
+                        if not m7_locked_prev_eod:
+                            will_roll_m = True
+                            m7_roll_reps.append((exit_usd, prev_cap_m, prev_sig_m))
+                        else:
+                            if cur_ep is not None:
+                                cur_ep["blocked_m7_rolls"] += 1
+                            if exit_usd > 1e-10:
+                                d_sh = exit_usd / (exec_px * (1.0 + STOCK_REBAL_FEE))
+                                core_shares += d_sh
+                    elif exit_usd > 1e-10:
+                        d_sh = exit_usd / (exec_px * (1.0 + STOCK_REBAL_FEE))
+                        core_shares += d_sh
+                else:
+                    if exit_usd > 1e-10:
+                        d_sh = exit_usd / (exec_px * (1.0 + STOCK_REBAL_FEE))
+                        core_shares += d_sh
 
-                roi_mult = (exit_usd / tr["entry_cost_usd"]) if tr["entry_cost_usd"] > 1e-6 else 0.0
-                actual_net_sh = put_bid - tr["entry_put_ask"]
-                conv = bco_mod.decompose_tranche_convexity(
-                    "naked_put",
-                    tr["entry_spot"],
-                    exec_px,
-                    tr["kp"],
-                    None,
-                    tr["T_entry"],
-                    t_rem,
-                    tr["entry_r"],
-                    r_cur,
-                    tr["entry_q"],
-                    q_cur,
-                    tr["entry_vxn"],
-                    vxn_ex,
-                    coeffs,
-                    actual_net_sh,
-                )
-                hs = tr["hedged_shares"]
-                en_src = tr.get("entry_source", "bsm_fallback")
-                q_tag = _classify_quote_source_tag(en_src, src_ex, tr["entry_date"], d, opra_max_d or "2025-12-15")
-                occ_sym = str(tr.get("occ_symbol") or _occ(tr["exp_date"], "put", tr["kp"]))
                 ledger.append(
-                    {
-                        "tranche_id": tr["tranche_id"],
-                        "strategy_id": strategy_id,
-                        "slot_num": tr["slot_num"],
-                        "tier": tr["tier"],
-                        "max_slots": max_slots,
-                        "tranche_type": "naked_put",
-                        "put_otm_pct": otm_pct_int,
-                        "tp_mode": tp_code,
-                        "roll_mode": roll_mode,
-                        "target_dte": int(tr.get("target_dte") or target_dte),
-                        "roll_dte": int(tr.get("roll_dte_thr") or 0),
-                        "is_cta": bool(tr.get("is_cta", False)),
-                        "quoteSource": q_tag,
-                        "quote_source": q_tag,
-                        "occSymbol": occ_sym,
-                        "occ_symbol": occ_sym,
-                        "exp": tr["exp_date"],
-                        "strike": round(tr["kp"], 2),
-                        "entryBid": round(float(tr.get("entry_bid_raw", tr["entry_put_ask"])), 3),
-                        "entryAsk": round(float(tr.get("entry_ask_raw", tr["entry_put_ask"])), 3),
-                        "exitBid": round(float(b_ex), 3),
-                        "exitAsk": round(float(a_ex), 3),
-                        "pricing_source": _classify_trade_source(en_src, src_ex),
-                        "entry_source": en_src,
-                        "exit_source": src_ex,
-                        "signal_date": tr["signal_date"],
-                        "entry_date": tr["entry_date"],
-                        "planned_exp_date": tr["exp_date"],
-                        "exit_date": d,
-                        "actual_days_held": (dt_objs[i] - tr["entry_dt"]).days,
-                        "rem_dte_at_exit": rem_days,
-                        "exit_reason": exit_rsn,
-                        "sig_score": tr["sig_score"],
-                        "sig_ad_below50": tr["sig_ad_below50"],
-                        "crisis_prob": tr["crisis_prob"],
-                        "p1": tr["p1"],
-                        "p2": tr["p2"],
-                        "p3": tr["p3"],
-                        "triggered_modules": tr["triggered_modules"],
-                        "trigger_code": tr["trigger_code"],
-                        "trigger_en": tr["trigger_en"],
-                        "trigger_zh": tr["trigger_zh"],
-                        "entry_spot": round(tr["entry_spot"], 2),
-                        "entry_vxn": round(tr["entry_vxn"], 2),
-                        "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
-                        "kp": round(tr["kp"], 2),
-                        "kc": None,
-                        "call_cap_pct": None,
-                        "hedged_shares": round(hs, 2),
-                        "contracts_est": round(hs / 100.0, 2),
-                        "slot_coverage": round(tr["hedged_ratio"], 4),
-                        "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
-                        "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
-                        "entry_cost_usd": round(tr["entry_cost_usd"], 2),
-                        "entry_shares_sold": round(tr["entry_shares_sold"], 4),
-                        "exit_spot": round(exec_px, 2),
-                        "exit_vxn": round(vxn_ex, 2),
-                        "exit_vix_ratio": round(tr["tp_trigger_ratio"], 3),
-                        "underlying_ret_pct": round((exec_px / tr["entry_spot"] - 1.0) * 100.0, 2),
-                        "put_exit_val_sh": round(put_bid, 4),
-                        "call_exit_cost_sh": 0.0,
-                        "exit_net_cash_usd": round(exit_usd, 2),
-                        "net_pnl_usd": round(exit_usd - tr["entry_cost_usd"], 2),
-                        "roi_mult": round(roi_mult, 2),
-                        "exit_shares_delta": round(d_sh, 2),
-                        "shares_added": round(tr["entry_shares_sold"] + d_sh, 2),
-                        "delta0": round(float(conv["delta0"]), 4),
-                        "delta_usd": round(float(conv["dV_delta_sh"]) * hs, 2),
-                        "gamma_usd": round(float(conv["dV_gamma_sh"]) * hs, 2),
-                        "vega_usd": round(float(conv["dV_vega_sh"]) * hs, 2),
-                        "theta_slip_usd": round(
-                            round(exit_usd - tr["entry_cost_usd"], 2)
-                            - (
-                                round(float(conv["dV_delta_sh"]) * hs, 2)
-                                + round(float(conv["dV_gamma_sh"]) * hs, 2)
-                                + round(float(conv["dV_vega_sh"]) * hs, 2)
-                            ),
-                            2,
-                        ),
-                        "convexity_mult": round(float(conv["conv_mult"]), 2) if conv["conv_mult"] is not None else None,
-                        "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
-                        "comp_put_gain_usd": round(d_sh * mult_morning, 2),
-                        "comp_call_drag_usd": 0.0,
-                    }
+                    _build_closed_ledger_row(
+                        tr, d, i, rem_days, t_rem, exec_px, vxn_ex, vix_cl, vix_r,
+                        r_cur, q_cur, b_ex, a_ex, sell_px, src_ex, exit_rsn, d_sh, mult_morning,
+                    )
                 )
-            active_tranches = still_open
-
-            # Direct Adaptive Roll replacements using salvaged cash without double stock-fee churn
-            for salv_usd, r_cap, r_sig_d in roll_replacements:
-                r_en, q_en = r_cur, q_cur
-                vxn_en = vxn_ex
-                is_cta_r = bool(r_sig_d.get("M4", False))
-                tr_tgt_dte, tr_ref_dte, tr_roll_thr, (lo_put_r, hi_put_r), (lo_ref_r, hi_ref_r) = _tenor_for_sig(is_cta_r)
-                c_ref = None
-                c_en = None
-                if use_real:
-                    c_ref = real_store.select_put_contract(
-                        d, exec_px, tr_ref_dte, ref_moneyness, lo_ref_r, hi_ref_r, r_en, q_en,
-                        rec_tag=f"p_{tr_ref_dte}_10",
-                    )
-                    c_en = real_store.select_put_contract(
-                        d, exec_px, tr_tgt_dte, put_moneyness, lo_put_r, hi_put_r, r_en, q_en,
-                        rec_tag=f"p_{tr_tgt_dte}_{otm_pct_int}",
-                    )
-                    if opra_max_d and d <= opra_max_d and (c_ref is None or c_en is None):
-                        if salv_usd > 1e-8:
-                            core_shares += salv_usd / (exec_px * (1.0 + STOCK_REBAL_FEE))
-                        continue
-                if c_ref is not None:
-                    _rec_src(c_ref["source"], d)
-                    put_ask_ref = _buy_px(c_ref["bid"], c_ref["ask"], c_ref["mid"], c_ref["source"], slip_bsm=OPT_SLIP)
-                else:
-                    ref_cal = dt_objs[i] + datetime.timedelta(days=tr_ref_dte)
-                    pos_ref = bisect.bisect_left(dt_objs, ref_cal)
-                    exp_dt_ref = dt_objs[pos_ref] if pos_ref < n_days else ref_cal
-                    t_ref = max(1, (exp_dt_ref - dt_objs[i]).days) / 365.0
-                    kp_ref = exec_px * ref_moneyness
-                    sig_ref = bco_mod.eval_skew_iv(exec_px, kp_ref, t_ref, r_en, q_en, vxn_en, coeffs)
-                    mid_ref = bco_mod.bsm_price(exec_px, kp_ref, t_ref, r_en, q_en, sig_ref, "put")
-                    put_ask_ref = _buy_px(mid_ref * (1.0 - OPT_SLIP), mid_ref * (1.0 + OPT_SLIP), mid_ref, "bsm_fallback", slip_bsm=OPT_SLIP)
-                    _rec_src("bsm_fallback", d)
-                if c_en is not None:
-                    _rec_src(c_en["source"], d)
-                    exp_date = c_en["exp"]
-                    exp_dt = c_en["exp_dt"]
-                    t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
-                    kp = c_en["strike"]
-                    k_cents_en = c_en["k_cents"]
-                    en_bid_raw = float(c_en["bid"])
-                    en_ask_raw = float(c_en["ask"])
-                    put_ask_en = _buy_px(en_bid_raw, en_ask_raw, c_en["mid"], c_en["source"], slip_bsm=OPT_SLIP)
-                    iv_en = c_en["iv"]
-                    src_en = c_en["source"]
-                    occ_en = str(c_en.get("occ_symbol") or _occ(exp_date, "put", kp))
-                else:
-                    target_cal = dt_objs[i] + datetime.timedelta(days=tr_tgt_dte)
-                    pos = bisect.bisect_left(dt_objs, target_cal)
-                    exp_date, exp_dt = (dates[pos], dt_objs[pos]) if pos < n_days else (target_cal.isoformat(), target_cal)
-                    t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
-                    kp = round(exec_px * put_moneyness, 2)
-                    k_cents_en = int(round(kp * 100.0))
-                    iv_en = bco_mod.eval_skew_iv(exec_px, kp, t_en, r_en, q_en, vxn_en, coeffs)
-                    mid_en = bco_mod.bsm_price(exec_px, kp, t_en, r_en, q_en, iv_en, "put")
-                    en_bid_raw = max(0.0, mid_en * (1.0 - OPT_SLIP))
-                    en_ask_raw = mid_en * (1.0 + OPT_SLIP)
-                    put_ask_en = _buy_px(en_bid_raw, en_ask_raw, mid_en, "bsm_fallback", slip_bsm=OPT_SLIP)
-                    src_en = "bsm_fallback"
-                    occ_en = _occ(exp_date, "put", kp)
-                    _rec_src(src_en, d)
-
-                iv_anchor_en = None
-                if src_en.startswith("real_opra") and iv_en is not None and math.isfinite(iv_en) and 0.02 <= iv_en <= 3.0:
-                    bsm_iv_ref = bco_mod.eval_skew_iv(exec_px, kp, max(t_en, 1.0 / 365.0), r_en, q_en, vxn_en, coeffs)
-                    iv_anchor_en = max(0.5, min(2.0, iv_en / max(bsm_iv_ref, 0.05)))
-
-                already_ref_cov = sum(t["ref_cov_sh"] for t in active_tranches)
-                cost_sh_frac_ref = put_ask_ref / (exec_px * (1.0 - STOCK_REBAL_FEE))
-                max_cov = core_shares * (slot_coverage * max(2, r_cap))
-                avail_sh_ref = max(0.0, max_cov - already_ref_cov)
-                ref_hedged_sh = min(core_shares * slot_coverage, avail_sh_ref / (1.0 + cost_sh_frac_ref))
-                ref_budget_usd = ref_hedged_sh * put_ask_ref
-                if put_ask_en >= 0.03 and ref_budget_usd > 1.0:
-                    hedged_sh = ref_budget_usd / put_ask_en
-                    entry_cost_usd = ref_budget_usd
-                    rem_need = entry_cost_usd - salv_usd
-                    d_sh_entry = 0.0
-                    if rem_need < -1e-8:
-                        d_sh_entry = (-rem_need) / (exec_px * (1.0 + STOCK_REBAL_FEE))
-                        core_shares += d_sh_entry
-                    elif rem_need > 1e-8:
-                        if cc_enabled and cc_cash > 0.0:
-                            use_cc = min(cc_cash, rem_need)
-                            cc_cash -= use_cc
-                            cc_funded_puts += use_cc
-                            rem_need -= use_cc
-                        if rem_need > 1e-8:
-                            d_sh_entry = -rem_need / (exec_px * (1.0 - STOCK_REBAL_FEE))
-                            core_shares += d_sh_entry
-                    tid += 1
-                    used_slots = {t["slot_num"] for t in active_tranches}
-                    slot_num = min(s for s in range(1, max(max_slots, r_cap) + 1) if s not in used_slots)
-                    hr = hedged_sh / max(core_shares, 1e-6)
-                    prev_row = rows_eval[i - 1]
-                    mods, t_code, t_en_l, t_zh_l = format_m7_trigger_labels(r_sig_d, max_slots, core3_only=is_core3)
-                    c_prob_r, p1_r, p2_r, p3_r = _prob_tuple(r_sig_d)
-                    active_tranches.append(
-                        {
-                            "tranche_id": tid,
-                            "slot_num": slot_num,
-                            "tier": r_cap,
-                            "is_cta": is_cta_r,
-                            "target_dte": tr_tgt_dte,
-                            "roll_dte_thr": tr_roll_thr,
-                            "occ_symbol": occ_en,
-                            "signal_date": dates[i - 1],
-                            "sig_score": int(prev_row["score"]),
-                            "sig_ad_below50": bool(float(prev_row["ad_line"]) < float(prev_row["ad_sma50"])),
-                            "crisis_prob": c_prob_r,
-                            "p1": p1_r,
-                            "p2": p2_r,
-                            "p3": p3_r,
-                            "triggered_modules": mods,
-                            "trigger_code": t_code,
-                            "trigger_en": t_en_l,
-                            "trigger_zh": t_zh_l,
-                            "entry_date": d,
-                            "entry_dt": dt_objs[i],
-                            "exp_date": exp_date,
-                            "exp_dt": exp_dt,
-                            "T_entry": t_en,
-                            "entry_spot": exec_px,
-                            "entry_vxn": vxn_en,
-                            "entry_vix_ratio": float(prev_row["vix_ratio"]),
-                            "entry_r": r_en,
-                            "entry_q": q_en,
-                            "kp": kp,
-                            "k_cents": k_cents_en,
-                            "last_iv": iv_en if (iv_en is not None and math.isfinite(iv_en)) else None,
-                            "iv_ratio_anchor": iv_anchor_en,
-                            "entry_source": src_en,
-                            "entry_bid_raw": en_bid_raw,
-                            "entry_ask_raw": en_ask_raw,
-                            "hedged_shares": hedged_sh,
-                            "ref_cov_sh": ref_hedged_sh,
-                            "hedged_ratio": hr,
-                            "entry_put_ask": put_ask_en,
-                            "entry_cost_usd": entry_cost_usd,
-                            "entry_shares_sold": d_sh_entry,
-                            "comp_entry_cost_usd": d_sh_entry * mult_morning,
-                            "pending_tp": False,
-                            "pending_roll": False,
-                            "tp_trigger_ratio": 0.0,
-                            "tp_reason": "",
-                        }
-                    )
-                elif salv_usd > 1e-8:
-                    core_shares += salv_usd / (exec_px * (1.0 + STOCK_REBAL_FEE))
-
-        # 2. Pending New M7 Tranche Entry at T+1
-        if i > 0 and pending_sig is not None and len(active_tranches) < pending_sig["cap_slots"]:
-            r_en, q_en = pending_sig["r"], pending_sig["q"]
-            vxn_en = vxn_ex
-            is_cta_en = bool(pending_sig.get("is_cta", False))
-            tr_tgt_dte, tr_ref_dte, tr_roll_thr, (lo_put_e, hi_put_e), (lo_ref_e, hi_ref_e) = _tenor_for_sig(is_cta_en)
-
-            c_ref = None
-            c_en = None
-            if use_real:
-                c_ref = real_store.select_put_contract(
-                    d, exec_px, tr_ref_dte, ref_moneyness, lo_ref_e, hi_ref_e, r_en, q_en,
-                    rec_tag=f"p_{tr_ref_dte}_10",
+            m7_active = still_m7
+            for salv_usd, cap_sl, r_sig_d in m7_roll_reps:
+                nt = _open_m7_tranche(
+                    i, d, exec_px, vxn_ex, vix_cl, r_cur, q_cur,
+                    cap_sl, r_sig_d, prev_row_m, mult_morning, cash_from_salvage=salv_usd,
                 )
-                c_en = real_store.select_put_contract(
-                    d, exec_px, tr_tgt_dte, put_moneyness, lo_put_e, hi_put_e, r_en, q_en,
-                    rec_tag=f"p_{tr_tgt_dte}_{otm_pct_int}",
+                if nt is not None:
+                    m7_active.append(nt)
+
+        # 1B. Execute Pending T+1 Close Exits for Book B (0.20% Base VIX<=20 Gate)
+        if i > 0 and base_active:
+            still_base: list[dict[str, Any]] = []
+            base_roll_cash = 0.0
+            want_base_reopen = False
+            prev_row_b = rows_eval[i - 1]
+            prev_sig_b = sig_series[i - 1]
+            prev_gate_ok = float(prev_row_b["vix"]) <= HARDCODED_BASE_VIX_MAX and float(prev_row_b["vix_ratio"]) < HARDCODED_BASE_VR_MAX
+            for tr in base_active:
+                if not tr.get("pending_tp") and not tr.get("pending_roll"):
+                    still_base.append(tr)
+                    continue
+                rem_days = max(0, (tr["exp_dt"] - dt_objs[i]).days)
+                t_rem = rem_days / 365.0
+                b_ex, a_ex, m_ex, _, _, src_ex = _lookup_opt(
+                    d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents"),
+                    exec_px, rem_days, r_cur, q_cur, vxn_ex, tr.get("last_iv"),
+                    slip_bsm=OPT_SLIP, iv_ratio_anchor=tr.get("iv_ratio_anchor"),
                 )
-
-            if use_real and opra_max_d and d <= opra_max_d and (c_ref is None or c_en is None):
-                pending_sig = None
-            else:
-                if c_ref is not None:
-                    _rec_src(c_ref["source"], d)
-                    put_ask_ref = _buy_px(c_ref["bid"], c_ref["ask"], c_ref["mid"], c_ref["source"], slip_bsm=OPT_SLIP)
+                sell_px = _sell_px(b_ex, a_ex, m_ex, src_ex, slip_bsm=OPT_SLIP)
+                exit_usd = tr["hedged_shares"] * sell_px
+                exit_rsn = str(tr.get("tp_reason") or "roll_75d")
+                d_sh = 0.0
+                if exit_rsn == "roll_75d":
+                    if prev_gate_ok and not want_base_reopen:
+                        if not base_locked_prev_eod:
+                            want_base_reopen = True
+                            base_roll_cash += exit_usd
+                        else:
+                            if cur_ep is not None:
+                                cur_ep["blocked_base_rolls"] += 1
+                            if exit_usd > 1e-10:
+                                d_sh = exit_usd / (exec_px * (1.0 + STOCK_REBAL_FEE))
+                                core_shares += d_sh
+                    elif exit_usd > 1e-10:
+                        d_sh = exit_usd / (exec_px * (1.0 + STOCK_REBAL_FEE))
+                        core_shares += d_sh
                 else:
-                    ref_cal = dt_objs[i] + datetime.timedelta(days=tr_ref_dte)
-                    pos_ref = bisect.bisect_left(dt_objs, ref_cal)
-                    exp_dt_ref = dt_objs[pos_ref] if pos_ref < n_days else ref_cal
-                    t_ref = max(1, (exp_dt_ref - dt_objs[i]).days) / 365.0
-                    kp_ref = exec_px * ref_moneyness
-                    sig_ref = bco_mod.eval_skew_iv(exec_px, kp_ref, t_ref, r_en, q_en, vxn_en, coeffs)
-                    mid_ref = bco_mod.bsm_price(exec_px, kp_ref, t_ref, r_en, q_en, sig_ref, "put")
-                    put_ask_ref = _buy_px(mid_ref * (1.0 - OPT_SLIP), mid_ref * (1.0 + OPT_SLIP), mid_ref, "bsm_fallback", slip_bsm=OPT_SLIP)
-                    _rec_src("bsm_fallback", d)
+                    if exit_usd > 1e-10:
+                        d_sh = exit_usd / (exec_px * (1.0 + STOCK_REBAL_FEE))
+                        core_shares += d_sh
 
-                if c_en is not None:
-                    _rec_src(c_en["source"], d)
-                    exp_date = c_en["exp"]
-                    exp_dt = c_en["exp_dt"]
-                    t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
-                    kp = c_en["strike"]
-                    k_cents_en = c_en["k_cents"]
-                    en_bid_raw = float(c_en["bid"])
-                    en_ask_raw = float(c_en["ask"])
-                    put_ask_en = _buy_px(en_bid_raw, en_ask_raw, c_en["mid"], c_en["source"], slip_bsm=OPT_SLIP)
-                    iv_en = c_en["iv"]
-                    src_en = c_en["source"]
-                    occ_en = str(c_en.get("occ_symbol") or _occ(exp_date, "put", kp))
-                else:
-                    target_cal = dt_objs[i] + datetime.timedelta(days=tr_tgt_dte)
-                    pos = bisect.bisect_left(dt_objs, target_cal)
-                    exp_date, exp_dt = (dates[pos], dt_objs[pos]) if pos < n_days else (target_cal.isoformat(), target_cal)
-                    t_en = max(1, (exp_dt - dt_objs[i]).days) / 365.0
-                    kp = round(exec_px * put_moneyness, 2)
-                    k_cents_en = int(round(kp * 100.0))
-                    iv_en = bco_mod.eval_skew_iv(exec_px, kp, t_en, r_en, q_en, vxn_en, coeffs)
-                    mid_en = bco_mod.bsm_price(exec_px, kp, t_en, r_en, q_en, iv_en, "put")
-                    en_bid_raw = max(0.0, mid_en * (1.0 - OPT_SLIP))
-                    en_ask_raw = mid_en * (1.0 + OPT_SLIP)
-                    put_ask_en = _buy_px(en_bid_raw, en_ask_raw, mid_en, "bsm_fallback", slip_bsm=OPT_SLIP)
-                    src_en = "bsm_fallback"
-                    occ_en = _occ(exp_date, "put", kp)
-                    _rec_src(src_en, d)
-
-                iv_anchor_en = None
-                if src_en.startswith("real_opra") and iv_en is not None and math.isfinite(iv_en) and 0.02 <= iv_en <= 3.0:
-                    bsm_iv_ref = bco_mod.eval_skew_iv(exec_px, kp, max(t_en, 1.0 / 365.0), r_en, q_en, vxn_en, coeffs)
-                    iv_anchor_en = max(0.5, min(2.0, iv_en / max(bsm_iv_ref, 0.05)))
-
-                already_ref_cov = sum(t["ref_cov_sh"] for t in active_tranches)
-                cost_sh_frac_ref = put_ask_ref / (exec_px * (1.0 - STOCK_REBAL_FEE))
-                max_cov = core_shares * (slot_coverage * max(2, pending_sig["cap_slots"]))
-                avail_sh_ref = max(0.0, max_cov - already_ref_cov)
-                ref_hedged_sh = min(core_shares * slot_coverage, avail_sh_ref / (1.0 + cost_sh_frac_ref))
-                ref_budget_usd = ref_hedged_sh * put_ask_ref
-
-                if put_ask_en >= 0.03 and ref_budget_usd > 1.0:
-                    hedged_sh = ref_budget_usd / put_ask_en
-                    entry_cost_usd = ref_budget_usd
-                    if cc_enabled and cc_cash >= entry_cost_usd:
-                        cc_cash -= entry_cost_usd
-                        cc_funded_puts += entry_cost_usd
-                        d_sh_entry = 0.0
-                    elif cc_enabled and cc_cash > 0.0:
-                        paid_cc = cc_cash
-                        cc_funded_puts += paid_cc
-                        rem_cost = entry_cost_usd - paid_cc
-                        cc_cash = 0.0
-                        d_sh_entry = -rem_cost / (exec_px * (1.0 - STOCK_REBAL_FEE))
-                        core_shares += d_sh_entry
-                    else:
-                        d_sh_entry = -entry_cost_usd / (exec_px * (1.0 - STOCK_REBAL_FEE))
-                        core_shares += d_sh_entry
-
-                    tid += 1
-                    used_slots = {t["slot_num"] for t in active_tranches}
-                    slot_num = min(s for s in range(1, max(max_slots, pending_sig["cap_slots"]) + 1) if s not in used_slots)
-                    hr = hedged_sh / max(core_shares, 1e-6)
-                    active_tranches.append(
-                        {
-                            "tranche_id": tid,
-                            "slot_num": slot_num,
-                            "tier": pending_sig["tier"],
-                            "is_cta": is_cta_en,
-                            "target_dte": tr_tgt_dte,
-                            "roll_dte_thr": tr_roll_thr,
-                            "occ_symbol": occ_en,
-                            "signal_date": pending_sig["signal_date"],
-                            "sig_score": pending_sig["sig_score"],
-                            "sig_ad_below50": pending_sig["sig_ad_below50"],
-                            "crisis_prob": pending_sig["crisis_prob"],
-                            "p1": pending_sig["p1"],
-                            "p2": pending_sig["p2"],
-                            "p3": pending_sig["p3"],
-                            "triggered_modules": pending_sig["triggered_modules"],
-                            "trigger_code": pending_sig["trigger_code"],
-                            "trigger_en": pending_sig["trigger_en"],
-                            "trigger_zh": pending_sig["trigger_zh"],
-                            "entry_date": d,
-                            "entry_dt": dt_objs[i],
-                            "exp_date": exp_date,
-                            "exp_dt": exp_dt,
-                            "T_entry": t_en,
-                            "entry_spot": exec_px,
-                            "entry_vxn": vxn_en,
-                            "entry_vix_ratio": pending_sig["vix_ratio"],
-                            "entry_r": r_en,
-                            "entry_q": q_en,
-                            "kp": kp,
-                            "k_cents": k_cents_en,
-                            "last_iv": iv_en if (iv_en is not None and math.isfinite(iv_en)) else None,
-                            "iv_ratio_anchor": iv_anchor_en,
-                            "entry_source": src_en,
-                            "entry_bid_raw": en_bid_raw,
-                            "entry_ask_raw": en_ask_raw,
-                            "hedged_shares": hedged_sh,
-                            "ref_cov_sh": ref_hedged_sh,
-                            "hedged_ratio": hr,
-                            "entry_put_ask": put_ask_en,
-                            "entry_cost_usd": entry_cost_usd,
-                            "entry_shares_sold": d_sh_entry,
-                            "comp_entry_cost_usd": d_sh_entry * mult_morning,
-                            "pending_tp": False,
-                            "pending_roll": False,
-                            "tp_trigger_ratio": 0.0,
-                            "tp_reason": "",
-                        }
+                ledger.append(
+                    _build_closed_ledger_row(
+                        tr, d, i, rem_days, t_rem, exec_px, vxn_ex, vix_cl, vix_r,
+                        r_cur, q_cur, b_ex, a_ex, sell_px, src_ex, exit_rsn, d_sh, mult_morning,
                     )
-                pending_sig = None
-        else:
-            pending_sig = None
+                )
+            base_active = still_base
+            if want_base_reopen:
+                cur_nav = _current_nav_approx(exec_px) + base_roll_cash
+                bud = cur_nav * base_budget_pct
+                nt_b = _open_base_tranche(
+                    i, d, exec_px, vxn_ex, vix_cl, r_cur, q_cur,
+                    prev_sig_b, prev_row_b, mult_morning, bud, cash_from_salvage=base_roll_cash,
+                )
+                if nt_b is not None:
+                    base_active.append(nt_b)
 
-        # 2b. Engine 2 Covered Call & Engine 3 Wheel T+1 executions
+        # 2A. Execute Pending New Book M Entry at T+1 Close
+        if i > 0 and pending_sig is not None and len(m7_active) < pending_sig["cap_slots"]:
+            nt_m = _open_m7_tranche(
+                i, d, exec_px, vxn_ex, vix_cl, r_cur, q_cur,
+                pending_sig["cap_slots"], sig_series[i - 1], rows_eval[i - 1], mult_morning, cash_from_salvage=0.0,
+            )
+            if nt_m is not None:
+                m7_active.append(nt_m)
+        pending_sig = None
+
+        # 2B. Execute Pending New Book B Entry at T+1 Close
+        if i > 0 and pending_base_open and len(base_active) == 0:
+            cur_nav = _current_nav_approx(exec_px)
+            bud = cur_nav * base_budget_pct
+            nt_b = _open_base_tranche(
+                i, d, exec_px, vxn_ex, vix_cl, r_cur, q_cur,
+                sig_series[i - 1], rows_eval[i - 1], mult_morning, bud, cash_from_salvage=0.0,
+            )
+            if nt_b is not None:
+                base_active.append(nt_b)
+        pending_base_open = False
+
+        # 2C. Engine 2 Covered Call & Engine 3 Wheel T+1 executions
         if i > 0 and cc_enabled and pending_cc is not None and active_cc is None:
             r_cc, q_cc = pending_cc["r"], pending_cc["q"]
             vxn_cc = vxn_ex
@@ -2282,11 +2504,7 @@ def simulate_m7_strategy(
                 _rec_src(src_wc)
             if c_bid_wc >= MIN_OPT_BID:
                 prem_wc = assigned_shares * c_bid_wc
-                if not use_real:
-                    sp_comm_total += assigned_shares * OPT_COMM_PER_SH
-                else:
-                    # Commission already deducted in _sell_px; track separately for telemetry
-                    sp_comm_total += assigned_shares * OPT_COMM_PER_SH
+                sp_comm_total += assigned_shares * OPT_COMM_PER_SH
                 sp_cash += prem_wc
                 wc_tid += 1
                 active_wc = {
@@ -2365,171 +2583,121 @@ def simulate_m7_strategy(
                     "entry_vix_ratio": ps["vix_ratio"],
                 }
 
-        # 3. Dividends DRIP (exact STOCK_REBAL_FEE parity with 05_cta_shorter_dte_real_opra_study.py)
+        # 3. Dividends DRIP (exact STOCK_REBAL_FEE parity)
         if div > 0.0 and core_shares > 0.0:
             core_shares += (core_shares * div) / (cl * (1.0 + STOCK_REBAL_FEE))
             if assigned_shares > 0.0:
                 sp_cash += assigned_shares * div
 
-        was_active_today = len(active_tranches) > 0
-        active_slots_today = len(active_tranches)
+        was_active_today = (len(m7_active) > 0) or (len(base_active) > 0)
+        active_slots_today = len(m7_active)
 
-        # 4. EOD Expiries
-        still_open_exp: list[dict[str, Any]] = []
-        for tr in active_tranches:
-            if _is_exp(i, tr["exp_dt"]):
-                put_intr = max(0.0, tr["kp"] - cl)
-                settle_usd = tr["hedged_shares"] * put_intr
-                d_sh = 0.0
-                if abs(settle_usd) > 1e-10:
-                    d_sh = settle_usd / (cl * (1.0 + STOCK_REBAL_FEE))
-                    core_shares += d_sh
-                roi_mult = (settle_usd / tr["entry_cost_usd"]) if tr["entry_cost_usd"] > 1e-6 else 0.0
-                actual_net_sh = put_intr - tr["entry_put_ask"]
-                conv = bco_mod.decompose_tranche_convexity(
-                    "naked_put",
-                    tr["entry_spot"],
-                    cl,
-                    tr["kp"],
-                    None,
-                    tr["T_entry"],
-                    0.0,
-                    tr["entry_r"],
-                    r_cur,
-                    tr["entry_q"],
-                    q_cur,
-                    tr["entry_vxn"],
-                    vxn_cl,
-                    coeffs,
-                    actual_net_sh,
-                )
-                hs = tr["hedged_shares"]
-                en_src = tr.get("entry_source", "bsm_fallback")
-                ex_src_exp = "real_opra_exact" if (use_real and opra_max_d and d <= opra_max_d) else en_src
-                q_tag_exp = _classify_quote_source_tag(en_src, ex_src_exp, tr["entry_date"], d, opra_max_d or "2025-12-15")
-                occ_sym = str(tr.get("occ_symbol") or _occ(tr["exp_date"], "put", tr["kp"]))
-                tr_tgt_d = int(tr.get("target_dte") or target_dte)
-                ledger.append(
-                    {
-                        "tranche_id": tr["tranche_id"],
-                        "strategy_id": strategy_id,
-                        "slot_num": tr["slot_num"],
-                        "tier": tr["tier"],
-                        "max_slots": max_slots,
-                        "tranche_type": "naked_put",
-                        "put_otm_pct": otm_pct_int,
-                        "tp_mode": tp_code,
-                        "roll_mode": roll_mode,
-                        "target_dte": tr_tgt_d,
-                        "roll_dte": int(tr.get("roll_dte_thr") or 0),
-                        "is_cta": bool(tr.get("is_cta", False)),
-                        "quoteSource": q_tag_exp,
-                        "quote_source": q_tag_exp,
-                        "occSymbol": occ_sym,
-                        "occ_symbol": occ_sym,
-                        "exp": tr["exp_date"],
-                        "strike": round(tr["kp"], 2),
-                        "entryBid": round(float(tr.get("entry_bid_raw", tr["entry_put_ask"])), 3),
-                        "entryAsk": round(float(tr.get("entry_ask_raw", tr["entry_put_ask"])), 3),
-                        "exitBid": round(float(put_intr), 3),
-                        "exitAsk": round(float(put_intr), 3),
-                        "pricing_source": _classify_trade_source(en_src, ex_src_exp),
-                        "entry_source": en_src,
-                        "exit_source": ex_src_exp,
-                        "signal_date": tr["signal_date"],
-                        "entry_date": tr["entry_date"],
-                        "planned_exp_date": tr["exp_date"],
-                        "exit_date": d,
-                        "actual_days_held": (dt_objs[i] - tr["entry_dt"]).days,
-                        "rem_dte_at_exit": 0,
-                        "exit_reason": f"expiry_{tr_tgt_d}dte",
-                        "sig_score": tr["sig_score"],
-                        "sig_ad_below50": tr["sig_ad_below50"],
-                        "crisis_prob": tr["crisis_prob"],
-                        "p1": tr["p1"],
-                        "p2": tr["p2"],
-                        "p3": tr["p3"],
-                        "triggered_modules": tr["triggered_modules"],
-                        "trigger_code": tr["trigger_code"],
-                        "trigger_en": tr["trigger_en"],
-                        "trigger_zh": tr["trigger_zh"],
-                        "entry_spot": round(tr["entry_spot"], 2),
-                        "entry_vxn": round(tr["entry_vxn"], 2),
-                        "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
-                        "kp": round(tr["kp"], 2),
-                        "kc": None,
-                        "call_cap_pct": None,
-                        "hedged_shares": round(hs, 2),
-                        "contracts_est": round(hs / 100.0, 2),
-                        "slot_coverage": round(tr["hedged_ratio"], 4),
-                        "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
-                        "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
-                        "entry_cost_usd": round(tr["entry_cost_usd"], 2),
-                        "entry_shares_sold": round(tr["entry_shares_sold"], 4),
-                        "exit_spot": round(cl, 2),
-                        "exit_vxn": round(vxn_cl, 2),
-                        "exit_vix_ratio": round(vix_r, 3),
-                        "underlying_ret_pct": round((cl / tr["entry_spot"] - 1.0) * 100.0, 2),
-                        "put_exit_val_sh": round(put_intr, 4),
-                        "call_exit_cost_sh": 0.0,
-                        "exit_net_cash_usd": round(settle_usd, 2),
-                        "net_pnl_usd": round(settle_usd - tr["entry_cost_usd"], 2),
-                        "roi_mult": round(roi_mult, 2),
-                        "exit_shares_delta": round(d_sh, 2),
-                        "shares_added": round(tr["entry_shares_sold"] + d_sh, 2),
-                        "delta0": round(float(conv["delta0"]), 4),
-                        "delta_usd": round(float(conv["dV_delta_sh"]) * hs, 2),
-                        "gamma_usd": round(float(conv["dV_gamma_sh"]) * hs, 2),
-                        "vega_usd": round(float(conv["dV_vega_sh"]) * hs, 2),
-                        "theta_slip_usd": round(
-                            round(settle_usd - tr["entry_cost_usd"], 2)
-                            - (
-                                round(float(conv["dV_delta_sh"]) * hs, 2)
-                                + round(float(conv["dV_gamma_sh"]) * hs, 2)
-                                + round(float(conv["dV_vega_sh"]) * hs, 2)
-                            ),
-                            2,
-                        ),
-                        "convexity_mult": round(float(conv["conv_mult"]), 2) if conv["conv_mult"] is not None else None,
-                        "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
-                        "comp_put_gain_usd": round(d_sh * mult_eod, 2),
-                        "comp_call_drag_usd": 0.0,
-                    }
-                )
-            else:
-                still_open_exp.append(tr)
-        active_tranches = still_open_exp
+        # 4. EOD Expiries (safety fallback for 90d_hold comparison; never triggers under Hard 75D/30D Roll)
+        for book_list in (m7_active, base_active):
+            still_exp: list[dict[str, Any]] = []
+            for tr in book_list:
+                if _is_exp(i, tr["exp_dt"]):
+                    put_intr = max(0.0, tr["kp"] - cl)
+                    settle_usd = tr["hedged_shares"] * put_intr
+                    d_sh = 0.0
+                    if settle_usd > 0.0:
+                        d_sh = settle_usd / (cl * (1.0 + STOCK_REBAL_FEE))
+                        core_shares += d_sh
+                    en_src = str(tr.get("entry_source", "bsm_fallback"))
+                    ex_src_exp = "real_opra" if (use_real and opra_max_d and d <= opra_max_d) else en_src
+                    tr_tgt_d = int(tr.get("target_dte") or target_dte)
+                    ledger.append(
+                        _build_closed_ledger_row(
+                            tr, d, i, 0, 0.0, cl, vxn_cl, vix_cl, vix_r,
+                            r_cur, q_cur, put_intr, put_intr, put_intr, ex_src_exp,
+                            f"expiry_{tr_tgt_d}dte", d_sh, mult_eod,
+                        )
+                    )
+                else:
+                    still_exp.append(tr)
+            book_list[:] = still_exp
 
-        # 5. EOD MTM & Unified TP / Adaptive Roll Check
-        put_mtm = 0.0
-        for tr in active_tranches:
+        # 5. Daily EOD MTM & Near-ITM TP / Hard-Roll Check
+        gate_ok_today = vix_cl <= HARDCODED_BASE_VIX_MAX and vix_r < HARDCODED_BASE_VR_MAX
+        if gate_ok_today:
+            base_gate_open_days += 1
+        any_tp_triggered_today = False
+        tp_triggers_today: list[str] = []
+
+        m7_mtm_total = 0.0
+        for tr in m7_active:
             rem_days = max(1, (tr["exp_dt"] - dt_objs[i]).days)
             _, _, put_mid, iv_m, _, src_mtm = _lookup_opt(
                 d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents"),
                 cl, rem_days, r_cur, q_cur, vxn_cl, tr.get("last_iv"),
                 slip_bsm=OPT_SLIP, iv_ratio_anchor=tr.get("iv_ratio_anchor"),
             )
-            if math.isfinite(iv_m) and 0.02 <= iv_m <= 3.0:
+            if math.isfinite(iv_m) and iv_m > 0.05:
                 tr["last_iv"] = iv_m
-                if src_mtm.startswith("real_opra"):
+                if src_mtm.startswith("real_opra") and iv_m <= 3.0:
                     bsm_iv_m = bco_mod.eval_skew_iv(cl, tr["kp"], max(rem_days / 365.0, 1.0 / 365.0), r_cur, q_cur, vxn_cl, coeffs)
                     tr["iv_ratio_anchor"] = max(0.5, min(2.0, iv_m / max(bsm_iv_m, 0.05)))
-            put_mtm += tr["hedged_shares"] * put_mid
+            val_usd = tr["hedged_shares"] * put_mid
+            tr["last_mtm_usd"] = val_usd
+            m7_mtm_total += val_usd
             tr_roll_thr_cur = int(tr.get("roll_dte_thr") or 0)
-            if not tr["pending_tp"]:
-                vix_ok = (vix_r >= vix_ratio_tp) and ((cl <= tr["kp"]) if require_itm_tp else True)
-                if vix_ok:
+            if not tr["pending_tp"] and not tr["pending_roll"]:
+                near_itm_ok = (vix_r >= vix_ratio_tp and cl <= tr["kp"] * near_itm_mult) or (vix_cl >= HARDCODED_EXTREME_VIX_TP)
+                if near_itm_ok:
                     tr["pending_tp"] = True
                     tr["tp_trigger_ratio"] = vix_r
-                    tr["tp_reason"] = "vix_inv_1.10_itm_tp" if require_itm_tp else "vix_inv_1.10_tp"
-                elif rem_days <= put_mult_max_dte and tr["entry_put_ask"] > 1e-6 and put_mid >= tr["entry_put_ask"] * put_mult_tp:
+                    tr["tp_reason"] = "vix_inv_1.10_itm_tp" if require_itm_tp else "tp_near_itm"
+                    any_tp_triggered_today = True
+                    tp_triggers_today.append(f"m7:{tr['tp_reason']}")
+                elif rem_days <= put_mult_max_dte_m7 and tr["entry_put_ask"] > 1e-6 and put_mid >= tr["entry_put_ask"] * put_mult_tp:
                     tr["pending_tp"] = True
                     tr["tp_trigger_ratio"] = vix_r
-                    tr["tp_reason"] = "put_5x_dte45_tp"
-                elif tr_roll_thr_cur > 0 and rem_days <= tr_roll_thr_cur and not tr.get("pending_roll"):
+                    tr["tp_reason"] = "tp_5x_late"
+                    any_tp_triggered_today = True
+                    tp_triggers_today.append("m7:tp_5x_late")
+                elif tr_roll_thr_cur > 0 and rem_days <= tr_roll_thr_cur:
                     tr["pending_roll"] = True
                     tr["tp_trigger_ratio"] = vix_r
                     tr["tp_reason"] = f"roll_{tr_roll_thr_cur}d"
+
+        base_mtm_total = 0.0
+        for tr in base_active:
+            rem_days = max(1, (tr["exp_dt"] - dt_objs[i]).days)
+            _, _, put_mid, iv_b, _, src_mtm_b = _lookup_opt(
+                d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents"),
+                cl, rem_days, r_cur, q_cur, vxn_cl, tr.get("last_iv"),
+                slip_bsm=OPT_SLIP, iv_ratio_anchor=tr.get("iv_ratio_anchor"),
+            )
+            if math.isfinite(iv_b) and iv_b > 0.05:
+                tr["last_iv"] = iv_b
+                if src_mtm_b.startswith("real_opra") and iv_b <= 3.0:
+                    bsm_iv_b = bco_mod.eval_skew_iv(cl, tr["kp"], max(rem_days / 365.0, 1.0 / 365.0), r_cur, q_cur, vxn_cl, coeffs)
+                    tr["iv_ratio_anchor"] = max(0.5, min(2.0, iv_b / max(bsm_iv_b, 0.05)))
+            val_usd_b = tr["hedged_shares"] * put_mid
+            tr["last_mtm_usd"] = val_usd_b
+            base_mtm_total += val_usd_b
+            if not tr["pending_tp"] and not tr["pending_roll"]:
+                near_itm_ok_b = (vix_r >= vix_ratio_tp and cl <= tr["kp"] * near_itm_mult) or (vix_cl >= HARDCODED_EXTREME_VIX_TP)
+                if near_itm_ok_b:
+                    tr["pending_tp"] = True
+                    tr["tp_trigger_ratio"] = vix_r
+                    tr["tp_reason"] = "base_vix_inv_1.10_itm_tp" if require_itm_tp else "base_tp_near_itm"
+                    any_tp_triggered_today = True
+                    tp_triggers_today.append(f"base:{tr['tp_reason']}")
+                elif rem_days <= put_mult_max_dte_base and tr["entry_put_ask"] > 1e-6 and put_mid >= tr["entry_put_ask"] * put_mult_tp:
+                    tr["pending_tp"] = True
+                    tr["tp_trigger_ratio"] = vix_r
+                    tr["tp_reason"] = "base_tp_5x_late"
+                    any_tp_triggered_today = True
+                    tp_triggers_today.append("base:tp_5x_late")
+                elif rem_days <= base_roll_dte:
+                    tr["pending_roll"] = True
+                    tr["tp_trigger_ratio"] = vix_r
+                    tr["tp_reason"] = "roll_75d" if gate_ok_today else "salvage_vix_expensive"
+
+        put_mtm = m7_mtm_total + base_mtm_total
+        if len(base_active) > 0:
+            base_days_hedged += 1
 
         # 5b. Engine 2 & Engine 3 EOD MTM/Expiries
         cc_mtm = 0.0
@@ -2744,40 +2912,110 @@ def simulate_m7_strategy(
 
         nav_list.append(nav)
         equiv_sh_list.append(nav / cl)
-        any_active_list.append(1 if (was_active_today or len(active_tranches) > 0) else 0)
-        active_slots_list.append(max(active_slots_today, len(active_tranches)))
+        any_active_list.append(1 if (was_active_today or len(m7_active) > 0 or len(base_active) > 0) else 0)
+        active_slots_list.append(max(active_slots_today, len(m7_active)))
 
-        # 6. EOD M7 Signal & Hard Redline Gate for T+1 Open (exact parity with 05_cta_shorter_dte_real_opra_study.py)
-        cap_slots = _slots_for_sig(sig_d)
-        redline_blocked = bool(vxn_cl > 27.0 or vix_r >= 1.02)
-        eff_open = active_tranches
-        if cap_slots > 0 and not redline_blocked and len(eff_open) < cap_slots:
-            min_gap = step_cal_days if cap_slots <= 2 else escalate_min_days
-            recent = any((dt_objs[i] - t["entry_dt"]).days < min_gap for t in eff_open)
-            if not recent:
-                mods, t_code, t_en, t_zh = format_m7_trigger_labels(sig_d, max_slots, core3_only=is_core3)
-                c_prob_s, p1_s, p2_s, p3_s = _prob_tuple(sig_d)
-                pending_sig = {
-                    "signal_date": d,
-                    "is_cta": bool(sig_d.get("M4", False)),
-                    "vxn": vxn_cl,
-                    "close": cl,
-                    "vix_ratio": vix_r,
-                    "r": r_cur,
-                    "q": q_cur,
-                    "cap_slots": cap_slots,
-                    "tier": cap_slots,
-                    "sig_score": int(row["score"]),
-                    "sig_ad_below50": bool(float(row["ad_line"]) < float(row["ad_sma50"])),
-                    "crisis_prob": c_prob_s,
-                    "p1": p1_s,
-                    "p2": p2_s,
-                    "p3": p3_s,
-                    "triggered_modules": mods,
-                    "trigger_code": t_code,
-                    "trigger_en": t_en,
-                    "trigger_zh": t_zh,
-                }
+        # 5.5 Strictly Causal EOD Post-TP Lockout State Machine (VIX/VIX3M < 1.00 x 5 consecutive trading days)
+        if lockout_days > 0:
+            if any_tp_triggered_today:
+                last_tp_date = d
+                if not post_tp_lockout:
+                    cur_ep = {
+                        "start_signal_date": d,
+                        "start_idx": i,
+                        "triggers": list(tp_triggers_today),
+                        "start_vix": round(vix_cl, 2),
+                        "start_vr": round(vix_r, 3),
+                        "start_spot": round(cl, 2),
+                        "unlock_eod_date": None,
+                        "trading_days_locked": 0,
+                        "re_inversions": 0,
+                        "blocked_base_entries": 0,
+                        "blocked_m7_entries": 0,
+                        "blocked_base_rolls": 0,
+                        "blocked_m7_rolls": 0,
+                    }
+                    lockout_episodes.append(cur_ep)
+                elif cur_ep is not None:
+                    cur_ep["triggers"].extend(tp_triggers_today)
+                post_tp_lockout = True
+                non_inverted_streak = 0
+                lockout_days_total += 1
+                if cur_ep is not None:
+                    cur_ep["trading_days_locked"] += 1
+            elif post_tp_lockout:
+                if vix_r < lockout_inv_thresh:
+                    non_inverted_streak += 1
+                    if non_inverted_streak >= lockout_days:
+                        post_tp_lockout = False
+                        non_inverted_streak = 0
+                        last_unlock_date = d
+                        if cur_ep is not None:
+                            cur_ep["unlock_eod_date"] = d
+                            cur_ep["unlock_vix"] = round(vix_cl, 2)
+                            cur_ep["unlock_vr"] = round(vix_r, 3)
+                            cur_ep["unlock_spot"] = round(cl, 2)
+                            cur_ep["cal_days_locked"] = (dt_objs[i] - dt_objs[cur_ep["start_idx"]]).days
+                            cur_ep = None
+                    else:
+                        lockout_days_total += 1
+                        if cur_ep is not None:
+                            cur_ep["trading_days_locked"] += 1
+                else:
+                    if non_inverted_streak > 0 and cur_ep is not None:
+                        cur_ep["re_inversions"] += 1
+                    non_inverted_streak = 0
+                    lockout_days_total += 1
+                    if cur_ep is not None:
+                        cur_ep["trading_days_locked"] += 1
+
+        m7_locked_today = post_tp_lockout
+        base_locked_today = post_tp_lockout
+        m7_locked_prev_eod = m7_locked_today
+        base_locked_prev_eod = base_locked_today
+
+        # 6A. Book M Tactical EOD Entry Signal -> T+1 Close
+        cap_slots = min(max_slots, _slots_for_sig(sig_d))
+        eff_m7 = [t for t in m7_active if not (t.get("pending_tp") or t.get("pending_roll"))]
+        if cap_slots > len(eff_m7) and vxn_cl <= 27.0 and vix_r < 1.02:
+            req_gap = escalate_min_days if cap_slots == 3 else step_cal_days
+            last_dt_m = max((t["entry_dt"] for t in eff_m7), default=None)
+            if last_dt_m is None or (dt_objs[i] - last_dt_m).days >= req_gap:
+                if not m7_locked_today:
+                    mods, t_code, t_en, t_zh = format_m7_trigger_labels(sig_d, max_slots, core3_only=is_core3)
+                    c_prob_s, p1_s, p2_s, p3_s = _prob_tuple(sig_d)
+                    pending_sig = {
+                        "signal_date": d,
+                        "is_cta": bool(sig_d.get("M4", False)),
+                        "vxn": vxn_cl,
+                        "close": cl,
+                        "vix_ratio": vix_r,
+                        "r": r_cur,
+                        "q": q_cur,
+                        "cap_slots": cap_slots,
+                        "tier": cap_slots,
+                        "sig_score": int(row["score"]),
+                        "sig_ad_below50": bool(float(row["ad_line"]) < float(row["ad_sma50"])),
+                        "crisis_prob": c_prob_s,
+                        "p1": p1_s,
+                        "p2": p2_s,
+                        "p3": p3_s,
+                        "triggered_modules": mods,
+                        "trigger_code": t_code,
+                        "trigger_en": t_en,
+                        "trigger_zh": t_zh,
+                    }
+                elif cur_ep is not None:
+                    cur_ep["blocked_m7_entries"] += 1
+
+        # 6B. Book B Floor EOD Entry Signal (VIX <= 20 & VIX/3M < 1.02) -> T+1 Close
+        if base_enabled and gate_ok_today:
+            eff_base = [t for t in base_active if not (t.get("pending_tp") or t.get("pending_roll"))]
+            if len(eff_base) == 0:
+                if not base_locked_today:
+                    pending_base_open = True
+                elif cur_ep is not None:
+                    cur_ep["blocked_base_entries"] += 1
 
         if cc_enabled and i < n_days - 1:
             if active_cc is None and dd_cur >= -cc_ath_limit and vxn_cl >= cc_min_vxn:
@@ -2795,21 +3033,23 @@ def simulate_m7_strategy(
             if trig_sp:
                 pending_sp = {"signal_date": d, "close": cl, "vxn": vxn_cl, "vix_ratio": vix_r, "r": r_cur, "q": q_cur}
 
+    # Sort closed ledger rows chronologically by entry_date (then tranche_id)
+    ledger.sort(key=lambda x: (x["entry_date"], x["tranche_id"]))
     closed_trades_count = len(ledger)
 
-    # Serialize any open live tranches at final EOD
+    # Serialize open live tranches at final EOD (both Book M and Book B)
     last_r = rows_eval[-1]
     last_d = dates[-1]
     last_dt = dt_objs[-1]
     last_cl = float(last_r["close"])
     last_vxn = float(last_r["vxn"])
+    last_vix = float(last_r["vix"])
     last_vr = float(last_r["vix_ratio"])
     last_rf = float(last_r["r"])
     last_q = float(last_r["div_yield"])
     mult_last = (final_bh_sh / bh_m7["post_sh"][-1]) * final_cl
 
-    active_tranches_serialized: list[dict[str, Any]] = []
-    for tr in active_tranches:
+    def _serialize_open_tranche(tr: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         rem_d = max(1, (tr["exp_dt"] - last_dt).days)
         t_rem = rem_d / 365.0
         b_live, a_live, pm, _, _, src_live = _lookup_opt(
@@ -2817,13 +3057,13 @@ def simulate_m7_strategy(
             last_cl, rem_d, last_rf, last_q, last_vxn, tr.get("last_iv"),
             slip_bsm=OPT_SLIP, iv_ratio_anchor=tr.get("iv_ratio_anchor"),
         )
-        hs = tr["hedged_shares"]
+        hs = float(tr["hedged_shares"])
         mtm_cash_usd = hs * pm
-        mtm_net_pnl = mtm_cash_usd - tr["entry_cost_usd"]
-        roi_mult = (mtm_cash_usd / tr["entry_cost_usd"]) if tr["entry_cost_usd"] > 1e-6 else 0.0
+        mtm_net_pnl = mtm_cash_usd - float(tr["entry_cost_usd"])
+        roi_mult = (mtm_cash_usd / float(tr["entry_cost_usd"])) if float(tr["entry_cost_usd"]) > 1e-6 else 0.0
         est_d_sh = mtm_cash_usd / (last_cl * (1.0 + STOCK_REBAL_FEE)) if abs(mtm_cash_usd) > 1e-8 else 0.0
-        est_sh_added = tr["entry_shares_sold"] + est_d_sh
-        actual_net_sh = pm - tr["entry_put_ask"]
+        est_sh_added = float(tr["entry_shares_sold"]) + est_d_sh
+        actual_net_sh = pm - float(tr["entry_put_ask"])
         conv = bco_mod.decompose_tranche_convexity(
             "naked_put",
             tr["entry_spot"],
@@ -2844,161 +3084,186 @@ def simulate_m7_strategy(
         tr_tgt_d = int(tr.get("target_dte") or target_dte)
         tr_roll_d = int(tr.get("roll_dte_thr") or 0)
         is_armed = bool(tr.get("pending_tp")) or bool(tr.get("pending_roll"))
-        armed_reason = tr.get("tp_reason") or (f"roll_{tr_roll_d}d" if tr.get("pending_roll") else "")
-        if is_armed and str(armed_reason).startswith("roll_"):
+        armed_reason = str(tr.get("tp_reason") or "")
+        if is_armed and (armed_reason.startswith("roll_") or armed_reason.startswith("salvage_")):
             live_reason = f"live_{armed_reason}_armed_next_open"
         elif is_armed:
             live_reason = "live_tp_armed_next_open"
         else:
             live_reason = "open_live_mtm"
-        en_src_l = tr.get("entry_source", "bsm_fallback")
+        en_src_l = str(tr.get("entry_source", "bsm_fallback"))
         q_tag_live = _classify_quote_source_tag(en_src_l, src_live, tr["entry_date"], last_d, opra_max_d or "2025-12-15")
         occ_sym = str(tr.get("occ_symbol") or _occ(tr["exp_date"], "put", tr["kp"]))
-        ledger.append(
-            {
-                "tranche_id": tr["tranche_id"],
-                "strategy_id": strategy_id,
-                "slot_num": tr["slot_num"],
-                "tier": tr["tier"],
-                "max_slots": max_slots,
-                "tranche_type": "naked_put",
-                "put_otm_pct": otm_pct_int,
-                "tp_mode": tp_code,
-                "roll_mode": roll_mode,
-                "target_dte": tr_tgt_d,
-                "roll_dte": tr_roll_d,
-                "is_cta": bool(tr.get("is_cta", False)),
-                "quoteSource": q_tag_live,
-                "quote_source": q_tag_live,
-                "occSymbol": occ_sym,
-                "occ_symbol": occ_sym,
-                "exp": tr["exp_date"],
-                "strike": round(tr["kp"], 2),
-                "entryBid": round(float(tr.get("entry_bid_raw", tr["entry_put_ask"])), 3),
-                "entryAsk": round(float(tr.get("entry_ask_raw", tr["entry_put_ask"])), 3),
-                "exitBid": round(float(b_live), 3),
-                "exitAsk": round(float(a_live), 3),
-                "signal_date": tr["signal_date"],
-                "entry_date": tr["entry_date"],
-                "planned_exp_date": tr["exp_date"],
-                "exit_date": None,
-                "mtm_date": last_d,
-                "is_open_live": True,
-                "pending_tp": is_armed,
-                "pending_tp_reason": tr.get("tp_reason") or "",
-                "actual_days_held": (last_dt - tr["entry_dt"]).days,
-                "rem_dte_at_exit": rem_d,
-                "exit_reason": live_reason,
-                "pricing_source": _classify_trade_source(en_src_l, src_live),
-                "entry_source": en_src_l,
-                "exit_source": src_live,
-                "sig_score": tr["sig_score"],
-                "sig_ad_below50": tr["sig_ad_below50"],
-                "crisis_prob": tr["crisis_prob"],
-                "p1": tr["p1"],
-                "p2": tr["p2"],
-                "p3": tr["p3"],
-                "triggered_modules": tr["triggered_modules"],
-                "trigger_code": tr["trigger_code"],
-                "trigger_en": tr["trigger_en"],
-                "trigger_zh": tr["trigger_zh"],
-                "entry_spot": round(tr["entry_spot"], 2),
-                "entry_vxn": round(tr["entry_vxn"], 2),
-                "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
-                "kp": round(tr["kp"], 2),
-                "kc": None,
-                "call_cap_pct": None,
-                "hedged_shares": round(hs, 2),
-                "contracts_est": round(hs / 100.0, 2),
-                "slot_coverage": round(tr["hedged_ratio"], 4),
-                "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
-                "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
-                "entry_cost_usd": round(tr["entry_cost_usd"], 2),
-                "entry_shares_sold": round(tr["entry_shares_sold"], 4),
-                "exit_spot": round(last_cl, 2),
-                "exit_vxn": round(last_vxn, 2),
-                "exit_vix_ratio": round(last_vr, 3),
-                "underlying_ret_pct": round((last_cl / tr["entry_spot"] - 1.0) * 100.0, 2),
-                "put_exit_val_sh": round(pm, 4),
-                "call_exit_cost_sh": 0.0,
-                "exit_net_cash_usd": round(mtm_cash_usd, 2),
-                "net_pnl_usd": round(mtm_net_pnl, 2),
-                "roi_mult": round(roi_mult, 2),
-                "exit_shares_delta": round(est_d_sh, 2),
-                "shares_added": round(est_sh_added, 2),
-                "delta0": round(float(conv["delta0"]), 4),
-                "delta_usd": round(float(conv["dV_delta_sh"]) * hs, 2),
-                "gamma_usd": round(float(conv["dV_gamma_sh"]) * hs, 2),
-                "vega_usd": round(float(conv["dV_vega_sh"]) * hs, 2),
-                "theta_slip_usd": round(
-                    round(mtm_net_pnl, 2)
-                    - (
-                        round(float(conv["dV_delta_sh"]) * hs, 2)
-                        + round(float(conv["dV_gamma_sh"]) * hs, 2)
-                        + round(float(conv["dV_vega_sh"]) * hs, 2)
-                    ),
-                    2,
-                ),
-                "convexity_mult": round(float(conv["conv_mult"]), 2) if conv["conv_mult"] is not None else None,
-                "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
-                "comp_put_gain_usd": round((hs * pm / last_cl) * mult_last, 2),
-                "comp_call_drag_usd": 0.0,
-            }
-        )
-        active_tranches_serialized.append(
-            {
-                "tranche_id": tr["tranche_id"],
-                "slot_num": tr["slot_num"],
-                "tier": tr["tier"],
-                "tranche_type": "naked_put",
-                "put_otm_pct": otm_pct_int,
-                "roll_mode": roll_mode,
-                "target_dte": tr_tgt_d,
-                "roll_dte": tr_roll_d,
-                "is_cta": bool(tr.get("is_cta", False)),
-                "occSymbol": occ_sym,
-                "quoteSource": q_tag_live,
-                "days_to_roll": max(0, rem_d - tr_roll_d) if tr_roll_d > 0 else None,
-                "days_to_roll50": max(0, rem_d - tr_roll_d) if tr_roll_d > 0 else None,
-                "entry_date": tr["entry_date"],
-                "exp_date": tr["exp_date"],
-                "rem_dte": rem_d,
-                "entry_spot": round(tr["entry_spot"], 2),
-                "mtm_spot": round(last_cl, 2),
-                "mtm_date": last_d,
-                "kp": round(tr["kp"], 2),
-                "kc": None,
-                "hedged_shares": round(hs, 2),
-                "contracts_est": round(hs / 100.0, 2),
-                "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
-                "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
-                "entry_cost_usd": round(tr["entry_cost_usd"], 2),
-                "mtm_put_val_sh": round(pm, 4),
-                "mtm_call_val_sh": 0.0,
-                "mtm_pnl_usd": round(mtm_net_pnl, 2),
-                "roi_mult": round(roi_mult, 2),
-                "est_shares_added": round(est_sh_added, 2),
-                "pending_tp": is_armed,
-                "tp_reason": tr.get("tp_reason") or "",
-                "tp_trigger_ratio": round(float(tr.get("tp_trigger_ratio") or last_vr), 3),
-                "trigger_code": tr["trigger_code"],
-                "crisis_prob": tr["crisis_prob"],
-            }
-        )
+        is_base_b = tr["book"] == "base"
+        net_pnl_r = round(mtm_net_pnl, 2)
+        d_usd = round(float(conv["dV_delta_sh"]) * hs, 2)
+        g_usd = round(float(conv["dV_gamma_sh"]) * hs, 2)
+        v_usd = round(float(conv["dV_vega_sh"]) * hs, 2)
+        th_usd = round(net_pnl_r - (d_usd + g_usd + v_usd), 2)
+        led_row = {
+            "tranche_id": tr["tranche_id"],
+            "strategy_id": strategy_id,
+            "book": tr["book"],
+            "book_label_en": "Book B · 0.20% Base" if is_base_b else "Book M · 1.25% M7G",
+            "book_label_zh": "B账本 · 0.20%常态基底" if is_base_b else "M账本 · 1.25%战术M7G",
+            "budget_pct_nav": 0.20 if is_base_b else 1.25,
+            "entry_pct_nav": tr["entry_pct_nav"],
+            "nav_at_entry": round(float(tr["nav_at_entry"]), 2),
+            "slot_num": tr["slot_num"],
+            "tier": tr["tier"],
+            "max_slots": max_slots,
+            "tranche_type": "naked_put",
+            "put_otm_pct": int(tr.get("put_otm_pct") or otm_pct_int),
+            "tp_mode": tp_code,
+            "roll_mode": roll_mode,
+            "target_dte": tr_tgt_d,
+            "roll_dte": tr_roll_d,
+            "is_cta": bool(tr.get("is_cta", False)),
+            "quoteSource": q_tag_live,
+            "quote_source": q_tag_live,
+            "occSymbol": occ_sym,
+            "occ_symbol": occ_sym,
+            "exp": tr["exp_date"],
+            "strike": round(tr["kp"], 2),
+            "near_itm_strike_105": round(tr["kp"] * near_itm_mult, 2),
+            "entryBid": round(float(tr.get("entry_bid_raw", tr["entry_put_ask"])), 3),
+            "entryAsk": round(float(tr.get("entry_ask_raw", tr["entry_put_ask"])), 3),
+            "exitBid": round(float(b_live), 3),
+            "exitAsk": round(float(a_live), 3),
+            "signal_date": tr["signal_date"],
+            "entry_date": tr["entry_date"],
+            "planned_exp_date": tr["exp_date"],
+            "exit_date": None,
+            "mtm_date": last_d,
+            "is_open_live": True,
+            "pending_tp": is_armed,
+            "pending_tp_reason": armed_reason,
+            "actual_days_held": (last_dt - tr["entry_dt"]).days,
+            "rem_dte_at_exit": rem_d,
+            "exit_reason": live_reason,
+            "pricing_source": _classify_trade_source(en_src_l, src_live),
+            "entry_source": en_src_l,
+            "exit_source": src_live,
+            "sig_score": tr["sig_score"],
+            "sig_ad_below50": tr["sig_ad_below50"],
+            "crisis_prob": tr["crisis_prob"],
+            "p1": tr["p1"],
+            "p2": tr["p2"],
+            "p3": tr["p3"],
+            "triggered_modules": tr["triggered_modules"],
+            "trigger_code": tr["trigger_code"],
+            "trigger_en": tr["trigger_en"],
+            "trigger_zh": tr["trigger_zh"],
+            "entry_spot": round(tr["entry_spot"], 2),
+            "entry_vxn": round(tr["entry_vxn"], 2),
+            "entry_vix": round(float(tr.get("entry_vix", 0.0)), 2),
+            "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
+            "kp": round(tr["kp"], 2),
+            "kc": None,
+            "call_cap_pct": None,
+            "hedged_shares": round(hs, 2),
+            "contracts_est": round(hs / 100.0, 2),
+            "slot_coverage": round(tr["hedged_ratio"], 4),
+            "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
+            "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
+            "entry_cost_usd": round(tr["entry_cost_usd"], 2),
+            "entry_shares_sold": round(tr["entry_shares_sold"], 4),
+            "exit_spot": round(last_cl, 2),
+            "exit_vxn": round(last_vxn, 2),
+            "exit_vix": round(last_vix, 2),
+            "exit_vix_ratio": round(last_vr, 3),
+            "underlying_ret_pct": round((last_cl / tr["entry_spot"] - 1.0) * 100.0, 2),
+            "put_exit_val_sh": round(pm, 4),
+            "call_exit_cost_sh": 0.0,
+            "exit_net_cash_usd": round(mtm_cash_usd, 2),
+            "net_pnl_usd": net_pnl_r,
+            "roi_mult": round(roi_mult, 2),
+            "exit_shares_delta": round(est_d_sh, 2),
+            "shares_added": round(est_sh_added, 2),
+            "delta0": round(float(conv["delta0"]), 4),
+            "delta_usd": d_usd,
+            "gamma_usd": g_usd,
+            "vega_usd": v_usd,
+            "theta_slip_usd": th_usd,
+            "convexity_mult": round(float(conv["conv_mult"]), 2) if conv["conv_mult"] is not None else None,
+            "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
+            "comp_put_gain_usd": round((hs * pm / last_cl) * mult_last, 2),
+            "comp_call_drag_usd": 0.0,
+        }
+        ser_row = {
+            "tranche_id": tr["tranche_id"],
+            "book": tr["book"],
+            "book_label_en": "Book B · 0.20% Base" if is_base_b else "Book M · 1.25% M7G",
+            "book_label_zh": "B账本 · 0.20%常态基底" if is_base_b else "M账本 · 1.25%战术M7G",
+            "budget_pct_nav": 0.20 if is_base_b else 1.25,
+            "slot_num": tr["slot_num"],
+            "tier": tr["tier"],
+            "tranche_type": "naked_put",
+            "put_otm_pct": int(tr.get("put_otm_pct") or otm_pct_int),
+            "roll_mode": roll_mode,
+            "target_dte": tr_tgt_d,
+            "roll_dte": tr_roll_d,
+            "is_cta": bool(tr.get("is_cta", False)),
+            "occSymbol": occ_sym,
+            "quoteSource": q_tag_live,
+            "days_to_roll": max(0, rem_d - tr_roll_d) if tr_roll_d > 0 else None,
+            "days_to_roll50": max(0, rem_d - tr_roll_d) if tr_roll_d > 0 else None,
+            "entry_date": tr["entry_date"],
+            "exp_date": tr["exp_date"],
+            "rem_dte": rem_d,
+            "entry_spot": round(tr["entry_spot"], 2),
+            "mtm_spot": round(last_cl, 2),
+            "mtm_date": last_d,
+            "kp": round(tr["kp"], 2),
+            "near_itm_strike_105": round(tr["kp"] * near_itm_mult, 2),
+            "kc": None,
+            "hedged_shares": round(hs, 2),
+            "contracts_est": round(hs / 100.0, 2),
+            "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
+            "tp_target_5x_sh": round(5.0 * tr["entry_put_ask"], 4),
+            "entry_cost_usd": round(tr["entry_cost_usd"], 2),
+            "mtm_put_val_sh": round(pm, 4),
+            "mtm_call_val_sh": 0.0,
+            "mtm_pnl_usd": net_pnl_r,
+            "roi_mult": round(roi_mult, 2),
+            "est_shares_added": round(est_sh_added, 2),
+            "pending_tp": is_armed,
+            "tp_reason": armed_reason,
+            "tp_trigger_ratio": round(float(tr.get("tp_trigger_ratio") or last_vr), 3),
+            "trigger_code": tr["trigger_code"],
+            "crisis_prob": tr["crisis_prob"],
+        }
+        return led_row, ser_row
 
-    # Metrics (matching 02_run_real_quotes_backtest.py & 09_core3_pruned_ablation_real_opra.py!)
+    base_active_serialized: list[dict[str, Any]] = []
+    for tr_b in base_active:
+        lr_b, sr_b = _serialize_open_tranche(tr_b)
+        ledger.append(lr_b)
+        base_active_serialized.append(sr_b)
+
+    active_tranches_serialized: list[dict[str, Any]] = []
+    for tr_m in m7_active:
+        lr_m, sr_m = _serialize_open_tranche(tr_m)
+        ledger.append(lr_m)
+        active_tranches_serialized.append(sr_m)
+
+    # Metrics matching 01_run_hard_roll_5d_lockout_audit.py & grid_48_full.json to the exact decimal
     yrs = (dt_objs[-1] - dt_objs[0]).days / 365.25
-    cagr = (nav_list[-1] / INITIAL_CAPITAL) ** (1.0 / yrs) - 1.0
+    cagr = (nav_list[-1] / nav_list[0]) ** (1.0 / yrs) - 1.0
     rets = [nav_list[j] / nav_list[j - 1] - 1.0 for j in range(1, n_days)]
+    ex_rets = [rets[j - 1] - (r_arr[j] / 252.0) for j in range(1, n_days)]
     mean_r = sum(rets) / len(rets)
     var_r = sum((x - mean_r) ** 2 for x in rets) / max(1, len(rets) - 1)
     vol = math.sqrt(var_r) * math.sqrt(252.0)
-    sharpe = (mean_r * 252.0) / vol if vol > 0 else 0.0
-    neg_rets = [x for x in rets if x < 0.0]
-    if len(neg_rets) > 1:
-        mu_neg = sum(neg_rets) / len(neg_rets)
-        down_std = math.sqrt(sum((x - mu_neg) ** 2 for x in neg_rets) / (len(neg_rets) - 1)) * math.sqrt(252.0)
-        sortino = (mean_r * 252.0) / down_std if down_std > 0 else 0.0
+    mean_ex = sum(ex_rets) / len(ex_rets)
+    var_ex = sum((x - mean_ex) ** 2 for x in ex_rets) / max(1, len(ex_rets) - 1)
+    std_ex = math.sqrt(var_ex)
+    sharpe = (mean_ex / std_ex * math.sqrt(252.0)) if std_ex > 1e-12 else 0.0
+    down_ex = [x for x in ex_rets if x < 0.0]
+    if len(down_ex) > 2:
+        mu_down = sum(down_ex) / len(down_ex)
+        down_std = math.sqrt(sum((x - mu_down) ** 2 for x in down_ex) / (len(down_ex) - 1))
+        sortino = (mean_ex / down_std * math.sqrt(252.0)) if down_std > 1e-12 else 0.0
     else:
         sortino = 0.0
 
@@ -3013,27 +3278,57 @@ def simulate_m7_strategy(
     calmar = cagr / abs(mdd) if mdd < 0 else 0.0
 
     closed_rows = [x for x in ledger if not x.get("is_open_live")]
+    closed_base = [x for x in closed_rows if x.get("book") == "base"]
+    closed_m7 = [x for x in closed_rows if x.get("book") == "m7"]
+
+    def _book_pf(rows_sub: list[dict[str, Any]]) -> float:
+        w = sum(float(x["net_pnl_usd"]) for x in rows_sub if float(x["net_pnl_usd"]) > 0.0)
+        l = sum(-float(x["net_pnl_usd"]) for x in rows_sub if float(x["net_pnl_usd"]) < 0.0)
+        return round(w / l, 2) if l > 1e-6 else (99.0 if w > 0.0 else 0.0)
+
     n_closed = len(closed_rows)
-    closed_pnls = [float(x["exit_net_cash_usd"]) - float(x["entry_cost_usd"]) for x in closed_rows]
+    closed_pnls = [float(x["net_pnl_usd"]) for x in closed_rows]
     win_cnt = sum(1 for p in closed_pnls if p > 0.0)
     win_rate_pct = (win_cnt / n_closed * 100.0) if n_closed > 0 else 0.0
-    gross_win_usd = sum(p for p in closed_pnls if p > 0.0)
-    gross_loss_usd = sum(-p for p in closed_pnls if p <= 0.0)
-    profit_factor = (gross_win_usd / gross_loss_usd) if gross_loss_usd > 1e-6 else 0.0
+    profit_factor = _book_pf(closed_rows)
+    base_pf = _book_pf(closed_base)
+    m7_pf = _book_pf(closed_m7)
 
     n_tp = sum(1 for x in closed_rows if "tp" in str(x["exit_reason"]))
-    roll_exits = [x for x in closed_rows if str(x["exit_reason"]).startswith("roll_")]
+    base_tp_cnt = sum(1 for x in closed_base if "tp" in str(x["exit_reason"]))
+    m7_tp_cnt = sum(1 for x in closed_m7 if "tp" in str(x["exit_reason"]))
+    roll_exits = [
+        x for x in closed_rows
+        if str(x["exit_reason"]).startswith("roll_") or str(x["exit_reason"]).startswith("salvage_")
+    ]
     roll_salvage_count = len(roll_exits)
+    roll_75d_count = sum(1 for x in closed_rows if x["exit_reason"] == "roll_75d")
     roll_30d_count = sum(1 for x in closed_rows if x["exit_reason"] == "roll_30d")
     roll_50d_count = sum(1 for x in closed_rows if x["exit_reason"] == "roll_50d")
+    salvage_vix_exp_count = sum(1 for x in closed_rows if x["exit_reason"] == "salvage_vix_expensive")
     avg_roll_salvage_pct = (
         (sum(float(x.get("roi_mult") or 0.0) for x in roll_exits) / roll_salvage_count) * 100.0
         if roll_salvage_count > 0
         else 0.0
     )
-    naked_spent = sum(x["entry_cost_usd"] for x in ledger)
-    gross_put = sum(x["exit_net_cash_usd"] for x in closed_rows)
-    payout_to_cost = (gross_put / sum(x["entry_cost_usd"] for x in closed_rows)) if closed_rows else 0.0
+    ann_gross_spend_pct = (
+        sum(float(x["entry_cost_usd"]) / max(float(x.get("nav_at_entry") or INITIAL_CAPITAL), 1.0) for x in closed_rows)
+        / yrs
+        * 100.0
+    )
+    ann_net_bleed_pct = (
+        sum(
+            (float(x["entry_cost_usd"]) - float(x["exit_net_cash_usd"])) / max(float(x.get("nav_at_entry") or INITIAL_CAPITAL), 1.0)
+            for x in closed_rows
+            if "tp" not in str(x["exit_reason"])
+        )
+        / yrs
+        * 100.0
+    )
+
+    naked_spent = sum(float(x["entry_cost_usd"]) for x in ledger)
+    gross_put = sum(float(x["exit_net_cash_usd"]) for x in closed_rows)
+    payout_to_cost = (gross_put / sum(float(x["entry_cost_usd"]) for x in closed_rows)) if closed_rows else 0.0
     net_alpha = nav_list[-1] - bh_m7["end_nav"]
     pct_active = (sum(any_active_list) / n_days) * 100.0
     active_days = max(1, sum(any_active_list))
@@ -3130,10 +3425,21 @@ def simulate_m7_strategy(
     real_lk = q_stats["real_opra_hits"] + q_stats["real_polygon_hits"]
     real_hit_pct = (real_lk / tot_lk * 100.0) if tot_lk > 0 else 0.0
 
+    blk_b_en = sum(int(e["blocked_base_entries"]) for e in lockout_episodes)
+    blk_m_en = sum(int(e["blocked_m7_entries"]) for e in lockout_episodes)
+    blk_b_rl = sum(int(e["blocked_base_rolls"]) for e in lockout_episodes)
+    blk_m_rl = sum(int(e["blocked_m7_rolls"]) for e in lockout_episodes)
+
     summary = {
         "id": strategy_id,
         "profile": "core3_adaptive" if is_core3 else "full_m7_adaptive",
-        "arch": "m7_equal_dollar",
+        "arch": "b020_m125_dual_book_hard_roll_5d_lockout",
+        "ruleset_code": HARDCODED_RULESET_SPEC["code"],
+        "base_budget_pct": 0.20,
+        "m7_budget_pct": 1.25,
+        "base_vix_gate_max": HARDCODED_BASE_VIX_MAX,
+        "lockout_days": lockout_days,
+        "lockout_inv_thresh": lockout_inv_thresh,
         "pricing_basis": "real_opra_2015_2025_calibrated_bsm" if use_real else "bsm_simulated",
         "fill_mode": fill_mode,
         "real_trades_count": real_tr_cnt,
@@ -3166,23 +3472,44 @@ def simulate_m7_strategy(
         "sortino": round(sortino, 3),
         "calmar": round(calmar, 3),
         "win_rate_pct": round(win_rate_pct, 1),
-        "profit_factor": round(profit_factor, 3),
+        "profit_factor": profit_factor,
+        "base_pf": base_pf,
+        "m7_pf": m7_pf,
         "payout_to_cost": round(payout_to_cost, 3),
         "final_shares": round(equiv_sh_list[-1], 2),
         "bh_final_shares": round(final_bh_sh, 2),
         "extra_shares_vs_bh": round(extra_sh_vs_bh, 2),
         "extra_shares_pct": round(extra_sh_pct, 2),
         "pct_days_hedged": round(pct_active, 1),
+        "base_days_hedged_pct": round(base_days_hedged / max(n_days, 1) * 100.0, 1),
+        "base_gate_open_pct": round(base_gate_open_days / max(n_days, 1) * 100.0, 1),
         "alpha_per_active_day_usd": round(net_alpha / active_days, 2),
         "tranches_total": len(ledger),
         "closed_trades_count": closed_trades_count,
+        "base_trades_count": len(closed_base),
+        "m7_trades_count": len(closed_m7),
         "naked_count": len(ledger),
         "collar_count": 0,
         "tp_count": n_tp,
+        "base_tp_count": base_tp_cnt,
+        "m7_tp_count": m7_tp_cnt,
         "roll_salvage_count": roll_salvage_count,
+        "roll_75d_count": roll_75d_count,
         "roll_30d_count": roll_30d_count,
         "roll_50d_count": roll_50d_count,
+        "salvage_vix_expensive_count": salvage_vix_exp_count,
         "avg_roll_salvage_pct": round(avg_roll_salvage_pct, 1),
+        "ann_gross_spend_pct_nav": round(ann_gross_spend_pct, 2),
+        "ann_net_bleed_pct_nav": round(ann_net_bleed_pct, 2),
+        "base_net_pnl_usd": round(sum(float(x["net_pnl_usd"]) for x in closed_base), 2),
+        "m7_net_pnl_usd": round(sum(float(x["net_pnl_usd"]) for x in closed_m7), 2),
+        "net_option_pnl_usd": round(sum(float(x["net_pnl_usd"]) for x in closed_rows), 2),
+        "lockout_episodes_count": len(lockout_episodes),
+        "lockout_days_total": lockout_days_total,
+        "blocked_base_entries": blk_b_en,
+        "blocked_m7_entries": blk_m_en,
+        "blocked_base_rolls": blk_b_rl,
+        "blocked_m7_rolls": blk_m_rl,
         "max_roi_mult": round(max_roi, 2),
         "naked_prem_spent_usd": round(naked_spent, 2),
         "gross_put_monetized_usd": round(gross_put, 2),
@@ -3241,19 +3568,40 @@ def simulate_m7_strategy(
         "open_wheel_call": open_wc_ser,
     }
 
+    lockout_state_eod = {
+        "locked": post_tp_lockout,
+        "non_inverted_streak": non_inverted_streak,
+        "required_streak": lockout_days,
+        "vix_ratio_unlock_max": lockout_inv_thresh,
+        "last_tp_date": last_tp_date,
+        "last_unlock_date": last_unlock_date,
+        "episodes_count": len(lockout_episodes),
+        "trading_days_locked": lockout_days_total,
+        "blocked_base_entries": blk_b_en,
+        "blocked_m7_entries": blk_m_en,
+        "blocked_base_rolls": blk_b_rl,
+        "blocked_m7_rolls": blk_m_rl,
+        "blocked_total": blk_b_en + blk_m_en + blk_b_rl + blk_m_rl,
+        "episodes": lockout_episodes,
+    }
+
     return {
         "summary": summary,
         "nav": nav_list,
         "equiv_shares": equiv_sh_list,
         "any_active": any_active_list,
         "active_slots": active_slots_list,
-        "slot1_naked": [s > 0 for s in active_slots_list],
+        "slot1_naked": [s > 0 for s in any_active_list],
         "ledger": ledger,
         "cc_ledger": cc_ledger,
         "sp_ledger": sp_combined_ledger,
         "shield_events": [],
         "active_tranches_eod": active_tranches_serialized,
+        "base_active_tranches_eod": base_active_serialized,
+        "all_active_tranches_eod": base_active_serialized + active_tranches_serialized,
         "pending_sig_eod": pending_sig,
+        "pending_base_open_eod": pending_base_open,
+        "lockout_state_eod": lockout_state_eod,
         "sp_live_eod": sp_live_eod,
     }
 
@@ -3272,8 +3620,8 @@ def build_m7_live_dashboard(
 ) -> dict[str, Any]:
     d = str(row["date"])
     cl = float(row["close"])
-    ath = float(row["running_ath"])
     dd_pct = float(row["dd_from_ath"]) * 100.0
+    vix_now = float(row.get("vix", 0.0))
     vxn = float(row["vxn"])
     vr = float(row["vix_ratio"])
     r_cur = float(row["r"])
@@ -3284,15 +3632,21 @@ def build_m7_live_dashboard(
     ad_below = ad_line < ad_sma50
 
     strategy_id = str(m7_sim["summary"]["id"])
+    fill_mode_cur = str(m7_sim["summary"].get("fill_mode") or DEFAULT_M7_FILL_MODE)
     is_core3 = strategy_id == "Core3_Adaptive"
-    if is_core3 and roll_mode == "90d_hold":
+    if roll_mode == "adaptive_120_90":
+        roll_mode_norm = "adaptive_125_90"
+    else:
+        roll_mode_norm = roll_mode
+    if is_core3 and roll_mode_norm == "90d_hold":
         roll_mode = "adaptive_120_90"
-    is_adaptive = roll_mode == "adaptive_120_90"
-    is_roll50 = roll_mode == "120d_roll50"
+        roll_mode_norm = "adaptive_125_90"
+    is_adaptive = roll_mode_norm in ("adaptive_125_90", "adaptive_120_90")
+    is_roll50 = roll_mode_norm == "120d_roll50"
     is_cta_now = bool(sig_day.get("M4", False))
     if is_adaptive:
-        entry_dte = 90 if is_cta_now else 120
-        roll_dte = 30 if is_cta_now else 50
+        entry_dte = HARDCODED_M7_CTA_DTE if is_cta_now else HARDCODED_M7_BASE_DTE
+        roll_dte = HARDCODED_M7_CTA_ROLL_DTE if is_cta_now else HARDCODED_M7_BASE_ROLL_DTE
     elif is_roll50:
         entry_dte = 120
         roll_dte = 50
@@ -3300,6 +3654,7 @@ def build_m7_live_dashboard(
         entry_dte = 90
         roll_dte = 0
     five_x_dte = 45
+    near_itm_mult = 1.00 if m7_tp_mode == "itm_tp" else HARDCODED_NEAR_ITM_MULT
 
     max_slots = int(m7_sim["summary"]["max_slots"])
     is_graded = max_slots == 3
@@ -3316,10 +3671,32 @@ def build_m7_live_dashboard(
         p3 = float(sig_day["p3"])
         target_slots = int(sig_day["target_slots_m7g" if is_graded else "target_slots_m7"])
 
-    active_tr = m7_sim["active_tranches_eod"]
+    active_tr = list(m7_sim.get("active_tranches_eod") or [])
+    base_tr = list(m7_sim.get("base_active_tranches_eod") or [])
+    all_open_tr = list(m7_sim.get("all_active_tranches_eod") or (base_tr + active_tr))
     active_slots = len(active_tr)
-    eff_active_tr = active_tr
-    pend_sig = m7_sim["pending_sig_eod"]
+    base_active_slots = len(base_tr)
+    eff_active_tr = [t for t in active_tr if not bool(t.get("pending_tp"))]
+    eff_base_tr = [t for t in base_tr if not bool(t.get("pending_tp"))]
+    pend_sig = m7_sim.get("pending_sig_eod")
+    pend_base_open = bool(m7_sim.get("pending_base_open_eod"))
+    lock_eod = dict(m7_sim.get("lockout_state_eod") or {})
+
+    locked_by_5d = bool(lock_eod.get("locked", False))
+    non_inv_streak = int(lock_eod.get("non_inverted_streak", 0))
+    req_lock_streak = int(lock_eod.get("required_streak", HARDCODED_LOCKOUT_DAYS))
+    unlock_vr_max = float(lock_eod.get("vix_ratio_unlock_max", HARDCODED_LOCKOUT_INV_THRESH))
+    is_non_inv_today = bool(vr < unlock_vr_max)
+    last_tp_dt_str = lock_eod.get("last_tp_date")
+    last_unlock_dt_str = lock_eod.get("last_unlock_date")
+    lock_ep_cnt = int(lock_eod.get("episodes_count", 0))
+    lock_days_tot = int(lock_eod.get("trading_days_locked", 0))
+    lock_blk_tot = int(lock_eod.get("blocked_total", 0))
+
+    base_vix_ok = bool(vix_now <= HARDCODED_BASE_VIX_MAX)
+    base_vr_ok = bool(vr < HARDCODED_BASE_VR_MAX)
+    base_raw_gate_open = bool(base_vix_ok and base_vr_ok)
+    base_gate_open = bool(base_raw_gate_open and not locked_by_5d)
 
     vxn_red_ok = vxn <= 27.0
     vr_red_ok = vr < 1.02
@@ -3391,17 +3768,148 @@ def build_m7_live_dashboard(
     stress_lbl_en = str(stress_pack["live_stress_label_en"])
     stress_lbl_zh = str(stress_pack["live_stress_label_zh"])
 
-    # T+1 Open Execution Order Verdict
-    any_tp_armed = any(bool(t.get("pending_tp")) and not str(t.get("tp_reason", "")).startswith("roll_") for t in active_tr)
-    any_roll_armed = any(bool(t.get("pending_tp")) and str(t.get("tp_reason", "")).startswith("roll_") for t in active_tr)
+    # Book B 0.20% VIX<=20 Gate live diagnostic block
+    if locked_by_5d:
+        bb_status = "LOCKED_BY_5D"
+        bb_lbl_en = f"LOCKED BY 5D POST-TP GATE ({non_inv_streak}/{req_lock_streak}d < 1.00)"
+        bb_lbl_zh = f"止盈后 5D 静默锁死（解除倒挂进度 {non_inv_streak}/{req_lock_streak} 天）"
+        bb_det_en = (
+            f"Book B 0.20% floor put re-entry is paused until VIX/VIX3M < {unlock_vr_max:.2f} holds for "
+            f"{req_lock_streak} consecutive trading days (currently {non_inv_streak}/{req_lock_streak}, VIX {vix_now:.2f})."
+        )
+        bb_det_zh = (
+            f"B账本 0.20% 常态底仓在崩盘止盈后暂停新开/滚仓，须等 VIX/VIX3M < {unlock_vr_max:.2f} 连续满 "
+            f"{req_lock_streak} 个交易日才解锁（当前 {non_inv_streak}/{req_lock_streak} 天，VIX {vix_now:.2f}）。"
+        )
+    elif base_gate_open:
+        bb_status = "GATE_OPEN"
+        bb_lbl_en = f"OPEN · VIX {vix_now:.2f} <= 20 & VIX/3M {vr:.3f} < 1.02"
+        bb_lbl_zh = f"门控开启 · VIX {vix_now:.2f} <= 20 且 VIX/3M {vr:.3f} < 1.02"
+        if base_tr:
+            b0 = base_tr[0]
+            bb_det_en = (
+                f"Active 0.20% NAV floor put ({b0['occSymbol']} · K=${b0['kp']:.2f} · {b0['rem_dte']}D left) — "
+                f"hard-rolls cleanly at <= 75 DTE while VIX <= 20."
+            )
+            bb_det_zh = (
+                f"在途持有 0.20% 净值常态底仓（{b0['occSymbol']} · 行权 ${b0['kp']:.2f} · 剩 {b0['rem_dte']} 天）—— "
+                f"VIX <= 20 期间剩 <=75 天自动硬换新 125D Put。"
+            )
+        else:
+            bb_det_en = "Calm IV window open: T+1 Close deploys 0.20% NAV into 125D -15% OTM floor put."
+            bb_det_zh = "低波窗口开启：次日收盘按 0.20% 净值买入 125D -15% OTM 常态底仓 Put。"
+    else:
+        bb_status = "GATE_CLOSED_HIGH_VIX"
+        bb_lbl_en = f"CLOSED · VIX {vix_now:.2f} > 20 or VIX/3M {vr:.3f} >= 1.02"
+        bb_lbl_zh = f"门控关闭 · VIX {vix_now:.2f} > 20 或 VIX/3M {vr:.3f} >= 1.02（禁买贵底仓）"
+        if base_tr:
+            b0 = base_tr[0]
+            bb_det_en = (
+                f"Existing floor put ({b0['occSymbol']} · K=${b0['kp']:.2f} · {b0['rem_dte']}D left) continues shielding; "
+                f"if it hits <= 75 DTE while VIX > 20, it salvages residual cash into QQQ without re-buying expensive IV."
+            )
+            bb_det_zh = (
+                f"存量底仓（{b0['occSymbol']} · K=${b0['kp']:.2f} · 剩 {b0['rem_dte']} 天）继续护航；"
+                f"若 VIX > 20 期间跌至 <=75 天则直接回收残值换股，绝不追买高波贵 Put。"
+            )
+        else:
+            bb_det_en = f"VIX {vix_now:.2f} exceeds 20.0 gate — Book B waits on standby until VIX <= 20 & VIX/3M < 1.02."
+            bb_det_zh = f"当前 VIX {vix_now:.2f} 高于 20.0 门控线 —— B账本静默待命，待 VIX <= 20 低波回归再建底仓。"
+
+    book_b_vix_gate = {
+        "open": base_gate_open,
+        "raw_gate_open": base_raw_gate_open,
+        "status": bb_status,
+        "vix": round(vix_now, 2),
+        "vix_max": HARDCODED_BASE_VIX_MAX,
+        "vix_ok": base_vix_ok,
+        "vix_ratio": round(vr, 3),
+        "vix_ratio_max": HARDCODED_BASE_VR_MAX,
+        "vix_ratio_ok": base_vr_ok,
+        "locked_by_5d": locked_by_5d,
+        "budget_pct": 0.20,
+        "target_dte": HARDCODED_BASE_DTE,
+        "roll_dte": HARDCODED_BASE_ROLL_DTE,
+        "otm_pct": 15,
+        "active_slots": base_active_slots,
+        "active_tranche": base_tr[0] if base_tr else None,
+        "pending_open_t1": pend_base_open,
+        "status_label_en": bb_lbl_en,
+        "status_label_zh": bb_lbl_zh,
+        "detail_en": bb_det_en,
+        "detail_zh": bb_det_zh,
+    }
+
+    # 5D Post-Inversion Lockout live diagnostic block
+    if locked_by_5d:
+        rem_lk = max(1, req_lock_streak - non_inv_streak)
+        lk_lbl_en = f"LOCKED · Non-Inverted Streak {non_inv_streak}/{req_lock_streak}D ({rem_lk}D left)"
+        lk_lbl_zh = f"止盈静默锁死中 · 解除倒挂连续 {non_inv_streak}/{req_lock_streak} 天（还需 {rem_lk} 天）"
+        lk_det_en = (
+            f"Triggered by crash TP on {last_tp_dt_str or d}. Today VIX/VIX3M = {vr:.3f} "
+            f"({'< 1.00 contango' if is_non_inv_today else '>= 1.00 still inverted -> streak reset to 0'}): "
+            f"blocks all new puts & 75D/30D re-buys across Book B & Book M until 5 consecutive days < 1.00."
+        )
+        lk_det_zh = (
+            f"自 {last_tp_dt_str or d} 崩盘止盈起进入静默锁死；今日 VIX/VIX3M = {vr:.3f}"
+            f"（{'< 1.00 已退回正斜率' if is_non_inv_today else '>= 1.00 仍在倒挂 -> 计数清零'}）—— "
+            f"双账本新开与滚仓续买全面冻结，直至连续 {req_lock_streak} 个交易日 < 1.00 解锁。"
+        )
+    else:
+        lk_lbl_en = f"UNLOCKED · Clear to Execute (Last TP {last_tp_dt_str or 'None'})"
+        lk_lbl_zh = f"已解锁就绪 · 允许正常开仓/硬换（上次止盈 {last_tp_dt_str or '无'}）"
+        lk_det_en = (
+            f"Rule: after any crash TP, freeze all new buys & roll re-buys until VIX/VIX3M < 1.00 for 5 consecutive trading days "
+            f"({lock_ep_cnt} historical episodes / {lock_days_tot} locked days)."
+        )
+        lk_det_zh = (
+            f"铁律：任意槽位触发崩盘止盈后立即停买，须等 VIX/VIX3M < 1.00 连续满 5 个交易日且不反跳才允许再买"
+            f"（历史共触发 {lock_ep_cnt} 轮 / 锁定 {lock_days_tot} 个交易日）。"
+        )
+
+    post_tp_lockout_block = {
+        "locked": locked_by_5d,
+        "non_inverted_streak": non_inv_streak,
+        "required_streak": req_lock_streak,
+        "vix_ratio_now": round(vr, 3),
+        "vix_ratio_unlock_max": unlock_vr_max,
+        "is_non_inverted_today": is_non_inv_today,
+        "last_tp_date": last_tp_dt_str,
+        "last_unlock_date": last_unlock_dt_str,
+        "episodes_count": lock_ep_cnt,
+        "trading_days_locked": lock_days_tot,
+        "blocked_base_entries": int(lock_eod.get("blocked_base_entries", 0)),
+        "blocked_m7_entries": int(lock_eod.get("blocked_m7_entries", 0)),
+        "blocked_total": lock_blk_tot,
+        "status_label_en": lk_lbl_en,
+        "status_label_zh": lk_lbl_zh,
+        "detail_en": lk_det_en,
+        "detail_zh": lk_det_zh,
+    }
+
+    # T+1 Close Execution Order Verdict (covering BOTH Book M 1.25% & Book B 0.20% + 5D Lockout)
+    any_tp_armed = any(
+        bool(t.get("pending_tp"))
+        and not (str(t.get("tp_reason", "")).startswith("roll_") or str(t.get("tp_reason", "")).startswith("salvage_"))
+        for t in all_open_tr
+    )
+    any_m7_roll_armed = any(
+        bool(t.get("pending_tp")) and str(t.get("tp_reason", "")).startswith("roll_")
+        for t in active_tr
+    )
+    any_base_roll_armed = any(
+        bool(t.get("pending_tp"))
+        and (str(t.get("tp_reason", "")).startswith("roll_") or str(t.get("tp_reason", "")).startswith("salvage_"))
+        for t in base_tr
+    )
     armed_roll_d = next(
-        (int(t.get("roll_dte") or 50) for t in active_tr if bool(t.get("pending_tp")) and str(t.get("tp_reason", "")).startswith("roll_")),
-        roll_dte if roll_dte > 0 else 50,
+        (int(t.get("roll_dte") or 75) for t in active_tr if bool(t.get("pending_tp")) and str(t.get("tp_reason", "")).startswith("roll_")),
+        roll_dte if roll_dte > 0 else 75,
     )
     otm_lbl = "-20% OTM" if put_otm == "otm20" else "-15% OTM"
     if is_adaptive:
-        tenor_lbl_en = f"{entry_dte}D (Roll@{roll_dte}D)"
-        tenor_lbl_zh = f"{entry_dte}D（剩{roll_dte}天滚仓）"
+        tenor_lbl_en = f"{entry_dte}D (Hard Roll@{roll_dte}D)"
+        tenor_lbl_zh = f"{entry_dte}D（剩{roll_dte}天硬换）"
     elif is_roll50:
         tenor_lbl_en = "120D (Roll@50D)"
         tenor_lbl_zh = "120D（剩50天滚仓）"
@@ -3409,130 +3917,206 @@ def build_m7_live_dashboard(
         tenor_lbl_en = "90D"
         tenor_lbl_zh = "90D"
 
+    m7_wants_entry = target_slots > len(eff_active_tr) and vxn_red_ok and vr_red_ok and cooldown_passed
+    base_wants_entry = base_raw_gate_open and len(eff_base_tr) == 0
+
     if any_tp_armed:
         t1_code = "TP_ARMED_NEXT_OPEN"
         t1_tone = "tp"
-        t1_badge_en = "T+1 OPEN: TAKE-PROFIT MONETIZE & RELOAD QQQ"
-        t1_badge_zh = "T+1 开盘指令：触发恐慌止盈 · 变现 Put 抄底加仓 QQQ"
-        t1_title_en = "Panic Take-Profit Triggered — Monetize Active Put Slot(s) at Next Open"
-        t1_title_zh = "恐慌止盈阈值已触发 —— 次日开盘全额平仓变现并复投 QQQ 正股"
-    elif any_roll_armed and target_slots > 0:
-        t1_code = "ROLL_50D_AND_REOPEN"
+        t1_badge_en = "T+1 EXEC: NEAR-ITM BOTTOM CLEARANCE -> MONETIZE PUTS & ENTER 5D LOCKOUT"
+        t1_badge_zh = "T+1 执行指令：准实值底部出清触发 · 全额变现抄底 QQQ 并启动 5D 静默锁死"
+        t1_title_en = "Near-ITM Panic Take-Profit Armed — Monetize Put(s) Into QQQ & Lock Re-Entry Until 5D Non-Inverted"
+        t1_title_zh = "准实值恐慌止盈已触发 —— 次日变现全部达标 Put 换入 QQQ，并同步冻结新买直至解除倒挂满 5 天"
+    elif any_m7_roll_armed and target_slots > 0 and not redline_blocked and not locked_by_5d:
+        t1_code = "ROLL_75D_AND_REOPEN"
         t1_tone = "armed"
-        t1_badge_en = f"T+1 OPEN: {armed_roll_d}-DTE ROLL -> HARVEST RESIDUAL & OPEN {entry_dte}D {otm_lbl} PUT"
-        t1_badge_zh = f"T+1 开盘指令：剩 <={armed_roll_d} DTE 触发滚仓 · 回收残值并换入新 {entry_dte}D {otm_lbl} Put"
-        t1_title_en = f"Low-Vol Entry Gate {prob:.0f}% ({trig_code}) Active at <={armed_roll_d} DTE — Salvage Expiring Slot & Roll Into Fresh {entry_dte}-DTE {otm_lbl} Put"
-        t1_title_zh = f"在途槽位剩 <={armed_roll_d} DTE 且买盾执行分 {prob:.0f}%（{trig_code}）仍亮 —— 次日开盘回收残值并滚入新 {entry_dte}D {otm_lbl} Put"
-    elif any_roll_armed:
-        t1_code = "SALVAGE_50D_EXIT"
+        t1_badge_en = f"T+1 EXEC: {armed_roll_d}-DTE HARD ROLL -> SALVAGE & OPEN 1.25% {entry_dte}D {otm_lbl} PUT"
+        t1_badge_zh = f"T+1 执行指令：剩 <={armed_roll_d} DTE 硬换 · 回收残值并按 1.25% 预算换入新 {entry_dte}D {otm_lbl} Put"
+        t1_title_en = f"Low-Vol Gate {prob:.0f}% ({trig_code}) Active at <={armed_roll_d} DTE — Hard-Roll Into Fresh 1.25% NAV {entry_dte}-DTE {otm_lbl} Put"
+        t1_title_zh = f"在途战术槽剩 <={armed_roll_d} DTE 且买盾分 {prob:.0f}%（{trig_code}）仍亮 —— 次日硬换入新 1.25% 净值 {entry_dte}D {otm_lbl} Put"
+    elif any_m7_roll_armed:
+        t1_code = "SALVAGE_75D_EXIT"
         t1_tone = "active"
-        t1_badge_en = f"T+1 OPEN: {armed_roll_d}-DTE SALVAGE EXIT -> HARVEST RESIDUAL TO QQQ"
-        t1_badge_zh = f"T+1 开盘指令：剩 <={armed_roll_d} DTE 信号熄灭 · 平仓回收残值复投 QQQ"
-        t1_title_en = f"Slot Reached <={armed_roll_d} DTE With Entry Gate Off — Exit Before Theta Cliff & Reinvest Residual Cash Into QQQ"
-        t1_title_zh = f"在途槽位剩 <={armed_roll_d} DTE 且买盾执行信号已解除 —— 在 Theta 悬崖前平仓回收残值并复投 QQQ"
+        t1_badge_en = f"T+1 EXEC: {armed_roll_d}-DTE HARD EXIT -> HARVEST RESIDUAL TO QQQ"
+        t1_badge_zh = f"T+1 执行指令：剩 <={armed_roll_d} DTE 硬退回收残值复投 QQQ（信号关闭或静默锁死）"
+        t1_title_en = f"Slot Reached <={armed_roll_d} DTE With Gate Off/Locked — Exit Cleanly Before Theta Cliff & Sweep Into QQQ"
+        t1_title_zh = f"在途槽位剩 <={armed_roll_d} DTE 且买盾门控关闭/锁死 —— 在 Theta 悬崖前硬退回收残值并复投 QQQ"
     elif pend_sig is not None:
         next_slot_idx = len(eff_active_tr) + 1
         t1_code = "OPEN_NEW_SLOT"
         t1_tone = "armed"
-        t1_badge_en = f"T+1 OPEN: BUY 1 NEW SLOT (SLOT {next_slot_idx}/{max_slots} · {tenor_lbl_en} {otm_lbl} PUT)"
-        t1_badge_zh = f"T+1 开盘指令：新开 1 槽保护（第 {next_slot_idx}/{max_slots} 槽 · {tenor_lbl_zh} {otm_lbl} Put）"
-        t1_title_en = f"Real-Time Stress {stress_idx}% · Low-Vol Gate {prob:.0f}% ({trig_code}) -> Open Slot {next_slot_idx}/{max_slots} Equal-Dollar {entry_dte}-DTE {otm_lbl} Put"
-        t1_title_zh = f"实时压力 {stress_idx}% · 低波买盾执行分 {prob:.0f}%（{trig_code}）-> 次日开盘按等金额预算买入第 {next_slot_idx}/{max_slots} 槽 {tenor_lbl_zh} {otm_lbl} Put"
+        t1_badge_en = f"T+1 EXEC: BUY BOOK M SLOT {next_slot_idx}/{max_slots} (1.25% NAV · {tenor_lbl_en} {otm_lbl} PUT)"
+        t1_badge_zh = f"T+1 执行指令：新开 M账本第 {next_slot_idx}/{max_slots} 槽（1.25% 净值固定预算 · {tenor_lbl_zh} {otm_lbl} Put）"
+        t1_title_en = f"Real-Time Stress {stress_idx}% · Low-Vol Gate {prob:.0f}% ({trig_code}) -> Deploy 1.25% NAV Into {entry_dte}-DTE {otm_lbl} Put"
+        t1_title_zh = f"实时压力 {stress_idx}% · 低波买盾分 {prob:.0f}%（{trig_code}）-> 次日按 1.25% 净值固定预算买入第 {next_slot_idx}/{max_slots} 槽 {tenor_lbl_zh} {otm_lbl} Put"
+    elif locked_by_5d and (m7_wants_entry or base_wants_entry or target_slots > len(eff_active_tr)):
+        rem_lk_d = max(1, req_lock_streak - non_inv_streak)
+        t1_code = "POST_TP_LOCKOUT_WAIT"
+        t1_tone = "blocked"
+        t1_badge_en = f"T+1 EXEC: 5D POST-TP LOCKOUT ({non_inv_streak}/{req_lock_streak}D VIX/3M < 1.00 · {rem_lk_d}D LEFT)"
+        t1_badge_zh = f"T+1 执行指令：止盈后 5D 静默锁死（解除倒挂 {non_inv_streak}/{req_lock_streak} 天 · 还需 {rem_lk_d} 天）"
+        t1_title_en = (
+            f"Post-TP Lockout Active Since {last_tp_dt_str or d} (VIX/3M {vr:.3f}) — "
+            f"No Re-Buying Until 5 Consecutive Non-Inverted Days (< 1.00) Complete"
+        )
+        t1_title_zh = (
+            f"崩盘止盈后静默门控生效（上次止盈 {last_tp_dt_str or d}，今日 VIX/3M {vr:.3f}）—— "
+            f"须等连续 5 个交易日解除倒挂（< 1.00）且不反跳后才恢复买盾"
+        )
     elif target_slots > len(eff_active_tr) and redline_blocked:
         t1_code = "REDLINE_BLOCKED"
         t1_tone = "blocked"
-        t1_badge_en = "T+1 OPEN: HARD REDLINE BLOCKED (NO NEW PUTS IN HIGH IV)"
-        t1_badge_zh = "T+1 开盘指令：风控红线锁死禁开新仓（拒绝高波追买天价 Put）"
+        t1_badge_en = "T+1 EXEC: HARD REDLINE BLOCKED (NO NEW PUTS IN HIGH IV)"
+        t1_badge_zh = "T+1 执行指令：风控红线锁死禁开新仓（拒绝高波追买天价 Put）"
         t1_title_en = f"Real-Time Stress {stress_idx}% ({stress_lbl_en}) · Hard Redline Active (VXN {vxn:.1f} > 27 or VIX/3M {vr:.3f} >= 1.02) — Chasing Expensive Puts Forbidden"
         t1_title_zh = f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· 绝对风控红线生效（VXN {vxn:.1f} > 27 或 VIX/3M {vr:.3f} >= 1.02）—— 严禁高波追高买贵盾"
     elif target_slots > len(eff_active_tr) and not cooldown_passed:
         rem_wait = max(1, req_gap - (days_since_last or 0))
         t1_code = "COOLDOWN_WAIT"
         t1_tone = "cooldown"
-        t1_badge_en = f"T+1 OPEN: COOLDOWN WAIT ({days_since_last}D / {req_gap}D · {rem_wait}D LEFT)"
-        t1_badge_zh = f"T+1 开盘指令：加仓冷却期等待中（距上槽 {days_since_last}/{req_gap} 天 · 还需 {rem_wait} 天）"
+        t1_badge_en = f"T+1 EXEC: COOLDOWN WAIT ({days_since_last}D / {req_gap}D · {rem_wait}D LEFT)"
+        t1_badge_zh = f"T+1 执行指令：加仓冷却期等待中（距上槽 {days_since_last}/{req_gap} 天 · 还需 {rem_wait} 天）"
         t1_title_en = f"Low-Vol Entry Gate {prob:.0f}% Wants {target_slots} Slots, Waiting {rem_wait} Calendar Days for {req_gap}D Step Cooldown"
         t1_title_zh = f"低波买盾执行分 {prob:.0f}% 指向 {target_slots} 槽，当前距上一槽仅 {days_since_last} 天（未满 {req_gap} 天冷却期，暂缓加槽）"
-    elif active_slots > 0:
+    elif any_base_roll_armed and base_gate_open:
+        t1_code = "ROLL_BASE_75D"
+        t1_tone = "armed"
+        t1_badge_en = "T+1 EXEC: BOOK B 75-DTE HARD ROLL -> REFRESH 0.20% NAV 125D -15% OTM PUT"
+        t1_badge_zh = "T+1 执行指令：B账本 <=75 DTE 硬换 -> 按 0.20% 净值续换新 125D -15% OTM 底仓 Put"
+        t1_title_en = f"VIX {vix_now:.2f} <= 20 Calm Gate Open — Salvage 75D Floor Put & Refresh 0.20% NAV 125D -15% OTM Put"
+        t1_title_zh = f"VIX {vix_now:.2f} <= 20 低波门控开启 —— 次日回收剩 <=75 天旧底仓残值并硬换新 125D -15% OTM 底仓 Put"
+    elif any_base_roll_armed:
+        t1_code = "SALVAGE_BASE_75D"
+        t1_tone = "active"
+        t1_badge_en = "T+1 EXEC: BOOK B 75-DTE SALVAGE EXIT (VIX > 20 GATE CLOSED · NO RE-BUY)"
+        t1_badge_zh = "T+1 执行指令：B账本 <=75 DTE 残值退出（VIX > 20 门控关闭 · 禁追高续买）"
+        t1_title_en = f"Book B Floor Put Reached <=75 DTE With VIX {vix_now:.2f} > 20 — Harvest Residual Cash Into QQQ"
+        t1_title_zh = f"B账本底仓剩 <=75 天且 VIX {vix_now:.2f} > 20 —— 次日回收残值换入 QQQ，等待低波回归再建底仓"
+    elif pend_base_open:
+        t1_code = "OPEN_BASE_FLOOR"
+        t1_tone = "armed"
+        t1_badge_en = "T+1 EXEC: OPEN BOOK B 0.20% BASE PUT (125D -15% OTM · VIX <= 20)"
+        t1_badge_zh = "T+1 执行指令：开启 B账本 0.20% 常态底仓（125D -15% OTM Put · VIX <= 20）"
+        t1_title_en = f"Calm VIX Gate Open (VIX {vix_now:.2f} <= 20 & VIX/3M {vr:.3f} < 1.02) — Deploy 0.20% NAV Floor Put"
+        t1_title_zh = f"常态低波门控达标（VIX {vix_now:.2f} <= 20 且 VIX/3M {vr:.3f} < 1.02）—— 次日按 0.20% 净值建仓 125D -15% OTM 底仓 Put"
+    elif active_slots > 0 or base_active_slots > 0:
         t1_code = "HOLD_ACTIVE_SLOTS"
         t1_tone = "active"
-        roll_note_en = f" · ROLL @ <={roll_dte} DTE" if roll_dte > 0 else ""
-        roll_note_zh = f" · 剩<={roll_dte}天滚仓" if roll_dte > 0 else ""
-        t1_badge_en = f"T+1 OPEN: HOLD {active_slots}/{max_slots} ACTIVE PUT SLOT(S) · MONITOR TP{roll_note_en}"
-        t1_badge_zh = f"T+1 开盘指令：继续持有 {active_slots}/{max_slots} 槽在途 Put · 盯紧止盈线{roll_note_zh}"
-        t1_title_en = f"Real-Time Stress {stress_idx}% ({stress_lbl_en}) · {active_slots}/{max_slots} Equal-Dollar Put Slot(s) Shielding 100% Uncapped QQQ Core"
-        t1_title_zh = f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· 当前 {active_slots}/{max_slots} 槽等金额裸 Put 在途护航（100% QQQ 底仓无封顶持有）"
+        t1_badge_en = (
+            f"T+1 EXEC: HOLD {base_active_slots} BASE (0.20%) + {active_slots}/{max_slots} M7G (1.25%) PUT(S) · HARD ROLL 75D/30D"
+        )
+        t1_badge_zh = (
+            f"T+1 执行指令：持有 B账本 {base_active_slots} 槽(0.20%) + M账本 {active_slots}/{max_slots} 槽(1.25%) · 盯紧准实值止盈与 75D/30D 硬换"
+        )
+        t1_title_en = (
+            f"Real-Time Stress {stress_idx}% ({stress_lbl_en}) · Dual-Book Shield Active "
+            f"({base_active_slots} Base + {active_slots}/{max_slots} M7G Slots) Over 100% Uncapped QQQ Core"
+        )
+        t1_title_zh = (
+            f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· 双账本在途护航"
+            f"（B账本 {base_active_slots} 槽 + M账本 {active_slots}/{max_slots} 槽 · 100% QQQ 底仓无封顶持有）"
+        )
     else:
         t1_code = "STANDBY"
         t1_tone = "standby"
-        prof_lbl_en = "Core-3 Minimal" if is_core3 else "Full M7 Shield"
-        prof_lbl_zh = "精简3核" if is_core3 else "全套M7护盾"
-        if redline_blocked:
-            t1_badge_en = "T+1 OPEN: STANDBY (100% QQQ · HIGH-VOL REDLINE FREEZE)"
-            t1_badge_zh = "T+1 开盘指令：空盾待命（100% 满仓 QQQ · 高波红线冻结禁追买贵盾）"
+        prof_lbl_en = "Core-3 Minimal" if is_core3 else "Full M7G Dual-Book"
+        prof_lbl_zh = "精简3核双账本" if is_core3 else "全套M7G双账本"
+        if locked_by_5d:
+            t1_badge_en = f"T+1 EXEC: POST-TP 5D LOCKOUT STANDBY ({non_inv_streak}/{req_lock_streak}D < 1.00)"
+            t1_badge_zh = f"T+1 执行指令：止盈后 5D 静默待命（解除倒挂 {non_inv_streak}/{req_lock_streak} 天 · 100% QQQ）"
             t1_title_en = (
-                f"Real-Time Stress {stress_idx}% ({stress_lbl_en}) · {prof_lbl_en} Low-Vol Entry Gate {prob:.0f}% "
-                f"(High-IV Redline VXN {vxn:.1f} / VIX/3M {vr:.3f} Freezes Chasing Expensive Puts — Hold 100% QQQ Uncapped)"
+                f"Real-Time Stress {stress_idx}% ({stress_lbl_en}) · Post-TP Lockout Freezes Re-Entry Until "
+                f"VIX/VIX3M < 1.00 Holds for 5 Consecutive Days ({non_inv_streak}/5)"
             )
             t1_title_zh = (
-                f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· {prof_lbl_zh}低波买盾执行分 {prob:.0f}% "
-                f"（高波红线 VXN {vxn:.1f} / VIX/3M {vr:.3f} 冻结禁追高买贵盾 —— 100% QQQ 零损耗待弹）"
+                f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· 崩盘止盈后静默锁死中，须等 VIX/VIX3M < 1.00 连续满 5 天（当前 {non_inv_streak}/5）才允许再买"
+            )
+        elif redline_blocked or not base_vix_ok:
+            t1_badge_en = f"T+1 EXEC: STANDBY (100% QQQ · VIX {vix_now:.1f} > 20 GATE FREEZE)"
+            t1_badge_zh = f"T+1 执行指令：空盾待命（100% 满仓 QQQ · VIX {vix_now:.1f} > 20 高波门控禁追贵盾）"
+            t1_title_en = (
+                f"Real-Time Stress {stress_idx}% ({stress_lbl_en}) · {prof_lbl_en} Low-Vol Gate {prob:.0f}% "
+                f"(VIX {vix_now:.1f} > 20 / VXN {vxn:.1f} Freezes Chasing Expensive Puts — Hold 100% QQQ Uncapped)"
+            )
+            t1_title_zh = (
+                f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· {prof_lbl_zh}低波买盾分 {prob:.0f}% "
+                f"（VIX {vix_now:.1f} > 20 / VXN {vxn:.1f} 冻结禁追买高价 Put —— 100% QQQ 零损耗待弹）"
             )
         else:
-            t1_badge_en = "T+1 OPEN: STANDBY · ZERO PUT SPEND (100% QQQ CRUISE)"
-            t1_badge_zh = "T+1 开盘指令：静默待命 · 零保费损耗（100% 满仓 QQQ 复利巡航）"
+            t1_badge_en = "T+1 EXEC: STANDBY · ZERO TACTICAL DRAG (100% QQQ CRUISE)"
+            t1_badge_zh = "T+1 执行指令：静默待命 · 100% 满仓 QQQ 复利巡航"
             t1_title_en = (
                 f"Real-Time Stress {stress_idx}% ({stress_lbl_en}) · {prof_lbl_en} Low-Vol Entry Gate {prob:.0f}% "
-                f"(< 35% Threshold) — Zero Option Drag, 100% QQQ Compounding"
+                f"(< 35% Threshold) — 100% QQQ Compounding"
             )
             t1_title_zh = (
-                f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· {prof_lbl_zh}低波买盾执行分 {prob:.0f}% "
-                f"（低于 35% 开仓线）—— 零期权保费损耗，100% QQQ 顺风复利"
+                f"实时危机压力 {stress_idx}%（{stress_lbl_zh}）· {prof_lbl_zh}低波买盾分 {prob:.0f}% "
+                f"（低于 35% 开仓线）—— 100% QQQ 顺风复利"
             )
 
-    # Equal-Dollar Strike & Budget Calculator (90-DTE or 120-DTE matched reference)
+    # Fixed-% NAV Strike & Budget Calculator (Book B = 0.20% NAV, Book M = 1.25% NAV per slot)
     tau_calc = float(entry_dte) / 365.0
+    tau_base = float(HARDCODED_BASE_DTE) / 365.0
     k10 = cl * 0.90
     k15 = cl * 0.85
     k20 = cl * 0.80
     iv10 = bco_mod.eval_skew_iv(cl, k10, tau_calc, r_cur, q_cur, vxn, coeffs)
     iv15 = bco_mod.eval_skew_iv(cl, k15, tau_calc, r_cur, q_cur, vxn, coeffs)
     iv20 = bco_mod.eval_skew_iv(cl, k20, tau_calc, r_cur, q_cur, vxn, coeffs)
+    iv15_base = bco_mod.eval_skew_iv(cl, k15, tau_base, r_cur, q_cur, vxn, coeffs)
     mid10 = bco_mod.bsm_price(cl, k10, tau_calc, r_cur, q_cur, iv10, "put")
     mid15 = bco_mod.bsm_price(cl, k15, tau_calc, r_cur, q_cur, iv15, "put")
     mid20 = bco_mod.bsm_price(cl, k20, tau_calc, r_cur, q_cur, iv20, "put")
-    ask10_ref = mid10 * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH
-    ask15 = mid15 * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH
-    ask20 = mid20 * (1.0 + OPT_SLIP) + OPT_COMM_PER_SH
+    mid15_base = bco_mod.bsm_price(cl, k15, tau_base, r_cur, q_cur, iv15_base, "put")
+    slip_eff = 0.35 * OPT_SLIP if fill_mode_cur == "ibkr_limit" else OPT_SLIP
+    ask10_ref = mid10 * (1.0 + slip_eff) + OPT_COMM_PER_SH
+    ask15 = mid15 * (1.0 + slip_eff) + OPT_COMM_PER_SH
+    ask20 = mid20 * (1.0 + slip_eff) + OPT_COMM_PER_SH
+    ask15_base = mid15_base * (1.0 + slip_eff) + OPT_COMM_PER_SH
     skew_ratio = iv20 / max(iv10, 1e-6)
     favorable_20 = skew_ratio <= 1.18
 
     sel_ask = ask20 if put_otm == "otm20" else ask15
     sel_k = k20 if put_otm == "otm20" else k15
     ref_sh_1000 = 1000.0
-    budget_per_1000_sh = (ref_sh_1000 * 0.50) * ask10_ref
+    sample_nav_1000sh = ref_sh_1000 * cl
+    budget_per_1000_sh = sample_nav_1000sh * HARDCODED_M7_BUDGET_PCT
+    base_budget_per_1000_sh = sample_nav_1000sh * HARDCODED_BASE_BUDGET_PCT
     contracts_per_1000_sh = (budget_per_1000_sh / max(sel_ask, 1e-6)) / 100.0
+    base_contracts_per_1000_sh = (base_budget_per_1000_sh / max(ask15_base, 1e-6)) / 100.0
 
     roll_formula_en = (
-        " · Adaptive Roll: P1/P2 120D->50D, CTA M4 90D->30D"
+        " · Hard Roll: P1/P2 & Book B 125D->75D, CTA M4 90D->30D"
         if is_adaptive
         else (" · Salvage/Roll at <= 50 DTE" if is_roll50 else "")
     )
     roll_formula_zh = (
-        " · 自适应滚仓：P1/P2 120D->50D、CTA(M4) 90D->30D"
+        " · 硬换规则：P1/P2 与 B账本 125D->75D、CTA(M4) 90D->30D"
         if is_adaptive
         else (" · 剩 <=50 DTE 残值滚仓/平仓" if is_roll50 else "")
     )
 
     sizing_calc = {
         "qqq_spot": round(cl, 2),
+        "vix": round(vix_now, 2),
         "vxn": round(vxn, 2),
         "dte": entry_dte,
         "roll_dte": roll_dte,
+        "base_dte": HARDCODED_BASE_DTE,
+        "base_roll_dte": HARDCODED_BASE_ROLL_DTE,
+        "base_budget_pct": 0.20,
+        "m7_budget_pct": 1.25,
+        "fill_mode": fill_mode_cur,
         "roll_mode": roll_mode,
         "selected_otm": put_otm,
-        "formula_en": f"Per-Slot Budget = Current QQQ Shares × 50% × Ask({entry_dte}D -10% OTM Put){roll_formula_en}",
-        "formula_zh": f"单槽美元预算 = 当前持有 QQQ 股数 × 50% × {entry_dte}-DTE -10% OTM Put 卖一价(Ask){roll_formula_zh}",
+        "formula_en": (
+            f"Hard-Coded Fixed-% Sizing: Book B Floor = 0.20% NAV (125D -15% OTM, VIX<=20) · "
+            f"Book M Tactical = 1.25% NAV / Slot ({entry_dte}D {otm_lbl}){roll_formula_en}"
+        ),
+        "formula_zh": (
+            f"写死双账本固定预算：B账本常态基底 = 0.20% 净值（125D -15% OTM，VIX<=20）· "
+            f"M账本战术槽 = 1.25% 净值/槽（{entry_dte}D {otm_lbl}）{roll_formula_zh}"
+        ),
         "ref_otm10": {
             "otm_pct": 10,
             "strike": round(k10, 2),
@@ -3546,6 +4130,7 @@ def build_m7_live_dashboard(
             "iv_pct": round(iv15 * 100.0, 2),
             "mid_sh": round(mid15, 2),
             "ask_sh": round(ask15, 2),
+            "base_125d_ask_sh": round(ask15_base, 2),
         },
         "otm20": {
             "otm_pct": 20,
@@ -3558,83 +4143,129 @@ def build_m7_live_dashboard(
         "skew_switch_threshold": 1.18,
         "favorable_otm20_skew": favorable_20,
         "skew_tip_en": (
-            f"Tail Skew Favorable: IV(-20%)/IV(-10%) = {skew_ratio:.3f} <= 1.18 — switching equal budget to -20% OTM offers superior crash convexity!"
+            f"Tail Skew Favorable: IV(-20%)/IV(-10%) = {skew_ratio:.3f} <= 1.18 — locked ruleset uses -15% OTM (1.05xK Near-ITM TP)."
             if favorable_20
-            else f"Steep Tail Skew: IV(-20%)/IV(-10%) = {skew_ratio:.3f} > 1.18 — keep default -15% OTM to avoid overpaying deep-tail skew."
+            else f"Steep Tail Skew: IV(-20%)/IV(-10%) = {skew_ratio:.3f} > 1.18 — locked -15% OTM avoids overpaying deep-tail skew."
         ),
         "skew_tip_zh": (
-            f"偏度性价比极佳：当前 IV(-20%)/IV(-10%) = {skew_ratio:.3f} <= 1.18 —— 等金额切换至 -20% OTM 可获更高崩盘凸性赔率！"
+            f"当前偏度比 IV(-20%)/IV(-10%) = {skew_ratio:.3f} <= 1.18（写死规则统一采用 -15% OTM 配合 1.05×K 准实值止盈）。"
             if favorable_20
-            else f"尾部偏度较陡：当前 IV(-20%)/IV(-10%) = {skew_ratio:.3f} > 1.18 —— 建议维持默认 -15% OTM，避免为深虚值高偏度溢价买单。"
+            else f"尾部偏度较陡：IV(-20%)/IV(-10%) = {skew_ratio:.3f} > 1.18 —— 写死默认 -15% OTM 规避深虚值高溢价。"
         ),
         "default_qqq_shares": 1000,
         "model_qqq_shares": round(float(m7_sim["summary"]["final_shares"]), 2),
+        "sample_1000sh_nav_usd": round(sample_nav_1000sh, 2),
         "sample_1000sh_budget_usd": round(budget_per_1000_sh, 2),
+        "sample_1000sh_base_budget_usd": round(base_budget_per_1000_sh, 2),
+        "sample_1000sh_base_strike": round(k15, 2),
+        "sample_1000sh_base_ask": round(ask15_base, 2),
+        "sample_1000sh_base_contracts": round(base_contracts_per_1000_sh, 2),
         "sample_1000sh_selected_strike": round(sel_k, 2),
         "sample_1000sh_selected_ask": round(sel_ask, 2),
         "sample_1000sh_contracts": round(contracts_per_1000_sh, 2),
     }
 
-    # TP Monitor
+    # TP Monitor + Near-ITM Bottom Clearance diagnostic block
     tp_spec = next((x for x in M7_TP_MODE_SPECS if x["id"] == m7_tp_mode), M7_TP_MODE_SPECS[0])
     roll_rule_en = (
-        "; else salvage/roll at DTE <= 50 (Non-CTA 120D) or DTE <= 30 (CTA M4 90D)."
+        "; else hard-roll/exit at DTE <= 75 (Book B & Non-CTA 125D) or DTE <= 30 (CTA M4 90D); after any TP, lock all re-entries until 5 consecutive days VIX/VIX3M < 1.00."
         if is_adaptive
-        else ("; else at DTE <= 50 salvage residual (and roll into fresh 120D Put if M7 stays active)." if is_roll50 else ".")
+        else ("; else at DTE <= 50 salvage residual; after any TP, lock re-entries for 5 consecutive days VIX/VIX3M < 1.00." if is_roll50 else ".")
     )
     roll_rule_zh = (
-        "；未止盈则在非CTA槽 DTE<=50 / CTA(M4)槽 DTE<=30 时回收残值（信号仍亮则自动滚仓）。"
+        "；未止盈则在 B账本/非CTA槽 DTE<=75、CTA(M4)槽 DTE<=30 硬换/退出；一旦触发止盈，双账本锁定禁买直至连续 5 天 VIX/VIX3M < 1.00。"
         if is_adaptive
-        else ("；未止盈且 DTE <= 50 时次日开盘回收残值（信号仍亮则同步滚入新 120D Put）。" if is_roll50 else "。")
+        else ("；未止盈且 DTE <= 50 时回收残值；止盈后连续 5 天 VIX/VIX3M < 1.00 才恢复买盾。" if is_roll50 else "。")
     )
     tp_rule_en = (
         (
-            f"Exit at T+1 Open when EOD (VIX/VIX3M >= 1.10 AND QQQ <= Strike Kp) OR (DTE <= {five_x_dte} AND Put Mid >= 5x Cost)"
+            "Exit 100% at T+1 Close when EOD (VIX/VIX3M >= 1.10 AND QQQ <= Strike Kp) OR VIX >= 45 OR (Late DTE & Put Mid >= 5x Cost)"
             if m7_tp_mode == "itm_tp"
-            else f"Exit at T+1 Open when EOD VIX/VIX3M >= 1.10 OR (DTE <= {five_x_dte} AND Put Mid >= 5x Cost)"
+            else "Exit 100% at T+1 Close when EOD (VIX/VIX3M >= 1.10 AND QQQ <= 1.05 x Strike Kp) OR VIX >= 45 OR (DTE <= 60/45 & Put Mid >= 5x Cost)"
         )
         + roll_rule_en
     )
     tp_rule_zh = (
         (
-            f"收盘同时满足（VIX/VIX3M >= 1.10 且 QQQ <= 行权价 Kp 实值），或（DTE <= {five_x_dte} 且中间价 >= 5 倍成本）次日开盘止盈"
+            "收盘满足（VIX/VIX3M >= 1.10 且 QQQ <= 行权价 Kp）或 VIX >= 45 或（临期中间价 >= 5 倍成本）次日 100% 出清换股"
             if m7_tp_mode == "itm_tp"
-            else f"收盘触发 VIX/VIX3M >= 1.10 恐慌倒挂，或（DTE <= {five_x_dte} 且期权中间价 >= 5 倍成本）次日开盘止盈"
+            else "收盘满足（VIX/VIX3M >= 1.10 且 QQQ <= 1.05×Kp 准实值）或 VIX >= 45 极值恐慌 或（DTE <= 60/45 且中间价 >= 5 倍成本）次日 100% 出清换股"
         )
         + roll_rule_zh
     )
     tp_slots_live: list[dict[str, Any]] = []
-    for tr in active_tr:
+    near_itm_open_rows: list[dict[str, Any]] = []
+    for tr in all_open_tr:
         kp_tr = float(tr["kp"])
+        near_k_tr = round(kp_tr * near_itm_mult, 2)
         rem_tr = int(tr["rem_dte"])
         tr_rd = int(tr.get("roll_dte") or 0)
+        is_base_t = str(tr.get("book") or "m7") == "base"
+        five_x_cap_tr = 60 if is_base_t else five_x_dte
         is_itm = cl <= kp_tr
-        tp_vix_ok = (vr >= 1.10) and (is_itm if m7_tp_mode == "itm_tp" else True)
-        tp_5x_ok = rem_tr <= five_x_dte and float(tr["mtm_put_val_sh"]) >= float(tr["tp_target_5x_sh"])
-        roll50_due = bool(tr_rd > 0 and rem_tr <= tr_rd and not tp_vix_ok and not tp_5x_ok)
-        tp_slots_live.append(
+        is_near_itm = cl <= kp_tr * near_itm_mult
+        tp_vix_ok = (vr >= 1.10 and is_near_itm) or (vix_now >= HARDCODED_EXTREME_VIX_TP)
+        tp_5x_ok = rem_tr <= five_x_cap_tr and float(tr["mtm_put_val_sh"]) >= float(tr["tp_target_5x_sh"])
+        roll_due = bool(tr_rd > 0 and rem_tr <= tr_rd and not tp_vix_ok and not tp_5x_ok)
+        row_tp_item = {
+            "book": "base" if is_base_t else "m7",
+            "book_label_en": tr.get("book_label_en") or ("Book B · 0.20% Base" if is_base_t else "Book M · 1.25% M7G"),
+            "book_label_zh": tr.get("book_label_zh") or ("B账本 · 0.20%常态基底" if is_base_t else "M账本 · 1.25%战术M7G"),
+            "slot_num": tr["slot_num"],
+            "occSymbol": tr.get("occSymbol", ""),
+            "entry_date": tr["entry_date"],
+            "exp_date": tr["exp_date"],
+            "rem_dte": rem_tr,
+            "roll_dte": tr_rd,
+            "days_to_roll": max(0, rem_tr - tr_rd) if tr_rd > 0 else None,
+            "days_to_roll50": max(0, rem_tr - tr_rd) if tr_rd > 0 else None,
+            "roll50_due": roll_due,
+            "kp": kp_tr,
+            "near_itm_strike_105": near_k_tr,
+            "spot_vs_kp_pct": round((cl / kp_tr - 1.0) * 100.0, 2),
+            "is_itm": is_itm,
+            "is_near_itm": is_near_itm,
+            "entry_ask_sh": tr["entry_put_ask_sh"],
+            "current_mid_sh": tr["mtm_put_val_sh"],
+            "target_5x_mid_sh": tr["tp_target_5x_sh"],
+            "roi_mult": tr["roi_mult"],
+            "mtm_pnl_usd": tr["mtm_pnl_usd"],
+            "vix_leg_met": tp_vix_ok,
+            "five_x_leg_met": tp_5x_ok,
+            "pending_tp": bool(tr["pending_tp"]),
+            "tp_reason": tr.get("tp_reason") or "",
+        }
+        tp_slots_live.append(row_tp_item)
+        near_itm_open_rows.append(
             {
+                "book": "base" if is_base_t else "m7",
                 "slot_num": tr["slot_num"],
-                "entry_date": tr["entry_date"],
-                "exp_date": tr["exp_date"],
-                "rem_dte": rem_tr,
-                "roll_dte": tr_rd,
-                "days_to_roll50": max(0, rem_tr - tr_rd) if tr_rd > 0 else None,
-                "roll50_due": roll50_due,
+                "occSymbol": tr.get("occSymbol", ""),
                 "kp": kp_tr,
-                "spot_vs_kp_pct": round((cl / kp_tr - 1.0) * 100.0, 2),
-                "is_itm": is_itm,
-                "entry_ask_sh": tr["entry_put_ask_sh"],
-                "current_mid_sh": tr["mtm_put_val_sh"],
-                "target_5x_mid_sh": tr["tp_target_5x_sh"],
+                "near_itm_strike_105": near_k_tr,
+                "spot_le_near_itm": is_near_itm,
+                "rem_dte": rem_tr,
                 "roi_mult": tr["roi_mult"],
-                "mtm_pnl_usd": tr["mtm_pnl_usd"],
-                "vix_leg_met": tp_vix_ok,
-                "five_x_leg_met": tp_5x_ok,
-                "pending_tp": bool(tr["pending_tp"]),
-                "tp_reason": tr.get("tp_reason") or "",
+                "triggered": bool(tp_vix_ok or tp_5x_ok),
             }
         )
+
+    near_itm_tp_rule = {
+        "tp_mode": m7_tp_mode,
+        "vix_now": round(vix_now, 2),
+        "vix_extreme": HARDCODED_EXTREME_VIX_TP,
+        "vix_extreme_met": bool(vix_now >= HARDCODED_EXTREME_VIX_TP),
+        "vix_ratio_now": round(vr, 3),
+        "vix_ratio_min": 1.10,
+        "vix_ratio_met": bool(vr >= 1.10),
+        "near_itm_mult": near_itm_mult,
+        "qqq_spot_now": round(cl, 2),
+        "simulated_next_kp": round(sel_k, 2),
+        "simulated_next_near_itm_px": round(sel_k * near_itm_mult, 2),
+        "formula_en": "(VIX/VIX3M >= 1.10 & QQQ <= 1.05×K) OR VIX >= 45 OR Late >= 5x -> 100% Clear & Reload QQQ",
+        "formula_zh": "(VIX/VIX3M >= 1.10 且 QQQ <= 1.05×K 准实值) 或 VIX >= 45 或 临期 >=5x -> 100% 底部出清抄底 QQQ",
+        "open_tranches": near_itm_open_rows,
+    }
 
     tp_monitor = {
         "tp_mode": m7_tp_mode,
@@ -3646,11 +4277,16 @@ def build_m7_live_dashboard(
         "label_zh": tp_spec["label_zh"],
         "rule_en": tp_rule_en,
         "rule_zh": tp_rule_zh,
+        "vix_now": round(vix_now, 2),
+        "vix_extreme_target": HARDCODED_EXTREME_VIX_TP,
+        "vix_extreme_met": bool(vix_now >= HARDCODED_EXTREME_VIX_TP),
         "vix_ratio_now": round(vr, 3),
         "vix_ratio_target": 1.10,
         "vix_ratio_met": bool(vr >= 1.10),
+        "near_itm_mult": near_itm_mult,
         "qqq_spot_now": round(cl, 2),
         "simulated_next_slot_kp": round(sel_k, 2),
+        "simulated_next_slot_near_itm_px": round(sel_k * near_itm_mult, 2),
         "simulated_next_slot_5x_mid": round(5.0 * sel_ask, 2),
         "open_slots": tp_slots_live,
     }
@@ -4163,10 +4799,15 @@ def build_m7_live_dashboard(
         "as_of_date": d,
         "strategy_id": strategy_id,
         "profile": "core3_adaptive" if is_core3 else "full_m7_adaptive",
+        "fill_mode": fill_mode_cur,
         "put_otm": put_otm,
         "m7_tp_mode": m7_tp_mode,
         "roll_mode": roll_mode,
         "m0_enabled": m0_enabled,
+        "hardcoded_ruleset": {**HARDCODED_RULESET_SPEC, "fill_mode": fill_mode_cur},
+        "book_b_vix_gate": book_b_vix_gate,
+        "post_tp_lockout": post_tp_lockout_block,
+        "near_itm_tp_rule": near_itm_tp_rule,
         "crisis_prob": round(prob, 0),
         "p1_score": round(p1, 0),
         "p2_score": round(p2, 0),
@@ -4182,18 +4823,19 @@ def build_m7_live_dashboard(
         "data_freshness": data_freshness,
         "target_slots": target_slots,
         "active_slots": active_slots,
+        "base_active_slots": base_active_slots,
         "max_slots": max_slots,
         "triggered_modules": mods_active,
         "trigger_code": trig_code if mods_active else "NONE",
         "tier_rule_en": (
-            "Core-3 Minimal: M0=35% (1 Slot) · M0+M6=45% (2 Slots) · M4=35% (1 Slot) · M0+M4=70% (3 Slots); M6 alone=20% (0 Slots)"
+            "Book B: 0.20% NAV (VIX<=20, 125D->75D) + Book M Core-3 (1.25% NAV/slot): M0=35% (1) · M0+M6=45% (2) · M4=35% (1) · M0+M4=70% (3)"
             if is_core3
-            else "<35%: 0 Slots · 35-44%: 1 Slot · 45-64%: 2 Slots · >=65%: 3 Slots"
+            else "Book B: 0.20% NAV (VIX<=20, 125D->75D) + Book M Full M7G (1.25% NAV/slot): <35%=0 · 35-44%=1 · 45-64%=2 · >=65%=3 Slots"
         ),
         "tier_rule_zh": (
-            "精简3核权重：M0=35%（1槽）· M0+M6=45%（2槽）· M4=35%（1槽）· M0+M4=70%（3槽）；M6单亮=20%不单发"
+            "B账本：0.20%净值(VIX<=20, 125D->75D) + M账本精简3核(1.25%/槽)：M0=35%(1槽) · M0+M6=45%(2槽) · M4=35%(1槽) · M0+M4=70%(3槽)"
             if is_core3
-            else "<35%：0槽 · 35–44%：1槽 · 45–64%：2槽 · >=65%：3槽满配"
+            else "B账本：0.20%净值(VIX<=20, 125D->75D) + M账本全套M7G(1.25%/槽)：<35%=0槽 · 35–44%=1槽 · 45–64%=2槽 · >=65%=3槽满配"
         ),
         "redline": {
             "blocked": redline_blocked,

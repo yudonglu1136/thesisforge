@@ -351,6 +351,9 @@ class CrisisObservatoryFixtureApi extends ApiClient {
       final rollMode = (strat == 'Core3_Adaptive' && rawRoll == '90d_hold')
           ? 'adaptive_120_90'
           : rawRoll;
+      final fillMode =
+          (qp['fillMode'] ?? qp['co_fillMode'] ?? raw['default_fill_mode'] ?? 'ibkr_limit')
+              .toString();
       final m0Enabled = (qp['m0Enabled'] ?? 'true') != 'false';
       final tpMode = qp['tpMode'] ?? raw['default_tp_mode'] ?? 'layered_itm';
       final ccMode = qp['ccMode'] ?? raw['default_cc_mode'] ?? 'cc_off';
@@ -511,7 +514,13 @@ class CrisisObservatoryFixtureApi extends ApiClient {
           final m7Sums = m7Base['summaries'] as Map;
           for (final sid in ['M7G_Graded', 'Core3_Adaptive', 'M7_Ensemble']) {
             if (m7Sums[sid] is Map) {
-              baseMap[sid] = Map<String, dynamic>.from(m7Sums[sid] as Map);
+              final sMap = Map<String, dynamic>.from(m7Sums[sid] as Map);
+              sMap['fill_mode'] = fillMode;
+              if (fillMode == 'ask_bid' && sid == 'M7G_Graded') {
+                sMap['end_nav'] = 1721508.16;
+                sMap['net_alpha_usd'] = 433622.94;
+              }
+              baseMap[sid] = sMap;
             }
           }
         }
@@ -675,10 +684,21 @@ class CrisisObservatoryFixtureApi extends ApiClient {
               })
               .toList();
       final m7Sums = m7Base?['summaries'] as Map?;
+      Map<String, dynamic>? m7SumFor(String sid) {
+        final sRaw = m7Sums?[sid];
+        if (sRaw is! Map) return null;
+        final sMap = Map<String, dynamic>.from(sRaw);
+        sMap['fill_mode'] = fillMode;
+        if (fillMode == 'ask_bid' && sid == 'M7G_Graded') {
+          sMap['end_nav'] = 1721508.16;
+          sMap['net_alpha_usd'] = 433622.94;
+        }
+        return sMap;
+      }
       final mergedSummaries = <dynamic>[
-        if (m7Sums?['M7G_Graded'] != null) m7Sums!['M7G_Graded'],
-        if (m7Sums?['Core3_Adaptive'] != null) m7Sums!['Core3_Adaptive'],
-        if (m7Sums?['M7_Ensemble'] != null) m7Sums!['M7_Ensemble'],
+        if (m7SumFor('M7G_Graded') != null) m7SumFor('M7G_Graded'),
+        if (m7SumFor('Core3_Adaptive') != null) m7SumFor('Core3_Adaptive'),
+        if (m7SumFor('M7_Ensemble') != null) m7SumFor('M7_Ensemble'),
         ...legacySummaries,
       ];
 
@@ -717,6 +737,7 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         'daily_series': projectedSeries,
         'engine_attribution_by_strategy': engineAttrByStrat,
         'profile': profile,
+        'fill_mode': fillMode,
         'put_otm': putOtm,
         'm7_tp_mode': m7TpMode,
         'roll_mode': rollMode,
@@ -813,7 +834,35 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('MIT Real QQQ OPRA Chain (9.88M Quotes, 0 Fallbacks)'),
+        find.byKey(const ValueKey('crisis-locked-ruleset-strip')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-fill-mode-bar')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-fill-pill-ibkr_limit')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-fill-pill-ask_bid')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-book-b-gate-card')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-post-tp-lockout-card')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('crisis-near-itm-tp-card')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('MIT Real QQQ OPRA Chain (9.88M Quotes'),
         findsOneWidget,
       );
       expect(
@@ -883,7 +932,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('Real OPRA Chain 95.7%'),
+        find.textContaining('Real OPRA Chain 89.8%'),
         findsOneWidget,
       );
       expect(
@@ -891,22 +940,36 @@ void main() {
         findsNothing,
       );
 
-      // Penny-exact Real-OPRA Full M7 Shield Adaptive default metrics ($1,466,143 · +$178,258 · 2,409.6 sh · +13.8% · -28.3% MDD · Calmar 0.645)
-      expect(find.text('\$1,466,143'), findsOneWidget);
-      expect(find.text('+\$178,258'), findsWidgets);
-      expect(find.text('2,409.6 sh'), findsOneWidget);
-      expect(find.textContaining('+13.8%'), findsWidgets);
-      expect(find.text('-28.3%'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.645'), findsWidgets);
-      expect(find.text('50D/30D Roll Salvage'), findsOneWidget);
+      // Penny-exact Real-OPRA B020_M125 Dual-Book default metrics ($1,740,267 2015-2025 OPRA card · $1,775,772 12Y end NAV · +$487,887 · 2,918.5 sh · +37.9% · -26.2% MDD · Calmar 0.771)
+      expect(find.textContaining('\$1,740,267'), findsWidgets);
+      expect(find.text('\$1,775,772'), findsOneWidget);
+      expect(find.text('+\$487,887'), findsWidgets);
+      expect(find.text('2,918.5 sh'), findsOneWidget);
+      expect(find.textContaining('+37.9%'), findsWidgets);
+      expect(find.text('-26.2%'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.771'), findsWidgets);
+      expect(find.text('75D/30D Hard Roll'), findsOneWidget);
       expect(find.text('BSM* Calib.'), findsWidgets);
 
-      // Interactive QQQ Shares calculator updates per-slot budget live
+      // Toggle Execution Fill to Strict Ask/Bid ($1,688,420 2015-2025 OPRA · $1,721,508 12Y) and back to IBKR Limit
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-fill-pill-ask_bid')),
+      );
+      expect(find.textContaining('\$1,688,420'), findsWidgets);
+      expect(find.text('\$1,721,508'), findsOneWidget);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-fill-pill-ibkr_limit')),
+      );
+      expect(find.text('\$1,775,772'), findsOneWidget);
+
+      // Interactive Fixed-% QQQ Shares calculator updates Book B (0.20%) & Book M (1.25%/slot) budgets live
       final sharesField = find.byKey(const ValueKey('crisis-qqq-shares-input'));
       await tester.ensureVisible(sharesField);
       await tester.enterText(sharesField, '5000');
       await tester.pumpAndSettle();
-      expect(find.textContaining('ctr (120D K=\$'), findsOneWidget);
+      expect(find.textContaining('ctr (125D K=\$'), findsOneWidget);
 
       // Standalone Six Crisis Lights panel & toggle are retired (covered by Three-Pillar Matrix)
       expect(
@@ -923,12 +986,12 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-profile-core3_adaptive')),
       );
-      expect(find.text('\$1,497,023'), findsOneWidget);
-      expect(find.text('+\$209,138'), findsWidgets);
-      expect(find.text('2,460.4 sh'), findsOneWidget);
-      expect(find.textContaining('+16.2%'), findsWidgets);
-      expect(find.text('-28.6%'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.646'), findsWidgets);
+      expect(find.text('\$1,506,552'), findsOneWidget);
+      expect(find.text('+\$218,667'), findsWidgets);
+      expect(find.text('2,476.1 sh'), findsOneWidget);
+      expect(find.textContaining('+17.0%'), findsWidgets);
+      expect(find.text('-28.1%'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.661'), findsWidgets);
       // Safety guardrail: 90D Hold is NEVER exposed on Core-3 Minimal
       expect(
         find.byKey(const ValueKey('crisis-core3-roll-locked-badge')),
@@ -962,37 +1025,37 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-profile-full_m7_adaptive')),
       );
-      expect(find.text('\$1,466,143'), findsOneWidget);
+      expect(find.text('\$1,775,772'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('crisis-mod-core3-off-M2')),
         findsNothing,
       );
 
-      // Switch Tenor/Roll to 90D Hold on Full M7 Shield (90d_hold -> $1,343,816 · -28.1% MDD · Calmar 0.620)
+      // Switch Tenor/Roll to 90D Hold on Full M7 Shield (90d_hold -> $1,359,771 · -23.9% MDD · Calmar 0.733)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
       );
-      expect(find.text('\$1,343,816'), findsOneWidget);
-      expect(find.text('-28.1%'), findsOneWidget);
+      expect(find.text('\$1,359,771'), findsOneWidget);
+      expect(find.text('-23.9%'), findsOneWidget);
 
-      // Switch Strike to -20% OTM while on 90d_hold ($1,274,910 · -1.0%)
+      // Switch Strike to -20% OTM while on 90d_hold ($1,163,318 · -9.7%)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-otm-pill-otm20')),
       );
-      expect(find.text('\$1,274,910'), findsOneWidget);
-      expect(find.textContaining('-1.0%'), findsWidgets);
+      expect(find.text('\$1,163,318'), findsOneWidget);
+      expect(find.textContaining('-9.7%'), findsWidgets);
 
-      // Switch to 120D -> 50D Roll while on -20% OTM ($1,420,675 · +10.3%)
+      // Switch to 120D -> 50D Roll while on -20% OTM ($1,198,793 · -6.9%)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-roll-pill-120d_roll50')),
       );
-      expect(find.text('\$1,420,675'), findsOneWidget);
-      expect(find.textContaining('+10.3%'), findsWidgets);
+      expect(find.text('\$1,198,793'), findsOneWidget);
+      expect(find.textContaining('-6.9%'), findsWidgets);
 
-      // Switch back to Adaptive 120/90 + -15% OTM and test ITM_TP ($1,335,192 · -28.3% MDD · Calmar 0.612)
+      // Switch back to Adaptive 125/90 + -15% OTM and test ITM_TP ($1,521,000 · -26.2% MDD · Calmar 0.711)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-roll-pill-adaptive_120_90')),
@@ -1005,11 +1068,11 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-m7-tp-pill-itm_tp')),
       );
-      expect(find.text('\$1,335,192'), findsOneWidget);
-      expect(find.text('-28.3%'), findsOneWidget);
-      expect(find.textContaining('Calmar 0.612'), findsWidgets);
+      expect(find.text('\$1,521,000'), findsOneWidget);
+      expect(find.text('-26.2%'), findsOneWidget);
+      expect(find.textContaining('Calmar 0.711'), findsWidgets);
 
-      // Restore standard TP and verify M7_Ensemble ($1,437,261) + M0 switch
+      // Restore standard TP and verify M7_Ensemble ($1,620,259) + M0 switch
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-m7-tp-pill-standard')),
@@ -1018,7 +1081,7 @@ void main() {
         tester,
         find.byKey(const ValueKey('crisis-strategy-pill-M7_Ensemble')),
       );
-      expect(find.text('\$1,437,261'), findsOneWidget);
+      expect(find.text('\$1,620,259'), findsOneWidget);
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-m0-toggle')),
@@ -1130,7 +1193,7 @@ void main() {
       await gesture.moveTo(Offset.zero);
       await tester.pumpAndSettle();
 
-      // One-click upgrade banner jumps straight back to Full M7 Shield Adaptive ($1,466,143)
+      // One-click upgrade banner jumps straight back to Full M7 Shield Adaptive ($1,775,772)
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-switch-to-m7g-btn')),
@@ -1139,7 +1202,7 @@ void main() {
         find.byKey(const ValueKey('crisis-legacy-upgrade-banner')),
         findsNothing,
       );
-      expect(find.text('\$1,466,143'), findsOneWidget);
+      expect(find.text('\$1,775,772'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -1174,8 +1237,8 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('🛡️ 全套 M7 护盾 · 默认推荐'), findsOneWidget);
-        expect(find.text('⚡ 精简 3 核 · 低频高赔率'), findsOneWidget);
+        expect(find.textContaining('0.20% 常态基底'), findsWidgets);
+        expect(find.textContaining('1.25%'), findsWidgets);
         expect(
           find.textContaining('2015-01-02 至 2025-12-15：MIT 真实 QQQ OPRA 期权盘口'),
           findsOneWidget,
@@ -1188,16 +1251,16 @@ void main() {
         expect(find.textContaining('高波红线冻结防追高'), findsWidgets);
         expect(find.textContaining('预警 3/3 · 高波禁追'), findsOneWidget);
         expect(find.textContaining('Yahoo EOD 2026-11-20'), findsOneWidget);
-        expect(find.textContaining('单槽等金额预算：'), findsOneWidget);
-        expect(find.text('自适应 120/90（推荐）'), findsOneWidget);
-        expect(find.text('统一 120→50'), findsOneWidget);
-        expect(find.text('90D 持有'), findsOneWidget);
+        expect(find.textContaining('固定预算 · Book B 0.20%：'), findsOneWidget);
+        expect(find.text('自适应 125→75 / CTA 90→30（锁定）'), findsOneWidget);
+        expect(find.text('统一 120→50 滚仓'), findsOneWidget);
+        expect(find.text('90D 持有到期'), findsOneWidget);
         expect(find.text('-15% OTM（真实 OPRA 冠军）'), findsOneWidget);
         expect(find.text('-20% OTM（深虚值对照）'), findsOneWidget);
-        expect(find.textContaining('真实盘口覆盖 95.7%'), findsOneWidget);
-        expect(find.text('50D/30D 残值滚仓'), findsOneWidget);
+        expect(find.textContaining('真实盘口覆盖 89.8%'), findsOneWidget);
+        expect(find.text('75D/30D 硬滚仓回收'), findsOneWidget);
         expect(find.text('历史保护策略 vs 死拿 QQQ'), findsOneWidget);
-        expect(find.textContaining('+13.8%'), findsWidgets);
+        expect(find.textContaining('+37.9%'), findsWidgets);
         expect(find.text('BSM* 校准'), findsWidgets);
         expect(find.textContaining('短债'), findsNothing);
 
@@ -1206,10 +1269,10 @@ void main() {
           tester,
           find.byKey(const ValueKey('crisis-profile-core3_adaptive')),
         );
-        expect(find.text('\$1,497,023'), findsOneWidget);
+        expect(find.text('\$1,506,552'), findsOneWidget);
         expect(find.text('精简模式已关闭'), findsWidgets);
         expect(
-          find.text('已锁定最优自适应滚仓 120→50 / CTA 90→30（禁用 90D 持有）'),
+          find.text('已锁定最优自适应硬滚仓 125→75 / CTA 90→30（禁用 90D 持有）'),
           findsOneWidget,
         );
         expect(tester.takeException(), isNull);
@@ -1217,7 +1280,7 @@ void main() {
           tester,
           find.byKey(const ValueKey('crisis-profile-full_m7_adaptive')),
         );
-        expect(find.text('\$1,466,143'), findsOneWidget);
+        expect(find.text('\$1,775,772'), findsOneWidget);
       }
 
       addTearDown(tester.view.resetPhysicalSize);
@@ -1226,7 +1289,7 @@ void main() {
   );
 
   testWidgets(
-    'Crisis Observatory enforces Core-3 90D Hold safety guardrail on deep-link init and emits co_profile + rollMode cleanly in onSelection',
+    'Crisis Observatory enforces Core-3 90D Hold safety guardrail on deep-link init and emits co_profile + rollMode + fillMode cleanly in onSelection',
     (tester) async {
       tester.view.physicalSize = const Size(1440, 1000);
       tester.view.devicePixelRatio = 1.0;
@@ -1250,6 +1313,7 @@ void main() {
                   initialSelection: const {
                     'profile': 'core3_adaptive',
                     'rollMode': '90d_hold',
+                    'fillMode': 'ask_bid',
                     'putOtm': 'otm15',
                     'm7TpMode': 'standard',
                     'm0Enabled': true,
@@ -1263,8 +1327,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Even when initialized with rollMode=90d_hold on core3_adaptive, safety guardrail locks it to adaptive_120_90 ($1,497,023)!
-      expect(find.text('\$1,497,023'), findsOneWidget);
+      // Even when initialized with rollMode=90d_hold on core3_adaptive, safety guardrail locks it to adaptive_120_90 ($1,506,552)!
+      expect(find.text('\$1,506,552'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('crisis-core3-roll-locked-badge')),
         findsOneWidget,
@@ -1274,7 +1338,7 @@ void main() {
         findsNothing,
       );
 
-      // Switch to Full M7 Shield and toggle 90D Hold to verify full state emission
+      // Switch to Full M7 Shield and toggle IBKR Limit + 90D Hold to verify full state emission
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-profile-full_m7_adaptive')),
@@ -1282,12 +1346,19 @@ void main() {
       expect(latestSelection['profile'], 'full_m7_adaptive');
       expect(latestSelection['strategy'], 'M7G_Graded');
       expect(latestSelection['rollMode'], 'adaptive_120_90');
+      expect(latestSelection['fillMode'], 'ask_bid');
+
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('crisis-fill-pill-ibkr_limit')),
+      );
+      expect(latestSelection['fillMode'], 'ibkr_limit');
 
       await tapVisible(
         tester,
         find.byKey(const ValueKey('crisis-roll-pill-90d_hold')),
       );
-      expect(find.text('\$1,343,816'), findsOneWidget);
+      expect(find.text('\$1,359,771'), findsOneWidget);
       expect(latestSelection['strategy'], 'M7G_Graded');
       expect(latestSelection['putOtm'], 'otm15');
       expect(latestSelection['rollMode'], '90d_hold');

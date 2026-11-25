@@ -9,6 +9,7 @@ import {
   CRISIS_OBSERVATORY_PUT_OTMS,
   CRISIS_OBSERVATORY_M7_TP_MODES,
   CRISIS_OBSERVATORY_ROLL_MODES,
+  CRISIS_OBSERVATORY_FILL_MODES,
   CRISIS_OBSERVATORY_TP_MODES,
   CRISIS_OBSERVATORY_CC_MODES,
   CRISIS_OBSERVATORY_SP_MODES,
@@ -24,6 +25,14 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
   const doc = loadCrisisObservatoryDashboard({ asOf: '2026-11-20' });
   assert.equal(doc.version, CRISIS_OBSERVATORY_VERSION);
   assert.equal(doc.as_of_date, '2026-11-20');
+  assert.equal(doc.fill_mode, 'ibkr_limit');
+  assert.equal(doc.default_fill_mode, 'ibkr_limit');
+  assert.equal(doc.hardcoded_ruleset?.code, 'B020_M125_HARD75_NEARITM_5DLOCK');
+  assert.equal(doc.hardcoded_ruleset?.locked, true);
+  assert.equal(doc.hardcoded_ruleset?.base_book?.budget_pct_nav, 0.2);
+  assert.equal(doc.hardcoded_ruleset?.base_book?.vix_max, 20.0);
+  assert.equal(doc.hardcoded_ruleset?.m7_book?.budget_pct_nav_per_slot, 1.25);
+  assert.equal(doc.hardcoded_ruleset?.post_tp_lockout?.consecutive_days, 5);
   assert.equal(doc.profile, 'full_m7_adaptive');
   assert.equal(doc.selected_profile, 'full_m7_adaptive');
   assert.equal(doc.core3_roll_locked, false);
@@ -39,12 +48,20 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
   assert.equal(doc.pricing_provenance?.segment1_real_opra?.quotes_count, 9875299);
   assert.equal(doc.pricing_provenance?.segment1_real_opra?.execution_fallbacks, 0);
   assert.equal(
+    doc.pricing_provenance?.audited_opra_benchmarks_2015_2025?.full_m7_adaptive_ibkr_limit?.end_nav,
+    1740267.2,
+  );
+  assert.equal(
     doc.pricing_provenance?.audited_opra_benchmarks_2015_2025?.full_m7_adaptive_ask_bid?.end_nav,
-    1451369.05,
+    1688420.02,
+  );
+  assert.equal(
+    doc.pricing_provenance?.audited_opra_benchmarks_2015_2025?.core3_adaptive_ibkr_limit?.end_nav,
+    1514395.1,
   );
   assert.equal(
     doc.pricing_provenance?.audited_opra_benchmarks_2015_2025?.core3_adaptive_ask_bid?.end_nav,
-    1481937.31,
+    1478048.67,
   );
   assert.equal(doc.tp_modes, undefined, 'Raw tp_modes bundle must be stripped from API wire response');
   assert.equal(doc.mode_bundles, undefined, 'Raw mode_bundles must be stripped from API wire response');
@@ -53,6 +70,7 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
   assert.equal(doc.m7_feature_table, undefined, 'Raw m7_feature_table must be stripped from API wire response');
   assert.equal(doc.m7_live_tail_state, undefined, 'Raw m7_live_tail_state must be stripped from API wire response');
   assert.equal(doc.m7_eval_bars, undefined, 'Raw m7_eval_bars must be stripped from API wire response');
+  assert.equal(doc.fill_modes_meta.length, 2);
   assert.equal(doc.profiles_meta.length, 2);
   assert.equal(doc.put_otm_meta.length, 2);
   assert.equal(doc.m7_tp_modes_meta.length, 2);
@@ -61,11 +79,11 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
   assert.equal(doc.cc_modes_meta.length, 4);
   assert.ok(doc.snapshotId && doc.snapshotId.length === 16);
 
-  // Verify 2025-12-15 -> 2025-12-16 OPRA-to-BSM seam continuity (0.0000% jump)
+  // Verify 2025-12-15 OPRA golden benchmark & smooth 2025-12-16 seam continuity (Book B active across seam)
   const bar1215 = doc.daily_series.find(r => r.date === '2025-12-15');
   const bar1216 = doc.daily_series.find(r => r.date === '2025-12-16');
-  assert.equal(bar1215.nav_m7g, 1451369.05);
-  assert.equal(bar1215.nav_c3, 1481937.31);
+  assert.equal(bar1215.nav_m7g, 1740267.2);
+  assert.equal(bar1215.nav_c3, 1514395.1);
   assert.equal(
     doc.pricing_provenance?.audited_opra_benchmarks_2015_2025?.qqq_bh_end_nav,
     1286327.45,
@@ -73,37 +91,58 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
   const qRetSeam = bar1216.qqq_close / bar1215.qqq_close - 1;
   const m7RetSeam = bar1216.nav_m7g / bar1215.nav_m7g - 1;
   const c3RetSeam = bar1216.nav_c3 / bar1215.nav_c3 - 1;
-  assert.ok(Math.abs(m7RetSeam - qRetSeam) < 1e-5, '0.0000% seam tracking jump on Full M7');
-  assert.ok(Math.abs(c3RetSeam - qRetSeam) < 1e-5, '0.0000% seam tracking jump on Core-3');
+  assert.ok(Math.abs(m7RetSeam - qRetSeam) < 0.002, 'Smooth seam continuity on Full M7 with active 0.20% Book B');
+  assert.ok(Math.abs(c3RetSeam - qRetSeam) < 0.002, 'Smooth seam continuity on Core-3 with active 0.20% Book B');
 
-  // Verify quoteSource tagging & real OCC contract metadata in trade_ledger
-  const opraTrades = doc.trade_ledger.filter(t => t.entry_date <= '2025-12-15');
+  // Verify fillMode=ask_bid toggle dynamically computes strict OPRA Ask/Bid ($1,688,420 on 2025-12-15; $1,721,508 on 2026-11-20)
+  const askBidDoc = loadCrisisObservatoryDashboard({ asOf: '2026-11-20', fillMode: 'ask_bid' });
+  assert.equal(askBidDoc.fill_mode, 'ask_bid');
+  const ab1215 = askBidDoc.daily_series.find(r => r.date === '2025-12-15');
+  assert.ok(Math.abs(ab1215.nav_m7g - 1688420.02) <= 0.25);
+  assert.ok(Math.abs(ab1215.nav_c3 - 1478048.67) <= 0.25);
+  const abM7S = Object.fromEntries(askBidDoc.strategies_summary.map(s => [s.id, s])).M7G_Graded;
+  assert.equal(abM7S.fill_mode, 'ask_bid');
+  assert.ok(Math.abs(abM7S.end_nav - 1721508.16) <= 0.5);
+
+  // Verify quoteSource tagging & real OCC contract metadata in trade_ledger (Book B + Book M = 127 trades)
+  const opraTrades = doc.trade_ledger.filter(
+    t => t.entry_date <= '2025-12-15' && (!t.exit_date || t.exit_date <= '2025-12-15') && !t.is_open_live,
+  );
   const bsmTrades = doc.trade_ledger.filter(t => t.entry_date > '2025-12-15');
-  assert.equal(opraTrades.length, 45);
-  assert.equal(bsmTrades.length, 2);
-  assert.ok(opraTrades.every(t => t.quoteSource === 'REAL_OPRA' && String(t.occSymbol || '').startsWith('QQQ')));
+  assert.equal(opraTrades.length, 116);
+  assert.equal(opraTrades.filter(t => t.quoteSource === 'REAL_OPRA').length, 114);
+  assert.ok(doc.trade_ledger.every(t => (t.book === 'base' || t.book === 'm7') && String(t.occSymbol || '').startsWith('QQQ')));
   assert.ok(bsmTrades.every(t => t.quoteSource === 'CALIBRATED_BSM'));
 
-  // Verify M7 Live Dashboard 3-Pillar + Sizing + TP Monitor (default adaptive_120_90)
+  // Verify M7 Live Dashboard 3-Pillar + Book B VIX<=20 Gate + 5D Lockout + Near-ITM TP + Fixed-% Sizing
   const m7Dash = doc.m7_live_dashboard;
   assert.ok(m7Dash, 'm7_live_dashboard must be populated');
   assert.equal(m7Dash.as_of_date, '2026-11-20');
   assert.equal(m7Dash.strategy_id, 'M7G_Graded');
   assert.equal(m7Dash.profile, 'full_m7_adaptive');
+  assert.equal(m7Dash.fill_mode, 'ibkr_limit');
   assert.equal(m7Dash.put_otm, 'otm15');
   assert.equal(m7Dash.m7_tp_mode, 'standard');
   assert.equal(m7Dash.roll_mode, 'adaptive_120_90');
   assert.equal(m7Dash.m0_enabled, true);
+  assert.equal(m7Dash.book_b_vix_gate?.budget_pct, 0.2);
+  assert.equal(m7Dash.book_b_vix_gate?.vix_max, 20.0);
+  assert.equal(m7Dash.book_b_vix_gate?.status, 'LOCKED_BY_5D');
+  assert.equal(m7Dash.post_tp_lockout?.locked, true);
+  assert.equal(m7Dash.post_tp_lockout?.non_inverted_streak, 0);
+  assert.equal(m7Dash.post_tp_lockout?.required_streak, 5);
+  assert.equal(m7Dash.near_itm_tp_rule?.near_itm_mult, 1.05);
   assert.equal(m7Dash.pillars.length, 3);
   assert.equal(m7Dash.pillars[0].modules.length, 2);
   assert.equal(m7Dash.pillars[1].modules.length, 2);
   assert.equal(m7Dash.pillars[2].modules.length, 2);
   assert.equal(m7Dash.redline.blocked, true);
-  assert.equal(m7Dash.sizing_calculator.dte, 120);
-  assert.equal(m7Dash.sizing_calculator.roll_dte, 50);
-  assert.equal(m7Dash.sizing_calculator.skew_switch_threshold, 1.18);
+  assert.equal(m7Dash.sizing_calculator.dte, 125);
+  assert.equal(m7Dash.sizing_calculator.roll_dte, 75);
+  assert.equal(m7Dash.sizing_calculator.base_budget_pct, 0.2);
+  assert.equal(m7Dash.sizing_calculator.m7_budget_pct, 1.25);
   assert.ok(m7Dash.sizing_calculator.sample_1000sh_budget_usd > 0);
-  assert.equal(m7Dash.tp_monitor.tp_code, 'STANDARD');
+  assert.equal(m7Dash.tp_monitor.tp_code, 'NEAR_ITM');
 
   // Option 2: Core-3 Minimal (Adaptive) + SAFETY GUARDRAIL against 90D Hold
   const c3Doc = loadCrisisObservatoryDashboard({
@@ -115,8 +154,8 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
   assert.equal(c3Doc.selected_strategy_id, 'Core3_Adaptive');
   assert.equal(c3Doc.roll_mode, 'adaptive_120_90');
   assert.equal(c3Doc.core3_roll_locked, true);
-  assert.equal(c3Doc.trade_ledger.length, 32);
-  assert.equal(c3Doc.trade_ledger.filter(t => t.quoteSource === 'REAL_OPRA').length, 30);
+  assert.equal(c3Doc.trade_ledger.length, 110);
+  assert.equal(c3Doc.trade_ledger.filter(t => t.quoteSource === 'REAL_OPRA').length, 98);
   assert.equal(c3Doc.m7_live_dashboard.strategy_id, 'Core3_Adaptive');
   assert.equal(c3Doc.m7_live_dashboard.pillars[1].disabled_in_core3, true);
   assert.equal(c3Doc.m7_live_dashboard.pillars[1].modules[0].disabled_in_core3, true); // M2
@@ -150,26 +189,27 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
   assert.equal(sig.slot2_collar.status, 'FROZEN_BELOW_ATH5');
   assert.equal(sig.gate_checklist.length, 5);
 
-  // Real-OPRA Strict Ask/Bid + Post-2025 Calibrated BSM Champions
+  // Real-OPRA IBKR Limit + Post-2025 Calibrated BSM Champions (B020_M125 Dual-Book)
   const smap = Object.fromEntries(doc.strategies_summary.map(s => [s.id, s]));
   assert.equal(smap.U4_DualEngine, undefined);
   assert.equal(smap.M7G_Graded.pricing_basis, 'real_opra_2015_2025_calibrated_bsm');
-  assert.equal(smap.M7G_Graded.real_trades_pct, 95.7);
-  assert.ok(Math.abs(smap.M7G_Graded.end_nav - 1466143.41) <= 0.1);
-  assert.equal(smap.M7G_Graded.cagr_pct, 18.25);
-  assert.equal(smap.M7G_Graded.max_dd_pct, -28.32);
-  assert.equal(smap.M7G_Graded.calmar, 0.645);
-  assert.equal(smap.M7G_Graded.sharpe, 0.918);
-  assert.equal(smap.M7G_Graded.roll_50d_count, 28);
-  assert.equal(smap.M7G_Graded.roll_30d_count, 4);
-  assert.ok(doc.events.some(ev => ev.event_type === 'roll_50d'));
+  assert.equal(smap.M7G_Graded.fill_mode, 'ibkr_limit');
+  assert.equal(smap.M7G_Graded.real_trades_pct, 89.8);
+  assert.ok(Math.abs(smap.M7G_Graded.end_nav - 1775771.98) <= 0.1);
+  assert.equal(smap.M7G_Graded.cagr_pct, 20.18);
+  assert.equal(smap.M7G_Graded.max_dd_pct, -26.17);
+  assert.equal(smap.M7G_Graded.calmar, 0.771);
+  assert.equal(smap.M7G_Graded.sharpe, 0.931);
+  assert.equal(smap.M7G_Graded.roll_75d_count, 99);
+  assert.equal(smap.M7G_Graded.roll_30d_count, 3);
+  assert.ok(doc.events.some(ev => ev.event_type === 'roll_75d'));
   assert.ok(doc.events.some(ev => ev.event_type === 'roll_30d'));
-  assert.ok(Math.abs(smap.Core3_Adaptive.end_nav - 1497022.85) <= 0.1);
-  assert.equal(smap.Core3_Adaptive.tranches_total, 32);
-  assert.equal(smap.Core3_Adaptive.real_opra_trades_count, 30);
-  assert.ok(Math.abs(smap.M7_Ensemble.end_nav - 1437260.55) <= 0.1);
+  assert.ok(Math.abs(smap.Core3_Adaptive.end_nav - 1506551.86) <= 0.1);
+  assert.equal(smap.Core3_Adaptive.tranches_total, 110);
+  assert.equal(smap.Core3_Adaptive.real_opra_trades_count, 98);
+  assert.ok(Math.abs(smap.M7_Ensemble.end_nav - 1620258.94) <= 0.1);
   assert.ok(Math.abs(smap.U1_PureOptions.end_nav - 1322402.31) <= 0.5);
-  assert.ok(smap.M7G_Graded.end_nav > smap.U1_PureOptions.end_nav + 140000);
+  assert.ok(smap.M7G_Graded.end_nav > smap.U1_PureOptions.end_nav + 400000);
   assert.ok(Math.abs(smap.B1c_PureAD.end_nav - 1347636.26) <= 0.5);
   assert.ok(Math.abs(smap.D2_SixLights.end_nav - 1351686.36) <= 0.5);
   assert.ok(Math.abs(smap.H2_G4_PriceGate.end_nav - 1252925.34) <= 0.5);
@@ -181,8 +221,8 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
     rollMode: '120d_roll50',
   });
   const m7Roll50S = Object.fromEntries(m7Roll50.strategies_summary.map(s => [s.id, s])).M7G_Graded;
-  assert.ok(Math.abs(m7Roll50S.end_nav - 1436762.5) <= 0.1);
-  assert.equal(m7Roll50S.roll_50d_count, 33);
+  assert.ok(Math.abs(m7Roll50S.end_nav - 1338003.36) <= 0.1);
+  assert.equal(m7Roll50S.roll_50d_count, 42);
 
   const m7Hold15 = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
@@ -191,10 +231,10 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
   assert.equal(m7Hold15.roll_mode, '90d_hold');
   assert.equal(m7Hold15.m7_live_dashboard.sizing_calculator.dte, 90);
   const m7Hold15S = Object.fromEntries(m7Hold15.strategies_summary.map(s => [s.id, s])).M7G_Graded;
-  assert.ok(Math.abs(m7Hold15S.end_nav - 1343816.19) <= 0.1);
-  assert.equal(m7Hold15S.cagr_pct, 17.39);
-  assert.equal(m7Hold15S.max_dd_pct, -28.05);
-  assert.ok(smap.M7G_Graded.end_nav > m7Roll50S.end_nav && m7Roll50S.end_nav > m7Hold15S.end_nav);
+  assert.ok(Math.abs(m7Hold15S.end_nav - 1359770.65) <= 0.1);
+  assert.equal(m7Hold15S.cagr_pct, 17.51);
+  assert.equal(m7Hold15S.max_dd_pct, -23.87);
+  assert.ok(smap.M7G_Graded.end_nav > m7Hold15S.end_nav && smap.M7G_Graded.end_nav > m7Roll50S.end_nav);
 
   const m7Otm20Roll = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
@@ -202,8 +242,8 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
     rollMode: '120d_roll50',
   });
   const m7Otm20RollS = Object.fromEntries(m7Otm20Roll.strategies_summary.map(s => [s.id, s])).M7G_Graded;
-  assert.ok(Math.abs(m7Otm20RollS.end_nav - 1420675.17) <= 0.1);
-  assert.equal(m7Otm20RollS.roll_50d_count, 33);
+  assert.ok(Math.abs(m7Otm20RollS.end_nav - 1198792.77) <= 0.1);
+  assert.equal(m7Otm20RollS.roll_50d_count, 44);
 
   const m7Otm20Hold = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
@@ -211,7 +251,7 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
     rollMode: '90d_hold',
   });
   const m7Otm20HoldS = Object.fromEntries(m7Otm20Hold.strategies_summary.map(s => [s.id, s])).M7G_Graded;
-  assert.ok(Math.abs(m7Otm20HoldS.end_nav - 1274910.48) <= 0.1);
+  assert.ok(Math.abs(m7Otm20HoldS.end_nav - 1163317.78) <= 0.1);
 
   const m7ItmTp = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
@@ -219,8 +259,8 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
     rollMode: '90d_hold',
   });
   const m7ItmS = Object.fromEntries(m7ItmTp.strategies_summary.map(s => [s.id, s])).M7G_Graded;
-  assert.ok(Math.abs(m7ItmS.end_nav - 1290849.77) <= 0.1);
-  assert.equal(m7ItmS.max_dd_pct, -27.87);
+  assert.ok(Math.abs(m7ItmS.end_nav - 1217359.98) <= 0.1);
+  assert.equal(m7ItmS.max_dd_pct, -23.87);
 
   const m7NoM0 = loadCrisisObservatoryDashboard({
     asOf: '2026-11-20',
@@ -238,9 +278,9 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
     spMode: 'sp_14d_cap10',
   });
   const m7Cap10S = Object.fromEntries(m7Cap10.strategies_summary.map(s => [s.id, s])).M7G_Graded;
-  assert.ok(Math.abs(m7Cap10S.end_nav - 1561466.56) <= 2.5, `Expected $1,561,466.56, got ${m7Cap10S.end_nav}`);
-  assert.equal(m7Cap10S.max_dd_pct, -28.17);
-  assert.equal(m7Cap10S.calmar, 0.67);
+  assert.ok(Math.abs(m7Cap10S.end_nav - 1892071.22) <= 2.5, `Expected $1,892,071.22, got ${m7Cap10S.end_nav}`);
+  assert.equal(m7Cap10S.max_dd_pct, -25.68);
+  assert.equal(m7Cap10S.calmar, 0.811);
 
   // M7G_Graded + Engine 2 + Engine 3 dynamic pure-JS combo & additive 3-engine attribution
   const m7Combo3 = loadCrisisObservatoryDashboard({
@@ -322,7 +362,7 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
   );
 
   const gzBytes = zlib.gzipSync(JSON.stringify(spCap10)).length;
-  assert.ok(gzBytes < 520 * 1024, `Projected single-mode gzipped payload must stay compact (<520 KB), got ${gzBytes}`);
+  assert.ok(gzBytes < 650 * 1024, `Projected single-mode gzipped payload must stay compact (<650 KB), got ${gzBytes}`);
 
   // Standalone Engine 3 on Pure QQQ (NoPut_CallOnly + cc_off + sp_14d_unf)
   const spStandaloneRec = loadCrisisObservatoryDashboard({
@@ -337,7 +377,7 @@ test('loads canonical 2026-11-20 M7-Graded & Core-3 Crisis Observatory payload w
 });
 
 test('slices historical asOf cutoffs without lookahead and extends M7 causally on live EOD bars', async () => {
-  // Leak-free M7G_Graded cutoff on 2026-10-15: 35% score -> 1 graded Put slot (8/31), future 11/06 TP masked!
+  // Leak-free M7G_Graded cutoff on 2026-10-15: Book B (0.20%) + 1 M7 slot (8/31) = 2 open tranches, future TP masked!
   const midOctM7 = loadCrisisObservatoryDashboard({
     asOf: '2026-10-15',
     strategy: 'M7G_Graded',
@@ -345,18 +385,19 @@ test('slices historical asOf cutoffs without lookahead and extends M7 causally o
   assert.equal(midOctM7.as_of_date, '2026-10-15');
   assert.equal(midOctM7.m7_live_dashboard.as_of_date, '2026-10-15');
   assert.equal(midOctM7.m7_live_dashboard.active_slots, 1);
+  assert.equal(midOctM7.m7_live_dashboard.base_active_slots, 1);
   assert.ok(!midOctM7.events.some(ev => ev.date > '2026-10-15'));
   const openM7 = midOctM7.trade_ledger.filter(t => t.exit_date === null);
-  assert.equal(openM7.length, 1);
+  assert.equal(openM7.length, 2);
   assert.ok(openM7.every(t => t.exit_reason === 'open_as_of_cutoff' && t.net_pnl_usd === null && t.roi_mult === null));
 
-  // Meanwhile M7_Ensemble (>=35% -> 2 slots) has 2 open slots on 2026-10-15
+  // Meanwhile M7_Ensemble (>=35% -> 2 M7 slots + 1 Book B slot = 3 open tranches) on 2026-10-15
   const midOctEns = loadCrisisObservatoryDashboard({
     asOf: '2026-10-15',
     strategy: 'M7_Ensemble',
   });
   assert.equal(midOctEns.m7_live_dashboard.active_slots, 2);
-  assert.equal(midOctEns.trade_ledger.filter(t => t.exit_date === null).length, 2);
+  assert.equal(midOctEns.trade_ledger.filter(t => t.exit_date === null).length, 3);
 
   // On 2026-10-15, both Slot 1 (entered 2026-08-31) and Slot 2 (entered 2026-10-05) are OPEN on U1_PureOptions too
   const midOct = loadCrisisObservatoryDashboard({
@@ -458,6 +499,7 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.deepEqual(CRISIS_OBSERVATORY_PUT_OTMS, ['otm15', 'otm20']);
   assert.deepEqual(CRISIS_OBSERVATORY_M7_TP_MODES, ['standard', 'itm_tp']);
   assert.deepEqual(CRISIS_OBSERVATORY_ROLL_MODES, ['adaptive_120_90', '120d_roll50', '90d_hold']);
+  assert.deepEqual(CRISIS_OBSERVATORY_FILL_MODES, ['ibkr_limit', 'ask_bid']);
   assert.deepEqual(CRISIS_OBSERVATORY_TP_MODES, ['layered_itm', 'standard_dual', 'both_4x']);
   assert.deepEqual(CRISIS_OBSERVATORY_CC_MODES, ['cc_off', 'cc_d12_d35', 'cc_d12_r45', 'cc_d12_cr55']);
   assert.deepEqual(CRISIS_OBSERVATORY_SP_MODES, ['sp_off', 'sp_14d_cap10', 'sp_10d_vixf', 'sp_14d_unf']);
@@ -476,6 +518,7 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.throws(() => loadCrisisObservatoryDashboard({ putOtm: 'otm99' }), /invalid_crisis_observatory_put_otm/);
   assert.throws(() => loadCrisisObservatoryDashboard({ m7TpMode: 'UNKNOWN_M7TP' }), /invalid_crisis_observatory_m7_tp_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ rollMode: 'UNKNOWN_ROLL' }), /invalid_crisis_observatory_roll_mode/);
+  assert.throws(() => loadCrisisObservatoryDashboard({ fillMode: 'UNKNOWN_FILL' }), /invalid_crisis_observatory_fill_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ m0Enabled: 'maybe' }), /invalid_crisis_observatory_m0_enabled/);
   assert.throws(() => loadCrisisObservatoryDashboard({ tpMode: 'UNKNOWN_TP' }), /invalid_crisis_observatory_tp_mode/);
   assert.throws(() => loadCrisisObservatoryDashboard({ ccMode: 'UNKNOWN_CC' }), /invalid_crisis_observatory_cc_mode/);
@@ -514,8 +557,11 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
 
   // Authenticated -> 200 default Full M7 Shield (adaptive_120_90) + Core-3 Minimal (co_profile=core3_adaptive) + putOtm=otm20
   const authHeaders = { 'x-test-auth': '1' };
-  const [resM7Def, resC3Guard, resM7Roll] = await Promise.all([
+  const [resM7Def, resM7AskBid, resC3Guard, resM7Roll] = await Promise.all([
     fetch(`http://127.0.0.1:${port}/api/investment/crisis-observatory?asOf=2026-11-20`, {
+      headers: authHeaders,
+    }),
+    fetch(`http://127.0.0.1:${port}/api/investment/crisis-observatory?fillMode=ask_bid&asOf=2026-11-20`, {
       headers: authHeaders,
     }),
     fetch(
@@ -528,14 +574,20 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
     ),
   ]);
   assert.equal(resM7Def.status, 200);
+  assert.equal(resM7AskBid.status, 200);
   assert.equal(resC3Guard.status, 200);
   assert.equal(resM7Roll.status, 200);
   const bodyM7Def = await resM7Def.json();
+  const bodyM7AskBid = await resM7AskBid.json();
   const bodyC3Guard = await resC3Guard.json();
   const bodyM7Roll = await resM7Roll.json();
+  assert.equal(bodyM7Def.fill_mode, 'ibkr_limit');
   assert.equal(bodyM7Def.profile, 'full_m7_adaptive');
   assert.equal(bodyM7Def.selected_strategy_id, 'M7G_Graded');
   assert.equal(bodyM7Def.roll_mode, 'adaptive_120_90');
+  assert.equal(bodyM7AskBid.fill_mode, 'ask_bid');
+  const httpAbM7 = Object.fromEntries(bodyM7AskBid.strategies_summary.map(s => [s.id, s])).M7G_Graded;
+  assert.ok(Math.abs(httpAbM7.end_nav - 1721508.16) <= 0.5);
   assert.equal(bodyC3Guard.profile, 'core3_adaptive');
   assert.equal(bodyC3Guard.selected_strategy_id, 'Core3_Adaptive');
   assert.equal(bodyC3Guard.roll_mode, 'adaptive_120_90', 'Core-3 must never allow 90D Hold');
@@ -543,8 +595,8 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   assert.equal(bodyM7Roll.put_otm, 'otm20');
   assert.equal(bodyM7Roll.roll_mode, '120d_roll50');
   const httpM7Roll = Object.fromEntries(bodyM7Roll.strategies_summary.map(s => [s.id, s])).M7G_Graded;
-  assert.ok(Math.abs(httpM7Roll.end_nav - 1420675.17) <= 0.1);
-  assert.equal(httpM7Roll.sharpe, 0.905);
+  assert.ok(Math.abs(httpM7Roll.end_nav - 1198792.77) <= 0.1);
+  assert.equal(httpM7Roll.sharpe, 0.763);
 
   const [resInv, resDisc] = await Promise.all([
     fetch(`http://127.0.0.1:${port}/api/investment/crisis-observatory?strategy=U1_PureOptions&asOf=2026-11-20`, {
@@ -658,9 +710,12 @@ test('validates parameters and serves both /api/investment/crisis-observatory an
   const pit2025 = loadCrisisObservatoryPitSnapshot({ date: '2025-04-04' });
   assert.equal(pit2025.pit_date, '2025-04-04');
   assert.equal(pit2025.live_market_snapshot.qqq_close, 422.67);
-  assert.equal(pit2025.m7_live_dashboard.active_slots, 1);
-  assert.equal(pit2025.m7_live_dashboard.tp_monitor.open_slots[0].kp, 440);
-  assert.equal(pit2025.m7_live_dashboard.tp_monitor.open_slots[0].pending_tp, true);
+  assert.equal(pit2025.m7_live_dashboard.active_slots, 3);
+  assert.equal(pit2025.m7_live_dashboard.base_active_slots, 1);
+  assert.equal(pit2025.m7_live_dashboard.tp_monitor.open_slots.length, 4);
+  assert.ok(pit2025.m7_live_dashboard.tp_monitor.open_slots.every(s => s.pending_tp === true));
+  assert.ok(pit2025.m7_live_dashboard.book_b_vix_gate);
+  assert.ok(pit2025.m7_live_dashboard.post_tp_lockout);
 });
 
 test('parseFredCsvText skips US holiday empty/dot cells without zero corruption and Dual-Track scorer + live six_crisis_lights work end-to-end', () => {

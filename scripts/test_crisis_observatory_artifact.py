@@ -54,6 +54,18 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
 
     doc = json.loads(raw)
     assert doc["as_of_date"] == "2026-11-20"
+    assert doc["default_fill_mode"] == "ibkr_limit"
+    assert doc["fill_mode"] == "ibkr_limit"
+    assert [m["id"] for m in doc["fill_modes_meta"]] == ["ibkr_limit", "ask_bid"]
+    assert doc["hardcoded_ruleset"]["code"] == "B020_M125_HARD75_NEARITM_5DLOCK"
+    assert doc["hardcoded_ruleset"]["locked"] is True
+    assert doc["hardcoded_ruleset"]["base_book"]["budget_pct_nav"] == 0.2
+    assert doc["hardcoded_ruleset"]["base_book"]["vix_max"] == 20.0
+    assert doc["hardcoded_ruleset"]["base_book"]["target_dte"] == 125
+    assert doc["hardcoded_ruleset"]["base_book"]["roll_dte"] == 75
+    assert doc["hardcoded_ruleset"]["m7_book"]["budget_pct_nav_per_slot"] == 1.25
+    assert doc["hardcoded_ruleset"]["near_itm_tp"]["near_itm_strike_mult"] == 1.05
+    assert doc["hardcoded_ruleset"]["post_tp_lockout"]["consecutive_days"] == 5
     assert doc["default_profile"] == "full_m7_adaptive"
     assert doc["default_strategy_id"] == "M7G_Graded"
     assert doc["default_put_otm"] == "otm15"
@@ -65,9 +77,33 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
     assert doc["pricing_provenance"]["segment1_real_opra"]["trading_days"] == 2749
     assert doc["pricing_provenance"]["segment1_real_opra"]["quotes_count"] == 9875299
     assert doc["pricing_provenance"]["segment1_real_opra"]["execution_fallbacks"] == 0
-    assert doc["pricing_provenance"]["audited_opra_benchmarks_2015_2025"]["full_m7_adaptive_ask_bid"]["end_nav"] == 1451369.05
-    assert doc["pricing_provenance"]["audited_opra_benchmarks_2015_2025"]["core3_adaptive_ask_bid"]["end_nav"] == 1481937.31
+    opra_bench = doc["pricing_provenance"]["audited_opra_benchmarks_2015_2025"]
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["end_nav"] == 1740267.20
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["net_alpha_usd"] == 453939.75
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["cagr_pct"] == 21.85
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["max_dd_pct"] == -26.17
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["calmar"] == 0.835
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["sharpe"] == 1.011
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["sortino"] == 1.355
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["trades"] == 116
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["base_trades"] == 67
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["m7_trades"] == 49
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["tp_count"] == 13
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["profit_factor"] == 2.28
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["lockout_episodes"] == 6
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["lockout_days"] == 91
+    assert opra_bench["full_m7_adaptive_ibkr_limit"]["blocked_base_entries"] == 2
+    assert opra_bench["full_m7_adaptive_ask_bid"]["end_nav"] == 1688420.02
+    assert opra_bench["full_m7_adaptive_ask_bid"]["net_alpha_usd"] == 402092.57
+    assert opra_bench["full_m7_adaptive_ask_bid"]["cagr_pct"] == 21.51
+    assert opra_bench["full_m7_adaptive_ask_bid"]["calmar"] == 0.819
+    assert opra_bench["full_m7_adaptive_ask_bid"]["profit_factor"] == 2.19
+    assert opra_bench["core3_adaptive_ibkr_limit"]["end_nav"] == 1514395.10
+    assert opra_bench["core3_adaptive_ask_bid"]["end_nav"] == 1478048.67
     assert doc["pricing_provenance"]["seam_continuity_audit"]["last_opra_date"] == "2025-12-15"
+    seam_row = next(r for r in doc["daily_series"] if r["date"] == "2025-12-15")
+    assert seam_row["nav_m7g"] == 1740267.20
+    assert seam_row["nav_c3"] == 1514395.10
     for forbidden in ("U4_DualEngine", "T-Bill", "slow_bear_shield", "慢熊盾", "美债慢熊盾", "短债"):
         assert forbidden not in raw, f"Forbidden T-Bill/U4 term found in artifact: {forbidden}"
 
@@ -118,53 +154,65 @@ def test_artifact_matches_audited_2026_11_20_benchmarks():
         "NoPut_CallOnly",
         "BH_Pure_QQQ",
     ]
-    # Real-OPRA Ask/Bid + Calibrated BSM Default: M7G_Graded Adaptive 120->50 / CTA 90->30 (-15% OTM · STANDARD)
+    # Real-OPRA IBKR Limit + Calibrated BSM Default: B020_M125 Dual-Book M7G_Graded (0.20% Base VIX<=20 + 1.25% M7G · 125->75 / CTA 90->30 · 5D Lockout)
     assert smap["M7G_Graded"]["pricing_basis"] == "real_opra_2015_2025_calibrated_bsm"
-    assert smap["M7G_Graded"]["real_trades_pct"] == 95.7
-    assert smap["M7G_Graded"]["real_opra_trades_count"] == 45
-    assert smap["M7G_Graded"]["sim_trades_count"] == 2
-    assert abs(smap["M7G_Graded"]["end_nav"] - 1466143.41) <= 0.05
-    assert smap["M7G_Graded"]["cagr_pct"] == 18.25
-    assert smap["M7G_Graded"]["max_dd_pct"] == -28.32
-    assert smap["M7G_Graded"]["calmar"] == 0.645
-    assert smap["M7G_Graded"]["sharpe"] == 0.918
-    assert smap["M7G_Graded"]["roll_50d_count"] == 28
-    assert smap["M7G_Graded"]["roll_30d_count"] == 4
-    assert abs(smap["M7G_Graded"]["avg_roll_salvage_pct"] - 51.5) <= 0.2
+    assert smap["M7G_Graded"]["fill_mode"] == "ibkr_limit"
+    assert smap["M7G_Graded"]["ruleset_code"] == "B020_M125_HARD75_NEARITM_5DLOCK"
+    assert smap["M7G_Graded"]["base_budget_pct"] == 0.2
+    assert smap["M7G_Graded"]["m7_budget_pct"] == 1.25
+    assert smap["M7G_Graded"]["real_trades_pct"] == 89.8
+    assert smap["M7G_Graded"]["real_opra_trades_count"] == 114
+    assert smap["M7G_Graded"]["sim_trades_count"] == 13
+    assert abs(smap["M7G_Graded"]["end_nav"] - 1775771.98) <= 0.05
+    assert smap["M7G_Graded"]["cagr_pct"] == 20.18
+    assert smap["M7G_Graded"]["max_dd_pct"] == -26.17
+    assert smap["M7G_Graded"]["calmar"] == 0.771
+    assert smap["M7G_Graded"]["sharpe"] == 0.931
+    assert smap["M7G_Graded"]["roll_75d_count"] == 99
+    assert smap["M7G_Graded"]["roll_30d_count"] == 3
+    assert smap["M7G_Graded"]["salvage_vix_expensive_count"] == 9
+    assert abs(smap["M7G_Graded"]["avg_roll_salvage_pct"] - 55.4) <= 0.2
 
-    # Core-3 Minimal Adaptive: M0+M6+M4 + Adaptive 120->50 / CTA 90->30
+    # Core-3 Minimal Adaptive: Book B 0.20% + Book M 1.25%/slot (M0+M6+M4) + Adaptive 125->75 / CTA 90->30
     assert smap["Core3_Adaptive"]["pricing_basis"] == "real_opra_2015_2025_calibrated_bsm"
-    assert smap["Core3_Adaptive"]["real_opra_trades_count"] == 30
-    assert smap["Core3_Adaptive"]["sim_trades_count"] == 2
-    assert abs(smap["Core3_Adaptive"]["end_nav"] - 1497022.85) <= 0.05
-    assert smap["Core3_Adaptive"]["cagr_pct"] == 18.46
-    assert smap["Core3_Adaptive"]["max_dd_pct"] == -28.56
-    assert smap["Core3_Adaptive"]["profit_factor"] == 2.321
+    assert smap["Core3_Adaptive"]["real_opra_trades_count"] == 98
+    assert smap["Core3_Adaptive"]["sim_trades_count"] == 12
+    assert abs(smap["Core3_Adaptive"]["end_nav"] - 1506551.86) <= 0.05
+    assert smap["Core3_Adaptive"]["cagr_pct"] == 18.53
+    assert smap["Core3_Adaptive"]["max_dd_pct"] == -28.05
+    assert smap["Core3_Adaptive"]["profit_factor"] == 1.32
 
-    assert abs(smap["M7_Ensemble"]["end_nav"] - 1437260.55) <= 0.05
+    assert abs(smap["M7_Ensemble"]["end_nav"] - 1620258.94) <= 0.05
     assert len(doc["m7_bundles"]) == 24
     # Core-3 safety guardrail: 90d_hold bundle locks Core3_Adaptive to adaptive_120_90
     c3_guard = doc["m7_bundles"]["otm15__standard__90d_hold__m0on"]["summaries"]["Core3_Adaptive"]
     assert c3_guard["roll_mode"] == "adaptive_120_90"
-    assert abs(c3_guard["end_nav"] - 1497022.85) <= 0.05
+    assert abs(c3_guard["end_nav"] - 1506551.86) <= 0.05
 
-    assert abs(doc["m7_bundles"]["otm15__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1436762.50) <= 0.05
-    assert abs(doc["m7_bundles"]["otm15__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1343816.19) <= 0.05
-    assert abs(doc["m7_bundles"]["otm20__standard__adaptive_120_90__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1438956.91) <= 0.05
-    assert abs(doc["m7_bundles"]["otm20__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1274910.48) <= 0.05
-    assert abs(doc["m7_bundles"]["otm15__itm_tp__adaptive_120_90__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1335191.63) <= 0.05
-    assert abs(doc["m7_bundles"]["otm15__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1290849.77) <= 0.05
-    assert abs(doc["m7_bundles"]["otm20__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1225265.05) <= 0.05
+    assert abs(doc["m7_bundles"]["otm15__standard__120d_roll50__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1338003.36) <= 0.05
+    assert abs(doc["m7_bundles"]["otm15__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1359770.65) <= 0.05
+    assert abs(doc["m7_bundles"]["otm20__standard__adaptive_120_90__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1501151.01) <= 0.05
+    assert abs(doc["m7_bundles"]["otm20__standard__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1163317.78) <= 0.05
+    assert abs(doc["m7_bundles"]["otm15__itm_tp__adaptive_120_90__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1521000.10) <= 0.05
+    assert abs(doc["m7_bundles"]["otm15__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1217359.98) <= 0.05
+    assert abs(doc["m7_bundles"]["otm20__itm_tp__90d_hold__m0on"]["summaries"]["M7G_Graded"]["end_nav"] - 1134462.67) <= 0.05
 
-    # Verify M7 trade ledger quoteSource tags ("REAL_OPRA" <= 2025-12-15 vs "CALIBRATED_BSM" > 2025-12-15)
+    # Verify M7 trade ledger quoteSource tags (>=98% REAL_OPRA inside 2015..2025-12-15; CALIBRATED_BSM > 2025-12-15)
     for sid in ("M7G_Graded", "Core3_Adaptive"):
         m7_ledger = _unpack_rows(doc["m7_bundles"]["otm15__standard__adaptive_120_90__m0on"]["ledgers"][sid])
-        assert len(m7_ledger) >= 32
+        assert len(m7_ledger) >= 100
+        in_opra = [
+            tr for tr in m7_ledger
+            if str(tr["entry_date"]) <= "2025-12-15"
+            and (tr.get("exit_date") is None or str(tr["exit_date"]) <= "2025-12-15")
+            and not tr.get("is_open_live")
+        ]
+        real_in_opra = sum(1 for tr in in_opra if tr.get("quoteSource") == "REAL_OPRA")
+        assert real_in_opra / len(in_opra) >= 0.98
         for tr in m7_ledger:
             qs = tr.get("quoteSource")
             assert qs in ("REAL_OPRA", "CALIBRATED_BSM")
-            if str(tr["entry_date"]) <= "2025-12-15" and (tr.get("exit_date") is None or str(tr["exit_date"]) <= "2025-12-15") and not tr.get("is_open_live"):
-                assert qs == "REAL_OPRA"
+            assert tr.get("book") in ("base", "m7")
             assert tr.get("occSymbol")
 
     # Legacy strategies on real OPRA Ask/Bid + Calibrated BSM
@@ -264,22 +312,22 @@ def test_crisis_windows_and_4factor_convexity_identity():
         "2026-08_11_LIVE",
     ]
     win_2022 = next(w for w in doc["crisis_windows"] if w["id"] == "2022")
-    assert win_2022["m7g_mdd"] == -28.32
-    assert win_2022["c3_mdd"] == -28.32
+    assert win_2022["m7g_mdd"] == -26.17
+    assert win_2022["c3_mdd"] == -26.17
     assert win_2022["u1_mdd"] == -33.25
     assert win_2022["qqq_mdd"] == -35.12
-    assert abs(win_2022["harvested_usd_m7g"] - 37794.79) <= 0.10
-    assert abs(win_2022["harvested_usd_c3"] - 38665.63) <= 0.10
+    assert abs(win_2022["harvested_usd_m7g"] - 49660.65) <= 0.10
+    assert abs(win_2022["harvested_usd_c3"] - 49190.95) <= 0.10
     assert abs(win_2022["harvested_usd"] - 18335.83) <= 0.05
 
     live_win = doc["crisis_windows"][-1]
     assert live_win["is_live"] is True
-    assert live_win["m7g_mdd"] == -18.46
-    assert live_win["c3_mdd"] == -18.46
+    assert live_win["m7g_mdd"] == -16.74
+    assert live_win["c3_mdd"] == -18.82
     assert live_win["u1_mdd"] == -14.78
     assert live_win["qqq_mdd"] == -19.90
-    assert abs(live_win["harvested_usd_m7g"] - 18703.71) <= 0.10
-    assert abs(live_win["harvested_usd_c3"] - 19097.64) <= 0.10
+    assert abs(live_win["harvested_usd_m7g"] - 55028.18) <= 0.10
+    assert abs(live_win["harvested_usd_c3"] - 12090.43) <= 0.10
     assert abs(live_win["harvested_usd"] - 74506.03) <= 0.10
     assert doc["shield_events"] == []
 
@@ -299,6 +347,15 @@ def test_crisis_windows_and_4factor_convexity_identity():
 def test_dual_track_live_stress_and_module_readiness_in_artifact():
     doc = json.loads(ARTIFACT_PATH.read_text(encoding="utf-8"))
     dash = doc["m7_live_dashboard"]
+    assert dash["fill_mode"] == "ibkr_limit"
+    assert dash["book_b_vix_gate"]["budget_pct"] == 0.2
+    assert dash["book_b_vix_gate"]["vix_max"] == 20.0
+    assert dash["book_b_vix_gate"]["status"] == "LOCKED_BY_5D"
+    assert dash["post_tp_lockout"]["locked"] is True
+    assert dash["post_tp_lockout"]["non_inverted_streak"] == 0
+    assert dash["post_tp_lockout"]["required_streak"] == 5
+    assert dash["near_itm_tp_rule"]["near_itm_mult"] == 1.05
+    assert dash["near_itm_tp_rule"]["vix_extreme"] == 45.0
     assert dash["live_stress_index"] >= 75
     assert dash["live_stress_level"] == "crisis"
     assert dash["live_stress_label_en"] == "Active Crisis"

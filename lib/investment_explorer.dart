@@ -224,6 +224,7 @@ extension _InvestmentExplorer on _InvestmentWorkspaceState {
       for (final key in [
         'profile',
         'strategy',
+        'fillMode',
         'window',
         'putOtm',
         'm7TpMode',
