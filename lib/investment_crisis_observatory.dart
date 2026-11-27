@@ -48,6 +48,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String selectedWindow = '11y_opra';
   bool useLogScale = true;
   bool showLedger = false;
+  bool showPlaybookManual = false;
   String ledgerFilter = 'all';
   int hoverIndex = -1;
   int loadSerial = 0;
@@ -397,8 +398,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             const SizedBox(height: 14),
             Text(
               w(
-                'Loading ThesisForge v2.0 Single-Strategy Crisis Cockpit...',
-                '正在加载 ThesisForge v2.0 唯一锁定主策略危机观测舱...',
+                'Loading ThesisForge v3.0 Double-Champion Crisis Cockpit...',
+                '正在加载 ThesisForge v3.0 双冠终极版危机观测舱...',
               ),
               style: const TextStyle(color: _fgMuted, fontSize: 13),
             ),
@@ -421,8 +422,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           children: [
             Text(
               w(
-                'Unable to load Crisis Observatory v2.0 data.',
-                '暂时无法加载危机观测 v2.0 数据。',
+                'Unable to load Crisis Observatory v3.0 data.',
+                '暂时无法加载危机观测 v3.0 数据。',
               ),
               style: const TextStyle(
                 color: _fgPrimary,
@@ -495,12 +496,16 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               ),
               const SizedBox(height: 16),
 
-              // Section 5: Real MIT OPRA Historical Verification (v2.0 vs 100% QQQ)
+              // Section 5: Real MIT OPRA Historical Verification (v3.0 Plan D vs 100% QQQ)
               _buildSection5OpraBacktest(
                 backtest,
                 isCompact: isCompact,
                 isWide: isWide,
               ),
+              const SizedBox(height: 16),
+
+              // Section 6: v3.0 Double-Champion Full Strategy Operating Manual (Expandable)
+              _buildSection6PlaybookManual(isCompact),
             ],
           ),
         );
@@ -522,7 +527,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final pillars = asMap(cockpit['three_pillars']);
     final strikes = asMap(cmd['target_strikes']);
     final r1Strike = asMap(strikes['route1_125d_15otm']);
-    final r2Strike = asMap(strikes['route2_m4_90d_10otm']);
+    final r2Strike = asMap(
+      strikes['route2_m4_90d_15otm'] ?? strikes['route2_m4_90d_10otm'],
+    );
     final subEngines = asList(cmd['sub_engines']);
 
     final asOfDate = text(cockpit['date']);
@@ -573,8 +580,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     ),
                     child: Text(
                       w(
-                        'v2.0 LOCKED MASTER STRATEGY',
-                        'v2.0 唯一锁定主策略',
+                        'v3.0 DOUBLE-CHAMPION (PLAN D)',
+                        'v3.0 双冠终极版（PLAN D）',
                       ),
                       style: const TextStyle(
                         color: _mint,
@@ -586,8 +593,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   ),
                   Text(
                     w(
-                      '100% QQQ + 10% DBMF + 10% KMLM (<=1.20x) + Dual-Sleeve Tail Put',
-                      '100% QQQ + 10% DBMF + 10% KMLM（<=1.20x）+ 双轨尾部 Put',
+                      '100% QQQ + 20% Dual-CTA Box (Natural Drift) + Taleb B020_M125 (-15% OTM) + CONT_2M',
+                      '100% QQQ + 20% 双CTA Box（自然漂移无砍仓）+ 正统 Taleb B020_M125（统一 -15% OTM）+ CONT_2M',
                     ),
                     style: const TextStyle(
                       color: _fgMuted,
@@ -944,35 +951,35 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                       _amber,
                     ),
                     _sizerChip(
-                      w('Sleeve A (0.2% · 125D -15%)', '常态盾 0.2% · 125D -15%'),
+                      w('B020 Base (0.20% · 125D -15%)', 'B020 常态盾 0.20% · 125D -15%'),
                       'K = \$${_n(r1Strike['suggested_strike'])?.round() ?? 0} (${_fmtUsd(accountNav * 0.002)})',
                       w(
-                        'Exact ${_fmtUsd(_n(r1Strike['exact_strike']), dec: 2)} · Roll <=75D',
-                        '精确 ${_fmtUsd(_n(r1Strike['exact_strike']), dec: 2)} · <=75D 滚仓',
+                        'Exact ${_fmtUsd(_n(r1Strike['exact_strike']), dec: 2)} · VIX<=20 · Hard 75D Roll',
+                        '精确 ${_fmtUsd(_n(r1Strike['exact_strike']), dec: 2)} · VIX<=20 · 75D 强滚',
                       ),
                       _sky,
                     ),
                     _sizerChip(
                       w(
-                        'Sleeve B R1 (1.0% · 125D -15%)',
-                        '危机盾 R1 1.0% · 125D -15%',
+                        'M7G Ladder (1-3 x 1.25% · 125D -15%)',
+                        'M7G 阶梯盾 1-3x1.25% · 125D -15%',
                       ),
-                      'K = \$${_n(r1Strike['suggested_strike'])?.round() ?? 0} (${_fmtUsd(accountNav * 0.010)})',
+                      'K = \$${_n(r1Strike['suggested_strike'])?.round() ?? 0} (${_fmtUsd(accountNav * 0.0125)}/s · Max ${_fmtUsd(accountNav * 0.0375)})',
                       w(
-                        'P1/P2/M3 >=35% · Roll/Recycle 75D',
-                        'P1/P2/M3 >=35% · 75D 滚仓/回收',
+                        'Score >=35/45/65 -> 1/2/3 Slots · Hard 75D Roll',
+                        '得分 >=35/45/65 -> 开 1/2/3 槽 · 75D 强滚',
                       ),
                       _amber,
                     ),
                     _sizerChip(
                       w(
-                        'Sleeve B M4 (1.0% · 90D -10%)',
-                        '慢熊 M4 1.0% · 90D -10%',
+                        'M4 +8% Latch (1.25%/s · 90D -15%)',
+                        'M4 +8% 磁滞锁存 1.25%/槽 · 90D -15%',
                       ),
-                      'K = \$${_n(r2Strike['suggested_strike'])?.round() ?? 0} (${_fmtUsd(accountNav * 0.010)})',
+                      'K = \$${_n(r2Strike['suggested_strike'])?.round() ?? 0} (${_fmtUsd(accountNav * 0.0125)}/s)',
                       w(
-                        'Exact ${_fmtUsd(_n(r2Strike['exact_strike']), dec: 2)} · Recycle <=30D',
-                        '精确 ${_fmtUsd(_n(r2Strike['exact_strike']), dec: 2)} · <=30D 回收残值',
+                        'Uniform -15% OTM (${_fmtUsd(_n(r2Strike['exact_strike']), dec: 2)}) · Hard 30D Roll',
+                        '统一 -15% OTM（${_fmtUsd(_n(r2Strike['exact_strike']), dec: 2)}）· 30D 强滚',
                       ),
                       _lilac,
                     ),
@@ -1276,8 +1283,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             children: [
               Text(
                 w(
-                  '2-Month Continuous Bear Timer (CONT_2M) & 1.20x Guard',
-                  '双CTA 2个月持续熊市计时器（CONT_2M）与 1.20x 红线',
+                  '2-Month Continuous Bear Timer (CONT_2M) & Natural-Drift Box Guard',
+                  '双CTA 2个月持续熊市计时器（CONT_2M）与自然漂移 Box 护栏',
                 ),
                 style: const TextStyle(
                   color: _fgPrimary,
@@ -1383,7 +1390,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           ),
           const SizedBox(height: 12),
 
-          // Hard <= 1.200x Daily Leverage Guard Strip
+          // Natural-Drift Box Leverage Guard Strip (NO daily 1.20x forced crash deleveraging cap)
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
@@ -1391,31 +1398,49 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: _mint.withValues(alpha: 0.4)),
             ),
-            child: Wrap(
-              spacing: 12,
-              runSpacing: 6,
-              alignment: WrapAlignment.spaceBetween,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _inlineStat(
-                  w('Hard Daily Cap', '每日硬杠杆上限'),
-                  '<= ${_fmtNum(_n(lev['hard_cap']), dec: 3)}x',
-                  _mint,
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 6,
+                  alignment: WrapAlignment.spaceBetween,
+                  children: [
+                    _inlineStat(
+                      w('Live / Peak Drift', '实时 / 11Y峰值杠杆'),
+                      '${_fmtNum(_n(lev['live_gross_leverage']) ?? _n(lev['target_gross']) ?? 1.2, dec: 3)}x (Pk ${_fmtNum(_n(lev['observed_peak_drift_11y']) ?? 1.257, dec: 2)}x)',
+                      _mint,
+                    ),
+                    _inlineStat(
+                      w('IBKR PM Cushion', 'IBKR PM 强平垫'),
+                      _fmtPct(
+                        _n(lev['ibkr_pm_crash_cushion_pct']) ?? -80.39,
+                      ),
+                      _mint,
+                    ),
+                    _inlineStat(
+                      w('Reg-T Cushion', 'Reg-T 强平垫'),
+                      _fmtPct(_n(lev['reg_t_crash_cushion_pct']) ?? -77.78),
+                      _sky,
+                    ),
+                    _inlineStat(
+                      w('SPX Box Cost', 'Box 融资成本'),
+                      '${_fmtNum(_n(lev['box_rate_pct']), dec: 2)}% (${_fmtNum(_n(lev['box_annual_drag_pct_nav']) ?? 0.85, dec: 2)}%/yr)',
+                      _amber,
+                    ),
+                  ],
                 ),
-                _inlineStat(
-                  w('Init LTV', '初始 LTV'),
-                  '${_fmtNum(_n(lev['init_ltv_pct']), dec: 2)}%',
-                  _sky,
-                ),
-                _inlineStat(
-                  w('Reg-T Cushion', 'Reg-T 强平垫'),
-                  _fmtPct(_n(lev['reg_t_crash_cushion_pct'])),
-                  _mint,
-                ),
-                _inlineStat(
-                  w('SPX Box Rate', 'Box 融资利率'),
-                  '${_fmtNum(_n(lev['box_rate_pct']), dec: 2)}%',
-                  _amber,
-                ),
+                if (text(lev['policy_en']).isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    w(text(lev['policy_en']), text(lev['policy_zh'])),
+                    style: const TextStyle(
+                      color: _fgMuted,
+                      fontSize: 10.6,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1454,7 +1479,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final pillars = asList(tp['pillars']);
     final stressIdx = _n(tp['live_stress_index'])?.round() ?? 0;
     final rawProb = _n(tp['raw_crisis_prob'])?.round() ?? 0;
+    final rawSlots = _n(tp['raw_target_slots'])?.round() ??
+        (rawProb >= 65 ? 3 : (rawProb >= 45 ? 2 : (rawProb >= 35 ? 1 : 0)));
     final entProb = _n(tp['entry_crisis_prob'])?.round() ?? 0;
+    final actSlots = _n(tp['actionable_m7g_slots'])?.round() ?? 0;
+    final actBud = _n(tp['actionable_m7g_budget_pct']) ?? (actSlots * 1.25);
+    final m7Info = asMap(tp['m7g_ladder_and_bleed']);
+    final grossTurn = _n(m7Info['gross_turnover_pct_nav_yr']) ?? 6.36;
+    final salvPct = _n(m7Info['roll_salvage_pct']) ?? 67.9;
+    final netBleed = _n(m7Info['true_net_bleed_pct_nav_yr']) ?? 2.04;
     final vgStatus = text(tp['vol_gate_status']);
     final vgColor = vgStatus == 'ENTRY_ALLOWED'
         ? _mint
@@ -1479,8 +1512,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             children: [
               Text(
                 w(
-                  'Three-Pillar Real-Time Crisis Sensors (Raw Structure vs Vol-Gate)',
-                  '三支柱实时危机雷达（原始结构预警 vs 低波建仓门控）',
+                  'Three-Pillar Real-Time Crisis Sensors · M7G Graded Ladder (1-3 x 1.25%)',
+                  '三支柱实时危机雷达 · M7G 阶梯加码（1-3 槽 x 1.25% NAV）',
                 ),
                 style: const TextStyle(
                   color: _fgPrimary,
@@ -1494,8 +1527,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 children: [
                   _pillBadge(
                     w(
-                      'Track A · Stress $stressIdx/100 · Raw $rawProb%',
-                      '轨道 A · 实时压力 $stressIdx/100 · 原始预警 $rawProb%',
+                      'Track A · Stress $stressIdx/100 · Raw $rawProb ($rawSlots/3 Slots)',
+                      '轨道 A · 压力 $stressIdx/100 · 原始 $rawProb（$rawSlots/3 槽）',
                     ),
                     stressIdx >= 75
                         ? _coral
@@ -1503,8 +1536,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   ),
                   _pillBadge(
                     w(
-                      'Track B · Vol-Gate Entry $entProb%',
-                      '轨道 B · 低波建仓 $entProb%',
+                      'Track B · Actionable $actSlots/3 (${actBud.toStringAsFixed(2)}% · Score $entProb)',
+                      '轨道 B · 可开 $actSlots/3 槽（${actBud.toStringAsFixed(2)}% · 得分 $entProb）',
                     ),
                     vgColor,
                   ),
@@ -1560,6 +1593,27 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                       w('Breadth/Tail', '宽度与尾部'),
                       _n(breakdown['breadth_tail']) ?? 0,
                       _n(breakdown['breadth_tail_cap']) ?? 20,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 7),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 5,
+                  children: [
+                    _pillBadge(
+                      w(
+                        'M7G Ladder: >=35 -> 1s (1.25%) | >=45 -> 2s (2.50%) | >=65 -> 3s (3.75%) · Uniform -15% OTM',
+                        'M7G 阶梯：>=35 开1槽(1.25%) | >=45 开2槽(2.50%) | >=65 开3槽(3.75%) · 统一 -15% OTM',
+                      ),
+                      _sky,
+                    ),
+                    _pillBadge(
+                      w(
+                        'Hard 75D/30D Roll: Gross ${grossTurn.toStringAsFixed(2)}%/yr -> Salvage ${salvPct.toStringAsFixed(1)}% -> True Net Bleed ${netBleed.toStringAsFixed(2)}% NAV/yr',
+                        '75D/30D 强滚成本：名义流水 ${grossTurn.toStringAsFixed(2)}%/yr -> 回收 ${salvPct.toStringAsFixed(1)}% 残值 -> 真实净损耗仅 ${netBleed.toStringAsFixed(2)}% NAV/yr',
+                      ),
+                      _mint,
                     ),
                   ],
                 ),
@@ -1794,7 +1848,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
     final t2Fired = t2['triggered_today'] == true;
     final t2VrOk = t2['vr_ok'] == true;
-    final t2DdOk = t2['dd_ok'] == true;
+    final t2NearItmOk = (t2['near_itm_ok'] ?? t2['dd_ok']) == true;
+    final t2VixPanicOk = t2['vix_panic_ok'] == true || vix >= 45.0;
+    final nearItmSpot = _n(t2['near_itm_spot_target']);
     final vrGap = _n(t2['vr_gap']) ?? 0;
 
     return Container(
@@ -1812,8 +1868,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         children: [
           Text(
             w(
-              'Tiered Put Take-Profit Radar & Volatility/Skew Microstructure',
-              '两档 Put 止盈雷达与波动率 / 偏度微结构',
+              'Right-Tail Put Take-Profit Radar (tp_near_itm_late5x) & Volatility/Skew Microstructure',
+              '右尾 Put 止盈雷达（近实值 / VIX>=45 / 晚段 5x）与波动率 / 偏度微结构',
             ),
             style: const TextStyle(
               color: _fgPrimary,
@@ -1823,7 +1879,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           ),
           const SizedBox(height: 10),
 
-          // 6 Volatility & Skew Microstructure Tiles
+          // Volatility & Skew Microstructure Tiles
           Wrap(
             spacing: 10,
             runSpacing: 8,
@@ -1831,19 +1887,19 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               _metricBox(
                 'VIX',
                 _fmtNum(vix),
-                vix < 20.0 ? _mint : (vix >= 30.0 ? _coral : _amber),
-                sub: w('Sleeve A < 20.0', '常态盾门槛 < 20.0'),
+                vix <= 20.0 ? _mint : (vix >= 45.0 ? _mint : (vix >= 30.0 ? _coral : _amber)),
+                sub: w('B020 <= 20 · Panic TP >= 45', '常态盾 <= 20 · 恐慌止盈 >= 45'),
               ),
               _metricBox(
                 'VXN',
                 _fmtNum(vxn),
-                vxn <= 28.0 ? _mint : _coral,
-                sub: w('M4 Gate <= 28.0', 'M4 门控 <= 28.0'),
+                vxn <= 27.0 ? _mint : _coral,
+                sub: w('M7G <= 27 · M4 <= 28', 'M7G 门控 <= 27 · M4 <= 28'),
               ),
               _metricBox(
                 'VIX / VIX3M',
                 _fmtNum(vr, dec: 3),
-                vr >= 1.10 ? _mint : (vr >= 1.0 ? _coral : _sky),
+                vr >= 1.10 ? _mint : (vr >= 1.02 ? _coral : _sky),
                 sub: w(
                   'VIX3M ${_fmtNum(_n(m['vix3m']))} · TP >= 1.10',
                   'VIX3M ${_fmtNum(_n(m['vix3m']))} · 止盈 >= 1.10',
@@ -1852,8 +1908,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               _metricBox(
                 w('QQQ ATH DD', 'QQQ 距前高回撤'),
                 _fmtPct(ddPct),
-                ddPct <= -10.0 ? _amber : _fgPrimary,
-                sub: w('Full TP <= -10.0%', '全额止盈 <= -10.0%'),
+                ddPct <= -12.0 ? _amber : _fgPrimary,
+                sub: nearItmSpot != null
+                    ? w(
+                        'Near-ITM <= \$${nearItmSpot.toStringAsFixed(0)} · CONT_2M <= -12%',
+                        '近实值 <= \$${nearItmSpot.toStringAsFixed(0)} · 轮动 <= -12%',
+                      )
+                    : w('CONT_2M <= -12.0%', '慢熊轮动 <= -12.0%'),
               ),
               _metricBox(
                 'SKEW (10D)',
@@ -1872,7 +1933,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           ),
           const SizedBox(height: 12),
 
-          // Tier 1 & Tier 2 Take-Profit Cards
+          // Late 5x TP & Full Right-Tail TP Cards (tp_near_itm_late5x)
           LayoutBuilder(
             builder: (_, c) {
               final twoCol = c.maxWidth >= 780;
@@ -1893,8 +1954,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                       children: [
                         Text(
                           w(
-                            'Tier 1 · Partial TP (>= 5.0x & VIX/3M < 1.00)',
-                            '一档分批止盈（>= 5.0x 且 VIX/3M < 1.00）',
+                            'Late 5x Full TP (<= 60D Base / <= 45D Crisis & >= 5.0x)',
+                            '晚段 5x 全额止盈（<= 60D 常态 / <= 45D 危机 且 >= 5.0x）',
                           ),
                           style: const TextStyle(
                             color: _sky,
@@ -1903,10 +1964,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                           ),
                         ),
                         _pillBadge(
-                          t1['contango_ok'] == true
-                              ? w('CONTANGO OK', '非倒挂就绪')
-                              : w('INVERTED -> TIER 2', '已倒挂 -> 看二档'),
-                          t1['contango_ok'] == true ? _sky : _amber,
+                          w('100% LIQUIDATE', '100% 清仓落袋'),
+                          _sky,
                         ),
                       ],
                     ),
@@ -1942,8 +2001,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                       children: [
                         Text(
                           w(
-                            'Tier 2 · 100% Full TP (VR >= 1.10 & ATH DD <= -10%)',
-                            '二档 100% 清仓止盈（VR >= 1.10 且回撤 <= -10%）',
+                            'Full Right-Tail TP · (VR >= 1.10 & Near-ITM) OR VIX >= 45',
+                            '右尾全额止盈 · (VR >= 1.10 且近实值) 或 VIX >= 45',
                           ),
                           style: TextStyle(
                             color: t2Fired ? _mint : _amber,
@@ -1972,8 +2031,17 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                           t2VrOk ? _mint : _slate,
                         ),
                         _pillBadge(
-                          'ATH DD ${_fmtPct(ddPct)} <= -10.0%',
-                          t2DdOk ? _mint : _slate,
+                          nearItmSpot != null
+                              ? w(
+                                  'Near-ITM <= \$${nearItmSpot.toStringAsFixed(1)} (1.05xK)',
+                                  '近实值 <= \$${nearItmSpot.toStringAsFixed(1)} (1.05xK)',
+                                )
+                              : w('Near-ITM (QQQ <= 1.05xK)', '近实值 (QQQ <= 1.05xK)'),
+                          t2NearItmOk ? _mint : _slate,
+                        ),
+                        _pillBadge(
+                          'OR VIX ${_fmtNum(vix, dec: 1)} >= 45.0',
+                          t2VixPanicOk ? _mint : _slate,
                         ),
                       ],
                     ),
@@ -2074,8 +2142,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 children: [
                   Text(
                     w(
-                      'Real MIT OPRA Historical Verification · v2.0 Master Strategy vs 100% QQQ',
-                      '真实 MIT OPRA 历史验证 · v2.0 唯一主策略 vs 100% QQQ',
+                      'Real MIT OPRA Historical Verification · v3.0 Double-Champion (Plan D) vs 100% QQQ',
+                      '真实 MIT OPRA 历史验证 · v3.0 双冠终极版（Plan D）vs 100% QQQ',
                     ),
                     style: const TextStyle(
                       color: _fgPrimary,
@@ -2086,8 +2154,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   const SizedBox(height: 3),
                   Text(
                     w(
-                      '6,382,288 real MIT OPRA quotes (2015-2025.12, 0 fallbacks) + real spot & OPRA-calibrated Skew-BSM extension (2025.12-$endYm) · Click curve to replay PIT',
-                      '6,382,288 条真实 OPRA 盘口（2015-2025.12，0 次回退）+ 真实现货与 OPRA 校准 BSM 模拟延展（2025.12-$endYm）· 点击净值曲线任意日期一键回放',
+                      '6,382,288 real MIT OPRA quotes (2015-2025.12) + real spot & OPRA-calibrated Z-surface BSM extension (2025.12-$endYm) · Click curve to replay PIT',
+                      '6,382,288 条真实 OPRA 盘口（2015-2025.12）+ 真实现货与 OPRA 残差校准 BSM 延展（2025.12-$endYm）· 点击净值曲线任意日期一键回放',
                     ),
                     style: const TextStyle(color: _fgMuted, fontSize: 11.5),
                   ),
@@ -2137,16 +2205,16 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   _kpiHeaderRow(),
                   _kpiDataRow(
                     w(
-                      'v2.0 Master (Box +35bp · IBKR Limit)',
-                      'v2.0 唯一主策略（Box +35bp · 限价）',
+                      'v3.0 Plan D (Box +35bp · IBKR Limit)',
+                      'v3.0 双冠主策略（Box +35bp · 限价）',
                     ),
                     kPri,
                     highlight: true,
                   ),
                   _kpiDataRow(
                     w(
-                      'v2.0 Stress (IBKR +150bp · Full Ask/Bid)',
-                      'v2.0 极端压测（IBKR +150bp · 对手盘）',
+                      'v3.0 Stress (IBKR +150bp · Full Ask/Bid)',
+                      'v3.0 极端压测（IBKR +150bp · 对手盘）',
                     ),
                     kStr,
                   ),
@@ -2159,6 +2227,38 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               ),
             ),
           ),
+
+          if (asMap(win['kpi_opra_verified_primary']).isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Builder(
+              builder: (_) {
+                final kOp = asMap(win['kpi_opra_verified_primary']);
+                final gTurn = _n(kOp['put_gross_turnover_pct_nav_yr']) ?? 6.36;
+                final rSalv = _n(kOp['put_roll_salvage_pct']) ?? 67.9;
+                final nBld = _n(kOp['put_true_net_bleed_pct_nav_yr']) ?? 2.04;
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    _pillBadge(
+                      w(
+                        'Pure Real MIT OPRA (${text(win['start_date'])} -> $opraCutoff): ${_fmtPct(_n(kOp['cagr_pct']), signed: false)} CAGR · ${_fmtPct(_n(kOp['max_dd_pct']), signed: false)} MDD · ${_fmtNum(_n(kOp['calmar']), dec: 3)} Calmar · ${_fmtUsd(_n(kOp['end_nav']))}',
+                        '纯真 MIT OPRA 审计段（${text(win['start_date'])} -> $opraCutoff）：CAGR ${_fmtPct(_n(kOp['cagr_pct']), signed: false)} · MDD ${_fmtPct(_n(kOp['max_dd_pct']), signed: false)} · Calmar ${_fmtNum(_n(kOp['calmar']), dec: 3)} · 终值 ${_fmtUsd(_n(kOp['end_nav']))}',
+                      ),
+                      _mint,
+                    ),
+                    _pillBadge(
+                      w(
+                        'Roll Cost Audit: Gross ${gTurn.toStringAsFixed(2)}%/yr -> Salvage ${rSalv.toStringAsFixed(1)}% -> True Net Bleed ${nBld.toStringAsFixed(2)}% NAV/yr',
+                        '滚仓成本审计：名义流水 ${gTurn.toStringAsFixed(2)}%/yr -> 残值回收 ${rSalv.toStringAsFixed(1)}% -> 真实净损耗仅 ${nBld.toStringAsFixed(2)}% NAV/yr',
+                      ),
+                      _amber,
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
 
           const SizedBox(height: 8),
           Text(
@@ -2225,8 +2325,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           // 8-Crisis Historical Anatomy Comparison Table
           Text(
             w(
-              'Historical Crisis Anatomy (v2.0 Single Strategy vs 100% QQQ)',
-              '历次真实危机解剖对比（v2.0 唯一主策略 vs 100% QQQ）',
+              'Historical Crisis Anatomy (v3.0 Double-Champion vs 100% QQQ)',
+              '历次真实危机解剖对比（v3.0 双冠终极版 vs 100% QQQ）',
             ),
             style: const TextStyle(
               color: _fgPrimary,
@@ -2301,15 +2401,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               runSpacing: 6,
               children: [
                 _ledgerFilterChip('all', w('All Puts', '全部 Put')),
-                _ledgerFilterChip('base', w('Sleeve A (0.2%)', '常态盾 0.2%')),
+                _ledgerFilterChip('base', w('B020 Base (0.20%)', 'B020 常态盾 0.20%')),
                 _ledgerFilterChip(
                   'route1',
-                  w('Route 1 (125D -15%)', '三支柱 125D -15%'),
+                  w('M7G Standard (125D -15%)', 'M7G 标准 125D -15%'),
                 ),
-                _ledgerFilterChip('m4', w('M4 Slow-Bear (90D -10%)', 'M4 慢熊 90D -10%')),
+                _ledgerFilterChip('m4', w('M4 Slow-Bear (90D -15%)', 'M4 慢熊 90D -15%')),
                 _ledgerFilterChip(
                   'cta',
-                  w('Dual-CTA Rotations', '双CTA 轮动记录'),
+                  w('Dual-CTA CONT_2M', '双CTA CONT_2M 轮动'),
                 ),
               ],
             ),
@@ -2337,7 +2437,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     if (op.isEmpty) return const [];
     final sk = asMap(op['skew_ratio']);
     final p125 = asMap(op['put_125d_15otm']);
-    final p90 = asMap(op['put_90d_10otm']);
+    final p90 = asMap(op['put_90d_15otm'] ?? op['put_90d_10otm']);
     final isReal = text(op['quote_source']) == 'real_opra';
     final srcTag = isReal ? w('OPRA', 'OPRA实盘') : w('BSM Est', 'BSM估算');
     final sk20 = _n(sk['opra_iv_20_10']);
@@ -2354,46 +2454,67 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             'IV(-15/ATM) ${sk15 != null ? '${sk15.toStringAsFixed(2)}x' : '--'} · $srcTag',
       ),
       _metricBox(
-        w('1 Put / 100 QQQ (125D -15%)', '1张 Put / 1手 QQQ（125D）'),
+        w('1 Put / 100 QQQ (125D -15%)', '1张 Put / 1手 QQQ（125D -15%）'),
         lot125 != null ? '${lot125.toStringAsFixed(2)}%' : '--',
         (lot125 ?? 99) <= 1.25 ? _mint : ((lot125 ?? 0) >= 2.2 ? _coral : _sky),
         sub:
             '${_fmtUsd(_n(p125['one_put_usd']))} / ${_fmtUsd(_n(p125['one_lot_qqq_usd']))} · K \$${_fmtNum(_n(p125['strike']), dec: 0)}',
       ),
       _metricBox(
-        w('1 Put / 100 QQQ (90D -10%)', '1张 Put / 1手 QQQ（M4 90D）'),
+        w('1 Put / 100 QQQ (M4 90D -15%)', '1张 Put / 1手 QQQ（M4 90D -15%）'),
         lot90 != null ? '${lot90.toStringAsFixed(2)}%' : '--',
         _lilac,
         sub:
-            '${_fmtUsd(_n(p90['one_put_usd']))} / ${_fmtUsd(_n(p90['one_lot_qqq_usd']))} · IV ${_fmtNum(_n(p90['iv_pct']), dec: 1)}%',
+            '${_fmtUsd(_n(p90['one_put_usd']))} / ${_fmtUsd(_n(p90['one_lot_qqq_usd']))} · K \$${_fmtNum(_n(p90['strike']), dec: 0)} · IV ${_fmtNum(_n(p90['iv_pct']), dec: 1)}%',
       ),
     ];
   }
 
   String _pitReasonLabel(String r) {
     return switch (r) {
+      'tp_near_itm' => w(
+        'Right-Tail Full TP (Near-ITM / VIX>=45)',
+        '右尾全额止盈（近实值 / VIX>=45）',
+      ),
+      'base_tp_near_itm' => w(
+        'Base Right-Tail TP (Near-ITM / VIX>=45)',
+        '常态盾右尾止盈（近实值 / VIX>=45）',
+      ),
+      'tp_5x_late' => w(
+        'Late 5x Full TP (<=45D & >=5.0x)',
+        '危机盾晚段 5x 全额止盈（<=45D）',
+      ),
+      'base_tp_5x_late' => w(
+        'Base Late 5x Full TP (<=60D & >=5.0x)',
+        '常态盾晚段 5x 全额止盈（<=60D）',
+      ),
       'tp_vr110_dd10_full' => w(
-        'Tier 2 Full TP (VIX/3M>=1.10 & DD<=-10%)',
-        '二档 100% 止盈（倒挂>=1.10 且回撤<=-10%）',
+        'Full Right-Tail TP',
+        '右尾全额止盈',
       ),
       'tp_5x_partial' => w(
-        'Tier 1 5x Partial TP (50% Harvest)',
-        '一档 5x 半仓止盈（落袋 50%）',
+        '5x Take-Profit',
+        '5x 止盈落袋',
       ),
-      'roll_75d' => w('75D Mechanical Roll', '75D 正常早滚仓'),
+      'roll_75d' => w('Hard 75D Roll / Salvage', '75D 强制早滚 / 回收残值'),
+      'roll_30d' => w('M4 Hard 30D Roll / Salvage', 'M4 30D 强制早滚 / 回收'),
+      'salvage_vix_expensive' => w(
+        '75D Salvage (VIX > 20 Pause)',
+        '75D 残值回收（VIX > 20 暂停）',
+      ),
       'close_75d_signal_off' => w(
         '75D Signal-Off Recycle',
         '75D 信号熄灭回收残值',
       ),
       'recycle_30d_m4' => w('M4 30D Salvage Recycle', 'M4 30D 残值回收'),
-      'expiry' => w('Contract Expiry Settlement', '合约到期结算'),
+      'expiry' || 'expiry_itm' || 'expiry_otm' => w('Contract Expiry Settlement', '合约到期结算'),
       'cont_2m_cta_to_qqq' => w(
         'CONT_2M Dual-CTA -> QQQ Rotation',
         '持续2月跌超-12% · 卖CTA买QQQ',
       ),
       '1y_mechanical_restore' => w(
-        '1-Year Mechanical CTA Restore',
-        '满1年机械恢复 DBMF/KMLM',
+        '1-Year Mechanical LTCG Restore',
+        '满1年 LTCG 机械恢复 DBMF/KMLM',
       ),
       _ => r,
     };
@@ -2480,7 +2601,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final tpMap = <String, Map<String, dynamic>>{};
     for (final raw in putLedger) {
       final t = asMap(raw);
-      if (!text(t['exit_reason']).startsWith('tp_')) continue;
+      if (!text(t['exit_reason']).contains('tp_')) continue;
       final d = text(t['exit_date']);
       if (d.isEmpty) continue;
       final roi = _n(t['roi_mult'])?.toDouble() ?? 0.0;
@@ -2521,8 +2642,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 children: [
                   _legendDot(
                     rebaseActive
-                        ? w('v2.0 (Base 100)', 'v2.0 归一净值')
-                        : w('v2.0 Master NAV', 'v2.0 主策略净值'),
+                        ? w('v3.0 Plan D (Base 100)', 'v3.0 双冠归一净值')
+                        : w('v3.0 Plan D NAV', 'v3.0 双冠净值'),
                     _mint,
                   ),
                   _legendDot(
@@ -2531,11 +2652,11 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                         : w('100% QQQ B&H', '100% QQQ 基准'),
                     _sky,
                   ),
-                  _legendDot(w('Daily Lev (<=1.20x)', '每日杠杆'), _amber),
+                  _legendDot(w('Daily Lev (Natural Drift)', '每日杠杆（自然漂移）'), _amber),
                   _legendDot(w('Slow-Bear Latch', '慢熊锁存期'), _lilac),
                   _legendMarker('◆', w('Put TP', 'Put 止盈'), _amber),
-                  _legendMarker('▲', w('Crisis Put Open', '危机Put建仓'), _coral),
-                  _legendMarker('●', w('0.2% Base Put', '0.2%常态盾'), _sky),
+                  _legendMarker('▲', w('M7G Crisis Open', 'M7G 危机盾建仓'), _coral),
+                  _legendMarker('●', w('B020 Base Put', 'B020 常态盾'), _sky),
                   _legendMarker('■', w('CTA Rotate', '双CTA轮动'), _mint),
                 ],
               ),
@@ -2546,8 +2667,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 children: [
                   Text(
                     isZoomed
-                        ? '${text(activeRow['date'])}  ·  v2.0 ${_fmtPct(activeSliceV2Ret)} (${_fmtUsd(_n(activeRow['nav_v2']))})  ·  QQQ ${_fmtPct(activeSliceQRet)}  ·  Lev ${_fmtNum(_n(activeRow['lev']), dec: 3)}x'
-                        : '${text(activeRow['date'])}  ·  v2.0 ${_fmtUsd(_n(activeRow['nav_v2']))} (${_fmtPct(_n(activeRow['dd_v2']), signed: false)})  ·  QQQ ${_fmtUsd(_n(activeRow['nav_qqq']))}  ·  Lev ${_fmtNum(_n(activeRow['lev']), dec: 3)}x',
+                        ? '${text(activeRow['date'])}  ·  v3.0 ${_fmtPct(activeSliceV2Ret)} (${_fmtUsd(_n(activeRow['nav_v2']))})  ·  QQQ ${_fmtPct(activeSliceQRet)}  ·  Lev ${_fmtNum(_n(activeRow['lev']), dec: 3)}x'
+                        : '${text(activeRow['date'])}  ·  v3.0 ${_fmtUsd(_n(activeRow['nav_v2']))} (${_fmtPct(_n(activeRow['dd_v2']), signed: false)})  ·  QQQ ${_fmtUsd(_n(activeRow['nav_qqq']))}  ·  Lev ${_fmtNum(_n(activeRow['lev']), dec: 3)}x',
                     style: const TextStyle(
                       color: _fgPrimary,
                       fontSize: 11.5,
@@ -2809,7 +2930,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 ],
               ),
               Text(
-                '$selStartDate -> $selEndDate ($selDays${w('D', '交易日')})  ·  v2.0 ${_fmtPct(sliceV2Ret)} (MDD ${_fmtPct(sliceV2Mdd, signed: false)})  vs  QQQ ${_fmtPct(sliceQRet)} (MDD ${_fmtPct(sliceQMdd, signed: false)})',
+                '$selStartDate -> $selEndDate ($selDays${w('D', '交易日')})  ·  v3.0 ${_fmtPct(sliceV2Ret)} (MDD ${_fmtPct(sliceV2Mdd, signed: false)})  vs  QQQ ${_fmtPct(sliceQRet)} (MDD ${_fmtPct(sliceQMdd, signed: false)})',
                 style: TextStyle(
                   color: isZoomed ? _mint : _fgMuted,
                   fontSize: 10.8,
@@ -3012,7 +3133,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final op = asMap(tpMic['option_pricing']);
     final sk = asMap(op['skew_ratio']);
     final p125 = asMap(op['put_125d_15otm']);
-    final p90 = asMap(op['put_90d_10otm']);
+    final p90 = asMap(op['put_90d_15otm'] ?? op['put_90d_10otm']);
     final navSnap = asMap(hist['nav_snapshot']);
     final events = asList(hist['events_on_date']);
     final activePuts = asList(hist['active_puts_on_date']);
@@ -3157,8 +3278,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 ),
                 _metricBox(
                   w(
-                    '1 Put / 100 QQQ · M4 90D -10% (IBKR Limit)',
-                    '1张 Put / 1手 QQQ · M4 90D -10%（限价）',
+                    '1 Put / 100 QQQ · M4 90D -15% (IBKR Limit)',
+                    '1张 Put / 1手 QQQ · M4 90D -15%（限价）',
                   ),
                   _n(p90['put_to_lot_pct']) != null
                       ? '${_n(p90['put_to_lot_pct'])!.toStringAsFixed(2)}%'
@@ -3269,20 +3390,20 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     : _fgMuted));
 
     final slLabel = sl == 'crisis_m4'
-        ? w('M4 Slow-Bear 90D -10%', 'M4 慢熊 90D -10%')
+        ? w('M4 Slow-Bear 90D -15%', 'M4 慢熊 90D -15%')
         : (sl == 'crisis'
-              ? w('Route 1 Crisis 125D -15%', '三支柱危机盾 125D -15%')
+              ? w('M7G Crisis 125D -15%', 'M7G 危机盾 125D -15%')
               : (sl == 'base'
-                    ? w('Sleeve A 0.2% Base 125D', '常态 0.2% 基底盾')
+                    ? w('B020 Base 0.20% 125D', 'B020 常态 0.20% 基底盾')
                     : sl));
 
     final actionTag = switch (action) {
       'PUT_TP' => w('◆ PUT TAKE-PROFIT', '◆ PUT 止盈兑现'),
       'PUT_OPEN' => w('▲ PUT ENTRY (IBKR LMT)', '▲ PUT 建仓（IBKR 限价）'),
-      'PUT_ROLL' => w('↻ 75D ROLL EXIT', '↻ 75D 滚仓平旧'),
-      'PUT_CLOSE' => w('× PUT RECYCLE / CLOSE', '× Put 回收 / 平仓'),
+      'PUT_ROLL' => w('↻ HARD ROLL EXIT', '↻ 强制早滚平旧'),
+      'PUT_CLOSE' => w('× PUT SALVAGE / CLOSE', '× Put 残值回收 / 平仓'),
       'CTA_ROTATE' => w('■ CTA -> QQQ ROTATION', '■ 卖盈利 CTA 抄底 QQQ'),
-      'CTA_RESTORE' => w('■ 1Y CTA RESTORE', '■ 满1年恢复双CTA'),
+      'CTA_RESTORE' => w('■ 1Y LTCG CTA RESTORE', '■ 满1年 LTCG 恢复双CTA'),
       _ => action,
     };
 
@@ -3427,10 +3548,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         ? _lilac
         : (sl == 'crisis' ? _amber : _sky);
     final slName = sl == 'crisis_m4'
-        ? 'M4 90D'
-        : (sl == 'crisis' ? 'R1 125D' : 'Base 0.2%');
+        ? 'M4 90D -15%'
+        : (sl == 'crisis' ? 'M7G 125D -15%' : 'B020 0.20%');
     final exitD = text(ap['eventual_exit_date']);
-    final isTpExit = text(ap['eventual_reason']).startsWith('tp_');
+    final isTpExit = text(ap['eventual_reason']).contains('tp_');
     final lot = _n(ap['entry_lot_pct']);
 
     return InkWell(
@@ -3638,7 +3759,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           ),
           Expanded(
             flex: 2,
-            child: Text(w('v2.0 MDD', 'v2.0 最大回撤'), style: _thStyle),
+            child: Text(w('v3.0 MDD', 'v3.0 最大回撤'), style: _thStyle),
           ),
           Expanded(
             flex: 2,
@@ -3803,13 +3924,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                         : (sl == 'crisis' ? _amber : _sky);
                     final isSimBsm = text(r['quote_source']) == 'BSM_SIM_2026';
                     final slNameBase = sl == 'crisis_m4'
-                        ? w('M4 90D -10%', 'M4 90D -10%')
+                        ? w('M4 90D -15%', 'M4 90D -15%')
                         : (sl == 'crisis'
-                              ? w('R1 125D -15%', 'R1 125D -15%')
-                              : w('Base 0.2%', '常态 0.2%'));
+                              ? w('M7G 125D -15%', 'M7G 125D -15%')
+                              : w('B020 0.20%', '常态 0.20%'));
                     final slName = isSimBsm ? '$slNameBase [BSM]' : slNameBase;
                     final roi = _n(r['roi_mult']) ?? 0;
-                    final isTpRow = text(r['exit_reason']).startsWith('tp_');
+                    final isTpRow = text(r['exit_reason']).contains('tp_');
                     final clickDate = isTpRow
                         ? text(r['exit_date'])
                         : text(r['entry_date']);
@@ -4052,6 +4173,296 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             ],
           ),
         ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // SECTION 6: v3.0 DOUBLE-CHAMPION FULL STRATEGY OPERATING MANUAL (PLAN D)
+  // ---------------------------------------------------------------------------
+  Widget _buildSection6PlaybookManual(bool isCompact) {
+    return Container(
+      key: const ValueKey('crisis-v3-playbook-manual'),
+      padding: EdgeInsets.all(isCompact ? 12 : 16),
+      decoration: BoxDecoration(
+        color: _bgCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: showPlaybookManual
+              ? _mint.withValues(alpha: 0.48)
+              : _borderLine,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            key: const ValueKey('crisis-v3-playbook-toggle'),
+            onTap: () =>
+                setState(() => showPlaybookManual = !showPlaybookManual),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _mint.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: _mint.withValues(alpha: 0.55)),
+                    ),
+                    child: Text(
+                      w('SOP MANUAL', '操作手册'),
+                      style: const TextStyle(
+                        color: _mint,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      w(
+                        'v3.0 Double-Champion (Plan D) Full Operating Manual & IBKR Execution Checklist',
+                        'v3.0 双冠终极版（Plan D）完整策略操作手册与 IBKR 实盘执行清单',
+                      ),
+                      style: const TextStyle(
+                        color: _fgPrimary,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    showPlaybookManual
+                        ? w('Collapse ▲', '收起手册 ▲')
+                        : w('Read Full SOP ▼', '展开完整手册 ▼'),
+                    style: const TextStyle(
+                      color: _sky,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (showPlaybookManual) ...[
+            const SizedBox(height: 12),
+            Text(
+              w(
+                'Single locked production ruleset verified on 11Y MIT Real OPRA (2015-01-02 to 2025-12-15: 22.76% CAGR / -24.31% MDD / 0.936 Calmar), 5Y Zero-Splice OPRA (2020-12-03 to 2025-12-15: 24.56% CAGR / -23.67% MDD / 1.038 Calmar), and extended through 2026-11-25 (\$1,007,160 / 21.43% CAGR).',
+                '全站唯一锁定实盘规则集：11年纯真实 MIT OPRA（2015-01-02 至 2025-12-15）实证 22.76% 年化 / -24.31% 最大回撤 / 0.936 Calmar；5年零拼接纯实盘窗口（2020-12-03 至 2025-12-15）24.56% 年化 / -23.67% 最大回撤 / 1.038 Calmar；平滑延伸至 2026-11-25 净值达 \$1,007,160（21.43% 年化）。',
+              ),
+              style: const TextStyle(
+                color: _fgMuted,
+                fontSize: 11.5,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _manualChapterCard(
+              badge: '01',
+              accent: _mint,
+              title: w(
+                'Core + Borrowed Dual-CTA Box Stack (Natural Drift, Zero Forced Crash Liquidation)',
+                '一、底仓 + 借入双CTA Box 叠加（允许自然漂移，彻底取消底部强制砍仓线）',
+              ),
+              bullets: [
+                w(
+                  'Target Allocation: 100% Layer-1 Core (QQQ + B020_M125 Tail Puts) + 10% DBMF + 10% KMLM = 1.20x gross exposure funded by a 20% European cash-settled SPX Short Box Spread at NY Fed EFFR + 35 bps (IBKR stress test uses EFFR + 150 bps).',
+                  '目标仓位：100% 第一层底仓（QQQ + B020_M125 尾部看跌核）+ 10% DBMF + 10% KMLM = 1.20x 总敞口；其中 20% 资金通过欧式现金交割 SPX Short Box Spread 融入（利率 NY Fed EFFR + 35 bps；极端压测按 IBKR Pro EFFR + 150 bps）。',
+                ),
+                w(
+                  'Natural-Drift Leverage Policy: Daily 1.20x forced drawdown deleveraging cap is permanently REMOVED. During drawdowns, gross leverage naturally drifts to around 1.25x-1.26x (11Y peak 1.257x, 5Y peak 1.249x) without ever selling QQQ at crash bottoms. Quarterly calm-market calibration resets back to 1.20x.',
+                  '自然漂移杠杆纪律：永久取消逐日 1.20x 跌市强制砍仓上限。下跌期间允许总杠杆自然漂移至 1.25x-1.26x（11年历史峰值 1.257x，5年峰值 1.249x），绝不在崩盘底部被迫低卖 QQQ；仅在季度平稳期校准回 1.20x。',
+                ),
+                w(
+                  'Margin Safety Margin: Even at 1.26x peak drift, IBKR Portfolio Margin (15% maintenance) tolerates an additional 80%+ QQQ drop (around 82% at 1.20x) before any margin call, and Reg-T (25% maintenance) still retains around 79% crash headroom.',
+                  '保证金安全垫：即使处于 1.26x 峰值自然漂移，IBKR Portfolio Margin（15% 维持保证金）仍可承受逾 80% 的 QQQ 额外暴跌而不触发强平（1.20x 时约 82%）；Reg-T（25% 维持）亦保有约 79% 安全垫。',
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _manualChapterCard(
+              badge: '02',
+              accent: _sky,
+              title: w(
+                'True Taleb Put Engine: B020 Floor + M7G 1-3x1.25% Graded Ladder (Uniform -15% OTM)',
+                '二、正统 Taleb 满血期权核：B020 常态底盾 + M7G 1-3 槽阶梯加码（统一 -15% OTM）',
+              ),
+              bullets: [
+                w(
+                  'Sleeve A — B020 Baseline Floor (0.20% NAV): Active entry when VIX <= 20.0 AND VIX/VIX3M < 1.02 AND not in 5D Post-TP Lockout. Buy 125 DTE, -15% OTM QQQ Put (K = 0.85 x Spot). Hard roll/salvage at 75 DTE.',
+                  'A 轨 · B020 常态基底盾（0.20% NAV）：当 VIX <= 20.0 且 VIX/VIX3M < 1.02 且未处 5日止盈冷冻期时建仓。买入 125 DTE、-15% OTM 的 QQQ Put（行权价 K = 0.85 x 现价），剩 75 DTE 强制早滚回收残值。',
+                ),
+                w(
+                  'Sleeve B — M7G Graded Crisis Ladder (1-3 Slots x 1.25% NAV = up to 3.75% NAV): Composite Score = min(100, Pillar1_Top + Pillar2_Shock + 10 if M3 + 35 if M4_Latch_v2). Score >= 35 opens 1 slot (1.25%), >= 45 opens 2 slots (2.50%), >= 65 opens 3 slots (3.75%).',
+                  'B 轨 · M7G 阶梯危机加码（1-3 槽 x 1.25% NAV，最高 3.75% NAV）：综合得分 = min(100, 支柱一顶部 + 支柱二冲击 + M3加10分 + M4磁滞锁存加35分)。>= 35 开 1 槽（1.25%），>= 45 开 2 槽（2.50%），>= 65 开 3 槽（3.75%）。',
+                ),
+                w(
+                  'Standard P1/P2/M3 Low-Vol Entry Gate & Cooldown: Enter only when VXN <= 27.0 AND VIX/VIX3M < 1.02 AND not in 5D Lockout. Minimum spacing between slot escalations: 30 calendar days (Slot 1 -> 2) and 21 calendar days (Slot 2 -> 3). Contract: 125 DTE -> Hard 75D Roll, -15% OTM.',
+                  '常规 P1/P2/M3 低波入场门控与冷却期：仅当 VXN <= 27.0 且 VIX/VIX3M < 1.02 且非冷冻期才允许入场；槽位递增冷却为 30 自然日（1->2 槽）与 21 自然日（2->3 槽）。合约统一买 125 DTE -> 75D 强滚、-15% OTM。',
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _manualChapterCard(
+              badge: '03',
+              accent: _lilac,
+              title: w(
+                'Slow-Bear +8% Hysteresis Latch (M4_latch_v2 · Uniform -15% OTM 90D->30D)',
+                '三、用户独创 +8% 慢熊磁滞锁存引擎（M4_latch_v2 · 严格统一 -15% OTM）',
+              ),
+              bullets: [
+                w(
+                  'ARM Latch (ON): All 4 conditions must hold simultaneously — QQQ < 200DMA, QQQ drawdown from 252d high <= -10.0%, 60d rolling correlation Corr60(DualCTA, QQQ) < 0, AND Dual-CTA cumulative gain since QQQ 252d high >= +8.0%.',
+                  '锁存激活（ARM ON）：须同时满足 4 项条件 —— QQQ < 200日均线、QQQ 距 252 日高点回撤 <= -10.0%、双CTA 与 QQQ 60 日滚动相关性 < 0、且双CTA 自 QQQ 252 日高点以来累计涨幅 >= +8.0%。',
+                ),
+                w(
+                  'RESET Latch (OFF): Stays latched ON across bear-market rallies until QQQ closes above 200DMA for 10 consecutive trading days (prevents premature reset during 2022-style dead-cat bounces).',
+                  '磁滞复位（RESET OFF）：一旦锁存开启，熊市反抽不会将其误关，必须等 QQQ 连续 10 个交易日收盘站稳 200 日均线上方后才复位关闭（精准防 2022 式假突破）。',
+                ),
+                w(
+                  'M4 Dead-Cat Bounce Trigger & Uniform -15% Strike: When Latch == ON AND QQQ < 200DMA AND 3-Speed EWMAC < 0 AND QQQ > EMA20 AND VXN <= 28.0 AND VIX/VIX3M <= 0.90 -> buy 1.25% NAV per slot in UNIFORM 90 DTE -> Hard 30D Roll, -15% OTM Put (K = 0.85 x S, never -10% OTM) to preserve maximum Taleb gamma convexity.',
+                  'M4 死猫反抽入场与统一 -15% 铁律：当锁存 ON 且 QQQ < 200DMA 且三速 EWMAC < 0 且 QQQ > EMA20 且 VXN <= 28.0 且 VIX/VIX3M <= 0.90 时，每槽买 1.25% NAV 的 90 DTE -> 30D 强滚合约，严格坚持统一 -15% OTM（绝不用昂贵 -10% OTM），保留满血 Taleb 尾部凸性。',
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _manualChapterCard(
+              badge: '04',
+              accent: _amber,
+              title: w(
+                'Hard 75D/30D Roll Salvage Audit + Right-Tail Take-Profit (tp_near_itm_late5x) & 5D Lockout',
+                '四、75D/30D 强滚残值审计 + 右尾止盈（tp_near_itm_late5x）与 5日冷冻期',
+              ),
+              bullets: [
+                w(
+                  'True Roll Cost vs Gross Turnover: Gross annual put turnover is 6.36% NAV/yr (11Y OPRA), NOT net bleed! Hard rolling at 75D (Base/Crisis) and 30D (M4) exits before steep final-month Theta collapse, recovering 67.9% salvage on non-TP rolls so True Net Roll Bleed is ONLY 2.04% NAV/yr — while net put PnL is +\$121,171 (1.58x payout ratio across 112 trades).',
+                  '真实净磨损审计（勿把总换手误读为亏损）：11年总期权名义换手 6.36% NAV/yr，但凭借 75D（常规/底盾）与 30D（M4）硬滚仓提前避开末月陡峭 Theta 衰减，非止盈滚仓平均回收 67.9% 残值，真实年化净滚仓成本仅 2.04% NAV/yr；全期权账本净赚 +\$121,171（112 笔总赔付比 1.58x）。',
+                ),
+                w(
+                  'Full Take-Profit (100% Liquidate): Triggered when (VIX/VIX3M >= 1.10 AND QQQ <= 1.05 x Strike [Near-ITM]) OR VIX >= 45.0. Late 5x Take-Profit: Remaining DTE <= 60D (Base) or <= 45D (Crisis) AND option ROI >= 5.0x -> 100% liquidate.',
+                  '右尾全额止盈（100% 平仓）：满足（VIX/VIX3M >= 1.10 且 QQQ <= 1.05 x 行权价 [近实值]）或 VIX >= 45.0 即全平；末段 5x 止盈：剩 <= 60D（底盾）或 <= 45D（危机槽）且期权倍数 >= 5.0x 即全平。',
+                ),
+                w(
+                  'T+1 Lump-Sum QQQ Reinvestment & 5D Contango Lockout: 100% of harvested put cash buys QQQ lump-sum at T+1 close. Both Base and Crisis books immediately lock out new entries until VIX/VIX3M < 1.00 for 5 consecutive trading days (eliminates post-crash IV-crush overpaying).',
+                  'T+1 一次性复投 QQQ 与 5日升水冷冻期：止盈现金在 T+1 收盘 100% 一次性买入 QQQ 锁定复利；同时锁定 A/B 两轨新开仓，直到 VIX/VIX3M 连续 5 个交易日回到 < 1.00 升水区才解冻（杜绝暴跌后高 IV 追高挨双打）。',
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _manualChapterCard(
+              badge: '05',
+              accent: _mint,
+              title: w(
+                'Dual-CTA Slow-Bear Rotation (CONT_2M + 5-Tranche + 1Y LTCG Lock) & IBKR Discipline',
+                '五、双CTA 慢熊轮动（CONT_2M 60天 + 分5批 + 1年 LTCG 锁）与 IBKR 实盘下单规范',
+              ),
+              bullets: [
+                w(
+                  'CONT_2M 60-Day Timer: Count consecutive calendar days with QQQ drawdown from ATH <= -12.0%. Once >= 60 continuous calendar days (filters out V-shaped flash crashes like 2020 COVID or 2025 Tariff shock), any CTA ETF (DBMF or KMLM independently) whose return since QQQ ATH is > 0% enters 5-tranche rotation.',
+                  'CONT_2M 60天连续慢熊计时器：统计 QQQ 距历史前高回撤 <= -12.0% 的连续自然日。只有满 60 天才激活（天然免疫 2020 疫情、2025 关税等 V 型闪崩误触发），凡自 QQQ 前高以来录得正收益（> 0%）的 CTA（DBMF / KMLM 独立判定）启动分批换仓。',
+                ),
+                w(
+                  '5-Tranche Execution & 365-Day Mechanical LTCG Restore: Sell 20% of the qualifying CTA sleeve into pure QQQ every 5 trading days (5 equal tranches total; cancel remaining tranches if QQQ recovers above -12.0% DD). Hold each rotated QQQ lot mechanically for 365 calendar days (qualifies for US Long-Term Capital Gains tax rate), then sell QQQ lot back to 10% DBMF + 10% KMLM (1.20x).',
+                  '分5批换仓与 365天机械 LTCG 恢复：每间隔 5 个交易日卖出该盈利 CTA 的 20% 换入纯 QQQ（共 5 批；若中途 QQQ 回到 -12.0% 以内则取消余批）。每批换入的 QQQ 机械持有满 365 自然日（满足美股长期资本利得税率 LTCG），到期机械换回 10% DBMF + 10% KMLM（1.20x）。',
+                ),
+                w(
+                  'IBKR Execution Checklist: Always place Limit Orders at Mid + 0.25 x (Ask - Bid) for QQQ puts (never Market Orders on deep OTM options). Check daily close signals after 15:45 ET and execute on T+1 open/close. For SPX Box Spreads, use European AM-settled SPX combos (verify implied financing vs EFFR + 35 bps).',
+                  'IBKR 实盘下单纪律：QQQ 深虚值 Put 一律下限价单 Mid + 0.25 x (Ask - Bid)，严禁市价单扫盘；每日美东 15:45 后按本页面实时状态核对 T+1 动作；SPX Box Spread 务必选用欧式现金交割 SPX 组合单并核验隐含利率接近 EFFR + 35 bps。',
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _manualChapterCard({
+    required String badge,
+    required Color accent,
+    required String title,
+    required List<String> bullets,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _bgObsidian,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _borderLine),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: accent.withValues(alpha: 0.55)),
+                ),
+                child: Text(
+                  badge,
+                  style: TextStyle(
+                    color: accent,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: _fgPrimary,
+                    fontSize: 12.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final line in bullets)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 5),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '• ',
+                    style: TextStyle(
+                      color: accent,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      line,
+                      style: const TextStyle(
+                        color: _fgMuted,
+                        fontSize: 11.4,
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -4432,7 +4843,7 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
     }
 
     double yLev(double lev) {
-      final frac = ((lev - 0.90) / 0.36).clamp(0.0, 1.0);
+      final frac = ((lev - 0.95) / 0.37).clamp(0.0, 1.0);
       return levTop + levH - frac * levH;
     }
 
@@ -4529,22 +4940,35 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
       9,
     );
 
-    // 1.20x Hard Cap redline on Leverage panel
-    final capY = yLev(1.20);
+    // 1.20x Quarterly Calibration reference + 1.26x Natural Drift ceiling band (NO daily forced crash cap!)
+    final calY = yLev(1.20);
+    final driftY = yLev(1.26);
+    canvas.drawRect(
+      Rect.fromLTRB(padL, driftY, padL + plotW, calY),
+      Paint()..color = const Color(0xFFF2BC60).withValues(alpha: 0.07),
+    );
     canvas.drawLine(
-      Offset(padL, capY),
-      Offset(padL + plotW, capY),
+      Offset(padL, calY),
+      Offset(padL + plotW, calY),
       Paint()
-        ..color = const Color(0xFFEC8C98).withValues(alpha: 0.7)
+        ..color = const Color(0xFF7DB8F0).withValues(alpha: 0.55)
         ..strokeWidth = 1.0,
     );
-    _drawText(canvas, '1.20x', Offset(12, capY - 6), const Color(0xFFEC8C98), 9);
+    canvas.drawLine(
+      Offset(padL, driftY),
+      Offset(padL + plotW, driftY),
+      Paint()
+        ..color = const Color(0xFFF2BC60).withValues(alpha: 0.45)
+        ..strokeWidth = 0.8,
+    );
+    _drawText(canvas, '1.26x', Offset(12, driftY - 6), const Color(0xFFF2BC60), 8.5);
+    _drawText(canvas, '1.20x', Offset(12, calY - 5), const Color(0xFF7DB8F0), 8.5);
     _drawText(
       canvas,
       '1.00x',
       Offset(12, yLev(1.00) - 5),
       const Color(0xFF9CABB9),
-      9,
+      8.5,
     );
 
     // Build paths

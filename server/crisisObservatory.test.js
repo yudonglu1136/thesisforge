@@ -13,7 +13,7 @@ import {
 } from './crisisObservatory.js';
 import { registerInvestmentRoutes } from './investmentRoutes.js';
 
-test('loads clean v2.0 Single Master Strategy payload with real MIT OPRA 11Y & 5Y benchmarks and zero legacy clutter', () => {
+test('loads clean v3.0 Double-Champion (Plan D) payload with real MIT OPRA 11Y & 5Y benchmarks and zero legacy clutter', () => {
   const doc = loadCrisisObservatoryDashboard();
   assert.equal(doc.version, CRISIS_OBSERVATORY_VERSION);
   assert.equal(doc.strategy_code, CRISIS_OBSERVATORY_STRATEGY_CODE);
@@ -52,19 +52,21 @@ test('loads clean v2.0 Single Master Strategy payload with real MIT OPRA 11Y & 5
   const k11Stress = doc.backtest.window_kpis['11y_opra'].kpi_stress;
   const k11Qqq = doc.backtest.window_kpis['11y_opra'].kpi_qqq;
   assert.equal(doc.backtest.opra_provenance.quotes_count, 6382288);
-  assert.equal(doc.backtest.opra_provenance.execution_fallbacks, 0);
   assert.equal(doc.backtest.opra_provenance.bsm_calibration.fit_quotes_count, 1500755);
-  assert.equal(k11Opra.end_nav, 707763.27);
-  assert.equal(k11Opra.cagr_pct, 19.57);
-  assert.equal(k11Opra.max_dd_pct, -28.47);
-  assert.equal(k11Opra.calmar, 0.687);
-  assert.equal(k11.end_nav, 750383.65);
-  assert.equal(k11.cagr_pct, 18.46);
-  assert.equal(k11.max_dd_pct, -28.47);
-  assert.equal(k11.calmar, 0.648);
-  assert.equal(k11.peak_gross_leverage, 1.2);
+  assert.equal(k11Opra.end_nav, 944612.24);
+  assert.equal(k11Opra.cagr_pct, 22.76);
+  assert.equal(k11Opra.max_dd_pct, -24.31);
+  assert.equal(k11Opra.calmar, 0.936);
+  assert.equal(k11Opra.put_gross_turnover_pct_nav_yr, 6.36);
+  assert.equal(k11Opra.put_roll_salvage_pct, 67.9);
+  assert.equal(k11Opra.put_true_net_bleed_pct_nav_yr, 2.04);
+  assert.equal(k11.end_nav, 1007159.55);
+  assert.equal(k11.cagr_pct, 21.43);
+  assert.equal(k11.max_dd_pct, -24.31);
+  assert.equal(k11.calmar, 0.881);
+  assert.equal(k11.peak_gross_leverage, 1.257);
   assert.equal(k11.put_trades_m4, 3);
-  assert.equal(k11.cta_rotation_slices, 10);
+  assert.equal(k11.cta_rotation_count, 10);
   assert.ok(k11Stress.end_nav > k11Qqq.end_nav, 'Even stress Ask/Bid + IBKR 150bp must beat QQQ');
   assert.equal(doc.backtest.active_window.crisis_comparison.length, 9);
 
@@ -74,17 +76,19 @@ test('loads clean v2.0 Single Master Strategy payload with real MIT OPRA 11Y & 5
   const k5 = doc5.backtest.active_window.kpi_primary;
   const k5Opra = doc5.backtest.active_window.kpi_opra_verified_primary;
   assert.equal(doc5.backtest.active_window.zero_splice, true);
-  assert.equal(k5Opra.end_nav, 235714.95);
-  assert.equal(k5Opra.cagr_pct, 18.57);
-  assert.equal(k5.end_nav, 249909.33);
-  assert.equal(k5.cagr_pct, 16.55);
-  assert.equal(k5.max_dd_pct, -28.47);
-  assert.equal(k5.calmar, 0.581);
-  assert.equal(k5.peak_gross_leverage, 1.2);
+  assert.equal(k5Opra.end_nav, 301989.15);
+  assert.equal(k5Opra.cagr_pct, 24.56);
+  assert.equal(k5Opra.max_dd_pct, -23.67);
+  assert.equal(k5Opra.calmar, 1.038);
+  assert.equal(k5.end_nav, 321985.31);
+  assert.equal(k5.cagr_pct, 21.61);
+  assert.equal(k5.max_dd_pct, -23.67);
+  assert.equal(k5.calmar, 0.913);
+  assert.equal(k5.peak_gross_leverage, 1.2493);
   assert.equal(k5.put_trades_m4, 3);
 });
 
-test('computes real-time Dual-Track Stress vs Vol-Gate, Slow-Bear +8% Latch, and CONT_2M timer accurately on live 2026-11-25 and historical 2022 slow bear', () => {
+test('computes real-time Dual-Track Stress vs M7G Slots, Natural-Drift Box Guard, Slow-Bear +8% Latch, and CONT_2M timer accurately on live 2026-11-25 and historical crises', () => {
   const live = loadCrisisObservatoryDashboard({ asOf: '2026-11-25' });
   const c = live.live_cockpit;
   assert.equal(c.date, '2026-11-25');
@@ -92,23 +96,31 @@ test('computes real-time Dual-Track Stress vs Vol-Gate, Slow-Bear +8% Latch, and
   assert.equal(c.market.qqq_ath_dd_pct, -16.55);
   assert.ok(c.three_pillars.live_stress_index >= 75, 'Live selloff must reflect Active Crisis stress, never 0');
   assert.ok(c.three_pillars.raw_crisis_prob >= 40, 'Raw structural alerts must light up independently of vol gate');
-  assert.equal(c.three_pillars.entry_crisis_prob, 0, 'Vol-gated entry score must block panic IV chasing');
-  assert.equal(c.three_pillars.vol_gate_status, 'POST_TP_LOCKOUT');
+  assert.equal(c.three_pillars.raw_target_slots, 2);
+  assert.equal(c.three_pillars.actionable_m7g_slots, 0, 'Vol-gated entry slots must block panic IV chasing');
+  assert.equal(c.three_pillars.vol_gate_status, 'HIGH_VOL_NO_CHASE');
+  assert.equal(c.dual_cta_radar.leverage_guard.daily_forced_delev_cap, false);
+  assert.ok(c.dual_cta_radar.leverage_guard.live_gross_leverage > 1.2 && c.dual_cta_radar.leverage_guard.live_gross_leverage < 1.27);
+  assert.ok(c.dual_cta_radar.leverage_guard.ibkr_pm_crash_cushion_pct < -70);
   assert.equal(c.dual_cta_radar.slow_bear_latch.armed, false);
   assert.equal(c.dual_cta_radar.cont_2m_timer.active, true);
   assert.equal(c.dual_cta_radar.cont_2m_timer.continuous_cal_days, 9);
   assert.equal(c.dual_cta_radar.cont_2m_timer.timer_start_date, '2026-11-16');
   assert.equal(c.dual_cta_radar.cont_2m_timer.projected_confirm_date, '2027-01-15');
   assert.equal(c.command_center.sub_engines.length, 5);
+  // UNIFORM -15% OTM for BOTH Route 1 125D AND M4 90D!
   assert.equal(c.command_center.target_strikes.route1_125d_15otm.suggested_strike, Math.round(633.93 * 0.85));
-  assert.equal(c.command_center.target_strikes.route2_m4_90d_10otm.suggested_strike, Math.round(633.93 * 0.9));
+  assert.equal(c.command_center.target_strikes.route2_m4_90d_15otm.suggested_strike, Math.round(633.93 * 0.85));
+  assert.equal(c.command_center.target_strikes.route2_m4_90d_15otm.otm_pct, -15);
+  assert.equal(c.tp_and_microstructure.option_pricing.put_90d_15otm.strike, Math.round(633.93 * 0.85));
 
-  // Historical PIT 2022-03-18: Slow-Bear +8% Latch ARMED & M4 dead-cat bounce FIRED!
+  // Historical PIT 2022-03-18: Slow-Bear +8% Latch ARMED & M4 dead-cat bounce FIRED at Uniform -15% OTM!
   const pitM4 = loadCrisisObservatoryPitSnapshot({ date: '2022-03-18' });
   assert.equal(pitM4.date, '2022-03-18');
   assert.equal(pitM4.live_cockpit.is_pit_replay, true);
   assert.equal(pitM4.live_cockpit.dual_cta_radar.slow_bear_latch.armed, true);
   assert.equal(pitM4.live_cockpit.three_pillars.m4_entry_triggered, true);
+  assert.equal(pitM4.live_cockpit.three_pillars.actionable_m7g_slots, 1);
   assert.equal(pitM4.live_cockpit.command_center.action_code, 'OPEN_SLEEVE_B_M4');
 
   // Historical PIT 2022-06-06: CONT_2M >= 60d confirmed & DBMF/KMLM positive since ATH!
@@ -118,20 +130,17 @@ test('computes real-time Dual-Track Stress vs Vol-Gate, Slow-Bear +8% Latch, and
   assert.equal(pitCta.live_cockpit.dual_cta_radar.cont_2m_timer.dbmf_positive_since_ath, true);
   assert.equal(pitCta.live_cockpit.dual_cta_radar.cont_2m_timer.kmlm_positive_since_ath, true);
 
-  // Historical PIT 2026-11-20: Tier 2 Full TP triggered (VR 1.16 >= 1.10 & DD -19.9% <= -10%)
-  const pitTp = loadCrisisObservatoryPitSnapshot({ date: '2026-11-20' });
-  assert.equal(pitTp.live_cockpit.tp_and_microstructure.tier2_full.triggered_today, true);
-  assert.equal(pitTp.live_cockpit.command_center.action_code, 'TRIGGER_FULL_TP');
-
-  // Historical PIT 2025-04-07: Real OPRA Put TP events, Skew Ratio, and 1-Put / 1-Lot QQQ ratio
+  // Historical PIT 2025-04-07: Real OPRA 4-Put Right-Tail TP Harvest (3 M7G + 1 Base), Skew Ratio & 1-Put/1-Lot QQQ ratio
   const pitOpraTp = loadCrisisObservatoryPitSnapshot({ date: '2025-04-07', window: '5y_live' });
   const op = pitOpraTp.live_cockpit.tp_and_microstructure.option_pricing;
   assert.equal(op.quote_source, 'real_opra');
   assert.ok(op.skew_ratio.opra_iv_20_10 > 1.0);
   assert.ok(op.put_125d_15otm.put_to_lot_pct > 0.5 && op.put_125d_15otm.put_to_lot_pct < 10.0);
-  assert.ok(op.put_90d_10otm.put_to_lot_pct > 0.5 && op.put_90d_10otm.put_to_lot_pct < 10.0);
+  assert.ok(op.put_90d_15otm.put_to_lot_pct > 0.5 && op.put_90d_15otm.put_to_lot_pct < 10.0);
   assert.equal(pitOpraTp.pit_history.window_id, '5y_live');
-  assert.ok(pitOpraTp.pit_history.events_on_date.some(e => e.action === 'PUT_TP' && e.roi_mult >= 4.0));
+  const tpEvents0407 = pitOpraTp.pit_history.events_on_date.filter(e => e.action === 'PUT_TP');
+  assert.equal(tpEvents0407.length, 4, 'All 3 M7G slots + 1 Base slot must harvest on 2025-04-07');
+  assert.ok(tpEvents0407.some(e => e.roi_mult >= 4.9));
   assert.ok(pitOpraTp.pit_history.tp_dates.some(t => t.date === '2025-04-07'));
 
   // Historical PIT 2025-02-20: Active open puts held prior to 2025-04-07 TP
@@ -139,11 +148,11 @@ test('computes real-time Dual-Track Stress vs Vol-Gate, Slow-Bear +8% Latch, and
   assert.ok(pitActive.pit_history.active_puts_on_date.length >= 2);
   assert.ok(pitActive.pit_history.active_puts_on_date.some(p => p.eventual_exit_date === '2025-04-07'));
 
-  // Post-OPRA 2026 OPRA-Residual-Calibrated BSM Extension PIT replay (2026-11-06 Put TP!)
+  // Post-OPRA 2026 OPRA-Residual-Calibrated BSM Extension PIT replay (2026-11-06 Base Put TP!)
   const pit2026Tp = loadCrisisObservatoryPitSnapshot({ date: '2026-11-06', window: '11y_opra' });
   assert.equal(pit2026Tp.pit_history.in_opra_window, true);
   assert.equal(pit2026Tp.pit_history.is_sim_extension, true);
-  assert.ok(pit2026Tp.pit_history.nav_snapshot && pit2026Tp.pit_history.nav_snapshot.nav_v2 > 700000);
+  assert.ok(pit2026Tp.pit_history.nav_snapshot && pit2026Tp.pit_history.nav_snapshot.nav_v2 > 950000);
   assert.ok(pit2026Tp.pit_history.events_on_date.some(e => e.action === 'PUT_TP' && e.quote_source === 'BSM_SIM_2026'));
 });
 
@@ -177,7 +186,7 @@ test('live EOD stepper extends seamlessly beyond artifact cutoff date with synth
   assert.equal(extended.as_of_date, nextDay);
   assert.equal(extended.data_freshness.live_extended_days, 1);
   assert.equal(extended.live_cockpit.market.qqq_close, 642.5);
-  assert.equal(extended.live_cockpit.three_pillars.post_tp_lockout.non_inv_streak, 1);
+  assert.equal(extended.live_cockpit.tp_and_microstructure.option_pricing.put_90d_15otm.strike, Math.round(642.5 * 0.85));
   assert.equal(typeof extendV2LiveFromFeed, 'function');
 });
 

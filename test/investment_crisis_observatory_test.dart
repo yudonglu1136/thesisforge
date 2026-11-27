@@ -138,12 +138,14 @@ void main() {
       expect(find.byKey(const ValueKey('crisis-v2-backtest')), findsOneWidget);
       expect(find.byKey(const ValueKey('crisis-v2-chart')), findsOneWidget);
 
-      // Verify live 2026-11-25 Dual-Track stress & CONT_2M & verified 12Y Full (OPRA + 2026 Calibrated BSM) numbers appear
+      // Verify live 2026-11-25 Dual-Track stress, CONT_2M, M7G Roll Audit & verified Plan D (OPRA + 2026 Calibrated BSM) numbers appear
       expect(find.textContaining('87 / 100'), findsWidgets);
-      expect(find.textContaining('\$750,384'), findsWidgets);
-      expect(find.textContaining('18.46%'), findsWidgets);
-      expect(find.textContaining('\$707,763'), findsWidgets);
-      expect(find.textContaining('1.200x'), findsWidgets);
+      expect(find.textContaining('\$1,007,160'), findsWidgets);
+      expect(find.textContaining('21.43%'), findsWidgets);
+      expect(find.textContaining('\$944,612'), findsWidgets);
+      expect(find.textContaining('22.76%'), findsWidgets);
+      expect(find.textContaining('1.257x'), findsWidgets);
+      expect(find.textContaining('2.04%'), findsWidgets);
       expect(find.textContaining('9 / 60'), findsWidgets);
       expect(find.byKey(const ValueKey('crisis-v2-bsm-calibration-note')), findsOneWidget);
 
@@ -167,8 +169,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(latestSel?['window'], '5y_live');
-      expect(find.textContaining('\$249,909'), findsWidgets);
-      expect(find.textContaining('16.55%'), findsWidgets);
+      expect(find.textContaining('\$321,985'), findsWidgets);
+      expect(find.textContaining('21.61%'), findsWidgets);
+      expect(find.textContaining('24.56%'), findsWidgets);
 
       // Expand real MIT OPRA forensic ledger
       final ledgerToggle = find.byKey(
@@ -177,7 +180,7 @@ void main() {
       await tester.ensureVisible(ledgerToggle);
       await tester.tap(ledgerToggle);
       await tester.pumpAndSettle();
-      expect(find.textContaining('M4 90D -10%'), findsWidgets);
+      expect(find.textContaining('M4 90D -15%'), findsWidgets);
 
       // Interactive NAV Sizer update
       final navInput = find.byKey(const ValueKey('crisis-v2-nav-input'));
@@ -245,6 +248,17 @@ void main() {
       expect(find.textContaining('QQQ \$423.69'), findsWidgets);
       expect(find.textContaining('◆ PUT 止盈兑现'), findsWidgets);
       expect(find.textContaining('4.51x'), findsWidgets);
+
+      // Expand v3.0 Double-Champion full strategy operating manual
+      final manualToggle = find.byKey(
+        const ValueKey('crisis-v3-playbook-toggle'),
+      );
+      await tester.ensureVisible(manualToggle);
+      await tester.tap(manualToggle);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('真实净磨损审计'), findsOneWidget);
+      expect(find.textContaining('IBKR 实盘下单纪律'), findsOneWidget);
     },
   );
 
@@ -263,14 +277,15 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
-      expect(find.textContaining('v2.0 LOCKED MASTER STRATEGY'), findsOneWidget);
+      expect(find.textContaining('v3.0 DOUBLE-CHAMPION (PLAN D)'), findsOneWidget);
       expect(find.textContaining('Slow-Bear +8% Hysteresis Latch'), findsWidgets);
       expect(
         find.textContaining('2-Month Continuous Bear Timer'),
         findsOneWidget,
       );
       expect(find.textContaining('LIVE STRESS 87 / 100'), findsWidgets);
-      expect(find.textContaining('\$750,384'), findsWidgets);
+      expect(find.textContaining('\$1,007,160'), findsWidgets);
+      expect(find.textContaining('22.76%'), findsWidgets);
       expect(find.byKey(const ValueKey('crisis-v2-bsm-calibration-note')), findsOneWidget);
 
       // Zoom into 2025 Tariff via range brush preset on mobile EN -> verify zero overflow & zero CJK
@@ -294,7 +309,17 @@ void main() {
       expect(find.textContaining('QQQ \$423.69'), findsWidgets);
       expect(find.textContaining('◆ PUT TAKE-PROFIT'), findsWidgets);
 
-      // Ensure zero CJK characters appear in English mode (including expanded PIT inspector)
+      // Expand v3.0 Double-Champion full operating manual on mobile EN -> verify zero overflow & zero CJK
+      final enManualToggle = find.byKey(
+        const ValueKey('crisis-v3-playbook-toggle'),
+      );
+      await tester.ensureVisible(enManualToggle);
+      await tester.tap(enManualToggle);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('True Roll Cost vs Gross Turnover'), findsOneWidget);
+
+      // Ensure zero CJK characters appear in English mode (including expanded PIT inspector & SOP manual)
       final cjkRegex = RegExp(r'[\u4E00-\u9FFF]');
       for (final widget in tester.widgetList<Text>(find.byType(Text))) {
         final s = widget.data ?? '';

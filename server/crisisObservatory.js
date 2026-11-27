@@ -3,8 +3,9 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-export const CRISIS_OBSERVATORY_VERSION = 'crisis-observatory-v2-master';
-export const CRISIS_OBSERVATORY_STRATEGY_CODE = 'V2_QQQ_DUALCTA_TAILPUT_SINGLE';
+export const CRISIS_OBSERVATORY_VERSION = 'crisis-observatory-v3-plan-d';
+export const CRISIS_OBSERVATORY_STRATEGY_CODE = 'PlanD_TalebB020M125_DualCTA_CONT2M';
+export const CRISIS_OBSERVATORY_PUT_ENGINE = 'B020_M125';
 export const CRISIS_OBSERVATORY_WINDOWS = Object.freeze(['11y_opra', '5y_live']);
 export const DEFAULT_CRISIS_WINDOW = '11y_opra';
 
@@ -244,13 +245,14 @@ function estimateBsmOptionMicroJS(cl, vxn, effrPct, coeffs, opts = {}) {
   const iv10 = evalCalibratedOpraIvJS(cl, k10, 125, r, q, vxn, vrEff, skewEff, z13);
   const iv15 = evalCalibratedOpraIvJS(cl, k15, 125, r, q, vxn, vrEff, skewEff, z13);
   const iv20 = evalCalibratedOpraIvJS(cl, k20, 125, r, q, vxn, vrEff, skewEff, z13);
-  const iv90 = evalCalibratedOpraIvJS(cl, k10, 90, r, q, vxn, vrEff, skewEff, z13);
+  // UNIFORM -15% OTM (k15) for M4 90D under Plan D Taleb rules
+  const iv90 = evalCalibratedOpraIvJS(cl, k15, 90, r, q, vxn, vrEff, skewEff, z13);
   const mid15 = Math.max(0.05, bsmPutJS(cl, k15, t125, r, q, iv15));
-  const mid90 = Math.max(0.05, bsmPutJS(cl, k10, t90, r, q, iv90));
+  const mid90 = Math.max(0.05, bsmPutJS(cl, k15, t90, r, q, iv90));
   const fwd125 = cl * Math.exp((r - q) * t125);
   const fwd90 = cl * Math.exp((r - q) * t90);
   const hs15 = evalCalibratedOpraHsJS(mid15, 125, vixEff, Math.log(Math.max(k15, 1) / Math.max(fwd125, 1)), hs5);
-  const hs90 = evalCalibratedOpraHsJS(mid90, 90, vixEff, Math.log(Math.max(k10, 1) / Math.max(fwd90, 1)), hs5);
+  const hs90 = evalCalibratedOpraHsJS(mid90, 90, vixEff, Math.log(Math.max(k15, 1) / Math.max(fwd90, 1)), hs5);
   const bid15 = Math.max(0.01, mid15 * (1 - hs15));
   const ask15 = mid15 * (1 + hs15);
   const bid90 = Math.max(0.01, mid90 * (1 - hs90));
@@ -271,7 +273,7 @@ function estimateBsmOptionMicroJS(cl, vxn, effrPct, coeffs, opts = {}) {
     p125_iv: r1(iv15 * 100),
     p125_lot_pct: r3((lmt15 / Math.max(cl, 1)) * 100),
     p125_mid_pct: r3((mid15 / Math.max(cl, 1)) * 100),
-    p90_k: k10,
+    p90_k: k15,
     p90_dte: 90,
     p90_bid: r2(bid90),
     p90_ask: r2(ask90),
@@ -957,9 +959,15 @@ export function extendV2LiveFromFeed(artifactObj, liveFeed, requestedAsOf) {
       contDays = 0;
     }
 
-    // Contango streak & Post-TP 5D Lockout
+    // Contango streak & Post-TP 5D Lockout (Plan D tp_near_itm_late5x: (VR>=1.10 & Near-ITM) OR VIX>=45.0)
     contangoStreak = vr < 1.0 ? contangoStreak + 1 : 0;
-    if (vr >= 1.1 && ddAth <= -0.1) {
+    const openStrikes = Array.isArray(tail.put_gate_state?.open_puts_strikes)
+      ? tail.put_gate_state.open_puts_strikes
+      : [];
+    const nearItmLive = openStrikes.length
+      ? openStrikes.some(k => cl <= Number(k) * 1.05)
+      : ddAth <= -0.11;
+    if ((vr >= 1.1 && nearItmLive) || vix >= 45.0) {
       postTpLock = true;
       lockStreak = 0;
       lastTpDate = d;
@@ -1079,6 +1087,12 @@ export function extendV2LiveFromFeed(artifactObj, liveFeed, requestedAsOf) {
         (m0Raw ? 1 : 0) | (m6Raw ? 2 : 0) | (m2Raw ? 4 : 0) | (m5Raw ? 8 : 0) | (m4Raw ? 16 : 0) | (m3Raw ? 32 : 0),
       ent_mask:
         (m0Entry ? 1 : 0) | (m6Entry ? 2 : 0) | (m2Entry ? 4 : 0) | (m5Entry ? 8 : 0) | (m4Entry ? 16 : 0) | (m3Entry ? 32 : 0),
+      m7g_slots: (() => {
+        const p1E = Math.min(45, (m0Entry ? 35 : 0) + (m6Entry ? 20 : 0));
+        const p2E = Math.min(40, (m2Entry ? 20 : 0) + (m5Entry ? 20 : 0));
+        const scE = Math.min(100, p1E + p2E + (m3Entry ? 10 : 0) + (m4Entry ? 35 : 0));
+        return scE >= 65 ? 3 : scE >= 45 ? 2 : scE >= 35 ? 1 : 0;
+      })(),
       ...bsmMicro,
     });
   }
@@ -1093,7 +1107,17 @@ export function extendV2LiveFromFeed(artifactObj, liveFeed, requestedAsOf) {
   return { extraPitRows, fredLatest, effrLatest };
 }
 
-export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
+function crashToCallPctJS(grossLev, maintMargin) {
+  const lev = Math.max(1.01, Number(grossLev) || 1.2);
+  const debtOverAssets = (lev - 1.0) / lev;
+  const x = 1.0 - debtOverAssets / Math.max(0.01, 1.0 - maintMargin);
+  return r2(-x * 100.0);
+}
+
+export function buildLiveCockpit(
+  row,
+  { isPitReplay = false, rollEcon = null, openStrikes = null, liveGrossLev = null, peakDriftLev = 1.257 } = {},
+) {
   const qqq = Number(row.qqq);
   const ath = Number(row.ath);
   const ddAthPct = Number(row.dd_ath);
@@ -1146,16 +1170,24 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
   const m4Ent = hasBit(entMask, 16);
   const m3Ent = hasBit(entMask, 32);
 
+  // Plan D exact scoring: min(100, P1 + P2 + 10*M3 + 35*M4_latch_v2) -> M7G_tier_45_65 (1-3 slots x 1.25% NAV)
   const p1Raw = Math.min(45, (m0Raw ? 35 : 0) + (m6Raw ? 20 : 0));
   const p2Raw = Math.min(40, (m2Raw ? 20 : 0) + (m5Raw ? 20 : 0));
-  const p3Raw = Math.min(45, (m4Raw ? 35 : 0) + (m3Raw ? 20 : 0));
+  const p3Raw = Math.min(45, (m4Raw ? 35 : 0) + (m3Raw ? 10 : 0));
   const rawCrisisProb = Math.min(100, p1Raw + p2Raw + p3Raw);
+  const rawTargetSlots = rawCrisisProb >= 65 ? 3 : rawCrisisProb >= 45 ? 2 : rawCrisisProb >= 35 ? 1 : 0;
 
   const p1Ent = Math.min(45, (m0Ent ? 35 : 0) + (m6Ent ? 20 : 0));
   const p2Ent = Math.min(40, (m2Ent ? 20 : 0) + (m5Ent ? 20 : 0));
-  const p3Ent = Math.min(45, (m4Ent ? 35 : 0) + (m3Ent ? 20 : 0));
-  const nonM4EntProb = Math.min(100, p1Ent + p2Ent + (m3Ent ? 20 : 0));
+  const p3Ent = Math.min(45, (m4Ent ? 35 : 0) + (m3Ent ? 10 : 0));
+  const nonM4EntProb = Math.min(100, p1Ent + p2Ent + (m3Ent ? 10 : 0));
   const entryCrisisProb = Math.min(100, p1Ent + p2Ent + p3Ent);
+  const entrySlotsFromScore =
+    entryCrisisProb >= 65 ? 3 : entryCrisisProb >= 45 ? 2 : entryCrisisProb >= 35 ? 1 : 0;
+  const rowM7Slots = row.m7g_slots != null ? Number(row.m7g_slots) : entrySlotsFromScore;
+  const m7VolGateOk = !postTpLock && vr < 1.02 && (m4Ent ? vxn <= 28.0 && vr <= 0.9 : vxn <= 27.0);
+  const actionableSlots = m7VolGateOk ? Math.min(3, Math.max(entrySlotsFromScore, rowM7Slots)) : 0;
+  const actionableBudgetPct = r2(actionableSlots * 1.25);
 
   const stressPack = computeLiveStressIndexJS({
     hmm_p: row.hmm_p,
@@ -1183,155 +1215,179 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
     vr_jump5: vrJ5,
   });
 
-  // Vol-gate status (transparently separates raw alert from vol-gated entry!)
+  // Vol-gate status (transparently separates Track A raw alert from Track B vol-gated M7G entry!)
   let volGateStatus = 'ENTRY_ALLOWED';
-  let volGateReasonEn = 'Low-to-moderate vol regime: new Put entries permitted whenever a pillar fires.';
-  let volGateReasonZh = '中低波环境：只要三支柱信号触发即允许按规则建仓 Put。';
+  let volGateReasonEn = 'Low-to-moderate vol regime (VXN <= 27 & VR < 1.02): M7G ladder slots permitted whenever pillars fire.';
+  let volGateReasonZh = '中低波窗口（VXN <= 27 且 VR < 1.02）：只要三支柱得分达标即可按阶梯开槽（1-3 x 1.25%）。';
   if (postTpLock) {
     volGateStatus = 'POST_TP_LOCKOUT';
-    volGateReasonEn = `Post-TP 5D contango lockout active (${tpLockStreak}/5 consecutive days VIX/VIX3M < 1.00 since ${lastTpDate ?? 'last TP'}). Do not re-buy puts prematurely.`;
-    volGateReasonZh = `止盈后 5 日正向期限结构锁仓中（自 ${lastTpDate ?? '上次止盈'} 起连续 VIX/VIX3M < 1.00：${tpLockStreak}/5 天），禁止过早追回新 Put。`;
-  } else if (vr >= 1.02 || vxn > 28.0) {
+    volGateReasonEn = `Post-TP 5D contango lockout active (${tpLockStreak}/5 consecutive days VIX/VIX3M < 1.00 since ${lastTpDate ?? 'last TP'}). BOTH Base & M7G books locked.`;
+    volGateReasonZh = `止盈后 5 日正向期限结构锁仓中（自 ${lastTpDate ?? '上次止盈'} 起连续 VIX/VIX3M < 1.00：${tpLockStreak}/5 天），常态与危机双账本均暂停追买新 Put。`;
+  } else if (vr >= 1.02 || vxn > (m4Ent ? 28.0 : 27.0)) {
     volGateStatus = 'HIGH_VOL_NO_CHASE';
-    volGateReasonEn = `High-vol no-chase guard active (VXN ${vxn.toFixed(1)}, VIX/VIX3M ${vr.toFixed(3)}): raw alerts reflect live stress, but new Put entries are blocked to avoid paying panic IV.`;
-    volGateReasonZh = `高波禁追保护生效（VXN ${vxn.toFixed(1)}，VIX/VIX3M ${vr.toFixed(3)}）：原始预警反映实时危机压力，但禁止追高买入昂贵新 Put，现有持仓等待止盈。`;
+    volGateReasonEn = `High-vol no-chase guard active (VXN ${vxn.toFixed(1)}, VIX/VIX3M ${vr.toFixed(3)}): Track A raw alerts (${rawCrisisProb} / ${rawTargetSlots} slots) reflect live stress, while Track B blocks paying panic IV.`;
+    volGateReasonZh = `高波禁追保护生效（VXN ${vxn.toFixed(1)}，VIX/VIX3M ${vr.toFixed(3)}）：轨道 A 原始预警（${rawCrisisProb} / ${rawTargetSlots} 槽）如实反映实时压力，轨道 B 禁止高波追买昂贵新 Put。`;
   }
 
-  // Sleeve A status
+  // Sleeve A status (B020 Baseline Floor: 0.20% NAV, VIX <= 20.0 & VIX/VIX3M < 1.02 & not in 5D Lockout, Hard 75D roll)
   let sleeveAStatus = 'OPEN_READY';
   let sleeveATone = 'mint';
-  let sleeveAValEn = 'READY · 125D -15%';
-  let sleeveAValZh = '允许建仓/滚仓';
-  let sleeveADetEn = `VIX ${vix.toFixed(1)} < 20 & ${contangoStreak}D contango (>= 5D). Maintain 0.2% NAV baseline Put.`;
-  let sleeveADetZh = `VIX ${vix.toFixed(1)} < 20 且连续 ${contangoStreak} 日非倒挂（>=5日），正常持有/滚仓 0.2% NAV 常态盾。`;
-  if (vr >= 1.0) {
-    sleeveAStatus = 'HOLD_INVERTED';
+  let sleeveAValEn = 'READY · 0.20% (125D -15%)';
+  let sleeveAValZh = '允许建仓/75D强滚';
+  let sleeveADetEn = `VIX ${vix.toFixed(1)} <= 20.0 & VR ${vr.toFixed(3)} < 1.02 & unlocked. Maintain 0.20% NAV 125D -15% OTM Put with Hard 75D roll.`;
+  let sleeveADetZh = `VIX ${vix.toFixed(1)} <= 20.0 且 VIX/3M ${vr.toFixed(3)} < 1.02 且未锁仓，正常维护 0.20% NAV 125D -15% OTM 常态盾（75D 强制滚仓）。`;
+  if (postTpLock) {
+    sleeveAStatus = 'POST_TP_LOCKOUT';
     sleeveATone = 'coral';
-    sleeveAValEn = `INVERTED (${vr.toFixed(2)}) · HOLD`;
-    sleeveAValZh = `倒挂 (${vr.toFixed(2)}) · 持仓不换`;
-    sleeveADetEn = 'VIX/VIX3M >= 1.00 inverted: HOLD existing Put (do NOT roll into panic IV; watch Tier 2 TP).';
-    sleeveADetZh = '期限结构倒挂 >= 1.00：现有 Put 死拿不滚仓，严禁高波追新单，盯紧二档止盈。';
-  } else if (vix >= 20.0) {
-    sleeveAStatus = 'PAUSED_VIX_GE_20';
+    sleeveAValEn = `LOCKED ${tpLockStreak}/5D`;
+    sleeveAValZh = `止盈锁仓 ${tpLockStreak}/5 天`;
+    sleeveADetEn = `5D post-TP contango lockout blocks new 0.20% entries (${tpLockStreak}/5D VR < 1.00).`;
+    sleeveADetZh = `止盈后 5 日正向锁仓中（${tpLockStreak}/5 天），暂不重开 0.20% 常态盾。`;
+  } else if (vr >= 1.02) {
+    sleeveAStatus = 'PAUSED_INVERTED';
+    sleeveATone = 'coral';
+    sleeveAValEn = `INVERTED (${vr.toFixed(2)}) · WATCH TP`;
+    sleeveAValZh = `倒挂 (${vr.toFixed(2)}) · 盯止盈`;
+    sleeveADetEn = 'VIX/VIX3M >= 1.02 inverted: no new 0.20% buys; existing put watches Near-ITM / VIX>=45 TP or Hard 75D salvage.';
+    sleeveADetZh = '期限结构倒挂 >= 1.02：暂停新开 0.20% 常态盾；已有仓位盯紧近实值/VIX>=45 止盈或 75D 回收。';
+  } else if (vix > 20.0) {
+    sleeveAStatus = 'PAUSED_VIX_GT_20';
     sleeveATone = 'amber';
-    sleeveAValEn = `PAUSED (VIX ${vix.toFixed(1)} >= 20)`;
-    sleeveAValZh = `暂停新开 (VIX ${vix.toFixed(1)} >= 20)`;
-    sleeveADetEn = 'VIX >= 20.0 blocks new 0.2% baseline entries; existing put rolls at <= 75 DTE if non-inverted.';
-    sleeveADetZh = 'VIX >= 20.0 暂停新开 0.2% 常态盾；已有仓位在非倒挂且 <= 75 DTE 时正常滚仓。';
-  } else if (contangoStreak < 5) {
-    sleeveAStatus = 'WAIT_CONTANGO_5D';
-    sleeveATone = 'sky';
-    sleeveAValEn = `WAIT ${contangoStreak}/5D CONTANGO`;
-    sleeveAValZh = `等待正向 ${contangoStreak}/5 天`;
-    sleeveADetEn = `VIX < 20 ok, waiting for 5 consecutive days VIX/VIX3M < 1.00 (${contangoStreak}/5).`;
-    sleeveADetZh = `VIX < 20 已满足，等待连续 5 日 VIX/VIX3M < 1.00（当前 ${contangoStreak}/5 天）。`;
+    sleeveAValEn = `PAUSED (VIX ${vix.toFixed(1)} > 20)`;
+    sleeveAValZh = `暂停新开 (VIX ${vix.toFixed(1)} > 20)`;
+    sleeveADetEn = 'VIX > 20.0 pauses new 0.20% baseline buys; existing put salvages at <= 75 DTE if VIX stays > 20.';
+    sleeveADetZh = 'VIX > 20.0 暂停新开 0.20% 常态盾；已有仓位到 <= 75 DTE 时回收残值落袋。';
   }
 
-  // Sleeve B status
-  const sleeveBM4Ready = !postTpLock && vr < 1.02 && m4Ent;
-  const sleeveBR1Ready = !postTpLock && vr < 1.02 && !m4Ent && nonM4EntProb >= 35;
+  // Sleeve B status (M7G_tier_45_65 Graded Ladder: 1-3 Slots x 1.25% NAV = up to 3.75% NAV, UNIFORM -15% OTM!)
+  const sleeveBM4Ready = actionableSlots > 0 && m4Ent;
+  const sleeveBR1Ready = actionableSlots > 0 && !m4Ent;
   let sleeveBStatus = 'STANDBY';
   let sleeveBTone = 'muted';
-  let sleeveBValEn = 'STANDBY (0%)';
-  let sleeveBValZh = '待命观察';
-  let sleeveBDetEn = 'No vol-gated crisis pillar >= 35%. Core 1.20x QQQ + Dual-CTA compounds unencumbered.';
-  let sleeveBDetZh = '三支柱均未达低波建仓阈值，1.20x 核心仓位顺畅复利运行。';
+  let sleeveBValEn = '0/3 SLOTS (0.00%)';
+  let sleeveBValZh = '0/3 槽待命 (0.00%)';
+  let sleeveBDetEn = 'No vol-gated crisis pillar >= 35. Core 1.20x QQQ + Dual-CTA compounds unencumbered.';
+  let sleeveBDetZh = '三支柱未达低波开槽阈值（>=35），1.20x 核心仓与双CTA 顺畅复利。';
   if (sleeveBM4Ready) {
     sleeveBStatus = 'OPEN_ROUTE2_M4';
     sleeveBTone = 'lilac';
-    sleeveBValEn = 'FIRE M4 · 90D -10%';
-    sleeveBValZh = '触发 M4 · 90D -10%';
-    sleeveBDetEn = 'Slow-Bear Latch ON + Dead-Cat Bounce + VXN <= 28 & VR <= 0.90 -> Buy 1.0% NAV 90D -10% OTM Put.';
-    sleeveBDetZh = '慢熊锁存开启 + 死猫跳 + VXN<=28 & VR<=0.90 -> T+1 买入 1.0% NAV 90D -10% OTM Put。';
+    sleeveBValEn = `FIRE M4 · ${actionableSlots}/3 (${actionableBudgetPct.toFixed(2)}%) · 90D -15%`;
+    sleeveBValZh = `触发 M4 · ${actionableSlots}/3 槽 (${actionableBudgetPct.toFixed(2)}%) · 90D -15%`;
+    sleeveBDetEn = `Slow-Bear +8% Latch ON + Dead-Cat Bounce + VXN <= 28 & VR <= 0.90 -> ${actionableSlots} slot(s) x 1.25% NAV in UNIFORM 90D -15% OTM Put (Hard 30D roll).`;
+    sleeveBDetZh = `慢熊 +8% 磁滞锁存开启 + 死猫反抽 + VXN<=28 & VR<=0.90 -> 激活 ${actionableSlots} 槽 x 1.25% NAV，统一买 90D -15% OTM（30D 强制滚仓）。`;
   } else if (sleeveBR1Ready) {
     sleeveBStatus = 'OPEN_ROUTE1_125D';
     sleeveBTone = 'amber';
-    sleeveBValEn = `FIRE R1 (${nonM4EntProb}%) · 125D -15%`;
-    sleeveBValZh = `触发 R1 (${nonM4EntProb}%) · 125D -15%`;
-    sleeveBDetEn = `Non-M4 crisis score ${nonM4EntProb}% >= 35% in low-vol window -> Buy 1.0% NAV 125D -15% OTM Put.`;
-    sleeveBDetZh = `非 M4 支柱综合得分 ${nonM4EntProb}% >= 35% 且处于低波窗口 -> T+1 买入 1.0% NAV 125D -15% OTM Put。`;
+    sleeveBValEn = `FIRE ${actionableSlots}/3 (${actionableBudgetPct.toFixed(2)}%) · 125D -15%`;
+    sleeveBValZh = `触发 ${actionableSlots}/3 槽 (${actionableBudgetPct.toFixed(2)}%) · 125D -15%`;
+    sleeveBDetEn = `Crisis score ${entryCrisisProb} (>=35: 1s, >=45: 2s, >=65: 3s) in low-vol window -> ${actionableSlots} slot(s) x 1.25% NAV in 125D -15% OTM Put (Hard 75D roll).`;
+    sleeveBDetZh = `危机得分 ${entryCrisisProb}（>=35开1槽 / >=45开2槽 / >=65开3槽）且处低波窗口 -> 激活 ${actionableSlots} 槽 x 1.25% NAV，买 125D -15% OTM（75D 强滚）。`;
   } else if (postTpLock) {
     sleeveBStatus = 'POST_TP_LOCKOUT';
     sleeveBTone = 'coral';
-    sleeveBValEn = `LOCKED ${tpLockStreak}/5D`;
-    sleeveBValZh = `止盈锁仓 ${tpLockStreak}/5 天`;
-    sleeveBDetEn = `Raw alerts ${rawCrisisProb}% lit, but 5D post-TP contango lockout blocks re-entry until 5D VR < 1.00.`;
-    sleeveBDetZh = `原始结构预警 ${rawCrisisProb}% 已亮，但处于止盈后 5 日锁仓期，须待连续 5 日 VIX/3M < 1.00 解锁。`;
+    sleeveBValEn = `LOCKED ${tpLockStreak}/5D (RAW ${rawTargetSlots}/3)`;
+    sleeveBValZh = `止盈锁仓 ${tpLockStreak}/5 天（原 ${rawTargetSlots}/3）`;
+    sleeveBDetEn = `Raw alerts ${rawCrisisProb} (${rawTargetSlots}/3 slots) lit, but 5D post-TP contango lockout blocks re-entry until 5D VR < 1.00.`;
+    sleeveBDetZh = `原始结构预警 ${rawCrisisProb}（对应 ${rawTargetSlots}/3 槽）已亮，但处于止盈后 5 日锁仓期，须待连续 5 日 VIX/3M < 1.00 解锁。`;
   } else if (rawCrisisProb >= 35 || stressPack.live_stress_index >= 50) {
     sleeveBStatus = 'RAW_ALERT_HIGH_VOL';
     sleeveBTone = 'amber';
-    sleeveBValEn = `RAW ${rawCrisisProb}% · NO CHASE`;
-    sleeveBValZh = `预警 ${rawCrisisProb}% · 高波禁追`;
-    sleeveBDetEn = `Live Stress ${stressPack.live_stress_index}/100 & Raw Alert ${rawCrisisProb}% lit, but high IV blocks chasing new puts.`;
-    sleeveBDetZh = `实时压力 ${stressPack.live_stress_index}/100、原始预警 ${rawCrisisProb}% 已亮，但隐波过高禁止追单，现有仓位盯止盈。`;
+    sleeveBValEn = `RAW ${rawTargetSlots}/3 (${rawCrisisProb}) · NO CHASE`;
+    sleeveBValZh = `预警 ${rawTargetSlots}/3 (${rawCrisisProb}) · 禁追`;
+    sleeveBDetEn = `Live Stress ${stressPack.live_stress_index}/100 & Raw Score ${rawCrisisProb} (${rawTargetSlots}/3 slots) lit, but high IV blocks chasing new puts.`;
+    sleeveBDetZh = `实时压力 ${stressPack.live_stress_index}/100、原始得分 ${rawCrisisProb}（${rawTargetSlots}/3 槽）已亮，高波禁追新单，持仓盯止盈。`;
   }
 
-  // Tier 2 Full TP status
-  const tpFullVrOk = vr >= 1.1;
-  const tpFullDdOk = ddAthPct <= -10.0;
-  const tpFullTriggered = tpFullVrOk && tpFullDdOk;
+  // Exact live target strike: UNIFORM -15% OTM (K = 0.85 * S) for BOTH 125D AND 90D M4!
+  const strike15Exact = r2(qqq * 0.85);
+  const strike15Round = Math.round(qqq * 0.85);
 
-  // Master Command Center Action Directive
+  // Right-Tail Take-Profit (`tp_near_itm_late5x`)
+  const activeStrikesArr = Array.isArray(openStrikes) && openStrikes.length ? openStrikes.map(Number).filter(Number.isFinite) : [];
+  const refStrikeForTp = activeStrikesArr.length ? Math.max(...activeStrikesArr) : strike15Round;
+  const nearItmThresholdSpot = r2(refStrikeForTp * 1.05);
+  const nearItmOk = activeStrikesArr.length ? qqq <= nearItmThresholdSpot : ddAthPct <= -11.0;
+  const tpFullVrOk = vr >= 1.1;
+  const tpVixPanicOk = vix >= 45.0;
+  const tpFullTriggered = (tpFullVrOk && nearItmOk) || tpVixPanicOk;
+
+  // Natural-Drift Box Leverage Guard (NO daily 1.20x forced drawdown cap!)
+  const liveLev =
+    Number.isFinite(Number(liveGrossLev)) && Number(liveGrossLev) > 0.8
+      ? r3(Number(liveGrossLev))
+      : r3(Math.min(1.27, Math.max(1.16, 1.2 / Math.max(0.92, 1.0 + Math.min(0, ddAthPct / 100.0) * 0.35))));
+  const liveLtvPct = r2(((liveLev - 1.0) / Math.max(liveLev, 1.0)) * 100.0);
+  const pmCrashLivePct = crashToCallPctJS(liveLev, 0.15);
+  const regTCrashLivePct = crashToCallPctJS(liveLev, 0.25);
+  const boxAnnualDragPct = r2(0.2 * boxRatePct);
+
+  const rollStats = {
+    gross_turnover_pct_nav_yr: Number(rollEcon?.put_gross_turnover_pct_nav_yr ?? 6.36),
+    roll_salvage_pct: Number(rollEcon?.put_roll_salvage_pct ?? 67.9),
+    true_net_bleed_pct_nav_yr: Number(rollEcon?.put_true_net_bleed_pct_nav_yr ?? 2.04),
+    put_net_pnl_usd: Number(rollEcon?.put_net_pnl_usd ?? 121171.24),
+    put_payoff_mult: Number(rollEcon?.put_payoff_mult ?? 1.58),
+  };
+
+  // Master Command Center Action Directive (Plan D Double-Champion)
   let actionCode = 'HOLD_STEADY_CORE';
   let severity = 'calm';
-  let headlineEn = 'Calm Compounding · Hold 100% QQQ + 10% DBMF + 10% KMLM (<= 1.20x)';
-  let headlineZh = '平稳复利期 · 维持 100% QQQ + 10% DBMF + 10% KMLM（严守 <= 1.20x 红线）';
-  let summaryEn = `Live Stress ${stressPack.live_stress_index}/100 (${stressPack.live_stress_label_en}). Maintain 1.20x core stack and Sleeve A 0.2% baseline Put rules.`;
-  let summaryZh = `实时危机压力 ${stressPack.live_stress_index}/100（${stressPack.live_stress_label_zh}）。保持 1.20x 核心仓位，并按规则维护 0.2% 常态 Put 盾。`;
+  let headlineEn = `Calm Compounding · Hold 100% QQQ + 10% DBMF + 10% KMLM (Live ${liveLev.toFixed(2)}x · Natural Drift)`;
+  let headlineZh = `平稳复利期 · 持有 100% QQQ + 10% DBMF + 10% KMLM（当前 ${liveLev.toFixed(2)}x · 无底部砍仓线）`;
+  let summaryEn = `Live Stress ${stressPack.live_stress_index}/100 (${stressPack.live_stress_label_en}). Natural-drift Box stack (no forced crash liquidation; quarterly 1.20x calibration) + B020_M125 Uniform -15% OTM Put engine.`;
+  let summaryZh = `实时危机压力 ${stressPack.live_stress_index}/100（${stressPack.live_stress_label_zh}）。无强制底部砍仓线的 Box 叠加（平稳季调回 1.20x）+ B020_M125 统一 -15% OTM 期权核平稳运行。`;
 
   if (tpFullTriggered) {
     actionCode = 'TRIGGER_FULL_TP';
     severity = 'action';
-    headlineEn = `TIER 2 FULL TP ARMED · Liquidate 100% Active Puts (VIX/3M ${vr.toFixed(3)} >= 1.10 & ATH DD ${ddAthPct.toFixed(1)}% <= -10%)`;
-    headlineZh = `二档全额止盈触发 · T+1 清仓 100% Put（倒挂 ${vr.toFixed(3)} >= 1.10 且回撤 ${ddAthPct.toFixed(1)}% <= -10%）`;
-    summaryEn = 'Liquidate 100% of active Sleeve A & B puts at T+1 Close, deploy proceeds equally across 5 trading days (1/5/day) into QQQ (excess above 1.20x pays debt first), and start 5D contango lockout.';
-    summaryZh = 'T+1 收盘 100% 清仓所有活跃 Put，所得现金分 5 个交易日等额（每日 1/5）回买 QQQ（超出 1.200x 杠杆上限优先还债），同时开启止盈后 5 日正向锁仓。';
+    headlineEn = tpVixPanicOk
+      ? `RIGHT-TAIL FULL TP ARMED · VIX Panic (${vix.toFixed(1)} >= 45.0) -> Liquidate 100% Active Puts`
+      : `RIGHT-TAIL FULL TP ARMED · Inverted (${vr.toFixed(3)} >= 1.10) & Near-ITM (QQQ <= $${nearItmThresholdSpot.toFixed(1)}) -> Liquidate 100%`;
+    headlineZh = tpVixPanicOk
+      ? `右尾全额止盈触发 · VIX 恐慌爆表（${vix.toFixed(1)} >= 45.0）-> T+1 100% 清仓活跃 Put`
+      : `右尾全额止盈触发 · 期限倒挂（${vr.toFixed(3)} >= 1.10）且近实值（QQQ <= $${nearItmThresholdSpot.toFixed(1)}）-> T+1 100% 清仓`;
+    summaryEn = 'Liquidate 100% of active Base & M7G puts at T+1 Close, reinvest proceeds 100% lump-sum into QQQ at T+1, and lock BOTH books for 5 consecutive contango days (VIX/VIX3M < 1.00).';
+    summaryZh = 'T+1 收盘 100% 清仓全部活跃 Put，所得收益 T+1 一次性 100% 全额回买 QQQ（绝不分批踏空），并对常态/危机双账本开启止盈后 5 日正向期限结构锁仓。';
   } else if (c2mConfirmed && (dbAthPct > 0 || kmAthPct > 0)) {
     actionCode = 'TRIGGER_CTA_ROTATION';
     severity = 'action';
-    headlineEn = `DUAL-CTA 2-MONTH BEAR ROTATION CONFIRMED (${c2mDays}d <= -12%) · Rotate Winning CTA -> QQQ in 5 Tranches`;
-    headlineZh = `双CTA 2个月持续熊市确认（连续 ${c2mDays} 天 <= -12%）· 分 5 批切出盈利 CTA 买 QQQ`;
-    summaryEn = `QQQ stayed <= -12% for ${c2mDays} continuous calendar days. Sell profitable DBMF/KMLM sleeve(s) in 5 equal 20% tranches spaced 5 trading days apart into QQQ; hold mechanically for 365 days.`;
-    summaryZh = `QQQ 已连续 ${c2mDays} 自然日处于 <= -12% 回撤区间。对自前高盈利 > 0% 的 CTA 分 5 批（每次 20%，间隔 5 交易日）换入 QQQ，并机械锁定持有 1 年。`;
+    headlineEn = `DUAL-CTA CONT_2M CONFIRMED (${c2mDays}d <= -12%) · Rotate Winning CTA -> QQQ in 5 Tranches (1Y LTCG)`;
+    headlineZh = `双CTA CONT_2M 慢熊确认（连续 ${c2mDays} 天 <= -12%）· 分 5 批切出盈利 CTA 买 QQQ（1年 LTCG 锁）`;
+    summaryEn = `QQQ stayed <= -12% for ${c2mDays} continuous calendar days. Sell profitable DBMF/KMLM sleeve(s) in 5 equal 20% tranches spaced 5 trading days apart into QQQ; mechanically hold 365 days before restoring 1.20x.`;
+    summaryZh = `QQQ 已连续 ${c2mDays} 自然日处于 <= -12% 回撤区间。对自前高盈利 > 0% 的 CTA 分 5 批（每次 20%、间隔 5 交易日）换入 QQQ，并机械锁定持有 365 天后再恢复 1.20x。`;
   } else if (sleeveBM4Ready) {
     actionCode = 'OPEN_SLEEVE_B_M4';
     severity = 'action';
-    headlineEn = 'M4 SLOW-BEAR DEAD-CAT BOUNCE FIRED · Buy 1.0% NAV 90D -10% OTM QQQ Put';
-    headlineZh = 'M4 慢熊死猫跳触发 · T+1 买入 1.0% NAV 90D -10% OTM QQQ Put';
-    summaryEn = `Slow-Bear +8% Latch ARMED + QQQ < 200DMA + EWMAC < 0 + QQQ > EMA20 + low-vol complacency (VXN ${vxn.toFixed(1)} <= 28, VR ${vr.toFixed(3)} <= 0.90). Recycle salvage at <= 30 DTE.`;
-    summaryZh = `慢熊 +8% 滞回锁存已开，且满足破年线反抽 EMA20 + 波动率自满（VXN ${vxn.toFixed(1)} <= 28、VR ${vr.toFixed(3)} <= 0.90）。买 90D -10% OTM Put，<= 30 DTE 非倒挂回收残值。`;
+    headlineEn = `M4 +8% LATCH DEAD-CAT FIRED · Buy ${actionableSlots}/3 Slot(s) (${actionableBudgetPct.toFixed(2)}% NAV) 90D -15% OTM QQQ Put`;
+    headlineZh = `M4 +8% 磁滞锁存死猫跳触发 · T+1 买入 ${actionableSlots}/3 槽（${actionableBudgetPct.toFixed(2)}% NAV）90D -15% OTM Put`;
+    summaryEn = `Slow-Bear +8% Latch ARMED + QQQ < 200DMA + EWMAC < 0 + QQQ > EMA20 + VXN ${vxn.toFixed(1)} <= 28 & VR ${vr.toFixed(3)} <= 0.90. UNIFORM -15% OTM ($${strike15Round} strike), Hard 30D roll.`;
+    summaryZh = `慢熊 +8% 磁滞锁存已开，满足破年线反抽 EMA20 且波动率自满（VXN ${vxn.toFixed(1)} <= 28、VR ${vr.toFixed(3)} <= 0.90）。统一买 90D -15% OTM（$${strike15Round} 行权价），30D 强制滚仓。`;
   } else if (sleeveBR1Ready) {
     actionCode = 'OPEN_SLEEVE_B_ROUTE1';
     severity = 'action';
-    headlineEn = `THREE-PILLAR ROUTE 1 FIRED (${nonM4EntProb}%) · Buy 1.0% NAV 125D -15% OTM QQQ Put`;
-    headlineZh = `三支柱 Route 1 危机预警触发（${nonM4EntProb}%）· T+1 买入 1.0% NAV 125D -15% OTM Put`;
-    summaryEn = `Low-vol structural warning lit across P1/P2/M3 (${nonM4EntProb}% >= 35%). Open 1.0% NAV Sleeve B 125D -15% OTM Put at T+1 Close; roll at <= 75 DTE if still lit.`;
-    summaryZh = `P1/P2/M3 低波潜伏预警达标（${nonM4EntProb}% >= 35%）。T+1 收盘建仓 1.0% NAV 125D -15% OTM 危机盾，<= 75 DTE 非倒挂时信号仍亮则滚仓、熄灭则回收。`;
+    headlineEn = `M7G GRADED LADDER FIRED (${entryCrisisProb} -> ${actionableSlots}/3 Slots) · Buy ${actionableBudgetPct.toFixed(2)}% NAV 125D -15% OTM Put`;
+    headlineZh = `M7G 阶梯危机盾触发（得分 ${entryCrisisProb} -> ${actionableSlots}/3 槽）· T+1 买入 ${actionableBudgetPct.toFixed(2)}% NAV 125D -15% OTM Put`;
+    summaryEn = `Low-vol structural warning lit (Score ${entryCrisisProb}: >=35 1s, >=45 2s, >=65 3s). Open/scale up to ${actionableSlots} x 1.25% NAV in 125D -15% OTM ($${strike15Round} strike) with Hard 75D roll (recovers ${rollStats.roll_salvage_pct}% salvage).`;
+    summaryZh = `低波结构预警达标（得分 ${entryCrisisProb}：>=35 开1槽、>=45 开2槽、>=65 开3槽）。建仓/加码至 ${actionableSlots} x 1.25% NAV 的 125D -15% OTM（$${strike15Round}），75D 强制早滚回收 ${rollStats.roll_salvage_pct}% 残值。`;
   } else if (stressPack.live_stress_index >= 50 || rawCrisisProb >= 35 || postTpLock) {
     actionCode = 'HOLD_HIGH_VOL_WATCH_TP';
     severity = stressPack.live_stress_index >= 75 ? 'crisis' : 'elevated';
     headlineEn = postTpLock
-      ? `ACTIVE STRESS (${stressPack.live_stress_index}/100) · Post-TP Lockout (${tpLockStreak}/5D) · Hold Core <= 1.20x & Do Not Chase Puts`
-      : `HIGH-VOL STRESS (${stressPack.live_stress_index}/100) · Raw Alerts ${rawCrisisProb}% Lit · No New Put Chasing`;
+      ? `ACTIVE STRESS (${stressPack.live_stress_index}/100) · 5D Post-TP Lockout (${tpLockStreak}/5D) · Natural Drift ${liveLev.toFixed(2)}x (No Forced Sell)`
+      : `HIGH-VOL STRESS (${stressPack.live_stress_index}/100) · Raw ${rawCrisisProb} (${rawTargetSlots}/3 Slots) · No IV Chasing, Watch Right-Tail TP`;
     headlineZh = postTpLock
-      ? `高压危机态（压力 ${stressPack.live_stress_index}/100）· 止盈后锁仓 ${tpLockStreak}/5 天 · 严控 <= 1.20x 杠杆且禁追昂贵新 Put`
-      : `高压警戒态（压力 ${stressPack.live_stress_index}/100）· 原始预警 ${rawCrisisProb}% 已亮 · 高波禁追新 Put，持盾盯止盈`;
-    summaryEn = `QQQ ${fmtSigned(ddAthPct, 2)}% from ATH, VIX ${vix.toFixed(2)}, VXN ${vxn.toFixed(2)}, VIX/VIX3M ${vr.toFixed(3)}. Raw structural alerts (${rawCrisisProb}%) confirm live stress while vol-gate prevents paying panic IV. ${c2mActive ? `CONT_2M timer running: ${c2mDays}/60d.` : 'Watch Tier 2 Full TP (VR >= 1.10 & DD <= -10%).'}`;
-    summaryZh = `QQQ 距前高 ${fmtSigned(ddAthPct, 2)}%，VIX ${vix.toFixed(2)}，VXN ${vxn.toFixed(2)}，VIX/VIX3M ${vr.toFixed(3)}。原始结构预警（${rawCrisisProb}%）如实反映实时压力，但高波门控/止盈锁仓阻止追买高价新 Put。${c2mActive ? `双CTA 2月熊市计时器运行中：连续 ${c2mDays}/60 天。` : '密切盯防二档全额止盈（VIX/3M >= 1.10 且回撤 <= -10%）。'}`;
+      ? `高压危机态（压力 ${stressPack.live_stress_index}/100）· 止盈后 5D 锁仓（${tpLockStreak}/5 天）· 允许自然漂移 ${liveLev.toFixed(2)}x 绝不底部砍仓`
+      : `高压警戒态（压力 ${stressPack.live_stress_index}/100）· 原始预警 ${rawCrisisProb}（${rawTargetSlots}/3 槽）· 高波禁追，盯紧右尾止盈`;
+    summaryEn = `QQQ ${fmtSigned(ddAthPct, 2)}% from ATH, VIX ${vix.toFixed(2)}, VXN ${vxn.toFixed(2)}, VIX/VIX3M ${vr.toFixed(3)}. Natural leverage ${liveLev.toFixed(2)}x (PM cushion ${pmCrashLivePct}%). ${c2mActive ? `CONT_2M timer running: ${c2mDays}/60d.` : `Watch Full TP (VR>=1.10 & Near-ITM <=$${nearItmThresholdSpot.toFixed(0)} OR VIX>=45).`}`;
+    summaryZh = `QQQ 距前高 ${fmtSigned(ddAthPct, 2)}%，VIX ${vix.toFixed(2)}，VXN ${vxn.toFixed(2)}，VIX/VIX3M ${vr.toFixed(3)}。当前杠杆 ${liveLev.toFixed(2)}x（IBKR PM 强平垫 ${pmCrashLivePct}%）。${c2mActive ? `双CTA CONT_2M 计时运行中：连续 ${c2mDays}/60 天。` : `盯防右尾止盈（VR>=1.10 且近实值 <=$${nearItmThresholdSpot.toFixed(0)} 或 VIX>=45）。`}`;
   } else if (sleeveAStatus === 'OPEN_READY') {
     actionCode = 'OPEN_SLEEVE_A';
     severity = 'calm';
-    headlineEn = 'Calm Low-Vol · Core 1.20x Active + Sleeve A (0.2% NAV 125D -15% OTM) Open/Roll Ready';
-    headlineZh = '低波顺风期 · 维持 1.20x 核心仓 + 0.2% 常态盾（125D -15% OTM）可正常持有/滚仓';
-    summaryEn = `VIX ${vix.toFixed(2)} < 20.0 & ${contangoStreak}D contango (>= 5D). Maintain 0.2% NAV baseline tail put and 100% QQQ + 10% DBMF + 10% KMLM <= 1.200x.`;
-    summaryZh = `VIX ${vix.toFixed(2)} < 20.0 且已连续 ${contangoStreak} 日非倒挂（>= 5 日）。正常维护 0.2% NAV 常态尾盾，核心仓位严守 <= 1.200x 上限。`;
+    headlineEn = `Calm Low-Vol · Core ${liveLev.toFixed(2)}x Active + B020 Baseline (0.20% NAV 125D -15% OTM) Ready`;
+    headlineZh = `低波顺风期 · 核心 ${liveLev.toFixed(2)}x 运行 + B020 常态盾（0.20% NAV 125D -15% OTM）可建仓/75D强滚`;
+    summaryEn = `VIX ${vix.toFixed(2)} <= 20.0 & VIX/VIX3M ${vr.toFixed(3)} < 1.02. Maintain 0.20% NAV 125D -15% OTM baseline Put (Hard 75D roll -> ${rollStats.true_net_bleed_pct_nav_yr}% NAV/yr true net bleed) + 20% Dual-CTA Box stack.`;
+    summaryZh = `VIX ${vix.toFixed(2)} <= 20.0 且 VIX/VIX3M ${vr.toFixed(3)} < 1.02。维持 0.20% NAV 125D -15% OTM 常态尾盾（75D 强滚真实净耗仅 ${rollStats.true_net_bleed_pct_nav_yr}% NAV/yr）与 20% 双CTA Box 叠加。`;
   }
-
-  // Exact live target strikes computed from live QQQ spot
-  const strike15Exact = r2(qqq * 0.85);
-  const strike15Round = Math.round(qqq * 0.85);
-  const strike10Exact = r2(qqq * 0.9);
-  const strike10Round = Math.round(qqq * 0.9);
 
   // Build 3 Pillars with Dual-Track Raw vs Vol-Gate badges on every single sensor!
   const sensorStatus = (rawLit, entLit, specialBlocked = false) => {
@@ -1501,8 +1557,8 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
       id: 'P3',
       title_en: 'P3 · Slow-Bear Dead-Cat & Credit Squeeze',
       title_zh: 'P3 · 慢熊死猫跳与信用紧缩',
-      route_badge_en: 'M4: 90D->30D (-10%) · M3: 125D->75D (-15%)',
-      route_badge_zh: 'M4: 90D->30D (-10%) · M3: 125D->75D (-15%)',
+      route_badge_en: 'M4: 90D->30D (-15% OTM) · M3: 125D->75D (-15% OTM)',
+      route_badge_zh: 'M4: 90D->30D (-15% OTM) · M3: 125D->75D (-15% OTM)',
       raw_score: p3Raw,
       entry_score: p3Ent,
       max_score: 45,
@@ -1513,10 +1569,10 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
         {
           id: 'M4',
           name_en: 'M4 Slow-Bear Dead-Cat (+8% Latch)',
-          name_zh: 'M4 慢熊死猫跳（+8% 滞回锁存）',
+          name_zh: 'M4 慢熊死猫跳（+8% 磁滞锁存）',
           points: 35,
-          route_tag_en: '90D -> 30D (-10% OTM)',
-          route_tag_zh: '90D -> 30D (-10% OTM)',
+          route_tag_en: '90D -> 30D (-15% OTM)',
+          route_tag_zh: '90D -> 30D (-15% OTM)',
           raw_alert: m4Raw,
           vol_gate_ok: vxn <= 28.0 && vr <= 0.9,
           entry_triggered: m4Ent,
@@ -1524,31 +1580,31 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
           vol_gate_rule_en: 'Latch ON & VXN <= 28.0 & VIX/3M <= 0.90',
           vol_gate_rule_zh: '锁存开启 且 VXN <= 28 & VIX/3M <= 0.90',
           metrics: [
-            { label_en: '+8% Slow-Bear Latch', label_zh: '+8% 慢熊滞回锁存', value: latchArmed ? 'ARMED (ON)' : `OFF (CTA ${fmtSigned(ctaHi252Pct, 1)}%)`, passed: latchArmed },
+            { label_en: '+8% Slow-Bear Latch', label_zh: '+8% 慢熊磁滞锁存', value: latchArmed ? 'ARMED (ON)' : `OFF (CTA ${fmtSigned(ctaHi252Pct, 1)}%)`, passed: latchArmed },
             { label_en: 'QQQ < 200DMA & EWMAC < 0', label_zh: '破年线且 EWMAC < 0', value: `${qqq < sma200 ? '<200D' : '>200D'} · ${fmtSigned(ewmac, 2)}`, passed: qqq < sma200 && ewmac < 0 },
             { label_en: 'Dead-Cat QQQ > EMA20', label_zh: '反抽站上 EMA20', value: `$${qqq.toFixed(1)} vs $${ema20.toFixed(1)}`, passed: qqq > ema20 },
             { label_en: 'Complacency Gate', label_zh: '自满低波门控', value: `VXN ${vxn.toFixed(1)}<=28 · VR ${vr.toFixed(2)}<=0.90`, passed: vxn <= 28.0 && vr <= 0.9 },
           ],
           explanation_en: m4Ent
-            ? 'Structural slow-bear dead-cat complacency confirmed! Route 2 fires 90D -10% OTM Put (recycle at <= 30 DTE).'
+            ? 'Structural slow-bear dead-cat complacency confirmed! Route 2 fires UNIFORM 90D -15% OTM Put (1.25% NAV/slot, Hard 30D roll).'
             : m4Raw
               ? `Latch ON & dead-cat bounce active, waiting for vol complacency (VXN ${vxn.toFixed(1)} <= 28, VR ${vr.toFixed(2)} <= 0.90).`
               : !latchArmed
                 ? `Slow-Bear +8% Hysteresis Latch is OFF (Corr60 ${fmtSigned(corr60, 2)}, DualCTA ${fmtSigned(ctaHi252Pct, 1)}% since 1Y high) — blocks false non-slow-bear triggers.`
                 : 'Latch ARMED; waiting for QQQ bounce above EMA20 with VXN <= 28 & VR <= 0.90.',
           explanation_zh: m4Ent
-            ? '结构性慢熊死猫跳自满确认！Route 2 触发买入 90D -10% OTM Put（<= 30 DTE 回收残值）。'
+            ? '结构性慢熊死猫跳自满确认！Route 2 统一触发买入 90D -15% OTM Put（每槽 1.25% NAV，30D 强制滚仓）。'
             : m4Raw
               ? `慢熊锁存已开且出现死猫反抽，但等待波动率回落自满（VXN ${vxn.toFixed(1)}<=28、VR ${vr.toFixed(2)}<=0.90）。`
               : !latchArmed
-                ? `慢熊 +8% 滞回锁存开关为 OFF（Corr60 ${fmtSigned(corr60, 2)}，双CTA 距1年高点 ${fmtSigned(ctaHi252Pct, 1)}%），自动过滤非慢熊假信号。`
+                ? `慢熊 +8% 磁滞锁存开关为 OFF（Corr60 ${fmtSigned(corr60, 2)}，双CTA 距1年高点 ${fmtSigned(ctaHi252Pct, 1)}%），自动过滤非慢熊假信号。`
                 : '慢熊锁存已激活，等待 QQQ 反抽站上 EMA20 且 VXN <= 28、VIX/3M <= 0.90。',
         },
         {
           id: 'M3',
           name_en: 'M3 Credit & Financial Conditions Squeeze',
           name_zh: 'M3 信用利差与金融条件收紧',
-          points: 20,
+          points: 10,
           route_tag_en: '125D -15%',
           route_tag_zh: '125D -15%',
           raw_alert: m3Raw,
@@ -1563,12 +1619,12 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
             { label_en: '2Y / NFCI Jump', label_zh: '2Y / NFCI 跃升', value: `${dgs2J !== null ? fmtSigned(dgs2J, 2) : 'n/a'} / ${nfciJ !== null ? fmtSigned(nfciJ, 2) : 'n/a'}`, passed: (dgs2J !== null && dgs2J >= 0.4) || (nfciJ !== null && nfciJ >= 0.1) },
           ],
           explanation_en: m3Ent
-            ? 'HY credit breakdown + macro tightening confirmed in low-vol window.'
+            ? 'HY credit breakdown + macro tightening confirmed in low-vol window (+10 pts).'
             : m3Raw
               ? `Credit tightening structure LIT, blocked by elevated vol (VXN ${vxn.toFixed(1)} > 26 or VR ${vr.toFixed(2)} > 0.92).`
               : 'Credit spreads and financial conditions stable.',
           explanation_zh: m3Ent
-            ? '高收益债相对走弱叠加宏观利差/金融条件收紧，低波窗口触发。'
+            ? '高收益债相对走弱叠加宏观利差/金融条件收紧，低波窗口触发（+10 分）。'
             : m3Raw
               ? `信用与宏观紧缩结构已亮，但当前高波（VXN ${vxn.toFixed(1)} / VR ${vr.toFixed(2)}）禁追新单。`
               : '信用利差与金融条件整体稳定。',
@@ -1577,25 +1633,25 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
     },
   ];
 
-  // 5 Live Sub-Engine Status Pills for Section 1 Hero Card
+  // 5 Live Sub-Engine Status Pills for Section 1 Hero Card (Plan D Double-Champion)
   const subEngines = [
     {
       id: 'leverage_cap',
-      status_code: 'ENFORCED_120X',
+      status_code: 'NATURAL_DRIFT_120X',
       tone: 'mint',
-      label_en: '1.20x Leverage Cap',
-      label_zh: '1.20x 杠杆红线',
-      value_en: `<= 1.200x · Box ${boxRatePct.toFixed(2)}%`,
-      value_zh: `<= 1.200x · Box ${boxRatePct.toFixed(2)}%`,
-      detail_en: `100% QQQ + 10% DBMF + 10% KMLM (EFFR ${effrPct.toFixed(2)}% + 35bp)`,
-      detail_zh: `100% QQQ + 10% DBMF + 10% KMLM（EFFR ${effrPct.toFixed(2)}% + 35bp）`,
+      label_en: 'Box Leverage (No Crash Cap)',
+      label_zh: 'Box 杠杆（无底部砍仓）',
+      value_en: `Live ${liveLev.toFixed(2)}x · Box ${boxRatePct.toFixed(2)}%`,
+      value_zh: `实时 ${liveLev.toFixed(2)}x · Box ${boxRatePct.toFixed(2)}%`,
+      detail_en: `Natural drift <= ${peakDriftLev.toFixed(2)}x · PM Call ${pmCrashLivePct}% · Qtrly 1.20x`,
+      detail_zh: `允许自然漂移 <= ${peakDriftLev.toFixed(2)}x · PM强平垫 ${pmCrashLivePct}% · 平稳季调 1.20x`,
     },
     {
       id: 'sleeve_a',
       status_code: sleeveAStatus,
       tone: sleeveATone,
-      label_en: '0.2% Baseline Put',
-      label_zh: '0.2% 常态盾',
+      label_en: 'B020 Baseline (0.20%)',
+      label_zh: 'B020 常态盾 (0.20%)',
       value_en: sleeveAValEn,
       value_zh: sleeveAValZh,
       detail_en: sleeveADetEn,
@@ -1605,8 +1661,8 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
       id: 'sleeve_b',
       status_code: sleeveBStatus,
       tone: sleeveBTone,
-      label_en: '1.0% Three-Pillar Put',
-      label_zh: '1.0% 三支柱危机盾',
+      label_en: 'M7G Ladder (1-3 x 1.25%)',
+      label_zh: 'M7G 阶梯盾 (1-3x1.25%)',
       value_en: sleeveBValEn,
       value_zh: sleeveBValZh,
       detail_en: sleeveBDetEn,
@@ -1697,15 +1753,30 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
           exact_strike: strike15Exact,
           suggested_strike: strike15Round,
           budget_sleeve_a_pct: 0.2,
-          budget_sleeve_b_pct: 1.0,
+          budget_sleeve_b_pct: 1.25,
+          budget_sleeve_b_slot_pct: 1.25,
+          max_slots: 3,
+          max_budget_sleeve_b_pct: 3.75,
+        },
+        route2_m4_90d_15otm: {
+          target_dte: 90,
+          roll_dte: 30,
+          recycle_dte: 30,
+          otm_pct: -15,
+          exact_strike: strike15Exact,
+          suggested_strike: strike15Round,
+          budget_sleeve_b_pct: 1.25,
+          budget_sleeve_b_slot_pct: 1.25,
         },
         route2_m4_90d_10otm: {
           target_dte: 90,
+          roll_dte: 30,
           recycle_dte: 30,
-          otm_pct: -10,
-          exact_strike: strike10Exact,
-          suggested_strike: strike10Round,
-          budget_sleeve_b_pct: 1.0,
+          otm_pct: -15,
+          exact_strike: strike15Exact,
+          suggested_strike: strike15Round,
+          budget_sleeve_b_pct: 1.25,
+          budget_sleeve_b_slot_pct: 1.25,
         },
       },
     },
@@ -1767,32 +1838,59 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
         dual_cta_ret_since_ath_pct: ctaAthPct,
         rotation_rule_en: 'Sell 5 equal tranches (20% each) spaced 5 trading days apart -> buy QQQ immediately (cancel remaining if QQQ DD > -12.0%).',
         rotation_rule_zh: '确认后分 5 批等额（每批 20%、间隔 5 交易日）卖出盈利 CTA 并即时买 QQQ（回撤缩窄至 > -12% 立即终止剩余批次）。',
-        restore_rule_en: 'Mechanically hold rotated QQQ for 365 calendar days before restoring 10% DBMF + 10% KMLM (<= 1.200x cap).',
-        restore_rule_zh: '机械持有换入的 QQQ 满 1 年（365 自然日）后再恢复 10% DBMF + 10% KMLM（严守 <= 1.200x 杠杆红线）。',
+        restore_rule_en: 'Mechanically hold rotated QQQ for 365 calendar days (US LTCG lock) before restoring 10% DBMF + 10% KMLM (1.200x target).',
+        restore_rule_zh: '机械持有换入的 QQQ 满 1 年（365 自然日 LTCG 锁定）后再恢复 10% DBMF + 10% KMLM（季调校准回 1.200x）。',
       },
       leverage_guard: {
-        hard_cap: 1.2,
+        daily_forced_delev_cap: false,
+        hard_cap: null,
         target_gross: 1.2,
+        live_gross_leverage: liveLev,
+        live_ltv_pct: liveLtvPct,
+        observed_peak_drift_11y: r3(Number(peakDriftLev)),
         target_qqq_pct: 100.0,
         target_dbmf_pct: 10.0,
         target_kmlm_pct: 10.0,
         target_debt_pct: 20.0,
         init_ltv_pct: 16.67,
-        reg_t_crash_cushion_pct: -77.78,
+        ibkr_pm_maint_pct: 15.0,
+        ibkr_pm_crash_cushion_pct: pmCrashLivePct,
+        ibkr_pm_nominal_cushion_pct: crashToCallPctJS(1.2, 0.15),
+        reg_t_maint_pct: 25.0,
+        reg_t_crash_cushion_pct: regTCrashLivePct,
+        reg_t_nominal_cushion_pct: crashToCallPctJS(1.2, 0.25),
         effr_pct: effrPct,
         box_rate_pct: boxRatePct,
         ibkr_rate_pct: ibkrRatePct,
+        box_annual_drag_pct_nav: boxAnnualDragPct,
+        policy_en: 'NO daily 1.20x forced crash deleveraging cap (natural drift up to approx 1.26x avoids crash-bottom QQQ liquidations; quarterly calm calibration restores 1.20x).',
+        policy_zh: '取消每日 1.20x 强制去杠杆砍仓线（崩盘期允许自然漂移至约 1.26x，绝不在底部割肉 QQQ；平稳无锁仓期按季校准回 1.20x）。',
       },
     },
     three_pillars: {
       ...stressPack,
       raw_crisis_prob: rawCrisisProb,
+      raw_target_slots: rawTargetSlots,
       entry_crisis_prob: entryCrisisProb,
       non_m4_entry_prob: nonM4EntProb,
+      actionable_m7g_slots: actionableSlots,
+      actionable_m7g_budget_pct: actionableBudgetPct,
       m4_entry_triggered: m4Ent,
       vol_gate_status: volGateStatus,
       vol_gate_reason_en: volGateReasonEn,
       vol_gate_reason_zh: volGateReasonZh,
+      m7g_ladder_and_bleed: {
+        tier_ladder: 'M7G_tier_45_65',
+        budget_per_slot_pct: 1.25,
+        max_slots: 3,
+        max_budget_pct: 3.75,
+        raw_target_slots: rawTargetSlots,
+        actionable_slots: actionableSlots,
+        actionable_budget_pct: actionableBudgetPct,
+        thresholds: { slot1: 35, slot2: 45, slot3: 65 },
+        uniform_otm_pct: -15,
+        ...rollStats,
+      },
       post_tp_lockout: {
         active: postTpLock,
         non_inv_streak: tpLockStreak,
@@ -1803,35 +1901,49 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
         status: sleeveAStatus,
         contango_streak: contangoStreak,
         target_days: 5,
-        vix_ok: vix < 20.0,
+        vix_ok: vix <= 20.0,
+        vr_ok: vr < 1.02,
         vix,
         vix_max: 20.0,
         vr,
+        vr_max: 1.02,
       },
       pillars,
     },
     tp_and_microstructure: {
       tier1_partial: {
-        rule_en: 'Return >= 5.0x AND VIX/VIX3M < 1.00 -> take 50% partial TP starting from shortest-DTE tranche.',
-        rule_zh: '持仓回报 >= 5.0x 且 VIX/VIX3M < 1.00 -> 优先止盈最短剩余到期仓位的 50%。',
+        mode: 'late_5x_full_tp',
+        rule_en: 'Late 5x TP: Remaining DTE <= 60D (Base) / <= 45D (Crisis) AND Option ROI >= 5.0x -> 100% liquidate at T+1 Close.',
+        rule_zh: '晚段 5x 止盈：剩余到期 <= 60D（常态盾）/ <= 45D（危机盾）且期权回报 >= 5.0x -> T+1 100% 清仓。',
+        dte_limit_base: 60,
+        dte_limit_crisis: 45,
+        roi_mult_target: 5.0,
         contango_ok: vr < 1.0,
         vr,
       },
       tier2_full: {
+        mode: 'tp_near_itm_or_vix45',
         triggered_today: tpFullTriggered,
         vr_ok: tpFullVrOk,
-        dd_ok: tpFullDdOk,
+        near_itm_ok: nearItmOk,
+        vix_panic_ok: tpVixPanicOk,
+        dd_ok: nearItmOk,
         vr,
         vr_target: 1.1,
         vr_gap: r3(1.1 - vr),
+        vix,
+        vix_panic_target: 45.0,
+        ref_strike: refStrikeForTp,
+        near_itm_spot_target: nearItmThresholdSpot,
         dd_pct: ddAthPct,
-        dd_target: -10.0,
-        dd_gap_pp: r2(ddAthPct - -10.0),
-        rule_en: 'VIX/VIX3M >= 1.10 AND QQQ ATH Drawdown <= -10.0% -> Liquidate 100% of ALL active puts.',
-        rule_zh: 'VIX/VIX3M >= 1.10 且 QQQ 距历史高点回落 <= -10.0% -> 100% 全额清仓所有活跃 Put。',
+        dd_target: -11.0,
+        dd_gap_pp: r2(ddAthPct - -11.0),
+        rule_en: 'Full Right-Tail TP: (VIX/VIX3M >= 1.10 AND QQQ <= 1.05 x Strike [Near-ITM]) OR VIX >= 45.0 -> 100% liquidate ALL active puts.',
+        rule_zh: '右尾全额止盈：（VIX/VIX3M >= 1.10 且 QQQ <= 1.05 倍行权价 [近实值]）或 VIX >= 45.0 -> 100% 全额清仓所有活跃 Put。',
       },
-      deploy_5d_rule_en: 'Deploy realized TP cash equally over 5 trading days (1/5 per day) into QQQ; excess above 1.200x repays debt first.',
-      deploy_5d_rule_zh: '止盈现金分 5 个交易日等额（每日 1/5）分批买入 QQQ；超出 1.200x 杠杆上限的部分优先偿还借款。',
+      deploy_5d_rule_en: 'T+1 lump-sum 100% immediate reinvestment into QQQ (never 5D tranche-lagged) + 5D Post-TP Contango Lockout (VIX/VIX3M < 1.00 for 5 consecutive days) on BOTH books.',
+      deploy_5d_rule_zh: '止盈收益 T+1 一次性 100% 全额回买 QQQ（杜绝分批踏空），并对常态与危机双账本开启止盈后 5 日正向期限结构锁仓（连续 5 日 VIX/3M < 1.00 解锁）。',
+      roll_economics: rollStats,
       metrics: {
         vix,
         vxn,
@@ -1857,6 +1969,7 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
           cboe_skew_p75: Number(row.skew_p75),
         },
         put_125d_15otm: {
+          otm_pct: -15,
           strike: row.p125_k != null ? Number(row.p125_k) : strike15Round,
           dte: row.p125_dte != null ? Number(row.p125_dte) : 125,
           bid: row.p125_bid != null ? Number(row.p125_bid) : null,
@@ -1871,8 +1984,25 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
           put_to_lot_pct: row.p125_lot_pct != null ? Number(row.p125_lot_pct) : null,
           mid_to_lot_pct: row.p125_mid_pct != null ? Number(row.p125_mid_pct) : null,
         },
+        put_90d_15otm: {
+          otm_pct: -15,
+          strike: row.p90_k != null ? Number(row.p90_k) : strike15Round,
+          dte: row.p90_dte != null ? Number(row.p90_dte) : 90,
+          bid: row.p90_bid != null ? Number(row.p90_bid) : null,
+          ask: row.p90_ask != null ? Number(row.p90_ask) : null,
+          mid: row.p90_mid != null ? Number(row.p90_mid) : null,
+          ibkr_limit_buy: row.p90_lmt != null ? Number(row.p90_lmt) : null,
+          half_spread_pct: row.p90_hs != null ? Number(row.p90_hs) : null,
+          iv_pct: row.p90_iv != null ? Number(row.p90_iv) : null,
+          one_put_usd: row.p90_lmt != null ? r2(Number(row.p90_lmt) * 100) : null,
+          one_put_mid_usd: row.p90_mid != null ? r2(Number(row.p90_mid) * 100) : null,
+          one_lot_qqq_usd: r2(qqq * 100),
+          put_to_lot_pct: row.p90_lot_pct != null ? Number(row.p90_lot_pct) : null,
+          mid_to_lot_pct: row.p90_mid_pct != null ? Number(row.p90_mid_pct) : null,
+        },
         put_90d_10otm: {
-          strike: row.p90_k != null ? Number(row.p90_k) : strike10Round,
+          otm_pct: -15,
+          strike: row.p90_k != null ? Number(row.p90_k) : strike15Round,
           dte: row.p90_dte != null ? Number(row.p90_dte) : 90,
           bid: row.p90_bid != null ? Number(row.p90_bid) : null,
           ask: row.p90_ask != null ? Number(row.p90_ask) : null,
@@ -1955,6 +2085,13 @@ export function loadCrisisObservatoryDashboard({
   const effectiveAsOf = selectedRow.date;
   const isPitReplay = Boolean(requestedAsOf && effectiveAsOf < pitRows[pitRows.length - 1].date);
   const activeWin = artifactObj.unpackedWindows[winId];
+  const win11 = artifactObj.unpackedWindows['11y_opra'];
+  const rollEconRef = win11?.kpi_opra_verified_primary ?? win11?.kpi_primary ?? null;
+  const peakDriftLev = Number(win11?.kpi_primary?.peak_gross_leverage ?? 1.257);
+  const pitHistNow = buildPitHistoryForWindow(activeWin, effectiveAsOf);
+  const openStrikesNow = (pitHistNow?.active_puts_on_date ?? []).map(p => Number(p.strike)).filter(Number.isFinite);
+  const openStrikesFallback = (activeWin?.open_puts_at_end ?? []).map(p => Number(p.strike)).filter(Number.isFinite);
+  const liveGrossLevNow = pitHistNow?.nav_snapshot?.lev ?? null;
 
   const freshness = {
     market_as_of: effectiveAsOf,
@@ -1990,7 +2127,13 @@ export function loadCrisisObservatoryDashboard({
     }),
     ruleset: artifactObj.data.ruleset,
     data_freshness: freshness,
-    live_cockpit: buildLiveCockpit(selectedRow, { isPitReplay }),
+    live_cockpit: buildLiveCockpit(selectedRow, {
+      isPitReplay,
+      rollEcon: rollEconRef,
+      openStrikes: openStrikesNow.length ? openStrikesNow : openStrikesFallback,
+      liveGrossLev: liveGrossLevNow,
+      peakDriftLev,
+    }),
     backtest: {
       initial_capital: artifactObj.data.backtest.initial_capital,
       opra_provenance: artifactObj.data.backtest.opra_provenance,
@@ -2052,7 +2195,7 @@ function buildPitHistoryForWindow(activeWin, targetDate) {
   for (const t of putLedger) {
     eventDateSet.add(t.entry_date);
     eventDateSet.add(t.exit_date);
-    const isTp = String(t.exit_reason ?? '').startsWith('tp_');
+    const isTp = String(t.exit_reason ?? '').includes('tp_');
     if (isTp) {
       const prev = tpByDate.get(t.exit_date) ?? {
         date: t.exit_date,
@@ -2320,6 +2463,12 @@ export function loadCrisisObservatoryPitSnapshot({
   const nextDate = matchIdx + 1 < pitRows.length ? pitRows[matchIdx + 1].date : null;
   const latestDate = pitRows[pitRows.length - 1].date;
   const activeWin = artifactObj.unpackedWindows[winId];
+  const win11 = artifactObj.unpackedWindows['11y_opra'];
+  const rollEconRef = win11?.kpi_opra_verified_primary ?? win11?.kpi_primary ?? null;
+  const peakDriftLev = Number(win11?.kpi_primary?.peak_gross_leverage ?? 1.257);
+  const pitHistory = buildPitHistoryForWindow(activeWin, row.date);
+  const openStrikesOnDate = (pitHistory?.active_puts_on_date ?? []).map(p => Number(p.strike)).filter(Number.isFinite);
+  const liveGrossLevOnDate = pitHistory?.nav_snapshot?.lev ?? null;
 
   return {
     version: CRISIS_OBSERVATORY_VERSION,
@@ -2330,8 +2479,14 @@ export function loadCrisisObservatoryPitSnapshot({
     prev_date: prevDate,
     next_date: nextDate,
     latest_date: latestDate,
-    live_cockpit: buildLiveCockpit(row, { isPitReplay: row.date < latestDate }),
-    pit_history: buildPitHistoryForWindow(activeWin, row.date),
+    live_cockpit: buildLiveCockpit(row, {
+      isPitReplay: row.date < latestDate,
+      rollEcon: rollEconRef,
+      openStrikes: openStrikesOnDate,
+      liveGrossLev: liveGrossLevOnDate,
+      peakDriftLev,
+    }),
+    pit_history: pitHistory,
   };
 }
 
