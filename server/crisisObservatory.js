@@ -1322,9 +1322,9 @@ export function buildLiveCockpit(
   const boxAnnualDragPct = r2(0.2 * boxRatePct);
 
   const rollStats = {
-    gross_turnover_pct_nav_yr: Number(rollEcon?.put_gross_turnover_pct_nav_yr ?? 6.36),
-    roll_salvage_pct: Number(rollEcon?.put_roll_salvage_pct ?? 67.9),
-    true_net_bleed_pct_nav_yr: Number(rollEcon?.put_true_net_bleed_pct_nav_yr ?? 2.04),
+    gross_turnover_pct_nav_yr: Number(rollEcon?.put_gross_turnover_pct_nav_yr ?? 6.13),
+    roll_salvage_pct: Number(rollEcon?.put_roll_salvage_pct ?? 67.8),
+    true_net_bleed_pct_nav_yr: Number(rollEcon?.put_true_net_bleed_pct_nav_yr ?? 2.03),
     put_net_pnl_usd: Number(rollEcon?.put_net_pnl_usd ?? 121171.24),
     put_payoff_mult: Number(rollEcon?.put_payoff_mult ?? 1.58),
   };

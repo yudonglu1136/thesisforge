@@ -1487,9 +1487,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final actSlots = _n(tp['actionable_m7g_slots'])?.round() ?? 0;
     final actBud = _n(tp['actionable_m7g_budget_pct']) ?? (actSlots * 1.25);
     final m7Info = asMap(tp['m7g_ladder_and_bleed']);
-    final grossTurn = _n(m7Info['gross_turnover_pct_nav_yr']) ?? 6.36;
-    final salvPct = _n(m7Info['roll_salvage_pct']) ?? 67.9;
-    final netBleed = _n(m7Info['true_net_bleed_pct_nav_yr']) ?? 2.04;
+    final grossTurn = _n(m7Info['gross_turnover_pct_nav_yr']) ?? 6.13;
+    final salvPct = _n(m7Info['roll_salvage_pct']) ?? 67.8;
+    final netBleed = _n(m7Info['true_net_bleed_pct_nav_yr']) ?? 2.03;
     final vgStatus = text(tp['vol_gate_status']);
     final vgColor = vgStatus == 'ENTRY_ALLOWED'
         ? _mint
@@ -2237,9 +2237,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             Builder(
               builder: (_) {
                 final kOp = asMap(win['kpi_opra_verified_primary']);
-                final gTurn = _n(kOp['put_gross_turnover_pct_nav_yr']) ?? 6.36;
-                final rSalv = _n(kOp['put_roll_salvage_pct']) ?? 67.9;
-                final nBld = _n(kOp['put_true_net_bleed_pct_nav_yr']) ?? 2.04;
+                final gTurn = _n(kOp['put_gross_turnover_pct_nav_yr']) ?? 6.13;
+                final rSalv = _n(kOp['put_roll_salvage_pct']) ?? 67.8;
+                final nBld = _n(kOp['put_true_net_bleed_pct_nav_yr']) ?? 2.03;
                 return Wrap(
                   spacing: 8,
                   runSpacing: 6,
@@ -5032,8 +5032,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             const SizedBox(height: 12),
             Text(
               w(
-                'Single locked production ruleset verified on 11Y MIT Real OPRA (2015-01-02 to 2025-12-15: 22.76% CAGR / -24.31% MDD / 0.936 Calmar), 5Y Zero-Splice OPRA (2020-12-03 to 2025-12-15: 24.56% CAGR / -23.67% MDD / 1.038 Calmar), and extended through 2026-11-25 (\$1,007,160 / 21.43% CAGR).',
-                '全站唯一锁定实盘规则集：11年纯真实 MIT OPRA（2015-01-02 至 2025-12-15）实证 22.76% 年化 / -24.31% 最大回撤 / 0.936 Calmar；5年零拼接纯实盘窗口（2020-12-03 至 2025-12-15）24.56% 年化 / -23.67% 最大回撤 / 1.038 Calmar；平滑延伸至 2026-11-25 净值达 \$1,007,160（21.43% 年化）。',
+                'Single locked production ruleset verified on 11Y MIT Real OPRA (2015-01-02 to 2025-12-15: 22.54% CAGR / -24.31% MDD / 0.927 Calmar), 5Y Zero-Splice OPRA (2020-12-03 to 2025-12-15: 24.05% CAGR / -23.67% MDD / 1.016 Calmar), and extended through 2026-11-25 (\$987,611 / 21.23% CAGR).',
+                '全站唯一锁定实盘规则集：11年纯真实 MIT OPRA（2015-01-02 至 2025-12-15）实证 22.54% 年化 / -24.31% 最大回撤 / 0.927 Calmar；5年零拼接纯实盘窗口（2020-12-03 至 2025-12-15）24.05% 年化 / -23.67% 最大回撤 / 1.016 Calmar；平滑延伸至 2026-11-25 净值达 \$987,611（21.23% 年化）。',
               ),
               style: const TextStyle(
                 color: _fgMuted,
@@ -5120,8 +5120,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               ),
               bullets: [
                 w(
-                  'True Roll Cost vs Gross Turnover: Gross annual put turnover is 6.36% NAV/yr (11Y OPRA), NOT net bleed! Hard rolling at 75D (Base/Crisis) and 30D (M4) exits before steep final-month Theta collapse, recovering 67.9% salvage on non-TP rolls so True Net Roll Bleed is ONLY 2.04% NAV/yr — while net put PnL is +\$121,171 (1.58x payout ratio across 112 trades).',
-                  '真实净磨损审计（勿把总换手误读为亏损）：11年总期权名义换手 6.36% NAV/yr，但凭借 75D（常规/底盾）与 30D（M4）硬滚仓提前避开末月陡峭 Theta 衰减，非止盈滚仓平均回收 67.9% 残值，真实年化净滚仓成本仅 2.04% NAV/yr；全期权账本净赚 +\$121,171（112 笔总赔付比 1.58x）。',
+                  'True Roll Cost vs Gross Turnover: Gross annual put turnover is 6.13% NAV/yr (11Y OPRA), NOT net bleed! Hard rolling at 75D (Base/Crisis) and 30D (M4) exits before steep final-month Theta collapse, recovering 67.8% salvage on non-TP rolls so True Net Roll Bleed is ONLY 2.03% NAV/yr — while net put PnL is +\$110,222 (1.56x payout ratio across 110 trades).',
+                  '真实净磨损审计（勿把总换手误读为亏损）：11年总期权名义换手 6.13% NAV/yr，但凭借 75D（常规/底盾）与 30D（M4）硬滚仓提前避开末月陡峭 Theta 衰减，非止盈滚仓平均回收 67.8% 残值，真实年化净滚仓成本仅 2.03% NAV/yr；全期权账本净赚 +\$110,222（110 笔总赔付比 1.56x）。',
                 ),
                 w(
                   'Full Take-Profit (100% Liquidate): Triggered when (VIX/VIX3M >= 1.10 AND QQQ <= 1.05 x Strike [Near-ITM]) OR VIX >= 45.0. Late 5x Take-Profit: Remaining DTE <= 60D (Base) or <= 45D (Crisis) AND option ROI >= 5.0x -> 100% liquidate.',

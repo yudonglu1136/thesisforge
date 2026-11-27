@@ -53,18 +53,18 @@ test('loads clean v3.0 Double-Champion (Plan D) payload with real MIT OPRA 11Y &
   const k11Qqq = doc.backtest.window_kpis['11y_opra'].kpi_qqq;
   assert.equal(doc.backtest.opra_provenance.quotes_count, 6382288);
   assert.equal(doc.backtest.opra_provenance.bsm_calibration.fit_quotes_count, 1500755);
-  assert.equal(k11Opra.end_nav, 944612.24);
-  assert.equal(k11Opra.cagr_pct, 22.76);
+  assert.equal(k11Opra.end_nav, 926278.08);
+  assert.equal(k11Opra.cagr_pct, 22.54);
   assert.equal(k11Opra.max_dd_pct, -24.31);
-  assert.equal(k11Opra.calmar, 0.936);
-  assert.equal(k11Opra.put_gross_turnover_pct_nav_yr, 6.36);
-  assert.equal(k11Opra.put_roll_salvage_pct, 67.9);
-  assert.equal(k11Opra.put_true_net_bleed_pct_nav_yr, 2.04);
-  assert.equal(k11.end_nav, 1007159.55);
-  assert.equal(k11.cagr_pct, 21.43);
+  assert.equal(k11Opra.calmar, 0.927);
+  assert.equal(k11Opra.put_gross_turnover_pct_nav_yr, 6.13);
+  assert.equal(k11Opra.put_roll_salvage_pct, 67.8);
+  assert.equal(k11Opra.put_true_net_bleed_pct_nav_yr, 2.03);
+  assert.equal(k11.end_nav, 987611.4);
+  assert.equal(k11.cagr_pct, 21.23);
   assert.equal(k11.max_dd_pct, -24.31);
-  assert.equal(k11.calmar, 0.881);
-  assert.equal(k11.peak_gross_leverage, 1.257);
+  assert.equal(k11.calmar, 0.873);
+  assert.equal(k11.peak_gross_leverage, 1.2582);
   assert.equal(k11.put_trades_m4, 3);
   assert.equal(k11.cta_rotation_count, 10);
   assert.ok(k11Stress.end_nav > k11Qqq.end_nav, 'Even stress Ask/Bid + IBKR 150bp must beat QQQ');
@@ -76,14 +76,14 @@ test('loads clean v3.0 Double-Champion (Plan D) payload with real MIT OPRA 11Y &
   const k5 = doc5.backtest.active_window.kpi_primary;
   const k5Opra = doc5.backtest.active_window.kpi_opra_verified_primary;
   assert.equal(doc5.backtest.active_window.zero_splice, true);
-  assert.equal(k5Opra.end_nav, 301989.15);
-  assert.equal(k5Opra.cagr_pct, 24.56);
+  assert.equal(k5Opra.end_nav, 295807.52);
+  assert.equal(k5Opra.cagr_pct, 24.05);
   assert.equal(k5Opra.max_dd_pct, -23.67);
-  assert.equal(k5Opra.calmar, 1.038);
-  assert.equal(k5.end_nav, 321985.31);
-  assert.equal(k5.cagr_pct, 21.61);
+  assert.equal(k5Opra.calmar, 1.016);
+  assert.equal(k5.end_nav, 315394.35);
+  assert.equal(k5.cagr_pct, 21.19);
   assert.equal(k5.max_dd_pct, -23.67);
-  assert.equal(k5.calmar, 0.913);
+  assert.equal(k5.calmar, 0.895);
   assert.equal(k5.peak_gross_leverage, 1.2493);
   assert.equal(k5.put_trades_m4, 3);
 });
@@ -130,7 +130,7 @@ test('computes real-time Dual-Track Stress vs M7G Slots, Natural-Drift Box Guard
   assert.equal(pitCta.live_cockpit.dual_cta_radar.cont_2m_timer.dbmf_positive_since_ath, true);
   assert.equal(pitCta.live_cockpit.dual_cta_radar.cont_2m_timer.kmlm_positive_since_ath, true);
 
-  // Historical PIT 2025-04-07: Real OPRA 4-Put Right-Tail TP Harvest (3 M7G + 1 Base), Skew Ratio & 1-Put/1-Lot QQQ ratio
+  // Historical PIT 2025-04-07: Real OPRA 3-Put Right-Tail TP Harvest (2 M7G + 1 Base after roll slot-cap bug fix)
   const pitOpraTp = loadCrisisObservatoryPitSnapshot({ date: '2025-04-07', window: '5y_live' });
   const op = pitOpraTp.live_cockpit.tp_and_microstructure.option_pricing;
   assert.equal(op.quote_source, 'real_opra');
@@ -139,8 +139,8 @@ test('computes real-time Dual-Track Stress vs M7G Slots, Natural-Drift Box Guard
   assert.ok(op.put_90d_15otm.put_to_lot_pct > 0.5 && op.put_90d_15otm.put_to_lot_pct < 10.0);
   assert.equal(pitOpraTp.pit_history.window_id, '5y_live');
   const tpEvents0407 = pitOpraTp.pit_history.events_on_date.filter(e => e.action === 'PUT_TP');
-  assert.equal(tpEvents0407.length, 4, 'All 3 M7G slots + 1 Base slot must harvest on 2025-04-07');
-  assert.ok(tpEvents0407.some(e => e.roi_mult >= 4.9));
+  assert.equal(tpEvents0407.length, 3, 'Exactly 2 legitimate M7G slots + 1 Base slot must harvest on 2025-04-07');
+  assert.ok(tpEvents0407.some(e => e.roi_mult >= 6.3));
   assert.ok(pitOpraTp.pit_history.tp_dates.some(t => t.date === '2025-04-07'));
 
   // Historical PIT 2025-02-20: Active open puts held prior to 2025-04-07 TP

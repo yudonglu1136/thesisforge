@@ -37,8 +37,8 @@ Exact Locked Plan D Strategy ("Double-Champion · Full-Blooded Taleb Core + User
 
 Windows Verified on Real MIT OPRA Quotes (6,382,288 real 16:00 ET QQQ put quotes across 2,749 OPRA days)
 + OPRA-Residual-Calibrated Z-Surface BSM Extension through 2026-11-25:
-  - 11Y Real MIT OPRA (2015-01-02 -> 2025-12-15): 22.76% CAGR / -24.31% MDD / 0.936 Calmar
-  - 5Y Zero-Splice Live (2020-12-03 -> 2025-12-15): 24.56% CAGR / -23.67% MDD / 1.038 Calmar
+  - 11Y Real MIT OPRA (2015-01-02 -> 2025-12-15): 22.54% CAGR / -24.31% MDD / 0.927 Calmar
+  - 5Y Zero-Splice Live (2020-12-03 -> 2025-12-15): 24.05% CAGR / -23.67% MDD / 1.016 Calmar
   - Extended continuously through 2026-11-25 via OPRA-residual-calibrated Z-surface BSM + half-spread model.
 """
 from __future__ import annotations
@@ -1010,11 +1010,12 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
 
             # 1A. Pending T+1 Close Exits for Book M (Crisis M7G)
             if i > 0 and m7_active:
-                still_m7 = []
+                # Pre-filter surviving (non-exiting) tranches BEFORE evaluating roll slot caps
+                # so older tranches at index 0 cannot overlook younger surviving tranches.
+                still_m7 = [t for t in m7_active if not t["pending_exit"]]
                 m7_roll_reps: list[tuple[float, int, bool]] = []
                 for tr in m7_active:
                     if not tr["pending_exit"]:
-                        still_m7.append(tr)
                         continue
                     rem_d = max(0, (tr["exp_dt"] - dt_objs[i]).days)
                     bid, ask, mid, iv, dl, src, trade_qsrc = _lookup_contract(d, tr, cl, rem_d, row_i)
@@ -1045,12 +1046,11 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
 
             # 1B. Pending T+1 Close Exits for Book B (0.20% Base Floor)
             if i > 0 and base_active:
-                still_base = []
+                still_base = [t for t in base_active if not t["pending_exit"]]
                 base_roll_cash = 0.0
                 want_base_reopen = False
                 for tr in base_active:
                     if not tr["pending_exit"]:
-                        still_base.append(tr)
                         continue
                     rem_d = max(0, (tr["exp_dt"] - dt_objs[i]).days)
                     bid, ask, mid, iv, dl, src, trade_qsrc = _lookup_contract(d, tr, cl, rem_d, row_i)
@@ -1059,7 +1059,7 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
                     sell_px = rb.exec_sell_price(bid, ask, mid, exec_mode)
                     ex_usd = _record_exit(tr, i, rem_d, bid, ask, mid, sell_px, trade_qsrc)
                     if tr["exit_reason"] == "roll_75d":
-                        if bool(base_gate_w[i - 1]) and (not want_base_reopen) and (not base_locked_prev_eod):
+                        if bool(base_gate_w[i - 1]) and len(still_base) == 0 and (not want_base_reopen) and (not base_locked_prev_eod):
                             want_base_reopen = True
                             base_roll_cash += ex_usd
                         elif ex_usd > 1e-10:

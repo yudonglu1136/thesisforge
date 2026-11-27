@@ -54,35 +54,47 @@ def test_v3_plan_d_artifact_benchmarks_and_strict_hygiene():
     assert w11["opra_cutoff_date"] == "2025-12-15"
     assert w11["end_date"] == "2026-11-25"
     assert w11["sim_extension_days"] == 238
-    # Exact verified Plan D Real MIT OPRA segment (2015-01-02 -> 2025-12-15)
-    assert w11["kpi_opra_verified_primary"]["end_nav"] == 944612.24
-    assert w11["kpi_opra_verified_primary"]["cagr_pct"] == 22.76
+    # Exact verified Plan D Real MIT OPRA segment (2015-01-02 -> 2025-12-15, strict pre-filtered roll slot cap)
+    assert w11["kpi_opra_verified_primary"]["end_nav"] == 926278.08
+    assert w11["kpi_opra_verified_primary"]["cagr_pct"] == 22.54
     assert w11["kpi_opra_verified_primary"]["max_dd_pct"] == -24.31
-    assert w11["kpi_opra_verified_primary"]["calmar"] == 0.936
-    assert w11["kpi_opra_verified_primary"]["put_gross_turnover_pct_nav_yr"] == 6.36
-    assert w11["kpi_opra_verified_primary"]["put_roll_salvage_pct"] == 67.9
-    assert w11["kpi_opra_verified_primary"]["put_true_net_bleed_pct_nav_yr"] == 2.04
+    assert w11["kpi_opra_verified_primary"]["calmar"] == 0.927
+    assert w11["kpi_opra_verified_primary"]["put_gross_turnover_pct_nav_yr"] == 6.13
+    assert w11["kpi_opra_verified_primary"]["put_roll_salvage_pct"] == 67.8
+    assert w11["kpi_opra_verified_primary"]["put_true_net_bleed_pct_nav_yr"] == 2.03
     # Full continuous window through 2026-11-25 (real spot + OPRA-residual-calibrated BSM extension)
-    assert w11["kpi_primary"]["end_nav"] == 1007159.55
-    assert w11["kpi_primary"]["cagr_pct"] == 21.43
+    assert w11["kpi_primary"]["end_nav"] == 987611.40
+    assert w11["kpi_primary"]["cagr_pct"] == 21.23
     assert w11["kpi_primary"]["max_dd_pct"] == -24.31
-    assert w11["kpi_primary"]["calmar"] == 0.881
-    assert w11["kpi_primary"]["peak_gross_leverage"] == 1.257
+    assert w11["kpi_primary"]["calmar"] == 0.873
+    assert w11["kpi_primary"]["peak_gross_leverage"] == 1.2582
     assert w11["kpi_primary"]["put_trades_m4"] == 3
     assert w11["kpi_primary"]["cta_rotation_count"] == 10
     assert len(w11["crisis_comparison"]) == 9
     assert len(w11["latch_episodes"]) == 1
 
+    # Regression guard for roll loop-order slot-cap bug:
+    # On 2025-01-07 (prev_cap=1 while T#104 remained open), no excess crisis roll may open,
+    # and 2025-04-07 must harvest 3 legitimate puts (2 crisis + 1 base) rather than 4.
+    pl11 = w11["put_ledger"]
+    if isinstance(pl11, dict) and "_cols" in pl11:
+        pl11 = [dict(zip(pl11["_cols"], r)) for r in pl11["_rows"]]
+    assert not any(
+        p["entry_date"] == "2025-01-07" and p["sleeve"] != "base" for p in pl11
+    ), "Roll loop-order bug regression: excess crisis roll opened on 2025-01-07 while cap=1"
+    tp_0407 = [p for p in pl11 if p["exit_date"] == "2025-04-07" and "tp_" in p["exit_reason"]]
+    assert len(tp_0407) == 3, f"Expected 3 legitimate TP puts on 2025-04-07, got {len(tp_0407)}"
+
     w5 = doc["backtest"]["windows"]["5y_live"]
     assert w5["zero_splice"] is True
     assert w5["end_date"] == "2026-11-25"
     # Exact verified Plan D 5Y Zero-Splice Real MIT OPRA segment (2020-12-03 -> 2025-12-15)
-    assert w5["kpi_opra_verified_primary"]["end_nav"] == 301989.15
-    assert w5["kpi_opra_verified_primary"]["cagr_pct"] == 24.56
+    assert w5["kpi_opra_verified_primary"]["end_nav"] == 295807.52
+    assert w5["kpi_opra_verified_primary"]["cagr_pct"] == 24.05
     assert w5["kpi_opra_verified_primary"]["max_dd_pct"] == -23.67
-    assert w5["kpi_opra_verified_primary"]["calmar"] == 1.038
-    assert w5["kpi_primary"]["end_nav"] == 321985.31
-    assert w5["kpi_primary"]["cagr_pct"] == 21.61
+    assert w5["kpi_opra_verified_primary"]["calmar"] == 1.016
+    assert w5["kpi_primary"]["end_nav"] == 315394.35
+    assert w5["kpi_primary"]["cagr_pct"] == 21.19
     assert w5["kpi_primary"]["max_dd_pct"] == -23.67
-    assert w5["kpi_primary"]["calmar"] == 0.913
+    assert w5["kpi_primary"]["calmar"] == 0.895
     assert w5["kpi_primary"]["peak_gross_leverage"] == 1.2493
