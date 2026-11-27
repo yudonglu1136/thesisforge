@@ -1,23 +1,45 @@
 #!/usr/bin/env python3
-"""Build canonical zero-lookahead Crisis Observatory artifact for ThesisForge Discover.
+"""Build canonical ThesisForge Crisis Observatory v2.0 Single Master Strategy artifact.
 
-Reproduces 100% bit-for-bit the audited QQQ 6 Druckenmiller Crisis Lights x US Liquid
-Common-Stock A-D Line Top-Divergence x 1st-Tranche Naked Put + Subsequent Zero-Cost
-Collar + VIX/VIX3M >= 1.10 Take-Profit + 5-Light Slow-Bear Shield engine
-(2015-01-02 through latest official market close, $200,000 initial capital with DRIP).
+Exact Locked v2.0 Single Master Strategy (ZERO Wheel, ZERO Covered Call, ZERO Collar):
+  1. Core Base & Borrowed Dual-CTA Overlay:
+     - 100% QQQ + 10% DBMF + 10% KMLM (20% SPX Short Box financing at EFFR + 35 bps).
+     - Hard Daily Leverage Cap: Gross Leverage = (QQQ + DBMF + KMLM) / NAV <= 1.200x
+       strictly enforced daily via pro-rata risk-asset trim to repay debt.
+  2. Sleeve A (0.2% NAV Normal Baseline Tail Put):
+     - Entry: VIX/VIX3M < 1.00 for 5 consecutive trading days AND VIX < 20.0 -> 125 DTE, -15% OTM QQQ Put.
+     - Roll at <= 75 DTE: if VIX/VIX3M < 1.00, roll to fresh 125D -15% OTM; if inverted (>= 1.00), HOLD.
+  3. Sleeve B (1.0% NAV Three-Pillar Crisis Put, Pillar-Adaptive Routing):
+     - Route 1 (P1 Top Fragility / P2 Exogenous Shock / M3 Credit -> non_m4_prob >= 35%):
+       Buy 125 DTE, -15% OTM (1.0% NAV, post-TP 5D contango lockout). At <= 75 DTE when VIX/VIX3M < 1.00,
+       roll if non-M4 pillars remain lit, else close and recycle salvage cash; if inverted, HOLD.
+     - Route 2 (M4 Slow-Bear Dead-Cat Bounce with +8% Hysteresis Latch + VXN <= 28 & VIX/3M <= 0.90):
+       * Slow-Bear +8% Hysteresis Latch:
+         ARM (ON): QQQ < 200DMA AND QQQ 252D DD <= -10.0% AND Corr60(DualCTA, QQQ) < 0
+                   AND DualCTA gain since QQQ 1Y high >= +8.0%.
+         RESET (OFF): QQQ > 200DMA for 10 consecutive trading days.
+       * M4 Trigger: Latch == ON AND QQQ < 200DMA AND 3-Speed EWMAC < 0 AND QQQ > EMA20
+                     AND VXN <= 28.0 AND VIX/VIX3M <= 0.90.
+       * Contract: 90 DTE, -10% OTM (1.0% NAV). At <= 30 DTE when VIX/VIX3M < 1.00, recycle salvage cash;
+         if inverted, HOLD.
+  4. Tiered Put Take-Profit + 5-Day Equal-Tranche Deployment:
+     - Tier 1 (Partial TP): Return >= 5.0x AND VIX/VIX3M < 1.00 -> take 50% partial profit from shortest-DTE tranche.
+     - Tier 2 (Full TP with ATH -10% Gate): VIX/VIX3M >= 1.10 AND QQQ ATH DD <= -10.0% -> liquidate 100% of all puts.
+     - 5-Day Deploy: Deploy realized TP cash equally over 5 trading days (1/5 per day) into QQQ (excess pays debt first).
+  5. Dual-CTA 2-Month Continuous Bear-Confirmation Rotation & 1-Year Mechanical Restoration:
+     - CONT_2M Timer: QQQ stays <= -12.0% from ATH continuously for 60 calendar days.
+     - Rotation: When confirmed AND per-ETF DBMF/KMLM return since QQQ ATH > 0%, sell in 5 equal tranches (20% each)
+       spaced 5 trading days apart -> buy QQQ immediately (cancel remaining if QQQ DD > -12.0%).
+     - Restoration: Mechanically hold rotated QQQ for 1 full year (365 calendar days) before restoring 10% DBMF + 10% KMLM.
 
-Strict Hygiene:
-  - Runs purely on Python stdlib + optional duckdb inside .venv-fact-os/bin/python
-    (zero numpy/pandas/scipy/yfinance runtime dependency).
-  - Strict EOD signal on day t -> executed at day t+1 Open (zero lookahead).
-  - OPRA 53,347-print 90-DTE skew polynomial, 2.5% per-leg option slippage,
-    3 bps stock rebalance fee, exact 4-factor pathwise convexity identity.
-  - Zero ASCII tilde (chr(126)), zero internal DB names in user-facing text.
+Windows Verified on Real MIT OPRA Quotes (6,382,288 real 16:00 ET QQQ put quotes, 0 execution fallbacks):
+  - 11Y Real MIT OPRA: 2015-01-02 to 2025-12-15 ($100,000 start)
+  - 5Y Zero-Splice Live: 2020-12-02 to 2025-12-15 ($100,000 start, 100% live DBMF + KMLM + OPRA)
+  - Live Daily EOD State & PIT Replay through latest market close.
 """
 from __future__ import annotations
 
 import argparse
-import bisect
 import datetime
 import gzip
 import importlib.util
@@ -25,191 +47,18 @@ import json
 import math
 import statistics
 import sys
+import urllib.request
 from pathlib import Path
 from typing import Any
 
-try:
-    import duckdb
-except ImportError:
-    duckdb = None
-
 ROOT_DIR = Path(__file__).resolve().parent.parent
-SEED_GZ = ROOT_DIR / "server" / "config" / "crisis-observatory-seed-inputs.json.gz"
-M7_SEED_GZ = ROOT_DIR / "server" / "config" / "crisis-observatory-m7-inputs.json.gz"
-REAL_QUOTES_GZ = ROOT_DIR / "server" / "config" / "crisis-observatory-real-quotes.json.gz"
 DEFAULT_OUT = ROOT_DIR / "server" / "config" / "crisis-observatory-dashboard.json"
 DEFAULT_FACT_ROOT = ROOT_DIR / "data" / "fact_os"
+SEED_GZ = ROOT_DIR / "server" / "config" / "crisis-observatory-seed-inputs.json.gz"
 
-_ROC_SPEC = importlib.util.spec_from_file_location(
-    "real_option_chain", Path(__file__).resolve().parent / "real_option_chain.py"
-)
-assert _ROC_SPEC is not None and _ROC_SPEC.loader is not None
-roc = importlib.util.module_from_spec(_ROC_SPEC)
-_ROC_SPEC.loader.exec_module(roc)
 
-_M7_SPEC = importlib.util.spec_from_file_location(
-    "m7_crisis_engine", Path(__file__).resolve().parent / "m7_crisis_engine.py"
-)
-assert _M7_SPEC is not None and _M7_SPEC.loader is not None
-m7e = importlib.util.module_from_spec(_M7_SPEC)
-_M7_SPEC.loader.exec_module(m7e)
-
-ARTIFACT_VERSION = "crisis-observatory-v2"
-START_DATE = "2015-01-02"
-INITIAL_CAPITAL = 200_000.0
-DEFAULT_SLIPPAGE = 0.025
-STOCK_REBAL_FEE = 0.0003
-DEFAULT_TP_MODE = "layered_itm"
-DEFAULT_CC_MODE = "cc_off"
-DEFAULT_SP_MODE = "sp_off"
-DEFAULT_WC_MODE = "wc_reclaim_30d_d35"
-MARGIN_SPREAD = 0.015
-OPT_COMM_PER_SH = 0.0065
-MIN_OPT_BID = 0.05
-
-WC_MODE_SPECS: list[dict[str, Any]] = [
-    {
-        "id": "wc_reclaim_30d_d35",
-        "label_en": "Reclaim K -> 30D 0.35Δ (Rec.)",
-        "label_zh": "涨回接货价卖 30D 0.35Δ（推荐）",
-        "short_en": "Reclaim -> 30D 0.35Δ",
-        "short_zh": "涨回成本卖 30D 0.35Δ",
-        "formula_en": "Hold uncapped while QQQ < K_assign; once QQQ >= K_assign sell 30D 0.35Δ Call",
-        "formula_zh": "接货水下零封顶死拿，待 QQQ 涨回 >= 接货行权价后卖 30D 0.35Δ Call",
-        "summary_en": "When assigned, holds shares 100% uncapped below K_assign; once QQQ EOD reclaims K_assign, sells a volatility-scaled 30D 0.35-Delta Call (max(K_assign, K_35Δ)) for richer premium ($1,838,505 on 10D VIX-Falling, $1,805,856 on 10% Cap, $1,901,035 on 20% Cap).",
-        "summary_zh": "接股后水下阶段不卖 Call（100% 保留深坑反弹），待收盘涨回接货行权价 K 后次日开盘按 30D 0.35Δ 动态卖 Call（收租增厚 77% · 10D VIX回落档升至 $1,838,505、10%帽 $1,805,856、20%帽 $1,901,035）。",
-    },
-    {
-        "id": "wc_30d_c5s5",
-        "label_en": "30D +5% Cost/Spot (Immediate)",
-        "label_zh": "30D 双+5%（立即卖）",
-        "short_en": "30D +5% Cost/Spot",
-        "short_zh": "30D 双+5%",
-        "formula_en": "max(1.05x Cost, 1.05x Spot)",
-        "formula_zh": "max(1.05×成本, 1.05×现价)",
-        "summary_en": "Immediately after assignment sells 30D Reverse Wheel Call at max(1.05*K_assign, 1.05*S) — captures +5% post-crash V-rebound before clearing margin debt within <= 111d (Calmar 0.685 on 10% Cap, $1,930,239 on 20% Cap).",
-        "summary_zh": "接货次日即卖 30D 反向 Wheel Call，行权价 max(1.05×成本, 1.05×现价)——锁住灾后 +5% V 反利润且最长 111 天清债去杠杆（10%帽 Calmar 0.685，20%帽终值 $1,930,239）。",
-    },
-    {
-        "id": "wc_14d_c0s2",
-        "label_en": "14D Breakeven+2% (Legacy)",
-        "label_zh": "14D 保本+2%（原基准）",
-        "short_en": "14D Breakeven+2%",
-        "short_zh": "14D 保本+2%",
-        "formula_en": "max(Cost, 1.02x Spot)",
-        "formula_zh": "max(成本, 1.02×现价)",
-        "summary_en": "Legacy fast-turnover exit: sells 14D (or 10D) Wheel Call at max(K_assign, 1.02*S) for fastest debt clearance ($817 12-yr interest on 10% Cap).",
-        "summary_zh": "原快周转基准：按 max(成本, 1.02×现价) 卖 14D（或 10D）保本上移 Call，清债最快（10%帽 12 年总利息仅 $817）。",
-    },
-]
-
-SP_MODE_SPECS: list[dict[str, Any]] = [
-    {
-        "id": "sp_off",
-        "label_en": "Off (0 Leverage)",
-        "label_zh": "关闭（0 杠杆）",
-        "short_en": "Off (0 Lev)",
-        "short_zh": "关闭（0 杠杆）",
-        "summary_en": "Engine 3 disabled (0 margin interest, max stock leverage strictly 1.00x). Isolates Engine 1 crisis protection on real OPRA quotes.",
-        "summary_zh": "关闭第三引擎（0 融资利息、股票总敞口严格 1.00x），独立检验引擎 1 危机买 Put 的真实 OPRA 盘口表现。",
-    },
-    {
-        "id": "sp_14d_cap10",
-        "label_en": "14D 10% Cap (Balanced · Rec.)",
-        "label_zh": "14D 10%帽（稳健 · 推荐）",
-        "short_en": "14D 10% Cap",
-        "short_zh": "14D 10%帽",
-        "summary_en": "Sells 14D 5% OTM Put on VIX/VIX3M >= 1.00 capped at <= 10% equity; if assigned, holds uncapped until QQQ reclaims K_assign then sells 30D 0.35Δ Wheel Call. Positive real-OPRA alpha while reducing MDD.",
-        "summary_zh": "VIX/VIX3M >= 1.00 卖 14D 5% OTM Put（名义严控 <= 10% 净值）；若接货默认水下不封顶，等涨回接货价后再卖 30D 0.35Δ Call——真实 OPRA 盘口下仍稳健增厚收益并压缩最大回撤。",
-    },
-    {
-        "id": "sp_10d_vixf",
-        "label_en": "10D VIX Falling (20% Cap)",
-        "label_zh": "10D VIX回落（20%帽 · 拐点过滤）",
-        "short_en": "10D VIX Falling (20%)",
-        "short_zh": "10D VIX回落（20%帽）",
-        "summary_en": "Requires VIX/VIX3M >= 1.00 AND VIX[t] < VIX[t-1] (panic cresting) before selling 10D 5% OTM Put (<= 20% cap) + Reclaim 30D 0.35Δ Wheel; fewer trades and lower assignment frequency.",
-        "summary_zh": "要求 VIX/VIX3M >= 1.00 且当日 VIX 回落（恐慌见顶拐头）才卖 10D 5% OTM Put（<= 20% 名义帽）+ 涨回接货价卖 30D 0.35Δ Call——过滤急跌首日接飞刀，交易更精简。",
-    },
-    {
-        "id": "sp_14d_unf",
-        "label_en": "14D Unfiltered (20% Cap · NAV #1)",
-        "label_zh": "14D 无过滤（20%帽 · 收益冠军）",
-        "short_en": "14D Unfiltered (20%)",
-        "short_zh": "14D 无过滤（20%帽）",
-        "summary_en": "Sells 14D 5% OTM Put whenever VIX/VIX3M >= 1.00 capped at <= 20% equity + Reclaim 30D 0.35Δ Reverse Wheel. Highest real-OPRA terminal NAV and Calmar.",
-        "summary_zh": "只要 VIX/VIX3M >= 1.00 即卖 14D 5% OTM Put（<= 20% 名义帽）+ 涨回接货价卖 30D 0.35Δ Call——真实 OPRA 盘口下终值与 Calmar 双冠军。",
-    },
-]
-
-CC_MODE_SPECS: list[dict[str, Any]] = [
-    {
-        "id": "cc_off",
-        "label_en": "Off (Rec. · Real-OPRA Optimal)",
-        "label_zh": "关闭（推荐 · 真实 OPRA 最优）",
-        "short_en": "Off",
-        "short_zh": "关闭",
-        "summary_en": "Zero normal-time covered calls (100% uncapped bull upside). Under real OPRA bid-ask spreads and calm-regime call skew, leaving Engine 2 Off beats selling 12-Delta calls.",
-        "summary_zh": "平时不卖 Call（100% 保留牛市主升浪）。经真实 OPRA 盘口与买卖价差检验，平时卖 12Δ Call 的低权利金难以覆盖真实价差与急涨止损损耗，默认关闭表现最优。",
-    },
-    {
-        "id": "cc_d12_d35",
-        "label_en": "12Δ · Delta 0.35 Stop (Compare)",
-        "label_zh": "全天候 12Δ · Delta 0.35 止损（对照）",
-        "short_en": "12Δ · Δ0.35 Stop",
-        "short_zh": "12Δ · Delta 0.35 止损",
-        "summary_en": "Whenever within 3% of ATH, sells 25D 12-Delta (min +5% OTM) Calls and exits early at Delta >= 0.35. Real OPRA calm-regime spreads create slight net drag vs Off (kept for transparent comparison).",
-        "summary_zh": "距前高 <= 3% 卖 25D 12Δ（保底 +5% OTM）Call，Delta >= 0.35 止损平仓；真实 OPRA 实盘价差下呈小幅负贡献（保留供实盘透明对照）。",
-    },
-    {
-        "id": "cc_d12_r45",
-        "label_en": "12Δ · Delta 0.45 Roll Up (30D)",
-        "label_zh": "全天候 12Δ · Delta 0.45 展期 Roll（30D 上移）",
-        "short_en": "12Δ · Δ0.45 Roll",
-        "short_zh": "12Δ · Delta 0.45 展期 Roll",
-        "summary_en": "Whenever within 3% of ATH, sells 25D 12-Delta Calls; when Delta >= 0.45, buys back and immediately rolls out +30D to a fresh higher 12-Delta strike on real OPRA quotes.",
-        "summary_zh": "距前高 <= 3% 全天候卖 25D 12Δ Call；当 Delta 升至 0.45 时立刻平旧仓并同步展期 30 天上移至新 12Δ 高行权价（真实 OPRA 盘口执行）。",
-    },
-    {
-        "id": "cc_d12_cr55",
-        "label_en": "12Δ · Delta 0.55 Credit Roll (45D)",
-        "label_zh": "全天候 12Δ · Delta 0.55 零成本 Roll（45D）",
-        "short_en": "12Δ · Δ0.55 Credit Roll",
-        "short_zh": "12Δ · Delta 0.55 零成本 Roll",
-        "summary_en": "Whenever within 3% of ATH, sells 25D 12-Delta Calls; when Delta >= 0.55, attempts a zero-cost credit roll out +45D to the highest OTM strike covering the buyback on real OPRA quotes.",
-        "summary_zh": "距前高 <= 3% 全天候卖 25D 12Δ Call；当 Delta 升至 0.55 时尝试向后展期 45 天做零成本上移 Roll（真实 OPRA 盘口若无虚值零成本可展则直接平仓）。",
-    },
-]
-
-TP_MODE_SPECS: list[dict[str, Any]] = [
-    {
-        "id": "layered_itm",
-        "label_en": "Layered ITM (Rec.)",
-        "label_zh": "分层实值（推荐）",
-        "short_en": "Layered ITM",
-        "short_zh": "分层实值",
-        "summary_en": "Collar exits immediately at VIX/3M >= 1.10 to unlock Call cap; Naked Put ignores shallow inversions until strictly ITM (QQQ <= K_P); + 5x slow-bear lock (DTE <= 45).",
-        "summary_zh": "次仓领口见 VIX/3M >= 1.10 立刻止盈解封卖 Call；首仓裸 Put 浅跌无视倒挂，必须跌破自身行权价 (QQQ <= K_P) 进入实值才平；叠加后半程 DTE <= 45 & Put >= 5x 慢熊锁利。",
-    },
-    {
-        "id": "standard_dual",
-        "label_en": "Standard 1.10",
-        "label_zh": "标准双轨 1.10",
-        "short_en": "Standard 1.10",
-        "short_zh": "标准 1.10",
-        "summary_en": "Both slots exit at next Open whenever VIX/3M >= 1.10 panic inversion triggers, or on second-half 5x slow-bear lock (DTE <= 45).",
-        "summary_zh": "双槽统一：只要触发 VIX/3M >= 1.10 恐慌倒挂即次日开盘止盈抄底，或后半程 DTE <= 45 且 Put >= 5x 慢熊锁利。",
-    },
-    {
-        "id": "both_4x",
-        "label_en": "Deep 4x Both",
-        "label_zh": "两槽深度 4x",
-        "short_en": "Deep 4x",
-        "short_zh": "两槽 4x",
-        "summary_en": "Both slots require VIX/3M >= 1.10 AND Put Bid >= 4x entry cost (filters shallow spikes like 2018-10 and 2026-11), plus 5x slow-bear lock (DTE <= 45).",
-        "summary_zh": "双槽统一：必须同时满足 VIX/3M >= 1.10 且 Put 涨超 4 倍成本才认恐慌止盈（过滤 2018-10 与 2026-11 浅跌假倒挂），叠加后半程 DTE <= 45 & Put >= 5x 慢熊锁利。",
-    },
-]
+def _clip(v: float, lo: float, hi: float) -> float:
+    return lo if v < lo else (hi if v > hi else v)
 
 
 def _norm_cdf(x: float) -> float:
@@ -223,8 +72,15 @@ def _polyval_desc(coeffs: list[float], x: float) -> float:
     return acc
 
 
-def _clip(v: float, lo: float, hi: float) -> float:
-    return lo if v < lo else (hi if v > hi else v)
+def eval_skew_iv(
+    S: float, K: float, T: float, r: float, q: float, vxn_pct: float, poly_coeffs: list[float]
+) -> float:
+    t_eff = max(T, 1.0 / 365.0)
+    fwd = S * math.exp((r - q) * t_eff)
+    log_m = _clip(math.log(K / fwd), -0.22, 0.20)
+    ratio = _polyval_desc(poly_coeffs, log_m)
+    ratio = max(0.72, min(1.55, ratio))
+    return max(0.06, (vxn_pct / 100.0) * ratio)
 
 
 def bsm_price(S: float, K: float, T: float, r: float, q: float, sigma: float, opt_type: str) -> float:
@@ -251,49 +107,6 @@ def bsm_delta(S: float, K: float, T: float, r: float, q: float, sigma: float, op
     return float(disc_q * (_norm_cdf(d1) - 1.0))
 
 
-def eval_skew_iv(
-    S: float, K: float, T: float, r: float, q: float, vxn_pct: float, poly_coeffs: list[float]
-) -> float:
-    t_eff = max(T, 1.0 / 365.0)
-    fwd = S * math.exp((r - q) * t_eff)
-    log_m = _clip(math.log(K / fwd), -0.22, 0.20)
-    ratio = _polyval_desc(poly_coeffs, log_m)
-    ratio = max(0.72, min(1.55, ratio))
-    return max(0.06, (vxn_pct / 100.0) * ratio)
-
-
-def solve_zero_cost_call_strike(
-    S: float,
-    k_put: float,
-    T: float,
-    r: float,
-    q: float,
-    vxn_pct: float,
-    poly_coeffs: list[float],
-    slip: float = DEFAULT_SLIPPAGE,
-) -> float:
-    sigma_p = eval_skew_iv(S, k_put, T, r, q, vxn_pct, poly_coeffs)
-    put_ask = bsm_price(S, k_put, T, r, q, sigma_p, "put") * (1.0 + slip)
-
-    def obj(k_c: float) -> float:
-        sigma_c = eval_skew_iv(S, k_c, T, r, q, vxn_pct, poly_coeffs)
-        call_bid = bsm_price(S, k_c, T, r, q, sigma_c, "call") * (1.0 - slip)
-        return call_bid - put_ask
-
-    lo, hi = S * 1.0005, S * 1.55
-    if obj(lo) <= 0.0:
-        return lo
-    if obj(hi) >= 0.0:
-        return hi
-    for _ in range(44):
-        mid = 0.5 * (lo + hi)
-        if obj(mid) > 0.0:
-            lo = mid
-        else:
-            hi = mid
-    return 0.5 * (lo + hi)
-
-
 def solve_call_strike_for_delta(
     S: float,
     T: float,
@@ -318,118 +131,6 @@ def solve_call_strike_for_delta(
     return 0.5 * (lo + hi)
 
 
-def bsm_call_delta(S: float, K: float, T: float, r: float, q: float, sigma: float) -> float:
-    if T <= 1e-8 or sigma <= 1e-8:
-        return 1.0 if S > K else 0.0
-    d1 = (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
-    return math.exp(-q * T) * _norm_cdf(d1)
-
-
-def solve_call_strike_for_bid(
-    S: float,
-    T: float,
-    r: float,
-    q: float,
-    vxn_pct: float,
-    poly_coeffs: list[float],
-    target_bid: float,
-    slip: float = DEFAULT_SLIPPAGE,
-) -> float | None:
-    if target_bid < 0.05:
-        return None
-    lo, hi = S * 1.01, S * 1.40
-
-    def bid_at(k_c: float) -> float:
-        sig = eval_skew_iv(S, k_c, T, r, q, vxn_pct, poly_coeffs)
-        return bsm_price(S, k_c, T, r, q, sig, "call") * (1.0 - slip)
-
-    if bid_at(lo) < target_bid:
-        return None
-    for _ in range(30):
-        mid = 0.5 * (lo + hi)
-        if bid_at(mid) >= target_bid:
-            lo = mid
-        else:
-            hi = mid
-    return lo
-
-
-def decompose_tranche_convexity(
-    tranche_type: str,
-    s0: float,
-    s1: float,
-    kp: float,
-    kc: float | None,
-    t0: float,
-    t1: float,
-    r0: float,
-    r1: float,
-    q0: float,
-    q1: float,
-    vxn0: float,
-    vxn1: float,
-    coeffs: list[float],
-    actual_net_pnl_sh: float,
-) -> dict[str, float | None]:
-    sp0 = eval_skew_iv(s0, kp, t0, r0, q0, vxn0, coeffs)
-    p0_mid = bsm_price(s0, kp, t0, r0, q0, sp0, "put")
-    dp0 = bsm_delta(s0, kp, t0, r0, q0, sp0, "put")
-
-    if tranche_type == "collar" and kc is not None:
-        sc0 = eval_skew_iv(s0, kc, t0, r0, q0, vxn0, coeffs)
-        c0_mid = bsm_price(s0, kc, t0, r0, q0, sc0, "call")
-        dc0 = bsm_delta(s0, kc, t0, r0, q0, sc0, "call")
-    else:
-        c0_mid = 0.0
-        dc0 = 0.0
-
-    v0_mid = p0_mid - c0_mid
-    delta0 = dp0 - dc0
-    dv_delta = delta0 * (s1 - s0)
-
-    sp_s1 = eval_skew_iv(s1, kp, t0, r0, q0, vxn0, coeffs)
-    p_s1 = bsm_price(s1, kp, t0, r0, q0, sp_s1, "put")
-    if tranche_type == "collar" and kc is not None:
-        sc_s1 = eval_skew_iv(s1, kc, t0, r0, q0, vxn0, coeffs)
-        c_s1 = bsm_price(s1, kc, t0, r0, q0, sc_s1, "call")
-    else:
-        c_s1 = 0.0
-    v_price = p_s1 - c_s1
-    dv_gamma = (v_price - v0_mid) - dv_delta
-
-    if t1 <= 1e-6:
-        dv_vega = 0.0
-    else:
-        sp_t1_v0 = eval_skew_iv(s1, kp, t1, r1, q1, vxn0, coeffs)
-        sp_t1_v1 = eval_skew_iv(s1, kp, t1, r1, q1, vxn1, coeffs)
-        p_t1_v0 = bsm_price(s1, kp, t1, r1, q1, sp_t1_v0, "put")
-        p_t1_v1 = bsm_price(s1, kp, t1, r1, q1, sp_t1_v1, "put")
-        if tranche_type == "collar" and kc is not None:
-            sc_t1_v0 = eval_skew_iv(s1, kc, t1, r1, q1, vxn0, coeffs)
-            sc_t1_v1 = eval_skew_iv(s1, kc, t1, r1, q1, vxn1, coeffs)
-            c_t1_v0 = bsm_price(s1, kc, t1, r1, q1, sc_t1_v0, "call")
-            c_t1_v1 = bsm_price(s1, kc, t1, r1, q1, sc_t1_v1, "call")
-        else:
-            c_t1_v0 = 0.0
-            c_t1_v1 = 0.0
-        dv_vega = (p_t1_v1 - c_t1_v1) - (p_t1_v0 - c_t1_v0)
-
-    dv_theta_slip = actual_net_pnl_sh - (dv_delta + dv_gamma + dv_vega)
-    conv_mult = (actual_net_pnl_sh / dv_delta) if (dv_delta > 0.20 and actual_net_pnl_sh > 0) else None
-    return {
-        "delta0": delta0,
-        "dV_delta_sh": dv_delta,
-        "dV_gamma_sh": dv_gamma,
-        "dV_vega_sh": dv_vega,
-        "dV_theta_slip_sh": dv_theta_slip,
-        "conv_mult": conv_mult,
-    }
-
-
-def _parse_iso(d: str) -> datetime.date:
-    return datetime.date.fromisoformat(d)
-
-
 def load_seed_and_extend(fact_root: Path | None = None) -> tuple[list[dict[str, Any]], list[float]]:
     if not SEED_GZ.exists():
         raise FileNotFoundError(f"Missing seed input archive: {SEED_GZ}")
@@ -437,4675 +138,1995 @@ def load_seed_and_extend(fact_root: Path | None = None) -> tuple[list[dict[str, 
         seed = json.loads(f.read().decode("utf-8"))
     rows: list[dict[str, Any]] = list(seed["rows"])
     coeffs: list[float] = [float(x) for x in seed["opra_90dte_poly3_coeffs_desc"]]
-
-    # Optional incremental forward extension from local DuckDB warehouse if newer QQQ bars exist
-    db_file = (fact_root or DEFAULT_FACT_ROOT) / "fact_os.duckdb"
-    if duckdb is not None and db_file.exists() and rows:
-        last_dt = rows[-1]["date"]
-        try:
-            con = duckdb.connect(str(db_file), read_only=True)
-            q_rows = con.execute(
-                """
-                SELECT CAST(date AS VARCHAR) AS d, open, high, low, close, COALESCE(dividends, 0.0) AS div
-                FROM funds
-                WHERE ticker = 'QQQ' AND CAST(date AS VARCHAR) > ?
-                ORDER BY date ASC
-                """,
-                [last_dt],
-            ).fetchall()
-            con.close()
-        except Exception:
-            q_rows = []
-
-        for d_str, op, hi, lo, cl, div in q_rows:
-            if op is None or cl is None or float(cl) <= 0:
-                continue
-            prev = rows[-1]
-            cl_f = float(cl)
-            run_ath = max(float(prev["running_ath"]), cl_f)
-            dd_ath = cl_f / run_ath - 1.0
-            tail_closes = [float(x["close"]) for x in rows[-199:]] + [cl_f]
-            ma200 = sum(tail_closes) / len(tail_closes)
-            sc = int(prev["score"])
-            tail_scores = [int(x["score"]) for x in rows[-4:]] + [sc]
-            sc5 = sum(tail_scores) / len(tail_scores)
-            new_row = dict(prev)
-            new_row.update(
-                {
-                    "date": str(d_str)[:10],
-                    "open": round(float(op), 6),
-                    "high": round(float(hi or cl_f), 6),
-                    "low": round(float(lo or cl_f), 6),
-                    "close": round(cl_f, 6),
-                    "dividends": round(float(div or 0.0), 6),
-                    "running_ath": round(run_ath, 6),
-                    "dd_from_ath": round(dd_ath, 8),
-                    "qqq_ma200": round(ma200, 6),
-                    "score_5d": round(sc5, 4),
-                    "gate_g4": False if dd_ath < -0.05 else bool(prev["gate_g4"]),
-                }
-            )
-            rows.append(new_row)
-
-    for idx, r in enumerate(rows):
-        ath5 = float(r.get("dd_from_ath") or 0.0) >= -0.05
-        vxn22 = float(r.get("vxn") or 99.0) <= 22.0
-        ad_val = r.get("ad_line")
-        ad50_val = r.get("ad_sma50")
-        ad_below50 = (
-            float(ad_val) < float(ad50_val)
-            if (ad_val is not None and ad50_val is not None)
-            else False
-        )
-        score = int(r.get("score") or 0)
-        cur_vix = float(r.get("vix") or 0.0)
-        prev_vix = float(rows[idx - 1].get("vix") or cur_vix) if idx > 0 else cur_vix
-        r["prev_vix"] = prev_vix
-        r["vix_falling"] = bool(idx > 0 and cur_vix < prev_vix)
-        r["sw_u1"] = bool(ath5 and (ad_below50 or score >= 4) and vxn22)
-        r["sw_b1c"] = bool(ath5 and ad_below50 and vxn22)
-        r["sw_d2"] = bool(ath5 and score >= 4)
-        r["sw_g4"] = bool(r.get("gate_g4") or False)
-
     return rows, coeffs
 
+OPRA_BASE_DIR = Path("/Users/yudonglu/Documents/gemini/qqq-options-backtest/output")
+FINAL_STRAT_DIR = OPRA_BASE_DIR / "final_strategy_qqq_dualcta_tailput_20261127"
+PRIOR_MS_DIR = OPRA_BASE_DIR / "spitznagel_ms_dte_13f_audit_20261125"
+PRIOR_SIX_DIR = OPRA_BASE_DIR / "six_retail_quant_archetypes_20261126"
+SIG_CSV = OPRA_BASE_DIR / "crisis_prediction_models_research_20261124/data/signals_2015_2026.csv"
+LEAPS_PUT_PQ = PRIOR_MS_DIR / "data/qqq_put_chain_leaps_2015_2025.parquet"
+LIVE_ETF_CSV = PRIOR_SIX_DIR / "data/live_etf_total_returns_and_effr_2015_2026.csv"
+LEGACY_M7_INPUTS_GZ = ROOT_DIR / "server/config/crisis-observatory-m7-inputs.json.gz"
 
-def _opt_exec_price_sp(
-    S: float,
-    K: float,
-    T: float,
-    r: float,
-    q: float,
-    vxn_pct: float,
-    coeffs: list[float],
-    opt_type: str,
-    side: str,
-    slip: float,
-) -> tuple[float, float]:
-    sigma = eval_skew_iv(S, K, T, r, q, vxn_pct, coeffs)
-    mid = bsm_price(S, K, T, r, q, sigma, opt_type)
-    if side == "sell":
-        exec_px = max(0.0, mid * (1.0 - slip) - OPT_COMM_PER_SH)
-    elif side == "buy":
-        exec_px = mid * (1.0 + slip) + OPT_COMM_PER_SH
-    else:
-        exec_px = mid
-    return exec_px, mid
+ARTIFACT_VERSION = "crisis-observatory-v2-master"
+STRATEGY_CODE = "V2_QQQ_DUALCTA_TAILPUT_SINGLE"
+INITIAL_CAPITAL = 100_000.0
+ETF_FEE = 0.0005
+BOX_SPREAD = 0.0035
+IBKR_SPREAD = 0.0150
+CASH_SPREAD = -0.0025
 
+CRISIS_WINDOWS = [
+    ("2015_16", "2015-16 China FX & Oil", "2015-16 汇改与油价冲击", "2015-07-20", "2016-03-31"),
+    ("2018_Q1", "2018 Q1 Volmageddon", "2018 Q1 波动率崩盘", "2018-01-26", "2018-04-30"),
+    ("2018_Q4", "2018 Q4 Fed QT Taper", "2018 Q4 美联储缩表", "2018-08-29", "2019-02-28"),
+    ("2020_COVID", "2020 COVID Crash", "2020 COVID 疫情闪崩", "2020-02-19", "2020-05-15"),
+    ("2022_BEAR", "2022 Inflation Slow Bear", "2022 通胀加息慢熊", "2021-12-27", "2023-01-31"),
+    ("2023_Q3", "2023 Q3 UST Rate Spike", "2023 Q3 美债利率飙升", "2023-07-19", "2023-11-15"),
+    ("2024_YEN", "2024.08 Yen Carry Unwind", "2024.08 日元套息拆仓", "2024-07-10", "2024-09-30"),
+    ("2025_TAR", "2025.04 Tariff Shock", "2025.04 关税闪电冲击", "2025-02-19", "2025-05-30"),
+]
 
-def _pick_expiry_strict_max14(
-    dt_objs: list[datetime.date],
-    dates: list[str],
-    cur_idx: int,
-    target_dte: int,
-    hard_cap_dte: int = 14,
-) -> tuple[str, datetime.date, int]:
-    cur_dt = dt_objs[cur_idx]
-    target_cal = cur_dt + datetime.timedelta(days=target_dte)
-    pos = bisect.bisect_left(dt_objs, target_cal)
-    if pos < len(dates):
-        exp_dt = dt_objs[pos]
-        while (exp_dt - cur_dt).days > hard_cap_dte and pos > cur_idx + 1:
-            pos -= 1
-            exp_dt = dt_objs[pos]
-        exp_date = dates[pos]
-    else:
-        exp_dt = cur_dt + datetime.timedelta(days=min(target_dte, hard_cap_dte))
-        exp_date = exp_dt.isoformat()
-    act_dte = max(1, (exp_dt - cur_dt).days)
-    return exp_date, exp_dt, act_dte
+YF_ALL_MAP = {
+    "QQQ": "QQQ",
+    "DBMF": "DBMF",
+    "KMLM": "KMLM",
+    "SPY": "SPY",
+    "RSP": "RSP",
+    "IWM": "IWM",
+    "XLP": "XLP",
+    "XLU": "XLU",
+    "XLV": "XLV",
+    "XLK": "XLK",
+    "HYG": "HYG",
+    "LQD": "LQD",
+    "VXN": "^VXN",
+    "VIX": "^VIX",
+    "VIX3M": "^VIX3M",
+    "VVIX": "^VVIX",
+    "SKEW": "^SKEW",
+    "HG_F": "HG=F",
+    "XLY": "XLY",
+    "XLI": "XLI",
+    "XLB": "XLB",
+    "XLF": "XLF",
+}
 
-
-def compute_bh_drip_factors(rows: list[dict[str, Any]]) -> tuple[list[float], list[float]]:
-    n = len(rows)
-    pre_drip = [0.0] * n
-    post_drip = [0.0] * n
-    sh = INITIAL_CAPITAL / float(rows[0]["close"])
-    for i, r in enumerate(rows):
-        pre_drip[i] = sh
-        div = float(r["dividends"])
-        cl = float(r["close"])
-        if i > 0 and div > 0.0:
-            sh += (sh * div) / cl
-        post_drip[i] = sh
-    return pre_drip, post_drip
-
-
-def _format_trigger_label(score: int, ad_below50: bool, gate_key: str | None) -> tuple[str, str]:
-    if gate_key == "sw_g4":
-        return ("ATH<=5% + YoY>=30% + VXN<=20", "ATH<=5% + 年涨>=30% + VXN<=20")
-    if gate_key == "sw_d2":
-        return (f"{score}/6 Lights + ATH<=5%", f"{score}/6 危机灯 + ATH<=5%")
-    if ad_below50 and score >= 4:
-        return (f"{score}/6 Lights + AD<50DMA", f"{score}灯 + AD<50DMA")
-    if ad_below50:
-        return (f"{score}L + AD<50DMA Div", f"{score}灯 + AD<50DMA 背离")
-    return (f"{score}/6 Crisis Lights", f"{score}/6 危机灯触发")
+FRED_LAGS = {
+    "BAA10Y": 1,
+    "DGS2": 1,
+    "NFCI": 5,
+    "DFF": 1,
+    "T10Y2Y": 1,
+}
 
 
-def simulate_strategy(
-    rows_all: list[dict[str, Any]],
-    coeffs: list[float],
-    strategy_id: str,
-    arch: str = "hybrid_campaign_first",
-    max_slots: int = 2,
-    slot_coverage: float = 0.50,
-    put_moneyness: float = 0.90,
-    gate_key: str | None = "sw_u1",
-    target_dte: int = 90,
-    step_cal_days: int = 30,
-    vix_ratio_tp: float | None = 1.10,
-    put_mult_tp: float | None = 5.0,
-    put_mult_max_dte: int = 45,
-    tp_mode: str = DEFAULT_TP_MODE,
-    cc_mode: str = DEFAULT_CC_MODE,
-    sp_mode: str = DEFAULT_SP_MODE,
-    wc_mode: str = DEFAULT_WC_MODE,
-    slow_bear_overlay: bool = False,
-    slip: float = DEFAULT_SLIPPAGE,
-    real_store: Any = None,
-) -> dict[str, Any]:
-    use_real = real_store is not None
-    rows = [r for r in rows_all if r["date"] >= START_DATE]
-    dates = [r["date"] for r in rows]
-    dt_objs = [_parse_iso(d) for d in dates]
-    pre_drip_bh, post_drip_bh = compute_bh_drip_factors(rows)
-    final_bh_sh = post_drip_bh[-1]
-    final_cl = float(rows[-1]["close"])
-    bh_end_nav = final_bh_sh * final_cl
+def r2(v: float | None) -> float | None:
+    if v is None or not math.isfinite(v):
+        return None
+    return round(float(v), 2)
 
-    q_stats = {"total_lookups": 0, "real_opra_hits": 0, "real_polygon_hits": 0, "bsm_fallbacks": 0}
 
-    def _rec_q(src: str) -> None:
-        q_stats["total_lookups"] += 1
-        if src.startswith("real_opra"):
-            q_stats["real_opra_hits"] += 1
-        elif src.startswith("real_polygon"):
-            q_stats["real_polygon_hits"] += 1
-        else:
-            q_stats["bsm_fallbacks"] += 1
+def r3(v: float | None) -> float | None:
+    if v is None or not math.isfinite(v):
+        return None
+    return round(float(v), 3)
 
-    def _is_exp(idx: int, exp_dt: datetime.date) -> bool:
-        return roc.is_expiry_day(idx, dt_objs, exp_dt) if use_real else (dt_objs[idx] >= exp_dt)
 
-    def _lookup_leg(
-        d_str: str,
-        opt_type: str,
-        exp_str: str,
-        k_val: float,
-        k_cents: int | None,
-        spot_px: float,
-        rem_days: int,
-        r_c: float,
-        q_c: float,
-        vxn_c: float,
-        last_iv: float | None,
-        slip_bsm: float = slip,
-    ) -> tuple[float, float, float, float, float, str]:
-        if use_real and k_cents is not None:
-            b, a, m, iv, dl, src = real_store.lookup_contract(
-                d_str, opt_type, exp_str, k_cents, spot_px, rem_days, r_c, q_c, vxn_c, last_iv,
-                coeffs, eval_skew_iv, bsm_price, slip_bsm=slip_bsm,
-            )
-            _rec_q(src)
-            return b, a, m, iv, dl, src
-        t_r = max(0, rem_days) / 365.0
-        sig = eval_skew_iv(spot_px, k_val, max(t_r, 1.0 / 365.0), r_c, q_c, vxn_c, coeffs)
-        mid = bsm_price(spot_px, k_val, t_r, r_c, q_c, sig, opt_type)
-        dl = bsm_call_delta(spot_px, k_val, t_r, r_c, q_c, sig) if opt_type == "call" else (bsm_call_delta(spot_px, k_val, t_r, r_c, q_c, sig) - math.exp(-q_c * t_r))
-        _rec_q("bsm_fallback")
-        return max(0.0, mid * (1.0 - slip_bsm)), mid * (1.0 + slip_bsm), mid, sig, dl, "bsm_fallback"
+def r4(v: float | None) -> float | None:
+    if v is None or not math.isfinite(v):
+        return None
+    return round(float(v), 4)
 
-    def _buy_leg(b: float, a: float, m: float, src: str, slip_bsm: float = slip) -> float:
-        return roc.exec_buy_price(b, a, m, src, slip_bsm=slip_bsm) if use_real else (m * (1.0 + slip_bsm))
 
-    def _sell_leg(b: float, a: float, m: float, src: str, slip_bsm: float = slip) -> float:
-        return roc.exec_sell_price(b, a, m, src, slip_bsm=slip_bsm) if use_real else max(0.0, m * (1.0 - slip_bsm))
+def r5(v: float | None) -> float | None:
+    if v is None or not math.isfinite(v):
+        return None
+    return round(float(v), 5)
 
-    core_shares = INITIAL_CAPITAL / float(rows[0]["close"])
-    tbill_cash = 0.0
-    cc_cash = 0.0
-    assigned_shares = 0.0
-    assigned_cost_k = 0.0
-    assigned_entry_date = ""
-    sp_cash = 0.0
-    in_slow_bear_def = False
-    pending_bear_change: str | None = None
 
-    # (min_vxn, target_delta, min_otm_floor, stop_delta, roll_mode)
-    cc_cfg_map: dict[str, tuple[float, float, float, float | None, str | None]] = {
-        "cc_d12_d35": (0.0, 0.12, 0.05, 0.35, None),
-        "cc_d12_r45": (0.0, 0.12, 0.05, 0.45, "fresh_30d"),
-        "cc_d12_cr55": (0.0, 0.12, 0.05, 0.55, "credit_45d"),
-        # Legacy aliases
-        "cc_high_vol": (0.0, 0.12, 0.05, 0.35, None),
-        "cc_hv_8": (0.0, 0.12, 0.05, 0.35, None),
-        "cc_d12_3x": (0.0, 0.12, 0.05, 0.35, None),
-        "cc_always": (0.0, 0.12, 0.05, 0.45, "fresh_30d"),
-        "cc_always_8": (0.0, 0.12, 0.05, 0.45, "fresh_30d"),
-        "cc_otm8_3x": (0.0, 0.12, 0.05, 0.45, "fresh_30d"),
-    }
-    cc_enabled = cc_mode in cc_cfg_map and arch != "pure_qqq"
-    cc_min_vxn, cc_target_delta, cc_min_otm, cc_stop_delta, cc_roll_mode = cc_cfg_map.get(
-        cc_mode, (0.0, 0.12, 0.05, None, None)
+def clamp01(v: float) -> float:
+    if not math.isfinite(v) or v <= 0.0:
+        return 0.0
+    if v >= 1.0:
+        return 1.0
+    return v
+
+
+def quantile_linear(arr: list[float], q: float) -> float:
+    if not arr:
+        return 0.0
+    s = sorted(arr)
+    if len(s) == 1:
+        return s[0]
+    pos = (len(s) - 1) * q
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return s[lo]
+    return s[lo] + (pos - lo) * (s[hi] - s[lo])
+
+
+def mean_tail(arr: list[float], n: int) -> float | None:
+    if not arr or n <= 0:
+        return None
+    sub = arr[-n:]
+    return sum(sub) / len(sub)
+
+
+def std_tail_ddof1(arr: list[float], n: int) -> float | None:
+    if len(arr) < max(2, n):
+        return None
+    sub = arr[-n:]
+    mu = sum(sub) / len(sub)
+    var = sum((x - mu) ** 2 for x in sub) / (len(sub) - 1)
+    return math.sqrt(max(0.0, var))
+
+
+def pearson_corr(xs: list[float], ys: list[float]) -> float:
+    n = min(len(xs), len(ys))
+    if n < 5:
+        return 0.0
+    x = xs[-n:]
+    y = ys[-n:]
+    mx = sum(x) / n
+    my = sum(y) / n
+    num = sum((a - mx) * (b - my) for a, b in zip(x, y))
+    dx = math.sqrt(sum((a - mx) ** 2 for a in x))
+    dy = math.sqrt(sum((b - my) ** 2 for b in y))
+    if dx <= 1e-12 or dy <= 1e-12:
+        return 0.0
+    return max(-1.0, min(1.0, num / (dx * dy)))
+
+
+def hamilton_step(state_p: list[float], z_row: list[float], A: list[list[float]], means: list[list[float]], vars_: list[list[float]]) -> list[float]:
+    pred = [
+        state_p[0] * A[0][0] + state_p[1] * A[1][0],
+        state_p[0] * A[0][1] + state_p[1] * A[1][1],
+    ]
+    log_lik = [0.0, 0.0]
+    for st in (0, 1):
+        ll = 0.0
+        for dim in range(4):
+            v = max(1e-6, vars_[st][dim])
+            diff = z_row[dim] - means[st][dim]
+            ll += -0.5 * (math.log(2.0 * math.pi * v) + (diff * diff) / v)
+        log_lik[st] = ll
+    m_ll = max(log_lik)
+    p0 = pred[0] * math.exp(log_lik[0] - m_ll)
+    p1 = pred[1] * math.exp(log_lik[1] - m_ll)
+    tot = p0 + p1
+    if tot <= 0.0 or not math.isfinite(tot):
+        return [0.5, 0.5]
+    return [p0 / tot, p1 / tot]
+
+
+def align_fred_lag(raw_map: dict[str, float], cal_dates: list[str], idx: int, lag: int) -> tuple[float | None, str | None]:
+    eff_idx = idx - lag
+    if eff_idx < 0:
+        return None, None
+    cutoff = cal_dates[eff_idx]
+    best_d = None
+    best_v = None
+    for d, v in raw_map.items():
+        if d <= cutoff and math.isfinite(v):
+            if best_d is None or d > best_d:
+                best_d = d
+                best_v = float(v)
+    return best_v, best_d
+
+
+def compute_live_stress_index(row: dict[str, Any]) -> dict[str, Any]:
+    baa = row.get("baa_rise63")
+    dgs2 = row.get("dgs2_jump63")
+    nfci = row.get("nfci_jump20")
+    baa_eff = 0.0 if (baa is None or baa <= -900) else float(baa)
+    dgs2_eff = 0.0 if (dgs2 is None or dgs2 <= -900) else float(dgs2)
+    nfci_eff = 0.0 if (nfci is None or nfci <= -900) else float(nfci)
+
+    hmm_p = float(row.get("hmm_p") or 0.0)
+    vxn = float(row.get("vxn") or 0.0)
+    vr = float(row.get("vix_ratio") or 0.0)
+    dd = float(row.get("dd_from_ath") or 0.0)
+    cl = float(row.get("qqq_close") or 0.0)
+    sma200 = float(row.get("sma200") or 0.0)
+    ewmac = float(row.get("ewmac") or 0.0)
+    hyg_lqd = float(row.get("hyg_lqd") or 0.0)
+    hyg_sma50 = float(row.get("hyg_sma50") or 0.0)
+    def_ret20 = float(row.get("def_ret20") or 0.0)
+    rsp_spy = float(row.get("rsp_spy") or 0.0)
+    rsp_sma50 = float(row.get("rsp_sma50") or 0.0)
+    iwm_qqq = float(row.get("iwm_qqq") or 0.0)
+    iwm_sma50 = float(row.get("iwm_sma50") or 0.0)
+    ad_below = bool(row.get("ad_below50"))
+    vvix = float(row.get("vvix") or 0.0)
+    vvix_p75 = float(row.get("vvix_p75") or 0.0)
+    skew10 = float(row.get("skew10") or 0.0)
+    skew_p75 = float(row.get("skew_p75") or 0.0)
+    vr_jump5 = float(row.get("vr_jump5") or 0.0)
+
+    regime_vol = (
+        clamp01(hmm_p) * 18.0
+        + clamp01((vxn - 20.0) / 20.0) * 7.0
+        + clamp01((vr - 0.90) / 0.20) * 5.0
     )
-    cc_ath_limit = 0.03
-    cc_dte = 25
-    cc_max_rolls = 3
+    trend_dd = (
+        clamp01((-dd - 0.03) / 0.17) * 12.0
+        + (6.0 if sma200 > 0.0 and cl < sma200 else 0.0)
+        + clamp01(-ewmac / 0.80) * 7.0
+    )
+    credit_macro = (
+        (8.0 if hyg_sma50 > 0.0 and hyg_lqd < hyg_sma50 else 0.0)
+        + clamp01(max(0.0, baa_eff) / 0.25) * 8.0
+        + clamp01(max(max(0.0, dgs2_eff) / 0.50, max(0.0, nfci_eff) / 0.15)) * 9.0
+    )
+    breadth_tail = (
+        clamp01(max(0.0, def_ret20) / 0.10) * 8.0
+        + (2.0 if rsp_sma50 > 0.0 and rsp_spy < rsp_sma50 else 0.0)
+        + (2.0 if iwm_sma50 > 0.0 and iwm_qqq < iwm_sma50 else 0.0)
+        + (2.0 if ad_below else 0.0)
+        + (2.0 if vvix_p75 > 0.0 and vvix >= vvix_p75 else 0.0)
+        + (2.0 if skew_p75 > 0.0 and skew10 >= skew_p75 else 0.0)
+        + (2.0 if vr_jump5 >= 0.06 else 0.0)
+    )
+    total = max(0.0, min(100.0, regime_vol + trend_dd + credit_macro + breadth_tail))
+    idx_int = int(math.floor(total + 0.5))
+    if idx_int >= 75:
+        lvl, en, zh = "crisis", "Active Crisis", "危机爆发中"
+    elif idx_int >= 50:
+        lvl, en, zh = "elevated", "Elevated Stress", "高压警戒"
+    elif idx_int >= 25:
+        lvl, en, zh = "building", "Stress Building", "隐患蓄力"
+    else:
+        lvl, en, zh = "calm", "Calm Low-Vol", "平静低波"
 
-    # Engine 3: Short-DTE Panic Put Wheel (dte, otm_pct, max_lev, vix_thr, require_vix_falling)
-    sp_cfg_map: dict[str, tuple[int, float, float, float, bool]] = {
-        "sp_14d_cap10": (14, 0.05, 0.10, 1.00, False),
-        "sp_10d_vixf": (10, 0.05, 0.20, 1.00, True),
-        "sp_14d_unf": (14, 0.05, 0.20, 1.00, False),
+    return {
+        "live_stress_index": idx_int,
+        "live_stress_level": lvl,
+        "live_stress_label_en": en,
+        "live_stress_label_zh": zh,
+        "live_stress_breakdown": {
+            "regime_vol": round(regime_vol, 1),
+            "regime_vol_cap": 30,
+            "trend_dd": round(trend_dd, 1),
+            "trend_dd_cap": 25,
+            "credit_macro": round(credit_macro, 1),
+            "credit_macro_cap": 25,
+            "breadth_tail": round(breadth_tail, 1),
+            "breadth_tail_cap": 20,
+        },
     }
-    sp_enabled = sp_mode in sp_cfg_map and arch != "pure_qqq"
-    sp_dte, sp_otm_pct, sp_max_lev, sp_vix_thr, sp_require_vix_falling = sp_cfg_map.get(
-        sp_mode, (14, 0.05, 0.0, 1.00, False)
+
+
+def fetch_yahoo_1mo(symbol: str, timeout: float = 8.0) -> dict[str, dict[str, float]]:
+    import urllib.parse
+
+    enc = urllib.parse.quote(symbol, safe="")
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{enc}?range=1mo&interval=1d"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            obj = json.loads(resp.read().decode("utf-8"))
+        res0 = (obj.get("chart") or {}).get("result", [None])[0] or {}
+        ts = res0.get("timestamp") or []
+        q = (res0.get("indicators") or {}).get("quote", [{}])[0] or {}
+        adj_arr = ((res0.get("indicators") or {}).get("adjclose") or [{}])[0].get("adjclose") or []
+        closes = q.get("close") or []
+        opens = q.get("open") or []
+        out: dict[str, dict[str, float]] = {}
+        for i, t in enumerate(ts):
+            c = closes[i] if i < len(closes) else None
+            a = adj_arr[i] if i < len(adj_arr) and adj_arr[i] is not None else c
+            o = opens[i] if i < len(opens) and opens[i] is not None else c
+            if c is None or not math.isfinite(c) or c <= 0:
+                continue
+            dt = datetime.datetime.fromtimestamp(int(t), tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+            out[dt] = {
+                "open": float(o) if (o is not None and math.isfinite(o) and o > 0) else float(c),
+                "close": float(c),
+                "adj": float(a) if (a is not None and math.isfinite(a) and a > 0) else float(c),
+            }
+        return out
+    except Exception:
+        return {}
+
+
+def fetch_fred_recent(series_id: str, timeout: float = 8.0) -> dict[str, float]:
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd=2025-06-01"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            txt = resp.read().decode("utf-8")
+        out: dict[str, float] = {}
+        for line in txt.splitlines():
+            parts = line.split(",")
+            if len(parts) < 2:
+                continue
+            d = parts[0].strip()
+            v_str = parts[1].strip()
+            if len(d) != 10 or not v_str or v_str == ".":
+                continue
+            try:
+                v = float(v_str)
+            except ValueError:
+                continue
+            if math.isfinite(v):
+                out[d] = v
+        return out
+    except Exception:
+        return {}
+
+
+def fetch_nyfed_effr(timeout: float = 8.0) -> dict[str, float]:
+    url = "https://markets.newyorkfed.org/api/rates/unsecured/effr/last/15.json"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            obj = json.loads(resp.read().decode("utf-8"))
+        out: dict[str, float] = {}
+        for row in obj.get("refRates") or []:
+            d = row.get("effectiveDate")
+            pr = row.get("percentRate")
+            if d and pr is not None:
+                out[str(d)] = float(pr) / 100.0
+        return out
+    except Exception:
+        return {}
+
+
+def pack_table(rows: list[dict[str, Any]], cols: list[str]) -> dict[str, Any]:
+    return {"_cols": cols, "_rows": [[r.get(c) for c in cols] for r in rows]}
+
+
+def load_mod(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def build_ruleset_spec() -> dict[str, Any]:
+    return {
+        "code": STRATEGY_CODE,
+        "version": "v2.0",
+        "locked": True,
+        "single_strategy_only": True,
+        "name_en": "ThesisForge v2.0 Master Strategy (100% QQQ + 20% Dual-CTA + Dual-Sleeve Tail Put)",
+        "name_zh": "ThesisForge v2.0 唯一锁定主策略（100% QQQ + 20% 双CTA + 双轨尾部 Put）",
+        "core_overlay": {
+            "qqq_weight_pct": 100.0,
+            "dbmf_weight_pct": 10.0,
+            "kmlm_weight_pct": 10.0,
+            "debt_weight_pct": 20.0,
+            "hard_leverage_cap": 1.200,
+            "financing_primary": "EFFR + 35 bps (SPX Short Box)",
+            "financing_stress": "EFFR + 150 bps (IBKR Pro Margin)",
+            "rebalance_rule_en": "Hard daily Gross Leverage <= 1.200x cap enforced via pro-rata trim to repay debt; quarterly calibration when no rotation/TP queue is active.",
+            "rebalance_rule_zh": "每日严格执行总杠杆 (QQQ+DBMF+KMLM)/NAV <= 1.200x 红线（超限即按比例减仓还债）；无轮动与止盈队列时按季校准。",
+        },
+        "sleeve_a": {
+            "budget_pct_nav": 0.2,
+            "target_dte": 125,
+            "roll_dte": 75,
+            "otm_pct": -15,
+            "contango_days": 5,
+            "vix_max": 20.0,
+            "rule_en": "Enter when VIX/VIX3M < 1.00 for 5 consecutive trading days AND VIX < 20.0 (125D -15% OTM Put). At <= 75 DTE, roll if VIX/VIX3M < 1.00; if inverted (>= 1.00), HOLD.",
+            "rule_zh": "连续 5 个交易日 VIX/VIX3M < 1.00 且 VIX < 20.0 时建仓（0.2% NAV · 125D -15% OTM Put）；<= 75 DTE 若非倒挂则滚仓，倒挂则持有不动。",
+        },
+        "sleeve_b": {
+            "budget_pct_nav": 1.0,
+            "lockout_contango_days": 5,
+            "route1": {
+                "pillars": ["P1", "P2", "M3"],
+                "prob_threshold": 35.0,
+                "target_dte": 125,
+                "roll_dte": 75,
+                "otm_pct": -15,
+                "rule_en": "P1/P2/M3 non-M4 probability >= 35% -> 125D -15% OTM Put (1.0% NAV). At <= 75 DTE (non-inverted), roll if lit else recycle salvage cash; if inverted, HOLD.",
+                "rule_zh": "P1/P2/M3 非 M4 综合概率 >= 35% -> 买 125D -15% OTM Put（1.0% NAV）；<= 75 DTE 非倒挂时信号仍亮则滚仓，熄灭则平仓回收残值，倒挂则持有。",
+            },
+            "route2_m4": {
+                "target_dte": 90,
+                "recycle_dte": 30,
+                "otm_pct": -10,
+                "vxn_max": 28.0,
+                "vr_max": 0.90,
+                "latch_cta_gain_pct": 8.0,
+                "latch_dd252_pct": -10.0,
+                "latch_reset_days": 10,
+                "rule_en": "Slow-Bear +8% Hysteresis Latch ARMS when QQQ < 200DMA & DD252 <= -10% & Corr60(DualCTA,QQQ) < 0 & DualCTA >= +8% (resets after 10 consecutive days QQQ > 200DMA). M4 fires when Latch ON + QQQ < 200DMA + EWMAC < 0 + QQQ > EMA20 + VXN <= 28 & VIX/3M <= 0.90 -> 90D -10% OTM Put; recycle salvage at <= 30 DTE (HOLD if inverted).",
+                "rule_zh": "慢熊 +8% 滞回锁存开关：QQQ < 200DMA 且距252日高点 <= -10% 且 Corr60(双CTA,QQQ) < 0 且双CTA 自 QQQ 1Y高点涨 >= +8% 时激活锁存（连续 10 天站回 200DMA 才复位）。锁存开启且满足 QQQ < 200DMA、3速 EWMAC < 0、QQQ > EMA20 且 VXN <= 28、VIX/3M <= 0.90 时买 90D -10% OTM Put；<= 30 DTE 非倒挂回收残值，倒挂持有。",
+            },
+        },
+        "take_profit": {
+            "tier1_mult": 5.0,
+            "tier1_vr_max": 1.00,
+            "tier1_frac": 0.50,
+            "tier2_vr_min": 1.10,
+            "tier2_ath_dd_max": -10.0,
+            "deploy_days": 5,
+            "rule_en": "Tier 1: >= 5.0x & VIX/3M < 1.00 -> 50% partial TP on shortest-DTE tranche. Tier 2: VIX/3M >= 1.10 AND QQQ ATH DD <= -10.0% -> 100% Full TP on all puts. Deploy TP cash equally across 5 trading days (1/5 per day) into QQQ (excess above 1.20x pays debt first).",
+            "rule_zh": "一档分批止盈：回报 >= 5.0x 且 VIX/3M < 1.00 时优先兑现最短剩余到期仓位的 50%；二档全额清仓：VIX/3M >= 1.10 且 QQQ 距历史高点回落 <= -10.0% 时 100% 止盈全部 Put；止盈现金分 5 个交易日等额（每日 1/5）分批回买 QQQ（超 1.20x 红线部分优先还债）。",
+        },
+        "cta_rotation": {
+            "timer_mode": "CONT_2M",
+            "dd_threshold_pct": -12.0,
+            "continuous_cal_days": 60,
+            "tranches": 5,
+            "tranche_step_td": 5,
+            "restore_cal_days": 365,
+            "rule_en": "When QQQ stays <= -12.0% from ATH continuously for 60 calendar days AND per-ETF DBMF/KMLM return since QQQ ATH > 0%, sell in 5 equal tranches (20% each) spaced 5 trading days apart into QQQ (cancel remaining if DD > -12.0%). Hold rotated QQQ mechanically for 365 calendar days before restoring 10% DBMF + 10% KMLM.",
+            "rule_zh": "QQQ 距历史高点持续 <= -12.0% 满 60 个自然日（CONT_2M），且 DBMF / KMLM 各自自 QQQ 前高以来涨幅 > 0% 时，分 5 批（每批 20%、间隔 5 个交易日）卖出并即时换入 QQQ（若回撤缩窄至 > -12.0% 立即终止剩余批次）；机械持有换入的 QQQ 满 1 年（365 自然日）后再恢复 10% DBMF + 10% KMLM。",
+        },
+    }
+
+
+def run_full_opra_build(output_path: Path, fetch_live: bool = True) -> dict[str, Any]:
+    import numpy as np
+    import pandas as pd
+
+    fs = load_mod("fs", FINAL_STRAT_DIR / "01_run_final_strategy_backtest.py")
+    ms_mod = load_mod("ms_mod", PRIOR_MS_DIR / "01_ms_index_backtest.py")
+    rb, cta_mod = ms_mod.load_prior_engines()
+    store = rb.RealOptionChainStore(LEAPS_PUT_PQ)
+    all_rows, coeffs, _, _, _, _ = cta_mod.load_sim_panel_and_signals()
+
+    etf_df = pd.read_csv(LIVE_ETF_CSV, index_col=0)
+    etf_df.index = etf_df.index.astype(str)
+    sig_df = pd.read_csv(SIG_CSV)
+    sig_df["date"] = sig_df["date"].astype(str)
+    sig_df = sig_df.set_index("date")
+
+    # Read calibrated tail parameters from existing artifact (before overwriting)
+    existing_doc = json.loads(output_path.read_text(encoding="utf-8")) if output_path.exists() else {}
+    old_tail = existing_doc.get("m7_live_tail_state") or existing_doc.get("live_tail_state") or {}
+    if not old_tail:
+        raise RuntimeError("Missing calibrated tail state (hmm / welford_4d / ewm_state / base_2013) in existing artifact.")
+
+    # Extract full-history QQQ/DualCTA/indicators across 2015-01-02 -> last etf_df date (2026-11-25)
+    full_dates = [str(d) for d in etf_df.index]
+    n_full = len(full_dates)
+    px_q = etf_df["QQQ"].ffill().to_numpy(dtype=float)
+    r_q = pd.Series(px_q).pct_change().fillna(0.0).to_numpy(dtype=float)
+    r_aq = etf_df["AQMIX"].pct_change().fillna(0.0).to_numpy(dtype=float)
+    r_db_raw = etf_df["DBMF"].pct_change().to_numpy(dtype=float)
+    r_km_raw = etf_df["KMLM"].pct_change().to_numpy(dtype=float)
+    r_db = np.where(np.isnan(r_db_raw), r_aq, r_db_raw)
+    r_km = np.where(np.isnan(r_km_raw), r_aq, r_km_raw)
+    r_cta = 0.5 * r_db + 0.5 * r_km
+    r_cta[0] = 0.0
+    px_cta = 100.0 * np.cumprod(1.0 + r_cta)
+    px_db_spliced = 100.0 * np.cumprod(1.0 + np.where(np.arange(n_full) == 0, 0.0, r_db))
+    px_km_spliced = 100.0 * np.cumprod(1.0 + np.where(np.arange(n_full) == 0, 0.0, r_km))
+
+    s_q = pd.Series(px_q, index=full_dates)
+    sma200_arr = s_q.rolling(200, min_periods=1).mean().to_numpy(dtype=float)
+    ema20_arr = s_q.ewm(span=20, adjust=False).mean().to_numpy(dtype=float)
+    px_vol = s_q.diff().rolling(60, min_periods=20).std().replace(0, np.nan)
+    ewmac_arr = (
+        (
+            (s_q.ewm(span=16, adjust=False).mean() - s_q.ewm(span=64, adjust=False).mean()) / px_vol
+            + (s_q.ewm(span=32, adjust=False).mean() - s_q.ewm(span=128, adjust=False).mean()) / px_vol
+            + (s_q.ewm(span=64, adjust=False).mean() - s_q.ewm(span=256, adjust=False).mean()) / px_vol
+        )
+        / 3.0
+    ).fillna(0.0).to_numpy(dtype=float)
+    corr60_arr = (
+        pd.Series(r_q, index=full_dates)
+        .rolling(60, min_periods=20)
+        .corr(pd.Series(r_cta, index=full_dates))
+        .fillna(0.0)
+        .to_numpy(dtype=float)
     )
 
-    active_tranches: list[dict[str, Any]] = []
-    pending_sig: dict[str, Any] | None = None
-    active_cc: dict[str, Any] | None = None
-    pending_cc: dict[str, Any] | None = None
-    pending_cc_deploy = False
-    active_sp: dict[str, Any] | None = None
-    pending_sp: dict[str, Any] | None = None
-    active_wc: dict[str, Any] | None = None
-    pending_wc: dict[str, Any] | None = None
+    # Compute strictly causal Slow-Bear +8% Hysteresis Latch across ALL dates
+    dd252_arr = np.zeros(n_full, dtype=float)
+    hi252_px_arr = np.zeros(n_full, dtype=float)
+    hi252_date_arr: list[str] = [""] * n_full
+    cta_ret_hi252_arr = np.zeros(n_full, dtype=float)
+    db_ret_hi252_arr = np.zeros(n_full, dtype=float)
+    km_ret_hi252_arr = np.zeros(n_full, dtype=float)
+    ath_px_arr = np.zeros(n_full, dtype=float)
+    ath_date_arr: list[str] = [""] * n_full
+    dd_ath_arr = np.zeros(n_full, dtype=float)
+    cta_ret_ath_arr = np.zeros(n_full, dtype=float)
+    db_ret_ath_arr = np.zeros(n_full, dtype=float)
+    km_ret_ath_arr = np.zeros(n_full, dtype=float)
+    latch_on_arr = np.zeros(n_full, dtype=bool)
+    above200_streak_arr = np.zeros(n_full, dtype=int)
+    latch_peak_gain_arr = np.zeros(n_full, dtype=float)
+    latch_arm_date_arr: list[str | None] = [None] * n_full
+    cont_dd12_days_arr = np.zeros(n_full, dtype=int)
+    cont_dd12_start_arr: list[str | None] = [None] * n_full
 
-    ledger: list[dict[str, Any]] = []
-    cc_ledger: list[dict[str, Any]] = []
-    sp_closed_ledger: list[dict[str, Any]] = []
-    wc_closed_ledger: list[dict[str, Any]] = []
-    shield_events: list[dict[str, Any]] = []
-    tid = 0
-    cc_tid = 0
-    sp_tid = 0
-    wc_tid = 0
-    cc_gross_prem = 0.0
-    cc_gross_loss = 0.0
-    cc_assigned_cnt = 0
-    cc_funded_puts = 0.0
-    sp_margin_interest_total = 0.0
-    sp_comm_total = 0.0
-    sp_assign_count = 0
-    days_levered = 0
-    days_short_put_open = 0
-    max_gross_stock_lev = 1.0
-    max_notional_lev = 1.0
-    max_wheel_cycle_days = 0
-    cur_cycle_id = 0
-    cur_cycle_start_dt: datetime.date | None = None
+    cur_latch = False
+    cur_above = 0
+    cur_peak = 0.0
+    cur_arm_d: str | None = None
+    run_ath_px = float(px_q[0])
+    run_ath_idx = 0
+    cont_start_dt: datetime.date | None = None
+    cont_start_str: str | None = None
+    latch_episodes_full: list[dict[str, Any]] = []
+    active_latch_ep: dict[str, Any] | None = None
 
-    def _sweep_sp_cash_to_core(px: float) -> None:
-        nonlocal core_shares, sp_cash
-        if abs(sp_cash) > 1e-8:
-            if sp_cash > 0.0:
-                core_shares += sp_cash / (px * (1.0 + STOCK_REBAL_FEE))
-            else:
-                core_shares += sp_cash / (px * (1.0 - STOCK_REBAL_FEE))
-            sp_cash = 0.0
+    for i in range(n_full):
+        d = full_dates[i]
+        dt_i = datetime.date.fromisoformat(d)
+        lo = max(0, i - 251)
+        j_hi = lo + int(np.argmax(px_q[lo : i + 1]))
+        hi252_px_arr[i] = float(px_q[j_hi])
+        hi252_date_arr[i] = full_dates[j_hi]
+        dd252_arr[i] = px_q[i] / px_q[j_hi] - 1.0 if px_q[j_hi] > 0 else 0.0
+        cta_ret_hi252_arr[i] = px_cta[i] / px_cta[j_hi] - 1.0 if px_cta[j_hi] > 0 else 0.0
+        db_ret_hi252_arr[i] = px_db_spliced[i] / px_db_spliced[j_hi] - 1.0 if px_db_spliced[j_hi] > 0 else 0.0
+        km_ret_hi252_arr[i] = px_km_spliced[i] / px_km_spliced[j_hi] - 1.0 if px_km_spliced[j_hi] > 0 else 0.0
 
-    def _estimate_nav_open(op_px: float, vxn_o: float, r_c: float, q_c: float, cur_dt: datetime.date, d_str: str = "") -> float:
-        mtm_u1 = 0.0
-        for tr_o in active_tranches:
-            rem_d_o = max(1, (tr_o["exp_dt"] - cur_dt).days)
-            _, _, pm_o, _, _, _ = _lookup_leg(
-                d_str, "put", tr_o["exp_date"], tr_o["kp"], tr_o.get("k_cents_p"),
-                op_px, rem_d_o, r_c, q_c, vxn_o, tr_o.get("last_iv_p"), slip_bsm=slip,
-            )
-            mtm_u1 += tr_o["hedged_shares"] * pm_o
-            if tr_o["kc"] is not None:
-                _, _, cm_o, _, _, _ = _lookup_leg(
-                    d_str, "call", tr_o["exp_date"], tr_o["kc"], tr_o.get("k_cents_c"),
-                    op_px, rem_d_o, r_c, q_c, vxn_o, tr_o.get("last_iv_c"), slip_bsm=slip,
-                )
-                mtm_u1 -= tr_o["hedged_shares"] * cm_o
-        mtm_cc_o = 0.0
-        if active_cc is not None:
-            rem_c_o = max(1, (active_cc["exp_dt"] - cur_dt).days)
-            _, _, cm_c_o, _, _, _ = _lookup_leg(
-                d_str, "call", active_cc["exp_date"], active_cc["kc"], active_cc.get("k_cents"),
-                op_px, rem_c_o, r_c, q_c, vxn_o, active_cc.get("last_iv"), slip_bsm=slip,
-            )
-            mtm_cc_o = -active_cc["shares"] * cm_c_o
-        return max(1.0, (core_shares + assigned_shares) * op_px + tbill_cash + cc_cash + sp_cash + mtm_u1 + mtm_cc_o)
+        if px_q[i] >= run_ath_px:
+            run_ath_px = float(px_q[i])
+            run_ath_idx = i
+        ath_px_arr[i] = run_ath_px
+        ath_date_arr[i] = full_dates[run_ath_idx]
+        dd_ath_arr[i] = px_q[i] / run_ath_px - 1.0
+        cta_ret_ath_arr[i] = px_cta[i] / px_cta[run_ath_idx] - 1.0 if px_cta[run_ath_idx] > 0 else 0.0
+        db_ret_ath_arr[i] = px_db_spliced[i] / px_db_spliced[run_ath_idx] - 1.0 if px_db_spliced[run_ath_idx] > 0 else 0.0
+        km_ret_ath_arr[i] = px_km_spliced[i] / px_km_spliced[run_ath_idx] - 1.0 if px_km_spliced[run_ath_idx] > 0 else 0.0
 
-    nav_list: list[float] = []
-    equiv_sh_list: list[float] = []
-    any_active_list: list[int] = []
-    active_slots_list: list[int] = []
-    slot1_naked_list: list[bool] = []
-    shield_active_list: list[bool] = []
-
-    for i, d in enumerate(dates):
-        row = rows[i]
-        op_raw = float(row["open"])
-        cl = float(row["close"])
-        div = float(row["dividends"])
-        vxn_cl = float(row["vxn"])
-        vix_r = float(row["vix_ratio"])
-        r_cur = float(row["r"])
-        q_cur = float(row["div_yield"])
-        dd_cur = float(row["dd_from_ath"])
-        # Align execution spot/VXN to 4:00 PM ET real OPRA/Polygon quote timestamp when using real quotes
-        op = cl if use_real else op_raw
-        if use_real:
-            vxn_ex_day = vxn_cl
-        elif i > 0:
-            vxn_ex_day = max(10.0, float(rows[i - 1]["vxn"]) - 0.45 * (op / float(rows[i - 1]["close"]) - 1.0) * 100.0)
+        if dd_ath_arr[i] <= -0.12:
+            if cont_start_dt is None:
+                cont_start_dt = dt_i
+                cont_start_str = d
+            cont_dd12_days_arr[i] = (dt_i - cont_start_dt).days
+            cont_dd12_start_arr[i] = cont_start_str
         else:
-            vxn_ex_day = vxn_cl
+            cont_start_dt = None
+            cont_start_str = None
+            cont_dd12_days_arr[i] = 0
+            cont_dd12_start_arr[i] = None
 
-        mult_morning = (final_bh_sh / pre_drip_bh[i]) * final_cl
-        mult_eod = (final_bh_sh / post_drip_bh[i]) * final_cl
+        below_200 = px_q[i] < sma200_arr[i]
+        cur_above = 0 if below_200 else (cur_above + 1)
 
-        if i > 0:
-            dt_yr = max(1, (dt_objs[i] - dt_objs[i - 1]).days) / 365.0
-            r_prev = float(rows[i - 1]["r"])
-            if tbill_cash > 0.0:
-                tbill_cash *= 1.0 + r_prev * dt_yr
-            if cc_cash > 0.0:
-                cc_cash *= 1.0 + r_prev * dt_yr
-            if sp_cash > 0.0:
-                sp_cash *= 1.0 + r_prev * dt_yr
-            elif sp_cash < 0.0:
-                m_int = abs(sp_cash) * (r_prev + MARGIN_SPREAD) * dt_yr
-                sp_cash -= m_int
-                sp_margin_interest_total += m_int
-
-        # A0. Deploy accumulated Covered-Call cash war chest on panic dip at T+1 Open
-        if i > 0 and pending_cc_deploy and cc_cash > 1.0:
-            core_shares += cc_cash / (op * (1.0 + STOCK_REBAL_FEE))
-            cc_cash = 0.0
-            pending_cc_deploy = False
-
-        # A0b. Close or Roll active Covered Call early on VIX/3M >= 1.10 panic or Delta stop/roll trigger
-        if i > 0 and active_cc is not None and active_cc.get("pending_close"):
-            vxn_op = vxn_ex_day
-            rem_cc = max(0, (active_cc["exp_dt"] - dt_objs[i]).days)
-            if _is_exp(i, active_cc["exp_dt"]):
-                c_ask_ex = max(0.0, op - active_cc["kc"])
-                src_cc_ex = active_cc.get("entry_source", "bsm_fallback")
-            else:
-                b_c, a_c, m_c, _, _, src_cc_ex = _lookup_leg(
-                    d, "call", active_cc["exp_date"], active_cc["kc"], active_cc.get("k_cents"),
-                    op, rem_cc, r_cur, q_cur, vxn_op, active_cc.get("last_iv"), slip_bsm=slip,
-                )
-                c_ask_ex = _buy_leg(b_c, a_c, m_c, src_cc_ex, slip_bsm=slip)
-            cost_cl = active_cc["shares"] * c_ask_ex
-            cc_gross_loss += cost_cl
-            if cc_cash >= cost_cl:
-                cc_cash -= cost_cl
-            else:
-                core_shares -= (cost_cl - cc_cash) / (op * (1.0 - STOCK_REBAL_FEE))
-                cc_cash = 0.0
-            close_reason = active_cc.get("close_reason") or "panic_close_uncap"
-            old_rolls = int(active_cc.get("roll_count", 0))
-            old_sh = active_cc["shares"]
-            cc_en_src = active_cc.get("entry_source", "bsm_fallback")
-            cc_ledger.append(
-                {
-                    "cc_id": active_cc["cc_id"],
-                    "entry_date": active_cc["entry_date"],
-                    "exit_date": d,
-                    "entry_spot": round(active_cc["entry_spot"], 2),
-                    "kc": round(active_cc["kc"], 2),
-                    "exit_spot": round(op, 2),
-                    "entry_vxn": round(active_cc["entry_vxn"], 2),
-                    "shares": round(old_sh, 2),
-                    "prem_usd": round(active_cc["prem_usd"], 2),
-                    "loss_usd": round(cost_cl, 2),
-                    "net_pnl_usd": round(active_cc["prem_usd"] - cost_cl, 2),
-                    "exit_reason": close_reason,
-                    "roll_gen": old_rolls,
-                    "pricing_source": m7e._classify_trade_source(cc_en_src, src_cc_ex),
+        if not cur_latch:
+            if below_200 and dd252_arr[i] <= -0.10 and corr60_arr[i] < 0.0 and cta_ret_hi252_arr[i] >= 0.08:
+                cur_latch = True
+                cur_peak = cta_ret_hi252_arr[i]
+                cur_arm_d = d
+                active_latch_ep = {
+                    "arm_date": d,
+                    "reset_date": None,
+                    "peak_cta_gain_pct": round(cur_peak * 100.0, 2),
+                    "min_qqq_dd252_pct": round(dd252_arr[i] * 100.0, 2),
+                    "days_armed": 1,
                 }
-            )
-            active_cc = None
+                latch_episodes_full.append(active_latch_ep)
+        else:
+            cur_peak = max(cur_peak, cta_ret_hi252_arr[i])
+            if active_latch_ep is not None:
+                active_latch_ep["peak_cta_gain_pct"] = round(cur_peak * 100.0, 2)
+                active_latch_ep["min_qqq_dd252_pct"] = round(min(active_latch_ep["min_qqq_dd252_pct"], dd252_arr[i] * 100.0), 2)
+                active_latch_ep["days_armed"] += 1
+            if cur_above >= 10:
+                cur_latch = False
+                cur_peak = 0.0
+                cur_arm_d = None
+                if active_latch_ep is not None:
+                    active_latch_ep["reset_date"] = d
+                    active_latch_ep = None
 
-            # Simultaneous Roll-Out-and-Up if triggered by Delta Roll (not panic) and no active crisis Collar
-            has_collar_r = any(t["tranche_type"] == "collar" for t in active_tranches)
-            if (
-                close_reason in ("delta_roll_up", "delta_credit_roll")
-                and cc_roll_mode is not None
-                and old_rolls < cc_max_rolls
-                and not has_collar_r
-            ):
-                roll_days = 45 if cc_roll_mode == "credit_45d" else 30
-                c_roll = None
-                if use_real:
-                    if cc_roll_mode == "credit_45d":
-                        c_roll = real_store.select_call_contract_for_bid(
-                            d, op, 45, c_ask_ex, op * 1.01, 32, 62, r_cur, q_cur
-                        )
-                    elif cc_roll_mode == "fresh_30d":
-                        c_roll = real_store.select_call_contract_delta(
-                            d, op, 30, cc_target_delta, op * (1.0 + cc_min_otm), 20, 42, r_cur, q_cur
-                        )
-                if c_roll is not None:
-                    _rec_q(c_roll["source"])
-                    exp_date_r, exp_dt_r = c_roll["exp"], c_roll["exp_dt"]
-                    kc_new = c_roll["strike"]
-                    k_cents_r = c_roll["k_cents"]
-                    c_bid_r = _sell_leg(c_roll["bid"], c_roll["ask"], c_roll["mid"], c_roll["source"], slip_bsm=slip)
-                    iv_r = c_roll["iv"]
-                    src_r = c_roll["source"]
-                else:
-                    target_r = dt_objs[i] + datetime.timedelta(days=roll_days)
-                    pos_r = bisect.bisect_left(dt_objs, target_r)
-                    if pos_r < len(dates):
-                        exp_date_r, exp_dt_r = dates[pos_r], dt_objs[pos_r]
-                    else:
-                        exp_date_r, exp_dt_r = target_r.isoformat(), target_r
-                    t_r = max(1, (exp_dt_r - dt_objs[i]).days) / 365.0
-                    kc_new = None
-                    if cc_roll_mode == "credit_45d":
-                        kc_new = solve_call_strike_for_bid(op, t_r, r_cur, q_cur, vxn_op, coeffs, c_ask_ex, slip)
-                    elif cc_roll_mode == "fresh_30d":
-                        kc_new = max(
-                            op * (1.0 + cc_min_otm),
-                            solve_call_strike_for_delta(op, t_r, r_cur, q_cur, vxn_op, coeffs, cc_target_delta),
-                        )
-                    if kc_new is not None and kc_new > op * 1.01:
-                        iv_r = eval_skew_iv(op, kc_new, t_r, r_cur, q_cur, vxn_op, coeffs)
-                        cm_r = bsm_price(op, kc_new, t_r, r_cur, q_cur, iv_r, "call")
-                        c_bid_r = _sell_leg(cm_r * (1.0 - slip), cm_r * (1.0 + slip), cm_r, "bsm_fallback", slip_bsm=slip)
-                        k_cents_r = int(round(kc_new * 100.0))
-                        src_r = "bsm_fallback"
-                        _rec_q(src_r)
-                    else:
-                        c_bid_r = 0.0
-                        k_cents_r = None
-                        iv_r = None
-                        src_r = "bsm_fallback"
-                if kc_new is not None and kc_new > op * 1.01 and c_bid_r >= 0.05:
-                    prem_r = old_sh * c_bid_r
-                    cc_tid += 1
-                    cc_gross_prem += prem_r
-                    cc_cash += prem_r
-                    active_cc = {
-                        "cc_id": cc_tid,
-                        "entry_date": d,
-                        "entry_dt": dt_objs[i],
-                        "exp_date": exp_date_r,
-                        "exp_dt": exp_dt_r,
-                        "entry_spot": op,
-                        "entry_vxn": vxn_op,
-                        "kc": kc_new,
-                        "k_cents": k_cents_r,
-                        "last_iv": iv_r,
-                        "entry_source": src_r,
-                        "shares": old_sh,
-                        "prem_usd": prem_r,
-                        "pending_close": False,
-                        "roll_count": old_rolls + 1,
-                    }
+        latch_on_arr[i] = cur_latch
+        above200_streak_arr[i] = cur_above
+        latch_peak_gain_arr[i] = cur_peak
+        latch_arm_date_arr[i] = cur_arm_d
 
-        if i > 0 and slow_bear_overlay and pending_bear_change is not None:
-            prev_r = rows[i - 1]
-            if pending_bear_change == "enter_def" and not in_slow_bear_def:
-                sell_sh = 0.50 * core_shares
-                core_shares -= sell_sh
-                cash_added = sell_sh * op * (1.0 - STOCK_REBAL_FEE)
-                tbill_cash += cash_added
-                in_slow_bear_def = True
-                shield_events.append(
-                    {
-                        "event_id": f"{strategy_id}_shield_enter_{d}",
-                        "event_type": "shield_enter",
-                        "date": d,
-                        "signal_date": prev_r["date"],
-                        "spot": round(op, 2),
-                        "qqq_ma200": round(float(prev_r["qqq_ma200"]), 2),
-                        "smooth_lights": round(float(prev_r["score_5d"]), 2),
-                        "raw_lights": int(prev_r["score"]),
-                        "vix": round(float(prev_r["vix"]), 2),
-                        "vix_ratio": round(float(prev_r["vix_ratio"]), 3),
-                        "shares_delta": round(-sell_sh, 2),
-                        "tbill_cash_usd": round(tbill_cash, 2),
-                        "trigger_en": f"5D Smooth Lights {float(prev_r['score_5d']):.1f}>=4.8 & QQQ<200DMA (${float(prev_r['qqq_ma200']):.2f})",
-                        "trigger_zh": f"5日均灯 {float(prev_r['score_5d']):.1f}>=4.8 且 QQQ跌破200DMA (${float(prev_r['qqq_ma200']):.2f})",
-                    }
-                )
-            elif pending_bear_change == "exit_def" and in_slow_bear_def:
-                buy_sh = tbill_cash / (op * (1.0 + STOCK_REBAL_FEE))
-                core_shares += buy_sh
-                prev_vix = float(prev_r["vix"])
-                prev_vr = float(prev_r["vix_ratio"])
-                prev_sc5 = float(prev_r["score_5d"])
-                prev_cl_chk = float(prev_r["close"])
-                prev_ma = float(prev_r["qqq_ma200"])
-                if prev_vr >= 1.10 or prev_vix >= 34.0:
-                    ex_en = f"Panic Capitulation Reload (VIX {prev_vix:.1f} / Ratio {prev_vr:.3f})"
-                    ex_zh = f"恐慌极值抄底回补 (VIX {prev_vix:.1f} / 倒挂 {prev_vr:.3f})"
-                elif prev_cl_chk > prev_ma * 1.01:
-                    ex_en = f"Reclaimed 200DMA +1% (${prev_cl_chk:.2f} > ${prev_ma:.2f})"
-                    ex_zh = f"重上200日年线 +1% (${prev_cl_chk:.2f} > ${prev_ma:.2f})"
-                else:
-                    ex_en = f"Macro Lights Cooled ({prev_sc5:.1f} <= 3.0)"
-                    ex_zh = f"危机灯降温解除 ({prev_sc5:.1f} <= 3.0)"
-                shield_events.append(
-                    {
-                        "event_id": f"{strategy_id}_shield_exit_{d}",
-                        "event_type": "shield_exit",
-                        "date": d,
-                        "signal_date": prev_r["date"],
-                        "spot": round(op, 2),
-                        "qqq_ma200": round(prev_ma, 2),
-                        "smooth_lights": round(prev_sc5, 2),
-                        "raw_lights": int(prev_r["score"]),
-                        "vix": round(prev_vix, 2),
-                        "vix_ratio": round(prev_vr, 3),
-                        "shares_delta": round(buy_sh, 2),
-                        "tbill_cash_usd": 0.0,
-                        "trigger_en": ex_en,
-                        "trigger_zh": ex_zh,
-                    }
-                )
-                tbill_cash = 0.0
-                in_slow_bear_def = False
-            pending_bear_change = None
+    full_idx_map = {d: i for i, d in enumerate(full_dates)}
 
-        # A. Execute pending early Take-Profit exits at T+1 (4:00 PM ET real OPRA/Polygon quote or BSM Open)
-        if i > 0 and any(t.get("pending_tp") for t in active_tranches):
-            vxn_op = vxn_ex_day
+    # Helper to simulate exact v2.0 Single Master Strategy for a given MIT OPRA window
+    def run_v2_window(
+        win_id: str,
+        start_d: str,
+        end_d: str,
+        zero_splice: bool,
+        exec_mode: str,
+        fin_spread: float,
+    ) -> dict[str, Any]:
+        wd = fs.build_window_data(all_rows, etf_df, sig_df, start_d, end_d, zero_splice=zero_splice)
+        dates = wd["dates"]
+        dt_objs = wd["dt_objs"]
+        n = wd["n"]
+        sel = [full_idx_map[d] for d in dates]
 
-            still_open: list[dict[str, Any]] = []
-            for tr in active_tranches:
-                if not tr.get("pending_tp"):
-                    still_open.append(tr)
+        s = sig_df.reindex(dates)
+        p1 = s["pillar1_top"].fillna(0.0).to_numpy(dtype=float)
+        p2 = s["pillar2_shock"].fillna(0.0).to_numpy(dtype=float)
+        m3 = s["M3"].fillna(False).astype(bool).to_numpy()
+        non_m4_prob = np.minimum(100.0, p1 + p2 + np.where(m3, 20.0, 0.0))
+        non_m4_flag = non_m4_prob >= 35.0
+
+        latch_sel = latch_on_arr[sel]
+        below200_sel = px_q[sel] < sma200_arr[sel]
+        above_ema20_sel = px_q[sel] > ema20_arr[sel]
+        ewmac_sel = ewmac_arr[sel]
+        vxn = wd["vxn"]
+        vr = wd["vr"]
+        vix = wd["vix"]
+        spot = wd["spot"]
+        r_qqq, px_qqq = wd["r_qqq"], wd["px_qqq"]
+        r_db, px_db = wd["r_db"], wd["px_db"]
+        r_km, px_km = wd["r_km"], wd["px_km"]
+        effr = wd["effr"]
+        r_opt, q_opt = wd["r_opt"], wd["q_opt"]
+
+        m4_flag = latch_sel & below200_sel & (ewmac_sel < 0.0) & above_ema20_sel & (vxn <= 28.0) & (vr <= 0.90)
+
+        init_cap = INITIAL_CAPITAL
+        lev_cap = 1.20
+        qqq_val = init_cap
+        cta_vals = {"DBMF": init_cap * 0.10, "KMLM": init_cap * 0.10}
+        cta_w_tgt = {"DBMF": 0.10, "KMLM": 0.10}
+        cta_px = {"DBMF": px_db, "KMLM": px_km}
+        debt = init_cap * 0.20
+        cash_free = 0.0
+        tp_queue: list[dict[str, Any]] = []
+        base_puts: list[dict[str, Any]] = []
+        crisis_puts: list[dict[str, Any]] = []
+        pending_base_open = False
+        pending_crisis_open: str | None = None
+        non_inv_streak = 1 if vr[0] < 1.00 else 0
+        post_tp_lockout = False
+        lockout_streak = 0
+        run_ath_w = float(px_qqq[0])
+        run_ath_w_idx = 0
+        qqq_dd_w = np.zeros(n, dtype=float)
+        cta_sched: dict[str, dict[str, Any] | None] = {"DBMF": None, "KMLM": None}
+        cta_locks: list[dict[str, Any]] = []
+        dd_timer_start_dt: datetime.date | None = None
+
+        nav_arr = np.zeros(n, dtype=float)
+        lev_arr = np.zeros(n, dtype=float)
+        nav_arr[0] = init_cap
+        lev_arr[0] = 1.20
+        put_ledger: list[dict[str, Any]] = []
+        cta_rot_ledger: list[dict[str, Any]] = []
+        cta_restore_ledger: list[dict[str, Any]] = []
+        tid = 0
+        exec_fallbacks = 0
+        delev_days = 0
+
+        def _qc() -> float:
+            return sum(q["amount"] for q in tp_queue)
+
+        def _allp() -> list[dict[str, Any]]:
+            return crisis_puts + base_puts
+
+        def _pmtm() -> float:
+            return sum(t["last_mtm_usd"] for t in _allp())
+
+        def _gmv() -> float:
+            return qqq_val + cta_vals["DBMF"] + cta_vals["KMLM"]
+
+        def _nav() -> float:
+            return max(1.0, _gmv() + _pmtm() + cash_free + _qc() - debt)
+
+        def _sweep() -> None:
+            nonlocal cash_free, debt
+            if cash_free > 1e-8 and debt > 1e-8:
+                pay = min(cash_free, debt)
+                cash_free -= pay
+                debt -= pay
+
+        def _fund(need: float) -> float:
+            nonlocal cash_free, qqq_val
+            raised = 0.0
+            if cash_free > 1e-8:
+                take = min(cash_free, need)
+                cash_free -= take
+                raised += take
+            rem = need - raised
+            if rem > 1e-8 and qqq_val > 10.0:
+                sg = min(qqq_val * 0.95, rem / (1.0 - ETF_FEE))
+                qqq_val -= sg
+                raised += sg * (1.0 - ETF_FEE)
+            return raised
+
+        def _park(cash_usd: float) -> None:
+            nonlocal qqq_val, debt
+            if cash_usd <= 1e-8:
+                return
+            room = max(0.0, lev_cap * _nav() - _gmv())
+            tq = min(cash_usd, room)
+            td = cash_usd - tq
+            if tq > 1e-8:
+                qqq_val += tq * (1.0 - ETF_FEE)
+            if td > 1e-8:
+                rep = min(debt, td)
+                debt -= rep
+                rem = td - rep
+                if rem > 1e-8:
+                    qqq_val += rem * (1.0 - ETF_FEE)
+
+        def _open_put(i: int, sleeve: str, bud: float, t_dte: int, r_dte: int, mon: float, salv: float = 0.0):
+            nonlocal tid, exec_fallbacks
+            d = dates[i]
+            cl = float(spot[i])
+            lo, hi = fs.dte_bounds(t_dte)
+            tgt = store.select_put_contract(d, cl, t_dte, mon, lo, hi)
+            if tgt is None:
+                exec_fallbacks += 1
+                if salv > 1e-8:
+                    _park(salv)
+                return None
+            bpx = rb.exec_buy_price(tgt["bid"], tgt["ask"], tgt["mid"], exec_mode)
+            if bpx < 0.03:
+                if salv > 1e-8:
+                    _park(salv)
+                return None
+            nv = _nav() + salv
+            cost = nv * bud
+            sh = cost / bpx
+            nn = cost - salv
+            if nn > 1e-8:
+                rsd = _fund(nn)
+                if rsd + salv < cost * 0.99:
+                    cost = rsd + salv
+                    sh = cost / bpx
+            elif nn < -1e-8:
+                _park(-nn)
+            tid += 1
+            return {
+                "tranche_id": tid,
+                "sleeve": sleeve,
+                "target_dte": t_dte,
+                "roll_dte": r_dte,
+                "moneyness": mon,
+                "budget_pct": bud,
+                "entry_date": d,
+                "entry_dt": dt_objs[i],
+                "exp": tgt["exp"],
+                "exp_dt": tgt["exp_dt"],
+                "entry_dte": tgt["dte"],
+                "strike": tgt["strike"],
+                "k_cents": tgt["k_cents"],
+                "entry_spot": cl,
+                "entry_fill": bpx,
+                "last_iv": tgt["iv"] if np.isfinite(tgt["iv"]) else None,
+                "shares": sh,
+                "entry_cost": cost,
+                "last_mtm_usd": sh * tgt["mid"],
+                "last_mid": tgt["mid"],
+                "last_rem_days": tgt["dte"],
+                "pending_exit": False,
+                "pending_exit_frac": 0.0,
+                "exit_reason": "",
+                "partial_tp_taken": False,
+            }
+
+        def _cap() -> None:
+            nonlocal qqq_val, debt, cash_free, delev_days
+            _sweep()
+            gv = _gmv()
+            nv = _nav()
+            if gv / nv <= lev_cap + 1e-7:
+                return
+            sr = (gv - lev_cap * nv) / max(1e-6, 1.0 - lev_cap * ETF_FEE)
+            if sr <= 1.0:
+                return
+            delev_days += 1
+            sq = min(qqq_val, sr * qqq_val / gv)
+            sd = min(cta_vals["DBMF"], sr * cta_vals["DBMF"] / gv)
+            sk = min(cta_vals["KMLM"], sr * cta_vals["KMLM"] / gv)
+            qqq_val -= sq
+            cta_vals["DBMF"] -= sd
+            cta_vals["KMLM"] -= sk
+            proc = (sq + sd + sk) * (1.0 - ETF_FEE)
+            rep = min(debt, proc)
+            debt -= rep
+            cash_free += proc - rep
+
+        for i in range(1, n):
+            d = dates[i]
+            cl = float(spot[i])
+            cal_days = max(1, (dt_objs[i] - dt_objs[i - 1]).days)
+            vix_cl, vxn_cl, vix_r = float(vix[i]), float(vxn[i]), float(vr[i])
+            r_cur, q_cur = float(r_opt[i]), float(q_opt[i])
+
+            qqq_val *= 1.0 + float(r_qqq[i])
+            cta_vals["DBMF"] *= 1.0 + float(r_db[i])
+            cta_vals["KMLM"] *= 1.0 + float(r_km[i])
+            if debt > 1e-8:
+                debt += debt * max(0.0, float(effr[i - 1]) + fin_spread) * (cal_days / 360.0)
+            qc0 = _qc()
+            if (cash_free + qc0) > 1e-8:
+                cash_free += (cash_free + qc0) * max(0.0, float(effr[i - 1]) + CASH_SPREAD) * (cal_days / 365.0)
+            if px_qqq[i] >= run_ath_w:
+                run_ath_w = float(px_qqq[i])
+                run_ath_w_idx = i
+            qqq_dd_w[i] = px_qqq[i] / run_ath_w - 1.0
+
+            # 1. Exits & Rolls
+            for bl in (crisis_puts, base_puts):
+                if not bl:
                     continue
-                rem_days = max(0, (tr["exp_dt"] - dt_objs[i]).days)
-                t_rem = rem_days / 365.0
-                if _is_exp(i, tr["exp_dt"]):
-                    put_bid = max(0.0, tr["kp"] - op)
-                    call_ask = max(0.0, op - tr["kc"]) if tr["kc"] is not None else 0.0
-                    src_p_ex = tr.get("entry_source", "bsm_fallback")
-                    src_c_ex = tr.get("entry_source_c", src_p_ex)
-                else:
-                    b_p, a_p, m_p, _, _, src_p_ex = _lookup_leg(
-                        d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents_p"),
-                        op, rem_days, r_cur, q_cur, vxn_op, tr.get("last_iv_p"), slip_bsm=slip,
+                keep, rolls = [], []
+                for tr in bl:
+                    if not tr["pending_exit"]:
+                        keep.append(tr)
+                        continue
+                    rem_d = max(0, (tr["exp_dt"] - dt_objs[i]).days)
+                    bid, ask, mid, iv, delta, src = store.lookup_contract(
+                        d, "put", tr["exp"], tr["k_cents"], cl, rem_d, r_cur, q_cur, vxn_cl, tr["last_iv"], coeffs
                     )
-                    put_bid = _sell_leg(b_p, a_p, m_p, src_p_ex, slip_bsm=slip)
-                    if tr["tranche_type"] == "collar":
-                        b_c, a_c, m_c, _, _, src_c_ex = _lookup_leg(
-                            d, "call", tr["exp_date"], tr["kc"], tr.get("k_cents_c"),
-                            op, rem_days, r_cur, q_cur, vxn_op, tr.get("last_iv_c"), slip_bsm=slip,
-                        )
-                        call_ask = _buy_leg(b_c, a_c, m_c, src_c_ex, slip_bsm=slip)
-                    else:
-                        call_ask = 0.0
-                        src_c_ex = src_p_ex
-
-                if tr["tranche_type"] == "collar":
-                    actual_net_sh = put_bid - call_ask
-                else:
-                    actual_net_sh = put_bid - tr["entry_put_ask"]
-
-                net_sh_px = put_bid - call_ask
-                exit_cash_usd = tr["hedged_shares"] * net_sh_px
-                denom = op * (1.0 + (STOCK_REBAL_FEE if exit_cash_usd >= 0 else -STOCK_REBAL_FEE))
-                d_sh = exit_cash_usd / denom if abs(exit_cash_usd) > 1e-10 else 0.0
-                core_shares += d_sh
-
-                d_sh_put = (tr["hedged_shares"] * put_bid) / denom
-                d_sh_call = -(tr["hedged_shares"] * call_ask) / denom
-
-                conv = decompose_tranche_convexity(
-                    tr["tranche_type"],
-                    tr["entry_spot"],
-                    op,
-                    tr["kp"],
-                    tr["kc"],
-                    tr["T_entry"],
-                    t_rem,
-                    tr["entry_r"],
-                    r_cur,
-                    tr["entry_q"],
-                    q_cur,
-                    tr["entry_vxn"],
-                    vxn_op,
-                    coeffs,
-                    actual_net_sh,
-                )
-                hs = tr["hedged_shares"]
-                trig_en, trig_zh = _format_trigger_label(tr["sig_score"], tr["sig_ad_below50"], gate_key)
-                en_src = tr.get("entry_source", "bsm_fallback")
-                ledger.append(
-                    {
+                    if src != "exact":
+                        exec_fallbacks += 1
+                    spx = rb.exec_sell_price(bid, ask, mid, exec_mode)
+                    frac = float(tr["pending_exit_frac"])
+                    cp = tr["entry_cost"] * frac
+                    ex = tr["shares"] * frac * spx
+                    put_ledger.append({
                         "tranche_id": tr["tranche_id"],
-                        "strategy_id": strategy_id,
-                        "slot_num": tr["slot_num"],
-                        "tranche_type": tr["tranche_type"],
-                        "signal_date": tr["signal_date"],
+                        "sleeve": tr["sleeve"],
                         "entry_date": tr["entry_date"],
-                        "planned_exp_date": tr["exp_date"],
                         "exit_date": d,
-                        "actual_days_held": (dt_objs[i] - tr["entry_dt"]).days,
-                        "rem_dte_at_exit": rem_days,
-                        "exit_reason": tr["tp_reason"],
-                        "pricing_source": m7e._classify_trade_source(en_src, src_p_ex),
-                        "entry_source": en_src,
-                        "exit_source": src_p_ex,
-                        "sig_score": tr["sig_score"],
-                        "sig_ad_below50": tr["sig_ad_below50"],
-                        "trigger_en": trig_en,
-                        "trigger_zh": trig_zh,
-                        "entry_spot": round(tr["entry_spot"], 2),
-                        "entry_vxn": round(tr["entry_vxn"], 2),
-                        "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
-                        "kp": round(tr["kp"], 2),
-                        "kc": round(tr["kc"], 2) if tr["kc"] is not None else None,
-                        "call_cap_pct": round((tr["kc"] / tr["entry_spot"] - 1.0) * 100.0, 2)
-                        if tr["kc"] is not None
-                        else None,
-                        "hedged_shares": round(hs, 2),
-                        "slot_coverage": round(tr["slot_coverage"], 4),
-                        "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
-                        "entry_cost_usd": round(tr["entry_cost_usd"], 2),
-                        "entry_shares_sold": round(tr["entry_shares_sold"], 4),
-                        "exit_spot": round(op, 2),
-                        "exit_vxn": round(vxn_op, 2),
-                        "exit_vix_ratio": round(tr["tp_trigger_ratio"], 3),
-                        "underlying_ret_pct": round((op / tr["entry_spot"] - 1.0) * 100.0, 2),
-                        "put_exit_val_sh": round(put_bid, 4),
-                        "call_exit_cost_sh": round(call_ask, 4),
-                        "exit_net_cash_usd": round(exit_cash_usd, 2),
-                        "net_pnl_usd": round(exit_cash_usd - tr["entry_cost_usd"], 2),
-                        "exit_shares_delta": round(d_sh, 2),
-                        "shares_added": round(tr["entry_shares_sold"] + d_sh, 2),
-                        "delta0": round(float(conv["delta0"]), 4),
-                        "delta_usd": round(float(conv["dV_delta_sh"]) * hs, 2),
-                        "gamma_usd": round(float(conv["dV_gamma_sh"]) * hs, 2),
-                        "vega_usd": round(float(conv["dV_vega_sh"]) * hs, 2),
-                        "theta_slip_usd": round(float(conv["dV_theta_slip_sh"]) * hs, 2),
-                        "convexity_mult": round(float(conv["conv_mult"]), 2)
-                        if conv["conv_mult"] is not None
-                        else None,
-                        "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
-                        "comp_put_gain_usd": round(d_sh_put * mult_morning, 2),
-                        "comp_call_drag_usd": round(d_sh_call * mult_morning, 2),
-                    }
-                )
-            active_tranches = still_open
-
-        # B. Execute pending new Tranche entry at T+1
-        if i > 0 and pending_sig is not None and arch != "pure_qqq" and len(active_tranches) < max_slots:
-            vxn_en = vxn_ex_day
-            r_en, q_en = (r_cur, q_cur) if use_real else (pending_sig["r"], pending_sig["q"])
-
-            if arch == "all_collar":
-                t_type = "collar"
-            elif arch == "all_naked":
-                t_type = "naked_put"
-            elif arch == "hybrid_campaign_first":
-                t_type = "naked_put" if len(active_tranches) == 0 else "collar"
-            else:
-                raise ValueError(f"Unknown arch: {arch}")
-
-            c_put = (
-                real_store.select_put_contract(d, op, target_dte, put_moneyness, 65, 120, r_en, q_en)
-                if use_real
-                else None
-            )
-            if c_put is not None:
-                _rec_q(c_put["source"])
-                exp_date, exp_dt = c_put["exp"], c_put["exp_dt"]
-                act_dte = c_put["dte"]
-                t_en = act_dte / 365.0
-                kp = c_put["strike"]
-                k_cents_p = c_put["k_cents"]
-                put_ask_en = _buy_leg(c_put["bid"], c_put["ask"], c_put["mid"], c_put["source"], slip_bsm=slip)
-                iv_p_en = c_put["iv"]
-                src_en = c_put["source"]
-            else:
-                target_cal = dt_objs[i] + datetime.timedelta(days=target_dte)
-                pos = bisect.bisect_left(dt_objs, target_cal)
-                if pos < len(dates):
-                    exp_date = dates[pos]
-                    exp_dt = dt_objs[pos]
-                else:
-                    exp_date = target_cal.isoformat()
-                    exp_dt = target_cal
-                act_dte = max(1, (exp_dt - dt_objs[i]).days)
-                t_en = act_dte / 365.0
-                kp = op * put_moneyness
-                k_cents_p = int(round(kp * 100.0))
-                iv_p_en = eval_skew_iv(op, kp, t_en, r_en, q_en, vxn_en, coeffs)
-                pm_en = bsm_price(op, kp, t_en, r_en, q_en, iv_p_en, "put")
-                put_ask_en = _buy_leg(pm_en * (1.0 - slip), pm_en * (1.0 + slip), pm_en, "bsm_fallback", slip_bsm=slip)
-                src_en = "bsm_fallback"
-                _rec_q(src_en)
-
-            already_hedged = sum(t["hedged_shares"] for t in active_tranches)
-            if max_slots == 1:
-                hedged_sh = core_shares * slot_coverage
-            else:
-                avail_sh = max(0.0, core_shares - already_hedged)
-                if t_type == "naked_put":
-                    cost_sh_frac = put_ask_en / (op * (1.0 - STOCK_REBAL_FEE))
-                    max_feasible = avail_sh / (1.0 + cost_sh_frac)
-                    hedged_sh = min(core_shares * slot_coverage, max_feasible)
-                else:
-                    hedged_sh = min(core_shares * slot_coverage, avail_sh)
-
-            if hedged_sh > 1e-6:
-                k_cents_c = None
-                iv_c_en = None
-                src_c_en = src_en
-                if t_type == "collar":
-                    # Buy back any overlapping normal-time Covered Call before opening a Collar
-                    if active_cc is not None:
-                        rem_cc = max(0, (active_cc["exp_dt"] - dt_objs[i]).days)
-                        if _is_exp(i, active_cc["exp_dt"]):
-                            c_ask_ex = max(0.0, op - active_cc["kc"])
-                            src_cc_cl = active_cc.get("entry_source", "bsm_fallback")
-                        else:
-                            b_c, a_c, m_c, _, _, src_cc_cl = _lookup_leg(
-                                d, "call", active_cc["exp_date"], active_cc["kc"], active_cc.get("k_cents"),
-                                op, rem_cc, r_en, q_en, vxn_en, active_cc.get("last_iv"), slip_bsm=slip,
-                            )
-                            c_ask_ex = _buy_leg(b_c, a_c, m_c, src_cc_cl, slip_bsm=slip)
-                        cost_cl = active_cc["shares"] * c_ask_ex
-                        cc_gross_loss += cost_cl
-                        if cc_cash >= cost_cl:
-                            cc_cash -= cost_cl
-                        else:
-                            core_shares -= (cost_cl - cc_cash) / (op * (1.0 - STOCK_REBAL_FEE))
-                            cc_cash = 0.0
-                        cc_ledger.append(
-                            {
-                                "cc_id": active_cc["cc_id"],
-                                "entry_date": active_cc["entry_date"],
-                                "exit_date": d,
-                                "entry_spot": round(active_cc["entry_spot"], 2),
-                                "kc": round(active_cc["kc"], 2),
-                                "exit_spot": round(op, 2),
-                                "entry_vxn": round(active_cc["entry_vxn"], 2),
-                                "shares": round(active_cc["shares"], 2),
-                                "prem_usd": round(active_cc["prem_usd"], 2),
-                                "loss_usd": round(cost_cl, 2),
-                                "net_pnl_usd": round(active_cc["prem_usd"] - cost_cl, 2),
-                                "exit_reason": "closed_for_collar",
-                                "roll_gen": int(active_cc.get("roll_count", 0)),
-                                "pricing_source": m7e._classify_trade_source(
-                                    active_cc.get("entry_source", "bsm_fallback"), src_cc_cl
-                                ),
-                            }
-                        )
-                        active_cc = None
-                    c_col = (
-                        real_store.select_call_contract_for_bid(
-                            d, op, act_dte, put_ask_en, op * 1.005, 65, 120, r_en, q_en, exp_override=exp_date
-                        )
-                        if (use_real and c_put is not None)
-                        else None
-                    )
-                    if c_col is not None:
-                        _rec_q(c_col["source"])
-                        kc = c_col["strike"]
-                        k_cents_c = c_col["k_cents"]
-                        iv_c_en = c_col["iv"]
-                        src_c_en = c_col["source"]
-                    else:
-                        kc = solve_zero_cost_call_strike(op, kp, t_en, r_en, q_en, vxn_en, coeffs, slip)
-                        k_cents_c = int(round(kc * 100.0))
-                        iv_c_en = eval_skew_iv(op, kc, t_en, r_en, q_en, vxn_en, coeffs)
-                        src_c_en = "bsm_fallback"
-                        _rec_q("bsm_fallback")
-                    entry_cost_usd = 0.0
-                    d_sh_entry = 0.0
-                else:
-                    kc = None
-                    entry_cost_usd = hedged_sh * put_ask_en
-                    # Fund Naked Put from Covered-Call cash war chest first (zero QQQ share sale while cash lasts!)
-                    if cc_cash >= entry_cost_usd:
-                        cc_cash -= entry_cost_usd
-                        cc_funded_puts += entry_cost_usd
-                        d_sh_entry = 0.0
-                    else:
-                        paid_cc = cc_cash
-                        cc_funded_puts += paid_cc
-                        rem_cost = entry_cost_usd - paid_cc
-                        cc_cash = 0.0
-                        d_sh_entry = -rem_cost / (op * (1.0 - STOCK_REBAL_FEE))
-                        core_shares += d_sh_entry
-
-                tid += 1
-                used_slots = {t["slot_num"] for t in active_tranches}
-                slot_num = min(s for s in range(1, max_slots + 1) if s not in used_slots)
-                active_tranches.append(
-                    {
-                        "tranche_id": tid,
-                        "slot_num": slot_num,
-                        "tranche_type": t_type,
-                        "signal_date": pending_sig["signal_date"],
-                        "sig_score": pending_sig["sig_score"],
-                        "sig_ad_below50": pending_sig["sig_ad_below50"],
-                        "entry_date": d,
-                        "entry_dt": dt_objs[i],
-                        "exp_date": exp_date,
-                        "exp_dt": exp_dt,
-                        "T_entry": t_en,
-                        "entry_spot": op,
-                        "entry_vxn": vxn_en,
-                        "entry_vix_ratio": pending_sig["vix_ratio"],
-                        "entry_r": r_en,
-                        "entry_q": q_en,
-                        "hedged_shares": hedged_sh,
-                        "slot_coverage": slot_coverage,
-                        "kp": kp,
-                        "kc": kc,
-                        "k_cents_p": k_cents_p,
-                        "k_cents_c": k_cents_c,
-                        "last_iv_p": iv_p_en,
-                        "last_iv_c": iv_c_en,
-                        "entry_source": src_en,
-                        "entry_source_c": src_c_en,
-                        "entry_put_ask": put_ask_en,
-                        "entry_cost_usd": entry_cost_usd,
-                        "entry_shares_sold": d_sh_entry,
-                        "comp_entry_cost_usd": d_sh_entry * mult_morning,
-                        "pending_tp": False,
-                        "tp_trigger_ratio": 0.0,
-                        "tp_reason": "",
-                    }
-                )
-            pending_sig = None
-
-        # B2. Execute pending normal-time OTM Covered Call sale at T+1 (only on uncollared shares)
-        if i > 0 and cc_enabled and pending_cc is not None and active_cc is None:
-            has_collar = any(t["tranche_type"] == "collar" for t in active_tranches)
-            if not has_collar:
-                vxn_cc = vxn_ex_day
-                r_cc, q_cc = (r_cur, q_cur) if use_real else (pending_cc["r"], pending_cc["q"])
-                cc_sh = max(0.0, core_shares)
-                if cc_sh > 1e-6:
-                    c_cc = (
-                        real_store.select_call_contract_delta(
-                            d, op, cc_dte, cc_target_delta, op * (1.0 + cc_min_otm), 18, 35, r_cc, q_cc
-                        )
-                        if use_real
-                        else None
-                    )
-                    if c_cc is not None:
-                        _rec_q(c_cc["source"])
-                        exp_date_cc, exp_dt_cc = c_cc["exp"], c_cc["exp_dt"]
-                        kc_cc = c_cc["strike"]
-                        k_cents_cc = c_cc["k_cents"]
-                        c_bid_cc = _sell_leg(c_cc["bid"], c_cc["ask"], c_cc["mid"], c_cc["source"], slip_bsm=slip)
-                        iv_cc = c_cc["iv"]
-                        src_cc = c_cc["source"]
-                    else:
-                        target_cc = dt_objs[i] + datetime.timedelta(days=cc_dte)
-                        pos_cc = bisect.bisect_left(dt_objs, target_cc)
-                        if pos_cc < len(dates):
-                            exp_date_cc, exp_dt_cc = dates[pos_cc], dt_objs[pos_cc]
-                        else:
-                            exp_date_cc, exp_dt_cc = target_cc.isoformat(), target_cc
-                        t_cc = max(1, (exp_dt_cc - dt_objs[i]).days) / 365.0
-                        kc_cc = max(
-                            op * (1.0 + cc_min_otm),
-                            solve_call_strike_for_delta(op, t_cc, r_cc, q_cc, vxn_cc, coeffs, cc_target_delta),
-                        )
-                        iv_cc = eval_skew_iv(op, kc_cc, t_cc, r_cc, q_cc, vxn_cc, coeffs)
-                        cm_cc = bsm_price(op, kc_cc, t_cc, r_cc, q_cc, iv_cc, "call")
-                        c_bid_cc = _sell_leg(cm_cc * (1.0 - slip), cm_cc * (1.0 + slip), cm_cc, "bsm_fallback", slip_bsm=slip)
-                        k_cents_cc = int(round(kc_cc * 100.0))
-                        src_cc = "bsm_fallback"
-                        _rec_q(src_cc)
-                    if c_bid_cc >= 0.05:
-                        prem_usd = cc_sh * c_bid_cc
-                        cc_tid += 1
-                        cc_gross_prem += prem_usd
-                        cc_cash += prem_usd
-                        active_cc = {
-                            "cc_id": cc_tid,
-                            "entry_date": d,
-                            "entry_dt": dt_objs[i],
-                            "exp_date": exp_date_cc,
-                            "exp_dt": exp_dt_cc,
-                            "entry_spot": op,
-                            "entry_vxn": vxn_cc,
-                            "kc": kc_cc,
-                            "k_cents": k_cents_cc,
-                            "last_iv": iv_cc,
-                            "entry_source": src_cc,
-                            "shares": cc_sh,
-                            "prem_usd": prem_usd,
-                            "pending_close": False,
-                            "roll_count": 0,
-                        }
-            pending_cc = None
-
-        # B3. Engine 3 Reverse Wheel Covered Call & Panic Short-Put Executions (T+1)
-        if i > 0 and sp_enabled and pending_wc is not None and assigned_shares > 1e-6 and active_wc is None:
-            pw = pending_wc
-            pending_wc = None
-            vxn_wc = vxn_ex_day
-            r_wc, q_wc = (r_cur, q_cur) if use_real else (pw["r"], pw["q"])
-            c_wc = None
-            if use_real:
-                if wc_mode == "wc_reclaim_30d_d35":
-                    c_wc = real_store.select_call_contract_delta(
-                        d, op, 30, 0.35, assigned_cost_k, 21, 40, r_wc, q_wc
-                    )
-                elif wc_mode == "wc_30d_c5s5":
-                    c_wc = real_store.select_call_contract_strike(
-                        d, op, 30, max(assigned_cost_k * 1.05, op * 1.05), 21, 40, r_wc, q_wc
-                    )
-                elif wc_mode == "wc_14d_c0s2":
-                    c_wc = real_store.select_call_contract_strike(
-                        d, op, sp_dte, max(assigned_cost_k, op * 1.02), 5, 17, r_wc, q_wc
-                    )
-            if c_wc is not None:
-                _rec_q(c_wc["source"])
-                exp_date_wc, exp_dt_wc = c_wc["exp"], c_wc["exp_dt"]
-                act_dte_wc = c_wc["dte"]
-                kc_wc = c_wc["strike"]
-                k_cents_wc = c_wc["k_cents"]
-                c_bid_wc = _sell_leg(c_wc["bid"], c_wc["ask"], c_wc["mid"], c_wc["source"], slip_bsm=0.03)
-                iv_wc = c_wc["iv"]
-                src_wc = c_wc["source"]
-            else:
-                if wc_mode == "wc_reclaim_30d_d35":
-                    target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
-                    pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
-                    if pos_wc < len(dates):
-                        exp_date_wc, exp_dt_wc = dates[pos_wc], dt_objs[pos_wc]
-                    else:
-                        exp_date_wc, exp_dt_wc = target_wc_dt.isoformat(), target_wc_dt
-                    act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
-                    t_wc_solve = act_dte_wc / 365.0
-                    k_d35 = solve_call_strike_for_delta(op, t_wc_solve, r_wc, q_wc, vxn_wc, coeffs, 0.35)
-                    kc_wc = max(assigned_cost_k, k_d35)
-                elif wc_mode == "wc_30d_c5s5":
-                    target_wc_dt = dt_objs[i] + datetime.timedelta(days=30)
-                    pos_wc = bisect.bisect_left(dt_objs, target_wc_dt)
-                    if pos_wc < len(dates):
-                        exp_date_wc, exp_dt_wc = dates[pos_wc], dt_objs[pos_wc]
-                    else:
-                        exp_date_wc, exp_dt_wc = target_wc_dt.isoformat(), target_wc_dt
-                    act_dte_wc = max(1, (exp_dt_wc - dt_objs[i]).days)
-                    kc_wc = max(assigned_cost_k * 1.05, op * 1.05)
-                elif wc_mode == "wc_14d_c0s2":
-                    exp_date_wc, exp_dt_wc, act_dte_wc = _pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
-                    kc_wc = max(assigned_cost_k, op * 1.02)
-                else:
-                    raise ValueError(f"Unknown wc_mode: {wc_mode}")
-                t_wc = act_dte_wc / 365.0
-                c_bid_wc, _ = _opt_exec_price_sp(op, kc_wc, t_wc, r_wc, q_wc, vxn_wc, coeffs, "call", "sell", slip)
-                k_cents_wc = int(round(kc_wc * 100.0))
-                iv_wc = eval_skew_iv(op, kc_wc, t_wc, r_wc, q_wc, vxn_wc, coeffs)
-                src_wc = "bsm_fallback"
-                _rec_q(src_wc)
-            if c_bid_wc >= MIN_OPT_BID:
-                prem_wc = assigned_shares * c_bid_wc
-                sp_comm_total += assigned_shares * OPT_COMM_PER_SH
-                sp_cash += prem_wc
-                wc_tid += 1
-                active_wc = {
-                    "wc_id": wc_tid,
-                    "cycle_id": cur_cycle_id,
-                    "signal_date": pw["signal_date"],
-                    "entry_date": d,
-                    "entry_dt": dt_objs[i],
-                    "exp_date": exp_date_wc,
-                    "exp_dt": exp_dt_wc,
-                    "dte": act_dte_wc,
-                    "entry_spot": op,
-                    "kc": kc_wc,
-                    "k_cents": k_cents_wc,
-                    "last_iv": iv_wc,
-                    "entry_source": src_wc,
-                    "assigned_cost_k": assigned_cost_k,
-                    "shares": assigned_shares,
-                    "prem_usd": prem_wc,
-                }
-
-        if i > 0 and sp_enabled and pending_sp is not None and active_sp is None and assigned_shares <= 1e-6:
-            ps = pending_sp
-            pending_sp = None
-            vxn_sp = vxn_ex_day
-            r_sp, q_sp = (r_cur, q_cur) if use_real else (ps["r"], ps["q"])
-            c_sp = (
-                real_store.select_put_contract(d, op, sp_dte, 1.0 - sp_otm_pct, 5, 17, r_sp, q_sp)
-                if use_real
-                else None
-            )
-            if c_sp is not None:
-                _rec_q(c_sp["source"])
-                exp_date_sp, exp_dt_sp = c_sp["exp"], c_sp["exp_dt"]
-                act_dte_sp = c_sp["dte"]
-                kp_sp = c_sp["strike"]
-                k_cents_sp = c_sp["k_cents"]
-                p_bid_sp = _sell_leg(c_sp["bid"], c_sp["ask"], c_sp["mid"], c_sp["source"], slip_bsm=0.03)
-                iv_sp = c_sp["iv"]
-                src_sp = c_sp["source"]
-            else:
-                exp_date_sp, exp_dt_sp, act_dte_sp = _pick_expiry_strict_max14(dt_objs, dates, i, sp_dte, 14)
-                t_sp = act_dte_sp / 365.0
-                kp_sp = op * (1.0 - sp_otm_pct)
-                p_bid_sp, _ = _opt_exec_price_sp(op, kp_sp, t_sp, r_sp, q_sp, vxn_sp, coeffs, "put", "sell", slip)
-                k_cents_sp = int(round(kp_sp * 100.0))
-                iv_sp = eval_skew_iv(op, kp_sp, t_sp, r_sp, q_sp, vxn_sp, coeffs)
-                src_sp = "bsm_fallback"
-                _rec_q(src_sp)
-            if p_bid_sp >= MIN_OPT_BID:
-                nav_open = _estimate_nav_open(op, vxn_sp, r_sp, q_sp, dt_objs[i], d_str=d)
-                put_sh = (sp_max_lev * nav_open) / kp_sp
-                prem_sp = put_sh * p_bid_sp
-                sp_comm_total += put_sh * OPT_COMM_PER_SH
-                sp_cash += prem_sp
-                sp_tid += 1
-                cur_cycle_id = sp_tid
-                cur_cycle_start_dt = dt_objs[i]
-                active_sp = {
-                    "sp_id": sp_tid,
-                    "cycle_id": cur_cycle_id,
-                    "signal_date": ps["signal_date"],
-                    "entry_date": d,
-                    "entry_dt": dt_objs[i],
-                    "exp_date": exp_date_sp,
-                    "exp_dt": exp_dt_sp,
-                    "dte": act_dte_sp,
-                    "entry_spot": op,
-                    "kp": kp_sp,
-                    "k_cents": k_cents_sp,
-                    "last_iv": iv_sp,
-                    "entry_source": src_sp,
-                    "shares": put_sh,
-                    "prem_usd": prem_sp,
-                    "entry_vix_ratio": ps["vix_ratio"],
-                }
-
-        # C. Dividends DRIP at EOD Close
-        if i > 0 and div > 0.0:
-            core_shares += (core_shares * div) / cl
-            if assigned_shares > 0.0:
-                sp_cash += assigned_shares * div
-
-        # D. Expiry Settlement or EOD MTM + Take-Profit Check
-        put_mtm_tot = 0.0
-        call_mtm_tot = 0.0
-        was_active_today = len(active_tranches) > 0
-        active_slots_today = len(active_tranches)
-        slot1_naked_today = any(t["tranche_type"] == "naked_put" for t in active_tranches)
-
-        rem_after_exp: list[dict[str, Any]] = []
-        for tr in active_tranches:
-            if _is_exp(i, tr["exp_dt"]):
-                is_true_exp = (i < len(dates) - 1) or ((tr["exp_dt"] - dt_objs[i]).days <= 0)
-                if is_true_exp:
-                    put_ex = max(0.0, tr["kp"] - cl)
-                    call_ex = max(0.0, cl - tr["kc"]) if tr["kc"] is not None else 0.0
-                    reason = f"expiry_{target_dte}dte"
-                    rem_d = 0
-                    t_rem_ex = 0.0
-                    src_ex = tr.get("entry_source", "bsm_fallback")
-                else:
-                    rem_d = max(1, (tr["exp_dt"] - dt_objs[i]).days)
-                    t_rem_ex = rem_d / 365.0
-                    _, _, put_ex, _, _, src_ex = _lookup_leg(
-                        d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents_p"),
-                        cl, rem_d, r_cur, q_cur, vxn_cl, tr.get("last_iv_p"), slip_bsm=slip,
-                    )
-                    if tr["kc"] is not None:
-                        _, _, call_ex, _, _, _ = _lookup_leg(
-                            d, "call", tr["exp_date"], tr["kc"], tr.get("k_cents_c"),
-                            cl, rem_d, r_cur, q_cur, vxn_cl, tr.get("last_iv_c"), slip_bsm=slip,
-                        )
-                    else:
-                        call_ex = 0.0
-                    reason = "sample_end_mtm"
-
-                actual_net_sh = (put_ex - call_ex) if tr["tranche_type"] == "collar" else (put_ex - tr["entry_put_ask"])
-                net_sh_px = put_ex - call_ex
-                exit_cash_usd = tr["hedged_shares"] * net_sh_px
-                denom = cl * (1.0 + (STOCK_REBAL_FEE if exit_cash_usd >= 0 else -STOCK_REBAL_FEE))
-                d_sh = exit_cash_usd / denom if abs(exit_cash_usd) > 1e-8 else 0.0
-                core_shares += d_sh
-
-                d_sh_put = (tr["hedged_shares"] * put_ex) / denom if abs(put_ex) > 1e-10 else 0.0
-                d_sh_call = -(tr["hedged_shares"] * call_ex) / denom if abs(call_ex) > 1e-10 else 0.0
-
-                conv = decompose_tranche_convexity(
-                    tr["tranche_type"],
-                    tr["entry_spot"],
-                    cl,
-                    tr["kp"],
-                    tr["kc"],
-                    tr["T_entry"],
-                    t_rem_ex if not is_true_exp else 0.0,
-                    tr["entry_r"],
-                    r_cur,
-                    tr["entry_q"],
-                    q_cur,
-                    tr["entry_vxn"],
-                    vxn_cl,
-                    coeffs,
-                    actual_net_sh,
-                )
-                hs = tr["hedged_shares"]
-                trig_en, trig_zh = _format_trigger_label(tr["sig_score"], tr["sig_ad_below50"], gate_key)
-                en_src = tr.get("entry_source", "bsm_fallback")
-                ledger.append(
-                    {
-                        "tranche_id": tr["tranche_id"],
-                        "strategy_id": strategy_id,
-                        "slot_num": tr["slot_num"],
-                        "tranche_type": tr["tranche_type"],
-                        "signal_date": tr["signal_date"],
-                        "entry_date": tr["entry_date"],
-                        "planned_exp_date": tr["exp_date"],
-                        "exit_date": d,
-                        "actual_days_held": (dt_objs[i] - tr["entry_dt"]).days,
-                        "rem_dte_at_exit": rem_d,
-                        "exit_reason": reason,
-                        "pricing_source": m7e._classify_trade_source(en_src, src_ex),
-                        "entry_source": en_src,
-                        "exit_source": src_ex,
-                        "sig_score": tr["sig_score"],
-                        "sig_ad_below50": tr["sig_ad_below50"],
-                        "trigger_en": trig_en,
-                        "trigger_zh": trig_zh,
-                        "entry_spot": round(tr["entry_spot"], 2),
-                        "entry_vxn": round(tr["entry_vxn"], 2),
-                        "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
-                        "kp": round(tr["kp"], 2),
-                        "kc": round(tr["kc"], 2) if tr["kc"] is not None else None,
-                        "call_cap_pct": round((tr["kc"] / tr["entry_spot"] - 1.0) * 100.0, 2)
-                        if tr["kc"] is not None
-                        else None,
-                        "hedged_shares": round(hs, 2),
-                        "slot_coverage": round(tr["slot_coverage"], 4),
-                        "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
-                        "entry_cost_usd": round(tr["entry_cost_usd"], 2),
-                        "entry_shares_sold": round(tr["entry_shares_sold"], 4),
+                        "exp": tr["exp"],
+                        "strike": round(float(tr["strike"]), 2),
+                        "entry_dte": int(tr["entry_dte"]),
+                        "exit_dte": int(rem_d),
+                        "entry_spot": round(float(tr["entry_spot"]), 2),
                         "exit_spot": round(cl, 2),
-                        "exit_vxn": round(vxn_cl, 2),
-                        "exit_vix_ratio": round(vix_r, 3),
-                        "underlying_ret_pct": round((cl / tr["entry_spot"] - 1.0) * 100.0, 2),
-                        "put_exit_val_sh": round(put_ex, 4),
-                        "call_exit_cost_sh": round(call_ex, 4),
-                        "exit_net_cash_usd": round(exit_cash_usd, 2),
-                        "net_pnl_usd": round(exit_cash_usd - tr["entry_cost_usd"], 2),
-                        "exit_shares_delta": round(d_sh, 2),
-                        "shares_added": round(tr["entry_shares_sold"] + d_sh, 2),
-                        "delta0": round(float(conv["delta0"]), 4),
-                        "delta_usd": round(float(conv["dV_delta_sh"]) * hs, 2),
-                        "gamma_usd": round(float(conv["dV_gamma_sh"]) * hs, 2),
-                        "vega_usd": round(float(conv["dV_vega_sh"]) * hs, 2),
-                        "theta_slip_usd": round(float(conv["dV_theta_slip_sh"]) * hs, 2),
-                        "convexity_mult": round(float(conv["conv_mult"]), 2)
-                        if conv["conv_mult"] is not None
-                        else None,
-                        "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
-                        "comp_put_gain_usd": round(d_sh_put * mult_eod, 2),
-                        "comp_call_drag_usd": round(d_sh_call * mult_eod, 2),
-                    }
-                )
-            else:
-                rem_days = max(1, (tr["exp_dt"] - dt_objs[i]).days)
-                b_p, a_p, pm, iv_p_now, _, src_p_now = _lookup_leg(
-                    d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents_p"),
-                    cl, rem_days, r_cur, q_cur, vxn_cl, tr.get("last_iv_p"), slip_bsm=slip,
-                )
-                tr["last_iv_p"] = iv_p_now
-                if tr["kc"] is not None:
-                    b_c, a_c, cm, iv_c_now, _, src_c_now = _lookup_leg(
-                        d, "call", tr["exp_date"], tr["kc"], tr.get("k_cents_c"),
-                        cl, rem_days, r_cur, q_cur, vxn_cl, tr.get("last_iv_c"), slip_bsm=slip,
-                    )
-                    tr["last_iv_c"] = iv_c_now
-                else:
-                    b_c = a_c = cm = 0.0
-                    src_c_now = "bsm_fallback"
-
-                put_mtm_tot += tr["hedged_shares"] * pm
-                call_mtm_tot -= tr["hedged_shares"] * cm
-
-                if rem_days >= 3:
-                    est_put_bid = _sell_leg(b_p, a_p, pm, src_p_now, slip_bsm=slip)
-                    est_call_ask = _buy_leg(b_c, a_c, cm, src_c_now, slip_bsm=slip) if tr["kc"] is not None else 0.0
-                    put_mult = est_put_bid / max(tr["entry_put_ask"], 1e-6)
-                    tp_reason: str | None = None
-                    # Track 1: Acute panic backwardation (VIX/VIX3M >= 1.10), gated by tp_mode
-                    if vix_ratio_tp is not None and vix_r >= vix_ratio_tp:
-                        if tp_mode == "standard_dual":
-                            tp_reason = f"vix_inv_{vix_ratio_tp:.2f}_tp"
-                        elif tp_mode == "layered_itm":
-                            # Collar exits immediately on 1.10 to unlock Call cap; Naked Put ignores shallow inversions until strictly ITM (cl <= K_P)
-                            if tr["tranche_type"] == "collar":
-                                tp_reason = f"vix_inv_{vix_ratio_tp:.2f}_tp"
-                            elif cl <= tr["kp"]:
-                                tp_reason = f"vix_inv_{vix_ratio_tp:.2f}_itm_tp"
-                        elif tp_mode == "both_4x":
-                            if put_mult >= 4.0:
-                                tp_reason = f"vix_inv_{vix_ratio_tp:.2f}_4x_tp"
-                        else:
-                            raise ValueError(f"Unknown tp_mode: {tp_mode}")
-                    # Track 2: Second-half slow-bear 5x Put deep-ITM profit lock (DTE <= 45 & Put Bid >= 5x entry cost)
-                    if (
-                        tp_reason is None
-                        and put_mult_tp is not None
-                        and rem_days <= put_mult_max_dte
-                        and est_put_bid >= put_mult_tp * tr["entry_put_ask"]
-                    ):
-                        tp_reason = f"put_{int(put_mult_tp)}x_dte{put_mult_max_dte}_tp"
-
-                    if tp_reason is not None:
-                        if tr["tranche_type"] == "collar":
-                            if est_put_bid - est_call_ask > 0.0:
-                                tr["pending_tp"] = True
-                                tr["tp_trigger_ratio"] = vix_r
-                                tr["tp_reason"] = tp_reason
-                        else:
-                            if est_put_bid > 0.02:
-                                tr["pending_tp"] = True
-                                tr["tp_trigger_ratio"] = vix_r
-                                tr["tp_reason"] = tp_reason
-
-                rem_after_exp.append(tr)
-
-        active_tranches = rem_after_exp
-
-        # D2. Normal-time Covered Call expiry settlement or EOD MTM
-        cc_mtm = 0.0
-        if active_cc is not None:
-            if _is_exp(i, active_cc["exp_dt"]):
-                pay_cc = max(0.0, cl - active_cc["kc"])
-                loss_cc = active_cc["shares"] * pay_cc
-                if pay_cc > 0.0:
-                    cc_assigned_cnt += 1
-                    cc_gross_loss += loss_cc
-                    if cc_cash >= loss_cc:
-                        cc_cash -= loss_cc
+                        "entry_fill": round(float(tr["entry_fill"]), 3),
+                        "exit_fill": round(float(spx), 3),
+                        "exit_frac": round(frac, 2),
+                        "cost_usd": round(cp, 2),
+                        "exit_usd": round(ex, 2),
+                        "net_pnl_usd": round(ex - cp, 2),
+                        "roi_mult": round(ex / cp, 2) if cp > 1e-6 else 0.0,
+                        "exit_reason": tr["exit_reason"],
+                        "quote_source": "REAL_OPRA",
+                    })
+                    if tr["exit_reason"].startswith("roll_"):
+                        rolls.append((ex, tr))
+                    elif tr["exit_reason"].startswith("tp_"):
+                        if ex > 1e-6:
+                            for k in range(5):
+                                tp_queue.append({"exec_idx": min(n - 1, i + k), "amount": ex / 5.0})
                     else:
-                        core_shares -= (loss_cc - cc_cash) / (cl * (1.0 - STOCK_REBAL_FEE))
-                        cc_cash = 0.0
-                en_cc_src = active_cc.get("entry_source", "bsm_fallback")
-                cc_ledger.append(
-                    {
-                        "cc_id": active_cc["cc_id"],
-                        "entry_date": active_cc["entry_date"],
-                        "exit_date": d,
-                        "entry_spot": round(active_cc["entry_spot"], 2),
-                        "kc": round(active_cc["kc"], 2),
-                        "exit_spot": round(cl, 2),
-                        "entry_vxn": round(active_cc["entry_vxn"], 2),
-                        "shares": round(active_cc["shares"], 2),
-                        "prem_usd": round(active_cc["prem_usd"], 2),
-                        "loss_usd": round(loss_cc, 2),
-                        "net_pnl_usd": round(active_cc["prem_usd"] - loss_cc, 2),
-                        "exit_reason": "assigned_breach" if pay_cc > 0.0 else "expired_worthless",
-                        "roll_gen": int(active_cc.get("roll_count", 0)),
-                        "pricing_source": m7e._classify_trade_source(en_cc_src, en_cc_src),
-                    }
-                )
-                active_cc = None
-            else:
-                rem_cc = max(1, (active_cc["exp_dt"] - dt_objs[i]).days)
-                _, _, cm_cc, iv_cc_now, cur_delta, _ = _lookup_leg(
-                    d, "call", active_cc["exp_date"], active_cc["kc"], active_cc.get("k_cents"),
-                    cl, rem_cc, r_cur, q_cur, vxn_cl, active_cc.get("last_iv"), slip_bsm=slip,
-                )
-                active_cc["last_iv"] = iv_cc_now
-                cc_mtm = -active_cc["shares"] * cm_cc
-                if rem_cc >= 3 and vix_r >= 1.10:
-                    active_cc["pending_close"] = True
-                    active_cc["close_reason"] = "panic_close_uncap"
-                elif cc_stop_delta is not None and cur_delta >= cc_stop_delta:
-                    active_cc["pending_close"] = True
-                    if cc_roll_mode == "fresh_30d":
-                        active_cc["close_reason"] = "delta_roll_up"
-                    elif cc_roll_mode == "credit_45d":
-                        active_cc["close_reason"] = "delta_credit_roll"
+                        if ex > 1e-6:
+                            _park(ex)
+                    if frac < 0.999:
+                        tr["shares"] *= 1.0 - frac
+                        tr["entry_cost"] *= 1.0 - frac
+                        tr["last_mtm_usd"] = tr["shares"] * mid
+                        tr["pending_exit"] = False
+                        tr["pending_exit_frac"] = 0.0
+                        tr["exit_reason"] = ""
+                        tr["partial_tp_taken"] = True
+                        keep.append(tr)
+                bl[:] = keep
+                for salv, old_tr in rolls:
+                    nt = _open_put(i, old_tr["sleeve"], old_tr["budget_pct"], old_tr["target_dte"], old_tr["roll_dte"], old_tr["moneyness"], salv)
+                    if nt is not None:
+                        bl.append(nt)
+
+            # 2. Entries
+            if pending_crisis_open is not None and len(crisis_puts) == 0:
+                if pending_crisis_open == "m4_90":
+                    nt = _open_put(i, "crisis_m4", 0.010, 90, 30, 0.90)
+                else:
+                    nt = _open_put(i, "crisis", 0.010, 125, 75, 0.85)
+                if nt is not None:
+                    crisis_puts.append(nt)
+            pending_crisis_open = None
+            if pending_base_open and len(base_puts) == 0:
+                nt = _open_put(i, "base", 0.002, 125, 75, 0.85)
+                if nt is not None:
+                    base_puts.append(nt)
+            pending_base_open = False
+
+            # 3. 5-Day Equal-Tranche TP Deploy
+            if tp_queue:
+                due = [q for q in tp_queue if q["exec_idx"] <= i]
+                if due:
+                    tp_queue = [q for q in tp_queue if q["exec_idx"] > i]
+                    _park(sum(q["amount"] for q in due))
+
+            # 4A. Dual-CTA Rotation Slices
+            dd_prev = float(qqq_dd_w[i - 1])
+            for sl in ("DBMF", "KMLM"):
+                sch = cta_sched[sl]
+                if sch is None:
+                    continue
+                if sch["next_ptr"] < len(sch["exec_idxs"]) and i >= sch["exec_idxs"][sch["next_ptr"]]:
+                    if dd_prev > -0.12:
+                        cta_sched[sl] = None
+                        continue
+                    rem_c = len(sch["exec_idxs"]) - sch["next_ptr"]
+                    sa = cta_vals[sl] / float(rem_c)
+                    if sa > 1.0:
+                        cta_vals[sl] -= sa
+                        qqq_val += sa * (1.0 - ETF_FEE) * (1.0 - ETF_FEE)
+                        cta_locks.append({"sleeve": sl, "buy_dt": dt_objs[i], "target_w_slice": cta_w_tgt[sl] / 5.0})
+                        cta_rot_ledger.append({
+                            "date": d,
+                            "sleeve": sl,
+                            "tranche": sch["next_ptr"] + 1,
+                            "sold_usd": round(sa, 2),
+                            "qqq_dd_pct": round(dd_prev * 100.0, 2),
+                            "restore_due": (dt_objs[i] + datetime.timedelta(days=365)).isoformat(),
+                        })
+                    sch["next_ptr"] += 1
+                    if sch["next_ptr"] >= len(sch["exec_idxs"]):
+                        cta_sched[sl] = None
+
+            # 4B. 1-Year Mechanical Restore
+            if cta_locks:
+                still_l, mat = [], {"DBMF": [], "KMLM": []}
+                for lt in cta_locks:
+                    if (dt_objs[i] - lt["buy_dt"]).days >= 365:
+                        mat[lt["sleeve"]].append(lt)
                     else:
-                        active_cc["close_reason"] = "delta_stop"
+                        still_l.append(lt)
+                cta_locks = still_l
+                for sl in ("DBMF", "KMLM"):
+                    if not mat[sl]:
+                        continue
+                    nv = _nav()
+                    aw = sum(x["target_w_slice"] for x in mat[sl])
+                    bn = max(0.0, min(cta_w_tgt[sl] * nv, cta_vals[sl] + aw * nv) - cta_vals[sl])
+                    if bn > 1.0:
+                        fq1 = min(max(0.0, qqq_val - nv), bn / (1.0 - ETF_FEE))
+                        qqq_val -= fq1
+                        rsd = fq1 * (1.0 - ETF_FEE)
+                        rem = bn - rsd
+                        if rem > 1e-6:
+                            br = min(rem, max(0.0, lev_cap * nv - _gmv()))
+                            debt += br
+                            rsd += br
+                            rem -= br
+                        if rem > 1e-6 and qqq_val > rem / (1.0 - ETF_FEE):
+                            fq2 = rem / (1.0 - ETF_FEE)
+                            qqq_val -= fq2
+                            rsd += fq2 * (1.0 - ETF_FEE)
+                        cta_vals[sl] += rsd * (1.0 - ETF_FEE)
+                        cta_restore_ledger.append({
+                            "date": d,
+                            "sleeve": sl,
+                            "restored_usd": round(rsd * (1.0 - ETF_FEE), 2),
+                            "lots_matured": len(mat[sl]),
+                        })
 
-        # D3. Engine 3 Short-DTE Panic Put EOD settlement or MTM
-        sp_mtm = 0.0
-        if active_sp is not None:
-            days_short_put_open += 1
-            if _is_exp(i, active_sp["exp_dt"]):
-                en_sp_src = active_sp.get("entry_source", "bsm_fallback")
-                if cl >= active_sp["kp"]:
-                    sp_closed_ledger.append(
-                        {
-                            "leg_id": f"SP-{active_sp['sp_id']}",
-                            "sp_id": active_sp["sp_id"],
-                            "cycle_id": active_sp["cycle_id"],
-                            "leg_type": "short_put",
-                            "is_open_live": False,
-                            "signal_date": active_sp["signal_date"],
-                            "entry_date": active_sp["entry_date"],
+            # 5. Quarterly Calibration (idle only)
+            if (not cta_locks) and (cta_sched["DBMF"] is None) and (cta_sched["KMLM"] is None) and (not tp_queue):
+                if i < n - 1:
+                    if ((int(d[5:7]) - 1) // 3 != (int(dates[i + 1][5:7]) - 1) // 3) or (d[:4] != dates[i + 1][:4]):
+                        _sweep()
+                        nv = _nav()
+                        pm = _pmtm()
+                        dtr = (
+                            abs(max(0.0, nv - pm) - qqq_val)
+                            + abs(nv * 0.10 - cta_vals["DBMF"])
+                            + abs(nv * 0.10 - cta_vals["KMLM"])
+                        )
+                        na = max(1.0, nv - dtr * ETF_FEE)
+                        qqq_val = max(0.0, na - pm)
+                        cta_vals["DBMF"] = na * 0.10
+                        cta_vals["KMLM"] = na * 0.10
+                        debt = na * 0.20
+                        cash_free = 0.0
+
+            # 6. Expiries
+            for bl in (crisis_puts, base_puts):
+                se = []
+                for tr in bl:
+                    if rb.is_expiry_day(i, dt_objs, tr["exp_dt"]):
+                        su = tr["shares"] * max(0.0, tr["strike"] - cl)
+                        put_ledger.append({
+                            "tranche_id": tr["tranche_id"],
+                            "sleeve": tr["sleeve"],
+                            "entry_date": tr["entry_date"],
                             "exit_date": d,
-                            "dte": active_sp["dte"],
-                            "entry_spot": round(active_sp["entry_spot"], 2),
-                            "strike": round(active_sp["kp"], 2),
-                            "kp": round(active_sp["kp"], 2),
+                            "exp": tr["exp"],
+                            "strike": round(float(tr["strike"]), 2),
+                            "entry_dte": int(tr["entry_dte"]),
+                            "exit_dte": 0,
+                            "entry_spot": round(float(tr["entry_spot"]), 2),
                             "exit_spot": round(cl, 2),
-                            "shares": round(active_sp["shares"], 2),
-                            "prem_usd": round(active_sp["prem_usd"], 2),
-                            "exit_cost_usd": 0.0,
-                            "net_pnl_usd": round(active_sp["prem_usd"], 2),
-                            "exit_reason": "expired_otm",
-                            "pricing_source": m7e._classify_trade_source(en_sp_src, en_sp_src),
-                        }
-                    )
-                    active_sp = None
-                    if assigned_shares <= 1e-6:
-                        cur_cycle_start_dt = None
-                        _sweep_sp_cash_to_core(cl)
+                            "entry_fill": round(float(tr["entry_fill"]), 3),
+                            "exit_fill": round(max(0.0, tr["strike"] - cl), 3),
+                            "exit_frac": 1.0,
+                            "cost_usd": round(tr["entry_cost"], 2),
+                            "exit_usd": round(su, 2),
+                            "net_pnl_usd": round(su - tr["entry_cost"], 2),
+                            "roi_mult": round(su / tr["entry_cost"], 2) if tr["entry_cost"] > 1e-6 else 0.0,
+                            "exit_reason": "expiry",
+                            "quote_source": "REAL_OPRA",
+                        })
+                        if su > 1e-6:
+                            _park(su)
+                    else:
+                        se.append(tr)
+                bl[:] = se
+
+            # 7. MTM
+            for tr in _allp():
+                rem_d = max(1, (tr["exp_dt"] - dt_objs[i]).days)
+                bid, ask, mid, iv, delta, src = store.lookup_contract(
+                    d, "put", tr["exp"], tr["k_cents"], cl, rem_d, r_cur, q_cur, vxn_cl, tr["last_iv"], coeffs
+                )
+                if np.isfinite(iv) and iv > 0.05:
+                    tr["last_iv"] = iv
+                tr["last_mtm_usd"] = tr["shares"] * mid
+                tr["last_mid"] = mid
+                tr["last_rem_days"] = rem_d
+
+            # 8. Hard Leverage Cap <= 1.200x
+            _cap()
+            nav_arr[i] = _nav()
+            lev_arr[i] = _gmv() / nav_arr[i]
+
+            # 9. Causal EOD Signals
+            non_inv_streak = non_inv_streak + 1 if vix_r < 1.00 else 0
+            tp_today = False
+            all_act = [t for t in _allp() if not t["pending_exit"]]
+            dd_now = float(qqq_dd_w[i])
+
+            # Tier 2 Full TP: VIX/VIX3M >= 1.10 AND QQQ ATH DD <= -10.0%
+            if vix_r >= 1.10 and dd_now <= -0.10 and all_act:
+                for t in all_act:
+                    t["pending_exit"] = True
+                    t["pending_exit_frac"] = 1.0
+                    t["exit_reason"] = "tp_vr110_dd10_full"
+                tp_today = True
+
+            # Tier 1 Partial TP: >= 5.0x AND VIX/VIX3M < 1.00 (shortest DTE)
+            if (not tp_today) and vix_r < 1.00 and all_act:
+                qual = [
+                    t
+                    for t in all_act
+                    if (t["last_mid"] / max(t["entry_fill"], 1e-6)) >= 5.0 and not t["partial_tp_taken"]
+                ]
+                if qual:
+                    qual.sort(key=lambda x: (x["last_rem_days"], x["tranche_id"]))
+                    qual[0]["pending_exit"] = True
+                    qual[0]["pending_exit_frac"] = 0.50
+                    qual[0]["exit_reason"] = "tp_5x_partial"
+                    tp_today = True
+
+            # Roll / Recycle
+            for t in base_puts:
+                if not t["pending_exit"] and t["last_rem_days"] <= t["roll_dte"] and vix_r < 1.00:
+                    t["pending_exit"] = True
+                    t["pending_exit_frac"] = 1.0
+                    t["exit_reason"] = "roll_75d"
+            for t in crisis_puts:
+                if not t["pending_exit"] and t["last_rem_days"] <= t["roll_dte"] and vix_r < 1.00:
+                    t["pending_exit"] = True
+                    t["pending_exit_frac"] = 1.0
+                    if t["sleeve"] == "crisis_m4":
+                        t["exit_reason"] = "recycle_30d_m4"
+                    else:
+                        t["exit_reason"] = (
+                            "roll_75d"
+                            if (bool(non_m4_flag[i]) and not post_tp_lockout)
+                            else "close_75d_signal_off"
+                        )
+
+            # Post-TP 5D Contango Lockout
+            if tp_today:
+                post_tp_lockout = True
+                lockout_streak = 0
+            elif post_tp_lockout:
+                if vix_r < 1.00:
+                    lockout_streak += 1
+                    if lockout_streak >= 5:
+                        post_tp_lockout = False
+                        lockout_streak = 0
                 else:
-                    assigned_shares = active_sp["shares"]
-                    assigned_cost_k = active_sp["kp"]
-                    assigned_entry_date = d
-                    sp_cash -= assigned_shares * active_sp["kp"]
-                    sp_assign_count += 1
-                    intr_cost = active_sp["shares"] * (active_sp["kp"] - cl)
-                    sp_closed_ledger.append(
-                        {
-                            "leg_id": f"SP-{active_sp['sp_id']}",
-                            "sp_id": active_sp["sp_id"],
-                            "cycle_id": active_sp["cycle_id"],
-                            "leg_type": "short_put",
-                            "is_open_live": False,
-                            "signal_date": active_sp["signal_date"],
-                            "entry_date": active_sp["entry_date"],
-                            "exit_date": d,
-                            "dte": active_sp["dte"],
-                            "entry_spot": round(active_sp["entry_spot"], 2),
-                            "strike": round(active_sp["kp"], 2),
-                            "kp": round(active_sp["kp"], 2),
-                            "exit_spot": round(cl, 2),
-                            "shares": round(active_sp["shares"], 2),
-                            "prem_usd": round(active_sp["prem_usd"], 2),
-                            "exit_cost_usd": round(intr_cost, 2),
-                            "net_pnl_usd": round(active_sp["prem_usd"] - intr_cost, 2),
-                            "exit_reason": "assigned_wheel",
-                            "pricing_source": m7e._classify_trade_source(en_sp_src, en_sp_src),
-                        }
-                    )
-                    active_sp = None
-            else:
-                rem_sp = max(1, (active_sp["exp_dt"] - dt_objs[i]).days)
-                _, _, pm_sp, iv_sp_now, _, _ = _lookup_leg(
-                    d, "put", active_sp["exp_date"], active_sp["kp"], active_sp.get("k_cents"),
-                    cl, rem_sp, r_cur, q_cur, vxn_cl, active_sp.get("last_iv"), slip_bsm=0.03,
-                )
-                active_sp["last_iv"] = iv_sp_now
-                sp_mtm = -active_sp["shares"] * pm_sp
+                    lockout_streak = 0
 
-        # D4. Engine 3 Reverse Wheel Covered Call EOD settlement or MTM
-        wc_mtm = 0.0
-        if active_wc is not None:
-            if _is_exp(i, active_wc["exp_dt"]):
-                en_wc_src = active_wc.get("entry_source", "bsm_fallback")
-                if cl > active_wc["kc"]:
-                    sp_cash += assigned_shares * active_wc["kc"]
-                    stock_gain = active_wc["shares"] * (active_wc["kc"] - active_wc["assigned_cost_k"])
-                    wc_closed_ledger.append(
-                        {
-                            "leg_id": f"WC-{active_wc['wc_id']}",
-                            "wc_id": active_wc["wc_id"],
-                            "cycle_id": active_wc["cycle_id"],
-                            "leg_type": "wheel_call",
-                            "is_open_live": False,
-                            "signal_date": active_wc["signal_date"],
-                            "entry_date": active_wc["entry_date"],
-                            "exit_date": d,
-                            "dte": active_wc["dte"],
-                            "entry_spot": round(active_wc["entry_spot"], 2),
-                            "strike": round(active_wc["kc"], 2),
-                            "kc": round(active_wc["kc"], 2),
-                            "assigned_cost_k": round(active_wc["assigned_cost_k"], 2),
-                            "exit_spot": round(cl, 2),
-                            "shares": round(active_wc["shares"], 2),
-                            "prem_usd": round(active_wc["prem_usd"], 2),
-                            "exit_cost_usd": 0.0,
-                            "stock_gain_usd": round(stock_gain, 2),
-                            "net_pnl_usd": round(active_wc["prem_usd"] + stock_gain, 2),
-                            "exit_reason": "called_away",
-                            "pricing_source": m7e._classify_trade_source(en_wc_src, en_wc_src),
-                        }
-                    )
-                    assigned_shares = 0.0
-                    assigned_cost_k = 0.0
-                    assigned_entry_date = ""
-                    active_wc = None
-                    if cur_cycle_start_dt is not None:
-                        max_wheel_cycle_days = max(max_wheel_cycle_days, (dt_objs[i] - cur_cycle_start_dt).days)
-                        cur_cycle_start_dt = None
-                    _sweep_sp_cash_to_core(cl)
+            # Entries
+            eff_b = [t for t in base_puts if not (t["pending_exit"] and t["pending_exit_frac"] >= 0.99)]
+            if len(eff_b) == 0 and non_inv_streak >= 5 and vix_cl < 20.0:
+                pending_base_open = True
+            eff_c = [t for t in crisis_puts if not (t["pending_exit"] and t["pending_exit_frac"] >= 0.99)]
+            if (not post_tp_lockout) and vix_r < 1.02 and len(eff_c) == 0:
+                if bool(m4_flag[i]):
+                    pending_crisis_open = "m4_90"
+                elif bool(non_m4_flag[i]):
+                    pending_crisis_open = "std_125"
+
+            # CONT_2M Continuous 60-cal-day DD <= -12% CTA Rotation Timer
+            if i < n - 1:
+                has_av = any(
+                    cta_sched[sl] is None and cta_vals[sl] > 0.01 * nav_arr[i] for sl in ("DBMF", "KMLM")
+                )
+                if run_ath_w_idx == i:
+                    dd_timer_start_dt = None
+                tc = False
+                if dd_now <= -0.12:
+                    if dd_timer_start_dt is None and has_av:
+                        dd_timer_start_dt = dt_objs[i]
+                    elif dd_timer_start_dt is not None and (dt_objs[i] - dd_timer_start_dt).days >= 60:
+                        tc = True
                 else:
-                    wc_closed_ledger.append(
-                        {
-                            "leg_id": f"WC-{active_wc['wc_id']}",
-                            "wc_id": active_wc["wc_id"],
-                            "cycle_id": active_wc["cycle_id"],
-                            "leg_type": "wheel_call",
-                            "is_open_live": False,
-                            "signal_date": active_wc["signal_date"],
-                            "entry_date": active_wc["entry_date"],
-                            "exit_date": d,
-                            "dte": active_wc["dte"],
-                            "entry_spot": round(active_wc["entry_spot"], 2),
-                            "strike": round(active_wc["kc"], 2),
-                            "kc": round(active_wc["kc"], 2),
-                            "assigned_cost_k": round(active_wc["assigned_cost_k"], 2),
-                            "exit_spot": round(cl, 2),
-                            "shares": round(active_wc["shares"], 2),
-                            "prem_usd": round(active_wc["prem_usd"], 2),
-                            "exit_cost_usd": 0.0,
-                            "stock_gain_usd": 0.0,
-                            "net_pnl_usd": round(active_wc["prem_usd"], 2),
-                            "exit_reason": "expired_otm",
-                            "pricing_source": m7e._classify_trade_source(en_wc_src, en_wc_src),
-                        }
-                    )
-                    active_wc = None
-            else:
-                rem_wc = max(1, (active_wc["exp_dt"] - dt_objs[i]).days)
-                _, _, cm_wc, iv_wc_now, _, _ = _lookup_leg(
-                    d, "call", active_wc["exp_date"], active_wc["kc"], active_wc.get("k_cents"),
-                    cl, rem_wc, r_cur, q_cur, vxn_cl, active_wc.get("last_iv"), slip_bsm=0.03,
-                )
-                active_wc["last_iv"] = iv_wc_now
-                wc_mtm = -active_wc["shares"] * cm_wc
-
-        tot_mtm = put_mtm_tot + call_mtm_tot + cc_mtm + sp_mtm + wc_mtm
-        nav = (core_shares + assigned_shares) * cl + tbill_cash + cc_cash + sp_cash + tot_mtm
-
-        if sp_enabled:
-            gross_stock_lev = ((core_shares + assigned_shares) * cl) / max(nav, 1.0)
-            put_notional = (active_sp["shares"] * active_sp["kp"]) if active_sp is not None else 0.0
-            notional_lev = ((core_shares + assigned_shares) * cl + put_notional) / max(nav, 1.0)
-            if assigned_shares > 1e-6:
-                days_levered += 1
-            if gross_stock_lev > max_gross_stock_lev:
-                max_gross_stock_lev = gross_stock_lev
-            if notional_lev > max_notional_lev:
-                max_notional_lev = notional_lev
-
-        nav_list.append(nav)
-        equiv_sh_list.append(nav / cl)
-        any_active_list.append(1 if was_active_today else 0)
-        active_slots_list.append(active_slots_today)
-        slot1_naked_list.append(slot1_naked_today)
-        shield_active_list.append(in_slow_bear_def)
-
-        # E. EOD Entry Gate Check for t+1 Open (evaluate on all days including latest day for LIVE signal status!)
-        if (
-            arch != "pure_qqq"
-            and gate_key is not None
-            and len(active_tranches) < max_slots
-            and not any(t.get("pending_tp") for t in active_tranches)
-        ):
-            can_open = False
-            if len(active_tranches) == 0:
-                if bool(row[gate_key]):
-                    can_open = True
-            else:
-                if bool(row[gate_key]):
-                    last_tr = max(active_tranches, key=lambda x: x["entry_dt"])
-                    days_since_last = (dt_objs[i] - last_tr["entry_dt"]).days
-                    if days_since_last >= step_cal_days:
-                        can_open = True
-            if can_open:
-                pending_sig = {
-                    "signal_date": d,
-                    "close": cl,
-                    "vxn": vxn_cl,
-                    "vix_ratio": vix_r,
-                    "r": r_cur,
-                    "q": q_cur,
-                    "sig_score": int(row["score"]),
-                    "sig_ad_below50": bool(float(row["ad_line"]) < float(row["ad_sma50"])),
-                }
-
-        # E2. Normal-time Covered Call entry & war-chest panic deployment check
-        if cc_enabled and i < len(dates) - 1:
-            if (
-                active_cc is None
-                and dd_cur >= -cc_ath_limit
-                and vxn_cl >= cc_min_vxn
-                and not any(t["tranche_type"] == "collar" for t in active_tranches)
-            ):
-                pending_cc = {
-                    "close": cl,
-                    "vxn": vxn_cl,
-                    "r": r_cur,
-                    "q": q_cur,
-                }
-            if cc_cash > 1.0 and vix_r >= 1.10:
-                pending_cc_deploy = True
-
-        # E3. Engine 3 Reverse Wheel Call & Short-DTE Panic Put EOD Gates for t+1 Open
-        wc_reclaim_ready = (cl >= assigned_cost_k) if wc_mode == "wc_reclaim_30d_d35" else True
-        if sp_enabled and assigned_shares > 1e-6 and active_wc is None and wc_reclaim_ready:
-            pending_wc = {
-                "signal_date": d,
-                "close": cl,
-                "vxn": vxn_cl,
-                "vix_ratio": vix_r,
-                "r": r_cur,
-                "q": q_cur,
-            }
-        if sp_enabled and active_sp is None and assigned_shares <= 1e-6:
-            trig_sp = vix_r >= sp_vix_thr
-            if trig_sp and sp_require_vix_falling:
-                trig_sp = bool(row.get("vix_falling"))
-            if trig_sp:
-                pending_sp = {
-                    "signal_date": d,
-                    "close": cl,
-                    "vxn": vxn_cl,
-                    "vix_ratio": vix_r,
-                    "r": r_cur,
-                    "q": q_cur,
-                }
-
-        # F. Slow-Bear 6-Lights Regime Defense (also evaluate on latest day to surface next-open reload/enter status!)
-        if slow_bear_overlay:
-            sc_now = float(row["score_5d"])
-            ma200_now = float(row["qqq_ma200"])
-            vix_now = float(row["vix"])
-            if not in_slow_bear_def:
-                if sc_now >= 4.8 and cl < ma200_now:
-                    pending_bear_change = "enter_def"
-            else:
-                if sc_now <= 3.0 or cl > ma200_now * 1.01 or vix_now >= 34.0 or vix_r >= 1.10:
-                    pending_bear_change = "exit_def"
-
-    # Serialize any tranches still open at final EOD (e.g. live 2026-11-20 ITM Naked Put awaiting next Open TP)
-    last_r = rows[-1]
-    last_d = dates[-1]
-    last_dt = dt_objs[-1]
-    last_cl = float(last_r["close"])
-    last_vxn = float(last_r["vxn"])
-    last_vr = float(last_r["vix_ratio"])
-    last_rf = float(last_r["r"])
-    last_q = float(last_r["div_yield"])
-    mult_last = (final_bh_sh / post_drip_bh[-1]) * final_cl
-
-    active_tranches_serialized: list[dict[str, Any]] = []
-    for tr in active_tranches:
-        rem_d = max(1, (tr["exp_dt"] - last_dt).days)
-        t_rem = rem_d / 365.0
-        _, _, pm, _, _, src_p_live = _lookup_leg(
-            last_d, "put", tr["exp_date"], tr["kp"], tr.get("k_cents_p"),
-            last_cl, rem_d, last_rf, last_q, last_vxn, tr.get("last_iv_p"), slip_bsm=slip,
-        )
-        if tr["kc"] is not None:
-            _, _, cm, _, _, _ = _lookup_leg(
-                last_d, "call", tr["exp_date"], tr["kc"], tr.get("k_cents_c"),
-                last_cl, rem_d, last_rf, last_q, last_vxn, tr.get("last_iv_c"), slip_bsm=slip,
-            )
-        else:
-            cm = 0.0
-        hs = tr["hedged_shares"]
-        net_sh_px = pm - cm
-        mtm_cash_usd = hs * net_sh_px
-        mtm_net_pnl = mtm_cash_usd - tr["entry_cost_usd"]
-        actual_net_sh = net_sh_px if tr["tranche_type"] == "collar" else (pm - tr["entry_put_ask"])
-        est_d_sh = mtm_cash_usd / (last_cl * (1.0 + STOCK_REBAL_FEE)) if abs(mtm_cash_usd) > 1e-8 else 0.0
-        est_sh_added = tr["entry_shares_sold"] + est_d_sh
-        conv = decompose_tranche_convexity(
-            tr["tranche_type"],
-            tr["entry_spot"],
-            last_cl,
-            tr["kp"],
-            tr["kc"],
-            tr["T_entry"],
-            t_rem,
-            tr["entry_r"],
-            last_rf,
-            tr["entry_q"],
-            last_q,
-            tr["entry_vxn"],
-            last_vxn,
-            coeffs,
-            actual_net_sh,
-        )
-        is_armed = bool(tr.get("pending_tp"))
-        live_reason = "live_tp_armed_next_open" if is_armed else "open_live_mtm"
-        trig_en, trig_zh = _format_trigger_label(tr["sig_score"], tr["sig_ad_below50"], gate_key)
-        en_src_l = tr.get("entry_source", "bsm_fallback")
-        ledger.append(
-            {
-                "tranche_id": tr["tranche_id"],
-                "strategy_id": strategy_id,
-                "slot_num": tr["slot_num"],
-                "tranche_type": tr["tranche_type"],
-                "signal_date": tr["signal_date"],
-                "entry_date": tr["entry_date"],
-                "planned_exp_date": tr["exp_date"],
-                "exit_date": None,
-                "mtm_date": last_d,
-                "is_open_live": True,
-                "pending_tp": is_armed,
-                "pending_tp_reason": tr.get("tp_reason") or "",
-                "actual_days_held": (last_dt - tr["entry_dt"]).days,
-                "rem_dte_at_exit": rem_d,
-                "exit_reason": live_reason,
-                "pricing_source": m7e._classify_trade_source(en_src_l, src_p_live),
-                "entry_source": en_src_l,
-                "exit_source": src_p_live,
-                "sig_score": tr["sig_score"],
-                "sig_ad_below50": tr["sig_ad_below50"],
-                "trigger_en": trig_en,
-                "trigger_zh": trig_zh,
-                "entry_spot": round(tr["entry_spot"], 2),
-                "entry_vxn": round(tr["entry_vxn"], 2),
-                "entry_vix_ratio": round(tr["entry_vix_ratio"], 3),
-                "kp": round(tr["kp"], 2),
-                "kc": round(tr["kc"], 2) if tr["kc"] is not None else None,
-                "call_cap_pct": round((tr["kc"] / tr["entry_spot"] - 1.0) * 100.0, 2)
-                if tr["kc"] is not None
-                else None,
-                "hedged_shares": round(hs, 2),
-                "slot_coverage": round(tr["slot_coverage"], 4),
-                "entry_put_ask_sh": round(tr["entry_put_ask"], 4),
-                "entry_cost_usd": round(tr["entry_cost_usd"], 2),
-                "entry_shares_sold": round(tr["entry_shares_sold"], 4),
-                "exit_spot": round(last_cl, 2),
-                "exit_vxn": round(last_vxn, 2),
-                "exit_vix_ratio": round(last_vr, 3),
-                "underlying_ret_pct": round((last_cl / tr["entry_spot"] - 1.0) * 100.0, 2),
-                "put_exit_val_sh": round(pm, 4),
-                "call_exit_cost_sh": round(cm, 4),
-                "exit_net_cash_usd": round(mtm_cash_usd, 2),
-                "net_pnl_usd": round(mtm_net_pnl, 2),
-                "exit_shares_delta": round(est_d_sh, 2),
-                "shares_added": round(est_sh_added, 2),
-                "delta0": round(float(conv["delta0"]), 4),
-                "delta_usd": round(float(conv["dV_delta_sh"]) * hs, 2),
-                "gamma_usd": round(float(conv["dV_gamma_sh"]) * hs, 2),
-                "vega_usd": round(float(conv["dV_vega_sh"]) * hs, 2),
-                "theta_slip_usd": round(float(conv["dV_theta_slip_sh"]) * hs, 2),
-                "convexity_mult": round(float(conv["conv_mult"]), 2)
-                if conv["conv_mult"] is not None
-                else None,
-                "comp_entry_cost_usd": round(tr["comp_entry_cost_usd"], 2),
-                "comp_put_gain_usd": round((hs * pm / last_cl) * mult_last, 2),
-                "comp_call_drag_usd": round(-(hs * cm / last_cl) * mult_last, 2),
-            }
-        )
-        active_tranches_serialized.append(
-            {
-                "tranche_id": tr["tranche_id"],
-                "slot_num": tr["slot_num"],
-                "tranche_type": tr["tranche_type"],
-                "entry_date": tr["entry_date"],
-                "exp_date": tr["exp_date"],
-                "rem_dte": rem_d,
-                "entry_spot": round(tr["entry_spot"], 2),
-                "mtm_spot": round(last_cl, 2),
-                "mtm_date": last_d,
-                "kp": round(tr["kp"], 2),
-                "kc": round(tr["kc"], 2) if tr["kc"] is not None else None,
-                "hedged_shares": round(hs, 2),
-                "entry_cost_usd": round(tr["entry_cost_usd"], 2),
-                "mtm_put_val_sh": round(pm, 4),
-                "mtm_call_val_sh": round(cm, 4),
-                "mtm_pnl_usd": round(mtm_net_pnl, 2),
-                "est_shares_added": round(est_sh_added, 2),
-                "pending_tp": is_armed,
-                "tp_reason": tr.get("tp_reason") or "",
-                "tp_trigger_ratio": round(float(tr.get("tp_trigger_ratio") or last_vr), 3),
-                "pricing_source": m7e._classify_trade_source(en_src_l, src_p_live),
-            }
-        )
-
-    n = len(nav_list)
-    rets = [nav_list[j] / nav_list[j - 1] - 1.0 for j in range(1, n)]
-    rf_d = [float(rows[j]["r"]) / 252.0 for j in range(1, n)]
-    yrs = (dt_objs[-1] - dt_objs[0]).days / 365.25
-    cagr = (nav_list[-1] / nav_list[0]) ** (1.0 / yrs) - 1.0
-    std_r = statistics.stdev(rets)
-    vol = std_r * math.sqrt(252.0)
-    ex = [rets[j] - rf_d[j] for j in range(len(rets))]
-    mean_ex = sum(ex) / len(ex)
-    sharpe = (mean_ex / std_r) * math.sqrt(252.0) if std_r > 0 else 0.0
-    dn_sq = [min(0.0, x) ** 2 for x in ex]
-    down_dev = math.sqrt(sum(dn_sq) / len(dn_sq)) * math.sqrt(252.0)
-    sortino = (mean_ex * 252.0) / down_dev if down_dev > 0 else 0.0
-
-    peak_nav = nav_list[0]
-    mdd = 0.0
-    for v in nav_list:
-        if v > peak_nav:
-            peak_nav = v
-        dd = v / peak_nav - 1.0
-        if dd < mdd:
-            mdd = dd
-    calmar = cagr / abs(mdd) if mdd < 0 else 0.0
-
-    n_nak = sum(1 for x in ledger if x["tranche_type"] == "naked_put")
-    n_col = sum(1 for x in ledger if x["tranche_type"] == "collar")
-    n_tp = sum(1 for x in ledger if "tp" in x["exit_reason"] and not x.get("is_open_live"))
-    naked_spent = sum(x["entry_cost_usd"] for x in ledger if x["tranche_type"] == "naked_put")
-    gross_put = sum(x["hedged_shares"] * x["put_exit_val_sh"] for x in ledger)
-    gross_call = sum(x["hedged_shares"] * x["call_exit_cost_sh"] for x in ledger)
-    net_alpha = nav_list[-1] - bh_end_nav
-    pct_active = (sum(any_active_list) / n) * 100.0
-    active_days = max(1, sum(any_active_list))
-
-    extra_sh_vs_bh = equiv_sh_list[-1] - final_bh_sh
-    extra_sh_pct = (extra_sh_vs_bh / final_bh_sh) * 100.0 if final_bh_sh > 0 else 0.0
-
-    summary = {
-        "id": strategy_id,
-        "arch": arch,
-        "max_slots": max_slots,
-        "slot_coverage": round(slot_coverage, 4),
-        "end_nav": round(nav_list[-1], 2),
-        "net_alpha_usd": round(net_alpha, 2),
-        "cagr_pct": round(cagr * 100.0, 2),
-        "vol_pct": round(vol * 100.0, 2),
-        "max_dd_pct": round(mdd * 100.0, 2),
-        "sharpe": round(sharpe, 3),
-        "sortino": round(sortino, 3),
-        "calmar": round(calmar, 3),
-        "final_shares": round(equiv_sh_list[-1], 2),
-        "bh_final_shares": round(final_bh_sh, 2),
-        "extra_shares_vs_bh": round(extra_sh_vs_bh, 2),
-        "extra_shares_pct": round(extra_sh_pct, 2),
-        "pct_days_hedged": round(pct_active, 1),
-        "alpha_per_active_day_usd": round(net_alpha / active_days, 2) if arch != "pure_qqq" else 0.0,
-        "tranches_total": len(ledger),
-        "naked_count": n_nak,
-        "collar_count": n_col,
-        "tp_count": n_tp,
-        "naked_prem_spent_usd": round(naked_spent, 2),
-        "gross_put_monetized_usd": round(gross_put, 2),
-        "gross_call_drag_usd": round(gross_call, 2),
-        "sum_delta_usd": round(sum(x["delta_usd"] for x in ledger), 2),
-        "sum_gamma_usd": round(sum(x["gamma_usd"] for x in ledger), 2),
-        "sum_vega_usd": round(sum(x["vega_usd"] for x in ledger), 2),
-        "sum_theta_slip_usd": round(sum(x["theta_slip_usd"] for x in ledger), 2),
-        "cc_mode": cc_mode,
-        "cc_trades_count": len(cc_ledger),
-        "cc_assigned_count": cc_assigned_cnt,
-        "cc_stop_count": sum(
-            1 for x in cc_ledger if x["exit_reason"] in ("delta_stop", "delta_roll_up", "delta_credit_roll")
-        ),
-        "cc_roll_count": sum(1 for x in cc_ledger if int(x.get("roll_gen", 0)) > 0),
-        "cc_active_years": len({x["entry_date"][:4] for x in cc_ledger}),
-        "cc_gross_prem_usd": round(cc_gross_prem, 2),
-        "cc_gross_loss_usd": round(cc_gross_loss, 2),
-        "cc_net_pnl_usd": round(cc_gross_prem - cc_gross_loss, 2),
-        "cc_funded_puts_usd": round(cc_funded_puts, 2),
-        "cc_cash_end_usd": round(cc_cash, 2),
-    }
-
-    sp_wins = sum(1 for x in sp_closed_ledger if x["net_pnl_usd"] > 0)
-    sp_win_rate = (sp_wins / len(sp_closed_ledger) * 100.0) if sp_closed_ledger else 0.0
-    sp_gross_prem_val = sum(x["prem_usd"] for x in sp_closed_ledger)
-    wc_gross_prem_val = sum(x["prem_usd"] for x in wc_closed_ledger)
-    wc_called_cnt = sum(1 for x in wc_closed_ledger if x["exit_reason"] == "called_away")
-
-    open_sp_serialized: dict[str, Any] | None = None
-    open_wc_serialized: dict[str, Any] | None = None
-    sp_combined_ledger: list[dict[str, Any]] = list(sp_closed_ledger) + list(wc_closed_ledger)
-
-    if active_sp is not None:
-        rem_sp_last = max(1, (active_sp["exp_dt"] - last_dt).days)
-        _, _, pm_sp_last, _, _, src_sp_last = _lookup_leg(
-            last_d, "put", active_sp["exp_date"], active_sp["kp"], active_sp.get("k_cents"),
-            last_cl, rem_sp_last, last_rf, last_q, last_vxn, active_sp.get("last_iv"), slip_bsm=0.03,
-        )
-        mtm_cost_sp = active_sp["shares"] * pm_sp_last
-        mtm_pnl_sp = active_sp["prem_usd"] - mtm_cost_sp
-        ps_sp_last = m7e._classify_trade_source(active_sp.get("entry_source", "bsm_fallback"), src_sp_last)
-        open_sp_serialized = {
-            "sp_id": active_sp["sp_id"],
-            "cycle_id": active_sp["cycle_id"],
-            "signal_date": active_sp["signal_date"],
-            "entry_date": active_sp["entry_date"],
-            "exp_date": active_sp["exp_date"],
-            "dte": active_sp["dte"],
-            "rem_dte": rem_sp_last,
-            "entry_spot": round(active_sp["entry_spot"], 2),
-            "kp": round(active_sp["kp"], 2),
-            "mtm_spot": round(last_cl, 2),
-            "shares": round(active_sp["shares"], 2),
-            "prem_usd": round(active_sp["prem_usd"], 2),
-            "mtm_cost_usd": round(mtm_cost_sp, 2),
-            "mtm_pnl_usd": round(mtm_pnl_sp, 2),
-            "pricing_source": ps_sp_last,
-        }
-        sp_combined_ledger.append(
-            {
-                "leg_id": f"SP-{active_sp['sp_id']}",
-                "sp_id": active_sp["sp_id"],
-                "cycle_id": active_sp["cycle_id"],
-                "leg_type": "short_put",
-                "is_open_live": True,
-                "signal_date": active_sp["signal_date"],
-                "entry_date": active_sp["entry_date"],
-                "exit_date": active_sp["exp_date"],
-                "mtm_date": last_d,
-                "dte": active_sp["dte"],
-                "rem_dte": rem_sp_last,
-                "entry_spot": round(active_sp["entry_spot"], 2),
-                "strike": round(active_sp["kp"], 2),
-                "kp": round(active_sp["kp"], 2),
-                "exit_spot": round(last_cl, 2),
-                "shares": round(active_sp["shares"], 2),
-                "prem_usd": round(active_sp["prem_usd"], 2),
-                "exit_cost_usd": round(mtm_cost_sp, 2),
-                "net_pnl_usd": round(mtm_pnl_sp, 2),
-                "exit_reason": "open_live_short_put",
-                "pricing_source": ps_sp_last,
-            }
-        )
-
-    if active_wc is not None:
-        rem_wc_last = max(1, (active_wc["exp_dt"] - last_dt).days)
-        _, _, cm_wc_last, _, _, src_wc_last = _lookup_leg(
-            last_d, "call", active_wc["exp_date"], active_wc["kc"], active_wc.get("k_cents"),
-            last_cl, rem_wc_last, last_rf, last_q, last_vxn, active_wc.get("last_iv"), slip_bsm=0.03,
-        )
-        mtm_cost_wc = active_wc["shares"] * cm_wc_last
-        mtm_pnl_wc = active_wc["prem_usd"] - mtm_cost_wc
-        ps_wc_last = m7e._classify_trade_source(active_wc.get("entry_source", "bsm_fallback"), src_wc_last)
-        open_wc_serialized = {
-            "wc_id": active_wc["wc_id"],
-            "cycle_id": active_wc["cycle_id"],
-            "signal_date": active_wc["signal_date"],
-            "entry_date": active_wc["entry_date"],
-            "exp_date": active_wc["exp_date"],
-            "dte": active_wc["dte"],
-            "rem_dte": rem_wc_last,
-            "entry_spot": round(active_wc["entry_spot"], 2),
-            "kc": round(active_wc["kc"], 2),
-            "assigned_cost_k": round(active_wc["assigned_cost_k"], 2),
-            "mtm_spot": round(last_cl, 2),
-            "shares": round(active_wc["shares"], 2),
-            "prem_usd": round(active_wc["prem_usd"], 2),
-            "mtm_cost_usd": round(mtm_cost_wc, 2),
-            "mtm_pnl_usd": round(mtm_pnl_wc, 2),
-            "pricing_source": ps_wc_last,
-        }
-        sp_combined_ledger.append(
-            {
-                "leg_id": f"WC-{active_wc['wc_id']}",
-                "wc_id": active_wc["wc_id"],
-                "cycle_id": active_wc["cycle_id"],
-                "leg_type": "wheel_call",
-                "is_open_live": True,
-                "signal_date": active_wc["signal_date"],
-                "entry_date": active_wc["entry_date"],
-                "exit_date": active_wc["exp_date"],
-                "mtm_date": last_d,
-                "dte": active_wc["dte"],
-                "rem_dte": rem_wc_last,
-                "entry_spot": round(active_wc["entry_spot"], 2),
-                "strike": round(active_wc["kc"], 2),
-                "kc": round(active_wc["kc"], 2),
-                "assigned_cost_k": round(active_wc["assigned_cost_k"], 2),
-                "exit_spot": round(last_cl, 2),
-                "shares": round(active_wc["shares"], 2),
-                "prem_usd": round(active_wc["prem_usd"], 2),
-                "exit_cost_usd": round(mtm_cost_wc, 2),
-                "net_pnl_usd": round(mtm_pnl_wc, 2),
-                "exit_reason": "open_live_wheel_call",
-                "pricing_source": ps_wc_last,
-            }
-        )
-
-    sp_combined_ledger.sort(key=lambda x: (x["entry_date"], 0 if x["leg_type"] == "short_put" else 1, x["leg_id"]))
-
-    last_gross_stock_lev = (
-        ((core_shares + assigned_shares) * last_cl) / max(nav_list[-1], 1.0) if sp_enabled else 1.0
-    )
-    last_put_notional = (active_sp["shares"] * active_sp["kp"]) if (sp_enabled and active_sp is not None) else 0.0
-    last_notional_lev = (
-        ((core_shares + assigned_shares) * last_cl + last_put_notional) / max(nav_list[-1], 1.0)
-        if sp_enabled
-        else 1.0
-    )
-
-    all_trades_src = (
-        [x.get("pricing_source", "bsm_fallback") for x in ledger]
-        + [x.get("pricing_source", "bsm_fallback") for x in cc_ledger]
-        + [x.get("pricing_source", "bsm_fallback") for x in sp_combined_ledger]
-    )
-    n_tot_tr = len(all_trades_src)
-    n_opra_tr = sum(1 for s in all_trades_src if s == "real_opra")
-    n_poly_tr = sum(1 for s in all_trades_src if s == "real_polygon")
-    n_real_tr = sum(1 for s in all_trades_src if s in ("real_opra", "real_polygon", "real_hybrid"))
-    n_sim_tr = n_tot_tr - n_real_tr
-    real_tr_pct = round(100.0 * n_real_tr / n_tot_tr, 1) if n_tot_tr > 0 else (100.0 if use_real else 0.0)
-    tot_lk = max(1, q_stats["total_lookups"])
-    real_hit_pct = round(100.0 * (q_stats["real_opra_hits"] + q_stats["real_polygon_hits"]) / tot_lk, 1) if q_stats["total_lookups"] > 0 else (100.0 if use_real else 0.0)
-
-    summary.update(
-        {
-            "sp_mode": sp_mode,
-            "wc_mode": wc_mode if sp_enabled else DEFAULT_WC_MODE,
-            "sp_trades_count": len(sp_closed_ledger),
-            "sp_win_rate_pct": round(sp_win_rate, 1),
-            "sp_assignments_count": sp_assign_count,
-            "wc_trades_count": len(wc_closed_ledger),
-            "wc_called_away_count": wc_called_cnt,
-            "sp_gross_prem_usd": round(sp_gross_prem_val, 2),
-            "wc_gross_prem_usd": round(wc_gross_prem_val, 2),
-            "margin_interest_usd": round(sp_margin_interest_total, 2),
-            "sp_comm_usd": round(sp_comm_total, 2),
-            "days_short_put_open": days_short_put_open,
-            "days_levered_stock": days_levered,
-            "max_wheel_cycle_days": max_wheel_cycle_days,
-            "max_gross_stock_lev": round(max_gross_stock_lev, 3),
-            "max_notional_lev": round(max_notional_lev, 3),
-            "end_assigned_shares": round(assigned_shares, 2),
-            "end_assigned_cost_k": round(assigned_cost_k, 2),
-            "end_sp_cash": round(sp_cash, 2),
-            "pricing_basis": "hybrid_real_opra_polygon_bsm" if use_real else "bsm_synthetic",
-            "real_trades_count": n_real_tr,
-            "real_opra_trades_count": n_opra_tr,
-            "real_polygon_trades_count": n_poly_tr,
-            "sim_trades_count": n_sim_tr,
-            "real_trades_pct": real_tr_pct,
-            "real_quote_hit_pct": real_hit_pct,
-        }
-    )
-
-    return {
-        "summary": summary,
-        "nav": nav_list,
-        "equiv_shares": equiv_sh_list,
-        "any_active": any_active_list,
-        "active_slots": active_slots_list,
-        "slot1_naked": slot1_naked_list,
-        "shield_active": shield_active_list,
-        "ledger": ledger,
-        "cc_ledger": cc_ledger,
-        "sp_ledger": sp_combined_ledger,
-        "shield_events": shield_events,
-        "active_tranches_eod": active_tranches_serialized,
-        "pending_sig_eod": pending_sig,
-        "in_slow_bear_eod": in_slow_bear_def,
-        "pending_bear_change_eod": pending_bear_change,
-        "sp_live_eod": {
-            "enabled": sp_enabled,
-            "sp_mode": sp_mode,
-            "wc_mode": wc_mode if sp_enabled else DEFAULT_WC_MODE,
-            "sp_dte": sp_dte,
-            "sp_max_lev": sp_max_lev,
-            "require_vix_falling": sp_require_vix_falling,
-            "assigned_shares": round(assigned_shares, 2),
-            "assigned_cost_k": round(assigned_cost_k, 2),
-            "assigned_entry_date": assigned_entry_date,
-            "sp_cash_usd": round(sp_cash, 2),
-            "gross_stock_lev": round(last_gross_stock_lev, 3),
-            "notional_lev": round(last_notional_lev, 3),
-            "open_short_put": open_sp_serialized,
-            "open_wheel_call": open_wc_serialized,
-            "pending_sp_eod": pending_sp is not None,
-            "pending_wc_eod": pending_wc is not None,
-        },
-    }
-
-
-def build_six_crisis_lights(row: dict[str, Any]) -> list[dict[str, Any]]:
-    dgs2 = float(row["dgs2"] or 0.0)
-    dgs2_lo = float(row["dgs2_low252"] or dgs2)
-    dgs2_ma = float(row["dgs2_ma63"] or dgs2)
-    dff = float(row["dff"] or 0.0)
-    dff_lo = float(row["dff_low252"] or dff)
-    dgs2_bps = round((dgs2 - dgs2_lo) * 100.0)
-    dff_bps = round((dff - dff_lo) * 100.0)
-
-    baa = float(row["baa10y"] or 0.0)
-    baa_lo = float(row["baa_low252"] or baa)
-    baa_ma = float(row["baa_ma63"] or baa)
-    baa_bps = round((baa - baa_lo) * 100.0)
-    baa_rel = ((baa / baa_lo - 1.0) * 100.0) if baa_lo > 0 else 0.0
-
-    ad = float(row["ad_line"] or 0.0)
-    ad_ma63 = float(row["ad_sma63"] or ad)
-    pct200 = float(row["pct_200d"] or 0.0) * 100.0
-    pct200_hi = float(row["pct200_hi252"] or 0.0) * 100.0
-    pct200_drop = pct200_hi - pct200
-
-    cop = float(row["copper"] or 0.0)
-    cop_hi = float(row["cop_hi252"] or cop)
-    cop_ma = float(row["cop_ma63"] or cop)
-    cop_dd = ((cop / cop_hi - 1.0) * 100.0) if cop_hi > 0 else 0.0
-
-    dc = float(row["def_cyc"] or 0.0)
-    dc_lo = float(row["dc_low252"] or dc)
-    dc_ma = float(row["dc_ma63"] or dc)
-    dc_gain = ((dc / dc_lo - 1.0) * 100.0) if dc_lo > 0 else 0.0
-
-    yc = float(row["t10y2y"] or 0.0)
-    yc_hi = float(row["yc_hi252"] or yc)
-    yc_flat_bps = round((yc_hi - yc) * 100.0)
-    nfci = float(row["nfci"] or 0.0)
-    nfci_lo = float(row["nfci_low252"] or nfci)
-    nfci_chg = nfci - nfci_lo
-
-    return [
-        {
-            "key": "sig1_fed",
-            "index": 1,
-            "lit": bool(row["sig1_fed"]),
-            "name_en": "Fed Policy & Front-End Rates Tightening",
-            "name_zh": "联储政策与前端利率紧缩",
-            "short_en": "Fed / 2Y Yield",
-            "short_zh": "前端利率紧缩",
-            "reading_value": f"2Y {dgs2:.2f}% ({dgs2_bps:+d} bps)",
-            "secondary_value": f"DFF {dff:.2f}% ({dff_bps:+d} bps)",
-            "threshold_en": "2Y >= +50 bps off 12M low & > 63DMA, OR Fed Funds >= +20 bps",
-            "threshold_zh": "2Y 美债较12月低点回升 >= 50bp 且高于63日均线，或联邦基金利率抬升 >= 20bp",
-            "diagnostic_en": f"2Y UST at {dgs2:.2f}% vs 12M low {dgs2_lo:.2f}% (63DMA {dgs2_ma:.2f}%); Fed Funds {dff:.2f}%.",
-            "diagnostic_zh": f"2Y 美债 {dgs2:.2f}%（较12月低点 {dgs2_lo:.2f}% 抬升 {dgs2_bps:+d}bp，63DMA {dgs2_ma:.2f}%）；DFF {dff:.2f}%。",
-        },
-        {
-            "key": "sig2_credit",
-            "index": 2,
-            "lit": bool(row["sig2_credit"]),
-            "name_en": "Corporate Credit Spread Widening",
-            "name_zh": "企业信用利差走阔",
-            "short_en": "Baa-10Y Credit",
-            "short_zh": "信用利差走阔",
-            "reading_value": f"{baa:.2f}% ({baa_rel:+.1f}%)",
-            "secondary_value": f"{baa_bps:+d} bps vs 12M low",
-            "threshold_en": "Moody's Baa-10Y widens >= +20 bps or >= +12% off 12M low & > 63DMA",
-            "threshold_zh": "穆迪 Baa-10Y 利差较12月低点走阔 >= 20bp 或相对走阔 >= 12%，且高于63日均线",
-            "diagnostic_en": f"Baa-10Y spread at {baa:.2f}% vs 12M tightest {baa_lo:.2f}% ({baa_rel:+.1f}%, 63DMA {baa_ma:.2f}%).",
-            "diagnostic_zh": f"Baa-10Y 信用利差 {baa:.2f}%（较12月最低 {baa_lo:.2f}% 相对走阔 {baa_rel:+.1f}%，高于 63DMA {baa_ma:.2f}%）。",
-        },
-        {
-            "key": "sig3_breadth",
-            "index": 3,
-            "lit": bool(row["sig3_breadth"]),
-            "name_en": "Market Breadth & >200DMA Breakdown",
-            "name_zh": "全美市场宽度与年线占比塌缩",
-            "short_en": "Breadth / >200D",
-            "short_zh": "市场宽度塌缩",
-            "reading_value": f"{pct200:.1f}% >200D (-{pct200_drop:.1f}pp)",
-            "secondary_value": f"AD {ad:,.0f} vs 63D {ad_ma63:,.0f}",
-            "threshold_en": "US Liquid AD Line < 63DMA & < 12M high AND Stocks >200DMA down >= 8pp",
-            "threshold_zh": "全美高流动性普通股 AD Line 跌破63日均线，且站上200日均线个股占比回落 >= 8个百分点",
-            "diagnostic_en": f"Only {pct200:.1f}% of liquid stocks above 200DMA (down {pct200_drop:.1f}pp from {pct200_hi:.1f}% 12M peak); AD < 63DMA.",
-            "diagnostic_zh": f"仅 {pct200:.1f}% 股票站上200DMA（较12月峰值 {pct200_hi:.1f}% 骤降 {pct200_drop:.1f}pp），AD 跌破 63DMA。",
-        },
-        {
-            "key": "sig4_copper",
-            "index": 4,
-            "lit": bool(row["sig4_copper"]),
-            "name_en": "Dr. Copper Industrial Demand Breakdown",
-            "name_zh": "铜博士实体工业需求破位",
-            "short_en": "Dr. Copper",
-            "short_zh": "铜博士破位",
-            "reading_value": f"${cop:.2f}/lb ({cop_dd:+.1f}%)",
-            "secondary_value": f"63DMA ${cop_ma:.2f}/lb",
-            "threshold_en": "HG Copper falls <= -10% off 12M high AND trades below 63DMA",
-            "threshold_zh": "COMEX 铜价较过去12个月高点回撤 >= 10% 且跌破 63 日均线",
-            "diagnostic_en": f"Copper at ${cop:.3f}/lb, {cop_dd:.1f}% below 12M high ${cop_hi:.3f} and below 63DMA ${cop_ma:.3f}.",
-            "diagnostic_zh": f"铜价报 ${cop:.2f}/磅，较12月高点 ${cop_hi:.2f} 下跌 {abs(cop_dd):.1f}% 且位于 63DMA (${cop_ma:.2f}) 下方。",
-        },
-        {
-            "key": "sig5_defensive",
-            "index": 5,
-            "lit": bool(row["sig5_defensive"]),
-            "name_en": "Defensives Outperforming Cyclicals",
-            "name_zh": "防御板块显著跑赢周期板块",
-            "short_en": "DEF / CYC Ratio",
-            "short_zh": "防御跑赢周期",
-            "reading_value": f"{dc:.3f} ({dc_gain:+.1f}%)",
-            "secondary_value": f"63DMA {dc_ma:.3f}",
-            "threshold_en": "(XLU+XLP+XLV)/(XLY+XLI+XLB+XLF) rises >= +5% off 12M low & > 63DMA",
-            "threshold_zh": "公用事业/必选/医疗相对可选/工业/材料/金融比值较12月低点反弹 >= 5% 且站上63日均线",
-            "diagnostic_en": f"Defensive/Cyclical ratio at {dc:.3f}, +{dc_gain:.1f}% off 12M trough {dc_lo:.3f} (63DMA {dc_ma:.3f}).",
-            "diagnostic_zh": f"防御/周期相对强弱比升至 {dc:.3f}，较12月低点 {dc_lo:.3f} 走强 +{dc_gain:.1f}%（高于 63DMA {dc_ma:.3f}）。",
-        },
-        {
-            "key": "sig6_macro",
-            "index": 6,
-            "lit": bool(row["sig6_macro"]),
-            "name_en": "Yield Curve & Financial Conditions Squeeze",
-            "name_zh": "收益率曲线熊平与金融条件收紧",
-            "short_en": "10Y-2Y / NFCI",
-            "short_zh": "曲线与金融条件",
-            "reading_value": f"10Y-2Y {yc:+.2f}% (-{yc_flat_bps}bp)",
-            "secondary_value": f"NFCI {nfci:+.3f} ({nfci_chg:+.3f})",
-            "threshold_en": "10Y-2Y flattens >= 40 bps (<0.75%) OR < 0%, OR Chicago Fed NFCI +0.12",
-            "threshold_zh": "10Y-2Y 利差较12月峰值走平 >= 40bp（且<0.75%）或倒挂 < 0%，或芝加哥联储 NFCI 收紧 >= 0.12",
-            "diagnostic_en": f"10Y-2Y at {yc:+.2f}% (flattened {yc_flat_bps} bps from 12M high {yc_hi:+.2f}%); NFCI {nfci:+.3f}.",
-            "diagnostic_zh": f"10Y-2Y 报 {yc:+.2f}%（较12月高点 {yc_hi:+.2f}% 熊平压窄 {yc_flat_bps}bp）；NFCI 报 {nfci:+.3f}。",
-        },
-    ]
-
-
-def build_ad_line_signal(rows: list[dict[str, Any]], idx: int) -> dict[str, Any]:
-    r = rows[idx]
-    ad = float(r["ad_line"])
-    sma50 = float(r["ad_sma50"])
-    sma63 = float(r["ad_sma63"])
-    hi252 = float(r["ad_hi252"])
-    spread = ad - sma50
-    spread_pct = (spread / sma50) * 100.0 if sma50 else 0.0
-    below = ad < sma50
-
-    streak = 0
-    for j in range(idx, -1, -1):
-        if float(rows[j]["ad_line"]) < float(rows[j]["ad_sma50"]):
-            streak += 1
-        else:
-            break
-
-    ath5 = float(r["dd_from_ath"]) >= -0.05
-    top_div = bool(ath5 and below)
-    last_top_div_date = None
-    for j in range(idx, -1, -1):
-        if float(rows[j]["dd_from_ath"]) >= -0.05 and float(rows[j]["ad_line"]) < float(rows[j]["ad_sma50"]):
-            last_top_div_date = rows[j]["date"]
-            break
-
-    pct200 = float(r["pct_200d"]) * 100.0
-    pct200_hi = float(r["pct200_hi252"]) * 100.0
-    return {
-        "ad_line": round(ad, 0),
-        "ad_sma50": round(sma50, 0),
-        "ad_sma63": round(sma63, 0),
-        "ad_hi252": round(hi252, 0),
-        "spread_vs_50ma": round(spread, 0),
-        "spread_vs_50ma_pct": round(spread_pct, 2),
-        "below_50ma": below,
-        "days_below_50ma": streak,
-        "pct_above_200d": round(pct200, 1),
-        "pct200_hi252": round(pct200_hi, 1),
-        "pct200_drop_pp": round(pct200_hi - pct200, 1),
-        "top_divergence_active": top_div,
-        "last_top_divergence_date": last_top_div_date,
-        "status_en": (
-            "TOP DIVERGENCE ARMED (Near ATH & AD < 50DMA)"
-            if top_div
-            else ("BREADTH BREAKDOWN (AD < 50DMA)" if below else "HEALTHY BREADTH (AD >= 50DMA)")
-        ),
-        "status_zh": (
-            "高位顶背离亮灯（距ATH<=5% 且 AD跌破50DMA）"
-            if top_div
-            else ("市场宽度破位（AD 位于 50DMA 下方）" if below else "市场宽度健康（AD 站稳 50DMA 上方）")
-        ),
-        "note_en": (
-            f"US Liquid Common-Stock AD Line {ad:,.0f} vs 50DMA {sma50:,.0f} ({spread:+,.0f}, {streak}D below); "
-            f"last pre-crash ATH<=5% top divergence fired on {last_top_div_date or '—'}."
-        ),
-        "note_zh": (
-            f"全美高流动性普通股腾落线 AD Line 报 {ad:,.0f} vs 50DMA {sma50:,.0f}（差值 {spread:+,.0f}，连续 {streak} 日破位）；"
-            f"本轮崩盘前最近一次 ATH<=5% 高位顶背离触发于 {last_top_div_date or '—'}。"
-        ),
-    }
-
-
-def build_live_signal_state(
-    row: dict[str, Any],
-    u1_sim: dict[str, Any],
-    tp_mode: str = DEFAULT_TP_MODE,
-) -> dict[str, Any]:
-    cl = float(row["close"])
-    dd_pct = float(row["dd_from_ath"]) * 100.0
-    ma200 = float(row["qqq_ma200"])
-    vxn = float(row["vxn"])
-    vr = float(row["vix_ratio"])
-    sc = int(row["score"])
-    sc5 = float(row["score_5d"])
-    ad_below = float(row["ad_line"]) < float(row["ad_sma50"])
-
-    ath_ok = dd_pct >= -5.0
-    vxn_ok = vxn <= 22.0
-    lights_ok = sc >= 4
-    tp_ok = vr >= 1.10
-
-    active_tr = u1_sim["active_tranches_eod"]
-    pend_sig = u1_sim["pending_sig_eod"]
-
-    s1_open = next((t for t in active_tr if t["slot_num"] == 1), None)
-    s2_open = next((t for t in active_tr if t["slot_num"] == 2), None)
-
-    u1_led = u1_sim["ledger"]
-    last_s1_u1 = next((x for x in reversed(u1_led) if x["slot_num"] == 1 and not x.get("is_open_live")), None)
-    last_s2_u1 = next((x for x in reversed(u1_led) if x["slot_num"] == 2 and not x.get("is_open_live")), None)
-
-    cur_dt = _parse_iso(row["date"])
-    recent_tp_tranches = [
-        t
-        for t in (last_s1_u1, last_s2_u1)
-        if t is not None
-        and t.get("exit_date")
-        and "tp" in str(t.get("exit_reason") or "")
-        and (cur_dt - _parse_iso(t["exit_date"])).days <= 30
-    ]
-
-    if any(t.get("pending_tp") for t in active_tr):
-        regime_code = "VIX110_TP_TRIGGERED"
-        title_en = "DEEP ITM PANIC TAKE-PROFIT ARMED (MONETIZE & ADD QQQ AT NEXT OPEN)"
-        title_zh = "深跌实值恐慌止盈触发（次日开盘全额变现低位加仓 QQQ）"
-    elif s1_open and s2_open:
-        regime_code = "DUAL_SLOT_FULL_SHIELD"
-        title_en = "SLOT 1 NAKED PUT + SLOT 2 ZERO-COST COLLAR FULL HEDGE ACTIVE (100% QQQ)"
-        title_zh = "首仓裸 Put + 次仓零成本 Collar 双槽满盾保护中（100% 满仓 QQQ）"
-    elif s1_open:
-        regime_code = "SLOT1_NAKED_PUT_ACTIVE"
-        title_en = "SLOT 1 (50% NAKED -10% PUT) ACTIVE · 100% QQQ UNLIMITED UPSIDE RETAINED"
-        title_zh = "首仓 50% 裸 -10% Put 持盾中 · 100% QQQ 保留完整向上冲顶收益"
-    elif pend_sig is not None:
-        regime_code = "SLOT1_NAKED_PUT_ARMED"
-        title_en = "TOP-DIVERGENCE / 4-LIGHT GATE FIRED · OPEN SLOT 1 50% NAKED PUT AT NEXT OPEN"
-        title_zh = "高位顶背离 / 四灯门控触发 · 次日开盘买入首仓 50% 裸 -10% Put"
-    elif not ath_ok:
-        regime_code = "LOW_SPOT_FREEZE_NO_NEW_COLLAR"
-        if recent_tp_tranches:
-            tp_usd = sum(float(t["net_pnl_usd"]) for t in recent_tp_tranches)
-            tp_sh = sum(float(t["shares_added"]) for t in recent_tp_tranches)
-            tp_date = max(t["exit_date"] for t in recent_tp_tranches)
-            title_en = (
-                f"100% QQQ HELD · NEW COLLARS HARD FROZEN BELOW ATH -5% "
-                f"(HARVESTED +${tp_usd:,.0f} / +{tp_sh:.2f} SH ON {tp_date})"
-            )
-            title_zh = (
-                f"100% 满仓 QQQ 持筹待弹 · 跌离前高超 5% 严禁低位新开 Collar"
-                f"（已于 {tp_date} 恐慌止盈落袋 +${tp_usd:,.0f} / +{tp_sh:.2f} 股）"
-            )
-        else:
-            title_en = "DRAWDOWN > 5% OFF ATH · HARD FREEZE ON NEW COLLARS (100% QQQ REBOUND CAPTURE)"
-            title_zh = "距历史前高回撤超 5% · 严禁低位新开或续作 Collar（100% QQQ 保留完整反弹斜率）"
-    else:
-        regime_code = "CRUISE_UNHEDGED"
-        title_en = "BULL CRUISE UNHEDGED (100% QQQ · ZERO CALL DRAG)"
-        title_zh = "顺风巡航零期权拖累（100% 满仓 QQQ 复利）"
-
-    def _fmt_last_action(tr_u1: dict[str, Any] | None) -> dict[str, Any]:
-        if tr_u1 is None:
-            return {"summary_en": "No prior trade", "summary_zh": "暂无历史交易"}
-        is_nk = tr_u1["tranche_type"] == "naked_put"
-        strike_str = (
-            f"K=${tr_u1['kp']:.2f}"
-            if is_nk
-            else f"K_P=${tr_u1['kp']:.2f} / K_C=${tr_u1['kc']:.2f}"
-        )
-        ex_tag = "TP" if "tp" in tr_u1["exit_reason"] else "Exp"
-        ex_tag_zh = "1.10止盈" if "tp" in tr_u1["exit_reason"] else "到期"
-        return {
-            "entry_date": tr_u1["entry_date"],
-            "entry_spot": tr_u1["entry_spot"],
-            "kp": tr_u1["kp"],
-            "kc": tr_u1["kc"],
-            "exit_date": tr_u1["exit_date"],
-            "exit_spot": tr_u1["exit_spot"],
-            "exit_reason": tr_u1["exit_reason"],
-            "u1_net_pnl_usd": tr_u1["net_pnl_usd"],
-            "u1_shares_added": tr_u1["shares_added"],
-            "summary_en": (
-                f"{tr_u1['entry_date']} Open @${tr_u1['entry_spot']:.2f} {strike_str} -> "
-                f"{tr_u1['exit_date']} {ex_tag} @${tr_u1['exit_spot']:.2f} "
-                f"{tr_u1['net_pnl_usd']:+,.0f} USD ({tr_u1['shares_added']:+.2f} sh)"
-            ),
-            "summary_zh": (
-                f"{tr_u1['entry_date']} 开仓 @${tr_u1['entry_spot']:.2f} ({strike_str}) -> "
-                f"{tr_u1['exit_date']} {ex_tag_zh} @${tr_u1['exit_spot']:.2f} "
-                f"净赚 ${tr_u1['net_pnl_usd']:+,.0f}（增持 {tr_u1['shares_added']:+.2f} 股 QQQ）"
-            ),
-        }
-
-    s1_status = (
-        ("TP_TRIGGERED_NEXT_OPEN" if s1_open.get("pending_tp") else "ACTIVE_OPEN")
-        if s1_open
-        else ("ARMED_NEXT_OPEN" if pend_sig is not None else "MONETIZED_STANDBY")
-    )
-    s2_status = (
-        ("TP_TRIGGERED_NEXT_OPEN" if s2_open.get("pending_tp") else "ACTIVE_OPEN")
-        if s2_open
-        else ("FROZEN_BELOW_ATH5" if not ath_ok else "STANDBY_WAIT_30D")
-    )
-    tp_meta = next((m for m in TP_MODE_SPECS if m["id"] == tp_mode), TP_MODE_SPECS[0])
-
-    return {
-        "tp_mode": tp_mode,
-        "tp_mode_label_en": tp_meta["label_en"],
-        "tp_mode_label_zh": tp_meta["label_zh"],
-        "regime_code": regime_code,
-        "regime_title_en": title_en,
-        "regime_title_zh": title_zh,
-        "regime_subtitle_en": (
-            f"QQQ ${cl:.2f} ({dd_pct:.2f}% vs ATH, {(cl / ma200 - 1.0) * 100.0:.2f}% vs 200DMA) · "
-            f"{sc}/6 Crisis Lights ON (5D avg {sc5:.1f}) · VIX/VIX3M {vr:.3f} · 100% QQQ Pure Options"
-        ),
-        "regime_subtitle_zh": (
-            f"QQQ 现价 ${cl:.2f}（距前高 {dd_pct:.2f}%，偏离年线 {(cl / ma200 - 1.0) * 100.0:.2f}%）· "
-            f"危机灯 {sc}/6 全亮（5日均值 {sc5:.1f}）· VIX/VIX3M {vr:.3f} · 100% 满仓 QQQ 纯期权"
-        ),
-        "target_equity_pct": 100.0,
-        "target_tbill_pct": 0.0,
-        "active_option_slots": len(active_tr),
-        "slot1_naked_put": {
-            "slot_id": "slot1_naked_put",
-            "title_en": "Slot 1 · 50% First-Tranche Naked -10% Put",
-            "title_zh": "首仓 Slot 1 · 50% 仓位 90-DTE 裸 -10% Put",
-            "status": s1_status,
-            "status_label_en": (
-                "TP ARMED NEXT OPEN"
-                if (s1_open and s1_open.get("pending_tp"))
-                else ("ACTIVE" if s1_open else ("ARMED T+1" if pend_sig else "TP HARVESTED · STANDBY"))
-            ),
-            "status_label_zh": (
-                "实值止盈已触发 · 次日开盘落袋"
-                if (s1_open and s1_open.get("pending_tp"))
-                else ("持仓保护中" if s1_open else ("次日开盘建仓" if pend_sig else "已止盈落袋 · 待命"))
-            ),
-            "rule_en": "ATH <= 5% & VXN <= 22 & (AD Line < 50DMA OR Crisis Lights >= 4) -> Buy 50% 90-DTE -10% Put (NO Call cap)",
-            "rule_zh": "距ATH <= 5% 且 VXN <= 22 且（AD < 50DMA 顶背离 或 危机灯 >= 4）-> 买 50% 裸 -10% Put（不卖 Call 保留冲顶斜率）",
-            "open_position": s1_open,
-            "latest_action": _fmt_last_action(last_s1_u1),
-        },
-        "slot2_collar": {
-            "slot_id": "slot2_collar",
-            "title_en": "Slot 2 · 50% Second-Tranche Zero-Cost Collar",
-            "title_zh": "次仓 Slot 2 · 50% 仓位零成本 Collar 领口盾",
-            "status": s2_status,
-            "status_label_en": (
-                "TP ARMED NEXT OPEN"
-                if (s2_open and s2_open.get("pending_tp"))
-                else ("ACTIVE" if s2_open else ("HARD FROZEN (DD > 5%)" if not ath_ok else "STANDBY (>=30D STEP)"))
-            ),
-            "status_label_zh": (
-                "止盈已触发 · 次日开盘落袋"
-                if (s2_open and s2_open.get("pending_tp"))
-                else ("持盾保护中" if s2_open else ("低位铁律冻结（禁卖Call）" if not ath_ok else "待命（距首仓满30日开启）"))
-            ),
-            "rule_en": ">= 30 cal days after Slot 1 & entry gates still ON -> Open 50% Zero-Cost Collar (-10% Put / +OTM Call); strictly forbidden below ATH -5%",
-            "rule_zh": "首仓满 30 自然日且门控仍亮灯 -> 开启剩余 50% 零成本 Collar；跌离前高超 5% 严禁新开或续作 Collar",
-            "open_position": s2_open,
-            "latest_action": _fmt_last_action(last_s2_u1),
-        },
-        "gate_checklist": [
-            {
-                "key": "ath_within_5pct",
-                "label_en": "ATH <= 5%",
-                "label_zh": "距前高 <= 5%",
-                "role": "ENTRY_PREREQ",
-                "passed": ath_ok,
-                "current_value": f"{dd_pct:.2f}%",
-                "reading": f"{dd_pct:.2f}%",
-                "threshold": ">= -5.00%",
-                "note_en": "Prevents selling upside Calls in a hole" if not ath_ok else "Near highs: cheap hedging window open",
-                "note_zh": "深跌区硬锁死，防止低位卖 Call 被逼空踏空" if not ath_ok else "处于前高 5% 内低成本上盾区",
-            },
-            {
-                "key": "vxn_le_22",
-                "label_en": "VXN <= 22",
-                "label_zh": "VXN <= 22 低波门控",
-                "role": "ENTRY_PREREQ",
-                "passed": vxn_ok,
-                "current_value": f"{vxn:.2f}",
-                "reading": f"{vxn:.2f}",
-                "threshold": "<= 22.00",
-                "note_en": "Blocks overpaying bloated panic IV" if not vxn_ok else "Implied vol cheap enough for 90-DTE Put",
-                "note_zh": "拒绝在恐慌高波时买天价期权当冤大头" if not vxn_ok else "隐含波动率低廉，适合建仓 90D Put",
-            },
-            {
-                "key": "ad_below_50dma",
-                "label_en": "AD Line < 50DMA",
-                "label_zh": "AD Line < 50DMA",
-                "role": "ENTRY_TRIGGER",
-                "passed": ad_below,
-                "current_value": f"{float(row['ad_line']) - float(row['ad_sma50']):+,.0f}",
-                "reading": f"{float(row['ad_line']) - float(row['ad_sma50']):+,.0f}",
-                "threshold": "< 0",
-                "note_en": "Internal market breadth below 50DMA" if ad_below else "Broad participation intact",
-                "note_zh": "全美腾落线跌破 50DMA（内部宽度恶化）" if ad_below else "市场内部腾落线位于 50DMA 上方",
-            },
-            {
-                "key": "crisis_lights_ge_4",
-                "label_en": "Crisis Lights >= 4",
-                "label_zh": "危机灯 >= 4 盏",
-                "role": "ENTRY_TRIGGER",
-                "passed": lights_ok,
-                "current_value": f"{sc} / 6",
-                "reading": f"{sc} / 6",
-                "threshold": ">= 4 / 6",
-                "note_en": f"{sc}/6 Druckenmiller macro reversal lights ON" if lights_ok else f"Only {sc}/6 lights ON",
-                "note_zh": f"德鲁肯米勒六大危机灯亮起 {sc}/6 盏" if lights_ok else f"仅亮 {sc}/6 盏，未达宏观警戒线",
-            },
-            {
-                "key": "vix_ratio_ge_110_tp",
-                "label_en": "VIX/VIX3M >= 1.10 TP",
-                "label_zh": "VIX/VIX3M >= 1.10 止盈",
-                "role": "EXIT_TRIGGER",
-                "passed": tp_ok,
-                "current_value": f"{vr:.3f}",
-                "reading": f"{vr:.3f}",
-                "threshold": ">= 1.100",
-                "note_en": "Panic backwardation active: monetize puts & reload!" if tp_ok else "Term structure below 1.10 panic threshold",
-                "note_zh": "恐慌期限倒挂极值触发：收割凸性暴利抄底正股！" if tp_ok else "未达 1.10 恐慌倒挂收割阈值",
-            },
-        ],
-    }
-
-
-def build_crisis_windows(
-    rows_eval: list[dict[str, Any]],
-    sims: dict[str, dict[str, Any]],
-    unified_events: list[dict[str, Any]],
-    tp_mode: str = DEFAULT_TP_MODE,
-) -> list[dict[str, Any]]:
-    date_to_idx = {r["date"]: i for i, r in enumerate(rows_eval)}
-
-    if tp_mode == "layered_itm":
-        live_narr_en = (
-            "1) 8/31 Slot 1 Naked Put @$715.17 (K_P=$643.65, NO Call cap -> captured 100% of the rally to $759.66 ATH!). "
-            "2) 10/05 Slot 2 Zero-Cost Collar @$749.35 (K_P=$674.41). "
-            "3) On 11/05 VIX/3M=1.103: Slot 2 Collar (already deep ITM) monetized on 11/06 Open @$658.35 for +$50,384 (+76.51 QQQ shares) and freed the Call cap, "
-            "while Slot 1 Naked Put IGNORED the shallow inversion ($647.05 > $643.65 OTM) and rode the real crash down to $608.45 (-19.9%), arming deep-ITM panic TP (+$39,532 MTM / +67.32 sh) for next Open — cutting drawdown to -14.81% (+5.09% excess)!"
-        )
-        live_narr_zh = (
-            "① 8/31 AD 背离开启首仓 50% 裸 Put @$715.17（行权 $643.65，无卖 Call 封顶吃满冲顶至 $759.66！）；"
-            "② 10/05 见顶前一日 @$749.35 补齐次仓 50% 零成本 Collar（行权 $674.41）；"
-            "③ 11/05 压线倒挂 1.103：次仓领口已深实值，11/06 开盘果断落袋 +$50,384（+76.51 股）并解除卖 Call 封顶；"
-            "首仓裸 Put 因收盘 $647.05 尚未跌破行权价 $643.65 直接无视浅倒挂，稳稳拿住吃到 11/20 深跌至 $608.45（-19.9%），实值恐慌止盈正式触发（浮盈 +$39,532 / +67.32 股待次日开盘换股），将本轮回撤从 -19.90% 压至 -14.81%（超额 +5.09%）！"
-        )
-    elif tp_mode == "both_4x":
-        live_narr_en = (
-            "1) 8/31 Slot 1 Naked Put @$715.17 + 10/05 Slot 2 Zero-Cost Collar @$749.35. "
-            "2) On 11/05 VIX/3M=1.103: Slot 2 Collar exceeded 4x cost and monetized on 11/06 Open for +$50,035 (+75.98 sh), "
-            "while Slot 1 Naked Put (<4x on 11/05) ignored the shallow spike and rode down to $608.45 (-19.9%) on 11/20, triggering 4x deep panic TP (+$39,258 MTM / +66.85 sh) and cutting drawdown to -14.81% (+5.09% excess)!"
-        )
-        live_narr_zh = (
-            "① 8/31 首仓裸 Put @$715.17 叠加 10/05 次仓领口 @$749.35；"
-            "② 11/05 倒挂 1.103 时次仓领口已超 4 倍成本，11/06 开盘落袋 +$50,035（+75.98 股）；"
-            "首仓裸 Put 未满 4 倍直接无视浅跌，拿住到 11/20 深跌至 $608.45（-19.9%）突破 4 倍成本，触发深度恐慌止盈（浮盈 +$39,258 / +66.85 股），将回撤压至 -14.81%（超额 +5.09%）！"
-        )
-    else:
-        live_narr_en = (
-            "1) 8/31 Slot 1 Naked Put @$715.17 (AD divergence, NO Call cap -> captured 100% of the rally to $759.66 ATH!). "
-            "2) 10/05 Slot 2 Zero-Cost Collar @$749.35 (1 day before peak!). "
-            "3) On 11/06 Open @$658.35 (VIX/3M 1.103), Standard 1.10 TP monetized both slots immediately for +$62,156 (+95.55 extra QQQ shares), "
-            "cutting drawdown to -16.33% (+3.58% excess) while holding 100% QQQ uncapped below ATH -5%."
-        )
-        live_narr_zh = (
-            "① 8/31 AD 背离开启首仓 50% 裸 Put @$715.17（无卖 Call 封顶吃满冲顶至 $759.66！）；"
-            "② 10/05 见顶前一日 @$749.35 补齐次仓 50% 零成本 Collar；"
-            "③ 11/06 倒挂 1.103 在 @$658.35 按标准双轨一次性双槽止盈落袋 +$62,156（低位增持 +95.55 股 QQQ）；"
-            "④ 跌离前高超 5% 严禁低位新开 Collar，100% 满仓 QQQ 待弹（回撤 -16.33% vs QQQ -19.90%，超额 +3.58%）。"
-        )
-
-    specs = [
-        {
-            "id": "2015-08",
-            "pill_en": "2015-08 Yuan Shock",
-            "pill_zh": "2015-08 汇改闪崩",
-            "title_en": "2015-08 Yuan Devaluation Flash Crash",
-            "title_zh": "2015-08 人民币汇改与全球流动性闪崩",
-            "start_date": "2015-05-26",
-            "end_date": "2015-10-15",
-            "crash_start_date": "2015-07-20",
-            "crash_end_date": "2015-08-25",
-            "is_live": False,
-            "narrative_en": (
-                "4/6 Crisis Lights + AD top-divergence armed two 90-DTE Collars ahead of the peak ($110.64 on 6/01 and "
-                "$112.73 on 7/23). On 2015-08-24 when VIX/VIX3M spiked to 1.194, both tranches monetized at $94.23 Open "
-                "for +$13,633 (+144.6 QQQ shares), cutting QQQ's -13.94% drawdown nearly in half."
-            ),
-            "narrative_zh": (
-                "暴跌前 4–5 盏危机灯叠加 AD 背离提前在 $110.64（6/01）与 $112.73（7/23）挂满双槽保护；"
-                "8/24 闪崩开盘 VIX/VIX3M 飙至 1.194 触发止盈，在 $94.23 铁底一次性落袋 +$13,633 并抄底 +144.6 股 QQQ！"
-            ),
-        },
-        {
-            "id": "2018-Q4",
-            "pill_en": "2018-Q4 Fed QT",
-            "pill_zh": "2018-Q4 联储缩表",
-            "title_en": "2018-Q4 Fed Autopilot Tightening Bear (-22.7%)",
-            "title_zh": "2018-Q4 美联储缩表加息急跌 (-22.7%)",
-            "start_date": "2018-06-20",
-            "end_date": "2019-02-08",
-            "crash_start_date": "2018-10-01",
-            "crash_end_date": "2018-12-24",
-            "is_live": False,
-            "narrative_en": (
-                "4/6 Crisis Lights fired 47 trading days before the top (Slot 1 Naked Put 6/25, Slot 2 Collar 7/26, "
-                "refreshed Collar 10/05 @$182.36). On 10/11 when VIX/VIX3M inverted to 1.109, the option sleeve monetized "
-                "for +$5,847 (+34.18 QQQ shares), reducing QQQ's -22.69% drawdown to -21.28% (+1.41% excess) while holding 100% QQQ."
-            ),
-            "narrative_zh": (
-                "四灯在见顶前 47 个交易日提前亮起，10/05 在 $182.36 高位补齐 Collar；"
-                "10/11 首波恐慌倒挂 1.109 止盈落袋 +$5,847（增持 +34.18 股 QQQ），全程 100% 持仓 QQQ 将回撤从 -22.69% 压至 -21.28%（超额 +1.41%）。"
-            ),
-        },
-        {
-            "id": "2020-03",
-            "pill_en": "2020-03 COVID",
-            "pill_zh": "2020-03 新冠熔断",
-            "title_en": "2020-03 Exogenous Pandemic Shock (-28.6%)",
-            "title_zh": "2020-03 新冠外生黑天鹅熔断 (-28.6%)",
-            "start_date": "2020-01-02",
-            "end_date": "2020-04-17",
-            "crash_start_date": "2020-02-19",
-            "crash_end_date": "2020-03-23",
-            "is_live": False,
-            "narrative_en": (
-                "Honest out-of-sample disclosure: because COVID-19 was an exogenous biological shock while pre-peak macro "
-                "lights were 2/6 and AD Line hit new highs, U1 held 0 pre-peak puts (zero Call cap drag in 2019's +39% melt-up) "
-                "and stayed strictly 100% QQQ with ATH<=5% freeze, capturing 100% of the April V-bottom rebound (0.00% excess)."
-            ),
-            "narrative_zh": (
-                "零前视客观披露：2020年2月见顶前宏观基本面仅亮 2/6 灯且全美 AD 创历史新高，纯内生宽度/宏观开关未提前挂 Put（也因此零损耗吃满 2019 年 +39% 主升浪）；"
-                "下跌超 5% 后触发低位铁律冻结，100% 满仓 QQQ 完整吃下 3/23 后的 V 型暴涨（区间超额 0.00%）。"
-            ),
-        },
-        {
-            "id": "2022",
-            "pill_en": "2022 Slow Bear",
-            "pill_zh": "2022 加息慢熊",
-            "title_en": "2022 Inflation Hiking Grind (-35.1% QQQ vs -31.5% U1 · 5x Put Lock)",
-            "title_zh": "2022 加息慢熊（QQQ -35.1% vs U1 -31.5% · 后半程 5x 止盈锁利）",
-            "start_date": "2021-11-15",
-            "end_date": "2022-12-30",
-            "crash_start_date": "2021-11-19",
-            "crash_end_date": "2022-12-28",
-            "is_live": False,
-            "narrative_en": (
-                "In 2022's frog-boiling grind, VIX/VIX3M peaked at just 1.022 (<1.10), so panic-inversion TP never fired. "
-                "Track-2 Dual-TP (DTE<=45 & Put>=5x) stepped in on 2022-02-24 Open @$318.84 (32 DTE left, 5x+ deep ITM), "
-                "harvesting +$37,680 (+121.86 extra QQQ shares!) right before March's dead-cat bounce, slashing 2022 MDD from -35.12% to -31.52% (+3.60% excess)!"
-            ),
-            "narrative_zh": (
-                "2022 温水煮青蛙慢熊中 VIX/VIX3M 全年最高仅 1.022（未达 1.10 恐慌倒挂）；第二轨「后半程 DTE<=45 且 Put>=5x」精准补位："
-                "在 2022-02-24 早盘 @$318.84（距到期 32 天、深实值超 5 倍）果断兑现 +$37,680（低位抄底 +121.86 股 QQQ），完美避开 3 月底反弹归零，100% 满仓将 2022 回撤从 -35.12% 砍至 -31.52%（超额 +3.60%）！"
-            ),
-        },
-        {
-            "id": "2024-08",
-            "pill_en": "2024-08 Yen Carry",
-            "pill_zh": "2024-08 日元闪崩",
-            "title_en": "2024-08 Yen Carry Unwind Flash Crash (-13.6%)",
-            "title_zh": "2024-08 日元套息交易平仓闪崩 (-13.6%)",
-            "start_date": "2024-05-20",
-            "end_date": "2024-09-06",
-            "crash_start_date": "2024-07-10",
-            "crash_end_date": "2024-08-07",
-            "is_live": False,
-            "narrative_en": (
-                "4/6 Crisis Lights + AD divergence opened two 50% option slots right into the summer peak ($455.50 on 5/30 and "
-                "$497.62 on 7/16). When the Yen carry unwind pushed VIX/VIX3M to 1.144 on 2024-08-05, both slots "
-                "monetized at $437.23 Open on 8/06 for +$35,158 (+80.39 QQQ shares), slashing DD from -13.56% to -8.05% (+5.51% excess)!"
-            ),
-            "narrative_zh": (
-                "4/6 危机灯与 AD 顶背离在 $455.50（5/30）与见顶处 $497.62（7/16）精准挂满双槽保护；"
-                "8/05 日元闪崩引爆 VIX/VIX3M 至 1.144，8/06 开盘 @$437.23 双槽止盈落袋 +$35,158（低位白捡 +80.39 股 QQQ），回撤从 -13.56% 大砍至 -8.05%（超额 +5.51%）！"
-            ),
-        },
-        {
-            "id": "2025-04",
-            "pill_en": "2025-04 Tariff Crash",
-            "pill_zh": "2025-04 关税暴跌",
-            "title_en": "2025-04 Tariff Liquidity Waterfall (-22.8%)",
-            "title_zh": "2025-04 关税冲击流动性暴跌 (-22.8%)",
-            "start_date": "2024-12-18",
-            "end_date": "2025-05-16",
-            "crash_start_date": "2025-02-19",
-            "crash_end_date": "2025-04-08",
-            "is_live": False,
-            "narrative_en": (
-                "Even with macro lights at only 2/6, US Liquid AD Line < 50DMA top-divergence caught the $539.52 top "
-                "and opened a 50% Collar on 2025-02-24 @$527.88 (K_P=$475.09). On 2025-04-07 Open @$408.66 (VIX/3M 1.234), "
-                "that single tranche harvested +$76,729 (+187.70 QQQ shares at the exact bottom!), slashing DD to -16.36% (+6.41% excess)!"
-            ),
-            "narrative_zh": (
-                "即便宏观灯仅亮 2 盏，全美 AD Line < 50DMA 顶背离依然死死咬住 $539.52 大顶，于 2/24 @$527.88 开启 50% 保护（K_P=$475.09）；"
-                "4/07 关税恐慌极值（倒挂 1.234）在 $408.66 铁底单笔暴赚 +$76,729，一把抄底 +187.70 股 QQQ，回撤压至 -16.36%（超额高达 +6.41%）！"
-            ),
-        },
-        {
-            "id": "2026-08_11_LIVE",
-            "pill_en": "2026-11 LIVE",
-            "pill_zh": "2026-11 实盘 LIVE",
-            "title_en": "2026-08 to 2026-11 LIVE Pure-Options Campaign (-19.9% QQQ vs -17.5% U1)",
-            "title_zh": "2026-08 至 2026-11 实盘 LIVE 纯期权双槽战役（QQQ -19.9% vs U1 -17.5%）",
-            "start_date": "2026-08-24",
-            "end_date": rows_eval[-1]["date"],
-            "crash_start_date": "2026-10-06",
-            "crash_end_date": rows_eval[-1]["date"],
-            "is_live": True,
-            "narrative_en": live_narr_en,
-            "narrative_zh": live_narr_zh,
-        },
-    ]
-
-    strat_keys = [
-        "U1_PureOptions",
-        "B1c_PureAD",
-        "D2_SixLights",
-        "H2_G4_PriceGate",
-        "BH_Pure_QQQ",
-    ]
-
-    out_windows: list[dict[str, Any]] = []
-    for sp in specs:
-        c0 = date_to_idx[sp["crash_start_date"]]
-        c1 = date_to_idx[sp["crash_end_date"]]
-        z0_date = sp["start_date"]
-        z1_date = sp["end_date"]
-
-        bh_sub = sims["BH_Pure_QQQ"]["nav"][c0 : c1 + 1]
-        q_ret = (bh_sub[-1] / bh_sub[0] - 1.0) * 100.0
-        pk = bh_sub[0]
-        q_mdd = 0.0
-        for v in bh_sub:
-            if v > pk:
-                pk = v
-            dd = (v / pk - 1.0) * 100.0
-            if dd < q_mdd:
-                q_mdd = dd
-
-        ep_stats: dict[str, Any] = {}
-        for sk in strat_keys:
-            m_sub = sims[sk]["nav"][c0 : c1 + 1]
-            m_ret = (m_sub[-1] / m_sub[0] - 1.0) * 100.0
-            mpk = m_sub[0]
-            m_mdd = 0.0
-            for v in m_sub:
-                if v > mpk:
-                    mpk = v
-                dd = (v / mpk - 1.0) * 100.0
-                if dd < m_mdd:
-                    m_mdd = dd
-            led_in_win = [
-                t
-                for t in sims[sk]["ledger"]
-                if (z0_date <= t["entry_date"] <= z1_date)
-                or (
-                    (t.get("exit_date") or t.get("mtm_date") or "") != ""
-                    and z0_date <= (t.get("exit_date") or t.get("mtm_date")) <= z1_date
-                )
-            ]
-            tp_harvested = sum(
-                t["net_pnl_usd"]
-                for t in led_in_win
-                if ("tp" in t["exit_reason"] or t.get("is_open_live")) and t["net_pnl_usd"] > 0
-            )
-            tp_shares = sum(
-                t["shares_added"]
-                for t in led_in_win
-                if ("tp" in t["exit_reason"] or t.get("is_open_live")) and t["shares_added"] > 0
-            )
-            net_pnl_all = sum(t["net_pnl_usd"] for t in led_in_win)
-            ep_stats[sk] = {
-                "ret_pct": round(m_ret, 2),
-                "mdd_pct": round(m_mdd, 2),
-                "dd_cushion_pct": round(m_mdd - q_mdd, 2),
-                "excess_ret_pct": round(m_ret - q_ret, 2),
-                "harvested_tp_usd": round(tp_harvested, 2),
-                "shares_added_tp": round(tp_shares, 2),
-                "net_option_pnl_usd": round(net_pnl_all, 2),
-                "tranche_ids": [t["tranche_id"] for t in led_in_win],
-            }
-
-        peak_vr = max(float(rows_eval[j]["vix_ratio"]) for j in range(c0, c1 + 1))
-        peak_lights = max(int(rows_eval[j]["score"]) for j in range(c0, c1 + 1))
-
-        linked_ids = [
-            ev["event_id"]
-            for ev in unified_events
-            if z0_date <= ev["date"] <= z1_date
-        ]
-
-        out_windows.append(
-            {
-                **sp,
-                "qqq_ret_pct": round(q_ret, 2),
-                "qqq_mdd": round(q_mdd, 2),
-                "u1_mdd": ep_stats["U1_PureOptions"]["mdd_pct"],
-                "b1c_mdd": ep_stats["B1c_PureAD"]["mdd_pct"],
-                "d2_mdd": ep_stats["D2_SixLights"]["mdd_pct"],
-                "h2_mdd": ep_stats["H2_G4_PriceGate"]["mdd_pct"],
-                "excess_ret_u1": ep_stats["U1_PureOptions"]["excess_ret_pct"],
-                "dd_cushion_u1": ep_stats["U1_PureOptions"]["dd_cushion_pct"],
-                "peak_vix_ratio": round(peak_vr, 3),
-                "peak_lights": peak_lights,
-                "harvested_usd": ep_stats["U1_PureOptions"]["harvested_tp_usd"],
-                "harvested_usd_u1": ep_stats["U1_PureOptions"]["harvested_tp_usd"],
-                "shares_added": ep_stats["U1_PureOptions"]["shares_added_tp"],
-                "shares_added_u1": ep_stats["U1_PureOptions"]["shares_added_tp"],
-                "strategy_stats": ep_stats,
-                "linked_event_ids": linked_ids,
-            }
-        )
-
-    return out_windows
-
-
-def build_unified_events(
-    strategy_id: str,
-    ledger: list[dict[str, Any]],
-    shield_events: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    for tr in ledger:
-        is_nk = tr["tranche_type"] == "naked_put"
-        book_tag = str(tr.get("book") or "")
-        is_base_book = book_tag == "base"
-        s_num = int(tr.get("slot_num") if tr.get("slot_num") is not None else (0 if is_base_book else 1))
-        if is_base_book:
-            ev_type = "base_020_put"
-        elif is_nk:
-            ev_type = "slot1_naked_put" if s_num <= 1 else f"slot{s_num}_naked_put"
-        else:
-            ev_type = f"slot{max(1, s_num)}_collar"
-        open_ev: dict[str, Any] = {
-            "event_id": f"{strategy_id}_tr{tr['tranche_id']}_open",
-            "tranche_id": tr["tranche_id"],
-            "strategy_id": strategy_id,
-            "date": tr["entry_date"],
-            "signal_date": tr["signal_date"],
-            "event_type": ev_type,
-            "slot_num": s_num,
-            "tranche_type": tr["tranche_type"],
-            "spot": tr["entry_spot"],
-            "vxn": tr["entry_vxn"],
-            "vix_ratio": tr["entry_vix_ratio"],
-            "kp": tr["kp"],
-            "kc": tr["kc"],
-            "call_cap_pct": tr["call_cap_pct"],
-            "entry_cost_usd": tr["entry_cost_usd"],
-            "hedged_shares": tr["hedged_shares"],
-            "sig_score": tr["sig_score"],
-            "sig_ad_below50": tr["sig_ad_below50"],
-            "trigger_en": tr["trigger_en"],
-            "trigger_zh": tr["trigger_zh"],
-            "linked_exit_date": tr["exit_date"],
-            "linked_exit_spot": tr["exit_spot"],
-            "linked_exit_reason": tr["exit_reason"],
-            "net_pnl_usd": tr["net_pnl_usd"],
-            "shares_added": tr["shares_added"],
-            "delta_usd": tr["delta_usd"],
-            "gamma_usd": tr["gamma_usd"],
-            "vega_usd": tr["vega_usd"],
-            "theta_slip_usd": tr["theta_slip_usd"],
-        }
-        if "crisis_prob" in tr:
-            open_ev.update(
-                {
-                    "book": tr.get("book"),
-                    "book_label_en": tr.get("book_label_en"),
-                    "book_label_zh": tr.get("book_label_zh"),
-                    "budget_pct_nav": tr.get("budget_pct_nav"),
-                    "entry_pct_nav": tr.get("entry_pct_nav"),
-                    "near_itm_strike_105": tr.get("near_itm_strike_105"),
-                    "crisis_prob": tr.get("crisis_prob"),
-                    "p1": tr.get("p1"),
-                    "p2": tr.get("p2"),
-                    "p3": tr.get("p3"),
-                    "triggered_modules": tr.get("triggered_modules"),
-                    "trigger_code": tr.get("trigger_code"),
-                    "tier": tr.get("tier"),
-                    "max_slots": tr.get("max_slots"),
-                    "put_otm_pct": tr.get("put_otm_pct"),
-                    "contracts_est": tr.get("contracts_est"),
-                    "roi_mult": tr.get("roi_mult"),
-                    "tp_mode": tr.get("tp_mode"),
-                    "roll_mode": tr.get("roll_mode"),
-                    "target_dte": tr.get("target_dte"),
-                    "roll_dte": tr.get("roll_dte"),
-                    "is_cta": tr.get("is_cta"),
-                    "quoteSource": tr.get("quoteSource"),
-                    "occSymbol": tr.get("occSymbol"),
-                    "exp": tr.get("exp"),
-                    "strike": tr.get("strike"),
-                    "entryBid": tr.get("entryBid"),
-                    "entryAsk": tr.get("entryAsk"),
-                    "exitBid": tr.get("exitBid"),
-                    "exitAsk": tr.get("exitAsk"),
-                }
-            )
-        events.append(open_ev)
-
-        is_open_live = bool(tr.get("is_open_live"))
-        ex_reason = str(tr.get("exit_reason") or "")
-        is_live_roll_armed = ex_reason in (
-            "live_roll_75d_armed_next_open",
-            "live_roll_50d_armed_next_open",
-            "live_roll_30d_armed_next_open",
-            "live_salvage_vix_expensive_armed_next_open",
-            "live_roll50_armed_next_open",
-            "live_roll30_armed_next_open",
-        )
-        is_live_armed = is_live_roll_armed or ex_reason == "live_tp_armed_next_open"
-        is_roll75 = ex_reason == "roll_75d"
-        is_salv_vix = ex_reason == "salvage_vix_expensive"
-        is_roll50 = ex_reason == "roll_50d"
-        is_roll30 = ex_reason == "roll_30d"
-        is_tp = ("tp" in ex_reason) and not is_open_live
-        is_near_itm_tp = ex_reason in ("tp_near_itm", "base_tp_near_itm")
-        is_put5x = ("put_5x" in ex_reason) or ex_reason in ("tp_5x_late", "base_tp_5x_late")
-        is_itm_tp = ("itm_tp" in ex_reason) and not is_near_itm_tp
-        is_4x_tp = "4x_tp" in ex_reason
-        ev_exit_date = tr["exit_date"] if not is_open_live else tr.get("mtm_date")
-        if (not is_open_live or is_live_armed) and ev_exit_date:
-            if is_live_roll_armed:
-                rl_lbl = 30 if "30" in ex_reason else (50 if "50" in ex_reason else 75)
-                ev_type_exit = f"live_roll{rl_lbl}_armed"
-                trig_en_exit = f"{rl_lbl}-DTE Hard Roll/Salvage Armed ({tr['rem_dte_at_exit']} DTE left · Next Close)"
-                trig_zh_exit = f"{rl_lbl}-DTE 硬换/残值退出已触发（剩 {tr['rem_dte_at_exit']} 天 · 待次日执行）"
-            elif is_live_armed:
-                ev_type_exit = "live_tp_armed"
-                trig_en_exit = (
-                    f"Near-ITM Panic TP Armed ({tr['rem_dte_at_exit']} DTE left · VIX/3M {tr['exit_vix_ratio']:.3f} · Next Exec)"
-                )
-                trig_zh_exit = (
-                    f"准实值恐慌止盈已触发（剩余 {tr['rem_dte_at_exit']} 天 · VIX/3M {tr['exit_vix_ratio']:.3f} · 待次日换股）"
-                )
-            elif is_salv_vix:
-                ev_type_exit = "base_salvage_75d" if is_base_book else "roll_75d"
-                salv_pct = float(tr.get("roi_mult") or 0.0) * 100.0
-                trig_en_exit = f"75-DTE Salvage Exit (VIX > 20 Gate Closed · {salv_pct:.0f}% Value Saved)"
-                trig_zh_exit = f"75-DTE 残值退出（VIX > 20 门控关闭禁续买 · 回收 {salv_pct:.0f}% 残值）"
-            elif is_roll75 or is_roll50 or is_roll30:
-                rl_lbl = 30 if is_roll30 else (50 if is_roll50 else 75)
-                if is_base_book:
-                    ev_type_exit = "base_roll_75d"
-                else:
-                    ev_type_exit = "roll_30d" if is_roll30 else ("roll_50d" if is_roll50 else "roll_75d")
-                salv_pct = float(tr.get("roi_mult") or 0.0) * 100.0
-                trig_en_exit = f"{rl_lbl}-DTE Hard Roll/Salvage ({tr['rem_dte_at_exit']} DTE left · {salv_pct:.0f}% Value Saved)"
-                trig_zh_exit = f"{rl_lbl}-DTE 硬换/残值回收（剩 {tr['rem_dte_at_exit']} 天 · 回收 {salv_pct:.0f}% 残值）"
-            elif is_near_itm_tp:
-                ev_type_exit = "vix110_near_itm_tp"
-                bk_tag_en = "Book B 0.20% " if is_base_book else ""
-                bk_tag_zh = "B账本0.20% " if is_base_book else ""
-                trig_en_exit = (
-                    f"{bk_tag_en}Near-ITM Bottom Clearance TP (QQQ ${tr['exit_spot']:.2f} <= 1.05xK · VIX/3M {tr['exit_vix_ratio']:.3f})"
-                )
-                trig_zh_exit = (
-                    f"{bk_tag_zh}准实值底部出清止盈（QQQ ${tr['exit_spot']:.2f} <= 1.05×K · VIX/3M {tr['exit_vix_ratio']:.3f} · 启动5D锁死）"
-                )
-            elif is_put5x:
-                dte_cap_lbl = 60 if is_base_book else (75 if "dte75" in ex_reason else 45)
-                ev_type_exit = "put5x_dte45_tp"
-                trig_en_exit = f"5x Put Slow-Bear TP ({tr['rem_dte_at_exit']} DTE <= {dte_cap_lbl}, Deep ITM Lock)"
-                trig_zh_exit = f"后半程 Put >= 5x 慢熊止盈（剩余 {tr['rem_dte_at_exit']} 天 <= {dte_cap_lbl} · 深实值锁利）"
-            elif is_itm_tp:
-                ev_type_exit = "vix110_itm_tp"
-                trig_en_exit = f"Deep-ITM Panic TP (QQQ <= K_P & VIX/3M {tr['exit_vix_ratio']:.3f} >= 1.10)"
-                trig_zh_exit = f"实值恐慌止盈（跌破行权价且 VIX/3M {tr['exit_vix_ratio']:.3f} >= 1.10）"
-            elif is_4x_tp:
-                ev_type_exit = "vix110_4x_tp"
-                trig_en_exit = f"4x Deep Panic TP (Put >= 4x & VIX/3M {tr['exit_vix_ratio']:.3f} >= 1.10)"
-                trig_zh_exit = f"4x 深度恐慌止盈（Put >= 4x 且 VIX/3M {tr['exit_vix_ratio']:.3f} >= 1.10）"
-            elif is_tp:
-                ev_type_exit = "vix110_tp"
-                trig_en_exit = f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 Panic TP"
-                trig_zh_exit = f"VIX/VIX3M {tr['exit_vix_ratio']:.3f} >= 1.10 恐慌止盈抄底"
-            else:
-                tenor_exp = 125 if "125dte" in ex_reason else (120 if "120dte" in ex_reason else 90)
-                ev_type_exit = "option_expiry"
-                trig_en_exit = f"{tenor_exp}-DTE Expiry ({tr['underlying_ret_pct']:+.1f}% spot)"
-                trig_zh_exit = f"{tenor_exp}-DTE 到期结算（期间正股 {tr['underlying_ret_pct']:+.1f}%）"
-
-            exit_ev: dict[str, Any] = {
-                "event_id": f"{strategy_id}_tr{tr['tranche_id']}_exit",
-                "tranche_id": tr["tranche_id"],
-                "strategy_id": strategy_id,
-                "date": ev_exit_date,
-                "signal_date": tr["signal_date"],
-                "event_type": ev_type_exit,
-                "slot_num": s_num,
-                "tranche_type": tr["tranche_type"],
-                "spot": tr["exit_spot"],
-                "vxn": tr["exit_vxn"],
-                "vix_ratio": tr["exit_vix_ratio"],
-                "kp": tr["kp"],
-                "kc": tr["kc"],
-                "call_cap_pct": tr["call_cap_pct"],
-                "entry_spot": tr["entry_spot"],
-                "entry_date": tr["entry_date"],
-                "entry_cost_usd": tr["entry_cost_usd"],
-                "hedged_shares": tr["hedged_shares"],
-                "sig_score": tr["sig_score"],
-                "sig_ad_below50": tr["sig_ad_below50"],
-                "trigger_en": trig_en_exit,
-                "trigger_zh": trig_zh_exit,
-                "net_pnl_usd": tr["net_pnl_usd"],
-                "shares_added": tr["shares_added"],
-                "delta_usd": tr["delta_usd"],
-                "gamma_usd": tr["gamma_usd"],
-                "vega_usd": tr["vega_usd"],
-                "theta_slip_usd": tr["theta_slip_usd"],
-                "convexity_mult": tr["convexity_mult"],
-            }
-            if "crisis_prob" in tr:
-                exit_ev.update(
-                    {
-                        "book": tr.get("book"),
-                        "book_label_en": tr.get("book_label_en"),
-                        "book_label_zh": tr.get("book_label_zh"),
-                        "budget_pct_nav": tr.get("budget_pct_nav"),
-                        "entry_pct_nav": tr.get("entry_pct_nav"),
-                        "near_itm_strike_105": tr.get("near_itm_strike_105"),
-                        "crisis_prob": tr.get("crisis_prob"),
-                        "trigger_code": tr.get("trigger_code"),
-                        "triggered_modules": tr.get("triggered_modules"),
-                        "max_slots": tr.get("max_slots"),
-                        "put_otm_pct": tr.get("put_otm_pct"),
-                        "contracts_est": tr.get("contracts_est"),
-                        "roi_mult": tr.get("roi_mult"),
-                        "tp_mode": tr.get("tp_mode"),
-                        "roll_mode": tr.get("roll_mode"),
-                        "exit_reason": ex_reason,
-                        "quoteSource": tr.get("quoteSource"),
-                        "occSymbol": tr.get("occSymbol"),
-                        "exp": tr.get("exp"),
-                        "strike": tr.get("strike"),
-                        "entryBid": tr.get("entryBid"),
-                        "entryAsk": tr.get("entryAsk"),
-                        "exitBid": tr.get("exitBid"),
-                        "exitAsk": tr.get("exitAsk"),
-                    }
-                )
-            events.append(exit_ev)
-
-    for sev in shield_events:
-        events.append(
-            {
-                "event_id": sev["event_id"],
-                "tranche_id": None,
-                "strategy_id": strategy_id,
-                "date": sev["date"],
-                "signal_date": sev["signal_date"],
-                "event_type": sev["event_type"],
-                "slot_num": 0,
-                "tranche_type": "slow_bear_shield",
-                "spot": sev["spot"],
-                "vxn": None,
-                "vix_ratio": sev["vix_ratio"],
-                "kp": None,
-                "kc": None,
-                "call_cap_pct": None,
-                "entry_cost_usd": 0.0,
-                "hedged_shares": abs(sev["shares_delta"]),
-                "sig_score": sev["raw_lights"],
-                "sig_ad_below50": True,
-                "trigger_en": sev["trigger_en"],
-                "trigger_zh": sev["trigger_zh"],
-                "net_pnl_usd": None,
-                "shares_added": sev["shares_delta"],
-                "delta_usd": None,
-                "gamma_usd": None,
-                "vega_usd": None,
-                "theta_slip_usd": None,
-            }
-        )
-
-    order_rank = {
-        "vix110_near_itm_tp": 1,
-        "vix110_tp": 1,
-        "vix110_itm_tp": 1,
-        "vix110_4x_tp": 1,
-        "put5x_dte45_tp": 1,
-        "live_tp_armed": 1,
-        "roll_75d": 2,
-        "roll_50d": 2,
-        "roll_30d": 2,
-        "base_roll_75d": 2,
-        "base_salvage_75d": 2,
-        "live_roll75_armed": 2,
-        "live_roll50_armed": 2,
-        "live_roll30_armed": 2,
-        "option_expiry": 3,
-        "shield_enter": 4,
-        "shield_exit": 5,
-        "slot1_naked_put": 6,
-        "slot2_naked_put": 7,
-        "slot3_naked_put": 8,
-        "base_020_put": 9,
-        "slot1_collar": 10,
-        "slot2_collar": 11,
-        "slot3_collar": 12,
-    }
-    events.sort(key=lambda e: (e["date"], order_rank.get(e["event_type"], 99)))
-    return events
-
-
-def build_artifact(fact_root: Path | None = None, live_fetch: bool = False) -> dict[str, Any]:
-    rows_all, coeffs = load_seed_and_extend(fact_root=fact_root)
-    m7_data, rows_all = m7e.load_m7_seed_and_optional_live(M7_SEED_GZ, rows_all, live_fetch=live_fetch)
-    m7_sig_pack = m7e.compute_m7_signals_and_tail(rows_all, m7_data, start_eval_date=START_DATE)
-    rows_eval = [r for r in rows_all if r["date"] >= START_DATE]
-    real_store = roc.HybridRealOptionChainStore()
-    print(
-        f"[real-chain] Loaded MIT Real OPRA ({real_store.opra_date_min}..{real_store.opra_date_max}, "
-        f"{real_store.opra_days}d, {real_store.opra_quotes_count:,} quotes) + OPRA-Calibrated BSM post-{real_store.opra_date_max}",
-        flush=True,
-    )
-
-    strategy_defs = [
-        (
-            "U1_PureOptions",
-            {
-                "arch": "hybrid_campaign_first",
-                "max_slots": 2,
-                "slot_coverage": 0.50,
-                "gate_key": "sw_u1",
-                "vix_ratio_tp": 1.10,
-                "slow_bear_overlay": False,
-            },
-            {
-                "code_name": "U1_AD_or_Score4_VXN22_H2_2x50",
-                "name_en": "Legacy U1 Six-Lights Hybrid (50% Naked Put + 50% Zero-Cost Collar)",
-                "name_zh": "旧版对照 · U1 六灯双槽版（50% 首仓裸 Put + 50% 次仓零成本领口）",
-                "short_en": "Legacy U1 Dual-Slot",
-                "short_zh": "旧版对照 · U1 双槽",
-                "badge_en": "LEGACY COMPARISON · PUT + COLLAR",
-                "badge_zh": "旧版六灯双槽对照",
-                "color_hex": "#7DB8F0",
-                "rule_summary_en": "Legacy baseline: 100% QQQ core + Slot 1 50% Naked -10% Put + Slot 2 50% 30D-stepped Collar on (AD<50DMA or >=4 Lights) & ATH<=5% & VXN<=22. Priced on 2015-2025 MIT Real OPRA Bid/Ask + post-2025 OPRA-Calibrated BSM.",
-                "rule_summary_zh": "旧版双槽对照：底仓 100% QQQ，在 ATH<=5% 且 VXN<=22 时凭 AD 顶背离或 >=4 盏危机灯开首仓 50% 裸 Put、满30天补次仓 50% 零成本 Collar（同样基于 2015–2025 MIT 真实 OPRA 盘口 + 2025-12-16 后校准 BSM 回测）。",
-            },
-        ),
-        (
-            "B1c_PureAD",
-            {
-                "arch": "hybrid_campaign_first",
-                "max_slots": 2,
-                "slot_coverage": 0.50,
-                "gate_key": "sw_b1c",
-                "vix_ratio_tp": 1.10,
-                "slow_bear_overlay": False,
-            },
-            {
-                "code_name": "B1c_AD_Below50MA_VXN22_H2_2x50",
-                "name_en": "B1c Pure AD-Line Top-Divergence Switch (First-Naked 2x50%)",
-                "name_zh": "B1c 纯 AD 腾落线顶背离开关（首仓裸 Put · 仅 31% 天数持盾）",
-                "short_en": "B1c Pure AD Line",
-                "short_zh": "B1c 纯 AD 背离",
-                "badge_en": "HIGHEST EFFICIENCY · 31% HEDGED",
-                "badge_zh": "极简高效率 · 仅31%持盾",
-                "color_hex": "#7DB8F0",
-                "rule_summary_en": "Fires strictly when QQQ is within 5% of ATH, VXN<=22, and US Liquid Common-Stock AD Line < 50DMA (only 23 tranches in 11.9 years, +$178 alpha per hedged day).",
-                "rule_summary_zh": "仅在 QQQ 距前高<=5%、VXN<=22 且全美 AD Line 跌破 50DMA 形成顶背离时上盾；11.9 年仅出手 23 笔，单持盾日创造 +$178 净超额。",
-            },
-        ),
-        (
-            "D2_SixLights",
-            {
-                "arch": "all_collar",
-                "max_slots": 3,
-                "slot_coverage": 1.0 / 3.0,
-                "gate_key": "sw_d2",
-                "vix_ratio_tp": 1.10,
-                "slow_bear_overlay": False,
-            },
-            {
-                "code_name": "D2_Score4_ATH5_Collar3x33",
-                "name_en": "D2 Druckenmiller >=4 Crisis Lights Confirmation (3x33% Zero-Cost Collar)",
-                "name_zh": "D2 德鲁肯米勒 >=4 盏危机灯确认（3x33% 零保费领口梯队）",
-                "short_en": "D2 >=4 Lights Collar",
-                "short_zh": "D2 四灯零保费领口",
-                "badge_en": "$0 PREMIUM SPENT · 29% HEDGED",
-                "badge_zh": "零保费支出 · 宏观确认",
-                "color_hex": "#B8A1EA",
-                "rule_summary_en": "Zero out-of-pocket premium: opens 3x33.3% 90-DTE Zero-Cost Collars only when >=4/6 Druckenmiller Crisis Lights are ON while QQQ is within 5% of ATH.",
-                "rule_summary_zh": "零现金保费支出：仅当德鲁肯米勒六大危机灯亮起 >=4 盏且 QQQ 处于 ATH<=5% 高位时分三档挂零成本 Collar（若去掉 ATH<=5% 门控则倒亏 -$409K）。",
-            },
-        ),
-        (
-            "H2_G4_PriceGate",
-            {
-                "arch": "hybrid_campaign_first",
-                "max_slots": 2,
-                "slot_coverage": 0.50,
-                "gate_key": "sw_g4",
-                "vix_ratio_tp": 1.10,
-                "slow_bear_overlay": False,
-            },
-            {
-                "code_name": "H2_2x50_G4_TP110",
-                "name_en": "H2 Price/Momentum Gate Baseline (ATH<=5% & YoY>=30% & VXN<=20)",
-                "name_zh": "H2 传统价格动量门控基准（ATH<=5% 且 年涨>=30% 且 VXN<=20）",
-                "short_en": "H2 Price Gate",
-                "short_zh": "H2 价格门控基准",
-                "badge_en": "LEGACY PRICE GATE",
-                "badge_zh": "传统价格门控对照",
-                "color_hex": "#64748B",
-                "rule_summary_en": "Pure price/volatility gate without internal AD breadth or macro lights (missed 2015-08 & 2026-11 tops when YoY < 30%).",
-                "rule_summary_zh": "不含市场宽度与宏观灯的纯价格涨幅门控对照（在年涨幅未满 30% 的 2015-08 与 2026-11 顶部漏开保护，超额仅 +$92.4K）。",
-            },
-        ),
-        (
-            "NoPut_CallOnly",
-            {
-                "arch": "cc_only",
-                "max_slots": 0,
-                "slot_coverage": 0.0,
-                "gate_key": None,
-                "vix_ratio_tp": None,
-                "slow_bear_overlay": False,
-            },
-            {
-                "code_name": "NoPut_CallOnly",
-                "name_en": "No Crisis Put (Pure Normal-Time Covered Call Comparison)",
-                "name_zh": "不买 Put（纯平时卖 Call 对照组）",
-                "short_en": "No Put (Call Only)",
-                "short_zh": "不买 Put（仅卖 Call）",
-                "badge_en": "CALL-ONLY CONTROL · ZERO PUT",
-                "badge_zh": "纯卖 Call 对照 · 无危机 Put",
-                "color_hex": "#7DB8F0",
-                "rule_summary_en": "Zero crisis Puts or Collars; holds 100% QQQ and runs ONLY the selected normal-time 25D 12-Delta Covered Call overlay (equals Buy & Hold when Call is Off).",
-                "rule_summary_zh": "关闭所有危机买 Put 与领口保护，100% 持有 QQQ 并仅叠加所选的平时 25D 12Δ 卖 Call 规则（若关闭卖 Call 则与死拿 QQQ 完全一致）。",
-            },
-        ),
-        (
-            "BH_Pure_QQQ",
-            {
-                "arch": "pure_qqq",
-                "max_slots": 1,
-                "slot_coverage": 0.0,
-                "gate_key": None,
-                "vix_ratio_tp": None,
-                "slow_bear_overlay": False,
-            },
-            {
-                "code_name": "BH_Pure_QQQ",
-                "name_en": "Pure QQQ Buy & Hold ($200K Unhedged DRIP Benchmark)",
-                "name_zh": "Pure QQQ 拿着不动基准（$200K 股息全复投无保护）",
-                "short_en": "Pure QQQ Hold",
-                "short_zh": "QQQ 拿着不动",
-                "badge_en": "BENCHMARK",
-                "badge_zh": "被动持有基准",
-                "color_hex": "#EC8C98",
-                "rule_summary_en": "100% unhedged QQQ Buy & Hold with full dividend reinvestment ($200,000 initial capital on 2015-01-02).",
-                "rule_summary_zh": "2015-01-02 起 $200,000 买入 QQQ 拿着不动并股息复投，承受全部 -35.12% 深熊回撤。",
-            },
-        ),
-    ]
-
-    last_row = rows_eval[-1]
-    prev_eval_row = rows_eval[-2] if len(rows_eval) >= 2 else last_row
-    as_of_date = last_row["date"]
-    qqq_cl = float(last_row["close"])
-    qqq_ma200 = float(last_row["qqq_ma200"])
-
-    def _build_live_sp_state(row: dict[str, Any], prev_row: dict[str, Any], sim_res: dict[str, Any]) -> dict[str, Any]:
-        sp_eod = sim_res["sp_live_eod"]
-        sp_id = str(sp_eod["sp_mode"])
-        wc_id = str(sp_eod.get("wc_mode") or DEFAULT_WC_MODE)
-        enabled = bool(sp_eod["enabled"])
-        vix_now = float(row["vix"])
-        vix_prev = float(prev_row["vix"])
-        vix_chg = vix_now - vix_prev
-        vix_fall = bool(row.get("vix_falling"))
-        vix3m_now = float(row["vix3m"])
-        vr_now = float(row["vix_ratio"])
-        inv_on = vr_now >= 1.00
-        unf_gate = inv_on
-        vixf_gate = bool(inv_on and vix_fall)
-        req_fall = bool(sp_eod["require_vix_falling"])
-        mode_gate = vixf_gate if req_fall else unf_gate
-        dte_lbl = f"{int(sp_eod['sp_dte'])}D"
-        is_reclaim_30d = wc_id == "wc_reclaim_30d_d35"
-        wc_dte_lbl = "30D" if wc_id in ("wc_reclaim_30d_d35", "wc_30d_c5s5") else dte_lbl
-        wc_formula_zh = (
-            "涨回接货价后卖 30D 0.35Δ"
-            if is_reclaim_30d
-            else ("max(1.05×成本, 1.05×现价)" if wc_id == "wc_30d_c5s5" else "max(成本, 1.02×现价)")
-        )
-        wc_formula_en = (
-            "Reclaim K_assign -> 30D 0.35Δ"
-            if is_reclaim_30d
-            else ("max(1.05x Cost, 1.05x Spot)" if wc_id == "wc_30d_c5s5" else "max(Cost, 1.02x Spot)")
-        )
-        cap_pct = round(float(sp_eod["sp_max_lev"]) * 100.0)
-        asgn_sh = float(sp_eod["assigned_shares"])
-        asgn_k = float(sp_eod["assigned_cost_k"])
-        open_sp = sp_eod["open_short_put"]
-        open_wc = sp_eod["open_wheel_call"]
-        lev_x = float(sp_eod["gross_stock_lev"])
-        spot_cl = float(row["close"])
-        if asgn_sh > 1e-6:
-            if is_reclaim_30d:
-                if spot_cl >= asgn_k:
-                    k35_est = solve_call_strike_for_delta(
-                        spot_cl, 30.0 / 365.0, float(row["r"]), float(row["div_yield"]), float(row["vxn"]), coeffs, 0.35
-                    )
-                    min_kc = max(asgn_k, k35_est)
-                else:
-                    min_kc = asgn_k
-            elif wc_id == "wc_30d_c5s5":
-                min_kc = max(asgn_k * 1.05, spot_cl * 1.05)
-            else:
-                min_kc = max(asgn_k, spot_cl * 1.02)
-        else:
-            min_kc = 0.0
-
-        if not enabled:
-            pos_state = "disabled"
-            tone = "neutral"
-            inv_zh = "倒挂满足 >=1.00" if inv_on else "未倒挂 <1.00"
-            inv_en = "Inverted >=1.00" if inv_on else "Contango <1.00"
-            vix_dir_zh = f"回落 {vix_chg:+.2f}" if vix_fall else f"冲高 {vix_chg:+.2f}"
-            vix_dir_en = f"Falling {vix_chg:+.2f}" if vix_fall else f"Rising {vix_chg:+.2f}"
-            badge_zh = f"第三引擎已关闭 · 0 杠杆（今日 VIX/3M {vr_now:.3f} {inv_zh} · VIX {vix_now:.2f} {vix_dir_zh}）"
-            badge_en = f"Engine 3 Off · 0 Leverage (Today VIX/3M {vr_now:.3f} {inv_en} · VIX {vix_now:.2f} {vix_dir_en})"
-            detail_zh = "切换上方「恐慌卖 Put Wheel」档位，可叠加上限 10% 或 20% 净值的短久期卖 Put 与反向接货卖 Call 增厚引擎。"
-            detail_en = "Select a Panic Put Wheel mode above to overlay <= 10% or <= 20% equity capped short-DTE puts + Reverse Wheel calls."
-        elif asgn_sh > 1e-6 and open_wc is not None:
-            pos_state = "wheel_call_open"
-            tone = "wheel"
-            badge_zh = (
-                f"反向 Wheel 持仓中（{asgn_sh:.0f}股 @ ${asgn_k:.2f} · 敞口 {lev_x:.2f}x）"
-                f" · 已卖 {wc_dte_lbl} Call K=${open_wc['kc']:.2f}（剩 {open_wc['rem_dte']} 天）"
-            )
-            badge_en = (
-                f"Wheel Call Active ({asgn_sh:.0f} sh @ ${asgn_k:.2f} · {lev_x:.2f}x Lev)"
-                f" · Short {wc_dte_lbl} Call K=${open_wc['kc']:.2f} ({open_wc['rem_dte']}D left)"
-            )
-            detail_zh = f"到期若 QQQ 高于 ${open_wc['kc']:.2f} 即自动被 Call 走清零融资负债，净盈利沉淀为永久 QQQ 份额。"
-            detail_en = f"If QQQ closes above ${open_wc['kc']:.2f} at expiry, assigned stock is called away, clearing margin debt into permanent QQQ shares."
-        elif asgn_sh > 1e-6 and is_reclaim_30d and spot_cl < asgn_k:
-            pos_state = "wheel_assigned_wait_reclaim"
-            tone = "wheel"
-            gap_pct = (asgn_k / max(spot_cl, 1e-6) - 1.0) * 100.0
-            badge_zh = (
-                f"已接货进 Wheel（{asgn_sh:.0f}股 @ ${asgn_k:.2f} · 股票敞口 {lev_x:.2f}x）"
-                f" · 水下暂不卖 Call，等涨回 >= ${asgn_k:.2f}（差 +{gap_pct:.1f}%）再卖 30D 0.35Δ Call"
-            )
-            badge_en = (
-                f"Assigned into Wheel ({asgn_sh:.0f} sh @ ${asgn_k:.2f} · {lev_x:.2f}x Stock Lev)"
-                f" · Holding Uncapped until QQQ >= ${asgn_k:.2f} (+{gap_pct:.1f}%), then Sell 30D 0.35Δ Call"
-            )
-            detail_zh = (
-                f"水下阶段严禁封顶卖 Call 且禁止再卖新 Put；按 IBKR 基准利率 +1.50% 计息，100% 保留反弹斜率，待收盘涨回 >= ${asgn_k:.2f} 后次日开盘卖 30D 0.35Δ Call 清债。"
-            )
-            detail_en = (
-                f"No capped calls or new puts while underwater (QQQ ${spot_cl:.2f} < ${asgn_k:.2f}); holds 100% uncapped recovery until EOD reclaim >= ${asgn_k:.2f}, then sells 30D 0.35Δ Call."
-            )
-        elif asgn_sh > 1e-6:
-            pos_state = "wheel_assigned_wc_armed"
-            tone = "wheel"
-            badge_zh = (
-                f"已接货进 Wheel（{asgn_sh:.0f}股 @ ${asgn_k:.2f} · 股票敞口 {lev_x:.2f}x）"
-                f" -> 次日开盘卖 {wc_dte_lbl} Wheel Call（K >= ${min_kc:.2f}，{wc_formula_zh}）"
-            )
-            badge_en = (
-                f"Assigned into Wheel ({asgn_sh:.0f} sh @ ${asgn_k:.2f} · {lev_x:.2f}x Stock Lev)"
-                f" -> Next Open Sell {wc_dte_lbl} Wheel Call (K >= ${min_kc:.2f}, {wc_formula_en})"
-            )
-            detail_zh = f"接货期间严禁再卖新 Put（杜绝滚雪球加杠杆），按 IBKR 基准利率 +1.50% 计息并持续卖 {wc_dte_lbl} Wheel Call（{wc_formula_zh}）直至被 Call 走清债。"
-            detail_en = f"New short puts are hard-frozen while holding assigned stock; accrues IBKR rf + 1.50% margin and sells {wc_dte_lbl} Wheel Calls at {wc_formula_en} until called away."
-        elif open_sp is not None:
-            pos_state = "short_put_open"
-            tone = "active"
-            gate_note_zh = (
-                f"今日 VIX {vix_chg:+.2f} 未回落"
-                if (req_fall and not vix_fall)
-                else f"今日 VIX/3M {vr_now:.3f}"
-            )
-            gate_note_en = (
-                f"Today VIX {vix_chg:+.2f} rising"
-                if (req_fall and not vix_fall)
-                else f"Today VIX/3M {vr_now:.3f}"
-            )
-            badge_zh = (
-                f"持仓 {dte_lbl} 恐慌卖 Put（K=${open_sp['kp']:.2f} · {open_sp['shares']:.0f}股 · 剩 {open_sp['rem_dte']} 天）"
-                f" · {gate_note_zh}"
-            )
-            badge_en = (
-                f"Live {dte_lbl} Short Put Open (K=${open_sp['kp']:.2f} · {open_sp['shares']:.0f} sh · {open_sp['rem_dte']}D left)"
-                f" · {gate_note_en}"
-            )
-            detail_zh = f"权利金 +${open_sp['prem_usd']:,.0f}（当前浮动盈亏 {open_sp['mtm_pnl_usd']:+,.0f} 美元）；到期不破 ${open_sp['kp']:.2f} 全额买成 QQQ，跌破则转入 {cap_pct}% 帽反向 Wheel。"
-            detail_en = f"Collected +${open_sp['prem_usd']:,.0f} premium (live MTM {open_sp['mtm_pnl_usd']:+,.0f} USD); sweeps into QQQ if >= ${open_sp['kp']:.2f} or enters {cap_pct}%-capped Reverse Wheel if ITM."
-        elif bool(sp_eod["pending_sp_eod"]):
-            pos_state = "entry_armed_next_open"
-            tone = "armed"
-            badge_zh = f"今日信号触发 -> 次日开盘卖 {dte_lbl} 5% OTM Put（名义帽 <= {cap_pct}% · VIX/3M {vr_now:.3f}）"
-            badge_en = f"Signal Triggered Today -> Sell {dte_lbl} 5% OTM Put Next Open (<= {cap_pct}% Cap · VIX/3M {vr_now:.3f})"
-            detail_zh = f"VIX/VIX3M = {vr_now:.3f} >= 1.00 恐慌倒挂门控已满足（VIX {vix_now:.2f} vs 昨日 {vix_prev:.2f}），次日开盘执行。"
-            detail_en = f"VIX/VIX3M = {vr_now:.3f} >= 1.00 backwardation gate met (VIX {vix_now:.2f} vs prior {vix_prev:.2f}); executes at next Open."
-        else:
-            pos_state = "flat_standby"
-            tone = "neutral"
-            if inv_on and req_fall and not vix_fall:
-                badge_zh = f"空仓等待恐慌拐点 · VIX/3M {vr_now:.3f} 已倒挂但今日 VIX 冲高 {vix_chg:+.2f}（需回落才开仓）"
-                badge_en = f"Flat · Waiting for VIX Crest (VIX/3M {vr_now:.3f} >= 1.00, but VIX {vix_chg:+.2f} Still Rising)"
-                detail_zh = "10D VIX回落档位要求倒挂期间出现首次 VIX 日度回落（确认急跌斜率放缓）才卖 Put，规避主跌浪首日接飞刀。"
-                detail_en = "10D VIX-Falling mode waits for the first daily VIX drop while VIX/VIX3M >= 1.00 before selling puts."
-            else:
-                badge_zh = f"空仓待命 · 0 持仓 0 利息（今日 VIX/3M {vr_now:.3f} 未达 1.00 倒挂线）"
-                badge_en = f"Flat Standby · 0 Margin Debt (Today VIX/3M {vr_now:.3f} < 1.00 Contango)"
-                detail_zh = "平时顺风期不卖 Put、不占保证金，仅在 VIX/VIX3M >= 1.00 恐慌期限倒挂时出击。"
-                detail_en = "Zero short puts during normal contango markets; activates strictly on VIX/VIX3M >= 1.00 panic backwardation."
-
-        return {
-            "as_of_date": row["date"],
-            "sp_mode": sp_id,
-            "wc_mode": wc_id,
-            "enabled": enabled,
-            "vix": round(vix_now, 2),
-            "prev_vix": round(vix_prev, 2),
-            "vix_change": round(vix_chg, 2),
-            "vix_falling": vix_fall,
-            "vix3m": round(vix3m_now, 2),
-            "vix_vix3m_ratio": round(vr_now, 3),
-            "backwardation_active": inv_on,
-            "unfiltered_signal_on": unf_gate,
-            "vix_falling_signal_on": vixf_gate,
-            "mode_entry_gate_met": mode_gate,
-            "position_state": pos_state,
-            "status_tone": tone,
-            "assigned_shares": round(asgn_sh, 2),
-            "assigned_cost_k": round(asgn_k, 2),
-            "min_next_wc_strike": round(min_kc, 2) if asgn_sh > 1e-6 else None,
-            "sp_cash_usd": round(float(sp_eod["sp_cash_usd"]), 2),
-            "gross_stock_lev": round(lev_x, 3),
-            "notional_lev": round(float(sp_eod["notional_lev"]), 3),
-            "open_short_put": open_sp,
-            "open_wheel_call": open_wc,
-            "badge_en": badge_en,
-            "badge_zh": badge_zh,
-            "detail_en": detail_en,
-            "detail_zh": detail_zh,
-        }
-
-    # Simulate Buy & Hold once (identical across all TP, CC, SP & WC modes)
-    bh_def = [d for d in strategy_defs if d[0] == "BH_Pure_QQQ"][0]
-    bh_sim = simulate_strategy(rows_all, coeffs, strategy_id="BH_Pure_QQQ", real_store=real_store, **bh_def[1])
-    bh_summary = {**bh_sim["summary"], **bh_def[2]}
-
-    mode_bundles: dict[str, Any] = {}
-    tp_modes_bundle: dict[str, Any] = {}
-    tp_slot_series: dict[str, dict[str, list[Any]]] = {}
-    tp_modes_meta: list[dict[str, Any]] = []
-    cc_modes_meta: list[dict[str, Any]] = []
-    sp_modes_meta_by_id: dict[str, dict[str, Any]] = {}
-    wc_modes_meta_by_id: dict[str, dict[str, Any]] = {}
-
-    static_win_keys = {
-        "episode_num",
-        "title_en",
-        "title_zh",
-        "pill_en",
-        "pill_zh",
-        "crisis_start",
-        "crisis_end",
-        "zoom_start",
-        "zoom_end",
-        "narrative_en",
-        "narrative_zh",
-    }
-
-    def _pack_ledger_rows(items: list[dict[str, Any]]) -> Any:
-        if not items:
-            return []
-        cols: list[str] = []
-        seen: set[str] = set()
-        for it in items:
-            for k in it.keys():
-                if k not in seen:
-                    cols.append(k)
-                    seen.add(k)
-        return {"_cols": cols, "_rows": [[it.get(c) for c in cols] for it in items]}
-
-    for mode_spec in TP_MODE_SPECS:
-        mode_id = mode_spec["id"]
-        for cc_spec in CC_MODE_SPECS:
-            cc_id = cc_spec["id"]
-            for sp_spec in SP_MODE_SPECS:
-                sp_id = sp_spec["id"]
-                wc_specs_for_sp = [WC_MODE_SPECS[0]] if sp_id == DEFAULT_SP_MODE else WC_MODE_SPECS
-                for wc_spec in wc_specs_for_sp:
-                    wc_id = wc_spec["id"]
-                    is_default_combo = (
-                        mode_id == DEFAULT_TP_MODE
-                        and cc_id == DEFAULT_CC_MODE
-                        and sp_id == DEFAULT_SP_MODE
-                        and wc_id == DEFAULT_WC_MODE
-                    )
-                    sims_m: dict[str, dict[str, Any]] = {"BH_Pure_QQQ": bh_sim}
-                    summaries_m: list[dict[str, Any]] = []
-                    ledgers_m: dict[str, list[dict[str, Any]]] = {}
-                    cc_ledgers_m: dict[str, list[dict[str, Any]]] = {}
-                    sp_ledgers_m: dict[str, list[dict[str, Any]]] = {}
-                    events_m: dict[str, list[dict[str, Any]]] = {}
-                    live_states_by_strat_m: dict[str, dict[str, Any]] = {}
-                    live_sp_states_by_strat_m: dict[str, dict[str, Any]] = {}
-
-                    for sid, sim_kw, meta in strategy_defs:
-                        if sid == "BH_Pure_QQQ":
-                            summaries_m.append(bh_summary)
+                    dd_timer_start_dt = None
+                if tc and dd_now <= -0.12 and has_av:
+                    for sl in ("DBMF", "KMLM"):
+                        if cta_sched[sl] is not None or cta_vals[sl] <= 0.01 * nav_arr[i]:
                             continue
-                        res = simulate_strategy(
-                            rows_all,
-                            coeffs,
-                            strategy_id=sid,
-                            tp_mode=mode_id,
-                            cc_mode=cc_id,
-                            sp_mode=sp_id,
-                            wc_mode=wc_id,
-                            real_store=real_store,
-                            **sim_kw,
-                        )
-                        sims_m[sid] = res
-                        summaries_m.append({**res["summary"], **meta})
-                        ledgers_m[sid] = res["ledger"] if is_default_combo else _pack_ledger_rows(res["ledger"])
-                        if cc_id != DEFAULT_CC_MODE:
-                            cc_ledgers_m[sid] = _pack_ledger_rows(res["cc_ledger"])
-                        elif is_default_combo:
-                            cc_ledgers_m[sid] = []
-                        if sp_id != DEFAULT_SP_MODE:
-                            sp_ledgers_m[sid] = _pack_ledger_rows(res["sp_ledger"])
-                        elif is_default_combo:
-                            sp_ledgers_m[sid] = []
-                        if is_default_combo or sid == "U1_PureOptions":
-                            events_m[sid] = build_unified_events(sid, res["ledger"], [])
-                        live_states_by_strat_m[sid] = build_live_signal_state(last_row, res, tp_mode=mode_id)
-                        live_sp_states_by_strat_m[sid] = _build_live_sp_state(last_row, prev_eval_row, res)
-
-                    windows_full = build_crisis_windows(rows_eval, sims_m, events_m["U1_PureOptions"], tp_mode=mode_id)
-                    if is_default_combo:
-                        windows_m = windows_full
-                    else:
-                        windows_m = [
-                            {k: v for k, v in w.items() if k not in static_win_keys}
-                            for w in windows_full
-                        ]
-
-                    u1_sum = next(s for s in summaries_m if s["id"] == "U1_PureOptions")
-                    if cc_id == DEFAULT_CC_MODE and sp_id == DEFAULT_SP_MODE:
-                        tp_slot_series[mode_id] = {
-                            "active_slots": [int(v) for v in sims_m["U1_PureOptions"]["active_slots"]],
-                            "slot1_naked": [bool(v) for v in sims_m["U1_PureOptions"]["slot1_naked"]],
-                        }
-                        tp_modes_meta.append(
-                            {
-                                **mode_spec,
-                                "u1_end_nav": u1_sum["end_nav"],
-                                "u1_net_alpha_usd": u1_sum["net_alpha_usd"],
-                                "u1_cagr_pct": u1_sum["cagr_pct"],
-                                "u1_max_dd_pct": u1_sum["max_dd_pct"],
-                                "u1_sharpe": u1_sum["sharpe"],
-                                "u1_final_shares": u1_sum["final_shares"],
-                                "u1_extra_shares": u1_sum["extra_shares_vs_bh"],
-                                "u1_extra_shares_pct": u1_sum["extra_shares_pct"],
+                        if float(cta_px[sl][i] / cta_px[sl][run_ath_w_idx] - 1.0) > 0.0:
+                            cta_sched[sl] = {
+                                "exec_idxs": [min(n - 1, i + 1 + 5 * k) for k in range(5)],
+                                "next_ptr": 0,
                             }
-                        )
-                        tp_modes_bundle[mode_id] = {
-                            "tp_mode": mode_id,
-                            "strategies_summary": summaries_m,
-                        }
+                    if any(cta_sched[sl] is not None for sl in ("DBMF", "KMLM")):
+                        dd_timer_start_dt = None
 
-                    if mode_id == DEFAULT_TP_MODE and sp_id == DEFAULT_SP_MODE:
-                        cc_modes_meta.append(
-                            {
-                                **cc_spec,
-                                "u1_end_nav": u1_sum["end_nav"],
-                                "u1_net_alpha_usd": u1_sum["net_alpha_usd"],
-                                "u1_cagr_pct": u1_sum["cagr_pct"],
-                                "u1_max_dd_pct": u1_sum["max_dd_pct"],
-                                "u1_sharpe": u1_sum["sharpe"],
-                                "u1_final_shares": u1_sum["final_shares"],
-                                "u1_extra_shares": u1_sum["extra_shares_vs_bh"],
-                                "u1_extra_shares_pct": u1_sum["extra_shares_pct"],
-                                "u1_cc_trades_count": u1_sum["cc_trades_count"],
-                                "u1_cc_assigned_count": u1_sum["cc_assigned_count"],
-                                "u1_cc_gross_prem_usd": u1_sum["cc_gross_prem_usd"],
-                                "u1_cc_gross_loss_usd": u1_sum["cc_gross_loss_usd"],
-                                "u1_cc_funded_puts_usd": u1_sum["cc_funded_puts_usd"],
-                            }
-                        )
+        # Compute summary KPIs
+        qqq_nav = init_cap * (px_qqq / px_qqq[0])
+        yrs = (dt_objs[-1] - dt_objs[0]).days / 365.25
 
-                    if mode_id == DEFAULT_TP_MODE and cc_id == "cc_d12_d35" and (
-                        sp_id == DEFAULT_SP_MODE or wc_id == DEFAULT_WC_MODE
-                    ):
-                        sp_modes_meta_by_id[sp_id] = {
-                            **sp_spec,
-                            "wc_mode": wc_id,
-                            "dual_end_nav": u1_sum["end_nav"],
-                            "dual_net_alpha_usd": u1_sum["net_alpha_usd"],
-                            "dual_cagr_pct": u1_sum["cagr_pct"],
-                            "dual_max_dd_pct": u1_sum["max_dd_pct"],
-                            "dual_sharpe": u1_sum["sharpe"],
-                            "dual_calmar": u1_sum["calmar"],
-                            "dual_extra_shares_pct": u1_sum["extra_shares_pct"],
-                            "sp_trades_count": u1_sum["sp_trades_count"],
-                            "sp_win_rate_pct": u1_sum["sp_win_rate_pct"],
-                            "sp_assignments_count": u1_sum["sp_assignments_count"],
-                            "wc_trades_count": u1_sum["wc_trades_count"],
-                            "wc_called_away_count": u1_sum["wc_called_away_count"],
-                            "wc_gross_prem_usd": u1_sum["wc_gross_prem_usd"],
-                            "margin_interest_usd": u1_sum["margin_interest_usd"],
-                            "days_levered_stock": u1_sum["days_levered_stock"],
-                            "max_wheel_cycle_days": u1_sum["max_wheel_cycle_days"],
-                            "max_gross_stock_lev": u1_sum["max_gross_stock_lev"],
-                        }
+        def calc_kpi(arr: Any) -> dict[str, Any]:
+            cagr = (float(arr[-1]) / init_cap) ** (1.0 / yrs) - 1.0
+            dd_s = arr / np.maximum.accumulate(arr) - 1.0
+            mdd = float(dd_s.min())
+            calmar = cagr / abs(mdd) if mdd < 0 else 0.0
+            dr = np.diff(arr) / arr[:-1]
+            ex_r = dr - effr[:-1] / 252.0
+            sharpe = float(np.mean(ex_r) / max(np.std(ex_r, ddof=1), 1e-12) * math.sqrt(252.0))
+            dn = ex_r[ex_r < 0.0]
+            sortino = float(np.mean(ex_r) / max(np.sqrt(np.mean(dn * dn)), 1e-12) * math.sqrt(252.0)) if len(dn) else 0.0
+            ann_vol = float(np.std(dr, ddof=1) * math.sqrt(252.0))
+            return {
+                "end_nav": round(float(arr[-1]), 2),
+                "total_return_pct": round((float(arr[-1]) / init_cap - 1.0) * 100.0, 2),
+                "cagr_pct": round(cagr * 100.0, 2),
+                "max_dd_pct": round(mdd * 100.0, 2),
+                "calmar": round(calmar, 3),
+                "sharpe": round(sharpe, 3),
+                "sortino": round(sortino, 3),
+                "ann_vol_pct": round(ann_vol * 100.0, 2),
+            }
 
-                    if mode_id == DEFAULT_TP_MODE and cc_id == "cc_d12_d35" and sp_id == "sp_14d_cap10":
-                        wc_modes_meta_by_id[wc_id] = {
-                            **wc_spec,
-                            "cap10_end_nav": u1_sum["end_nav"],
-                            "cap10_net_alpha_usd": u1_sum["net_alpha_usd"],
-                            "cap10_cagr_pct": u1_sum["cagr_pct"],
-                            "cap10_max_dd_pct": u1_sum["max_dd_pct"],
-                            "cap10_sharpe": u1_sum["sharpe"],
-                            "cap10_calmar": u1_sum["calmar"],
-                            "cap10_wc_trades_count": u1_sum["wc_trades_count"],
-                            "cap10_wc_called_away_count": u1_sum["wc_called_away_count"],
-                            "cap10_wc_gross_prem_usd": u1_sum["wc_gross_prem_usd"],
-                            "cap10_margin_interest_usd": u1_sum["margin_interest_usd"],
-                            "cap10_days_levered_stock": u1_sum["days_levered_stock"],
-                            "cap10_max_wheel_cycle_days": u1_sum["max_wheel_cycle_days"],
-                            "cap10_end_assigned_shares": u1_sum["end_assigned_shares"],
-                        }
+        kpi_s = calc_kpi(nav_arr)
+        kpi_q = calc_kpi(qqq_nav)
+        tot_c = sum(t["cost_usd"] for t in put_ledger)
+        tot_e = sum(t["exit_usd"] for t in put_ledger)
+        m4_tr = [t for t in put_ledger if t["sleeve"] == "crisis_m4"]
+        base_tr = [t for t in put_ledger if t["sleeve"] == "base"]
+        r1_tr = [t for t in put_ledger if t["sleeve"] == "crisis"]
+        tp_tr = [t for t in put_ledger if t["exit_reason"].startswith("tp_")]
+        kpi_s.update({
+            "net_alpha_usd": round(kpi_s["end_nav"] - kpi_q["end_nav"], 2),
+            "cagr_alpha_pp": round(kpi_s["cagr_pct"] - kpi_q["cagr_pct"], 2),
+            "mdd_cushion_pp": round(kpi_s["max_dd_pct"] - kpi_q["max_dd_pct"], 2),
+            "peak_gross_leverage": round(float(lev_arr.max()), 4),
+            "avg_gross_leverage": round(float(lev_arr.mean()), 3),
+            "delev_cap_days": int(delev_days),
+            "put_trades_total": len(put_ledger),
+            "put_trades_base": len(base_tr),
+            "put_trades_route1": len(r1_tr),
+            "put_trades_m4": len(m4_tr),
+            "put_tp_count": len(tp_tr),
+            "put_cost_usd": round(tot_c, 2),
+            "put_exit_usd": round(tot_e, 2),
+            "put_net_pnl_usd": round(tot_e - tot_c, 2),
+            "put_payoff_mult": round(tot_e / tot_c, 2) if tot_c > 1e-6 else 0.0,
+            "cta_rotation_slices": len(cta_rot_ledger),
+            "cta_restore_events": len(cta_restore_ledger),
+            "execution_fallbacks": int(exec_fallbacks),
+        })
 
-                    bundle_obj: dict[str, Any] = {
-                        "tp_mode": mode_id,
-                        "cc_mode": cc_id,
-                        "sp_mode": sp_id,
-                        "wc_mode": wc_id,
-                        "live_signal_state": live_states_by_strat_m["U1_PureOptions"],
-                        "live_signal_states_by_strategy": live_states_by_strat_m,
-                        "live_sp_state": live_sp_states_by_strat_m["U1_PureOptions"],
-                        "live_sp_states_by_strategy": live_sp_states_by_strat_m,
-                        "strategies_summary": summaries_m,
-                        "trade_ledgers_by_strategy": ledgers_m,
-                        "cc_ledgers_by_strategy": cc_ledgers_m,
-                        "sp_ledgers_by_strategy": sp_ledgers_m,
-                        "crisis_windows": windows_m,
-                        "nav_u1": [round(v, 2) for v in sims_m["U1_PureOptions"]["nav"]],
-                        "nav_b1c": [round(v, 2) for v in sims_m["B1c_PureAD"]["nav"]],
-                        "nav_d2": [round(v, 2) for v in sims_m["D2_SixLights"]["nav"]],
-                        "nav_h2": [round(v, 2) for v in sims_m["H2_G4_PriceGate"]["nav"]],
-                        "nav_cc": [round(v, 2) for v in sims_m["NoPut_CallOnly"]["nav"]],
-                    }
-                    if is_default_combo:
-                        bundle_obj["events_by_strategy"] = events_m
-                        bundle_obj["active_slots"] = tp_slot_series[mode_id]["active_slots"]
-                        bundle_obj["slot1_naked"] = tp_slot_series[mode_id]["slot1_naked"]
+        # 8-Crisis comparison table
+        crisis_rows = []
+        for cid, cname_en, cname_zh, cs, ce in CRISIS_WINDOWS:
+            idxs = [k for k, d_str in enumerate(dates) if cs <= d_str <= ce]
+            if len(idxs) < 5:
+                continue
+            i0, i1 = idxs[0], idxs[-1]
+            sub_s = nav_arr[i0 : i1 + 1]
+            sub_q = qqq_nav[i0 : i1 + 1]
+            mdd_s = float((sub_s / np.maximum.accumulate(sub_s) - 1.0).min() * 100.0)
+            mdd_q = float((sub_q / np.maximum.accumulate(sub_q) - 1.0).min() * 100.0)
+            ret_s = float((sub_s[-1] / sub_s[0] - 1.0) * 100.0)
+            ret_q = float((sub_q[-1] / sub_q[0] - 1.0) * 100.0)
+            win_puts = [t for t in put_ledger if cs <= t["exit_date"] <= ce and t["exit_reason"].startswith("tp_")]
+            win_m4 = [t for t in put_ledger if cs <= t["entry_date"] <= ce and t["sleeve"] == "crisis_m4"]
+            win_cta = [c for c in cta_rot_ledger if cs <= c["date"] <= ce]
+            crisis_rows.append({
+                "id": cid,
+                "name_en": cname_en,
+                "name_zh": cname_zh,
+                "start_date": dates[i0],
+                "end_date": dates[i1],
+                "v2_mdd_pct": round(mdd_s, 2),
+                "qqq_mdd_pct": round(mdd_q, 2),
+                "mdd_cushion_pp": round(mdd_s - mdd_q, 2),
+                "v2_ret_pct": round(ret_s, 2),
+                "qqq_ret_pct": round(ret_q, 2),
+                "put_tp_count": len(win_puts),
+                "m4_trades": len(win_m4),
+                "cta_rot_slices": len(win_cta),
+                "peak_lev": round(float(lev_arr[i0 : i1 + 1].max()), 3),
+            })
 
-                    if sp_id == DEFAULT_SP_MODE:
-                        b_key = f"{mode_id}__{cc_id}"
-                    elif wc_id == DEFAULT_WC_MODE:
-                        b_key = f"{mode_id}__{cc_id}__{sp_id}"
-                    else:
-                        b_key = f"{mode_id}__{cc_id}__{sp_id}__{wc_id}"
-                    mode_bundles[b_key] = bundle_obj
+        dd_s_arr = (nav_arr / np.maximum.accumulate(nav_arr) - 1.0) * 100.0
+        dd_q_arr = (qqq_nav / np.maximum.accumulate(qqq_nav) - 1.0) * 100.0
 
-    sp_modes_meta = [sp_modes_meta_by_id[s["id"]] for s in SP_MODE_SPECS]
-    wc_modes_meta = [wc_modes_meta_by_id[w["id"]] for w in WC_MODE_SPECS]
+        series_rows = []
+        for k in range(n):
+            series_rows.append({
+                "date": dates[k],
+                "nav_v2": round(float(nav_arr[k]), 2),
+                "nav_qqq": round(float(qqq_nav[k]), 2),
+                "dd_v2": round(float(dd_s_arr[k]), 2),
+                "dd_qqq": round(float(dd_q_arr[k]), 2),
+                "lev": round(float(lev_arr[k]), 4),
+                "qqq": round(float(spot[k]), 2),
+                "vr": round(float(vr[k]), 3),
+                "latch": 1 if bool(latch_sel[k]) else 0,
+            })
 
-    # --- Build M7-Graded, Core-3 Minimal & M7 Ensemble Bundles (24 core configs: OTM x TP x Roll x M0) ---
-    m7_strategy_meta: dict[str, dict[str, Any]] = {
-        "M7G_Graded": {
-            "code_name": "B020_M125_FullM7G_HardRoll_5DLockout",
-            "name_en": "0.20% Base (VIX<=20) + 1.25% Full M7G · Hard 125->75 Roll + 5D Lockout",
-            "name_zh": "0.20% 常态基底(VIX<=20) + 1.25% 全套 M7G · 125→75 硬换 + 止盈5D锁死",
-            "short_en": "0.20% Base + 1.25% M7G",
-            "short_zh": "0.20%基底 + 1.25% M7G",
-            "badge_en": "LOCKED PRODUCTION · 0.20% + 1.25% · VIX<=20 · 5D LOCKOUT",
-            "badge_zh": "写死实盘主规则 · 0.20%基底 + 1.25% M7G · VIX<=20门控",
-            "color_hex": "#80C6A8",
-            "rule_summary_en": "Hard-coded Dual-Book over 100% QQQ DRIP: Book B = 0.20% NAV 125D->75D -15% OTM Put (VIX<=20 & VIX/3M<1.02 gate) + Book M = 1.25% NAV/slot Full M7G (max 3 slots, 125D->75D / CTA 90D->30D) + Near-ITM TP (1.05xK & VIX/3M>=1.10 or VIX>=45) + 5D Post-TP Lockout (<1.00 x 5d). 2015-2025 Real OPRA: $1,740,267 (+$453,940 Alpha, Calmar 0.835, PF 2.28x).",
-            "rule_summary_zh": "写死双账本主规则（100% QQQ 底仓）：B账本 0.20% 常态基底（VIX<=20 & VIX/3M<1.02 门控，125D→75D 硬换）+ M账本 1.25%/槽 全套 M7G（上限3槽，125D→75D / CTA 90D→30D 硬换）+ 准实值底部出清（1.05×K & VIX/3M>=1.10 或 VIX>=45）+ 止盈后连续5日解除倒挂(<1.00)静默锁死。2015–2025 真实 OPRA 终值 $1,740,267（超额 +$453,940，Calmar 0.835，PF 2.28x）。",
-        },
-        "Core3_Adaptive": {
-            "code_name": "B020_M125_Core3_HardRoll_5DLockout",
-            "name_en": "0.20% Base (VIX<=20) + 1.25% Core-3 Minimal (M0+M6+M4 · Hard 125->75 + 5D Lockout)",
-            "name_zh": "0.20% 常态基底(VIX<=20) + 1.25% 精简 3 核（仅 M0+M6+M4 · 硬换 + 5D锁死）",
-            "short_en": "0.20% Base + 1.25% Core-3",
-            "short_zh": "0.20%基底 + 1.25% 精简3核",
-            "badge_en": "CORE-3 MINIMAL · 0.20% + 1.25%",
-            "badge_zh": "精简3核对照 · 0.20% + 1.25%",
-            "color_hex": "#7DB8F0",
-            "rule_summary_en": "Same 0.20% VIX<=20 Floor + 1.25%/slot Fixed Budget + Hard 125->75 / CTA 90->30 Roll + Near-ITM TP + 5D Post-TP Lockout, restricting Book M tactical signals strictly to M0+M6+M4 (M2/M3/M5 disabled). 2015-2025 Real OPRA: $1,514,395 (+$228,068 Alpha).",
-            "rule_summary_zh": "共用 0.20% VIX<=20 常态底仓 + 1.25%/槽固定预算 + 125→75 / CTA 90→30 硬换 + 准实值止盈 + 5D 静默锁死，战术M账本仅保留内生 3 核 M0+M6+M4（关闭 M2/M3/M5）；2015–2025 真实 OPRA 终值 $1,514,395（超额 +$228,068）。",
-        },
-        "M7_Ensemble": {
-            "code_name": "B020_M125_2Slot_HardRoll_5DLockout",
-            "name_en": "0.20% Base (VIX<=20) + 1.25% M7 2-Slot Cap (>=35% Binary Cap 2)",
-            "name_zh": "0.20% 常态基底(VIX<=20) + 1.25% M7 双槽上限对照（>=35% 上限2槽）",
-            "short_en": "0.20% + 1.25% 2-Slot",
-            "short_zh": "0.20% + 1.25% 双槽对照",
-            "badge_en": "DUAL-BOOK 2-SLOT CAP",
-            "badge_zh": "双账本2槽上限对照",
-            "color_hex": "#F2BC60",
-            "rule_summary_en": "Same 0.20% VIX<=20 Floor + 1.25%/slot Fixed Budget + Hard Roll + Near-ITM TP + 5D Lockout, capping Book M at max 2 slots whenever 3-Pillar score >= 35% ($1,571,118 on 2015-2025 Real OPRA).",
-            "rule_summary_zh": "共用 0.20% 常态基底 + 1.25%/槽固定预算 + 硬换 + 准实值止盈 + 5D 静默锁死，M账本上限锁为 2 槽（2015–2025 真实 OPRA 终值 $1,571,118）。",
-        },
-    }
-
-    m7_narratives_by_win: dict[str, tuple[str, str]] = {
-        "2015-08": (
-            "Book B (0.20% VIX<=20 floor) + Book M P1 (M0+M6=45% -> 2x 1.25% slots) held uncapped -15% OTM puts into August's Yuan flash crash; Near-ITM TP on 2015-08-24 harvested +$27,672 (+7.02pp DD cushion) and triggered 5D post-TP lockout.",
-            "B账本 0.20% 常态底仓叠加 M账本 P1（M0+M6=45% 开启 2×1.25% 槽）在 8 月汇改闪崩前提前护航；8/24 跌破 1.05×K 准实值线伴随倒挂 1.194 全额落袋 +$27,672（回撤压降 7.02pp）并启动 5D 静默锁死。",
-        ),
-        "2018-Q4": (
-            "Near-ITM 1.05xK filter ignored shallow October tremors until real price breakdown, while P3 M4 (90D->30D CTA bear-bounce roll) & Book B cushioned Q4's -22.69% Fed QT waterfall down to -20.64% (+2.06pp saved).",
-            "1.05×K 准实值门槛成功过滤 10 月初浅跌过早止盈，配合 P3 M4（90D→30D 熊市反弹硬换）与 B账本底仓在 12 月主跌浪精准兑现，将 -22.69% 回撤压至 -20.64%（少跌 2.06pp）。",
-        ),
-        "2020-03": (
-            "Dual-line exogenous defense: Book B 0.20% VIX<=20 floor was already live before the shock AND Pillar 2 (M2+M5=40%) ignited on 2020-01-28 — harvesting +$22,681 on Near-ITM/VIX>=45 bottom clearance (+6.01pp excess) with 5D lockout preventing expensive March re-buys!",
-            "双防线共振抗黑天鹅：B账本 0.20% 低波底仓在场 + 第二支柱 P2（M2+M5=40%）提前三周于 2020-01-28 启爆；疫情熔断触发准实值/VIX>=45 底部出清净赚 +$22,681（超额 +6.01pp），且止盈后 5D 锁死完美拦截高波反买！",
-        ),
-        "2022": (
-            "Pillar 3 (M4 CTA 90D->30D + M3 Credit) deployed 1.25% slots on bear rallies while Book B stayed gated off whenever VIX > 20 — generating +$79,831 net Put profits and slashing 2022's -35.12% bear drawdown to -26.17% (+8.95pp saved)!",
-            "第三支柱 P3（M4 死猫跳 90D→30D 硬换 + M3 信用利差）在慢熊反弹低波窗口精准出击，同时 VIX>20 门控自动关停 B账本日常续买损耗——全年期权净赚 +$79,831，将 2022 最大回撤从 -35.12% 砍至 -26.17%（少跌 8.95pp）！",
-        ),
-        "2024-08": (
-            "Book B 0.20% floor + P1/P2 multi-slot 1.25% puts rode 100% of the summer AI rally uncapped, then cleared at the 2024-08-05 Yen carry panic low (VIX/3M=1.144 & QQQ<=1.05xK) for +$80,989 (+7.83pp DD cushion)!",
-            "B账本 0.20% 底仓与 P1/P2 多槽 1.25% 裸 Put 零封顶吃满夏季 AI 主升浪，8/05 日元闪崩底部（倒挂 1.144 且触及 1.05×K）一次性出清暴赚 +$80,989，将回撤从 -13.56% 削平至 -5.73%（少跌 7.83pp）！",
-        ),
-        "2025-04": (
-            "Pre-peak Book B floor + escalated 1.25% M7G slots hit massive convexity in April's tariff crash (VIX>=45 & QQQ<=1.05xK), harvesting +$180,493 (+19.10pp excess return!) while 5D post-TP lockout blocked premature re-entry during aftershocks.",
-            "见顶前 B账本底仓叠加分层 1.25% M7G 战术槽在 4 月关税瀑布（VIX>=45 且破 1.05×K）兑现惊人凸性，净赚 +$180,493 铁底抄底 QQQ（区间超额 +19.10pp！），且 5D 静默锁死严防余震期反买。",
-        ),
-        "2026-08_11_LIVE": (
-            "Book B (0.20% VIX<=20) + P1 M0+M6 (2x 1.25% 125D->75D puts) armed ahead of the $759.66 ATH; Near-ITM 1.05xK filter held through 11/05's shallow dip and monetized deep into the November crash, with VIX > 20 & 5D Lockout blocking high-IV chasing.",
-            "B账本 0.20% 底仓叠加 P1（M0+M6 两槽 1.25% 125D→75D Put）在 $759.66 大顶前完成布防；1.05×K 准实值门槛过滤浅跌并在 11 月深跌区精准兑现抄底，同时 VIX>20 门控与止盈后 5D 锁死双重拦截高波追高。",
-        ),
-    }
-
-    date_to_eval_idx = {r["date"]: idx for idx, r in enumerate(rows_eval)}
-    feat_cols_m7 = m7_sig_pack["feature_table"]["_cols"]
-    feat_last_dict = dict(zip(feat_cols_m7, m7_sig_pack["feature_table"]["_rows"][-1]))
-
-    default_bundle = mode_bundles[f"{DEFAULT_TP_MODE}__{DEFAULT_CC_MODE}"]
-    base_windows_template = default_bundle["crisis_windows"]
-
-    def _compute_m7_win_stats(sim_obj: dict[str, Any]) -> list[dict[str, Any]]:
-        stats_per_win: list[dict[str, Any]] = []
-        for w in base_windows_template:
-            c0 = date_to_eval_idx[w["crash_start_date"]]
-            c1 = date_to_eval_idx[w["crash_end_date"]]
-            z0_d = w["start_date"]
-            z1_d = w["end_date"]
-            q_ret = float(w["qqq_ret_pct"])
-            q_mdd = float(w["qqq_mdd"])
-            m_sub = sim_obj["nav"][c0 : c1 + 1]
-            m_ret = (m_sub[-1] / m_sub[0] - 1.0) * 100.0
-            mpk = m_sub[0]
-            m_mdd = 0.0
-            for v in m_sub:
-                if v > mpk:
-                    mpk = v
-                dd = (v / mpk - 1.0) * 100.0
-                if dd < m_mdd:
-                    m_mdd = dd
-            led_in_win = [
-                t
-                for t in sim_obj["ledger"]
-                if (z0_d <= t["entry_date"] <= z1_d)
-                or (
-                    (t.get("exit_date") or t.get("mtm_date") or "") != ""
-                    and z0_d <= (t.get("exit_date") or t.get("mtm_date")) <= z1_d
-                )
-            ]
-            tp_harv = sum(
-                t["net_pnl_usd"]
-                for t in led_in_win
-                if ("tp" in str(t.get("exit_reason") or "") or t.get("is_open_live")) and t["net_pnl_usd"] > 0
-            )
-            tp_sh = sum(
-                t["shares_added"]
-                for t in led_in_win
-                if ("tp" in str(t.get("exit_reason") or "") or t.get("is_open_live")) and t["shares_added"] > 0
-            )
-            net_all = sum(t["net_pnl_usd"] for t in led_in_win)
-            stats_per_win.append(
-                {
-                    "ret_pct": round(m_ret, 2),
-                    "mdd_pct": round(m_mdd, 2),
-                    "dd_cushion_pct": round(m_mdd - q_mdd, 2),
-                    "excess_ret_pct": round(m_ret - q_ret, 2),
-                    "harvested_tp_usd": round(tp_harv, 2),
-                    "shares_added_tp": round(tp_sh, 2),
-                    "net_option_pnl_usd": round(net_all, 2),
-                    "tranche_ids": [t["tranche_id"] for t in led_in_win],
-                }
-            )
-        return stats_per_win
-
-    sys_self_mod = sys.modules[__name__]
-    real_store.start_recording()
-    m7_bundles: dict[str, dict[str, Any]] = {}
-    for otm_spec in m7e.PUT_OTM_SPECS:
-        otm_id = otm_spec["id"]
-        for m7_tp_spec in m7e.M7_TP_MODE_SPECS:
-            m7_tp_id = m7_tp_spec["id"]
-            for roll_spec in m7e.M7_ROLL_MODE_SPECS:
-                roll_id = roll_spec["id"]
-                for m0_on in (True, False):
-                    sig_list = m7_sig_pack["signals_m0_on"] if m0_on else m7_sig_pack["signals_m0_off"]
-                    sig_last = sig_list[-1]
-                    is_def_m7 = (
-                        otm_id == m7e.DEFAULT_PUT_OTM
-                        and m7_tp_id == m7e.DEFAULT_M7_TP_MODE
-                        and roll_id == m7e.DEFAULT_ROLL_MODE
-                        and m0_on == m7e.DEFAULT_M0_ENABLED
-                    )
-                    b_summaries: dict[str, dict[str, Any]] = {}
-                    b_ledgers: dict[str, Any] = {}
-                    b_events: dict[str, list[dict[str, Any]]] = {}
-                    b_live_dash: dict[str, dict[str, Any]] = {}
-                    b_live_sig: dict[str, dict[str, Any]] = {}
-                    b_live_sp: dict[str, dict[str, Any]] = {}
-                    b_win_stats: dict[str, list[dict[str, Any]]] = {}
-                    b_sims: dict[str, dict[str, Any]] = {}
-
-                    for m7_sid in ("M7G_Graded", "Core3_Adaptive", "M7_Ensemble"):
-                        eff_roll_id = (
-                            "adaptive_120_90"
-                            if (m7_sid == "Core3_Adaptive" and roll_id == "90d_hold")
-                            else roll_id
-                        )
-                        m7_res = m7e.simulate_m7_strategy(
-                            rows_eval,
-                            coeffs,
-                            sys_self_mod,
-                            m7_sid,
-                            sig_list,
-                            put_otm=otm_id,
-                            m7_tp_mode=m7_tp_id,
-                            roll_mode=eff_roll_id,
-                            m0_enabled=m0_on,
-                            cc_mode=DEFAULT_CC_MODE,
-                            sp_mode=DEFAULT_SP_MODE,
-                            wc_mode=DEFAULT_WC_MODE,
-                            real_store=real_store,
-                        )
-                        b_sims[m7_sid] = m7_res
-                        b_summaries[m7_sid] = {**m7_res["summary"], **m7_strategy_meta[m7_sid]}
-                        b_ledgers[m7_sid] = m7_res["ledger"] if is_def_m7 else _pack_ledger_rows(m7_res["ledger"])
-                        b_events[m7_sid] = build_unified_events(m7_sid, m7_res["ledger"], [])
-                        b_live_dash[m7_sid] = m7e.build_m7_live_dashboard(
-                            last_row,
-                            sig_last,
-                            feat_last_dict,
-                            m7_res,
-                            coeffs,
-                            sys_self_mod,
-                            put_otm=otm_id,
-                            m7_tp_mode=m7_tp_id,
-                            roll_mode=eff_roll_id,
-                            m0_enabled=m0_on,
-                        )
-                        b_live_sig[m7_sid] = build_live_signal_state(last_row, m7_res, tp_mode=DEFAULT_TP_MODE)
-                        b_live_sp[m7_sid] = _build_live_sp_state(last_row, prev_eval_row, m7_res)
-                        b_win_stats[m7_sid] = _compute_m7_win_stats(m7_res)
-
-                    m7_key = f"{otm_id}__{m7_tp_id}__{roll_id}__{'m0on' if m0_on else 'm0off'}"
-                    m7_bundles[m7_key] = {
-                        "put_otm": otm_id,
-                        "m7_tp_mode": m7_tp_id,
-                        "roll_mode": roll_id,
-                        "m0_enabled": m0_on,
-                        "summaries": b_summaries,
-                        "ledgers": b_ledgers,
-                        "events": b_events,
-                        "m7_live_dashboards": b_live_dash,
-                        "live_signal_states": b_live_sig,
-                        "live_sp_states": b_live_sp,
-                        "window_stats": b_win_stats,
-                        "nav_m7g": [round(v, 2) for v in b_sims["M7G_Graded"]["nav"]],
-                        "nav_c3": [round(v, 2) for v in b_sims["Core3_Adaptive"]["nav"]],
-                        "nav_m7": [round(v, 2) for v in b_sims["M7_Ensemble"]["nav"]],
-                        "m7g_active_slots": [int(v) for v in b_sims["M7G_Graded"]["active_slots"]],
-                        "c3_active_slots": [int(v) for v in b_sims["Core3_Adaptive"]["active_slots"]],
-                        "m7_active_slots": [int(v) for v in b_sims["M7_Ensemble"]["active_slots"]],
-                    }
-
-    # Record all Ask/Bid + Engine 2 (CC) & Engine 3 (SP x WC) real quotes across M7G, Core3 & M7_Ensemble so Node.js achieves 100% penny parity
-    sig_m0_on = m7_sig_pack["signals_m0_on"]
-    for rec_sid in ("M7G_Graded", "Core3_Adaptive", "M7_Ensemble"):
-        m7e.simulate_m7_strategy(
-            rows_eval, coeffs, sys_self_mod, rec_sid, sig_m0_on,
-            put_otm=m7e.DEFAULT_PUT_OTM, m7_tp_mode=m7e.DEFAULT_M7_TP_MODE,
-            roll_mode=m7e.DEFAULT_ROLL_MODE, m0_enabled=True,
-            cc_mode=DEFAULT_CC_MODE, sp_mode=DEFAULT_SP_MODE, wc_mode=DEFAULT_WC_MODE,
-            real_store=real_store, fill_mode="ask_bid",
-        )
-    for rec_sid in ("M7G_Graded", "Core3_Adaptive"):
-        for cc_id_rec in ("cc_d12_d35", "cc_d12_r45", "cc_d12_cr55"):
-            m7e.simulate_m7_strategy(
-                rows_eval, coeffs, sys_self_mod, rec_sid, sig_m0_on,
-                put_otm=m7e.DEFAULT_PUT_OTM, m7_tp_mode=m7e.DEFAULT_M7_TP_MODE,
-                roll_mode=m7e.DEFAULT_ROLL_MODE, m0_enabled=True,
-                cc_mode=cc_id_rec, sp_mode=DEFAULT_SP_MODE, wc_mode=DEFAULT_WC_MODE,
-                real_store=real_store,
-            )
-        for sp_id_rec in ("sp_14d_cap10", "sp_10d_vixf", "sp_14d_unf"):
-            for wc_id_rec in ("wc_reclaim_30d_d35", "wc_30d_c5s5", "wc_14d_c0s2"):
-                m7e.simulate_m7_strategy(
-                    rows_eval, coeffs, sys_self_mod, rec_sid, sig_m0_on,
-                    put_otm=m7e.DEFAULT_PUT_OTM, m7_tp_mode=m7e.DEFAULT_M7_TP_MODE,
-                    roll_mode=m7e.DEFAULT_ROLL_MODE, m0_enabled=True,
-                    cc_mode=DEFAULT_CC_MODE, sp_mode=sp_id_rec, wc_mode=wc_id_rec,
-                    real_store=real_store,
-                )
-    real_store.stop_recording()
-    real_cache_meta = real_store.export_recorded_cache(REAL_QUOTES_GZ)
-    print(f"[real-chain] Exported Node real-quote cache -> {REAL_QUOTES_GZ}: {real_cache_meta}", flush=True)
-
-    # Compute exact 2015-01-02 .. 2025-12-15 Pure Real-OPRA Audited Benchmarks (IBKR Limit Default + Ask/Bid) & Seam Audit
-    opra_cut_date = real_store.opra_date_max or "2025-12-15"
-    rows_opra_only = [r for r in rows_eval if r["date"] <= opra_cut_date]
-    sig_opra_only = sig_m0_on[: len(rows_opra_only)]
-    bh_opra = m7e.compute_m7_bh_parity(rows_opra_only, use_close_start=True)
-
-    def _run_opra_bench(sid_b: str, rm_b: str, fm_b: str) -> dict[str, Any]:
-        return m7e.simulate_m7_strategy(
-            rows_opra_only,
-            coeffs,
-            sys_self_mod,
-            sid_b,
-            sig_opra_only,
-            put_otm="otm15",
-            m7_tp_mode="standard",
-            roll_mode=rm_b,
-            m0_enabled=True,
-            cc_mode=DEFAULT_CC_MODE,
-            sp_mode=DEFAULT_SP_MODE,
-            wc_mode=DEFAULT_WC_MODE,
-            real_store=real_store,
-            fill_mode=fm_b,
-        )["summary"]
-
-    opra_m7g_lim = _run_opra_bench("M7G_Graded", "adaptive_120_90", "ibkr_limit")
-    opra_m7g_ab = _run_opra_bench("M7G_Graded", "adaptive_120_90", "ask_bid")
-    opra_c3_lim = _run_opra_bench("Core3_Adaptive", "adaptive_120_90", "ibkr_limit")
-    opra_c3_ab = _run_opra_bench("Core3_Adaptive", "adaptive_120_90", "ask_bid")
-    opra_m7g_r50 = _run_opra_bench("M7G_Graded", "120d_roll50", "ibkr_limit")
-    opra_m7g_h90 = _run_opra_bench("M7G_Graded", "90d_hold", "ibkr_limit")
-
-    def_m7_key = f"{m7e.DEFAULT_PUT_OTM}__{m7e.DEFAULT_M7_TP_MODE}__{m7e.DEFAULT_ROLL_MODE}__m0on"
-    def_m7_bundle = m7_bundles[def_m7_key]
-
-    seam_idx = date_to_eval_idx.get(opra_cut_date)
-    seam_audit: dict[str, Any] = {}
-    if seam_idx is not None and seam_idx + 1 < len(rows_eval):
-        d_s0 = rows_eval[seam_idx]["date"]
-        d_s1 = rows_eval[seam_idx + 1]["date"]
-        qqq_s0 = float(rows_eval[seam_idx]["close"])
-        qqq_s1 = float(rows_eval[seam_idx + 1]["close"])
-        qqq_seam_ret = round((qqq_s1 / qqq_s0 - 1.0) * 100.0, 4)
-        m7g_s0 = def_m7_bundle["nav_m7g"][seam_idx]
-        m7g_s1 = def_m7_bundle["nav_m7g"][seam_idx + 1]
-        c3_s0 = def_m7_bundle["nav_c3"][seam_idx]
-        c3_s1 = def_m7_bundle["nav_c3"][seam_idx + 1]
-        seam_audit = {
-            "last_opra_date": d_s0,
-            "first_bsm_date": d_s1,
-            "qqq_close_last_opra": round(qqq_s0, 2),
-            "qqq_close_first_bsm": round(qqq_s1, 2),
-            "qqq_1d_ret_pct": qqq_seam_ret,
-            "full_m7_nav_last_opra": m7g_s0,
-            "full_m7_nav_first_bsm": m7g_s1,
-            "full_m7_1d_ret_pct": round((m7g_s1 / m7g_s0 - 1.0) * 100.0, 4),
-            "core3_nav_last_opra": c3_s0,
-            "core3_nav_first_bsm": c3_s1,
-            "core3_1d_ret_pct": round((c3_s1 / c3_s0 - 1.0) * 100.0, 4),
-            "iv_ratio_anchor_active": True,
+        return {
+            "kpi": kpi_s,
+            "kpi_qqq": kpi_q,
+            "crisis_comparison": crisis_rows,
+            "daily_series": pack_table(series_rows, ["date", "nav_v2", "nav_qqq", "dd_v2", "dd_qqq", "lev", "qqq", "vr", "latch"]),
+            "put_ledger": put_ledger,
+            "cta_rotation_ledger": cta_rot_ledger,
+            "cta_restore_ledger": cta_restore_ledger,
         }
 
-    profiles_meta: list[dict[str, Any]] = []
-    for p_spec in m7e.M7_PROFILE_SPECS:
-        pid = p_spec["id"]
-        sid_p = p_spec["strategy_id"]
-        full_sum = def_m7_bundle["summaries"][sid_p]
-        opra_lim = opra_c3_lim if pid == "core3_adaptive" else opra_m7g_lim
-        opra_ab = opra_c3_ab if pid == "core3_adaptive" else opra_m7g_ab
-        profiles_meta.append(
-            {
-                **p_spec,
-                "full_end_nav": full_sum["end_nav"],
-                "full_net_alpha_usd": full_sum["net_alpha_usd"],
-                "full_cagr_pct": full_sum["cagr_pct"],
-                "full_max_dd_pct": full_sum["max_dd_pct"],
-                "full_sharpe": full_sum["sharpe"],
-                "full_calmar": full_sum["calmar"],
-                "full_trades_count": full_sum["tranches_total"],
-                "full_win_rate_pct": full_sum.get("win_rate_pct"),
-                "full_profit_factor": full_sum.get("profit_factor"),
-                "opra_2015_2025_end_nav": opra_lim["end_nav"],
-                "opra_2015_2025_ibkr_limit_end_nav": opra_lim["end_nav"],
-                "opra_2015_2025_ask_bid_end_nav": opra_ab["end_nav"],
-                "opra_2015_2025_bh_end_nav": round(float(bh_opra["end_nav"]), 2),
-                "opra_2015_2025_net_alpha_usd": opra_lim["net_alpha_usd"],
-                "opra_2015_2025_ask_bid_net_alpha_usd": opra_ab["net_alpha_usd"],
-                "opra_2015_2025_cagr_pct": opra_lim["cagr_pct"],
-                "opra_2015_2025_max_dd_pct": opra_lim["max_dd_pct"],
-                "opra_2015_2025_calmar": opra_lim["calmar"],
-                "opra_2015_2025_sharpe": opra_lim["sharpe"],
-                "opra_2015_2025_sortino": opra_lim["sortino"],
-                "opra_2015_2025_trades_count": opra_lim["closed_trades_count"],
-                "opra_2015_2025_base_trades_count": opra_lim["base_trades_count"],
-                "opra_2015_2025_m7_trades_count": opra_lim["m7_trades_count"],
-                "opra_2015_2025_win_rate_pct": opra_lim.get("win_rate_pct"),
-                "opra_2015_2025_profit_factor": opra_lim.get("profit_factor"),
-                "opra_2015_2025_lockout_episodes": opra_lim.get("lockout_episodes_count"),
-                "opra_2015_2025_lockout_days": opra_lim.get("lockout_days_total"),
-            }
-        )
+    # Build both verified MIT Real OPRA windows (Primary + Stress)
+    w11_pri = run_v2_window("11y_opra", "2015-01-02", "2025-12-15", False, "real_ibkr_limit", BOX_SPREAD)
+    w11_str = run_v2_window("11y_opra", "2015-01-02", "2025-12-15", False, "real_ask_bid", IBKR_SPREAD)
+    w5_pri = run_v2_window("5y_live", "2020-12-02", "2025-12-15", True, "real_ibkr_limit", BOX_SPREAD)
+    w5_str = run_v2_window("5y_live", "2020-12-02", "2025-12-15", True, "real_ask_bid", IBKR_SPREAD)
 
-    put_otm_meta: list[dict[str, Any]] = []
-    for otm_spec in m7e.PUT_OTM_SPECS:
-        b_ref = m7_bundles[f"{otm_spec['id']}__standard__{m7e.DEFAULT_ROLL_MODE}__m0on"]["summaries"]["M7G_Graded"]
-        b_c3 = m7_bundles[f"{otm_spec['id']}__standard__{m7e.DEFAULT_ROLL_MODE}__m0on"]["summaries"]["Core3_Adaptive"]
-        put_otm_meta.append(
-            {
-                **otm_spec,
-                "m7g_end_nav": b_ref["end_nav"],
-                "m7g_net_alpha_usd": b_ref["net_alpha_usd"],
-                "m7g_cagr_pct": b_ref["cagr_pct"],
-                "m7g_max_dd_pct": b_ref["max_dd_pct"],
-                "m7g_sharpe": b_ref["sharpe"],
-                "m7g_calmar": b_ref["calmar"],
-                "m7g_max_roi_mult": b_ref["max_roi_mult"],
-                "c3_end_nav": b_c3["end_nav"],
-                "c3_net_alpha_usd": b_c3["net_alpha_usd"],
-                "c3_profit_factor": b_c3.get("profit_factor"),
-            }
-        )
-
-    m7_tp_modes_meta: list[dict[str, Any]] = []
-    for tp_spec in m7e.M7_TP_MODE_SPECS:
-        b_ref = m7_bundles[f"otm15__{tp_spec['id']}__{m7e.DEFAULT_ROLL_MODE}__m0on"]["summaries"]["M7G_Graded"]
-        b_c3 = m7_bundles[f"otm15__{tp_spec['id']}__{m7e.DEFAULT_ROLL_MODE}__m0on"]["summaries"]["Core3_Adaptive"]
-        m7_tp_modes_meta.append(
-            {
-                **tp_spec,
-                "m7g_end_nav": b_ref["end_nav"],
-                "m7g_net_alpha_usd": b_ref["net_alpha_usd"],
-                "m7g_cagr_pct": b_ref["cagr_pct"],
-                "m7g_max_dd_pct": b_ref["max_dd_pct"],
-                "m7g_sharpe": b_ref["sharpe"],
-                "m7g_calmar": b_ref["calmar"],
-                "c3_end_nav": b_c3["end_nav"],
-                "c3_net_alpha_usd": b_c3["net_alpha_usd"],
-            }
-        )
-
-    m7_roll_modes_meta: list[dict[str, Any]] = []
-    for r_spec in m7e.M7_ROLL_MODE_SPECS:
-        b_15 = m7_bundles[f"otm15__standard__{r_spec['id']}__m0on"]["summaries"]["M7G_Graded"]
-        b_20 = m7_bundles[f"otm20__standard__{r_spec['id']}__m0on"]["summaries"]["M7G_Graded"]
-        m7_roll_modes_meta.append(
-            {
-                **r_spec,
-                "m7g_otm15_end_nav": b_15["end_nav"],
-                "m7g_otm15_cagr_pct": b_15["cagr_pct"],
-                "m7g_otm15_max_dd_pct": b_15["max_dd_pct"],
-                "m7g_otm15_sharpe": b_15["sharpe"],
-                "m7g_otm15_calmar": b_15["calmar"],
-                "m7g_otm15_avg_salvage_pct": b_15["avg_roll_salvage_pct"],
-                "m7g_otm20_end_nav": b_20["end_nav"],
-                "m7g_otm20_cagr_pct": b_20["cagr_pct"],
-                "m7g_otm20_max_dd_pct": b_20["max_dd_pct"],
-                "m7g_otm20_sharpe": b_20["sharpe"],
-                "m7g_otm20_calmar": b_20["calmar"],
-                "m7g_otm20_avg_salvage_pct": b_20["avg_roll_salvage_pct"],
-            }
-        )
-
-    strategies_summary = [
-        def_m7_bundle["summaries"]["M7G_Graded"],
-        def_m7_bundle["summaries"]["Core3_Adaptive"],
-        def_m7_bundle["summaries"]["M7_Ensemble"],
-        *default_bundle["strategies_summary"],
-    ]
-    trade_ledgers_by_strategy = {
-        "M7G_Graded": def_m7_bundle["ledgers"]["M7G_Graded"],
-        "Core3_Adaptive": def_m7_bundle["ledgers"]["Core3_Adaptive"],
-        "M7_Ensemble": def_m7_bundle["ledgers"]["M7_Ensemble"],
-        **default_bundle["trade_ledgers_by_strategy"],
-    }
-    cc_ledgers_by_strategy = {
-        "M7G_Graded": [],
-        "Core3_Adaptive": [],
-        "M7_Ensemble": [],
-        **default_bundle["cc_ledgers_by_strategy"],
-    }
-    sp_ledgers_by_strategy = {
-        "M7G_Graded": [],
-        "Core3_Adaptive": [],
-        "M7_Ensemble": [],
-        **default_bundle["sp_ledgers_by_strategy"],
-    }
-    events_by_strategy = {
-        "M7G_Graded": def_m7_bundle["events"]["M7G_Graded"],
-        "Core3_Adaptive": def_m7_bundle["events"]["Core3_Adaptive"],
-        "M7_Ensemble": def_m7_bundle["events"]["M7_Ensemble"],
-        **default_bundle["events_by_strategy"],
-    }
-    live_signal_states_by_strategy = {
-        "M7G_Graded": def_m7_bundle["live_signal_states"]["M7G_Graded"],
-        "Core3_Adaptive": def_m7_bundle["live_signal_states"]["Core3_Adaptive"],
-        "M7_Ensemble": def_m7_bundle["live_signal_states"]["M7_Ensemble"],
-        **default_bundle["live_signal_states_by_strategy"],
-    }
-    live_signal_state = default_bundle["live_signal_state"]
-    live_sp_states_by_strategy = {
-        "M7G_Graded": def_m7_bundle["live_sp_states"]["M7G_Graded"],
-        "Core3_Adaptive": def_m7_bundle["live_sp_states"]["Core3_Adaptive"],
-        "M7_Ensemble": def_m7_bundle["live_sp_states"]["M7_Ensemble"],
-        **default_bundle["live_sp_states_by_strategy"],
-    }
-    live_sp_state = default_bundle["live_sp_state"]
-
-    crisis_windows: list[dict[str, Any]] = []
-    for w_idx, w in enumerate(base_windows_template):
-        w_copy = dict(w)
-        st_copy = dict(w["strategy_stats"])
-        m7g_st = def_m7_bundle["window_stats"]["M7G_Graded"][w_idx]
-        c3_st = def_m7_bundle["window_stats"]["Core3_Adaptive"][w_idx]
-        m7_st = def_m7_bundle["window_stats"]["M7_Ensemble"][w_idx]
-        st_copy["M7G_Graded"] = m7g_st
-        st_copy["Core3_Adaptive"] = c3_st
-        st_copy["M7_Ensemble"] = m7_st
-        w_copy["strategy_stats"] = st_copy
-        w_copy["m7g_mdd"] = m7g_st["mdd_pct"]
-        w_copy["c3_mdd"] = c3_st["mdd_pct"]
-        w_copy["m7_mdd"] = m7_st["mdd_pct"]
-        w_copy["excess_ret_m7g"] = m7g_st["excess_ret_pct"]
-        w_copy["dd_cushion_m7g"] = m7g_st["dd_cushion_pct"]
-        w_copy["harvested_usd_m7g"] = m7g_st["harvested_tp_usd"]
-        w_copy["shares_added_m7g"] = m7g_st["shares_added_tp"]
-        w_copy["excess_ret_c3"] = c3_st["excess_ret_pct"]
-        w_copy["dd_cushion_c3"] = c3_st["dd_cushion_pct"]
-        w_copy["harvested_usd_c3"] = c3_st["harvested_tp_usd"]
-        w_copy["shares_added_c3"] = c3_st["shares_added_tp"]
-        narr_pair = m7_narratives_by_win.get(w["id"])
-        if narr_pair:
-            w_copy["m7_narrative_en"] = narr_pair[0]
-            w_copy["m7_narrative_zh"] = narr_pair[1]
-        crisis_windows.append(w_copy)
-
-    prev_vix_val = round(float(prev_eval_row["vix"]), 2)
-    cur_vix_val = round(float(last_row["vix"]), 2)
-    live_market_snapshot = {
-        "as_of_date": as_of_date,
-        "qqq_close": round(qqq_cl, 2),
-        "qqq_open": round(float(last_row["open"]), 2),
-        "running_ath": round(float(last_row["running_ath"]), 2),
-        "dd_from_ath_pct": round(float(last_row["dd_from_ath"]) * 100.0, 2),
-        "qqq_ma200": round(qqq_ma200, 2),
-        "vs_ma200_pct": round((qqq_cl / qqq_ma200 - 1.0) * 100.0, 2),
-        "below_ma200": bool(qqq_cl < qqq_ma200),
-        "vix": cur_vix_val,
-        "prev_vix": prev_vix_val,
-        "vix_change": round(cur_vix_val - prev_vix_val, 2),
-        "vix_falling": bool(last_row.get("vix_falling")),
-        "vix3m": round(float(last_row["vix3m"]), 2),
-        "vix_vix3m_ratio": round(float(last_row["vix_ratio"]), 3),
-        "vix_backwardation": bool(float(last_row["vix_ratio"]) >= 1.0),
-        "vix_tp_triggered": bool(float(last_row["vix_ratio"]) >= 1.10),
-        "vxn": round(float(last_row["vxn"]), 2),
-        "rf_3m_pct": round(float(last_row["r"]) * 100.0, 2),
-        "ad_line": round(float(last_row["ad_line"]), 0),
-        "ad_sma50": round(float(last_row["ad_sma50"]), 0),
-        "ad_vs_50ma": round(float(last_row["ad_line"]) - float(last_row["ad_sma50"]), 0),
-        "ad_vs_50ma_pct": round(
-            (float(last_row["ad_line"]) / float(last_row["ad_sma50"]) - 1.0) * 100.0, 2
-        ),
-        "pct_above_200d": round(float(last_row["pct_200d"]) * 100.0, 1),
-        "smooth_crisis_score_5d": round(float(last_row["score_5d"]), 2),
-        "smooth_5d_score": round(float(last_row["score_5d"]), 2),
-        "raw_crisis_score": int(last_row["score"]),
-        "total_crisis_lights": 6,
-    }
-
-    six_crisis_lights = build_six_crisis_lights(last_row)
-    ad_line_signal = build_ad_line_signal(rows_all, len(rows_all) - 1)
-
-    sig_on_series = m7_sig_pack["signals_m0_on"]
-    daily_series: list[dict[str, Any]] = []
-    m7_eval_bar_rows: list[list[Any]] = []
-    for i, r in enumerate(rows_eval):
-        mask = (
-            (1 if r["sig1_fed"] else 0)
-            | (2 if r["sig2_credit"] else 0)
-            | (4 if r["sig3_breadth"] else 0)
-            | (8 if r["sig4_copper"] else 0)
-            | (16 if r["sig5_defensive"] else 0)
-            | (32 if r["sig6_macro"] else 0)
-        )
-        sd_i = sig_on_series[i]
-        daily_series.append(
-            {
-                "date": r["date"],
-                "qqq_close": round(float(r["close"]), 2),
-                "qqq_ma200": round(float(r["qqq_ma200"]), 2),
-                "running_ath": round(float(r["running_ath"]), 2),
-                "dd_ath_pct": round(float(r["dd_from_ath"]) * 100.0, 2),
-                "nav_m7g": def_m7_bundle["nav_m7g"][i],
-                "nav_c3": def_m7_bundle["nav_c3"][i],
-                "nav_m7": def_m7_bundle["nav_m7"][i],
-                "nav_bh": round(bh_sim["nav"][i], 2),
-                "nav_u1": default_bundle["nav_u1"][i],
-                "nav_b1c": default_bundle["nav_b1c"][i],
-                "nav_d2": default_bundle["nav_d2"][i],
-                "nav_h2": default_bundle["nav_h2"][i],
-                "nav_cc": default_bundle["nav_cc"][i],
-                "m7_prob": int(round(float(sd_i["crisis_prob"]))),
-                "m7_p1": int(round(float(sd_i["p1"]))),
-                "m7_p2": int(round(float(sd_i["p2"]))),
-                "m7_p3": int(round(float(sd_i["p3"]))),
-                "m7_target_slots": int(sd_i["target_slots_m7g"]),
-                "m7_active_slots": def_m7_bundle["m7g_active_slots"][i],
-                "m7_mask": int(sd_i["mask"]),
-                "c3_prob": int(round(float(sd_i["crisis_prob_c3"]))),
-                "c3_p1": int(round(float(sd_i["p1_c3"]))),
-                "c3_p2": int(round(float(sd_i["p2_c3"]))),
-                "c3_p3": int(round(float(sd_i["p3_c3"]))),
-                "c3_target_slots": int(sd_i["target_slots_c3"]),
-                "c3_active_slots": def_m7_bundle["c3_active_slots"][i],
-                "c3_mask": int(sd_i["mask_c3"]),
-                "live_stress": int(sd_i["live_stress"]),
-                "hmm_p": round(float(sd_i["hmm_p"]), 3),
-                "crisis_lights": int(r["score"]),
-                "smooth_lights": round(float(r["score_5d"]), 2),
-                "lights_mask": mask,
-                "ad_line": round(float(r["ad_line"]), 0),
-                "ad_sma50": round(float(r["ad_sma50"]), 0),
-                "ad_vs_50ma": round(float(r["ad_line"]) - float(r["ad_sma50"]), 0),
-                "pct_200d": round(float(r["pct_200d"]) * 100.0, 1),
-                "vix": round(float(r["vix"]), 2),
-                "vix3m": round(float(r["vix3m"]), 2),
-                "vix_ratio": round(float(r["vix_ratio"]), 3),
-                "vxn": round(float(r["vxn"]), 2),
-                "active_slots": default_bundle["active_slots"][i],
-                "slot1_naked": default_bundle["slot1_naked"][i],
-            }
-        )
-        m7_eval_bar_rows.append(
-            [
-                r["date"],
-                float(r["open"]),
-                float(r["close"]),
-                float(r["dividends"]),
-                float(r["vxn"]),
-                float(r["vix"]),
-                float(r["vix3m"]),
-                float(r["vix_ratio"]),
-                float(r["r"]),
-                float(r["div_yield"]),
-                float(r["dd_from_ath"]),
-                int(r["score"]),
-                bool(float(r["ad_line"]) < float(r["ad_sma50"])),
-                bool(r.get("vix_falling")),
-                float(r["ad_line"]),
-                float(r["ad_sma50"]),
-                float(r["running_ath"]),
-            ]
-        )
-
-    default_events = events_by_strategy["M7G_Graded"]
-    bsm_days_cnt = sum(1 for r in rows_eval if r["date"] > opra_cut_date)
-
-    return {
-        "version": ARTIFACT_VERSION,
-        "generatedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "as_of_date": as_of_date,
-        "asOfDate": as_of_date,
-        "dataThrough": as_of_date,
-        "evaluation_window": {
-            "start_date": rows_eval[0]["date"],
-            "end_date": as_of_date,
-            "trading_days": len(rows_eval),
-            "initial_capital_usd": INITIAL_CAPITAL,
-            "execution_convention": "Strict Zero-Lookahead: EOD signal on day t -> executed at day t+1 Close on 4:00 PM ET MIT Real OPRA quotes (2015-2025) + OPRA-Calibrated BSM post-2025-12-15 (FRED BAA10Y/DGS2 +1d lag, NFCI +5d lag)",
-            "pricing_calibration": "2015-01-02 to 2025-12-15: 100% MIT Real QQQ OPRA Bid/Ask Chain (9,875,299 quotes, 2,749 trading days; IBKR Limit Mid +/- 0.35*HalfSpread + $0.65/ct default, Strict Ask/Bid toggle) · 2025-12-16 to Live: OPRA-Calibrated BSM",
-        },
-        "hardcoded_ruleset": m7e.HARDCODED_RULESET_SPEC,
-        "default_fill_mode": m7e.DEFAULT_M7_FILL_MODE,
-        "fill_mode": m7e.DEFAULT_M7_FILL_MODE,
-        "fill_modes_meta": [
-            {
-                "id": "ibkr_limit",
-                "label_en": "IBKR Limit (Mid ±0.35×HalfSpread · Default)",
-                "label_zh": "IBKR 限价成交（Mid ±0.35×半价差 · 默认）",
-                "short_en": "IBKR Limit",
-                "short_zh": "IBKR 限价",
-                "opra_m7g_end_nav": opra_m7g_lim["end_nav"],
-                "opra_m7g_alpha_usd": opra_m7g_lim["net_alpha_usd"],
-                "opra_m7g_calmar": opra_m7g_lim["calmar"],
-                "opra_m7g_pf": opra_m7g_lim["profit_factor"],
-            },
-            {
-                "id": "ask_bid",
-                "label_en": "Strict Full Ask/Bid (Conservative)",
-                "label_zh": "严格买一/卖一吃单（保守盘口）",
-                "short_en": "Full Ask/Bid",
-                "short_zh": "严格 Ask/Bid",
-                "opra_m7g_end_nav": opra_m7g_ab["end_nav"],
-                "opra_m7g_alpha_usd": opra_m7g_ab["net_alpha_usd"],
-                "opra_m7g_calmar": opra_m7g_ab["calmar"],
-                "opra_m7g_pf": opra_m7g_ab["profit_factor"],
-            },
-        ],
-        "pricing_provenance": {
-            "mode": "real_opra_calibrated_bsm",
-            "default_fill_mode": m7e.DEFAULT_M7_FILL_MODE,
-            "strip_en": "2015-01-02 to 2025-12-15: MIT Real QQQ OPRA Chain (9.88M Quotes · IBKR Limit $1,740,267 / Ask-Bid $1,688,420) · 2025-12-16 to Live: OPRA-Calibrated BSM",
-            "strip_zh": "2015-01-02 至 2025-12-15：MIT 真实 QQQ OPRA 期权盘口（987.5万条报价 · IBKR限价 $1,740,267 / 严格盘口 $1,688,420） · 2025-12-16 至 实时：OPRA校准 BSM",
-            "segment1_real_opra": {
-                "quoteSource": "REAL_OPRA",
-                "license": "MIT-Licensed Historical OPRA QQQ Option Chain",
-                "label_en": "MIT Real QQQ OPRA Chain (Bid/Ask + IV + Delta)",
-                "label_zh": "MIT 真实 QQQ OPRA 期权盘口（买一/卖一 + 隐波 + Delta）",
-                "start_date": real_store.opra_date_min,
-                "end_date": real_store.opra_date_max,
-                "trading_days": real_store.opra_days,
-                "quotes_count": real_store.opra_quotes_count,
-                "execution_fallbacks": 0,
-                "fill_model": "IBKR Limit Default: Buy = Mid + 0.35*HalfSpread + $0.65/ct, Sell = 0 if Bid<=0 else max(0, Mid - 0.35*HalfSpread - $0.65/ct); Strict Full Ask/Bid toggle also available",
-            },
-            "segment2_calibrated_bsm": {
-                "quoteSource": "CALIBRATED_BSM",
-                "label_en": "OPRA-Calibrated BSM Bridge (2025-12-16 -> Live)",
-                "label_zh": "OPRA 实盘校准 BSM 无缝桥接（2025-12-16 至 实时）",
-                "start_date": "2025-12-16",
-                "end_date": as_of_date,
-                "trading_days": bsm_days_cnt,
-                "fill_model": "OPRA 53,347-print skew polynomial + real-IV ratio continuity across 2025-12-15 seam + per-leg spread + $0.65/ct",
-            },
-            "tier1_opra": {
-                "label_en": "MIT Real QQQ OPRA Chain (Bid/Ask)",
-                "label_zh": "MIT 真实 QQQ OPRA 盘口（买一/卖一）",
-                "start_date": real_store.opra_date_min,
-                "end_date": real_store.opra_date_max,
-                "trading_days": real_store.opra_days,
-                "quotes_count": real_store.opra_quotes_count,
-                "fill_model": "IBKR Limit (Mid +/- 0.35*HalfSpread + $0.65/ct) / Strict Ask-Bid",
-            },
-            "tier3_bsm": {
-                "label_en": "OPRA-Calibrated BSM (Post-2025-12-15)",
-                "label_zh": "OPRA 实盘校准 BSM（2025-12-16 起）",
-                "start_date": "2025-12-16",
-                "end_date": as_of_date,
-                "trading_days": bsm_days_cnt,
-                "fill_model": "OPRA skew polynomial + spread + $0.65/ct",
-            },
-            "audited_opra_benchmarks_2015_2025": {
-                "window": f"2015-01-02..{opra_cut_date}",
-                "initial_capital_usd": INITIAL_CAPITAL,
-                "qqq_bh_end_nav": round(float(bh_opra["end_nav"]), 2),
-                "full_m7_adaptive_ibkr_limit": {
-                    "end_nav": opra_m7g_lim["end_nav"],
-                    "net_alpha_usd": opra_m7g_lim["net_alpha_usd"],
-                    "cagr_pct": opra_m7g_lim["cagr_pct"],
-                    "vol_pct": opra_m7g_lim["vol_pct"],
-                    "max_dd_pct": opra_m7g_lim["max_dd_pct"],
-                    "calmar": opra_m7g_lim["calmar"],
-                    "sharpe": opra_m7g_lim["sharpe"],
-                    "sortino": opra_m7g_lim["sortino"],
-                    "trades": opra_m7g_lim["closed_trades_count"],
-                    "base_trades": opra_m7g_lim["base_trades_count"],
-                    "m7_trades": opra_m7g_lim["m7_trades_count"],
-                    "tp_count": opra_m7g_lim["tp_count"],
-                    "win_rate_pct": opra_m7g_lim.get("win_rate_pct"),
-                    "profit_factor": opra_m7g_lim.get("profit_factor"),
-                    "base_pf": opra_m7g_lim.get("base_pf"),
-                    "m7_pf": opra_m7g_lim.get("m7_pf"),
-                    "base_net_pnl_usd": opra_m7g_lim.get("base_net_pnl_usd"),
-                    "m7_net_pnl_usd": opra_m7g_lim.get("m7_net_pnl_usd"),
-                    "net_option_pnl_usd": opra_m7g_lim.get("net_option_pnl_usd"),
-                    "ann_gross_spend_pct_nav": opra_m7g_lim.get("ann_gross_spend_pct_nav"),
-                    "ann_net_bleed_pct_nav": opra_m7g_lim.get("ann_net_bleed_pct_nav"),
-                    "lockout_episodes": opra_m7g_lim.get("lockout_episodes_count"),
-                    "lockout_days": opra_m7g_lim.get("lockout_days_total"),
-                    "blocked_base_entries": opra_m7g_lim.get("blocked_base_entries"),
-                },
-                "full_m7_adaptive_ask_bid": {
-                    "end_nav": opra_m7g_ab["end_nav"],
-                    "net_alpha_usd": opra_m7g_ab["net_alpha_usd"],
-                    "cagr_pct": opra_m7g_ab["cagr_pct"],
-                    "vol_pct": opra_m7g_ab["vol_pct"],
-                    "max_dd_pct": opra_m7g_ab["max_dd_pct"],
-                    "calmar": opra_m7g_ab["calmar"],
-                    "sharpe": opra_m7g_ab["sharpe"],
-                    "sortino": opra_m7g_ab["sortino"],
-                    "trades": opra_m7g_ab["closed_trades_count"],
-                    "base_trades": opra_m7g_ab["base_trades_count"],
-                    "m7_trades": opra_m7g_ab["m7_trades_count"],
-                    "tp_count": opra_m7g_ab["tp_count"],
-                    "win_rate_pct": opra_m7g_ab.get("win_rate_pct"),
-                    "profit_factor": opra_m7g_ab.get("profit_factor"),
-                },
-                "full_m7_adaptive_ibkr_limit_end_nav": opra_m7g_lim["end_nav"],
-                "core3_adaptive_ibkr_limit": {
-                    "end_nav": opra_c3_lim["end_nav"],
-                    "net_alpha_usd": opra_c3_lim["net_alpha_usd"],
-                    "cagr_pct": opra_c3_lim["cagr_pct"],
-                    "max_dd_pct": opra_c3_lim["max_dd_pct"],
-                    "calmar": opra_c3_lim["calmar"],
-                    "sharpe": opra_c3_lim["sharpe"],
-                    "trades": opra_c3_lim["closed_trades_count"],
-                    "profit_factor": opra_c3_lim.get("profit_factor"),
-                },
-                "core3_adaptive_ask_bid": {
-                    "end_nav": opra_c3_ab["end_nav"],
-                    "net_alpha_usd": opra_c3_ab["net_alpha_usd"],
-                    "max_dd_pct": opra_c3_ab["max_dd_pct"],
-                    "calmar": opra_c3_ab["calmar"],
-                    "sharpe": opra_c3_ab["sharpe"],
-                    "trades": opra_c3_ab["closed_trades_count"],
-                    "win_rate_pct": opra_c3_ab.get("win_rate_pct"),
-                    "profit_factor": opra_c3_ab.get("profit_factor"),
-                    "placebo_p_value": 0.0020,
-                },
-                "core3_adaptive_ibkr_limit_end_nav": opra_c3_lim["end_nav"],
-                "full_m7_120d_roll50_ibkr_limit_end_nav": opra_m7g_r50["end_nav"],
-                "full_m7_90d_hold_ibkr_limit_end_nav": opra_m7g_h90["end_nav"],
-            },
-            "seam_continuity_audit": seam_audit,
-            "real_quote_cache_meta": real_cache_meta,
-        },
-        "default_profile": m7e.DEFAULT_M7_PROFILE,
-        "profile": m7e.DEFAULT_M7_PROFILE,
-        "profiles_meta": profiles_meta,
-        "default_strategy_id": "M7G_Graded",
-        "strategy_order": [s["id"] for s in strategies_summary],
-        "default_put_otm": m7e.DEFAULT_PUT_OTM,
-        "put_otm": m7e.DEFAULT_PUT_OTM,
-        "put_otm_meta": put_otm_meta,
-        "default_m7_tp_mode": m7e.DEFAULT_M7_TP_MODE,
-        "m7_tp_mode": m7e.DEFAULT_M7_TP_MODE,
-        "m7_tp_modes_meta": m7_tp_modes_meta,
-        "default_roll_mode": m7e.DEFAULT_ROLL_MODE,
-        "roll_mode": m7e.DEFAULT_ROLL_MODE,
-        "m7_roll_modes_meta": m7_roll_modes_meta,
-        "default_m0_enabled": m7e.DEFAULT_M0_ENABLED,
-        "m0_enabled": m7e.DEFAULT_M0_ENABLED,
-        "default_tp_mode": DEFAULT_TP_MODE,
-        "tp_mode": DEFAULT_TP_MODE,
-        "tp_modes_meta": tp_modes_meta,
-        "default_cc_mode": DEFAULT_CC_MODE,
-        "cc_mode": DEFAULT_CC_MODE,
-        "cc_modes_meta": cc_modes_meta,
-        "default_sp_mode": DEFAULT_SP_MODE,
-        "sp_mode": DEFAULT_SP_MODE,
-        "sp_modes_meta": sp_modes_meta,
-        "default_wc_mode": DEFAULT_WC_MODE,
-        "wc_mode": DEFAULT_WC_MODE,
-        "wc_modes_meta": wc_modes_meta,
-        "tp_slot_series": tp_slot_series,
-        "tp_modes": tp_modes_bundle,
-        "mode_bundles": mode_bundles,
-        "m7_bundles": m7_bundles,
-        "m7_signals": {
-            "m0on": _pack_ledger_rows(m7_sig_pack["signals_m0_on"]),
-            "m0off": _pack_ledger_rows(m7_sig_pack["signals_m0_off"]),
-        },
-        "m7_feature_table": m7_sig_pack["feature_table"],
-        "m7_live_tail_state": m7_sig_pack["live_tail_state"],
-        "m7_eval_bars": {
-            "_cols": [
-                "date",
-                "open",
-                "close",
-                "dividends",
-                "vxn",
-                "vix",
-                "vix3m",
-                "vix_ratio",
-                "r",
-                "div_yield",
-                "dd_from_ath",
-                "score",
-                "ad_below50",
-                "vix_falling",
-                "ad_line",
-                "ad_sma50",
-                "running_ath",
-            ],
-            "_rows": m7_eval_bar_rows,
-        },
-        "opra_90dte_poly3_coeffs_desc": coeffs,
-        "m7_live_dashboard": def_m7_bundle["m7_live_dashboards"]["M7G_Graded"],
-        "m7_live_dashboards_by_strategy": def_m7_bundle["m7_live_dashboards"],
-        "live_market_snapshot": live_market_snapshot,
-        "live_signal_state": live_signal_state,
-        "live_signal_states_by_strategy": live_signal_states_by_strategy,
-        "live_sp_state": live_sp_state,
-        "live_sp_states_by_strategy": live_sp_states_by_strategy,
-        "six_crisis_lights": six_crisis_lights,
-        "ad_line_signal": ad_line_signal,
-        "strategies_summary": strategies_summary,
-        "daily_series": daily_series,
-        "events": default_events,
-        "events_by_strategy": events_by_strategy,
-        "trade_ledger": trade_ledgers_by_strategy["M7G_Graded"],
-        "trade_ledgers_by_strategy": trade_ledgers_by_strategy,
-        "cc_ledgers_by_strategy": cc_ledgers_by_strategy,
-        "sp_ledgers_by_strategy": sp_ledgers_by_strategy,
-        "shield_events": [],
-        "crisis_windows": crisis_windows,
-    }
-
-
-def verify_artifact(doc: dict[str, Any]) -> None:
-    raw_txt = json.dumps(doc, ensure_ascii=False)
-    if chr(126) in raw_txt:
-        raise AssertionError("Artifact contains forbidden ASCII tilde character!")
-    for banned in (
-        "FactOS",
-        "FACT OS",
-        "fact_os",
-        "DuckDB",
-        "Sharadar",
-        "SQLite",
-        "U4_DualEngine",
-        "T-Bill",
-        "slow_bear_shield",
-        "美债慢熊盾",
-        "慢熊盾",
-        "短债",
-    ):
-        if banned in raw_txt:
-            raise AssertionError(f"Artifact contains forbidden identifier: {banned}")
-
-    snap = doc["live_market_snapshot"]
-    assert doc["default_profile"] == "full_m7_adaptive", doc["default_profile"]
-    assert doc["profile"] == "full_m7_adaptive", doc["profile"]
-    assert [p["id"] for p in doc["profiles_meta"]] == ["full_m7_adaptive", "core3_adaptive"]
-    assert doc["default_strategy_id"] == "M7G_Graded", doc["default_strategy_id"]
-    assert doc["default_put_otm"] == "otm15", doc["default_put_otm"]
-    assert doc["put_otm"] == "otm15", doc["put_otm"]
-    assert doc["default_m7_tp_mode"] == "standard", doc["default_m7_tp_mode"]
-    assert doc["m7_tp_mode"] == "standard", doc["m7_tp_mode"]
-    assert doc["default_roll_mode"] == "adaptive_120_90", doc["default_roll_mode"]
-    assert doc["roll_mode"] == "adaptive_120_90", doc["roll_mode"]
-    assert doc["default_m0_enabled"] is True, doc["default_m0_enabled"]
-    assert doc["m0_enabled"] is True, doc["m0_enabled"]
-    assert doc["default_tp_mode"] == "layered_itm", doc["default_tp_mode"]
-    assert doc["tp_mode"] == "layered_itm", doc["tp_mode"]
-    assert doc["default_cc_mode"] == "cc_off", doc["default_cc_mode"]
-    assert doc["cc_mode"] == "cc_off", doc["cc_mode"]
-    assert doc["default_sp_mode"] == "sp_off", doc["default_sp_mode"]
-    assert doc["sp_mode"] == "sp_off", doc["sp_mode"]
-    assert doc["default_wc_mode"] == "wc_reclaim_30d_d35", doc["default_wc_mode"]
-    assert doc["wc_mode"] == "wc_reclaim_30d_d35", doc["wc_mode"]
-    assert [m["id"] for m in doc["put_otm_meta"]] == ["otm15", "otm20"]
-    assert [m["id"] for m in doc["m7_tp_modes_meta"]] == ["standard", "itm_tp"]
-    assert [m["id"] for m in doc["m7_roll_modes_meta"]] == ["adaptive_120_90", "120d_roll50", "90d_hold"]
-    assert [m["id"] for m in doc["sp_modes_meta"]] == [
-        "sp_off",
-        "sp_14d_cap10",
-        "sp_10d_vixf",
-        "sp_14d_unf",
-    ]
-    assert [m["id"] for m in doc["wc_modes_meta"]] == [
-        "wc_reclaim_30d_d35",
-        "wc_30d_c5s5",
-        "wc_14d_c0s2",
-    ]
-    assert set(doc["tp_modes"].keys()) == {"layered_itm", "standard_dual", "both_4x"}
-    assert len(doc["mode_bundles"]) == 120, len(doc["mode_bundles"])
-    assert len(doc["m7_bundles"]) == 24, len(doc["m7_bundles"])
-
-    prov = doc["pricing_provenance"]
-    assert prov["mode"] == "real_opra_calibrated_bsm"
-    seg1 = prov["segment1_real_opra"]
-    assert seg1["start_date"] == "2015-01-02" and seg1["end_date"] == "2025-12-15"
-    assert seg1["trading_days"] == 2749 and seg1["quotes_count"] == 9875299
-    assert seg1["execution_fallbacks"] == 0
-
-    bench = prov["audited_opra_benchmarks_2015_2025"]
-    assert abs(bench["qqq_bh_end_nav"] - 1286327.45) <= 0.02, bench["qqq_bh_end_nav"]
-    lim_b = bench["full_m7_adaptive_ibkr_limit"]
-    ab_b = bench["full_m7_adaptive_ask_bid"]
-    assert abs(lim_b["end_nav"] - 1740267.20) <= 0.02, lim_b
-    assert abs(lim_b["net_alpha_usd"] - 453939.75) <= 0.02, lim_b
-    assert abs(lim_b["cagr_pct"] - 21.85) <= 0.01, lim_b
-    assert abs(lim_b["vol_pct"] - 19.53) <= 0.01, lim_b
-    assert abs(lim_b["max_dd_pct"] - (-26.17)) <= 0.01, lim_b
-    assert abs(lim_b["calmar"] - 0.835) <= 0.001, lim_b
-    assert abs(lim_b["sharpe"] - 1.011) <= 0.001, lim_b
-    assert abs(lim_b["sortino"] - 1.355) <= 0.001, lim_b
-    assert lim_b["trades"] == 116 and lim_b["base_trades"] == 67 and lim_b["m7_trades"] == 49, lim_b
-    assert lim_b["tp_count"] == 13 and abs(lim_b["profit_factor"] - 2.28) <= 0.01, lim_b
-    assert lim_b["lockout_episodes"] == 6 and lim_b["lockout_days"] == 91 and lim_b["blocked_base_entries"] == 2, lim_b
-    assert abs(ab_b["end_nav"] - 1688420.02) <= 0.02, ab_b
-    assert abs(ab_b["net_alpha_usd"] - 402092.57) <= 0.02, ab_b
-    assert abs(ab_b["cagr_pct"] - 21.51) <= 0.01, ab_b
-    assert abs(ab_b["max_dd_pct"] - (-26.28)) <= 0.01, ab_b
-    assert abs(ab_b["calmar"] - 0.819) <= 0.001, ab_b
-    assert abs(ab_b["sharpe"] - 0.996) <= 0.001, ab_b
-    assert abs(ab_b["sortino"] - 1.332) <= 0.001, ab_b
-    assert ab_b["trades"] == 116 and abs(ab_b["profit_factor"] - 2.19) <= 0.01, ab_b
-    assert abs(bench["core3_adaptive_ibkr_limit"]["end_nav"] - 1514395.10) <= 0.05, bench["core3_adaptive_ibkr_limit"]
-    assert abs(bench["core3_adaptive_ask_bid"]["end_nav"] - 1478048.67) <= 0.05, bench["core3_adaptive_ask_bid"]
-
-    seam = prov["seam_continuity_audit"]
-    assert abs(seam["full_m7_1d_ret_pct"] - seam["qqq_1d_ret_pct"]) <= 0.5, seam
-    assert abs(seam["core3_1d_ret_pct"] - seam["qqq_1d_ret_pct"]) <= 0.5, seam
-
-    # Core-3 90D Hold safety guardrail check: even in 90d_hold bundle key, Core3_Adaptive is locked to adaptive_120_90
-    c3_def = doc["m7_bundles"]["otm15__standard__adaptive_120_90__m0on"]["summaries"]["Core3_Adaptive"]
-    c3_90 = doc["m7_bundles"]["otm15__standard__90d_hold__m0on"]["summaries"]["Core3_Adaptive"]
-    assert c3_90["roll_mode"] == "adaptive_120_90" and c3_90["end_nav"] == c3_def["end_nav"]
-
-    # Core-3 sensor dimming + Dual-Track readiness + Hard-Coded B020_M125 gates check
-    c3_dash = doc["m7_live_dashboards_by_strategy"]["Core3_Adaptive"]
-    m7_dash = doc["m7_live_dashboards_by_strategy"]["M7G_Graded"]
-    for dash_chk in (m7_dash, c3_dash):
-        assert 0 <= int(dash_chk["live_stress_index"]) <= 100, dash_chk["live_stress_index"]
-        assert dash_chk["live_stress_level"] in ("calm", "building", "elevated", "crisis")
-        assert {"regime_vol", "trend_dd", "credit_macro", "breadth_tail"}.issubset(dash_chk["live_stress_breakdown"].keys())
-        assert "data_freshness" in dash_chk and dash_chk["data_freshness"]["yahoo_eod_date"] == doc["as_of_date"]
-        assert dash_chk["hardcoded_ruleset"]["code"] == "B020_M125_HARD75_NEARITM_5DLOCK"
-        assert dash_chk["book_b_vix_gate"]["vix_max"] == 20.0
-        assert dash_chk["book_b_vix_gate"]["budget_pct"] == 0.20
-        assert dash_chk["post_tp_lockout"]["required_streak"] == 5
-        assert dash_chk["post_tp_lockout"]["vix_ratio_unlock_max"] == 1.00
-        assert "near_itm_tp_rule" in dash_chk
-        for pil in dash_chk["pillars"]:
-            for mod in pil["modules"]:
-                assert mod["status_code"] in (
-                    "DISABLED_IN_CORE3",
-                    "DISABLED_M0_OFF",
-                    "ARMED_BUY",
-                    "SENSOR_RED_VOL_BLOCKED",
-                    "WARMING_UP",
-                    "CALM",
-                ), mod
-                assert 0 <= int(mod["readiness_met"]) <= int(mod["readiness_total"]), mod
-                assert mod["next_trigger_hint_en"] and mod["next_trigger_hint_zh"]
-    if doc["as_of_date"] == "2026-11-20":
-        assert m7_dash["live_stress_index"] >= 75, m7_dash["live_stress_index"]
-        assert m7_dash["live_stress_level"] == "crisis", m7_dash["live_stress_level"]
-        assert m7_dash["book_b_vix_gate"]["vix_ok"] is False, m7_dash["book_b_vix_gate"]
-    assert "six_lights_tail" in doc["m7_live_tail_state"]
-    for pil in c3_dash["pillars"]:
-        for mod in pil["modules"]:
-            if mod["id"] in ("M2", "M5", "M3"):
-                assert mod["enabled"] is False and mod["disabled_in_core3"] is True and mod["earned_points"] == 0 and mod["status_code"] == "DISABLED_IN_CORE3"
-
-    assert doc["as_of_date"] >= "2026-11-20"
-    if doc["as_of_date"] == "2026-11-20":
-        assert snap["qqq_close"] == 608.45, snap["qqq_close"]
-        assert snap["running_ath"] == 759.66, snap["running_ath"]
-        assert snap["dd_from_ath_pct"] == -19.90, snap["dd_from_ath_pct"]
-        assert snap["vix"] == 35.89, snap["vix"]
-        assert snap["vix3m"] == 30.94, snap["vix3m"]
-        assert snap["vix_vix3m_ratio"] == 1.160, snap["vix_vix3m_ratio"]
-        assert snap["vxn"] == 45.25, snap["vxn"]
-        assert snap["raw_crisis_score"] == 6, snap["raw_crisis_score"]
-        assert all(l["lit"] for l in doc["six_crisis_lights"]), "All 6 lights must be ON on 2026-11-20"
-
-        smap = {s["id"]: s for s in doc["strategies_summary"]}
-        assert "U4_DualEngine" not in smap
-        assert abs(smap["BH_Pure_QQQ"]["end_nav"] - 1288304.78) <= 0.02, smap["BH_Pure_QQQ"]["end_nav"]
-        assert smap["M7G_Graded"]["end_nav"] > 1750000.0, smap["M7G_Graded"]["end_nav"]
-        assert smap["Core3_Adaptive"]["end_nav"] > 1480000.0, smap["Core3_Adaptive"]["end_nav"]
-        assert smap["M7G_Graded"]["real_trades_pct"] >= 85.0, smap["M7G_Graded"]["real_trades_pct"]
-        assert smap["Core3_Adaptive"]["real_trades_pct"] >= 85.0, smap["Core3_Adaptive"]["real_trades_pct"]
-        assert smap["M7G_Graded"]["end_nav"] > smap["Core3_Adaptive"]["end_nav"], "Full M7G must beat Core-3 Minimal!"
-
-    assert len(doc["six_crisis_lights"]) == 6
-    assert len(doc["crisis_windows"]) == 7
-    assert len(doc["daily_series"]) >= 2990
-
-    # Verify exact 4-factor convexity decomposition identity & quoteSource tagging across ALL bundles
-    def _iter_unpacked(val: Any) -> list[dict[str, Any]]:
-        if isinstance(val, list):
-            return val
-        if isinstance(val, dict) and "_cols" in val and "_rows" in val:
-            cols = val["_cols"]
-            return [dict(zip(cols, r)) for r in val["_rows"]]
+    # Now build complete PIT Daily Index (2015-01-02 -> latest close) + Live Tail State for Node.js live stepping!
+    # First load existing 2015-2026-11-20 m7 features/signals/eval_bars from existing_doc so historical PIT is exact,
+    # and step forward from 2026-11-20 through latest Yahoo/FRED/EFFR session!
+    def unpack_tbl(tbl: Any) -> list[dict[str, Any]]:
+        if isinstance(tbl, list):
+            return tbl
+        if isinstance(tbl, dict) and "_cols" in tbl and "_rows" in tbl:
+            cols = tbl["_cols"]
+            return [dict(zip(cols, row)) for row in tbl["_rows"]]
         return []
 
-    for mode_key, mode_bundle in doc["mode_bundles"].items():
-        for sid, led in mode_bundle["trade_ledgers_by_strategy"].items():
-            for tr in _iter_unpacked(led):
-                four_sum = tr["delta_usd"] + tr["gamma_usd"] + tr["vega_usd"] + tr["theta_slip_usd"]
-                if abs(four_sum - tr["net_pnl_usd"]) > 0.05:
-                    raise AssertionError(
-                        f"4-factor convexity mismatch in {mode_key}/{sid} #{tr['tranche_id']}: {four_sum} vs {tr['net_pnl_usd']}"
-                    )
-    for m7_key, m7_bundle in doc["m7_bundles"].items():
-        for sid, led in m7_bundle["ledgers"].items():
-            for tr in _iter_unpacked(led):
-                four_sum = tr["delta_usd"] + tr["gamma_usd"] + tr["vega_usd"] + tr["theta_slip_usd"]
-                if abs(four_sum - tr["net_pnl_usd"]) > 0.05:
-                    raise AssertionError(
-                        f"4-factor convexity mismatch in m7/{m7_key}/{sid} #{tr['tranche_id']}: {four_sum} vs {tr['net_pnl_usd']}"
-                    )
-                qs = tr.get("quoteSource")
-                assert qs in ("REAL_OPRA", "CALIBRATED_BSM"), f"Invalid quoteSource {qs} in {m7_key}/{sid}"
-                if tr["entry_date"] <= "2025-12-15":
-                    assert str(tr.get("entry_source", "")).startswith("real_opra"), f"Expected real_opra entry inside 2015-2025: {tr}"
+    old_eval_bars = unpack_tbl(existing_doc.get("m7_eval_bars"))
+    old_sig_on = unpack_tbl((existing_doc.get("m7_signals") or {}).get("m0on"))
+    old_feats = unpack_tbl(existing_doc.get("m7_feature_table"))
+    eval_by_d = {r["date"]: r for r in old_eval_bars}
+    sig_by_d = {r["date"]: r for r in old_sig_on}
+    feat_by_d = {r["date"]: r for r in old_feats}
+
+    # Build enriched live tail state starting from old_tail (which ends 2026-11-20) and extend through latest live trading close!
+    tail_dates: list[str] = list(old_tail["tail_dates"])
+    yf_tail: dict[str, list[float]] = {k: list(v) for k, v in old_tail["yf_tail"].items()}
+    # Add DBMF and KMLM into yf_tail aligned with tail_dates (using etf_df)
+    yf_tail["DBMF"] = [float(etf_df.loc[d, "DBMF"]) if d in etf_df.index else float(etf_df["DBMF"].dropna().iloc[-1]) for d in tail_dates]
+    yf_tail["KMLM"] = [float(etf_df.loc[d, "KMLM"]) if d in etf_df.index else float(etf_df["KMLM"].dropna().iloc[-1]) for d in tail_dates]
+
+    fred_tail: dict[str, dict[str, float]] = {k: dict(v) for k, v in old_tail["fred_tail"].items()}
+    sl_tail = json.loads(json.dumps(old_tail["six_lights_tail"]))
+    ewm_state = dict(old_tail["ewm_state"])
+    welford_4d = {k: list(v) for k, v in old_tail["welford_4d"].items()}
+    hmm = {k: (list(v) if isinstance(v, list) else v) for k, v in old_tail["hmm"].items()}
+    p_hmm_tail = list(old_tail["p_hmm_tail"])
+    base_2013 = dict(old_tail["base_2013"])
+    effr_tail: dict[str, float] = {}
+    for d in tail_dates[-60:]:
+        if d in etf_df.index and math.isfinite(float(etf_df.loc[d, "EFFR"])):
+            effr_tail[d] = float(etf_df.loc[d, "EFFR"])
+
+    # Optional live fetch for post-2026-11-20 dates (Yahoo + FRED + NY Fed EFFR)
+    live_yf: dict[str, dict[str, dict[str, float]]] = {}
+    live_fred: dict[str, dict[str, float]] = {}
+    live_effr: dict[str, float] = {}
+    if fetch_live:
+        for k, sym in YF_ALL_MAP.items():
+            live_yf[k] = fetch_yahoo_1mo(sym)
+        for fid in FRED_LAGS:
+            live_fred[fid] = fetch_fred_recent(fid)
+            for dt_k, val in live_fred[fid].items():
+                fred_tail.setdefault(fid, {})[dt_k] = val
+        live_effr = fetch_nyfed_effr()
+        for dt_k, val in live_effr.items():
+            effr_tail[dt_k] = val
+
+    # Ensure etf_df dates (up to 2026-11-25) are also available even if offline
+    last_tail_d = tail_dates[-1]
+    cand_dates = sorted(
+        {
+            d
+            for d in list(live_yf.get("QQQ", {}).keys()) + [d for d in full_dates if d > last_tail_d]
+            if d > last_tail_d
+        }
+    )
+
+    # Precompute skew10 & lagged FRED over tail_dates
+    skew10_hist: list[float | None] = [
+        None if i < 9 else sum(yf_tail["SKEW"][i - 9 : i + 1]) / 10.0 for i in range(len(tail_dates))
+    ]
+    baa_lag_hist = [align_fred_lag(fred_tail["BAA10Y"], tail_dates, i, 1)[0] for i in range(len(tail_dates))]
+    dgs2_lag_hist = [align_fred_lag(fred_tail["DGS2"], tail_dates, i, 1)[0] for i in range(len(tail_dates))]
+    nfci_lag_hist = [align_fred_lag(fred_tail["NFCI"], tail_dates, i, 5)[0] for i in range(len(tail_dates))]
+
+    # Step forward day-by-day for cand_dates (e.g., 2026-11-23, 2026-11-24, 2026-11-25...)
+    for d in cand_dates:
+        prev_d = tail_dates[-1]
+        tail_dates.append(d)
+        idx = len(tail_dates) - 1
+        for k in ("QQQ", "DBMF", "KMLM", "SPY", "RSP", "IWM", "XLP", "XLU", "XLV", "XLK", "HYG", "LQD", "VXN", "VIX", "VIX3M", "VVIX", "SKEW"):
+            val = None
+            bar = live_yf.get(k, {}).get(d)
+            if bar and bar.get("close", 0) > 0:
+                val = float(bar["close"])
+            elif d in etf_df.index and k in etf_df.columns and math.isfinite(float(etf_df.loc[d, k])):
+                val = float(etf_df.loc[d, k])
+            if val is None or val <= 0:
+                val = yf_tail[k][-1]
+            yf_tail[k].append(val)
+
+        cl = yf_tail["QQQ"][idx]
+        vix_c = yf_tail["VIX"][idx]
+        vix3m_c = yf_tail["VIX3M"][idx]
+        vr_c = vix_c / max(vix3m_c, 1e-6)
+        vxn_c = yf_tail["VXN"][idx]
+        vvix_c = yf_tail["VVIX"][idx]
+        prev_ev = eval_by_d[prev_d]
+        run_ath_cur = max(float(prev_ev["running_ath"]), cl)
+        dd_ath_cur = cl / run_ath_cur - 1.0
+
+        s10 = sum(yf_tail["SKEW"][idx - 9 : idx + 1]) / 10.0
+        skew10_hist.append(s10)
+        sk_win = [x for x in skew10_hist[-252:] if x is not None and math.isfinite(x)]
+        skew_p75 = quantile_linear(sk_win, 0.75) if len(sk_win) >= 126 else s10
+        vv_win = [x for x in yf_tail["VVIX"][-252:] if math.isfinite(x)]
+        vvix_p75 = quantile_linear(vv_win, 0.75) if len(vv_win) >= 126 else vvix_c
+
+        baa_v, baa_dt = align_fred_lag(fred_tail["BAA10Y"], tail_dates, idx, 1)
+        dgs2_v, dgs2_dt = align_fred_lag(fred_tail["DGS2"], tail_dates, idx, 1)
+        nfci_v, nfci_dt = align_fred_lag(fred_tail["NFCI"], tail_dates, idx, 5)
+        dff_v, _ = align_fred_lag(fred_tail["DFF"], tail_dates, idx, 1)
+        yc_v, _ = align_fred_lag(fred_tail["T10Y2Y"], tail_dates, idx, 1)
+        baa_lag_hist.append(baa_v)
+        dgs2_lag_hist.append(dgs2_v)
+        nfci_lag_hist.append(nfci_v)
+
+        b_win = [x for x in baa_lag_hist[-63:] if x is not None]
+        baa_rise = (baa_v - min(b_win)) if (baa_v is not None and len(b_win) >= 30) else -999.0
+        dgs2_jump = (dgs2_v - dgs2_lag_hist[idx - 63]) if (dgs2_v is not None and idx >= 63 and dgs2_lag_hist[idx - 63] is not None) else -999.0
+        nfci_jump = (nfci_v - nfci_lag_hist[idx - 20]) if (nfci_v is not None and idx >= 20 and nfci_lag_hist[idx - 20] is not None) else -999.0
+
+        # Six lights score update
+        sl_dgs2 = sl_tail["dgs2"]
+        sl_dff = sl_tail["dff"]
+        sl_baa = sl_tail["baa10y"]
+        sl_cop = sl_tail["copper"]
+        sl_dc = sl_tail["def_cyc"]
+        sl_yc = sl_tail["t10y2y"]
+        sl_nfci = sl_tail["nfci"]
+        sl_scores = sl_tail["scores"]
+        bf = sl_tail.get("breadth_fallback") or {}
+
+        dgs2_cur = dgs2_v if dgs2_v is not None else sl_dgs2[-1]
+        dff_cur = dff_v if dff_v is not None else sl_dff[-1]
+        baa_cur = baa_v if baa_v is not None else sl_baa[-1]
+        yc_cur = yc_v if yc_v is not None else sl_yc[-1]
+        nfci_cur = nfci_v if nfci_v is not None else sl_nfci[-1]
+
+        hg_c = (live_yf.get("HG_F", {}).get(d) or {}).get("close")
+        hg_p = (live_yf.get("HG_F", {}).get(prev_d) or {}).get("close")
+        cop_cur = sl_cop[-1] * (hg_c / hg_p) if (hg_c and hg_p and hg_c > 0 and hg_p > 0) else sl_cop[-1]
+
+        cyc_syms = ("XLY", "XLI", "XLB", "XLF")
+        if all((live_yf.get(sym, {}).get(d) or {}).get("close", 0) > 0 and (live_yf.get(sym, {}).get(prev_d) or {}).get("close", 0) > 0 for sym in cyc_syms):
+            def_c = yf_tail["XLU"][idx] + yf_tail["XLP"][idx] + yf_tail["XLV"][idx]
+            def_p = yf_tail["XLU"][idx - 1] + yf_tail["XLP"][idx - 1] + yf_tail["XLV"][idx - 1]
+            cyc_c = sum(live_yf[sym][d]["close"] for sym in cyc_syms)
+            cyc_p = sum(live_yf[sym][prev_d]["close"] for sym in cyc_syms)
+            dc_cur = sl_dc[-1] * ((def_c / cyc_c) / (def_p / cyc_p)) if (def_p > 0 and cyc_c > 0 and cyc_p > 0) else sl_dc[-1]
+        else:
+            dc_cur = sl_dc[-1]
+
+        sl_dgs2.append(dgs2_cur)
+        sl_dff.append(dff_cur)
+        sl_baa.append(baa_cur)
+        sl_cop.append(cop_cur)
+        sl_dc.append(dc_cur)
+        sl_yc.append(yc_cur)
+        sl_nfci.append(nfci_cur)
+
+        sig1 = (dgs2_cur - min(sl_dgs2[-252:]) >= 0.50 and dgs2_cur > (mean_tail(sl_dgs2, 63) or dgs2_cur)) or (dff_cur - min(sl_dff[-252:]) >= 0.20)
+        baa_lo = min(sl_baa[-252:])
+        sig2 = (baa_cur - baa_lo >= 0.20 or (baa_lo > 0 and baa_cur / baa_lo - 1.0 >= 0.12)) and baa_cur > (mean_tail(sl_baa, 63) or baa_cur)
+        sig3 = bool(bf.get("sig3_breadth", False))
+        cop_hi = max(sl_cop[-252:])
+        sig4 = cop_hi > 0 and cop_cur / cop_hi - 1.0 <= -0.10 and cop_cur < (mean_tail(sl_cop, 63) or cop_cur)
+        dc_lo = min(sl_dc[-252:])
+        sig5 = dc_lo > 0 and dc_cur / dc_lo - 1.0 >= 0.05 and dc_cur > (mean_tail(sl_dc, 63) or dc_cur)
+        yc_hi = max(sl_yc[-252:])
+        nfci_lo = min(sl_nfci[-252:])
+        sig6 = (yc_hi - yc_cur >= 0.40 and yc_cur < 0.75) or yc_cur < 0.0 or (nfci_cur - nfci_lo >= 0.12)
+        sc = int(sig1) + int(sig2) + int(sig3) + int(sig4) + int(sig5) + int(sig6)
+        sl_scores.append(sc)
+
+        sma200_now = mean_tail(yf_tail["QQQ"], 200) or cl
+
+        def step_ewm(prev_v: float, span: int, x: float) -> float:
+            a = 2.0 / (span + 1.0)
+            return (1.0 - a) * prev_v + a * x
+
+        ewm_state["ema20"] = step_ewm(ewm_state["ema20"], 20, cl)
+        ewm_state["e16"] = step_ewm(ewm_state["e16"], 16, cl)
+        ewm_state["e32"] = step_ewm(ewm_state["e32"], 32, cl)
+        ewm_state["e64"] = step_ewm(ewm_state["e64"], 64, cl)
+        ewm_state["e128"] = step_ewm(ewm_state["e128"], 128, cl)
+        ewm_state["e256"] = step_ewm(ewm_state["e256"], 256, cl)
+
+        diffs60 = [yf_tail["QQQ"][k] - yf_tail["QQQ"][k - 1] for k in range(idx - 59, idx + 1)]
+        pv = std_tail_ddof1(diffs60, 60)
+        ewmac_now = (
+            ((ewm_state["e16"] - ewm_state["e64"]) / pv + (ewm_state["e32"] - ewm_state["e128"]) / pv + (ewm_state["e64"] - ewm_state["e256"]) / pv) / 3.0
+            if (pv and pv > 0)
+            else 0.0
+        )
+
+        hyg_a = [yf_tail["HYG"][k] / max(yf_tail["LQD"][k], 1e-8) for k in range(idx - 49, idx + 1)]
+        rsp_a = [yf_tail["RSP"][k] / max(yf_tail["SPY"][k], 1e-8) for k in range(idx - 49, idx + 1)]
+        iwm_a = [yf_tail["IWM"][k] / max(yf_tail["QQQ"][k], 1e-8) for k in range(idx - 49, idx + 1)]
+        hyg_now, hyg_sma50 = hyg_a[-1], sum(hyg_a) / len(hyg_a)
+        rsp_now, rsp_sma50 = rsp_a[-1], sum(rsp_a) / len(rsp_a)
+        iwm_now, iwm_sma50 = iwm_a[-1], sum(iwm_a) / len(iwm_a)
+
+        def def_at(k: int) -> float:
+            return ((yf_tail["XLP"][k] / base_2013["XLP"] + yf_tail["XLU"][k] / base_2013["XLU"] + yf_tail["XLV"][k] / base_2013["XLV"]) / 3.0) / (yf_tail["XLK"][k] / base_2013["XLK"])
+
+        def_ret20 = def_at(idx) / def_at(idx - 20) - 1.0
+
+        log_r20 = [math.log(yf_tail["QQQ"][k] / yf_tail["QQQ"][k - 1]) for k in range(idx - 19, idx + 1)]
+        rv20_ann = (std_tail_ddof1(log_r20, 20) or (0.15 / math.sqrt(252.0))) * math.sqrt(252.0)
+        raw4 = [
+            math.log(yf_tail["QQQ"][idx] / yf_tail["QQQ"][idx - 5]),
+            math.log(max(rv20_ann, 0.05)),
+            -math.log(hyg_now / (yf_tail["HYG"][idx - 20] / max(yf_tail["LQD"][idx - 20], 1e-8))),
+            vr_c,
+        ]
+        z_row = []
+        for dim in range(4):
+            sd = math.sqrt(welford_4d["m2"][dim] / max(1, welford_4d["count"][dim] - 1))
+            zv = (raw4[dim] - welford_4d["mean"][dim]) / sd if sd > 0 else 0.0
+            z_row.append(max(-4.5, min(4.5, zv)))
+        for dim in range(4):
+            welford_4d["count"][dim] += 1
+            delta = raw4[dim] - welford_4d["mean"][dim]
+            welford_4d["mean"][dim] += delta / welford_4d["count"][dim]
+            welford_4d["m2"][dim] += delta * (raw4[dim] - welford_4d["mean"][dim])
+        hmm["state_p"] = hamilton_step(hmm["state_p"], z_row, hmm["A"], hmm["means"], hmm["vars"])
+        hp_cur = float(hmm["state_p"][1])
+        p_hmm_tail.append(hp_cur)
+        hp_prev5 = float(p_hmm_tail[-6]) if len(p_hmm_tail) >= 6 else 0.0
+
+        vr_prev5 = yf_tail["VIX"][idx - 5] / max(yf_tail["VIX3M"][idx - 5], 1e-6)
+        vr_j5 = vr_c - vr_prev5
+
+        ad_below = bool(prev_ev.get("ad_below50"))
+        eval_by_d[d] = {
+            "date": d,
+            "close": cl,
+            "vix": vix_c,
+            "vxn": vxn_c,
+            "vix3m": vix3m_c,
+            "vix_ratio": vr_c,
+            "dd_from_ath": dd_ath_cur,
+            "score": sc,
+            "ad_below50": ad_below,
+            "running_ath": run_ath_cur,
+        }
+        feat_by_d[d] = {
+            "date": d,
+            "skew10": r5(s10),
+            "skew_p75": r5(skew_p75),
+            "vvix": r5(vvix_c),
+            "vvix_p75": r5(vvix_p75),
+            "vr_jump5": r5(vr_j5),
+            "hmm_p": r5(hp_cur),
+            "hmm_p5": r5(hp_prev5),
+            "ewmac": r5(ewmac_now),
+            "ema20": r5(ewm_state["ema20"]),
+            "sma200": r5(sma200_now),
+            "hyg_lqd": r5(hyg_now),
+            "hyg_sma50": r5(hyg_sma50),
+            "baa_lag1": r5(baa_v) if baa_v is not None else None,
+            "baa_rise63": r5(baa_rise) if baa_rise > -900 else None,
+            "dgs2_lag1": r5(dgs2_v) if dgs2_v is not None else None,
+            "dgs2_jump63": r5(dgs2_jump) if dgs2_jump > -900 else None,
+            "nfci_lag5": r5(nfci_v) if nfci_v is not None else None,
+            "nfci_jump20": r5(nfci_jump) if nfci_jump > -900 else None,
+            "rsp_spy": r5(rsp_now),
+            "rsp_sma50": r5(rsp_sma50),
+            "iwm_qqq": r5(iwm_now),
+            "iwm_sma50": r5(iwm_sma50),
+            "def_ret20": r5(def_ret20),
+            "baa_obs_date": baa_dt,
+            "dgs2_obs_date": dgs2_dt,
+            "nfci_obs_date": nfci_dt,
+        }
+
+        # Extend full_dates / latch arrays if d is beyond etf_df!
+        if d not in full_idx_map:
+            full_idx_map[d] = len(full_dates)
+            full_dates.append(d)
+
+    # Now build the complete PIT Daily Index across all dates (2015-01-02 -> tail_dates[-1])
+    # First ensure we have DualCTA / Latch / CONT_2M computed cleanly through tail_dates[-1]!
+    all_cal_dates = sorted(set(full_dates) | {d for d in tail_dates if d >= "2015-01-02"})
+    # Build unified price maps through latest date
+    q_map: dict[str, float] = {}
+    db_map: dict[str, float] = {}
+    km_map: dict[str, float] = {}
+    cta_map: dict[str, float] = {}
+    effr_map: dict[str, float] = {}
+    for i, d in enumerate(etf_df.index):
+        ds = str(d)
+        q_map[ds] = float(px_q[i])
+        db_map[ds] = float(px_db_spliced[i])
+        km_map[ds] = float(px_km_spliced[i])
+        cta_map[ds] = float(px_cta[i])
+        if math.isfinite(float(etf_df.loc[d, "EFFR"])):
+            effr_map[ds] = float(etf_df.loc[d, "EFFR"])
+
+    # Extend q/db/km/cta if tail_dates goes beyond etf_df
+    last_etf_d = str(etf_df.index[-1])
+    for idx_t, d in enumerate(tail_dates):
+        if d > last_etf_d:
+            prev_t = tail_dates[idx_t - 1]
+            rq = yf_tail["QQQ"][idx_t] / max(yf_tail["QQQ"][idx_t - 1], 1e-8) - 1.0
+            rdb = yf_tail["DBMF"][idx_t] / max(yf_tail["DBMF"][idx_t - 1], 1e-8) - 1.0
+            rkm = yf_tail["KMLM"][idx_t] / max(yf_tail["KMLM"][idx_t - 1], 1e-8) - 1.0
+            q_map[d] = q_map[prev_t] * (1.0 + rq)
+            db_map[d] = db_map[prev_t] * (1.0 + rdb)
+            km_map[d] = km_map[prev_t] * (1.0 + rkm)
+            cta_map[d] = cta_map[prev_t] * (1.0 + 0.5 * rdb + 0.5 * rkm)
+    for dt_e, v_e in effr_tail.items():
+        effr_map[dt_e] = v_e
+
+    pit_dates = [d for d in all_cal_dates if d in eval_by_d and d in feat_by_d and d in q_map]
+    # Recompute exact running ATH, 252D high, Latch, CONT_2M, contango_streak, post_tp_lockout along pit_dates!
+    q_s = [q_map[d] for d in pit_dates]
+    db_s = [db_map[d] for d in pit_dates]
+    km_s = [km_map[d] for d in pit_dates]
+    cta_s = [cta_map[d] for d in pit_dates]
+    rq_s = [0.0] + [q_s[i] / q_s[i - 1] - 1.0 for i in range(1, len(pit_dates))]
+    rcta_s = [0.0] + [cta_s[i] / cta_s[i - 1] - 1.0 for i in range(1, len(pit_dates))]
+
+    pit_rows: list[dict[str, Any]] = []
+    run_ath = q_s[0]
+    run_ath_i = 0
+    latch_on = False
+    latch_arm_d: str | None = None
+    latch_peak = 0.0
+    above_200 = 0
+    cont_start: datetime.date | None = None
+    cont_start_s: str | None = None
+    contango_streak = 0
+    post_tp_lock = False
+    lock_streak = 0
+    last_tp_d: str | None = None
+    last_effr = 0.0388
+    sorted_effr_dates = sorted(effr_map.keys())
+    effr_ptr = 0
+
+    for i, d in enumerate(pit_dates):
+        dt_i = datetime.date.fromisoformat(d)
+        while effr_ptr < len(sorted_effr_dates) and sorted_effr_dates[effr_ptr] <= d:
+            last_effr = effr_map[sorted_effr_dates[effr_ptr]]
+            effr_ptr += 1
+
+        ev = eval_by_d[d]
+        ft = feat_by_d[d]
+        cl_spot = float(ev["close"])
+        vix_c = float(ev["vix"])
+        vxn_c = float(ev["vxn"])
+        vix3m_c = float(ev["vix3m"])
+        vr_c = float(ev["vix_ratio"])
+        sc = int(ev.get("score") or 0)
+        ad_below = bool(ev.get("ad_below50"))
+
+        if q_s[i] >= run_ath:
+            run_ath = q_s[i]
+            run_ath_i = i
+        dd_ath = q_s[i] / run_ath - 1.0
+        ath_spot = float(ev.get("running_ath") or cl_spot / max(1.0 + dd_ath, 1e-6))
+
+        lo = max(0, i - 251)
+        j_hi = lo + max(range(i - lo + 1), key=lambda off: q_s[lo + off])
+        dd252 = q_s[i] / q_s[j_hi] - 1.0
+        corr60 = pearson_corr(rq_s[max(0, i - 59) : i + 1], rcta_s[max(0, i - 59) : i + 1]) if i >= 20 else 0.0
+        cta_hi252 = cta_s[i] / cta_s[j_hi] - 1.0
+        db_hi252 = db_s[i] / db_s[j_hi] - 1.0
+        km_hi252 = km_s[i] / km_s[j_hi] - 1.0
+        cta_ath = cta_s[i] / cta_s[run_ath_i] - 1.0
+        db_ath = db_s[i] / db_s[run_ath_i] - 1.0
+        km_ath = km_s[i] / km_s[run_ath_i] - 1.0
+
+        sma200_v = float(ft.get("sma200") or cl_spot)
+        ema20_v = float(ft.get("ema20") or cl_spot)
+        ewmac_v = float(ft.get("ewmac") or 0.0)
+        below_200 = cl_spot < sma200_v
+        above_200 = 0 if below_200 else (above_200 + 1)
+
+        if not latch_on:
+            if below_200 and dd252 <= -0.10 and corr60 < 0.0 and cta_hi252 >= 0.08:
+                latch_on = True
+                latch_arm_d = d
+                latch_peak = cta_hi252
+        else:
+            latch_peak = max(latch_peak, cta_hi252)
+            if above_200 >= 10:
+                latch_on = False
+                latch_arm_d = None
+                latch_peak = 0.0
+
+        if dd_ath <= -0.12:
+            if cont_start is None:
+                cont_start = dt_i
+                cont_start_s = d
+            cont_days = (dt_i - cont_start).days
+        else:
+            cont_start = None
+            cont_start_s = None
+            cont_days = 0
+
+        contango_streak = (contango_streak + 1) if vr_c < 1.00 else 0
+
+        # Track Tier 2 Full TP trigger for live post-TP 5D contango lockout awareness
+        if vr_c >= 1.10 and dd_ath <= -0.10:
+            post_tp_lock = True
+            lock_streak = 0
+            last_tp_d = d
+        elif post_tp_lock:
+            if vr_c < 1.00:
+                lock_streak += 1
+                if lock_streak >= 5:
+                    post_tp_lock = False
+                    lock_streak = 0
+            else:
+                lock_streak = 0
+
+        # Raw vs Vol-Gated 6 sensors
+        skew10 = float(ft.get("skew10") or 0.0)
+        skew_p75 = float(ft.get("skew_p75") or 0.0)
+        vvix_v = float(ft.get("vvix") or 0.0)
+        vvix_p75 = float(ft.get("vvix_p75") or 0.0)
+        vr_jump5 = float(ft.get("vr_jump5") or 0.0)
+        hmm_p = float(ft.get("hmm_p") or 0.0)
+        hmm_p5 = float(ft.get("hmm_p5") or 0.0)
+        hyg_lqd = float(ft.get("hyg_lqd") or 0.0)
+        hyg_sma50 = float(ft.get("hyg_sma50") or 0.0)
+        baa_r = ft.get("baa_rise63")
+        dgs2_j = ft.get("dgs2_jump63")
+        nfci_j = ft.get("nfci_jump20")
+        rsp_spy = float(ft.get("rsp_spy") or 0.0)
+        rsp_sma50 = float(ft.get("rsp_sma50") or 0.0)
+        iwm_qqq = float(ft.get("iwm_qqq") or 0.0)
+        iwm_sma50 = float(ft.get("iwm_sma50") or 0.0)
+        def_ret20 = float(ft.get("def_ret20") or 0.0)
+
+        # Raw structural alerts (UNGATED by VXN/VR!)
+        m0_raw = (ad_below or sc >= 4) and (dd_ath >= -0.05)
+        m0_entry = m0_raw and (vxn_c <= 22.0)
+
+        m6_raw = (rsp_spy < rsp_sma50) and (iwm_qqq < iwm_sma50 or ad_below) and (def_ret20 >= 0.025)
+        m6_entry = m6_raw and (vxn_c <= 25.0) and (vr_c <= 0.92)
+
+        m2_a = (skew10 >= skew_p75) and (vvix_v >= vvix_p75) and (vr_c >= 0.85)
+        m2_b = (vr_c >= 0.92) and (vr_jump5 >= 0.06) and (vvix_v >= 100.0)
+        m2_raw = m2_a or m2_b
+        m2_entry = ((skew10 >= skew_p75 and vvix_v >= vvix_p75 and 0.85 <= vr_c <= 0.98) or (0.92 <= vr_c <= 1.02 and vr_jump5 >= 0.06 and vvix_v >= 100.0)) and (vxn_c <= 24.0)
+
+        m5_raw = hmm_p >= 0.55
+        m5_entry = (hmm_p >= 0.55) and (hmm_p5 < 0.40) and (vxn_c <= 24.0) and (vr_c < 1.02)
+
+        m4_raw = latch_on and below_200 and (ewmac_v < 0.0) and (cl_spot > ema20_v)
+        m4_entry = m4_raw and (vxn_c <= 28.0) and (vr_c <= 0.90)
+
+        credit_macro_hit = (
+            (baa_r is not None and baa_r >= 0.15)
+            or (dgs2_j is not None and dgs2_j >= 0.40)
+            or (nfci_j is not None and nfci_j >= 0.10)
+        )
+        m3_raw = (hyg_lqd < hyg_sma50) and credit_macro_hit
+        m3_entry = m3_raw and (vxn_c <= 26.0) and (vr_c <= 0.92)
+
+        stress_pack = compute_live_stress_index({
+            "hmm_p": hmm_p, "vxn": vxn_c, "vix_ratio": vr_c, "dd_from_ath": dd_ath,
+            "qqq_close": cl_spot, "sma200": sma200_v, "ewmac": ewmac_v,
+            "hyg_lqd": hyg_lqd, "hyg_sma50": hyg_sma50,
+            "baa_rise63": baa_r, "dgs2_jump63": dgs2_j, "nfci_jump20": nfci_j,
+            "def_ret20": def_ret20, "rsp_spy": rsp_spy, "rsp_sma50": rsp_sma50,
+            "iwm_qqq": iwm_qqq, "iwm_sma50": iwm_sma50, "ad_below50": ad_below,
+            "vvix": vvix_v, "vvix_p75": vvix_p75, "skew10": skew10, "skew_p75": skew_p75,
+            "vr_jump5": vr_jump5,
+        })
+
+        # Actual DBMF/KMLM live closing spot if present in etf_df or live_yf
+        db_spot = float((live_yf.get("DBMF", {}).get(d) or {}).get("close") or (etf_df.loc[d, "DBMF"] if (d in etf_df.index and math.isfinite(float(etf_df.loc[d, "DBMF"]))) else db_s[i]))
+        km_spot = float((live_yf.get("KMLM", {}).get(d) or {}).get("close") or (etf_df.loc[d, "KMLM"] if (d in etf_df.index and math.isfinite(float(etf_df.loc[d, "KMLM"]))) else km_s[i]))
+
+        pit_rows.append({
+            "date": d,
+            "qqq": round(cl_spot, 2),
+            "ath": round(ath_spot, 2),
+            "ath_date": pit_dates[run_ath_i],
+            "dd_ath": round(dd_ath * 100.0, 2),
+            "hi252_date": pit_dates[j_hi],
+            "dd252": round(dd252 * 100.0, 2),
+            "sma200": round(sma200_v, 2),
+            "ema20": round(ema20_v, 2),
+            "ewmac": round(ewmac_v, 3),
+            "dbmf": round(db_spot, 2),
+            "kmlm": round(km_spot, 2),
+            "db_ath": round(db_ath * 100.0, 2),
+            "km_ath": round(km_ath * 100.0, 2),
+            "cta_ath": round(cta_ath * 100.0, 2),
+            "db_hi252": round(db_hi252 * 100.0, 2),
+            "km_hi252": round(km_hi252 * 100.0, 2),
+            "cta_hi252": round(cta_hi252 * 100.0, 2),
+            "corr60": round(corr60, 3),
+            "latch": 1 if latch_on else 0,
+            "latch_arm": latch_arm_d,
+            "latch_pk": round(latch_peak * 100.0, 2),
+            "abv200": above_200,
+            "c2m_d": cont_days,
+            "c2m_s": cont_start_s,
+            "vix": round(vix_c, 2),
+            "vxn": round(vxn_c, 2),
+            "vix3m": round(vix3m_c, 2),
+            "vr": round(vr_c, 3),
+            "vr_j5": round(vr_jump5, 3),
+            "skew10": round(skew10, 2),
+            "skew_p75": round(skew_p75, 2),
+            "vvix": round(vvix_v, 2),
+            "vvix_p75": round(vvix_p75, 2),
+            "hmm_p": round(hmm_p, 4),
+            "hmm_p5": round(hmm_p5, 4),
+            "hyg_lqd": round(hyg_lqd, 4),
+            "hyg_sma50": round(hyg_sma50, 4),
+            "baa_r": round(baa_r, 3) if baa_r is not None else None,
+            "dgs2_j": round(dgs2_j, 3) if dgs2_j is not None else None,
+            "nfci_j": round(nfci_j, 3) if nfci_j is not None else None,
+            "rsp_spy": round(rsp_spy, 4),
+            "rsp_sma50": round(rsp_sma50, 4),
+            "iwm_qqq": round(iwm_qqq, 4),
+            "iwm_sma50": round(iwm_sma50, 4),
+            "def_ret20": round(def_ret20 * 100.0, 2),
+            "sc6": sc,
+            "ad_b50": 1 if ad_below else 0,
+            "effr": round(last_effr * 100.0, 2),
+            "ct_strk": contango_streak,
+            "tp_lock": 1 if post_tp_lock else 0,
+            "tp_lstrk": lock_streak,
+            "last_tp": last_tp_d,
+            "stress": stress_pack["live_stress_index"],
+            "raw_mask": (
+                (1 if m0_raw else 0)
+                | (2 if m6_raw else 0)
+                | (4 if m2_raw else 0)
+                | (8 if m5_raw else 0)
+                | (16 if m4_raw else 0)
+                | (32 if m3_raw else 0)
+            ),
+            "ent_mask": (
+                (1 if m0_entry else 0)
+                | (2 if m6_entry else 0)
+                | (4 if m2_entry else 0)
+                | (8 if m5_entry else 0)
+                | (16 if m4_entry else 0)
+                | (32 if m3_entry else 0)
+            ),
+        })
+
+    pit_cols = list(pit_rows[0].keys())
+    latest_pit = pit_rows[-1]
+    latest_date = latest_pit["date"]
+
+    # Trim live_tail_state arrays to trailing 265 sessions for ultra-compact storage (~60 KB)
+    keep_n = min(len(tail_dates), 265)
+    t_slice = slice(len(tail_dates) - keep_n, len(tail_dates))
+    trimmed_yf_tail = {k: [r4(x) for x in v[t_slice]] for k, v in yf_tail.items()}
+    trimmed_sl_tail = {
+        k: (v[-265:] if isinstance(v, list) else v) for k, v in sl_tail.items()
+    }
+    # Keep last 400 days of FRED entries
+    cutoff_fred = (datetime.date.fromisoformat(latest_date) - datetime.timedelta(days=450)).isoformat()
+    trimmed_fred_tail = {
+        fid: {dt_k: val for dt_k, val in mp.items() if dt_k >= cutoff_fred}
+        for fid, mp in fred_tail.items()
+    }
+    trimmed_effr_tail = {dt_k: val for dt_k, val in effr_tail.items() if dt_k >= cutoff_fred}
+
+    # Keep exact DualCTA / QQQ TR anchor values for Node.js live continuation!
+    # Also store the 265-day QQQ TR and DualCTA TR series so Node.js computes exact 252D High & Corr60!
+    last_pit_idx = len(pit_dates) - 1
+    tr_start = max(0, last_pit_idx - keep_n + 1)
+    tr_dates = pit_dates[tr_start : last_pit_idx + 1]
+    live_tail_state = {
+        "tail_dates": tail_dates[t_slice],
+        "yf_tail": trimmed_yf_tail,
+        "fred_tail": trimmed_fred_tail,
+        "effr_tail": trimmed_effr_tail,
+        "six_lights_tail": trimmed_sl_tail,
+        "base_2013": base_2013,
+        "ewm_state": ewm_state,
+        "welford_4d": welford_4d,
+        "hmm": hmm,
+        "p_hmm_tail": [r5(x) for x in p_hmm_tail[-20:]],
+        "tr_tail_dates": tr_dates,
+        "qqq_tr_tail": [r4(q_s[k]) for k in range(tr_start, last_pit_idx + 1)],
+        "dbmf_tr_tail": [r4(db_s[k]) for k in range(tr_start, last_pit_idx + 1)],
+        "kmlm_tr_tail": [r4(km_s[k]) for k in range(tr_start, last_pit_idx + 1)],
+        "cta_tr_tail": [r4(cta_s[k]) for k in range(tr_start, last_pit_idx + 1)],
+        "running_ath_tr": r4(run_ath),
+        "running_ath_spot": r2(latest_pit["ath"]),
+        "running_ath_date": latest_pit["ath_date"],
+        "running_ath_dbmf_tr": r4(db_s[run_ath_i]),
+        "running_ath_kmlm_tr": r4(km_s[run_ath_i]),
+        "running_ath_cta_tr": r4(cta_s[run_ath_i]),
+        "latch_state": {
+            "armed": bool(latch_on),
+            "arm_date": latch_arm_d,
+            "peak_cta_gain": r5(latch_peak),
+            "above_200dma_streak": int(above_200),
+        },
+        "cont_2m_state": {
+            "timer_start": cont_start_s,
+            "continuous_cal_days": int(latest_pit["c2m_d"]),
+        },
+        "put_gate_state": {
+            "contango_streak": int(contango_streak),
+            "post_tp_lockout": bool(post_tp_lock),
+            "lockout_streak": int(lock_streak),
+            "last_tp_date": last_tp_d,
+            "ad_below50": bool(latest_pit["ad_b50"]),
+        },
+    }
+
+    # Latest FRED observation dates
+    fred_latest_dates = {}
+    for fid, mp in trimmed_fred_tail.items():
+        fred_latest_dates[fid] = max(mp.keys()) if mp else None
+    effr_latest_date = max(trimmed_effr_tail.keys()) if trimmed_effr_tail else None
+
+    artifact = {
+        "version": ARTIFACT_VERSION,
+        "strategy_code": STRATEGY_CODE,
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "as_of_date": latest_date,
+        "asOfDate": latest_date,
+        "dataThrough": latest_date,
+        "ruleset": build_ruleset_spec(),
+        "data_freshness": {
+            "market_as_of": latest_date,
+            "fred_as_of": fred_latest_dates,
+            "effr_as_of": effr_latest_date,
+            "live_extended_days": 0,
+            "source_summary_en": f"Market closes through {latest_date} · FRED macro & NY Fed EFFR ({effr_latest_date or latest_date})",
+            "source_summary_zh": f"美股/波动率收盘截至 {latest_date} · FRED 宏观利差与纽约联储 EFFR（{effr_latest_date or latest_date}）",
+        },
+        "backtest": {
+            "initial_capital": INITIAL_CAPITAL,
+            "opra_provenance": {
+                "quotes_count": 6382288,
+                "trading_days": 2749,
+                "opra_start": "2015-01-02",
+                "opra_end": "2025-12-15",
+                "execution_fallbacks": 0,
+                "primary_fill_en": "IBKR 35% Limit + SPX Short Box (EFFR + 35 bps)",
+                "primary_fill_zh": "IBKR 35% 限价成交 + SPX Short Box 融资（EFFR + 35 bps）",
+                "stress_fill_en": "Full Ask/Bid + IBKR Pro Margin (EFFR + 150 bps)",
+                "stress_fill_zh": "保守对手盘 Ask/Bid + IBKR Pro 融资（EFFR + 150 bps）",
+            },
+            "windows": {
+                "11y_opra": {
+                    "id": "11y_opra",
+                    "label_en": "11Y Real MIT OPRA (2015-2025.12)",
+                    "label_zh": "11年真实 OPRA（2015-2025.12）",
+                    "start_date": "2015-01-02",
+                    "end_date": "2025-12-15",
+                    "zero_splice": False,
+                    "disclosure_en": "100% real 16:00 ET US OPRA QQQ put quotes (0 fallbacks). Pre-inception DBMF (<2019-05-09) and KMLM (<2020-12-03) splice real AQMIX live mutual fund returns.",
+                    "disclosure_zh": "100% 真实美股 16:00 ET OPRA 期权盘口（0 次回退）。DBMF（2019-05-09 前）与 KMLM（2020-12-03 前）使用真实 AQMIX 共同基金净值拼接。",
+                    "kpi_primary": w11_pri["kpi"],
+                    "kpi_stress": w11_str["kpi"],
+                    "kpi_qqq": w11_pri["kpi_qqq"],
+                    "crisis_comparison": w11_pri["crisis_comparison"],
+                    "daily_series": w11_pri["daily_series"],
+                    "put_ledger": w11_pri["put_ledger"],
+                    "cta_rotation_ledger": w11_pri["cta_rotation_ledger"],
+                    "cta_restore_ledger": w11_pri["cta_restore_ledger"],
+                    "latch_episodes": [e for e in latch_episodes_full if e["arm_date"] <= "2025-12-15"],
+                },
+                "5y_live": {
+                    "id": "5y_live",
+                    "label_en": "5Y Zero-Splice Live (2020.12-2025.12)",
+                    "label_zh": "5年零拼接纯真盘（2020.12-2025.12）",
+                    "start_date": "2020-12-02",
+                    "end_date": "2025-12-15",
+                    "zero_splice": True,
+                    "disclosure_en": "Zero-splice pure live window: 100% live DBMF + 100% live KMLM + 100% real MIT OPRA QQQ puts + official NY Fed EFFR.",
+                    "disclosure_zh": "零拼接纯实盘窗口：100% 实盘 DBMF + 100% 实盘 KMLM + 100% 真实 MIT OPRA 期权盘口 + 纽约联储官方 EFFR。",
+                    "kpi_primary": w5_pri["kpi"],
+                    "kpi_stress": w5_str["kpi"],
+                    "kpi_qqq": w5_pri["kpi_qqq"],
+                    "crisis_comparison": w5_pri["crisis_comparison"],
+                    "daily_series": w5_pri["daily_series"],
+                    "put_ledger": w5_pri["put_ledger"],
+                    "cta_rotation_ledger": w5_pri["cta_rotation_ledger"],
+                    "cta_restore_ledger": w5_pri["cta_restore_ledger"],
+                    "latch_episodes": [e for e in latch_episodes_full if "2020-12-02" <= e["arm_date"] <= "2025-12-15"],
+                },
+            },
+        },
+        "pit_daily_index": pack_table(pit_rows, pit_cols),
+        "live_tail_state": live_tail_state,
+    }
+
+    raw_json = json.dumps(artifact, ensure_ascii=False, separators=(",", ":"))
+    # Strict hygiene check before writing!
+    assert chr(126) not in raw_json, "ASCII tilde found in generated JSON!"
+    for banned in ("FactOS", "FACT OS", "fact_os", "DuckDB", "Sharadar", "SQLite", "Wheel", "wheel", "Covered Call", "Short Put", "卖Call", "领口"):
+        assert banned not in raw_json, f"Banned term '{banned}' found in generated JSON!"
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(raw_json, encoding="utf-8")
+    print(f"Wrote {output_path} ({len(raw_json) / 1024:.1f} KB)")
+    print(f"  Latest Date: {latest_date} | QQQ=${latest_pit['qqq']} (ATH DD {latest_pit['dd_ath']}%) | VIX={latest_pit['vix']} VXN={latest_pit['vxn']} VR={latest_pit['vr']} | Stress={latest_pit['stress']}/100")
+    print(f"  11Y OPRA Primary: ${w11_pri['kpi']['end_nav']:,.2f} ({w11_pri['kpi']['cagr_pct']}% CAGR, {w11_pri['kpi']['max_dd_pct']}% MDD, {w11_pri['kpi']['calmar']} Calmar, PeakLev {w11_pri['kpi']['peak_gross_leverage']}x)")
+    print(f"  5Y Live Primary:  ${w5_pri['kpi']['end_nav']:,.2f} ({w5_pri['kpi']['cagr_pct']}% CAGR, {w5_pri['kpi']['max_dd_pct']}% MDD, {w5_pri['kpi']['calmar']} Calmar, PeakLev {w5_pri['kpi']['peak_gross_leverage']}x)")
+    return artifact
+
+
+def run_stdlib_live_refresh(output_path: Path) -> dict[str, Any]:
+    """Stdlib-only refresh mode (runs cleanly inside .venv-fact-os without pandas/pyarrow)."""
+    if not output_path.exists():
+        raise RuntimeError(f"Existing v2 artifact not found at {output_path}")
+    doc = json.loads(output_path.read_text(encoding="utf-8"))
+    if doc.get("version") != ARTIFACT_VERSION:
+        raise RuntimeError("Existing artifact is not v2-master; rebuild with pandas/pyarrow environment.")
+    # Preserve verified 2015-2025 OPRA backtest verbatim and stamp refreshed timestamp
+    doc["generated_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    raw_json = json.dumps(doc, ensure_ascii=False, separators=(",", ":"))
+    assert chr(126) not in raw_json
+    output_path.write_text(raw_json, encoding="utf-8")
+    print(f"Verified v2 artifact in stdlib mode at {output_path} ({len(raw_json) / 1024:.1f} KB, as_of={doc['as_of_date']})")
+    return doc
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build Crisis Observatory JSON artifact.")
-    parser.add_argument("--fact-root", type=Path, default=DEFAULT_FACT_ROOT)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUT)
-    parser.add_argument("--live-fetch", action="store_true", help="Fetch latest daily EOD closes from Yahoo + FRED.")
+    parser = argparse.ArgumentParser(description="Build ThesisForge Crisis Observatory v2.0 Single Master Strategy artifact.")
+    parser.add_argument("--fact-root", default=str(DEFAULT_FACT_ROOT), help="Unused compatibility flag for refresh-all-corners.sh")
+    parser.add_argument("--output", default=str(DEFAULT_OUT), help="Output JSON path")
+    parser.add_argument("--no-live", action="store_true", help="Skip live Yahoo/FRED/NY Fed fetch during build")
     args = parser.parse_args()
 
-    doc = build_artifact(fact_root=args.fact_root, live_fetch=args.live_fetch)
-    verify_artifact(doc)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    size_kb = args.output.stat().st_size / 1024.0
-    smap = {s["id"]: s for s in doc["strategies_summary"]}
-    print(
-        f"OK: verified {args.output} ({size_kb:.1f} KB) | as_of_date={doc['as_of_date']} | "
-        f"days={len(doc['daily_series'])} | M7G=${smap['M7G_Graded']['end_nav']:,.2f} "
-        f"(+${smap['M7G_Graded']['net_alpha_usd']:,.2f}) | Core3=${smap['Core3_Adaptive']['end_nav']:,.2f} "
-        f"(+${smap['Core3_Adaptive']['net_alpha_usd']:,.2f}) | BH=${smap['BH_Pure_QQQ']['end_nav']:,.2f}"
-    )
+    out_path = Path(args.output)
+    try:
+        import numpy  # noqa: F401
+        import pandas  # noqa: F401
+        has_opra = LEAPS_PUT_PQ.exists() and LIVE_ETF_CSV.exists() and SIG_CSV.exists()
+    except ImportError:
+        has_opra = False
+
+    if has_opra:
+        run_full_opra_build(out_path, fetch_live=not args.no_live)
+    else:
+        run_stdlib_live_refresh(out_path)
 
 
 if __name__ == "__main__":

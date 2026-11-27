@@ -2,198 +2,66 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import {
-  CRISIS_OBSERVATORY_PROFILES,
-  CRISIS_OBSERVATORY_PUT_OTMS,
-  CRISIS_OBSERVATORY_M7_TP_MODES,
-  CRISIS_OBSERVATORY_ROLL_MODES,
-  CRISIS_OBSERVATORY_FILL_MODES,
-  DEFAULT_M7_FILL_MODE,
-  HARDCODED_RULESET_SPEC,
-  evalSkewIv,
-  bsmPrice,
-  evalCore3Signal,
-  simulateM7StrategyJS,
-  buildM7LiveDashboardJS,
-  extendM7LiveFromFeed,
-  getLiveM7MarketFeed,
-  normalizeLegacyExtraBarsToFeed,
-} from './crisisObservatoryM7.js';
-import {
-  CRISIS_OBSERVATORY_OVERLAY_MODES,
-  DEFAULT_OVERLAY_MODE,
-  CRISIS_OBSERVATORY_FIN_MODES,
-  DEFAULT_FIN_MODE,
-  CRISIS_OBSERVATORY_KMLM_WINDOWS,
-  DEFAULT_KMLM_WINDOW,
-  normalizeOverlayMode,
-  normalizeFinMode,
-  normalizeKmlmWindow,
-  getLiveKmlmEffrFeed,
-  buildHypothesisKmlm20Payload,
-} from './crisisObservatoryKmlm20.js';
 
-export {
-  CRISIS_OBSERVATORY_PROFILES,
-  CRISIS_OBSERVATORY_PUT_OTMS,
-  CRISIS_OBSERVATORY_M7_TP_MODES,
-  CRISIS_OBSERVATORY_ROLL_MODES,
-  CRISIS_OBSERVATORY_FILL_MODES,
-  DEFAULT_M7_FILL_MODE,
-  HARDCODED_RULESET_SPEC,
-  CRISIS_OBSERVATORY_OVERLAY_MODES,
-  DEFAULT_OVERLAY_MODE,
-  CRISIS_OBSERVATORY_FIN_MODES,
-  DEFAULT_FIN_MODE,
-  CRISIS_OBSERVATORY_KMLM_WINDOWS,
-  DEFAULT_KMLM_WINDOW,
-};
+export const CRISIS_OBSERVATORY_VERSION = 'crisis-observatory-v2-master';
+export const CRISIS_OBSERVATORY_STRATEGY_CODE = 'V2_QQQ_DUALCTA_TAILPUT_SINGLE';
+export const CRISIS_OBSERVATORY_WINDOWS = Object.freeze(['11y_opra', '5y_live']);
+export const DEFAULT_CRISIS_WINDOW = '11y_opra';
 
-export const CRISIS_OBSERVATORY_VERSION = 'crisis-observatory-v3-m7';
-export const CRISIS_OBSERVATORY_STRATEGIES = Object.freeze([
-  'M7G_Graded',
-  'Core3_Adaptive',
-  'M7_Ensemble',
-  'U1_PureOptions',
-  'B1c_PureAD',
-  'D2_SixLights',
-  'H2_G4_PriceGate',
-  'NoPut_CallOnly',
-  'BH_Pure_QQQ',
-]);
-export const CRISIS_OBSERVATORY_TP_MODES = Object.freeze([
-  'layered_itm',
-  'standard_dual',
-  'both_4x',
-]);
-export const CRISIS_OBSERVATORY_CC_MODES = Object.freeze([
-  'cc_off',
-  'cc_d12_d35',
-  'cc_d12_r45',
-  'cc_d12_cr55',
-]);
-export const CRISIS_OBSERVATORY_SP_MODES = Object.freeze([
-  'sp_off',
-  'sp_14d_cap10',
-  'sp_10d_vixf',
-  'sp_14d_unf',
-]);
-export const CRISIS_OBSERVATORY_WC_MODES = Object.freeze([
-  'wc_reclaim_30d_d35',
-  'wc_30d_c5s5',
-  'wc_14d_c0s2',
-]);
-
-const PUT_OTM_ALIASES = Object.freeze({
-  '15': 'otm15',
-  '-15': 'otm15',
-  '-15%': 'otm15',
-  '0.85': 'otm15',
-  '20': 'otm20',
-  '-20': 'otm20',
-  '-20%': 'otm20',
-  '0.80': 'otm20',
+const WINDOW_ALIASES = Object.freeze({
+  '11y': '11y_opra',
+  '11yr': '11y_opra',
+  '11y_opra': '11y_opra',
+  all: '11y_opra',
+  full: '11y_opra',
+  '5y': '5y_live',
+  '5yr': '5y_live',
+  '5yr_live': '5y_live',
+  '5y_live': '5y_live',
+  live: '5y_live',
+  zero_splice: '5y_live',
 });
 
-const M7_TP_ALIASES = Object.freeze({
-  std: 'standard',
-  STANDARD: 'standard',
-  itm: 'itm_tp',
-  ITM_TP: 'itm_tp',
+const YF_LIVE_MAP = Object.freeze({
+  QQQ: 'QQQ',
+  DBMF: 'DBMF',
+  KMLM: 'KMLM',
+  SPY: 'SPY',
+  RSP: 'RSP',
+  IWM: 'IWM',
+  XLP: 'XLP',
+  XLU: 'XLU',
+  XLV: 'XLV',
+  XLK: 'XLK',
+  HYG: 'HYG',
+  LQD: 'LQD',
+  VXN: '^VXN',
+  VIX: '^VIX',
+  VIX3M: '^VIX3M',
+  VVIX: '^VVIX',
+  SKEW: '^SKEW',
+  HG_F: 'HG=F',
+  XLY: 'XLY',
+  XLI: 'XLI',
+  XLB: 'XLB',
+  XLF: 'XLF',
 });
 
-const PROFILE_ALIASES = Object.freeze({
-  full_m7: 'full_m7_adaptive',
-  full: 'full_m7_adaptive',
-  m7: 'full_m7_adaptive',
-  m7g: 'full_m7_adaptive',
-  default: 'full_m7_adaptive',
-  core3: 'core3_adaptive',
-  core_3: 'core3_adaptive',
-  minimal: 'core3_adaptive',
-});
-
-const ROLL_MODE_ALIASES = Object.freeze({
-  adaptive: 'adaptive_120_90',
-  '120_90': 'adaptive_120_90',
-  '125_90': 'adaptive_120_90',
-  adaptive_125_90: 'adaptive_120_90',
-  adaptive_roll: 'adaptive_120_90',
-  '90d': '90d_hold',
-  hold: '90d_hold',
-  '120d': '120d_roll50',
-  roll50: '120d_roll50',
-  '50d': '120d_roll50',
-  '120d_50d': '120d_roll50',
-});
-
-const FILL_MODE_ALIASES = Object.freeze({
-  limit: 'ibkr_limit',
-  ibkr: 'ibkr_limit',
-  default: 'ibkr_limit',
-  strict: 'ask_bid',
-  askbid: 'ask_bid',
-  'ask-bid': 'ask_bid',
-});
-
-const LEGACY_SP_MODE_ALIASES = Object.freeze({
-  off: 'sp_off',
-  cap10: 'sp_14d_cap10',
-  vixf: 'sp_10d_vixf',
-  unf: 'sp_14d_unf',
-});
-
-const LEGACY_WC_MODE_ALIASES = Object.freeze({
-  reclaim: 'wc_reclaim_30d_d35',
-  d35: 'wc_reclaim_30d_d35',
-  reclaim_30d_d35: 'wc_reclaim_30d_d35',
-  rec: 'wc_reclaim_30d_d35',
-  default: 'wc_reclaim_30d_d35',
-  '30d': 'wc_30d_c5s5',
-  c5s5: 'wc_30d_c5s5',
-  '14d': 'wc_14d_c0s2',
-  c0s2: 'wc_14d_c0s2',
-  legacy: 'wc_14d_c0s2',
-});
-
-const LEGACY_CC_MODE_ALIASES = Object.freeze({
-  cc_high_vol: 'cc_d12_d35',
-  cc_hv_8: 'cc_d12_d35',
-  cc_hv_9: 'cc_d12_d35',
-  cc_d12_3x: 'cc_d12_d35',
-  cc_always: 'cc_d12_r45',
-  cc_always_8: 'cc_d12_r45',
-  cc_otm8_3x: 'cc_d12_r45',
-});
-
-const STRATEGY_NAV_KEYS = Object.freeze({
-  M7G_Graded: 'nav_m7g',
-  Core3_Adaptive: 'nav_c3',
-  M7_Ensemble: 'nav_m7',
-  U1_PureOptions: 'nav_u1',
-  B1c_PureAD: 'nav_b1c',
-  D2_SixLights: 'nav_d2',
-  H2_G4_PriceGate: 'nav_h2',
-  NoPut_CallOnly: 'nav_cc',
-  BH_Pure_QQQ: 'nav_bh',
-});
-
-const LEGACY_STRATEGY_ALIASES = Object.freeze({
-  U4_DualEngine: 'U1_PureOptions',
-  M7G: 'M7G_Graded',
-  M7: 'M7_Ensemble',
-  Core3: 'Core3_Adaptive',
-  CORE3: 'Core3_Adaptive',
-  full_m7_adaptive: 'M7G_Graded',
-  core3_adaptive: 'Core3_Adaptive',
+const FRED_LAGS = Object.freeze({
+  BAA10Y: 1,
+  DGS2: 1,
+  NFCI: 5,
+  DFF: 1,
+  T10Y2Y: 1,
 });
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultFile = path.resolve(projectRoot, 'server/config/crisis-observatory-dashboard.json');
 
 let cachedArtifact = null;
-const projectedModeCache = new Map();
-const m7SimComboCache = new Map();
+const liveResponseCache = new Map();
+const liveFeedCache = { fetchedAt: 0, feed: null, inFlight: null };
+const LIVE_FEED_TTL_MS = 15 * 60 * 1000;
 
 function fail(code, status = 503) {
   throw Object.assign(new Error(code), { status });
@@ -204,8 +72,260 @@ const isIsoDate = value =>
   Number.isFinite(Date.parse(value)) &&
   new Date(value).toISOString().slice(0, 10) === value;
 
+const r1 = v => (Number.isFinite(v) ? Math.round(v * 10) / 10 : null);
 const r2 = v => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 const r3 = v => (Number.isFinite(v) ? Math.round(v * 1000) / 1000 : null);
+const r4 = v => (Number.isFinite(v) ? Math.round(v * 10000) / 10000 : null);
+const r5 = v => (Number.isFinite(v) ? Math.round(v * 100000) / 100000 : null);
+
+function clamp01(v) {
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  if (v >= 1) return 1;
+  return v;
+}
+
+function fmtSigned(v, dec = 2) {
+  if (!Number.isFinite(v)) return 'n/a';
+  const sign = v >= 0 ? '+' : '';
+  return `${sign}${v.toFixed(dec)}`;
+}
+
+function addCalendarDaysIso(isoDate, days) {
+  if (!isIsoDate(isoDate)) return null;
+  const ms = Date.parse(`${isoDate}T00:00:00Z`) + days * 86400 * 1000;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function diffCalendarDaysIso(d1, d0) {
+  if (!isIsoDate(d1) || !isIsoDate(d0)) return 0;
+  return Math.round((Date.parse(`${d1}T00:00:00Z`) - Date.parse(`${d0}T00:00:00Z`)) / (86400 * 1000));
+}
+
+function quantileLinear(arr, q) {
+  if (!arr.length) return 0;
+  const s = arr.slice().sort((a, b) => a - b);
+  if (s.length === 1) return s[0];
+  const pos = (s.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return s[lo];
+  return s[lo] + (pos - lo) * (s[hi] - s[lo]);
+}
+
+function meanTail(arr, n) {
+  if (!arr.length || n <= 0) return null;
+  const sub = arr.slice(-n);
+  let sum = 0;
+  for (const x of sub) sum += x;
+  return sum / sub.length;
+}
+
+function stdTailDdof1(arr, n) {
+  if (arr.length < Math.max(2, n)) return null;
+  const sub = arr.slice(-n);
+  const mu = sub.reduce((a, b) => a + b, 0) / sub.length;
+  let sq = 0;
+  for (const x of sub) sq += (x - mu) * (x - mu);
+  return Math.sqrt(Math.max(0, sq / (sub.length - 1)));
+}
+
+function pearsonCorr(xs, ys) {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 5) return 0;
+  let mx = 0;
+  let my = 0;
+  const ox = xs.length - n;
+  const oy = ys.length - n;
+  for (let i = 0; i < n; i += 1) {
+    mx += xs[ox + i];
+    my += ys[oy + i];
+  }
+  mx /= n;
+  my /= n;
+  let num = 0;
+  let dx = 0;
+  let dy = 0;
+  for (let i = 0; i < n; i += 1) {
+    const a = xs[ox + i] - mx;
+    const b = ys[oy + i] - my;
+    num += a * b;
+    dx += a * a;
+    dy += b * b;
+  }
+  const denom = Math.sqrt(dx * dy);
+  if (denom <= 1e-12) return 0;
+  return Math.max(-1, Math.min(1, num / denom));
+}
+
+function hamiltonStepJS(stateP, zRow, A, means, vars) {
+  const pred = [
+    stateP[0] * A[0][0] + stateP[1] * A[1][0],
+    stateP[0] * A[0][1] + stateP[1] * A[1][1],
+  ];
+  const logLik = [0, 0];
+  for (let st = 0; st < 2; st += 1) {
+    let ll = 0;
+    for (let dim = 0; dim < 4; dim += 1) {
+      const v = Math.max(1e-6, vars[st][dim]);
+      const diff = zRow[dim] - means[st][dim];
+      ll += -0.5 * (Math.log(2 * Math.PI * v) + (diff * diff) / v);
+    }
+    logLik[st] = ll;
+  }
+  const m = Math.max(logLik[0], logLik[1]);
+  const p0 = pred[0] * Math.exp(logLik[0] - m);
+  const p1 = pred[1] * Math.exp(logLik[1] - m);
+  const tot = p0 + p1;
+  if (!Number.isFinite(tot) || tot <= 0) return [0.5, 0.5];
+  return [p0 / tot, p1 / tot];
+}
+
+function alignFredLagWithMeta(rawMap, calDates, idx, lag) {
+  const effIdx = idx - lag;
+  if (effIdx < 0 || !rawMap) return { value: null, obsDate: null };
+  const cutoff = calDates[effIdx];
+  let bestD = null;
+  let bestV = null;
+  for (const [d, v] of Object.entries(rawMap)) {
+    if (d <= cutoff && Number.isFinite(Number(v))) {
+      if (bestD === null || d > bestD) {
+        bestD = d;
+        bestV = Number(v);
+      }
+    }
+  }
+  return { value: bestV, obsDate: bestD };
+}
+
+export function parseFredCsvText(txt) {
+  if (typeof txt !== 'string' || !txt) return {};
+  const tailTxt = txt.length > 16000 ? txt.slice(-16000) : txt;
+  const lines = tailTxt.split(/\r?\n/);
+  const out = {};
+  for (const line of lines) {
+    const parts = line.split(',');
+    if (parts.length < 2) continue;
+    const d = parts[0].trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    const rawVal = parts[1].trim();
+    if (!rawVal || rawVal === '.') continue;
+    const v = Number(rawVal);
+    if (Number.isFinite(v)) out[d] = v;
+  }
+  return out;
+}
+
+export function computeLiveStressIndexJS({
+  hmm_p = 0,
+  vxn = 0,
+  vix_ratio = 0,
+  dd_from_ath = 0,
+  close = 0,
+  sma200 = 0,
+  ewmac = 0,
+  hyg_lqd = 0,
+  hyg_sma50 = 0,
+  baa_rise63 = null,
+  dgs2_jump63 = null,
+  nfci_jump20 = null,
+  def_ret20 = 0,
+  rsp_spy = 0,
+  rsp_sma50 = 0,
+  iwm_qqq = 0,
+  iwm_sma50 = 0,
+  ad_below50 = false,
+  vvix = 0,
+  vvix_p75 = 0,
+  skew10 = 0,
+  skew_p75 = 0,
+  vr_jump5 = 0,
+} = {}) {
+  const baaEff =
+    baa_rise63 === null || baa_rise63 === undefined || !Number.isFinite(Number(baa_rise63)) || Number(baa_rise63) <= -900
+      ? 0
+      : Number(baa_rise63);
+  const dgs2Eff =
+    dgs2_jump63 === null || dgs2_jump63 === undefined || !Number.isFinite(Number(dgs2_jump63)) || Number(dgs2_jump63) <= -900
+      ? 0
+      : Number(dgs2_jump63);
+  const nfciEff =
+    nfci_jump20 === null || nfci_jump20 === undefined || !Number.isFinite(Number(nfci_jump20)) || Number(nfci_jump20) <= -900
+      ? 0
+      : Number(nfci_jump20);
+
+  const regimeVol =
+    clamp01(Number(hmm_p)) * 18.0 +
+    clamp01((Number(vxn) - 20.0) / 20.0) * 7.0 +
+    clamp01((Number(vix_ratio) - 0.9) / 0.2) * 5.0;
+
+  const trendDd =
+    clamp01((-Number(dd_from_ath) - 0.03) / 0.17) * 12.0 +
+    (Number(sma200) > 0 && Number(close) < Number(sma200) ? 6.0 : 0.0) +
+    clamp01(-Number(ewmac) / 0.8) * 7.0;
+
+  const creditMacro =
+    (Number(hyg_sma50) > 0 && Number(hyg_lqd) < Number(hyg_sma50) ? 8.0 : 0.0) +
+    clamp01(Math.max(0, baaEff) / 0.25) * 8.0 +
+    clamp01(Math.max(Math.max(0, dgs2Eff) / 0.5, Math.max(0, nfciEff) / 0.15)) * 9.0;
+
+  const breadthTail =
+    clamp01(Math.max(0, Number(def_ret20)) / 0.1) * 8.0 +
+    (Number(rsp_sma50) > 0 && Number(rsp_spy) < Number(rsp_sma50) ? 2.0 : 0.0) +
+    (Number(iwm_sma50) > 0 && Number(iwm_qqq) < Number(iwm_sma50) ? 2.0 : 0.0) +
+    (ad_below50 ? 2.0 : 0.0) +
+    (Number(vvix_p75) > 0 && Number(vvix) >= Number(vvix_p75) ? 2.0 : 0.0) +
+    (Number(skew_p75) > 0 && Number(skew10) >= Number(skew_p75) ? 2.0 : 0.0) +
+    (Number(vr_jump5) >= 0.06 ? 2.0 : 0.0);
+
+  const rawTotal = Math.max(0, Math.min(100, regimeVol + trendDd + creditMacro + breadthTail));
+  const idxInt = Math.floor(rawTotal + 0.5);
+  let level = 'calm';
+  let lblEn = 'Calm Low-Vol';
+  let lblZh = '平静低波';
+  if (idxInt >= 75) {
+    level = 'crisis';
+    lblEn = 'Active Crisis';
+    lblZh = '危机爆发中';
+  } else if (idxInt >= 50) {
+    level = 'elevated';
+    lblEn = 'Elevated Stress';
+    lblZh = '高压警戒';
+  } else if (idxInt >= 25) {
+    level = 'building';
+    lblEn = 'Stress Building';
+    lblZh = '隐患蓄力';
+  }
+  return {
+    live_stress_index: idxInt,
+    live_stress_level: level,
+    live_stress_label_en: lblEn,
+    live_stress_label_zh: lblZh,
+    live_stress_breakdown: {
+      regime_vol: r1(regimeVol),
+      regime_vol_cap: 30,
+      trend_dd: r1(trendDd),
+      trend_dd_cap: 25,
+      credit_macro: r1(creditMacro),
+      credit_macro_cap: 25,
+      breadth_tail: r1(breadthTail),
+      breadth_tail_cap: 20,
+    },
+  };
+}
+
+function unpackTable(val) {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  if (Array.isArray(val._cols) && Array.isArray(val._rows)) {
+    const cols = val._cols;
+    return val._rows.map(row => {
+      const obj = {};
+      for (let i = 0; i < cols.length; i += 1) obj[cols[i]] = row[i] ?? null;
+      return obj;
+    });
+  }
+  return [];
+}
 
 function readArtifact(file = defaultFile) {
   let stat;
@@ -232,2866 +352,1526 @@ function readArtifact(file = defaultFile) {
   }
   if (
     !parsed ||
-    !Array.isArray(parsed.daily_series) ||
-    parsed.daily_series.length === 0 ||
-    !Array.isArray(parsed.six_crisis_lights) ||
-    !Array.isArray(parsed.strategies_summary) ||
-    !Array.isArray(parsed.crisis_windows)
+    parsed.version !== CRISIS_OBSERVATORY_VERSION ||
+    !parsed.backtest?.windows?.['11y_opra'] ||
+    !parsed.backtest?.windows?.['5y_live'] ||
+    !parsed.pit_daily_index ||
+    !parsed.live_tail_state
   ) {
     fail('crisis_observatory_invalid', 503);
   }
   const snapshotId = createHash('sha256').update(raw).digest('hex').slice(0, 16);
-  projectedModeCache.clear();
-  m7SimComboCache.clear();
+  const pitRows = unpackTable(parsed.pit_daily_index);
+  const pitByDate = new Map(pitRows.map(r => [r.date, r]));
+  const unpackedWindows = {};
+  for (const wid of CRISIS_OBSERVATORY_WINDOWS) {
+    const w = parsed.backtest.windows[wid];
+    unpackedWindows[wid] = {
+      ...w,
+      daily_series: unpackTable(w.daily_series),
+    };
+  }
+  liveResponseCache.clear();
   cachedArtifact = {
     file,
     mtimeMs: stat.mtimeMs,
     size: stat.size,
     snapshotId,
     data: parsed,
+    pitRows,
+    pitByDate,
+    unpackedWindows,
   };
   return cachedArtifact;
 }
 
-function unpackTable(val) {
-  if (!val) return [];
-  if (Array.isArray(val)) return val;
-  if (Array.isArray(val._cols) && Array.isArray(val._rows)) {
-    const cols = val._cols;
-    return val._rows.map(row => {
-      const obj = {};
-      for (let i = 0; i < cols.length; i += 1) {
-        obj[cols[i]] = row[i] ?? null;
-      }
-      return obj;
-    });
+export function normalizeWindowId(raw) {
+  if (!raw) return DEFAULT_CRISIS_WINDOW;
+  const k = String(raw).trim().toLowerCase();
+  return WINDOW_ALIASES[k] ?? DEFAULT_CRISIS_WINDOW;
+}
+
+async function fetchYahooChart1mo(symbol, timeoutMs = 5500) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const enc = encodeURIComponent(symbol);
+    const resp = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${enc}?range=1mo&interval=1d`,
+      { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: controller.signal },
+    );
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    const res0 = json?.chart?.result?.[0];
+    const ts = res0?.timestamp ?? [];
+    const quote = res0?.indicators?.quote?.[0] ?? {};
+    const adjArr = res0?.indicators?.adjclose?.[0]?.adjclose ?? [];
+    const opens = quote.open ?? [];
+    const closes = quote.close ?? [];
+    const out = new Map();
+    for (let i = 0; i < ts.length; i += 1) {
+      const c = closes[i];
+      if (!Number.isFinite(c) || c <= 0) continue;
+      const a = Number.isFinite(adjArr[i]) && adjArr[i] > 0 ? adjArr[i] : c;
+      const o = Number.isFinite(opens[i]) && opens[i] > 0 ? opens[i] : c;
+      const dt = new Date(ts[i] * 1000).toISOString().slice(0, 10);
+      out.set(dt, { open: o, close: c, adj: a });
+    }
+    return out;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
-  return [];
 }
 
-function normalizeTradeQuoteRow(tr) {
-  if (!tr || typeof tr !== 'object') return tr;
-  const pricingSrc = String(tr.pricing_source ?? tr.entry_source ?? '');
-  const quoteSource =
-    tr.quoteSource ||
-    tr.quote_source ||
-    (pricingSrc.startsWith('real_opra') ||
-    (tr.entry_date && String(tr.entry_date) <= '2025-12-15')
-      ? 'REAL_OPRA'
-      : 'CALIBRATED_BSM');
-  return {
-    ...tr,
-    quoteSource,
-    quote_source: quoteSource,
-    occSymbol: tr.occSymbol ?? tr.occ_symbol ?? null,
-    exp: tr.exp ?? tr.planned_exp_date ?? null,
-    strike: tr.strike ?? tr.kp ?? null,
-    entryBid: tr.entryBid ?? null,
-    entryAsk: tr.entryAsk ?? null,
-    exitBid: tr.exitBid ?? null,
-    exitAsk: tr.exitAsk ?? null,
-  };
-}
-
-function unpackLedgerMap(rawMap) {
-  if (!rawMap || typeof rawMap !== 'object') return {};
-  const out = {};
-  for (const [sid, val] of Object.entries(rawMap)) {
-    out[sid] = unpackTable(val).map(normalizeTradeQuoteRow);
+async function fetchFredRecent(seriesId, timeoutMs = 5500) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const enc = encodeURIComponent(seriesId);
+    const resp = await fetch(
+      `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${enc}&cosd=2025-06-01`,
+      { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: controller.signal },
+    );
+    if (!resp.ok) return null;
+    return parseFredCsvText(await resp.text());
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
-  return out;
 }
 
-const EVENT_ORDER_RANK = Object.freeze({
-  vix110_near_itm_tp: 1,
-  vix110_tp: 1,
-  vix110_itm_tp: 1,
-  vix110_4x_tp: 1,
-  put5x_dte45_tp: 1,
-  live_tp_armed: 1,
-  live_roll75_armed: 1,
-  live_roll50_armed: 1,
-  live_roll30_armed: 1,
-  roll_75d: 2,
-  roll_50d: 2,
-  roll_30d: 2,
-  base_roll_75d: 2,
-  base_salvage_75d: 2,
-  option_expiry: 2,
-  shield_enter: 3,
-  shield_exit: 4,
-  slot1_naked_put: 5,
-  slot2_naked_put: 6,
-  slot3_naked_put: 7,
-  slot1_collar: 6,
-  slot2_collar: 7,
-  slot3_collar: 8,
-  base_020_put: 9,
-});
-
-function synthesizeUnifiedEvents(strategyId, ledger) {
-  const events = [];
-  for (const rawTr of ledger ?? []) {
-    const tr = normalizeTradeQuoteRow(rawTr);
-    const isNk = tr.tranche_type === 'naked_put';
-    const bookTag = String(tr.book ?? '');
-    const isBaseBook = bookTag === 'base';
-    const sNum =
-      tr.slot_num !== null && tr.slot_num !== undefined
-        ? Number(tr.slot_num)
-        : isBaseBook
-          ? 0
-          : 1;
-    const evType = isBaseBook
-      ? 'base_020_put'
-      : isNk
-        ? sNum <= 1
-          ? 'slot1_naked_put'
-          : `slot${sNum}_naked_put`
-        : `slot${Math.max(1, sNum)}_collar`;
-    const openEv = {
-      event_id: `${strategyId}_tr${tr.tranche_id}_open`,
-      tranche_id: tr.tranche_id,
-      strategy_id: strategyId,
-      date: tr.entry_date,
-      signal_date: tr.signal_date,
-      event_type: evType,
-      slot_num: sNum,
-      tranche_type: tr.tranche_type,
-      spot: tr.entry_spot,
-      vxn: tr.entry_vxn,
-      vix_ratio: tr.entry_vix_ratio,
-      kp: tr.kp,
-      kc: tr.kc,
-      call_cap_pct: tr.call_cap_pct,
-      entry_cost_usd: tr.entry_cost_usd,
-      hedged_shares: tr.hedged_shares,
-      sig_score: tr.sig_score,
-      sig_ad_below50: tr.sig_ad_below50,
-      trigger_en: tr.trigger_en,
-      trigger_zh: tr.trigger_zh,
-      linked_exit_date: tr.exit_date,
-      linked_exit_spot: tr.exit_spot,
-      linked_exit_reason: tr.exit_reason,
-      net_pnl_usd: tr.net_pnl_usd,
-      shares_added: tr.shares_added,
-      delta_usd: tr.delta_usd,
-      gamma_usd: tr.gamma_usd,
-      vega_usd: tr.vega_usd,
-      theta_slip_usd: tr.theta_slip_usd,
-      quoteSource: tr.quoteSource,
-      occSymbol: tr.occSymbol,
-      exp: tr.exp,
-      strike: tr.strike,
-      entryBid: tr.entryBid,
-      entryAsk: tr.entryAsk,
-      exitBid: tr.exitBid,
-      exitAsk: tr.exitAsk,
-      is_cta: Boolean(tr.is_cta),
-      roll_dte: tr.roll_dte ?? null,
-    };
-    if (tr.crisis_prob !== undefined && tr.crisis_prob !== null) {
-      Object.assign(openEv, {
-        book: tr.book ?? null,
-        book_label_en: tr.book_label_en ?? null,
-        book_label_zh: tr.book_label_zh ?? null,
-        budget_pct_nav: tr.budget_pct_nav ?? null,
-        entry_pct_nav: tr.entry_pct_nav ?? null,
-        near_itm_strike_105: tr.near_itm_strike_105 ?? null,
-        crisis_prob: tr.crisis_prob,
-        p1: tr.p1,
-        p2: tr.p2,
-        p3: tr.p3,
-        triggered_modules: tr.triggered_modules,
-        trigger_code: tr.trigger_code,
-        tier: tr.tier,
-        max_slots: tr.max_slots,
-        put_otm_pct: tr.put_otm_pct,
-        contracts_est: tr.contracts_est,
-        roi_mult: tr.roi_mult,
-        tp_mode: tr.tp_mode,
-        roll_mode: tr.roll_mode,
-        target_dte: tr.target_dte,
+async function fetchNyFedEffrRecent(timeoutMs = 5000) {
+  const urls = [
+    'https://markets.newyorkfed.org/api/rates/unsecured/effr/last/15.json',
+    'https://markets.newyorkfed.org/api/rates/unsecured/effr/last/5.json',
+  ];
+  for (const url of urls) {
+    try {
+      const resp = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(timeoutMs),
       });
-    }
-    events.push(openEv);
-
-    const exitReason = String(tr.exit_reason ?? '');
-    const isOpenLive = Boolean(tr.is_open_live);
-    const isLiveRollArmed = [
-      'live_roll_75d_armed_next_open',
-      'live_roll_50d_armed_next_open',
-      'live_roll_30d_armed_next_open',
-      'live_salvage_vix_expensive_armed_next_open',
-      'live_roll50_armed_next_open',
-      'live_roll30_armed_next_open',
-    ].includes(exitReason);
-    const isLiveArmed = exitReason === 'live_tp_armed_next_open' || isLiveRollArmed;
-    const isRoll75 = exitReason === 'roll_75d';
-    const isSalvVix = exitReason === 'salvage_vix_expensive';
-    const isRoll30 = exitReason === 'roll_30d';
-    const isRoll50 = exitReason === 'roll_50d';
-    const isTp = exitReason.includes('tp') && !isOpenLive;
-    const isNearItmTp = exitReason === 'tp_near_itm' || exitReason === 'base_tp_near_itm';
-    const isPut5x =
-      exitReason.includes('put_5x') || exitReason === 'tp_5x_late' || exitReason === 'base_tp_5x_late';
-    const isItmTp = exitReason.includes('itm_tp') && !isNearItmTp;
-    const is4xTp = exitReason.includes('4x_tp');
-    const evExitDate = !isOpenLive ? tr.exit_date : tr.mtm_date;
-
-    if ((!isOpenLive || isLiveArmed) && evExitDate) {
-      const vrStr = Number(tr.exit_vix_ratio ?? 0).toFixed(3);
-      const retPct = Number(tr.underlying_ret_pct ?? 0);
-      const retStr = `${retPct >= 0 ? '+' : ''}${retPct.toFixed(1)}%`;
-      let evTypeExit;
-      let trigEnExit;
-      let trigZhExit;
-      if (isLiveRollArmed) {
-        const rlLbl = exitReason.includes('30') ? 30 : exitReason.includes('50') ? 50 : 75;
-        evTypeExit = `live_roll${rlLbl}_armed`;
-        trigEnExit = `${rlLbl}-DTE Hard Roll/Salvage Armed (${tr.rem_dte_at_exit} DTE left · Next Close)`;
-        trigZhExit = `${rlLbl}-DTE 硬换/残值退出已触发（剩 ${tr.rem_dte_at_exit} 天 · 待次日执行）`;
-      } else if (isLiveArmed) {
-        evTypeExit = 'live_tp_armed';
-        trigEnExit = `Near-ITM Panic TP Armed (${tr.rem_dte_at_exit} DTE left · VIX/3M ${vrStr} · Next Exec)`;
-        trigZhExit = `准实值恐慌止盈已触发（剩余 ${tr.rem_dte_at_exit} 天 · VIX/3M ${vrStr} · 待次日换股）`;
-      } else if (isSalvVix) {
-        evTypeExit = isBaseBook ? 'base_salvage_75d' : 'roll_75d';
-        const salvPct = Math.round(Number(tr.roi_mult ?? 0) * 100);
-        trigEnExit = `75-DTE Salvage Exit (VIX > 20 Gate Closed · ${salvPct}% Value Saved)`;
-        trigZhExit = `75-DTE 残值退出（VIX > 20 门控关闭禁续买 · 回收 ${salvPct}% 残值）`;
-      } else if (isRoll75 || isRoll30 || isRoll50) {
-        const rlLbl = isRoll30 ? 30 : isRoll50 ? 50 : 75;
-        evTypeExit = isBaseBook
-          ? 'base_roll_75d'
-          : isRoll30
-            ? 'roll_30d'
-            : isRoll50
-              ? 'roll_50d'
-              : 'roll_75d';
-        const salvPct = Math.round(Number(tr.roi_mult ?? 0) * 100);
-        trigEnExit = `${rlLbl}-DTE Hard Roll/Salvage (${tr.rem_dte_at_exit} DTE left · ${salvPct}% Value Saved)`;
-        trigZhExit = `${rlLbl}-DTE 硬换/残值回收（剩 ${tr.rem_dte_at_exit} 天 · 回收 ${salvPct}% 残值）`;
-      } else if (isNearItmTp) {
-        evTypeExit = 'vix110_near_itm_tp';
-        const bkTagEn = isBaseBook ? 'Book B 0.20% ' : '';
-        const bkTagZh = isBaseBook ? 'B账本0.20% ' : '';
-        trigEnExit = `${bkTagEn}Near-ITM Bottom Clearance TP (QQQ $${Number(tr.exit_spot ?? 0).toFixed(2)} <= 1.05xK · VIX/3M ${vrStr})`;
-        trigZhExit = `${bkTagZh}准实值底部出清止盈（QQQ $${Number(tr.exit_spot ?? 0).toFixed(2)} <= 1.05×K · VIX/3M ${vrStr} · 启动5D锁死）`;
-      } else if (isPut5x) {
-        const dteCapLbl = isBaseBook ? 60 : exitReason.includes('dte75') ? 75 : 45;
-        evTypeExit = 'put5x_dte45_tp';
-        trigEnExit = `5x Put Slow-Bear TP (${tr.rem_dte_at_exit} DTE <= ${dteCapLbl}, Deep ITM Lock)`;
-        trigZhExit = `后半程 Put >= 5x 慢熊止盈（剩余 ${tr.rem_dte_at_exit} 天 <= ${dteCapLbl} · 深实值锁利）`;
-      } else if (isItmTp) {
-        evTypeExit = 'vix110_itm_tp';
-        trigEnExit = `Deep-ITM Panic TP (QQQ <= K_P & VIX/3M ${vrStr} >= 1.10)`;
-        trigZhExit = `实值恐慌止盈（跌破行权价且 VIX/3M ${vrStr} >= 1.10）`;
-      } else if (is4xTp) {
-        evTypeExit = 'vix110_4x_tp';
-        trigEnExit = `4x Deep Panic TP (Put >= 4x & VIX/3M ${vrStr} >= 1.10)`;
-        trigZhExit = `4x 深度恐慌止盈（Put >= 4x 且 VIX/3M ${vrStr} >= 1.10）`;
-      } else if (isTp) {
-        evTypeExit = 'vix110_tp';
-        trigEnExit = `VIX/VIX3M ${vrStr} >= 1.10 Panic TP`;
-        trigZhExit = `VIX/VIX3M ${vrStr} >= 1.10 恐慌止盈抄底`;
-      } else {
-        const tenorExp = exitReason.includes('125dte') ? 125 : exitReason.includes('120dte') ? 120 : 90;
-        evTypeExit = 'option_expiry';
-        trigEnExit = `${tenorExp}-DTE Expiry (${retStr} spot)`;
-        trigZhExit = `${tenorExp}-DTE 到期结算（期间正股 ${retStr}）`;
+      if (!resp.ok) continue;
+      const obj = await resp.json();
+      const out = {};
+      for (const row of obj?.refRates ?? []) {
+        if (row?.effectiveDate && Number.isFinite(Number(row.percentRate))) {
+          out[String(row.effectiveDate)] = Number(row.percentRate) / 100.0;
+        }
       }
+      if (Object.keys(out).length > 0) return out;
+    } catch {
+      // try fallback
+    }
+  }
+  return null;
+}
 
-      const exitEv = {
-        event_id: `${strategyId}_tr${tr.tranche_id}_exit`,
-        tranche_id: tr.tranche_id,
-        strategy_id: strategyId,
-        date: evExitDate,
-        signal_date: tr.signal_date,
-        event_type: evTypeExit,
-        slot_num: sNum,
-        tranche_type: tr.tranche_type,
-        spot: tr.exit_spot,
-        vxn: tr.exit_vxn,
-        vix_ratio: tr.exit_vix_ratio,
-        kp: tr.kp,
-        kc: tr.kc,
-        call_cap_pct: tr.call_cap_pct,
-        entry_spot: tr.entry_spot,
-        entry_date: tr.entry_date,
-        entry_cost_usd: tr.entry_cost_usd,
-        hedged_shares: tr.hedged_shares,
-        sig_score: tr.sig_score,
-        sig_ad_below50: tr.sig_ad_below50,
-        trigger_en: trigEnExit,
-        trigger_zh: trigZhExit,
-        net_pnl_usd: tr.net_pnl_usd,
-        shares_added: tr.shares_added,
-        delta_usd: tr.delta_usd,
-        gamma_usd: tr.gamma_usd,
-        vega_usd: tr.vega_usd,
-        theta_slip_usd: tr.theta_slip_usd,
-        convexity_mult: tr.convexity_mult,
-        quoteSource: tr.quoteSource,
-        occSymbol: tr.occSymbol,
-        exp: tr.exp,
-        strike: tr.strike,
-        entryBid: tr.entryBid,
-        entryAsk: tr.entryAsk,
-        exitBid: tr.exitBid,
-        exitAsk: tr.exitAsk,
-        is_cta: Boolean(tr.is_cta),
-        roll_dte: tr.roll_dte ?? null,
+export async function getLiveV2MarketFeed({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && liveFeedCache.feed && now - liveFeedCache.fetchedAt < LIVE_FEED_TTL_MS) {
+    return liveFeedCache.feed;
+  }
+  if (!force && liveFeedCache.inFlight) return liveFeedCache.inFlight;
+
+  liveFeedCache.inFlight = (async () => {
+    try {
+      const yfKeys = Object.keys(YF_LIVE_MAP);
+      const fredKeys = Object.keys(FRED_LAGS);
+      const [yfResults, fredResults, effrRes] = await Promise.all([
+        Promise.all(yfKeys.map(k => fetchYahooChart1mo(YF_LIVE_MAP[k]))),
+        Promise.all(fredKeys.map(fid => fetchFredRecent(fid))),
+        fetchNyFedEffrRecent(),
+      ]);
+      const yahoo = {};
+      yfKeys.forEach((k, idx) => {
+        if (yfResults[idx]) yahoo[k] = yfResults[idx];
+      });
+      if (!yahoo.QQQ) return liveFeedCache.feed;
+      const fred = {};
+      fredKeys.forEach((fid, idx) => {
+        if (fredResults[idx]) fred[fid] = fredResults[idx];
+      });
+      const qqqDates = [...yahoo.QQQ.keys()].sort();
+      const feed = {
+        fetchedAt: new Date().toISOString(),
+        stamp: qqqDates[qqqDates.length - 1] ?? 'seed',
+        yahoo,
+        fred,
+        effr: effrRes ?? {},
       };
-      if (tr.crisis_prob !== undefined && tr.crisis_prob !== null) {
-        Object.assign(exitEv, {
-          book: tr.book ?? null,
-          book_label_en: tr.book_label_en ?? null,
-          book_label_zh: tr.book_label_zh ?? null,
-          budget_pct_nav: tr.budget_pct_nav ?? null,
-          near_itm_strike_105: tr.near_itm_strike_105 ?? null,
-          crisis_prob: tr.crisis_prob,
-          trigger_code: tr.trigger_code,
-          triggered_modules: tr.triggered_modules,
-          max_slots: tr.max_slots,
-          put_otm_pct: tr.put_otm_pct,
-          contracts_est: tr.contracts_est,
-          roi_mult: tr.roi_mult,
-          tp_mode: tr.tp_mode,
-          roll_mode: tr.roll_mode,
-          exit_reason: exitReason,
-        });
+      liveFeedCache.fetchedAt = Date.now();
+      liveFeedCache.feed = feed;
+      return feed;
+    } catch {
+      return liveFeedCache.feed;
+    } finally {
+      liveFeedCache.inFlight = null;
+    }
+  })();
+
+  return liveFeedCache.inFlight;
+}
+
+export function extendV2LiveFromFeed(artifactObj, liveFeed, requestedAsOf) {
+  const tail = artifactObj?.data?.live_tail_state;
+  if (!tail || !Array.isArray(tail.tail_dates) || !tail.tail_dates.length) return null;
+  const lastArtifactDate = tail.tail_dates[tail.tail_dates.length - 1];
+  const qqqMap = liveFeed?.yahoo?.QQQ;
+  if (!qqqMap || typeof qqqMap.keys !== 'function') return null;
+
+  const capAsOf = requestedAsOf && isIsoDate(requestedAsOf) ? requestedAsOf : '2099-12-31';
+  const newDates = [...qqqMap.keys()]
+    .filter(d => d > lastArtifactDate && d <= capAsOf && Number(qqqMap.get(d)?.close) > 0)
+    .sort();
+  if (!newDates.length) {
+    return {
+      extraPitRows: [],
+      fredLatest: { ...(artifactObj.data.data_freshness?.fred_as_of ?? {}) },
+      effrLatest: artifactObj.data.data_freshness?.effr_as_of ?? null,
+    };
+  }
+
+  const calDates = tail.tail_dates.slice();
+  const yf = {};
+  for (const k of Object.keys(tail.yf_tail)) yf[k] = tail.yf_tail[k].slice();
+
+  const fredRaw = {};
+  for (const fid of Object.keys(FRED_LAGS)) {
+    fredRaw[fid] = { ...(tail.fred_tail?.[fid] ?? {}), ...(liveFeed?.fred?.[fid] ?? {}) };
+  }
+  const effrRaw = { ...(tail.effr_tail ?? {}), ...(liveFeed?.effr ?? {}) };
+
+  const slTail = tail.six_lights_tail ?? {};
+  const slDgs2 = (slTail.dgs2 ?? []).slice();
+  const slDff = (slTail.dff ?? []).slice();
+  const slBaa = (slTail.baa10y ?? []).slice();
+  const slCop = (slTail.copper ?? []).slice();
+  const slDc = (slTail.def_cyc ?? []).slice();
+  const slYc = (slTail.t10y2y ?? []).slice();
+  const slNfci = (slTail.nfci ?? []).slice();
+  const slScores = (slTail.scores ?? []).slice();
+  const bf = slTail.breadth_fallback ?? {};
+
+  let { ema20, e16, e32, e64, e128, e256 } = tail.ewm_state;
+  const cnt = tail.welford_4d.count.slice();
+  const meanAcc = tail.welford_4d.mean.slice();
+  const m2Acc = tail.welford_4d.m2.slice();
+  let stateP = tail.hmm.state_p.slice();
+  const pHmmTail = tail.p_hmm_tail.slice();
+  const { XLP: xlp0, XLU: xlu0, XLV: xlv0, XLK: xlk0 } = tail.base_2013;
+
+  const trDates = (tail.tr_tail_dates ?? tail.tail_dates).slice();
+  const qTr = (tail.qqq_tr_tail ?? []).slice();
+  const dbTr = (tail.dbmf_tr_tail ?? []).slice();
+  const kmTr = (tail.kmlm_tr_tail ?? []).slice();
+  const ctaTr = (tail.cta_tr_tail ?? []).slice();
+
+  let runAthTr = Number(tail.running_ath_tr);
+  let runAthSpot = Number(tail.running_ath_spot);
+  let runAthDate = String(tail.running_ath_date);
+  let runAthDbTr = Number(tail.running_ath_dbmf_tr);
+  let runAthKmTr = Number(tail.running_ath_kmlm_tr);
+  let runAthCtaTr = Number(tail.running_ath_cta_tr);
+
+  let latchArmed = Boolean(tail.latch_state?.armed);
+  let latchArmDate = tail.latch_state?.arm_date ?? null;
+  let latchPeak = Number(tail.latch_state?.peak_cta_gain ?? 0);
+  let above200 = Number(tail.latch_state?.above_200dma_streak ?? 0);
+  let contStart = tail.cont_2m_state?.timer_start ?? null;
+  let contangoStreak = Number(tail.put_gate_state?.contango_streak ?? 0);
+  let postTpLock = Boolean(tail.put_gate_state?.post_tp_lockout);
+  let lockStreak = Number(tail.put_gate_state?.lockout_streak ?? 0);
+  let lastTpDate = tail.put_gate_state?.last_tp_date ?? null;
+  const adBelow = Boolean(tail.put_gate_state?.ad_below50);
+
+  const skew10Hist = calDates.map((_, idx) => {
+    if (idx < 9) return null;
+    let s = 0;
+    for (let k = idx - 9; k <= idx; k += 1) s += yf.SKEW[k];
+    return s / 10.0;
+  });
+  const baaLagHist = calDates.map((_, idx) => alignFredLagWithMeta(fredRaw.BAA10Y, calDates, idx, 1).value);
+  const dgs2LagHist = calDates.map((_, idx) => alignFredLagWithMeta(fredRaw.DGS2, calDates, idx, 1).value);
+  const nfciLagHist = calDates.map((_, idx) => alignFredLagWithMeta(fredRaw.NFCI, calDates, idx, 5).value);
+
+  const sortedEffrDates = Object.keys(effrRaw).sort();
+  const extraPitRows = [];
+
+  for (const d of newDates) {
+    const prevD = calDates[calDates.length - 1];
+    calDates.push(d);
+    trDates.push(d);
+    const idx = calDates.length - 1;
+
+    for (const k of Object.keys(yf)) {
+      const bar = liveFeed?.yahoo?.[k]?.get(d);
+      const prevV = yf[k][yf[k].length - 1];
+      const nextV = Number.isFinite(bar?.close) && bar.close > 0 ? Number(bar.close) : prevV;
+      yf[k].push(nextV);
+    }
+
+    const cl = yf.QQQ[idx];
+    const dbSpot = yf.DBMF[idx];
+    const kmSpot = yf.KMLM[idx];
+    const vix = yf.VIX[idx];
+    const vix3m = yf.VIX3M[idx];
+    const vr = vix3m > 0 ? vix / vix3m : 1.0;
+    const vxn = yf.VXN[idx];
+    const vvixNow = yf.VVIX[idx];
+
+    // Step TR series using Yahoo adj close ratio when available, else close ratio
+    const stepRatio = sym => {
+      const bCur = liveFeed?.yahoo?.[sym]?.get(d);
+      const bPrev = liveFeed?.yahoo?.[sym]?.get(prevD);
+      if (bCur?.adj > 0 && bPrev?.adj > 0) return bCur.adj / bPrev.adj;
+      const arr = yf[sym];
+      return arr[arr.length - 1] / Math.max(arr[arr.length - 2], 1e-8);
+    };
+    const rQ = stepRatio('QQQ') - 1.0;
+    const rDb = stepRatio('DBMF') - 1.0;
+    const rKm = stepRatio('KMLM') - 1.0;
+    const nextQTr = qTr[qTr.length - 1] * (1.0 + rQ);
+    const nextDbTr = dbTr[dbTr.length - 1] * (1.0 + rDb);
+    const nextKmTr = kmTr[kmTr.length - 1] * (1.0 + rKm);
+    const nextCtaTr = ctaTr[ctaTr.length - 1] * (1.0 + 0.5 * rDb + 0.5 * rKm);
+    qTr.push(nextQTr);
+    dbTr.push(nextDbTr);
+    kmTr.push(nextKmTr);
+    ctaTr.push(nextCtaTr);
+
+    if (nextQTr >= runAthTr) {
+      runAthTr = nextQTr;
+      runAthSpot = Math.max(runAthSpot, cl);
+      runAthDate = d;
+      runAthDbTr = nextDbTr;
+      runAthKmTr = nextKmTr;
+      runAthCtaTr = nextCtaTr;
+    }
+    const ddAth = nextQTr / runAthTr - 1.0;
+    const dbAth = nextDbTr / runAthDbTr - 1.0;
+    const kmAth = nextKmTr / runAthKmTr - 1.0;
+    const ctaAth = nextCtaTr / runAthCtaTr - 1.0;
+
+    // 252D rolling high & Corr60(DualCTA, QQQ)
+    const trIdx = qTr.length - 1;
+    const lo = Math.max(0, trIdx - 251);
+    let jHi = lo;
+    for (let k = lo + 1; k <= trIdx; k += 1) {
+      if (qTr[k] > qTr[jHi]) jHi = k;
+    }
+    const dd252 = nextQTr / qTr[jHi] - 1.0;
+    const dbHi252 = nextDbTr / dbTr[jHi] - 1.0;
+    const kmHi252 = nextKmTr / kmTr[jHi] - 1.0;
+    const ctaHi252 = nextCtaTr / ctaTr[jHi] - 1.0;
+
+    const rqWin = [];
+    const rctaWin = [];
+    const cStart = Math.max(1, trIdx - 59);
+    for (let k = cStart; k <= trIdx; k += 1) {
+      rqWin.push(qTr[k] / qTr[k - 1] - 1.0);
+      rctaWin.push(ctaTr[k] / ctaTr[k - 1] - 1.0);
+    }
+    const corr60 = pearsonCorr(rqWin, rctaWin);
+
+    // Skew10 / VVIX quantiles
+    let s10 = 0;
+    for (let k = idx - 9; k <= idx; k += 1) s10 += yf.SKEW[k];
+    const skew10Now = s10 / 10.0;
+    skew10Hist.push(skew10Now);
+    const skWin = skew10Hist.slice(-252).filter(Number.isFinite);
+    const skewP75Now = skWin.length >= 126 ? quantileLinear(skWin, 0.75) : skew10Now;
+    const vvWin = yf.VVIX.slice(-252).filter(Number.isFinite);
+    const vvixP75Now = vvWin.length >= 126 ? quantileLinear(vvWin, 0.75) : vvixNow;
+
+    // FRED lagged values
+    const baaNow = alignFredLagWithMeta(fredRaw.BAA10Y, calDates, idx, 1).value;
+    const dgs2Now = alignFredLagWithMeta(fredRaw.DGS2, calDates, idx, 1).value;
+    const nfciNow = alignFredLagWithMeta(fredRaw.NFCI, calDates, idx, 5).value;
+    const dffNow = alignFredLagWithMeta(fredRaw.DFF, calDates, idx, 1).value;
+    const ycNow = alignFredLagWithMeta(fredRaw.T10Y2Y, calDates, idx, 1).value;
+    baaLagHist.push(baaNow);
+    dgs2LagHist.push(dgs2Now);
+    nfciLagHist.push(nfciNow);
+
+    const baaWin63 = baaLagHist.slice(-63).filter(Number.isFinite);
+    const baaRise = baaNow !== null && baaWin63.length >= 30 ? baaNow - Math.min(...baaWin63) : null;
+    const dgs2Jump = dgs2Now !== null && idx >= 63 && dgs2LagHist[idx - 63] !== null ? dgs2Now - dgs2LagHist[idx - 63] : null;
+    const nfciJump = nfciNow !== null && idx >= 20 && nfciLagHist[idx - 20] !== null ? nfciNow - nfciLagHist[idx - 20] : null;
+
+    // Six-Lights score
+    const dgs2Cur = dgs2Now ?? slDgs2[slDgs2.length - 1];
+    const dffCur = dffNow ?? slDff[slDff.length - 1];
+    const baaCur = baaNow ?? slBaa[slBaa.length - 1];
+    const ycCur = ycNow ?? slYc[slYc.length - 1];
+    const nfciCur = nfciNow ?? slNfci[slNfci.length - 1];
+    const hgCur = liveFeed?.yahoo?.HG_F?.get(d)?.close;
+    const hgPrev = liveFeed?.yahoo?.HG_F?.get(prevD)?.close;
+    const copCur = hgCur > 0 && hgPrev > 0 ? slCop[slCop.length - 1] * (hgCur / hgPrev) : slCop[slCop.length - 1];
+    const cycSyms = ['XLY', 'XLI', 'XLB', 'XLF'];
+    let dcCur = slDc[slDc.length - 1];
+    if (cycSyms.every(sym => liveFeed?.yahoo?.[sym]?.get(d)?.close > 0 && liveFeed?.yahoo?.[sym]?.get(prevD)?.close > 0)) {
+      const defC = yf.XLU[idx] + yf.XLP[idx] + yf.XLV[idx];
+      const defP = yf.XLU[idx - 1] + yf.XLP[idx - 1] + yf.XLV[idx - 1];
+      const cycC = cycSyms.reduce((s, sym) => s + liveFeed.yahoo[sym].get(d).close, 0);
+      const cycP = cycSyms.reduce((s, sym) => s + liveFeed.yahoo[sym].get(prevD).close, 0);
+      if (defP > 0 && cycC > 0 && cycP > 0) dcCur *= (defC / cycC) / (defP / cycP);
+    }
+    slDgs2.push(dgs2Cur);
+    slDff.push(dffCur);
+    slBaa.push(baaCur);
+    slCop.push(copCur);
+    slDc.push(dcCur);
+    slYc.push(ycCur);
+    slNfci.push(nfciCur);
+
+    const min252 = arr => Math.min(...arr.slice(-252));
+    const max252 = arr => Math.max(...arr.slice(-252));
+    const sig1 = (dgs2Cur - min252(slDgs2) >= 0.5 && dgs2Cur > (meanTail(slDgs2, 63) ?? dgs2Cur)) || dffCur - min252(slDff) >= 0.2;
+    const baaLo = min252(slBaa);
+    const sig2 = (baaCur - baaLo >= 0.2 || (baaLo > 0 && baaCur / baaLo - 1 >= 0.12)) && baaCur > (meanTail(slBaa, 63) ?? baaCur);
+    const sig3 = Boolean(bf.sig3_breadth);
+    const copHi = max252(slCop);
+    const sig4 = copHi > 0 && copCur / copHi - 1 <= -0.1 && copCur < (meanTail(slCop, 63) ?? copCur);
+    const dcLo = min252(slDc);
+    const sig5 = dcLo > 0 && dcCur / dcLo - 1 >= 0.05 && dcCur > (meanTail(slDc, 63) ?? dcCur);
+    const sig6 = (max252(slYc) - ycCur >= 0.4 && ycCur < 0.75) || ycCur < 0 || nfciCur - min252(slNfci) >= 0.12;
+    const sc = Number(sig1) + Number(sig2) + Number(sig3) + Number(sig4) + Number(sig5) + Number(sig6);
+    slScores.push(sc);
+
+    // Trend / EWMAC
+    const sma200Now = meanTail(yf.QQQ, 200) ?? cl;
+    const stepEwm = (prev, span, x) => (1 - 2 / (span + 1)) * prev + (2 / (span + 1)) * x;
+    ema20 = stepEwm(ema20, 20, cl);
+    e16 = stepEwm(e16, 16, cl);
+    e32 = stepEwm(e32, 32, cl);
+    e64 = stepEwm(e64, 64, cl);
+    e128 = stepEwm(e128, 128, cl);
+    e256 = stepEwm(e256, 256, cl);
+    const diffs60 = [];
+    for (let k = idx - 59; k <= idx; k += 1) diffs60.push(yf.QQQ[k] - yf.QQQ[k - 1]);
+    const pxVol = stdTailDdof1(diffs60, 60);
+    const ewmacNow = pxVol && pxVol > 0 ? ((e16 - e64) / pxVol + (e32 - e128) / pxVol + (e64 - e256) / pxVol) / 3.0 : 0;
+
+    // Cross-asset ratios
+    const hygArr = [];
+    const rspArr = [];
+    const iwmArr = [];
+    for (let k = idx - 49; k <= idx; k += 1) {
+      hygArr.push(yf.HYG[k] / Math.max(yf.LQD[k], 1e-8));
+      rspArr.push(yf.RSP[k] / Math.max(yf.SPY[k], 1e-8));
+      iwmArr.push(yf.IWM[k] / Math.max(yf.QQQ[k], 1e-8));
+    }
+    const hygNow = hygArr[hygArr.length - 1];
+    const hygSma50 = meanTail(hygArr, 50) ?? hygNow;
+    const rspNow = rspArr[rspArr.length - 1];
+    const rspSma50 = meanTail(rspArr, 50) ?? rspNow;
+    const iwmNow = iwmArr[iwmArr.length - 1];
+    const iwmSma50 = meanTail(iwmArr, 50) ?? iwmNow;
+    const defAt = k => ((yf.XLP[k] / xlp0 + yf.XLU[k] / xlu0 + yf.XLV[k] / xlv0) / 3.0) / (yf.XLK[k] / xlk0);
+    const defRet20 = defAt(idx) / defAt(idx - 20) - 1.0;
+
+    // Causal 4D Welford + Hamilton HMM
+    const logR20 = [];
+    for (let k = idx - 19; k <= idx; k += 1) logR20.push(Math.log(yf.QQQ[k] / yf.QQQ[k - 1]));
+    const rv20Ann = (stdTailDdof1(logR20, 20) ?? 0.15 / Math.sqrt(252)) * Math.sqrt(252);
+    const raw4 = [
+      Math.log(yf.QQQ[idx] / yf.QQQ[idx - 5]),
+      Math.log(Math.max(rv20Ann, 0.05)),
+      -Math.log(hygNow / (yf.HYG[idx - 20] / Math.max(yf.LQD[idx - 20], 1e-8))),
+      vr,
+    ];
+    const zRow = [];
+    for (let dim = 0; dim < 4; dim += 1) {
+      const sd = Math.sqrt(m2Acc[dim] / Math.max(1, cnt[dim] - 1));
+      const zv = sd > 0 ? (raw4[dim] - meanAcc[dim]) / sd : 0;
+      zRow.push(Math.max(-4.5, Math.min(4.5, zv)));
+    }
+    for (let dim = 0; dim < 4; dim += 1) {
+      cnt[dim] += 1;
+      const delta = raw4[dim] - meanAcc[dim];
+      meanAcc[dim] += delta / cnt[dim];
+      m2Acc[dim] += delta * (raw4[dim] - meanAcc[dim]);
+    }
+    stateP = hamiltonStepJS(stateP, zRow, tail.hmm.A, tail.hmm.means, tail.hmm.vars);
+    const hpCur = stateP[1];
+    pHmmTail.push(hpCur);
+    const hpPrev5 = pHmmTail[pHmmTail.length - 6] ?? 0;
+    const vrJ5 = vr - yf.VIX[idx - 5] / Math.max(yf.VIX3M[idx - 5], 1e-6);
+
+    // Slow-Bear +8% Hysteresis Latch
+    const below200 = cl < sma200Now;
+    above200 = below200 ? 0 : above200 + 1;
+    if (!latchArmed) {
+      if (below200 && dd252 <= -0.1 && corr60 < 0 && ctaHi252 >= 0.08) {
+        latchArmed = true;
+        latchArmDate = d;
+        latchPeak = ctaHi252;
       }
-      events.push(exitEv);
-    }
-  }
-  events.sort((a, b) => {
-    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-    return (EVENT_ORDER_RANK[a.event_type] ?? 99) - (EVENT_ORDER_RANK[b.event_type] ?? 99);
-  });
-  return events;
-}
-
-function getUnpackedM7Tables(rawData) {
-  if (cachedArtifact && cachedArtifact.data === rawData && cachedArtifact.unpackedM7) {
-    return cachedArtifact.unpackedM7;
-  }
-  const evalBars = unpackTable(rawData.m7_eval_bars);
-  const sigM0On = unpackTable(rawData.m7_signals?.m0on);
-  const sigM0Off = unpackTable(rawData.m7_signals?.m0off);
-  const featRows = unpackTable(rawData.m7_feature_table);
-  const dateToIdx = new Map(evalBars.map((r, idx) => [r.date, idx]));
-  const unpacked = {
-    evalBars,
-    sigM0On,
-    sigM0Off,
-    featRows,
-    dateToIdx,
-    coeffs: rawData.opra_90dte_poly3_coeffs_desc ?? [],
-  };
-  if (cachedArtifact && cachedArtifact.data === rawData) {
-    cachedArtifact.unpackedM7 = unpacked;
-  }
-  return unpacked;
-}
-
-function computeM7WinStatsJS(baseWindows, dateToIdx, navArr, ledger) {
-  return (baseWindows ?? []).map(w => {
-    const c0 = dateToIdx.get(w.crash_start_date);
-    const c1 = dateToIdx.get(w.crash_end_date);
-    if (c0 === undefined || c1 === undefined || c1 < c0) {
-      return w.strategy_stats?.M7G_Graded ?? {};
-    }
-    const z0 = w.start_date;
-    const z1 = w.end_date;
-    const qRet = Number(w.qqq_ret_pct ?? 0);
-    const qMdd = Number(w.qqq_mdd ?? 0);
-    const mSub = navArr.slice(c0, c1 + 1);
-    const mRet = mSub.length >= 2 && mSub[0] > 0 ? (mSub[mSub.length - 1] / mSub[0] - 1) * 100 : 0;
-    let mpk = mSub[0] ?? 0;
-    let mMdd = 0;
-    for (const v of mSub) {
-      if (v > mpk) mpk = v;
-      const dd = mpk > 0 ? (v / mpk - 1) * 100 : 0;
-      if (dd < mMdd) mMdd = dd;
-    }
-    const ledInWin = (ledger ?? []).filter(t => {
-      const exDt = t.exit_date || t.mtm_date || '';
-      return (t.entry_date >= z0 && t.entry_date <= z1) || (exDt && exDt >= z0 && exDt <= z1);
-    });
-    const tpHarv = ledInWin.reduce((acc, t) => {
-      const ex = String(t.exit_reason ?? '');
-      return (ex.includes('tp') || t.is_open_live) && Number(t.net_pnl_usd) > 0
-        ? acc + Number(t.net_pnl_usd)
-        : acc;
-    }, 0);
-    const tpSh = ledInWin.reduce((acc, t) => {
-      const ex = String(t.exit_reason ?? '');
-      return (ex.includes('tp') || t.is_open_live) && Number(t.shares_added) > 0
-        ? acc + Number(t.shares_added)
-        : acc;
-    }, 0);
-    const netAll = ledInWin.reduce((acc, t) => acc + Number(t.net_pnl_usd ?? 0), 0);
-    return {
-      ret_pct: r2(mRet),
-      mdd_pct: r2(mMdd),
-      dd_cushion_pct: r2(mMdd - qMdd),
-      excess_ret_pct: r2(mRet - qRet),
-      harvested_tp_usd: r2(tpHarv),
-      shares_added_tp: r2(tpSh),
-      net_option_pnl_usd: r2(netAll),
-      tranche_ids: ledInWin.map(t => t.tranche_id),
-    };
-  });
-}
-
-function resolveM7EffectiveBundle(
-  rawData,
-  snapshotId,
-  {
-    putOtm = 'otm15',
-    m7TpMode = 'standard',
-    rollMode = 'adaptive_120_90',
-    m0Enabled = true,
-    fillMode = DEFAULT_M7_FILL_MODE,
-    ccMode = 'cc_off',
-    spMode = 'sp_off',
-    wcMode = 'wc_reclaim_30d_d35',
-  } = {},
-) {
-  const m0Tag = m0Enabled ? 'm0on' : 'm0off';
-  const baseKey = `${putOtm}__${m7TpMode}__${rollMode}__${m0Tag}`;
-  const baseM7 = rawData.m7_bundles?.[baseKey];
-  const defaultWc = rawData.default_wc_mode || 'wc_reclaim_30d_d35';
-  const effWc = spMode === 'sp_off' ? defaultWc : wcMode || defaultWc;
-  const effFill = CRISIS_OBSERVATORY_FILL_MODES.includes(fillMode) ? fillMode : DEFAULT_M7_FILL_MODE;
-  const artifactFill = rawData.default_fill_mode || DEFAULT_M7_FILL_MODE;
-
-  if (ccMode === 'cc_off' && spMode === 'sp_off' && effFill === artifactFill && baseM7) {
-    return {
-      putOtm,
-      m7TpMode,
-      rollMode,
-      m0Enabled,
-      fillMode: effFill,
-      summaries: baseM7.summaries ?? {},
-      ledgers: unpackLedgerMap(baseM7.ledgers),
-      ccLedgers: { M7G_Graded: [], Core3_Adaptive: [], M7_Ensemble: [] },
-      spLedgers: { M7G_Graded: [], Core3_Adaptive: [], M7_Ensemble: [] },
-      events: baseM7.events ?? {},
-      m7LiveDashboards: baseM7.m7_live_dashboards ?? {},
-      liveSignalStates: baseM7.live_signal_states ?? {},
-      liveSpStates: baseM7.live_sp_states ?? {},
-      windowStats: baseM7.window_stats ?? {},
-      nav_m7g: baseM7.nav_m7g ?? [],
-      nav_c3: baseM7.nav_c3 ?? [],
-      nav_m7: baseM7.nav_m7 ?? [],
-      m7g_active_slots: baseM7.m7g_active_slots ?? [],
-      c3_active_slots: baseM7.c3_active_slots ?? [],
-      m7_active_slots: baseM7.m7_active_slots ?? [],
-    };
-  }
-
-  const comboKey = `${snapshotId}:${baseKey}:${effFill}:${ccMode}:${spMode}:${effWc}`;
-  const cachedCombo = m7SimComboCache.get(comboKey);
-  if (cachedCombo) return cachedCombo;
-
-  const { evalBars, sigM0On, sigM0Off, featRows, dateToIdx, coeffs } = getUnpackedM7Tables(rawData);
-  const sigSeries = m0Enabled ? sigM0On : sigM0Off;
-  if (!evalBars.length || !sigSeries.length) return null;
-
-  const lastEval = evalBars[evalBars.length - 1];
-  const lastSig = sigSeries[sigSeries.length - 1];
-  const lastFeat = featRows[featRows.length - 1] ?? {};
-  const lastDailyBar = rawData.daily_series[rawData.daily_series.length - 1];
-
-  const summaries = {};
-  const ledgers = {};
-  const ccLedgers = {};
-  const spLedgers = {};
-  const events = {};
-  const m7LiveDashboards = {};
-  const liveSignalStates = {};
-  const liveSpStates = {};
-  const windowStats = {};
-  const sims = {};
-
-  for (const sid of ['M7G_Graded', 'Core3_Adaptive', 'M7_Ensemble']) {
-    const sidRollMode = sid === 'Core3_Adaptive' ? 'adaptive_120_90' : rollMode;
-    const sim = simulateM7StrategyJS(evalBars, coeffs, sid, sigSeries, {
-      putOtm,
-      m7TpMode,
-      rollMode: sidRollMode,
-      m0Enabled,
-      fillMode: effFill,
-      ccMode,
-      spMode,
-      wcMode: effWc,
-    });
-    sims[sid] = sim;
-    const metaRef = baseM7?.summaries?.[sid] ?? {};
-    summaries[sid] = {
-      ...metaRef,
-      ...sim.summary,
-    };
-    ledgers[sid] = sim.ledger;
-    ccLedgers[sid] = sim.cc_ledger;
-    spLedgers[sid] = sim.sp_ledger;
-    events[sid] = synthesizeUnifiedEvents(sid, sim.ledger);
-    m7LiveDashboards[sid] = buildM7LiveDashboardJS(lastEval, lastSig, lastFeat, sim, coeffs, {
-      putOtm,
-      m7TpMode,
-      rollMode: sidRollMode,
-      m0Enabled,
-    });
-    const openTrs = sim.active_tranches_eod ?? [];
-    liveSignalStates[sid] = buildCutoffSignalState(
-      lastDailyBar,
-      openTrs,
-      baseM7?.live_signal_states?.[sid] ?? rawData.live_signal_state,
-    );
-    const maskedSp = maskSimpleOptionLedgerAtCutoff(sim.sp_ledger, rawData.as_of_date);
-    liveSpStates[sid] = buildCutoffSpState(
-      rawData.daily_series,
-      spMode,
-      effWc,
-      maskedSp,
-      baseM7?.live_sp_states?.[sid] ?? rawData.live_sp_state,
-      rawData.as_of_date,
-    );
-    windowStats[sid] = computeM7WinStatsJS(rawData.crisis_windows, dateToIdx, sim.nav, sim.ledger);
-  }
-
-  const computed = {
-    putOtm,
-    m7TpMode,
-    rollMode,
-    m0Enabled,
-    fillMode: effFill,
-    summaries,
-    ledgers,
-    ccLedgers,
-    spLedgers,
-    events,
-    m7LiveDashboards,
-    liveSignalStates,
-    liveSpStates,
-    windowStats,
-    nav_m7g: sims.M7G_Graded.nav.map(r2),
-    nav_c3: sims.Core3_Adaptive.nav.map(r2),
-    nav_m7: sims.M7_Ensemble.nav.map(r2),
-    m7g_active_slots: sims.M7G_Graded.active_slots,
-    c3_active_slots: sims.Core3_Adaptive.active_slots,
-    m7_active_slots: sims.M7_Ensemble.active_slots,
-  };
-  if (m7SimComboCache.size >= 64) {
-    const oldest = m7SimComboCache.keys().next().value;
-    m7SimComboCache.delete(oldest);
-  }
-  m7SimComboCache.set(comboKey, computed);
-  return computed;
-}
-
-function hydrateCrisisWindows(baseWindows, bundleWindows, m7Bundle = null) {
-  const baseById = new Map((baseWindows ?? []).map(w => [w.id, w]));
-  const merged =
-    Array.isArray(bundleWindows) && bundleWindows.length
-      ? bundleWindows.map(w => ({
-          ...(baseById.get(w.id) ?? {}),
-          ...w,
-        }))
-      : (baseWindows ?? []).map(w => ({ ...w }));
-
-  if (!m7Bundle?.windowStats) return merged;
-  return merged.map((w, idx) => {
-    const m7gSt = m7Bundle.windowStats.M7G_Graded?.[idx];
-    const c3St = m7Bundle.windowStats.Core3_Adaptive?.[idx];
-    const m7St = m7Bundle.windowStats.M7_Ensemble?.[idx];
-    if (!m7gSt && !c3St && !m7St) return w;
-    return {
-      ...w,
-      strategy_stats: {
-        ...(w.strategy_stats ?? {}),
-        ...(m7gSt ? { M7G_Graded: m7gSt } : {}),
-        ...(c3St ? { Core3_Adaptive: c3St } : {}),
-        ...(m7St ? { M7_Ensemble: m7St } : {}),
-      },
-      m7g_mdd: m7gSt?.mdd_pct ?? w.m7g_mdd,
-      c3_mdd: c3St?.mdd_pct ?? w.c3_mdd,
-      m7_mdd: m7St?.mdd_pct ?? w.m7_mdd,
-      excess_ret_m7g: m7gSt?.excess_ret_pct ?? w.excess_ret_m7g,
-      dd_cushion_m7g: m7gSt?.dd_cushion_pct ?? w.dd_cushion_m7g,
-      harvested_usd_m7g: m7gSt?.harvested_tp_usd ?? w.harvested_usd_m7g,
-      shares_added_m7g: m7gSt?.shares_added_tp ?? w.shares_added_m7g,
-      excess_ret_c3: c3St?.excess_ret_pct ?? w.excess_ret_c3,
-      dd_cushion_c3: c3St?.dd_cushion_pct ?? w.dd_cushion_c3,
-      harvested_usd_c3: c3St?.harvested_tp_usd ?? w.harvested_usd_c3,
-      shares_added_c3: c3St?.shares_added_tp ?? w.shares_added_c3,
-    };
-  });
-}
-
-function resolveModeBundle(
-  rawData,
-  tpMode,
-  ccMode,
-  spMode = 'sp_off',
-  wcMode = 'wc_reclaim_30d_d35',
-) {
-  const modeBundles = rawData.mode_bundles;
-  const tpModes = rawData.tp_modes;
-  const defaultWc = rawData.default_wc_mode || 'wc_reclaim_30d_d35';
-  const effWc = wcMode || defaultWc;
-  const bundleKey =
-    spMode === 'sp_off'
-      ? `${tpMode}__${ccMode}`
-      : effWc === defaultWc
-        ? `${tpMode}__${ccMode}__${spMode}`
-        : `${tpMode}__${ccMode}__${spMode}__${effWc}`;
-  return (
-    modeBundles?.[bundleKey] ??
-    modeBundles?.[`${tpMode}__${ccMode}__${spMode}__${effWc}`] ??
-    modeBundles?.[`${tpMode}__${ccMode}__${spMode}`] ??
-    (ccMode === 'cc_off' && spMode === 'sp_off' ? tpModes?.[tpMode] : null) ??
-    null
-  );
-}
-
-function getBundleNavArray(rawData, bundle, navKey) {
-  if (bundle && Array.isArray(bundle[navKey])) return bundle[navKey];
-  return (rawData.daily_series ?? []).map(row => Number(row[navKey] ?? row.nav_bh ?? 0));
-}
-
-function computeDailyExcessReturns(navArr, bhArr, maxLen = null) {
-  const n = Math.min(navArr.length, bhArr.length, maxLen ?? navArr.length);
-  if (n < 3) return [];
-  const out = new Array(n - 1);
-  for (let i = 1; i < n; i += 1) {
-    const pNav = Number(navArr[i - 1]);
-    const cNav = Number(navArr[i]);
-    const pBh = Number(bhArr[i - 1]);
-    const cBh = Number(bhArr[i]);
-    const rStrat = pNav > 0 ? cNav / pNav - 1 : 0;
-    const rBh = pBh > 0 ? cBh / pBh - 1 : 0;
-    out[i - 1] = rStrat - rBh;
-  }
-  return out;
-}
-
-function pearsonCorr(xs, ys) {
-  const n = Math.min(xs.length, ys.length);
-  if (n < 5) return null;
-  let sx = 0;
-  let sy = 0;
-  for (let i = 0; i < n; i += 1) {
-    sx += xs[i];
-    sy += ys[i];
-  }
-  const mx = sx / n;
-  const my = sy / n;
-  let num = 0;
-  let vx = 0;
-  let vy = 0;
-  for (let i = 0; i < n; i += 1) {
-    const dx = xs[i] - mx;
-    const dy = ys[i] - my;
-    num += dx * dy;
-    vx += dx * dx;
-    vy += dy * dy;
-  }
-  if (vx <= 1e-18 || vy <= 1e-18) return null;
-  return r3(num / Math.sqrt(vx * vy));
-}
-
-function computeSeriesMetricsFromArray(dailyRows, navArr, bhEndNav) {
-  const n = Math.min(dailyRows.length, navArr.length);
-  if (n < 2) return null;
-  const startNav = Number(navArr[0]);
-  const endNav = Number(navArr[n - 1]);
-  const startMs = Date.parse(`${dailyRows[0].date}T00:00:00Z`);
-  const endMs = Date.parse(`${dailyRows[n - 1].date}T00:00:00Z`);
-  const years = Math.max((endMs - startMs) / (365.25 * 86400 * 1000), 1 / 252);
-  const cagr = startNav > 0 ? (Math.pow(endNav / startNav, 1 / years) - 1) * 100 : 0;
-  let peak = startNav;
-  let maxDd = 0;
-  for (let i = 0; i < n; i += 1) {
-    const v = Number(navArr[i]);
-    if (v > peak) peak = v;
-    const dd = peak > 0 ? (v / peak - 1) * 100 : 0;
-    if (dd < maxDd) maxDd = dd;
-  }
-  const calmar = maxDd < -1e-6 ? cagr / Math.abs(maxDd) : 0;
-  const lastClose = Number(dailyRows[n - 1].qqq_close);
-  const finalSh = lastClose > 0 ? endNav / lastClose : 0;
-  const bhSh = lastClose > 0 ? bhEndNav / lastClose : 0;
-  return {
-    end_nav: r2(endNav),
-    cagr_pct: r2(cagr),
-    max_dd_pct: r2(maxDd),
-    calmar: r3(calmar),
-    final_shares: r2(finalSh),
-    bh_final_shares: r2(bhSh),
-  };
-}
-
-function buildEngineAttributionByStrategy(
-  rawData,
-  snapshotId,
-  selectedTpMode,
-  selectedCcMode,
-  selectedSpMode,
-  selectedWcMode,
-  {
-    putOtm = 'otm15',
-    m7TpMode = 'standard',
-    rollMode = 'adaptive_120_90',
-    m0Enabled = true,
-    fillMode = DEFAULT_M7_FILL_MODE,
-    cutoffSeries = null,
-    liveScale = 1.0,
-  } = {},
-) {
-  const defaultWc = rawData.default_wc_mode || 'wc_reclaim_30d_d35';
-  const bE1 = resolveModeBundle(rawData, selectedTpMode, 'cc_off', 'sp_off', defaultWc);
-  const bE2 = resolveModeBundle(rawData, selectedTpMode, selectedCcMode, 'sp_off', defaultWc);
-  const bE3Standalone = resolveModeBundle(
-    rawData,
-    selectedTpMode,
-    'cc_off',
-    selectedSpMode,
-    selectedWcMode,
-  );
-  const bCur = resolveModeBundle(
-    rawData,
-    selectedTpMode,
-    selectedCcMode,
-    selectedSpMode,
-    selectedWcMode,
-  );
-
-  const m7E1 = resolveM7EffectiveBundle(rawData, snapshotId, {
-    putOtm,
-    m7TpMode,
-    rollMode,
-    m0Enabled,
-    fillMode,
-    ccMode: 'cc_off',
-    spMode: 'sp_off',
-    wcMode: defaultWc,
-  });
-  const m7E2 =
-    selectedCcMode === 'cc_off'
-      ? m7E1
-      : resolveM7EffectiveBundle(rawData, snapshotId, {
-          putOtm,
-          m7TpMode,
-          rollMode,
-          m0Enabled,
-          fillMode,
-          ccMode: selectedCcMode,
-          spMode: 'sp_off',
-          wcMode: defaultWc,
-        });
-  const m7Cur =
-    selectedSpMode === 'sp_off'
-      ? m7E2
-      : resolveM7EffectiveBundle(rawData, snapshotId, {
-          putOtm,
-          m7TpMode,
-          rollMode,
-          m0Enabled,
-          fillMode,
-          ccMode: selectedCcMode,
-          spMode: selectedSpMode,
-          wcMode: selectedWcMode,
-        });
-
-  const summaryMap = (bundle, m7B) => {
-    const list = bundle?.strategies_summary ?? rawData.strategies_summary ?? [];
-    const base = Object.fromEntries(list.map(s => [s.id, s]));
-    if (m7B?.summaries) {
-      Object.assign(base, m7B.summaries);
-    }
-    return base;
-  };
-  const m1 = summaryMap(bE1, m7E1);
-  const m2 = summaryMap(bE2, m7E2);
-  const m3Solo = summaryMap(bE3Standalone, null);
-  const mCur = summaryMap(bCur, m7Cur);
-
-  const baseSeries = rawData.daily_series ?? [];
-  const bhArr = baseSeries.map(r => Number(r.nav_bh ?? 0));
-  const useCutoffSlice =
-    Array.isArray(cutoffSeries) &&
-    cutoffSeries.length > 0 &&
-    cutoffSeries.length < baseSeries.length;
-  const effLen = useCutoffSlice ? cutoffSeries.length : baseSeries.length;
-  const bhEndCutoff = useCutoffSlice ? Number(cutoffSeries[cutoffSeries.length - 1].nav_bh ?? 0) : null;
-
-  const navE2SoloArr = getBundleNavArray(rawData, bE2, 'nav_cc');
-  const navE3SoloArr = getBundleNavArray(rawData, bE3Standalone, 'nav_cc');
-  const exE2Solo = selectedCcMode !== 'cc_off' ? computeDailyExcessReturns(navE2SoloArr, bhArr, effLen) : [];
-  const exE3Solo = selectedSpMode !== 'sp_off' ? computeDailyExcessReturns(navE3SoloArr, bhArr, effLen) : [];
-  const corrE2E3 = exE2Solo.length && exE3Solo.length ? pearsonCorr(exE2Solo, exE3Solo) : null;
-
-  const isM7Sid = sid =>
-    sid === 'M7G_Graded' || sid === 'Core3_Adaptive' || sid === 'M7_Ensemble';
-
-  const navArrayFor = (bundle, m7B, sid) => {
-    const navKey = STRATEGY_NAV_KEYS[sid] ?? 'nav_bh';
-    if (isM7Sid(sid) && m7B && Array.isArray(m7B[navKey]) && m7B[navKey].length) {
-      return m7B[navKey];
-    }
-    return getBundleNavArray(rawData, bundle, navKey);
-  };
-
-  const metricFor = (bundle, m7B, sMap, sid) => {
-    const rawS = sMap[sid] ?? mCur[sid] ?? mCur.BH_Pure_QQQ ?? {};
-    if (useCutoffSlice) {
-      const arr = navArrayFor(bundle, m7B, sid).slice(0, effLen);
-      const sliced = computeSeriesMetricsFromArray(cutoffSeries, arr, bhEndCutoff);
-      return { ...rawS, ...(sliced ?? {}) };
-    }
-    if (liveScale !== 1.0 && Number.isFinite(liveScale) && liveScale > 0) {
-      const endNav = r2(Number(rawS.end_nav ?? 0) * liveScale);
-      return { ...rawS, end_nav: endNav };
-    }
-    return rawS;
-  };
-
-  const sBh = metricFor(bCur, m7Cur, mCur, 'BH_Pure_QQQ');
-  const out = {};
-
-  for (const sid of CRISIS_OBSERVATORY_STRATEGIES) {
-    const isM7Strat = isM7Sid(sid);
-    const hasE1 = sid !== 'NoPut_CallOnly' && sid !== 'BH_Pure_QQQ';
-    const hasE2 = selectedCcMode !== 'cc_off' && sid !== 'BH_Pure_QQQ';
-    const hasE3 = selectedSpMode !== 'sp_off' && sid !== 'BH_Pure_QQQ';
-
-    const s1 = hasE1 ? metricFor(bE1, m7E1, m1, sid) : sBh;
-    const s2 = hasE2 ? metricFor(bE2, m7E2, m2, sid) : s1;
-    const s3 = hasE3 ? metricFor(bCur, m7Cur, mCur, sid) : s2;
-    const s2Solo = hasE2 ? metricFor(bE2, null, m2, 'NoPut_CallOnly') : sBh;
-    const s3Solo = hasE3 ? metricFor(bE3Standalone, null, m3Solo, 'NoPut_CallOnly') : sBh;
-
-    const bhNav =
-      !useCutoffSlice && isM7Strat && Number.isFinite(Number(s3.bh_parity_end_nav))
-        ? r2(Number(s3.bh_parity_end_nav) * (liveScale !== 1.0 && Number.isFinite(liveScale) && liveScale > 0 ? liveScale : 1.0))
-        : Number(sBh.end_nav ?? 0);
-    const bhSh =
-      !useCutoffSlice && isM7Strat && Number.isFinite(Number(s3.bh_final_shares))
-        ? Number(s3.bh_final_shares)
-        : Number(sBh.final_shares ?? 0);
-    const totNav = Number(s3.end_nav ?? bhNav);
-    const totAlpha = r2(totNav - bhNav);
-    const totExtraSh = r2(Number(s3.final_shares ?? bhSh) - bhSh);
-
-    const d1Usd = hasE1 ? r2(Number(s1.end_nav ?? bhNav) - bhNav) : 0;
-    const d2Usd = hasE2 ? r2(Number(s2.end_nav ?? s1.end_nav) - Number(s1.end_nav ?? bhNav)) : 0;
-    const d3Usd = hasE3 ? r2(totNav - Number(s2.end_nav ?? s1.end_nav)) : 0;
-
-    const d1Sh = hasE1 ? r2(Number(s1.final_shares ?? bhSh) - bhSh) : 0;
-    const d2Sh = hasE2 ? r2(Number(s2.final_shares ?? s1.final_shares) - Number(s1.final_shares ?? bhSh)) : 0;
-    const d3Sh = hasE3 ? r2(Number(s3.final_shares ?? s2.final_shares) - Number(s2.final_shares ?? bhSh)) : 0;
-
-    const sharePct = delta =>
-      Math.abs(totAlpha) > 1e-6 ? Math.round((delta / totAlpha) * 1000) / 10 : 0;
-    const extraShPct = dSh => (bhSh > 0 ? r2((dSh / bhSh) * 100) : 0);
-
-    const exE1 = hasE1
-      ? computeDailyExcessReturns(navArrayFor(bE1, m7E1, sid), bhArr, effLen)
-      : [];
-    const corrE1E2 = hasE1 && hasE2 ? pearsonCorr(exE1, exE2Solo) : null;
-    const corrE1E3 = hasE1 && hasE3 ? pearsonCorr(exE1, exE3Solo) : null;
-
-    const curSummary = mCur[sid] ?? s3;
-    const e1Meta = m1[sid] ?? curSummary;
-    const e1ModeId = !hasE1
-      ? 'off'
-      : isM7Strat
-        ? `${sid}::${putOtm}::${rollMode}::${m7TpMode}`
-        : `${sid}::${selectedTpMode}`;
-
-    out[sid] = {
-      strategy_id: sid,
-      base_end_nav: r2(bhNav),
-      base_shares: r2(bhSh),
-      base_cagr_pct: r2(Number(sBh.cagr_pct ?? 0)),
-      base_max_dd_pct: r2(Number(sBh.max_dd_pct ?? 0)),
-      base_calmar: r3(Number(sBh.calmar ?? 0)),
-      total_end_nav: r2(totNav),
-      total_alpha_usd: totAlpha,
-      total_extra_shares: totExtraSh,
-      total_extra_shares_pct: extraShPct(totExtraSh),
-      active_engines_count: (hasE1 ? 1 : 0) + (hasE2 ? 1 : 0) + (hasE3 ? 1 : 0),
-      correlations: {
-        e1_e2: corrE1E2,
-        e1_e3: corrE1E3,
-        e2_e3: hasE2 && hasE3 ? corrE2E3 : null,
-      },
-      engine1: {
-        active: hasE1,
-        mode_id: e1ModeId,
-        delta_usd: d1Usd,
-        standalone_alpha_usd: d1Usd,
-        share_of_alpha_pct: hasE1 ? sharePct(d1Usd) : 0,
-        delta_shares: d1Sh,
-        delta_extra_pct: extraShPct(d1Sh),
-        delta_cagr_pp: hasE1 ? r2(Number(s1.cagr_pct ?? 0) - Number(sBh.cagr_pct ?? 0)) : 0,
-        delta_mdd_pp: hasE1 ? r2(Number(s1.max_dd_pct ?? 0) - Number(sBh.max_dd_pct ?? 0)) : 0,
-        delta_calmar: hasE1 ? r3(Number(s1.calmar ?? 0) - Number(sBh.calmar ?? 0)) : 0,
-        tranches_total: Number(e1Meta.tranches_total ?? 0),
-        tp_count: Number(e1Meta.tp_count ?? 0),
-        roll_50d_count: Number(e1Meta.roll_50d_count ?? 0),
-        roll_30d_count: Number(e1Meta.roll_30d_count ?? 0),
-        roll_salvage_count: Number(e1Meta.roll_salvage_count ?? e1Meta.roll_50d_count ?? 0),
-        avg_roll_salvage_pct: r2(Number(e1Meta.avg_roll_salvage_pct ?? 0)),
-        naked_prem_spent_usd: r2(Number(e1Meta.naked_prem_spent_usd ?? 0)),
-        gross_put_monetized_usd: r2(Number(e1Meta.gross_put_monetized_usd ?? 0)),
-        pct_days_hedged: r2(Number(e1Meta.pct_days_hedged ?? 0)),
-      },
-      engine2: {
-        active: hasE2,
-        mode_id: selectedCcMode,
-        delta_usd: d2Usd,
-        standalone_alpha_usd: hasE2 ? r2(Number(s2Solo.end_nav ?? bhNav) - bhNav) : 0,
-        share_of_alpha_pct: hasE2 ? sharePct(d2Usd) : 0,
-        delta_shares: d2Sh,
-        delta_extra_pct: extraShPct(d2Sh),
-        delta_cagr_pp: hasE2 ? r2(Number(s2.cagr_pct ?? 0) - Number(s1.cagr_pct ?? 0)) : 0,
-        delta_mdd_pp: hasE2 ? r2(Number(s2.max_dd_pct ?? 0) - Number(s1.max_dd_pct ?? 0)) : 0,
-        delta_calmar: hasE2 ? r3(Number(s2.calmar ?? 0) - Number(s1.calmar ?? 0)) : 0,
-        trades_count: Number(curSummary.cc_trades_count ?? 0),
-        active_years: Number(curSummary.cc_active_years ?? 0),
-        stop_count: Number(curSummary.cc_stop_count ?? 0),
-        roll_count: Number(curSummary.cc_roll_count ?? 0),
-        assigned_count: Number(curSummary.cc_assigned_count ?? 0),
-        gross_prem_usd: r2(Number(curSummary.cc_gross_prem_usd ?? 0)),
-        gross_loss_usd: r2(Number(curSummary.cc_gross_loss_usd ?? 0)),
-        funded_puts_usd: r2(Number(curSummary.cc_funded_puts_usd ?? 0)),
-      },
-      engine3: {
-        active: hasE3,
-        mode_id: selectedSpMode,
-        wc_mode: selectedWcMode,
-        delta_usd: d3Usd,
-        standalone_alpha_usd: hasE3 ? r2(Number(s3Solo.end_nav ?? bhNav) - bhNav) : 0,
-        share_of_alpha_pct: hasE3 ? sharePct(d3Usd) : 0,
-        delta_shares: d3Sh,
-        delta_extra_pct: extraShPct(d3Sh),
-        delta_cagr_pp: hasE3 ? r2(Number(s3.cagr_pct ?? 0) - Number(s2.cagr_pct ?? 0)) : 0,
-        delta_mdd_pp: hasE3 ? r2(Number(s3.max_dd_pct ?? 0) - Number(s2.max_dd_pct ?? 0)) : 0,
-        delta_calmar: hasE3 ? r3(Number(s3.calmar ?? 0) - Number(s2.calmar ?? 0)) : 0,
-        sp_trades_count: Number(curSummary.sp_trades_count ?? 0),
-        sp_win_rate_pct: r2(Number(curSummary.sp_win_rate_pct ?? 0)),
-        sp_assignments_count: Number(curSummary.sp_assignments_count ?? 0),
-        wc_trades_count: Number(curSummary.wc_trades_count ?? 0),
-        wc_called_away_count: Number(curSummary.wc_called_away_count ?? 0),
-        gross_prem_usd: r2(Number(curSummary.sp_gross_prem_usd ?? 0) + Number(curSummary.wc_gross_prem_usd ?? 0)),
-        margin_interest_usd: r2(Number(curSummary.margin_interest_usd ?? 0)),
-        days_levered_stock: Number(curSummary.days_levered_stock ?? 0),
-        max_wheel_cycle_days: Number(curSummary.max_wheel_cycle_days ?? 0),
-        max_gross_stock_lev: r3(Number(curSummary.max_gross_stock_lev ?? 1.0)),
-      },
-    };
-  }
-  return out;
-}
-
-function projectArtifactForModes(
-  data,
-  snapshotId,
-  selectedTpMode,
-  selectedCcMode,
-  selectedSpMode = 'sp_off',
-  selectedWcMode = 'wc_reclaim_30d_d35',
-  selectedPutOtm = 'otm15',
-  selectedM7TpMode = 'standard',
-  selectedRollMode = 'adaptive_120_90',
-  selectedM0Enabled = true,
-  selectedFillMode = DEFAULT_M7_FILL_MODE,
-) {
-  const defaultWcMode = data.default_wc_mode ?? 'wc_reclaim_30d_d35';
-  const effectiveWcMode = selectedWcMode || defaultWcMode;
-  const cacheWcKey = selectedSpMode === 'sp_off' ? defaultWcMode : effectiveWcMode;
-  const m0Tag = selectedM0Enabled ? 'm0on' : 'm0off';
-  const effFillMode = CRISIS_OBSERVATORY_FILL_MODES.includes(selectedFillMode)
-    ? selectedFillMode
-    : DEFAULT_M7_FILL_MODE;
-  const cacheKey = `${snapshotId}:${selectedPutOtm}:${selectedM7TpMode}:${selectedRollMode}:${m0Tag}:${effFillMode}:${selectedTpMode}:${selectedCcMode}:${selectedSpMode}:${cacheWcKey}`;
-  const hit = projectedModeCache.get(cacheKey);
-  if (hit) return hit;
-
-  const {
-    tp_modes: tpModes,
-    mode_bundles: modeBundles,
-    tp_slot_series: tpSlotSeries,
-    m7_bundles: _m7Bundles,
-    m7_signals: _m7Signals,
-    m7_feature_table: _m7FeatureTable,
-    m7_live_tail_state: _m7LiveTailState,
-    m7_eval_bars: _m7EvalBars,
-    opra_90dte_poly3_coeffs_desc: _opraCoeffs,
-    ...baseWithoutModes
-  } = data;
-
-  const bundleKey =
-    selectedSpMode === 'sp_off'
-      ? `${selectedTpMode}__${selectedCcMode}`
-      : effectiveWcMode === defaultWcMode
-        ? `${selectedTpMode}__${selectedCcMode}__${selectedSpMode}`
-        : `${selectedTpMode}__${selectedCcMode}__${selectedSpMode}__${effectiveWcMode}`;
-  const bundle =
-    modeBundles?.[bundleKey] ??
-    modeBundles?.[`${selectedTpMode}__${selectedCcMode}__${selectedSpMode}`] ??
-    (selectedCcMode === 'cc_off' && selectedSpMode === 'sp_off' ? tpModes?.[selectedTpMode] : null);
-
-  const m7Eff = resolveM7EffectiveBundle(data, snapshotId, {
-    putOtm: selectedPutOtm,
-    m7TpMode: selectedM7TpMode,
-    rollMode: selectedRollMode,
-    m0Enabled: selectedM0Enabled,
-    fillMode: effFillMode,
-    ccMode: selectedCcMode,
-    spMode: selectedSpMode,
-    wcMode: effectiveWcMode,
-  });
-
-  if (!bundle && !m7Eff) {
-    const fallback = {
-      ...baseWithoutModes,
-      default_profile: data.default_profile ?? 'full_m7_adaptive',
-      profiles_meta: data.profiles_meta ?? [],
-      fill_mode: effFillMode,
-      selected_fill_mode: effFillMode,
-      default_fill_mode: data.default_fill_mode ?? DEFAULT_M7_FILL_MODE,
-      available_fill_modes: data.available_fill_modes ?? CRISIS_OBSERVATORY_FILL_MODES,
-      hardcoded_ruleset: {
-        ...(data.hardcoded_ruleset ?? HARDCODED_RULESET_SPEC),
-        fill_mode: effFillMode,
-      },
-      put_otm: selectedPutOtm,
-      m7_tp_mode: selectedM7TpMode,
-      roll_mode: selectedRollMode,
-      m0_enabled: selectedM0Enabled,
-      tp_mode: data.tp_mode ?? 'layered_itm',
-      default_tp_mode: data.default_tp_mode ?? 'layered_itm',
-      cc_mode: data.cc_mode ?? 'cc_off',
-      default_cc_mode: data.default_cc_mode ?? 'cc_off',
-      sp_mode: data.sp_mode ?? 'sp_off',
-      default_sp_mode: data.default_sp_mode ?? 'sp_off',
-      wc_mode: effectiveWcMode,
-      default_wc_mode: defaultWcMode,
-    };
-    projectedModeCache.set(cacheKey, fallback);
-    return fallback;
-  }
-
-  const isDefaultLegacy =
-    selectedTpMode === (data.default_tp_mode ?? 'layered_itm') &&
-    selectedCcMode === (data.default_cc_mode ?? 'cc_off') &&
-    selectedSpMode === (data.default_sp_mode ?? 'sp_off');
-  const isDefaultM7 =
-    selectedPutOtm === (data.default_put_otm ?? 'otm15') &&
-    selectedM7TpMode === (data.default_m7_tp_mode ?? 'standard') &&
-    selectedRollMode === (data.default_roll_mode ?? 'adaptive_120_90') &&
-    selectedM0Enabled === Boolean(data.default_m0_enabled ?? true) &&
-    effFillMode === (data.default_fill_mode ?? DEFAULT_M7_FILL_MODE) &&
-    selectedCcMode === (data.default_cc_mode ?? 'cc_off') &&
-    selectedSpMode === (data.default_sp_mode ?? 'sp_off');
-
-  const activeSlotsArr = bundle?.active_slots ?? tpSlotSeries?.[selectedTpMode]?.active_slots;
-  const slot1NakedArr = bundle?.slot1_naked ?? tpSlotSeries?.[selectedTpMode]?.slot1_naked;
-  const sigAltSeries = !selectedM0Enabled ? getUnpackedM7Tables(data).sigM0Off : null;
-
-  const projectedSeries =
-    isDefaultLegacy && isDefaultM7
-      ? data.daily_series
-      : data.daily_series.map((row, idx) => {
-          const sdOff = sigAltSeries?.[idx];
-          const c3Off = sdOff ? evalCore3Signal(sdOff, false) : null;
-          return {
-            ...row,
-            nav_m7g: m7Eff?.nav_m7g?.[idx] ?? row.nav_m7g,
-            nav_c3: m7Eff?.nav_c3?.[idx] ?? row.nav_c3,
-            nav_m7: m7Eff?.nav_m7?.[idx] ?? row.nav_m7,
-            m7_prob: sdOff ? Math.round(Number(sdOff.crisis_prob ?? 0)) : row.m7_prob,
-            m7_p1: sdOff ? Math.round(Number(sdOff.p1 ?? 0)) : row.m7_p1,
-            m7_p2: sdOff ? Math.round(Number(sdOff.p2 ?? 0)) : row.m7_p2,
-            m7_p3: sdOff ? Math.round(Number(sdOff.p3 ?? 0)) : row.m7_p3,
-            m7_target_slots: sdOff ? Number(sdOff.target_slots_m7g ?? 0) : row.m7_target_slots,
-            m7_active_slots: m7Eff?.m7g_active_slots?.[idx] ?? row.m7_active_slots,
-            m7_mask: sdOff ? Number(sdOff.mask ?? 0) : row.m7_mask,
-            c3_prob: c3Off ? Math.round(Number(c3Off.crisis_prob ?? 0)) : row.c3_prob,
-            c3_p1: c3Off ? Math.round(Number(c3Off.p1 ?? 0)) : row.c3_p1,
-            c3_p2: c3Off ? 0 : row.c3_p2,
-            c3_p3: c3Off ? Math.round(Number(c3Off.p3 ?? 0)) : row.c3_p3,
-            c3_target_slots: c3Off ? Number(c3Off.target_slots ?? 0) : row.c3_target_slots,
-            c3_active_slots: m7Eff?.c3_active_slots?.[idx] ?? row.c3_active_slots,
-            c3_mask: c3Off ? Number(c3Off.mask ?? 0) : row.c3_mask,
-            nav_u1: bundle?.nav_u1?.[idx] ?? row.nav_u1,
-            nav_b1c: bundle?.nav_b1c?.[idx] ?? row.nav_b1c,
-            nav_d2: bundle?.nav_d2?.[idx] ?? row.nav_d2,
-            nav_h2: bundle?.nav_h2?.[idx] ?? row.nav_h2,
-            nav_cc: bundle?.nav_cc?.[idx] ?? row.nav_cc,
-            active_slots: activeSlotsArr?.[idx] ?? row.active_slots,
-            slot1_naked: slot1NakedArr?.[idx] ?? row.slot1_naked,
-          };
-        });
-
-  const legacyTradeLedgers = bundle?.trade_ledgers_by_strategy
-    ? unpackLedgerMap(bundle.trade_ledgers_by_strategy)
-    : unpackLedgerMap(data.trade_ledgers_by_strategy ?? {});
-  const unpackedTradeLedgers = {
-    ...(m7Eff?.ledgers ?? {}),
-    ...legacyTradeLedgers,
-    ...(m7Eff?.ledgers?.M7G_Graded ? { M7G_Graded: m7Eff.ledgers.M7G_Graded } : {}),
-    ...(m7Eff?.ledgers?.Core3_Adaptive ? { Core3_Adaptive: m7Eff.ledgers.Core3_Adaptive } : {}),
-    ...(m7Eff?.ledgers?.M7_Ensemble ? { M7_Ensemble: m7Eff.ledgers.M7_Ensemble } : {}),
-  };
-
-  const legacyCcLedgers = bundle?.cc_ledgers_by_strategy
-    ? unpackLedgerMap(bundle.cc_ledgers_by_strategy)
-    : unpackLedgerMap(data.cc_ledgers_by_strategy ?? {});
-  const unpackedCcLedgers = {
-    ...legacyCcLedgers,
-    ...(m7Eff?.ccLedgers ?? {}),
-  };
-
-  const legacySpLedgers = bundle?.sp_ledgers_by_strategy
-    ? unpackLedgerMap(bundle.sp_ledgers_by_strategy)
-    : unpackLedgerMap(data.sp_ledgers_by_strategy ?? {});
-  const unpackedSpLedgers = {
-    ...legacySpLedgers,
-    ...(m7Eff?.spLedgers ?? {}),
-  };
-
-  const eventsByStrategy = {};
-  for (const [sid, led] of Object.entries(unpackedTradeLedgers)) {
-    if (sid === 'M7G_Graded' || sid === 'Core3_Adaptive' || sid === 'M7_Ensemble') {
-      eventsByStrategy[sid] = m7Eff?.events?.[sid] ?? synthesizeUnifiedEvents(sid, led);
     } else {
-      eventsByStrategy[sid] =
-        bundle?.events_by_strategy?.[sid] ?? synthesizeUnifiedEvents(sid, led);
+      latchPeak = Math.max(latchPeak, ctaHi252);
+      if (above200 >= 10) {
+        latchArmed = false;
+        latchArmDate = null;
+        latchPeak = 0;
+      }
     }
+
+    // CONT_2M Continuous 60-day DD <= -12% Timer
+    let contDays = 0;
+    if (ddAth <= -0.12) {
+      if (!contStart) contStart = d;
+      contDays = diffCalendarDaysIso(d, contStart);
+    } else {
+      contStart = null;
+      contDays = 0;
+    }
+
+    // Contango streak & Post-TP 5D Lockout
+    contangoStreak = vr < 1.0 ? contangoStreak + 1 : 0;
+    if (vr >= 1.1 && ddAth <= -0.1) {
+      postTpLock = true;
+      lockStreak = 0;
+      lastTpDate = d;
+    } else if (postTpLock) {
+      if (vr < 1.0) {
+        lockStreak += 1;
+        if (lockStreak >= 5) {
+          postTpLock = false;
+          lockStreak = 0;
+        }
+      } else {
+        lockStreak = 0;
+      }
+    }
+
+    // Dual-Track Raw vs Vol-Gated 6 sensors
+    const m0Raw = (adBelow || sc >= 4) && ddAth >= -0.05;
+    const m0Entry = m0Raw && vxn <= 22.0;
+    const m6Raw = rspNow < rspSma50 && (iwmNow < iwmSma50 || adBelow) && defRet20 >= 0.025;
+    const m6Entry = m6Raw && vxn <= 25.0 && vr <= 0.92;
+    const m2A = skew10Now >= skewP75Now && vvixNow >= vvixP75Now && vr >= 0.85;
+    const m2B = vr >= 0.92 && vrJ5 >= 0.06 && vvixNow >= 100.0;
+    const m2Raw = m2A || m2B;
+    const m2Entry =
+      ((skew10Now >= skewP75Now && vvixNow >= vvixP75Now && vr >= 0.85 && vr <= 0.98) ||
+        (vr >= 0.92 && vr <= 1.02 && vrJ5 >= 0.06 && vvixNow >= 100.0)) &&
+      vxn <= 24.0;
+    const m5Raw = hpCur >= 0.55;
+    const m5Entry = hpCur >= 0.55 && hpPrev5 < 0.4 && vxn <= 24.0 && vr < 1.02;
+    const m4Raw = latchArmed && below200 && ewmacNow < 0 && cl > ema20;
+    const m4Entry = m4Raw && vxn <= 28.0 && vr <= 0.9;
+    const creditHit = (baaRise !== null && baaRise >= 0.15) || (dgs2Jump !== null && dgs2Jump >= 0.4) || (nfciJump !== null && nfciJump >= 0.1);
+    const m3Raw = hygNow < hygSma50 && creditHit;
+    const m3Entry = m3Raw && vxn <= 26.0 && vr <= 0.92;
+
+    const stress = computeLiveStressIndexJS({
+      hmm_p: hpCur, vxn, vix_ratio: vr, dd_from_ath: ddAth, close: cl, sma200: sma200Now, ewmac: ewmacNow,
+      hyg_lqd: hygNow, hyg_sma50: hygSma50, baa_rise63: baaRise, dgs2_jump63: dgs2Jump, nfci_jump20: nfciJump,
+      def_ret20: defRet20, rsp_spy: rspNow, rsp_sma50: rspSma50, iwm_qqq: iwmNow, iwm_sma50: iwmSma50,
+      ad_below50: adBelow, vvix: vvixNow, vvix_p75: vvixP75Now, skew10: skew10Now, skew_p75: skewP75Now, vr_jump5: vrJ5,
+    });
+
+    let effrPct = 3.88;
+    for (let ei = sortedEffrDates.length - 1; ei >= 0; ei -= 1) {
+      if (sortedEffrDates[ei] <= d) {
+        effrPct = Number(effrRaw[sortedEffrDates[ei]]) * 100.0;
+        break;
+      }
+    }
+
+    extraPitRows.push({
+      date: d,
+      qqq: r2(cl),
+      ath: r2(runAthSpot),
+      ath_date: runAthDate,
+      dd_ath: r2(ddAth * 100),
+      hi252_date: trDates[jHi],
+      dd252: r2(dd252 * 100),
+      sma200: r2(sma200Now),
+      ema20: r2(ema20),
+      ewmac: r3(ewmacNow),
+      dbmf: r2(dbSpot),
+      kmlm: r2(kmSpot),
+      db_ath: r2(dbAth * 100),
+      km_ath: r2(kmAth * 100),
+      cta_ath: r2(ctaAth * 100),
+      db_hi252: r2(dbHi252 * 100),
+      km_hi252: r2(kmHi252 * 100),
+      cta_hi252: r2(ctaHi252 * 100),
+      corr60: r3(corr60),
+      latch: latchArmed ? 1 : 0,
+      latch_arm: latchArmDate,
+      latch_pk: r2(latchPeak * 100),
+      abv200: above200,
+      c2m_d: contDays,
+      c2m_s: contStart,
+      vix: r2(vix),
+      vxn: r2(vxn),
+      vix3m: r2(vix3m),
+      vr: r3(vr),
+      vr_j5: r3(vrJ5),
+      skew10: r2(skew10Now),
+      skew_p75: r2(skewP75Now),
+      vvix: r2(vvixNow),
+      vvix_p75: r2(vvixP75Now),
+      hmm_p: r4(hpCur),
+      hmm_p5: r4(hpPrev5),
+      hyg_lqd: r4(hygNow),
+      hyg_sma50: r4(hygSma50),
+      baa_r: baaRise !== null ? r3(baaRise) : null,
+      dgs2_j: dgs2Jump !== null ? r3(dgs2Jump) : null,
+      nfci_j: nfciJump !== null ? r3(nfciJump) : null,
+      rsp_spy: r4(rspNow),
+      rsp_sma50: r4(rspSma50),
+      iwm_qqq: r4(iwmNow),
+      iwm_sma50: r4(iwmSma50),
+      def_ret20: r2(defRet20 * 100),
+      sc6: sc,
+      ad_b50: adBelow ? 1 : 0,
+      effr: r2(effrPct),
+      ct_strk: contangoStreak,
+      tp_lock: postTpLock ? 1 : 0,
+      tp_lstrk: lockStreak,
+      last_tp: lastTpDate,
+      stress: stress.live_stress_index,
+      raw_mask:
+        (m0Raw ? 1 : 0) | (m6Raw ? 2 : 0) | (m2Raw ? 4 : 0) | (m5Raw ? 8 : 0) | (m4Raw ? 16 : 0) | (m3Raw ? 32 : 0),
+      ent_mask:
+        (m0Entry ? 1 : 0) | (m6Entry ? 2 : 0) | (m2Entry ? 4 : 0) | (m5Entry ? 8 : 0) | (m4Entry ? 16 : 0) | (m3Entry ? 32 : 0),
+    });
   }
 
-  const legacySummaries = (bundle?.strategies_summary ?? data.strategies_summary ?? []).filter(
-    s => s.id !== 'M7G_Graded' && s.id !== 'Core3_Adaptive' && s.id !== 'M7_Ensemble',
-  );
-  const strategiesSummary = [
-    ...(m7Eff?.summaries?.M7G_Graded ? [m7Eff.summaries.M7G_Graded] : []),
-    ...(m7Eff?.summaries?.Core3_Adaptive ? [m7Eff.summaries.Core3_Adaptive] : []),
-    ...(m7Eff?.summaries?.M7_Ensemble ? [m7Eff.summaries.M7_Ensemble] : []),
-    ...legacySummaries,
+  const fredLatest = {};
+  for (const fid of Object.keys(FRED_LAGS)) {
+    const ks = Object.keys(fredRaw[fid]).sort();
+    fredLatest[fid] = ks[ks.length - 1] ?? null;
+  }
+  const effrLatest = sortedEffrDates[sortedEffrDates.length - 1] ?? null;
+
+  return { extraPitRows, fredLatest, effrLatest };
+}
+
+export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
+  const qqq = Number(row.qqq);
+  const ath = Number(row.ath);
+  const ddAthPct = Number(row.dd_ath);
+  const dd252Pct = Number(row.dd252);
+  const sma200 = Number(row.sma200);
+  const ema20 = Number(row.ema20);
+  const ewmac = Number(row.ewmac);
+  const vix = Number(row.vix);
+  const vxn = Number(row.vxn);
+  const vix3m = Number(row.vix3m);
+  const vr = Number(row.vr);
+  const vrJ5 = Number(row.vr_j5 ?? 0);
+  const effrPct = Number(row.effr ?? 3.88);
+  const boxRatePct = r2(effrPct + 0.35);
+  const ibkrRatePct = r2(effrPct + 1.5);
+
+  const latchArmed = Boolean(row.latch);
+  const above200 = Number(row.abv200 ?? 0);
+  const corr60 = Number(row.corr60 ?? 0);
+  const ctaHi252Pct = Number(row.cta_hi252 ?? 0);
+  const dbAthPct = Number(row.db_ath ?? 0);
+  const kmAthPct = Number(row.km_ath ?? 0);
+  const ctaAthPct = Number(row.cta_ath ?? 0);
+  const c2mDays = Number(row.c2m_d ?? 0);
+  const c2mStart = row.c2m_s ?? null;
+  const c2mActive = c2mStart !== null && ddAthPct <= -12.0;
+  const c2mConfirmed = c2mActive && c2mDays >= 60;
+  const c2mProjected = c2mStart ? addCalendarDaysIso(c2mStart, 60) : null;
+
+  const contangoStreak = Number(row.ct_strk ?? 0);
+  const postTpLock = Boolean(row.tp_lock);
+  const tpLockStreak = Number(row.tp_lstrk ?? 0);
+  const lastTpDate = row.last_tp ?? null;
+
+  const rawMask = Number(row.raw_mask ?? 0);
+  const entMask = Number(row.ent_mask ?? 0);
+  const hasBit = (mask, bit) => (mask & bit) !== 0;
+
+  const m0Raw = hasBit(rawMask, 1);
+  const m6Raw = hasBit(rawMask, 2);
+  const m2Raw = hasBit(rawMask, 4);
+  const m5Raw = hasBit(rawMask, 8);
+  const m4Raw = hasBit(rawMask, 16);
+  const m3Raw = hasBit(rawMask, 32);
+
+  const m0Ent = hasBit(entMask, 1);
+  const m6Ent = hasBit(entMask, 2);
+  const m2Ent = hasBit(entMask, 4);
+  const m5Ent = hasBit(entMask, 8);
+  const m4Ent = hasBit(entMask, 16);
+  const m3Ent = hasBit(entMask, 32);
+
+  const p1Raw = Math.min(45, (m0Raw ? 35 : 0) + (m6Raw ? 20 : 0));
+  const p2Raw = Math.min(40, (m2Raw ? 20 : 0) + (m5Raw ? 20 : 0));
+  const p3Raw = Math.min(45, (m4Raw ? 35 : 0) + (m3Raw ? 20 : 0));
+  const rawCrisisProb = Math.min(100, p1Raw + p2Raw + p3Raw);
+
+  const p1Ent = Math.min(45, (m0Ent ? 35 : 0) + (m6Ent ? 20 : 0));
+  const p2Ent = Math.min(40, (m2Ent ? 20 : 0) + (m5Ent ? 20 : 0));
+  const p3Ent = Math.min(45, (m4Ent ? 35 : 0) + (m3Ent ? 20 : 0));
+  const nonM4EntProb = Math.min(100, p1Ent + p2Ent + (m3Ent ? 20 : 0));
+  const entryCrisisProb = Math.min(100, p1Ent + p2Ent + p3Ent);
+
+  const stressPack = computeLiveStressIndexJS({
+    hmm_p: row.hmm_p,
+    vxn,
+    vix_ratio: vr,
+    dd_from_ath: ddAthPct / 100.0,
+    close: qqq,
+    sma200,
+    ewmac,
+    hyg_lqd: row.hyg_lqd,
+    hyg_sma50: row.hyg_sma50,
+    baa_rise63: row.baa_r,
+    dgs2_jump63: row.dgs2_j,
+    nfci_jump20: row.nfci_j,
+    def_ret20: Number(row.def_ret20 ?? 0) / 100.0,
+    rsp_spy: row.rsp_spy,
+    rsp_sma50: row.rsp_sma50,
+    iwm_qqq: row.iwm_qqq,
+    iwm_sma50: row.iwm_sma50,
+    ad_below50: Boolean(row.ad_b50),
+    vvix: row.vvix,
+    vvix_p75: row.vvix_p75,
+    skew10: row.skew10,
+    skew_p75: row.skew_p75,
+    vr_jump5: vrJ5,
+  });
+
+  // Vol-gate status (transparently separates raw alert from vol-gated entry!)
+  let volGateStatus = 'ENTRY_ALLOWED';
+  let volGateReasonEn = 'Low-to-moderate vol regime: new Put entries permitted whenever a pillar fires.';
+  let volGateReasonZh = '中低波环境：只要三支柱信号触发即允许按规则建仓 Put。';
+  if (postTpLock) {
+    volGateStatus = 'POST_TP_LOCKOUT';
+    volGateReasonEn = `Post-TP 5D contango lockout active (${tpLockStreak}/5 consecutive days VIX/VIX3M < 1.00 since ${lastTpDate ?? 'last TP'}). Do not re-buy puts prematurely.`;
+    volGateReasonZh = `止盈后 5 日正向期限结构锁仓中（自 ${lastTpDate ?? '上次止盈'} 起连续 VIX/VIX3M < 1.00：${tpLockStreak}/5 天），禁止过早追回新 Put。`;
+  } else if (vr >= 1.02 || vxn > 28.0) {
+    volGateStatus = 'HIGH_VOL_NO_CHASE';
+    volGateReasonEn = `High-vol no-chase guard active (VXN ${vxn.toFixed(1)}, VIX/VIX3M ${vr.toFixed(3)}): raw alerts reflect live stress, but new Put entries are blocked to avoid paying panic IV.`;
+    volGateReasonZh = `高波禁追保护生效（VXN ${vxn.toFixed(1)}，VIX/VIX3M ${vr.toFixed(3)}）：原始预警反映实时危机压力，但禁止追高买入昂贵新 Put，现有持仓等待止盈。`;
+  }
+
+  // Sleeve A status
+  let sleeveAStatus = 'OPEN_READY';
+  let sleeveATone = 'mint';
+  let sleeveAValEn = 'READY · 125D -15%';
+  let sleeveAValZh = '允许建仓/滚仓';
+  let sleeveADetEn = `VIX ${vix.toFixed(1)} < 20 & ${contangoStreak}D contango (>= 5D). Maintain 0.2% NAV baseline Put.`;
+  let sleeveADetZh = `VIX ${vix.toFixed(1)} < 20 且连续 ${contangoStreak} 日非倒挂（>=5日），正常持有/滚仓 0.2% NAV 常态盾。`;
+  if (vr >= 1.0) {
+    sleeveAStatus = 'HOLD_INVERTED';
+    sleeveATone = 'coral';
+    sleeveAValEn = `INVERTED (${vr.toFixed(2)}) · HOLD`;
+    sleeveAValZh = `倒挂 (${vr.toFixed(2)}) · 持仓不换`;
+    sleeveADetEn = 'VIX/VIX3M >= 1.00 inverted: HOLD existing Put (do NOT roll into panic IV; watch Tier 2 TP).';
+    sleeveADetZh = '期限结构倒挂 >= 1.00：现有 Put 死拿不滚仓，严禁高波追新单，盯紧二档止盈。';
+  } else if (vix >= 20.0) {
+    sleeveAStatus = 'PAUSED_VIX_GE_20';
+    sleeveATone = 'amber';
+    sleeveAValEn = `PAUSED (VIX ${vix.toFixed(1)} >= 20)`;
+    sleeveAValZh = `暂停新开 (VIX ${vix.toFixed(1)} >= 20)`;
+    sleeveADetEn = 'VIX >= 20.0 blocks new 0.2% baseline entries; existing put rolls at <= 75 DTE if non-inverted.';
+    sleeveADetZh = 'VIX >= 20.0 暂停新开 0.2% 常态盾；已有仓位在非倒挂且 <= 75 DTE 时正常滚仓。';
+  } else if (contangoStreak < 5) {
+    sleeveAStatus = 'WAIT_CONTANGO_5D';
+    sleeveATone = 'sky';
+    sleeveAValEn = `WAIT ${contangoStreak}/5D CONTANGO`;
+    sleeveAValZh = `等待正向 ${contangoStreak}/5 天`;
+    sleeveADetEn = `VIX < 20 ok, waiting for 5 consecutive days VIX/VIX3M < 1.00 (${contangoStreak}/5).`;
+    sleeveADetZh = `VIX < 20 已满足，等待连续 5 日 VIX/VIX3M < 1.00（当前 ${contangoStreak}/5 天）。`;
+  }
+
+  // Sleeve B status
+  const sleeveBM4Ready = !postTpLock && vr < 1.02 && m4Ent;
+  const sleeveBR1Ready = !postTpLock && vr < 1.02 && !m4Ent && nonM4EntProb >= 35;
+  let sleeveBStatus = 'STANDBY';
+  let sleeveBTone = 'muted';
+  let sleeveBValEn = 'STANDBY (0%)';
+  let sleeveBValZh = '待命观察';
+  let sleeveBDetEn = 'No vol-gated crisis pillar >= 35%. Core 1.20x QQQ + Dual-CTA compounds unencumbered.';
+  let sleeveBDetZh = '三支柱均未达低波建仓阈值，1.20x 核心仓位顺畅复利运行。';
+  if (sleeveBM4Ready) {
+    sleeveBStatus = 'OPEN_ROUTE2_M4';
+    sleeveBTone = 'lilac';
+    sleeveBValEn = 'FIRE M4 · 90D -10%';
+    sleeveBValZh = '触发 M4 · 90D -10%';
+    sleeveBDetEn = 'Slow-Bear Latch ON + Dead-Cat Bounce + VXN <= 28 & VR <= 0.90 -> Buy 1.0% NAV 90D -10% OTM Put.';
+    sleeveBDetZh = '慢熊锁存开启 + 死猫跳 + VXN<=28 & VR<=0.90 -> T+1 买入 1.0% NAV 90D -10% OTM Put。';
+  } else if (sleeveBR1Ready) {
+    sleeveBStatus = 'OPEN_ROUTE1_125D';
+    sleeveBTone = 'amber';
+    sleeveBValEn = `FIRE R1 (${nonM4EntProb}%) · 125D -15%`;
+    sleeveBValZh = `触发 R1 (${nonM4EntProb}%) · 125D -15%`;
+    sleeveBDetEn = `Non-M4 crisis score ${nonM4EntProb}% >= 35% in low-vol window -> Buy 1.0% NAV 125D -15% OTM Put.`;
+    sleeveBDetZh = `非 M4 支柱综合得分 ${nonM4EntProb}% >= 35% 且处于低波窗口 -> T+1 买入 1.0% NAV 125D -15% OTM Put。`;
+  } else if (postTpLock) {
+    sleeveBStatus = 'POST_TP_LOCKOUT';
+    sleeveBTone = 'coral';
+    sleeveBValEn = `LOCKED ${tpLockStreak}/5D`;
+    sleeveBValZh = `止盈锁仓 ${tpLockStreak}/5 天`;
+    sleeveBDetEn = `Raw alerts ${rawCrisisProb}% lit, but 5D post-TP contango lockout blocks re-entry until 5D VR < 1.00.`;
+    sleeveBDetZh = `原始结构预警 ${rawCrisisProb}% 已亮，但处于止盈后 5 日锁仓期，须待连续 5 日 VIX/3M < 1.00 解锁。`;
+  } else if (rawCrisisProb >= 35 || stressPack.live_stress_index >= 50) {
+    sleeveBStatus = 'RAW_ALERT_HIGH_VOL';
+    sleeveBTone = 'amber';
+    sleeveBValEn = `RAW ${rawCrisisProb}% · NO CHASE`;
+    sleeveBValZh = `预警 ${rawCrisisProb}% · 高波禁追`;
+    sleeveBDetEn = `Live Stress ${stressPack.live_stress_index}/100 & Raw Alert ${rawCrisisProb}% lit, but high IV blocks chasing new puts.`;
+    sleeveBDetZh = `实时压力 ${stressPack.live_stress_index}/100、原始预警 ${rawCrisisProb}% 已亮，但隐波过高禁止追单，现有仓位盯止盈。`;
+  }
+
+  // Tier 2 Full TP status
+  const tpFullVrOk = vr >= 1.1;
+  const tpFullDdOk = ddAthPct <= -10.0;
+  const tpFullTriggered = tpFullVrOk && tpFullDdOk;
+
+  // Master Command Center Action Directive
+  let actionCode = 'HOLD_STEADY_CORE';
+  let severity = 'calm';
+  let headlineEn = 'Calm Compounding · Hold 100% QQQ + 10% DBMF + 10% KMLM (<= 1.20x)';
+  let headlineZh = '平稳复利期 · 维持 100% QQQ + 10% DBMF + 10% KMLM（严守 <= 1.20x 红线）';
+  let summaryEn = `Live Stress ${stressPack.live_stress_index}/100 (${stressPack.live_stress_label_en}). Maintain 1.20x core stack and Sleeve A 0.2% baseline Put rules.`;
+  let summaryZh = `实时危机压力 ${stressPack.live_stress_index}/100（${stressPack.live_stress_label_zh}）。保持 1.20x 核心仓位，并按规则维护 0.2% 常态 Put 盾。`;
+
+  if (tpFullTriggered) {
+    actionCode = 'TRIGGER_FULL_TP';
+    severity = 'action';
+    headlineEn = `TIER 2 FULL TP ARMED · Liquidate 100% Active Puts (VIX/3M ${vr.toFixed(3)} >= 1.10 & ATH DD ${ddAthPct.toFixed(1)}% <= -10%)`;
+    headlineZh = `二档全额止盈触发 · T+1 清仓 100% Put（倒挂 ${vr.toFixed(3)} >= 1.10 且回撤 ${ddAthPct.toFixed(1)}% <= -10%）`;
+    summaryEn = 'Liquidate 100% of active Sleeve A & B puts at T+1 Close, deploy proceeds equally across 5 trading days (1/5/day) into QQQ (excess above 1.20x pays debt first), and start 5D contango lockout.';
+    summaryZh = 'T+1 收盘 100% 清仓所有活跃 Put，所得现金分 5 个交易日等额（每日 1/5）回买 QQQ（超出 1.200x 杠杆上限优先还债），同时开启止盈后 5 日正向锁仓。';
+  } else if (c2mConfirmed && (dbAthPct > 0 || kmAthPct > 0)) {
+    actionCode = 'TRIGGER_CTA_ROTATION';
+    severity = 'action';
+    headlineEn = `DUAL-CTA 2-MONTH BEAR ROTATION CONFIRMED (${c2mDays}d <= -12%) · Rotate Winning CTA -> QQQ in 5 Tranches`;
+    headlineZh = `双CTA 2个月持续熊市确认（连续 ${c2mDays} 天 <= -12%）· 分 5 批切出盈利 CTA 买 QQQ`;
+    summaryEn = `QQQ stayed <= -12% for ${c2mDays} continuous calendar days. Sell profitable DBMF/KMLM sleeve(s) in 5 equal 20% tranches spaced 5 trading days apart into QQQ; hold mechanically for 365 days.`;
+    summaryZh = `QQQ 已连续 ${c2mDays} 自然日处于 <= -12% 回撤区间。对自前高盈利 > 0% 的 CTA 分 5 批（每次 20%，间隔 5 交易日）换入 QQQ，并机械锁定持有 1 年。`;
+  } else if (sleeveBM4Ready) {
+    actionCode = 'OPEN_SLEEVE_B_M4';
+    severity = 'action';
+    headlineEn = 'M4 SLOW-BEAR DEAD-CAT BOUNCE FIRED · Buy 1.0% NAV 90D -10% OTM QQQ Put';
+    headlineZh = 'M4 慢熊死猫跳触发 · T+1 买入 1.0% NAV 90D -10% OTM QQQ Put';
+    summaryEn = `Slow-Bear +8% Latch ARMED + QQQ < 200DMA + EWMAC < 0 + QQQ > EMA20 + low-vol complacency (VXN ${vxn.toFixed(1)} <= 28, VR ${vr.toFixed(3)} <= 0.90). Recycle salvage at <= 30 DTE.`;
+    summaryZh = `慢熊 +8% 滞回锁存已开，且满足破年线反抽 EMA20 + 波动率自满（VXN ${vxn.toFixed(1)} <= 28、VR ${vr.toFixed(3)} <= 0.90）。买 90D -10% OTM Put，<= 30 DTE 非倒挂回收残值。`;
+  } else if (sleeveBR1Ready) {
+    actionCode = 'OPEN_SLEEVE_B_ROUTE1';
+    severity = 'action';
+    headlineEn = `THREE-PILLAR ROUTE 1 FIRED (${nonM4EntProb}%) · Buy 1.0% NAV 125D -15% OTM QQQ Put`;
+    headlineZh = `三支柱 Route 1 危机预警触发（${nonM4EntProb}%）· T+1 买入 1.0% NAV 125D -15% OTM Put`;
+    summaryEn = `Low-vol structural warning lit across P1/P2/M3 (${nonM4EntProb}% >= 35%). Open 1.0% NAV Sleeve B 125D -15% OTM Put at T+1 Close; roll at <= 75 DTE if still lit.`;
+    summaryZh = `P1/P2/M3 低波潜伏预警达标（${nonM4EntProb}% >= 35%）。T+1 收盘建仓 1.0% NAV 125D -15% OTM 危机盾，<= 75 DTE 非倒挂时信号仍亮则滚仓、熄灭则回收。`;
+  } else if (stressPack.live_stress_index >= 50 || rawCrisisProb >= 35 || postTpLock) {
+    actionCode = 'HOLD_HIGH_VOL_WATCH_TP';
+    severity = stressPack.live_stress_index >= 75 ? 'crisis' : 'elevated';
+    headlineEn = postTpLock
+      ? `ACTIVE STRESS (${stressPack.live_stress_index}/100) · Post-TP Lockout (${tpLockStreak}/5D) · Hold Core <= 1.20x & Do Not Chase Puts`
+      : `HIGH-VOL STRESS (${stressPack.live_stress_index}/100) · Raw Alerts ${rawCrisisProb}% Lit · No New Put Chasing`;
+    headlineZh = postTpLock
+      ? `高压危机态（压力 ${stressPack.live_stress_index}/100）· 止盈后锁仓 ${tpLockStreak}/5 天 · 严控 <= 1.20x 杠杆且禁追昂贵新 Put`
+      : `高压警戒态（压力 ${stressPack.live_stress_index}/100）· 原始预警 ${rawCrisisProb}% 已亮 · 高波禁追新 Put，持盾盯止盈`;
+    summaryEn = `QQQ ${fmtSigned(ddAthPct, 2)}% from ATH, VIX ${vix.toFixed(2)}, VXN ${vxn.toFixed(2)}, VIX/VIX3M ${vr.toFixed(3)}. Raw structural alerts (${rawCrisisProb}%) confirm live stress while vol-gate prevents paying panic IV. ${c2mActive ? `CONT_2M timer running: ${c2mDays}/60d.` : 'Watch Tier 2 Full TP (VR >= 1.10 & DD <= -10%).'}`;
+    summaryZh = `QQQ 距前高 ${fmtSigned(ddAthPct, 2)}%，VIX ${vix.toFixed(2)}，VXN ${vxn.toFixed(2)}，VIX/VIX3M ${vr.toFixed(3)}。原始结构预警（${rawCrisisProb}%）如实反映实时压力，但高波门控/止盈锁仓阻止追买高价新 Put。${c2mActive ? `双CTA 2月熊市计时器运行中：连续 ${c2mDays}/60 天。` : '密切盯防二档全额止盈（VIX/3M >= 1.10 且回撤 <= -10%）。'}`;
+  } else if (sleeveAStatus === 'OPEN_READY') {
+    actionCode = 'OPEN_SLEEVE_A';
+    severity = 'calm';
+    headlineEn = 'Calm Low-Vol · Core 1.20x Active + Sleeve A (0.2% NAV 125D -15% OTM) Open/Roll Ready';
+    headlineZh = '低波顺风期 · 维持 1.20x 核心仓 + 0.2% 常态盾（125D -15% OTM）可正常持有/滚仓';
+    summaryEn = `VIX ${vix.toFixed(2)} < 20.0 & ${contangoStreak}D contango (>= 5D). Maintain 0.2% NAV baseline tail put and 100% QQQ + 10% DBMF + 10% KMLM <= 1.200x.`;
+    summaryZh = `VIX ${vix.toFixed(2)} < 20.0 且已连续 ${contangoStreak} 日非倒挂（>= 5 日）。正常维护 0.2% NAV 常态尾盾，核心仓位严守 <= 1.200x 上限。`;
+  }
+
+  // Exact live target strikes computed from live QQQ spot
+  const strike15Exact = r2(qqq * 0.85);
+  const strike15Round = Math.round(qqq * 0.85);
+  const strike10Exact = r2(qqq * 0.9);
+  const strike10Round = Math.round(qqq * 0.9);
+
+  // Build 3 Pillars with Dual-Track Raw vs Vol-Gate badges on every single sensor!
+  const sensorStatus = (rawLit, entLit, specialBlocked = false) => {
+    if (entLit) return 'ACTIONABLE';
+    if (rawLit) return 'RAW_ALERT_HIGH_VOL';
+    if (specialBlocked) return 'LATCH_OFF';
+    return 'CALM';
+  };
+
+  const baaR = row.baa_r;
+  const dgs2J = row.dgs2_j;
+  const nfciJ = row.nfci_j;
+
+  const pillars = [
+    {
+      id: 'P1',
+      title_en: 'P1 · Top Fragility & Breadth',
+      title_zh: 'P1 · 顶部脆弱性与宽度背离',
+      route_badge_en: 'Route 1 · 125D -> 75D (-15% OTM)',
+      route_badge_zh: 'Route 1 · 125D -> 75D (-15% OTM)',
+      raw_score: p1Raw,
+      entry_score: p1Ent,
+      max_score: 45,
+      raw_alert_lit: p1Raw > 0,
+      entry_lit: p1Ent > 0,
+      vol_blocked: p1Raw > 0 && p1Ent === 0,
+      sensors: [
+        {
+          id: 'M0',
+          name_en: 'M0 Six-Lights & Breadth Near High',
+          name_zh: 'M0 六灯宏观 + 高位宽度背离',
+          points: 35,
+          route_tag_en: '125D -15%',
+          route_tag_zh: '125D -15%',
+          raw_alert: m0Raw,
+          vol_gate_ok: vxn <= 22.0,
+          entry_triggered: m0Ent,
+          status_code: sensorStatus(m0Raw, m0Ent),
+          vol_gate_rule_en: 'VXN <= 22.0',
+          vol_gate_rule_zh: '低波门控 VXN <= 22.0',
+          metrics: [
+            { label_en: 'ATH Drawdown', label_zh: '距 ATH 回撤', value: `${fmtSigned(ddAthPct, 2)}% (>= -5%)`, passed: ddAthPct >= -5.0 },
+            { label_en: '6-Lights Score', label_zh: '六灯危机得分', value: `${row.sc6 ?? 0} / 6`, passed: Number(row.sc6 ?? 0) >= 4 },
+            { label_en: 'AD < 50DMA', label_zh: '宽度 AD < 50DMA', value: row.ad_b50 ? 'YES' : 'NO', passed: Boolean(row.ad_b50) },
+            { label_en: 'VXN Gate', label_zh: 'VXN 门控', value: `${vxn.toFixed(1)} (<= 22)`, passed: vxn <= 22.0 },
+          ],
+          explanation_en: m0Ent
+            ? 'Near-high macro/breadth warning active in low-vol zone.'
+            : m0Raw
+              ? `Near-high macro/breadth warning LIT, blocked by high VXN (${vxn.toFixed(1)} > 22).`
+              : ddAthPct < -5.0
+                ? `Already ${fmtSigned(ddAthPct, 1)}% off ATH (M0 only arms within -5% of highs).`
+                : 'Near-high breadth and 6-Lights calm.',
+          explanation_zh: m0Ent
+            ? '高位六灯/宽度预警在低波窗口激活。'
+            : m0Raw
+              ? `高位宏观/宽度预警已亮，但 VXN ${vxn.toFixed(1)} > 22 高波禁追。`
+              : ddAthPct < -5.0
+                ? `当前已回调 ${fmtSigned(ddAthPct, 1)}%（M0 仅在距前高 -5% 内潜伏建仓）。`
+                : '高位宽度与宏观六灯平稳。',
+        },
+        {
+          id: 'M6',
+          name_en: 'M6 Equal-Weight & Defensive Rotation',
+          name_zh: 'M6 宽度塌缩 + 防御轮动',
+          points: 20,
+          route_tag_en: '125D -15%',
+          route_tag_zh: '125D -15%',
+          raw_alert: m6Raw,
+          vol_gate_ok: vxn <= 25.0 && vr <= 0.92,
+          entry_triggered: m6Ent,
+          status_code: sensorStatus(m6Raw, m6Ent),
+          vol_gate_rule_en: 'VXN <= 25.0 & VIX/3M <= 0.92',
+          vol_gate_rule_zh: '低波门控 VXN <= 25 & VR <= 0.92',
+          metrics: [
+            { label_en: 'RSP/SPY < 50D', label_zh: '等权 RSP/SPY 破线', value: `${Number(row.rsp_spy).toFixed(3)} vs ${Number(row.rsp_sma50).toFixed(3)}`, passed: Number(row.rsp_spy) < Number(row.rsp_sma50) },
+            { label_en: 'IWM/QQQ < 50D', label_zh: '小盘 IWM/QQQ 破线', value: `${Number(row.iwm_qqq).toFixed(3)} vs ${Number(row.iwm_sma50).toFixed(3)}`, passed: Number(row.iwm_qqq) < Number(row.iwm_sma50) },
+            { label_en: 'Def/Tech 20D', label_zh: '防御/科技 20D', value: `${fmtSigned(Number(row.def_ret20), 2)}% (>= +2.5%)`, passed: Number(row.def_ret20) >= 2.5 },
+          ],
+          explanation_en: m6Ent
+            ? 'Smart-money rotation into XLP/XLU/XLV while breadth deteriorates at cheap vol.'
+            : m6Raw
+              ? `Defensive rotation & breadth breakdown LIT, blocked by vol gate (VXN ${vxn.toFixed(1)}, VR ${vr.toFixed(2)}).`
+              : 'No simultaneous breadth collapse + defensive rotation.',
+          explanation_zh: m6Ent
+            ? '大资金向防御板块轮动且市场宽度走弱，低波窗口允许建仓。'
+            : m6Raw
+              ? `宽度恶化+防御轮动结构已亮，但当前高波（VXN ${vxn.toFixed(1)}，VR ${vr.toFixed(2)}）禁追。`
+              : '未同时出现等权/小盘破位与防御板块大幅跑赢。',
+        },
+      ],
+    },
+    {
+      id: 'P2',
+      title_en: 'P2 · Exogenous Shock & Options Desk',
+      title_zh: 'P2 · 外生黑天鹅与期权台异动',
+      route_badge_en: 'Route 1 · 125D -> 75D (-15% OTM)',
+      route_badge_zh: 'Route 1 · 125D -> 75D (-15% OTM)',
+      raw_score: p2Raw,
+      entry_score: p2Ent,
+      max_score: 40,
+      raw_alert_lit: p2Raw > 0,
+      entry_lit: p2Ent > 0,
+      vol_blocked: p2Raw > 0 && p2Ent === 0,
+      sensors: [
+        {
+          id: 'M2',
+          name_en: 'M2 Skew / VVIX & Term Inflection',
+          name_zh: 'M2 偏度 / VVIX 与期限拐点',
+          points: 20,
+          route_tag_en: '125D -15%',
+          route_tag_zh: '125D -15%',
+          raw_alert: m2Raw,
+          vol_gate_ok: vxn <= 24.0 && vr <= 1.02,
+          entry_triggered: m2Ent,
+          status_code: sensorStatus(m2Raw, m2Ent),
+          vol_gate_rule_en: 'VXN <= 24.0 & VIX/3M <= 1.02',
+          vol_gate_rule_zh: '低波门控 VXN <= 24 & VR <= 1.02',
+          metrics: [
+            { label_en: 'SKEW 10D vs P75', label_zh: 'SKEW 10D 对比 P75', value: `${Number(row.skew10).toFixed(1)} / ${Number(row.skew_p75).toFixed(1)}`, passed: Number(row.skew10) >= Number(row.skew_p75) },
+            { label_en: 'VVIX vs P75', label_zh: 'VVIX 对比 P75', value: `${Number(row.vvix).toFixed(1)} / ${Number(row.vvix_p75).toFixed(1)}`, passed: Number(row.vvix) >= Number(row.vvix_p75) },
+            { label_en: '5D VR Jump', label_zh: '5日期限陡峭跳升', value: `${fmtSigned(vrJ5, 3)} (>= +0.06)`, passed: vrJ5 >= 0.06 },
+          ],
+          explanation_en: m2Ent
+            ? 'Options desk pricing silent left-tail / term inflection while VXN <= 24.'
+            : m2Raw
+              ? `Options desk tail stress LIT (VVIX ${Number(row.vvix).toFixed(1)}, VR ${vr.toFixed(3)}), blocked by high vol (VXN ${vxn.toFixed(1)} > 24).`
+              : 'Options skew and term-structure momentum normal.',
+          explanation_zh: m2Ent
+            ? '期权台隐含左尾偏度/期限斜率异动，且 VXN <= 24 处于廉价买盾期。'
+            : m2Raw
+              ? `期权台恐慌结构已亮（VVIX ${Number(row.vvix).toFixed(1)}，VR ${vr.toFixed(3)}），因 VXN ${vxn.toFixed(1)} > 24 高波禁追。`
+              : '期权偏度与期限结构变化平稳。',
+        },
+        {
+          id: 'M5',
+          name_en: 'M5 Causal 4D Hamilton HMM Regime',
+          name_zh: 'M5 因果 4D Hamilton HMM 状态跃迁',
+          points: 20,
+          route_tag_en: '125D -15%',
+          route_tag_zh: '125D -15%',
+          raw_alert: m5Raw,
+          vol_gate_ok: vxn <= 24.0 && vr < 1.02 && Number(row.hmm_p5 ?? 0) < 0.4,
+          entry_triggered: m5Ent,
+          status_code: sensorStatus(m5Raw, m5Ent),
+          vol_gate_rule_en: 'Fresh jump (P_t-5 < 40%) & VXN <= 24',
+          vol_gate_rule_zh: '初入跃迁 (5日前<40%) 且 VXN <= 24',
+          metrics: [
+            { label_en: 'HMM Stress P(t)', label_zh: 'HMM 危机概率 P(t)', value: `${(Number(row.hmm_p) * 100).toFixed(1)}% (>= 55%)`, passed: Number(row.hmm_p) >= 0.55 },
+            { label_en: 'HMM P(t-5)', label_zh: '5日前概率 P(t-5)', value: `${(Number(row.hmm_p5) * 100).toFixed(1)}% (< 40%)`, passed: Number(row.hmm_p5) < 0.4 },
+            { label_en: 'Vol Gate', label_zh: '低波门控', value: `VXN ${vxn.toFixed(1)} / VR ${vr.toFixed(2)}`, passed: vxn <= 24.0 && vr < 1.02 },
+          ],
+          explanation_en: m5Ent
+            ? 'Fresh 4D HMM transition into stress regime while option IV is still affordable.'
+            : m5Raw
+              ? `HMM in active crisis state (${(Number(row.hmm_p) * 100).toFixed(0)}%); M5 only buys on fresh onset when VXN <= 24.`
+              : `HMM calm regime (Stress prob ${(Number(row.hmm_p) * 100).toFixed(1)}%).`,
+          explanation_zh: m5Ent
+            ? '4D 因果 HMM 刚从平静态跃迁至压力态且隐波尚便宜，触发建仓。'
+            : m5Raw
+              ? `HMM 已处于持续高压危机态（${(Number(row.hmm_p) * 100).toFixed(0)}%）；M5 仅在初入跃迁且 VXN <= 24 时买盾。`
+              : `HMM 处于低波平静态（危机概率 ${(Number(row.hmm_p) * 100).toFixed(1)}%）。`,
+        },
+      ],
+    },
+    {
+      id: 'P3',
+      title_en: 'P3 · Slow-Bear Dead-Cat & Credit Squeeze',
+      title_zh: 'P3 · 慢熊死猫跳与信用紧缩',
+      route_badge_en: 'M4: 90D->30D (-10%) · M3: 125D->75D (-15%)',
+      route_badge_zh: 'M4: 90D->30D (-10%) · M3: 125D->75D (-15%)',
+      raw_score: p3Raw,
+      entry_score: p3Ent,
+      max_score: 45,
+      raw_alert_lit: p3Raw > 0,
+      entry_lit: p3Ent > 0,
+      vol_blocked: p3Raw > 0 && p3Ent === 0,
+      sensors: [
+        {
+          id: 'M4',
+          name_en: 'M4 Slow-Bear Dead-Cat (+8% Latch)',
+          name_zh: 'M4 慢熊死猫跳（+8% 滞回锁存）',
+          points: 35,
+          route_tag_en: '90D -> 30D (-10% OTM)',
+          route_tag_zh: '90D -> 30D (-10% OTM)',
+          raw_alert: m4Raw,
+          vol_gate_ok: vxn <= 28.0 && vr <= 0.9,
+          entry_triggered: m4Ent,
+          status_code: sensorStatus(m4Raw, m4Ent, !latchArmed && qqq < sma200),
+          vol_gate_rule_en: 'Latch ON & VXN <= 28.0 & VIX/3M <= 0.90',
+          vol_gate_rule_zh: '锁存开启 且 VXN <= 28 & VIX/3M <= 0.90',
+          metrics: [
+            { label_en: '+8% Slow-Bear Latch', label_zh: '+8% 慢熊滞回锁存', value: latchArmed ? 'ARMED (ON)' : `OFF (CTA ${fmtSigned(ctaHi252Pct, 1)}%)`, passed: latchArmed },
+            { label_en: 'QQQ < 200DMA & EWMAC < 0', label_zh: '破年线且 EWMAC < 0', value: `${qqq < sma200 ? '<200D' : '>200D'} · ${fmtSigned(ewmac, 2)}`, passed: qqq < sma200 && ewmac < 0 },
+            { label_en: 'Dead-Cat QQQ > EMA20', label_zh: '反抽站上 EMA20', value: `$${qqq.toFixed(1)} vs $${ema20.toFixed(1)}`, passed: qqq > ema20 },
+            { label_en: 'Complacency Gate', label_zh: '自满低波门控', value: `VXN ${vxn.toFixed(1)}<=28 · VR ${vr.toFixed(2)}<=0.90`, passed: vxn <= 28.0 && vr <= 0.9 },
+          ],
+          explanation_en: m4Ent
+            ? 'Structural slow-bear dead-cat complacency confirmed! Route 2 fires 90D -10% OTM Put (recycle at <= 30 DTE).'
+            : m4Raw
+              ? `Latch ON & dead-cat bounce active, waiting for vol complacency (VXN ${vxn.toFixed(1)} <= 28, VR ${vr.toFixed(2)} <= 0.90).`
+              : !latchArmed
+                ? `Slow-Bear +8% Hysteresis Latch is OFF (Corr60 ${fmtSigned(corr60, 2)}, DualCTA ${fmtSigned(ctaHi252Pct, 1)}% since 1Y high) — blocks false non-slow-bear triggers.`
+                : 'Latch ARMED; waiting for QQQ bounce above EMA20 with VXN <= 28 & VR <= 0.90.',
+          explanation_zh: m4Ent
+            ? '结构性慢熊死猫跳自满确认！Route 2 触发买入 90D -10% OTM Put（<= 30 DTE 回收残值）。'
+            : m4Raw
+              ? `慢熊锁存已开且出现死猫反抽，但等待波动率回落自满（VXN ${vxn.toFixed(1)}<=28、VR ${vr.toFixed(2)}<=0.90）。`
+              : !latchArmed
+                ? `慢熊 +8% 滞回锁存开关为 OFF（Corr60 ${fmtSigned(corr60, 2)}，双CTA 距1年高点 ${fmtSigned(ctaHi252Pct, 1)}%），自动过滤非慢熊假信号。`
+                : '慢熊锁存已激活，等待 QQQ 反抽站上 EMA20 且 VXN <= 28、VIX/3M <= 0.90。',
+        },
+        {
+          id: 'M3',
+          name_en: 'M3 Credit & Financial Conditions Squeeze',
+          name_zh: 'M3 信用利差与金融条件收紧',
+          points: 20,
+          route_tag_en: '125D -15%',
+          route_tag_zh: '125D -15%',
+          raw_alert: m3Raw,
+          vol_gate_ok: vxn <= 26.0 && vr <= 0.92,
+          entry_triggered: m3Ent,
+          status_code: sensorStatus(m3Raw, m3Ent),
+          vol_gate_rule_en: 'VXN <= 26.0 & VIX/3M <= 0.92',
+          vol_gate_rule_zh: '低波门控 VXN <= 26 & VR <= 0.92',
+          metrics: [
+            { label_en: 'HYG/LQD < 50DMA', label_zh: '高收益债 HYG/LQD 破线', value: `${Number(row.hyg_lqd).toFixed(4)} vs ${Number(row.hyg_sma50).toFixed(4)}`, passed: Number(row.hyg_lqd) < Number(row.hyg_sma50) },
+            { label_en: 'Baa 63D Rise', label_zh: 'Baa 63日走阔', value: baaR !== null ? `${fmtSigned(baaR, 2)}% (>= +0.15)` : 'n/a', passed: baaR !== null && baaR >= 0.15 },
+            { label_en: '2Y / NFCI Jump', label_zh: '2Y / NFCI 跃升', value: `${dgs2J !== null ? fmtSigned(dgs2J, 2) : 'n/a'} / ${nfciJ !== null ? fmtSigned(nfciJ, 2) : 'n/a'}`, passed: (dgs2J !== null && dgs2J >= 0.4) || (nfciJ !== null && nfciJ >= 0.1) },
+          ],
+          explanation_en: m3Ent
+            ? 'HY credit breakdown + macro tightening confirmed in low-vol window.'
+            : m3Raw
+              ? `Credit tightening structure LIT, blocked by elevated vol (VXN ${vxn.toFixed(1)} > 26 or VR ${vr.toFixed(2)} > 0.92).`
+              : 'Credit spreads and financial conditions stable.',
+          explanation_zh: m3Ent
+            ? '高收益债相对走弱叠加宏观利差/金融条件收紧，低波窗口触发。'
+            : m3Raw
+              ? `信用与宏观紧缩结构已亮，但当前高波（VXN ${vxn.toFixed(1)} / VR ${vr.toFixed(2)}）禁追新单。`
+              : '信用利差与金融条件整体稳定。',
+        },
+      ],
+    },
   ];
 
-  const hydratedWindows = hydrateCrisisWindows(
-    data.crisis_windows,
-    bundle?.crisis_windows,
-    m7Eff,
-  );
-  const engineAttributionByStrategy = buildEngineAttributionByStrategy(
-    data,
-    snapshotId,
-    selectedTpMode,
-    selectedCcMode,
-    selectedSpMode,
-    effectiveWcMode,
+  // 5 Live Sub-Engine Status Pills for Section 1 Hero Card
+  const subEngines = [
     {
-      putOtm: selectedPutOtm,
-      m7TpMode: selectedM7TpMode,
-      rollMode: selectedRollMode,
-      m0Enabled: selectedM0Enabled,
-      fillMode: effFillMode,
+      id: 'leverage_cap',
+      status_code: 'ENFORCED_120X',
+      tone: 'mint',
+      label_en: '1.20x Leverage Cap',
+      label_zh: '1.20x 杠杆红线',
+      value_en: `<= 1.200x · Box ${boxRatePct.toFixed(2)}%`,
+      value_zh: `<= 1.200x · Box ${boxRatePct.toFixed(2)}%`,
+      detail_en: `100% QQQ + 10% DBMF + 10% KMLM (EFFR ${effrPct.toFixed(2)}% + 35bp)`,
+      detail_zh: `100% QQQ + 10% DBMF + 10% KMLM（EFFR ${effrPct.toFixed(2)}% + 35bp）`,
     },
-  );
-
-  const liveSignalStatesByStrategy = {
-    ...(data.live_signal_states_by_strategy ?? {}),
-    ...(bundle?.live_signal_states_by_strategy ?? {}),
-    ...(m7Eff?.liveSignalStates ?? {}),
-  };
-  const liveSpStatesByStrategy = {
-    ...(data.live_sp_states_by_strategy ?? {}),
-    ...(bundle?.live_sp_states_by_strategy ?? {}),
-    ...(m7Eff?.liveSpStates ?? {}),
-  };
-  const m7LiveDashboardsByStrategy =
-    m7Eff?.m7LiveDashboards ?? data.m7_live_dashboards_by_strategy ?? {};
-
-  const projected = {
-    ...baseWithoutModes,
-    default_profile: data.default_profile ?? 'full_m7_adaptive',
-    profiles_meta: data.profiles_meta ?? [],
-    fill_mode: effFillMode,
-    selected_fill_mode: effFillMode,
-    default_fill_mode: data.default_fill_mode ?? DEFAULT_M7_FILL_MODE,
-    available_fill_modes: data.available_fill_modes ?? CRISIS_OBSERVATORY_FILL_MODES,
-    fill_modes_meta: data.fill_modes_meta ?? [],
-    hardcoded_ruleset: {
-      ...(data.hardcoded_ruleset ?? HARDCODED_RULESET_SPEC),
-      fill_mode: effFillMode,
+    {
+      id: 'sleeve_a',
+      status_code: sleeveAStatus,
+      tone: sleeveATone,
+      label_en: '0.2% Baseline Put',
+      label_zh: '0.2% 常态盾',
+      value_en: sleeveAValEn,
+      value_zh: sleeveAValZh,
+      detail_en: sleeveADetEn,
+      detail_zh: sleeveADetZh,
     },
-    put_otm: selectedPutOtm,
-    default_put_otm: data.default_put_otm ?? 'otm15',
-    put_otm_meta: data.put_otm_meta ?? [],
-    m7_tp_mode: selectedM7TpMode,
-    default_m7_tp_mode: data.default_m7_tp_mode ?? 'standard',
-    m7_tp_modes_meta: data.m7_tp_modes_meta ?? [],
-    roll_mode: selectedRollMode,
-    default_roll_mode: data.default_roll_mode ?? 'adaptive_120_90',
-    m7_roll_modes_meta: data.m7_roll_modes_meta ?? [],
-    m0_enabled: selectedM0Enabled,
-    default_m0_enabled: data.default_m0_enabled ?? true,
-    tp_mode: selectedTpMode,
-    default_tp_mode: data.default_tp_mode ?? 'layered_itm',
-    tp_modes_meta: data.tp_modes_meta ?? [],
-    cc_mode: selectedCcMode,
-    default_cc_mode: data.default_cc_mode ?? 'cc_off',
-    cc_modes_meta: data.cc_modes_meta ?? [],
-    sp_mode: selectedSpMode,
-    default_sp_mode: data.default_sp_mode ?? 'sp_off',
-    sp_modes_meta: data.sp_modes_meta ?? [],
-    wc_mode: effectiveWcMode,
-    default_wc_mode: defaultWcMode,
-    wc_modes_meta: data.wc_modes_meta ?? [],
-    m7_live_dashboard:
-      m7LiveDashboardsByStrategy.M7G_Graded ?? data.m7_live_dashboard ?? null,
-    m7_live_dashboards_by_strategy: m7LiveDashboardsByStrategy,
-    live_signal_state: bundle?.live_signal_state ?? data.live_signal_state,
-    live_signal_states_by_strategy: liveSignalStatesByStrategy,
-    live_sp_state: bundle?.live_sp_state ?? data.live_sp_state ?? null,
-    live_sp_states_by_strategy: liveSpStatesByStrategy,
-    strategies_summary: strategiesSummary,
-    engine_attribution_by_strategy: engineAttributionByStrategy,
-    daily_series: projectedSeries,
-    events: eventsByStrategy.M7G_Graded ?? data.events,
-    events_by_strategy: eventsByStrategy,
-    trade_ledger: unpackedTradeLedgers.M7G_Graded ?? data.trade_ledger,
-    trade_ledgers_by_strategy: unpackedTradeLedgers,
-    cc_ledgers_by_strategy: unpackedCcLedgers,
-    sp_ledger: unpackedSpLedgers.M7G_Graded ?? [],
-    sp_ledgers_by_strategy: unpackedSpLedgers,
-    crisis_windows: hydratedWindows,
-  };
-  if (projectedModeCache.size >= 64) {
-    const oldestKey = projectedModeCache.keys().next().value;
-    projectedModeCache.delete(oldestKey);
-  }
-  projectedModeCache.set(cacheKey, projected);
-  return projected;
-}
-
-function computeSeriesMetrics(dailyRows, navKey, bhEndNav) {
-  if (!dailyRows.length) return null;
-  const startNav = Number(dailyRows[0][navKey]);
-  const endNav = Number(dailyRows[dailyRows.length - 1][navKey]);
-  const startMs = Date.parse(`${dailyRows[0].date}T00:00:00Z`);
-  const endMs = Date.parse(`${dailyRows[dailyRows.length - 1].date}T00:00:00Z`);
-  const years = Math.max((endMs - startMs) / (365.25 * 86400 * 1000), 1 / 252);
-  const cagr = (Math.pow(endNav / startNav, 1 / years) - 1) * 100;
-
-  let peak = startNav;
-  let maxDd = 0;
-  const rets = [];
-  for (let i = 0; i < dailyRows.length; i += 1) {
-    const v = Number(dailyRows[i][navKey]);
-    if (v > peak) peak = v;
-    const dd = (v / peak - 1) * 100;
-    if (dd < maxDd) maxDd = dd;
-    if (i > 0) {
-      const prev = Number(dailyRows[i - 1][navKey]);
-      if (prev > 0) rets.push(v / prev - 1);
-    }
-  }
-  let sharpe = 0;
-  if (rets.length >= 2) {
-    const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
-    let sq = 0;
-    for (let i = 0; i < rets.length; i += 1) sq += (rets[i] - mean) ** 2;
-    const std = Math.sqrt(sq / (rets.length - 1));
-    if (std > 1e-12) sharpe = (mean / std) * Math.sqrt(252);
-  }
-  const calmar = maxDd < -1e-6 ? cagr / Math.abs(maxDd) : 0;
-  const lastClose = Number(dailyRows[dailyRows.length - 1].qqq_close);
-  const finalSh = lastClose > 0 ? endNav / lastClose : null;
-  const bhSh = lastClose > 0 ? bhEndNav / lastClose : null;
-  const extraSh = finalSh !== null && bhSh !== null ? finalSh - bhSh : null;
-  const extraPct = extraSh !== null && bhSh > 0 ? (extraSh / bhSh) * 100 : null;
-  return {
-    end_nav: r2(endNav),
-    net_alpha_usd: r2(endNav - bhEndNav),
-    cagr_pct: r2(cagr),
-    max_dd_pct: r2(maxDd),
-    sharpe: r3(sharpe),
-    calmar: r3(calmar),
-    final_shares: finalSh !== null ? r2(finalSh) : null,
-    bh_final_shares: bhSh !== null ? r2(bhSh) : null,
-    extra_shares_vs_bh: extraSh !== null ? r2(extraSh) : null,
-    extra_shares_pct: extraPct !== null ? r2(extraPct) : null,
-  };
-}
-
-function maskLedgerAtCutoff(ledger, asOfDate) {
-  const out = [];
-  for (const tr of ledger ?? []) {
-    if (tr.entry_date > asOfDate) continue;
-    if ((tr.exit_date && tr.exit_date <= asOfDate) || (tr.is_open_live && tr.mtm_date && tr.mtm_date <= asOfDate)) {
-      out.push(tr);
-    } else {
-      out.push({
-        ...tr,
-        exit_date: null,
-        exit_reason: 'open_as_of_cutoff',
-        actual_days_held: null,
-        rem_dte_at_exit: null,
-        exit_spot: null,
-        exit_vxn: null,
-        exit_vix_ratio: null,
-        underlying_ret_pct: null,
-        put_exit_val_sh: null,
-        call_exit_cost_sh: null,
-        exit_net_cash_usd: null,
-        net_pnl_usd: null,
-        roi_mult: null,
-        exit_shares_delta: null,
-        shares_added: null,
-        delta_usd: null,
-        gamma_usd: null,
-        vega_usd: null,
-        theta_slip_usd: null,
-        convexity_mult: null,
-        comp_put_gain_usd: null,
-        comp_call_drag_usd: null,
-      });
-    }
-  }
-  return out;
-}
-
-function buildCutoffSignalState(lastBar, openU1Tranches, baseSignalState) {
-  const ddPct = Number(lastBar.dd_ath_pct);
-  const vxn = Number(lastBar.vxn);
-  const vr = Number(lastBar.vix_ratio);
-  const sc = Number(lastBar.crisis_lights);
-  const sc5 = Number(lastBar.smooth_lights);
-  const cl = Number(lastBar.qqq_close);
-  const ma200 = Number(lastBar.qqq_ma200);
-  const adBelow = Number(lastBar.ad_line) < Number(lastBar.ad_sma50);
-  const athOk = ddPct >= -5.0;
-  const vxnOk = vxn <= 22.0;
-  const lightsOk = sc >= 4;
-  const tpOk = vr >= 1.1;
-
-  const s1Open = openU1Tranches.find(t => t.slot_num === 1) ?? null;
-  const s2Open = openU1Tranches.find(t => t.slot_num === 2) ?? null;
-
-  let regimeCode = 'CRUISE_UNHEDGED';
-  let titleEn = 'BULL CRUISE UNHEDGED (100% QQQ · ZERO CALL DRAG)';
-  let titleZh = '顺风巡航零期权拖累（100% 满仓 QQQ 复利）';
-  if (s1Open && s2Open) {
-    regimeCode = 'DUAL_SLOT_FULL_SHIELD';
-    titleEn = 'SLOT 1 NAKED PUT + SLOT 2 ZERO-COST COLLAR FULL HEDGE ACTIVE (100% QQQ)';
-    titleZh = '首仓裸 Put + 次仓零成本 Collar 双槽满盾保护中（100% 满仓 QQQ）';
-  } else if (s1Open) {
-    regimeCode = 'SLOT1_NAKED_PUT_ACTIVE';
-    titleEn = 'SLOT 1 (50% NAKED -10% PUT) ACTIVE · 100% QQQ UNLIMITED UPSIDE RETAINED';
-    titleZh = '首仓 50% 裸 -10% Put 持盾中 · 100% QQQ 保留完整向上冲顶收益';
-  } else if (!athOk) {
-    regimeCode = 'LOW_SPOT_FREEZE_NO_NEW_COLLAR';
-    titleEn = 'DRAWDOWN > 5% OFF ATH · HARD FREEZE ON NEW COLLARS (100% QQQ REBOUND CAPTURE)';
-    titleZh = '距历史前高回撤超 5% · 严禁低位新开或续作 Collar（100% QQQ 保留完整反弹斜率）';
-  }
-
-  const dev200 = ma200 > 0 ? ((cl / ma200 - 1) * 100).toFixed(2) : '0.00';
-  const adSpread = Math.round(Number(lastBar.ad_vs_50ma));
-  const adSpreadStr = `${adSpread >= 0 ? '+' : ''}${adSpread}`;
+    {
+      id: 'sleeve_b',
+      status_code: sleeveBStatus,
+      tone: sleeveBTone,
+      label_en: '1.0% Three-Pillar Put',
+      label_zh: '1.0% 三支柱危机盾',
+      value_en: sleeveBValEn,
+      value_zh: sleeveBValZh,
+      detail_en: sleeveBDetEn,
+      detail_zh: sleeveBDetZh,
+    },
+    {
+      id: 'slow_bear_latch',
+      status_code: latchArmed ? 'ARMED' : 'OFF',
+      tone: latchArmed ? 'lilac' : 'sky',
+      label_en: 'M4 +8% Slow-Bear Latch',
+      label_zh: 'M4 +8% 慢熊滞回锁存',
+      value_en: latchArmed ? `ARMED · Reset ${above200}/10D` : `OFF · CTA ${fmtSigned(ctaHi252Pct, 1)}%`,
+      value_zh: latchArmed ? `已锁存 · 复位 ${above200}/10天` : `未锁存 · CTA ${fmtSigned(ctaHi252Pct, 1)}%`,
+      detail_en: latchArmed
+        ? `Armed ${row.latch_arm}, Peak CTA ${fmtSigned(Number(row.latch_pk ?? 0), 1)}%, Corr60 ${fmtSigned(corr60, 2)}`
+        : `Requires QQQ<200D, DD252<=-10%, Corr60<0 (${fmtSigned(corr60, 2)}), CTA>=+8%`,
+      detail_zh: latchArmed
+        ? `锁存于 ${row.latch_arm}，峰值 CTA ${fmtSigned(Number(row.latch_pk ?? 0), 1)}%，Corr60 ${fmtSigned(corr60, 2)}`
+        : `需破200D、DD252<=-10%、Corr60<0（现 ${fmtSigned(corr60, 2)}）、CTA>=+8%`,
+    },
+    {
+      id: 'cta_timer',
+      status_code: c2mConfirmed ? 'CONFIRMED' : c2mActive ? 'RUNNING' : 'IDLE',
+      tone: c2mConfirmed ? 'coral' : c2mActive ? 'amber' : 'muted',
+      label_en: 'Dual-CTA 2M Timer',
+      label_zh: '双CTA 2月熊市计时器',
+      value_en: c2mActive ? `${c2mDays} / 60D (${c2mConfirmed ? 'CONFIRMED' : `Est ${c2mProjected}`})` : `IDLE (DD ${fmtSigned(ddAthPct, 1)}%)`,
+      value_zh: c2mActive ? `持续 ${c2mDays} / 60天${c2mConfirmed ? ' · 已确认' : ` (预计 ${c2mProjected})`}` : `待命 (回撤 ${fmtSigned(ddAthPct, 1)}%)`,
+      detail_en: c2mActive
+        ? `Started ${c2mStart} · DBMF ${fmtSigned(dbAthPct, 1)}%, KMLM ${fmtSigned(kmAthPct, 1)}% since ATH`
+        : 'Starts when QQQ ATH DD <= -12.0% continuously for 60 calendar days',
+      detail_zh: c2mActive
+        ? `起算日 ${c2mStart} · 自前高 DBMF ${fmtSigned(dbAthPct, 1)}%、KMLM ${fmtSigned(kmAthPct, 1)}%`
+        : '当 QQQ 距历史高点连续 <= -12.0% 满 60 自然日触发 5 批换仓',
+    },
+  ];
 
   return {
-    ...baseSignalState,
-    regime_code: regimeCode,
-    regime_title_en: titleEn,
-    regime_title_zh: titleZh,
-    regime_subtitle_en: `QQQ $${cl.toFixed(2)} (${ddPct.toFixed(2)}% vs ATH, ${dev200}% vs 200DMA) · ${sc}/6 Crisis Lights ON (5D avg ${sc5.toFixed(1)}) · VIX/VIX3M ${vr.toFixed(3)} · 100% QQQ Pure Options`,
-    regime_subtitle_zh: `QQQ 现价 $${cl.toFixed(2)}（距前高 ${ddPct.toFixed(2)}%，偏离年线 ${dev200}%）· 危机灯 ${sc}/6 亮灯（5日均值 ${sc5.toFixed(1)}）· VIX/VIX3M ${vr.toFixed(3)} · 100% 满仓 QQQ 纯期权`,
-    target_equity_pct: 100.0,
-    target_tbill_pct: 0.0,
-    active_option_slots: openU1Tranches.length,
-    slot1_naked_put: {
-      ...baseSignalState.slot1_naked_put,
-      status: s1Open ? 'ACTIVE_OPEN' : 'STANDBY',
-      status_label_en: s1Open ? 'ACTIVE' : 'STANDBY',
-      status_label_zh: s1Open ? '持仓保护中' : '待命',
-      open_position: s1Open,
+    date: row.date,
+    is_pit_replay: isPitReplay,
+    market: {
+      qqq_close: qqq,
+      qqq_ath: ath,
+      qqq_ath_date: row.ath_date,
+      qqq_ath_dd_pct: ddAthPct,
+      qqq_hi252_date: row.hi252_date,
+      qqq_dd252_pct: dd252Pct,
+      qqq_sma200: sma200,
+      qqq_ema20: ema20,
+      qqq_ewmac: ewmac,
+      dbmf_close: Number(row.dbmf),
+      kmlm_close: Number(row.kmlm),
+      dbmf_ret_since_ath_pct: dbAthPct,
+      kmlm_ret_since_ath_pct: kmAthPct,
+      dual_cta_ret_since_ath_pct: ctaAthPct,
+      dbmf_ret_since_hi252_pct: Number(row.db_hi252),
+      kmlm_ret_since_hi252_pct: Number(row.km_hi252),
+      dual_cta_ret_since_hi252_pct: ctaHi252Pct,
+      dual_cta_corr60: corr60,
+      vix,
+      vxn,
+      vix3m,
+      vix_ratio: vr,
+      vr_jump5: vrJ5,
+      skew10: Number(row.skew10),
+      skew_p75: Number(row.skew_p75),
+      vvix: Number(row.vvix),
+      vvix_p75: Number(row.vvix_p75),
+      hmm_p: Number(row.hmm_p),
+      hmm_p5: Number(row.hmm_p5),
+      effr_pct: effrPct,
+      box_rate_pct: boxRatePct,
+      ibkr_rate_pct: ibkrRatePct,
     },
-    slot2_collar: {
-      ...baseSignalState.slot2_collar,
-      status: s2Open ? 'ACTIVE_OPEN' : !athOk ? 'FROZEN_BELOW_ATH5' : 'STANDBY_WAIT_30D',
-      status_label_en: s2Open ? 'ACTIVE' : !athOk ? 'HARD FROZEN (DD > 5%)' : 'STANDBY (>=30D STEP)',
-      status_label_zh: s2Open ? '持盾保护中' : !athOk ? '低位铁律冻结（禁卖Call）' : '待命（距首仓满30日开启）',
-      open_position: s2Open,
+    command_center: {
+      action_code: actionCode,
+      severity,
+      headline_en: headlineEn,
+      headline_zh: headlineZh,
+      summary_en: summaryEn,
+      summary_zh: summaryZh,
+      sub_engines: subEngines,
+      target_strikes: {
+        route1_125d_15otm: {
+          target_dte: 125,
+          roll_dte: 75,
+          otm_pct: -15,
+          exact_strike: strike15Exact,
+          suggested_strike: strike15Round,
+          budget_sleeve_a_pct: 0.2,
+          budget_sleeve_b_pct: 1.0,
+        },
+        route2_m4_90d_10otm: {
+          target_dte: 90,
+          recycle_dte: 30,
+          otm_pct: -10,
+          exact_strike: strike10Exact,
+          suggested_strike: strike10Round,
+          budget_sleeve_b_pct: 1.0,
+        },
+      },
     },
-    gate_checklist: [
-      {
-        key: 'ath_within_5pct',
-        passed: athOk,
-        label_en: 'ATH <= 5%',
-        label_zh: '距前高 <= 5%',
-        current_value: `${ddPct.toFixed(2)}%`,
-        reading: `${ddPct.toFixed(2)}%`,
+    dual_cta_radar: {
+      slow_bear_latch: {
+        armed: latchArmed,
+        arm_date: row.latch_arm ?? null,
+        peak_cta_gain_pct: Number(row.latch_pk ?? 0),
+        above_200dma_streak: above200,
+        reset_target_days: 10,
+        corr60,
+        dual_cta_gain_since_hi252_pct: ctaHi252Pct,
+        dbmf_gain_since_hi252_pct: Number(row.db_hi252),
+        kmlm_gain_since_hi252_pct: Number(row.km_hi252),
+        gates: [
+          {
+            id: 'qqq_below_200dma',
+            label_en: 'QQQ < 200DMA',
+            label_zh: 'QQQ 跌破 200DMA',
+            passed: qqq < sma200,
+            value: `$${qqq.toFixed(2)} vs $${sma200.toFixed(2)}`,
+          },
+          {
+            id: 'qqq_dd252_le_10',
+            label_en: 'QQQ 252D DD <= -10.0%',
+            label_zh: 'QQQ 距252日高点 <= -10%',
+            passed: dd252Pct <= -10.0,
+            value: `${fmtSigned(dd252Pct, 2)}%`,
+          },
+          {
+            id: 'corr60_neg',
+            label_en: 'Corr60(DualCTA, QQQ) < 0',
+            label_zh: '60日相关性 Corr60 < 0',
+            passed: corr60 < 0,
+            value: fmtSigned(corr60, 3),
+          },
+          {
+            id: 'cta_gain_ge_8pct',
+            label_en: 'DualCTA Gain >= +8.0%',
+            label_zh: '双CTA 自1Y高点涨 >= +8%',
+            passed: ctaHi252Pct >= 8.0,
+            value: `${fmtSigned(ctaHi252Pct, 2)}%`,
+          },
+        ],
       },
-      {
-        key: 'vxn_le_22',
-        passed: vxnOk,
-        label_en: 'VXN <= 22',
-        label_zh: 'VXN <= 22 低波门控',
-        current_value: vxn.toFixed(2),
-        reading: vxn.toFixed(2),
+      cont_2m_timer: {
+        active: c2mActive,
+        confirmed: c2mConfirmed,
+        timer_start_date: c2mStart,
+        continuous_cal_days: c2mDays,
+        target_cal_days: 60,
+        projected_confirm_date: c2mProjected,
+        qqq_ath_dd_pct: ddAthPct,
+        threshold_dd_pct: -12.0,
+        dbmf_positive_since_ath: dbAthPct > 0,
+        kmlm_positive_since_ath: kmAthPct > 0,
+        dbmf_ret_since_ath_pct: dbAthPct,
+        kmlm_ret_since_ath_pct: kmAthPct,
+        dual_cta_ret_since_ath_pct: ctaAthPct,
+        rotation_rule_en: 'Sell 5 equal tranches (20% each) spaced 5 trading days apart -> buy QQQ immediately (cancel remaining if QQQ DD > -12.0%).',
+        rotation_rule_zh: '确认后分 5 批等额（每批 20%、间隔 5 交易日）卖出盈利 CTA 并即时买 QQQ（回撤缩窄至 > -12% 立即终止剩余批次）。',
+        restore_rule_en: 'Mechanically hold rotated QQQ for 365 calendar days before restoring 10% DBMF + 10% KMLM (<= 1.200x cap).',
+        restore_rule_zh: '机械持有换入的 QQQ 满 1 年（365 自然日）后再恢复 10% DBMF + 10% KMLM（严守 <= 1.200x 杠杆红线）。',
       },
-      {
-        key: 'ad_below_50dma',
-        passed: adBelow,
-        label_en: 'AD Line < 50DMA',
-        label_zh: 'AD Line < 50DMA',
-        current_value: adSpreadStr,
-        reading: adSpreadStr,
+      leverage_guard: {
+        hard_cap: 1.2,
+        target_gross: 1.2,
+        target_qqq_pct: 100.0,
+        target_dbmf_pct: 10.0,
+        target_kmlm_pct: 10.0,
+        target_debt_pct: 20.0,
+        init_ltv_pct: 16.67,
+        reg_t_crash_cushion_pct: -77.78,
+        effr_pct: effrPct,
+        box_rate_pct: boxRatePct,
+        ibkr_rate_pct: ibkrRatePct,
       },
-      {
-        key: 'crisis_lights_ge_4',
-        passed: lightsOk,
-        label_en: 'Crisis Lights >= 4',
-        label_zh: '危机灯 >= 4 盏',
-        current_value: `${sc} / 6`,
-        reading: `${sc} / 6`,
+    },
+    three_pillars: {
+      ...stressPack,
+      raw_crisis_prob: rawCrisisProb,
+      entry_crisis_prob: entryCrisisProb,
+      non_m4_entry_prob: nonM4EntProb,
+      m4_entry_triggered: m4Ent,
+      vol_gate_status: volGateStatus,
+      vol_gate_reason_en: volGateReasonEn,
+      vol_gate_reason_zh: volGateReasonZh,
+      post_tp_lockout: {
+        active: postTpLock,
+        non_inv_streak: tpLockStreak,
+        target_days: 5,
+        last_tp_trigger_date: lastTpDate,
       },
-      {
-        key: 'vix_ratio_ge_110_tp',
-        passed: tpOk,
-        label_en: 'VIX/VIX3M >= 1.10 TP',
-        label_zh: 'VIX/VIX3M >= 1.10 止盈',
-        current_value: vr.toFixed(3),
-        reading: vr.toFixed(3),
+      sleeve_a_gate: {
+        status: sleeveAStatus,
+        contango_streak: contangoStreak,
+        target_days: 5,
+        vix_ok: vix < 20.0,
+        vix,
+        vix_max: 20.0,
+        vr,
       },
-    ],
+      pillars,
+    },
+    tp_and_microstructure: {
+      tier1_partial: {
+        rule_en: 'Return >= 5.0x AND VIX/VIX3M < 1.00 -> take 50% partial TP starting from shortest-DTE tranche.',
+        rule_zh: '持仓回报 >= 5.0x 且 VIX/VIX3M < 1.00 -> 优先止盈最短剩余到期仓位的 50%。',
+        contango_ok: vr < 1.0,
+        vr,
+      },
+      tier2_full: {
+        triggered_today: tpFullTriggered,
+        vr_ok: tpFullVrOk,
+        dd_ok: tpFullDdOk,
+        vr,
+        vr_target: 1.1,
+        vr_gap: r3(1.1 - vr),
+        dd_pct: ddAthPct,
+        dd_target: -10.0,
+        dd_gap_pp: r2(ddAthPct - -10.0),
+        rule_en: 'VIX/VIX3M >= 1.10 AND QQQ ATH Drawdown <= -10.0% -> Liquidate 100% of ALL active puts.',
+        rule_zh: 'VIX/VIX3M >= 1.10 且 QQQ 距历史高点回落 <= -10.0% -> 100% 全额清仓所有活跃 Put。',
+      },
+      deploy_5d_rule_en: 'Deploy realized TP cash equally over 5 trading days (1/5 per day) into QQQ; excess above 1.200x repays debt first.',
+      deploy_5d_rule_zh: '止盈现金分 5 个交易日等额（每日 1/5）分批买入 QQQ；超出 1.200x 杠杆上限的部分优先偿还借款。',
+      metrics: {
+        vix,
+        vxn,
+        vix3m,
+        vix_ratio: vr,
+        vr_jump5: vrJ5,
+        skew10: Number(row.skew10),
+        skew_p75: Number(row.skew_p75),
+        vvix: Number(row.vvix),
+        vvix_p75: Number(row.vvix_p75),
+        qqq_ath_dd_pct: ddAthPct,
+      },
+    },
   };
 }
 
-function extendLiveBars(baseData, extraDailyBars, requestedAsOf) {
-  const baseSeries = baseData.daily_series;
-  const lastBase = baseSeries[baseSeries.length - 1];
-  const fresh = (extraDailyBars ?? [])
-    .filter(b => isIsoDate(b.date) && b.date > lastBase.date && b.date <= requestedAsOf && Number(b.qqqClose) > 0)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  if (!fresh.length) return null;
+function getCombinedPitIndex(artifactObj, liveFeed, requestedAsOf) {
+  let pitRows = artifactObj.pitRows;
+  let pitByDate = artifactObj.pitByDate;
+  let liveExtendedDays = 0;
+  let fredAsOf = artifactObj.data.data_freshness?.fred_as_of ?? {};
+  let effrAsOf = artifactObj.data.data_freshness?.effr_as_of ?? null;
 
-  const series = baseSeries.slice();
-
-  for (const b of fresh) {
-    const prev = series[series.length - 1];
-    const cl = Number(b.qqqClose);
-    const prevCl = Number(prev.qqq_close);
-    const qqqRet = prevCl > 0 ? cl / prevCl - 1 : 0;
-    const runAth = Math.max(Number(prev.running_ath), cl);
-    const ddAthPct = (cl / runAth - 1) * 100;
-    const tailCloses = series.slice(-199).map(x => Number(x.qqq_close)).concat([cl]);
-    const ma200 = tailCloses.reduce((a, c) => a + c, 0) / tailCloses.length;
-
-    const vix = Number.isFinite(b.vixClose) && b.vixClose > 0 ? Number(b.vixClose) : Number(prev.vix);
-    const vix3m = Number.isFinite(b.vix3mClose) && b.vix3mClose > 0 ? Number(b.vix3mClose) : Number(prev.vix3m);
-    const vr = vix3m > 0 ? vix / vix3m : Number(prev.vix_ratio);
-    const vxn = Number.isFinite(b.vxnClose) && b.vxnClose > 0 ? Number(b.vxnClose) : Number(prev.vxn);
-
-    const nextRow = {
-      ...prev,
-      date: b.date,
-      qqq_close: r2(cl),
-      qqq_ma200: r2(ma200),
-      running_ath: r2(runAth),
-      dd_ath_pct: r2(ddAthPct),
-      nav_m7g: r2(Number(prev.nav_m7g ?? prev.nav_bh) * (1 + qqqRet)),
-      nav_c3: r2(Number(prev.nav_c3 ?? prev.nav_bh) * (1 + qqqRet)),
-      nav_m7: r2(Number(prev.nav_m7 ?? prev.nav_bh) * (1 + qqqRet)),
-      nav_bh: r2(Number(prev.nav_bh) * (1 + qqqRet)),
-      nav_u1: r2(Number(prev.nav_u1) * (1 + qqqRet)),
-      nav_b1c: r2(Number(prev.nav_b1c) * (1 + qqqRet)),
-      nav_d2: r2(Number(prev.nav_d2) * (1 + qqqRet)),
-      nav_h2: r2(Number(prev.nav_h2) * (1 + qqqRet)),
-      nav_cc: r2(Number(prev.nav_cc ?? prev.nav_bh) * (1 + qqqRet)),
-      vix: r2(vix),
-      vix3m: r2(vix3m),
-      vix_ratio: r3(vr),
-      vxn: r2(vxn),
-    };
-    series.push(nextRow);
-  }
-  return series;
-}
-
-function extractExtraBarsFromFeed(liveM7Feed) {
-  const qqqMap = liveM7Feed?.yahoo?.QQQ;
-  if (!qqqMap || typeof qqqMap.keys !== 'function') return null;
-  const vixMap = liveM7Feed?.yahoo?.VIX;
-  const vix3mMap = liveM7Feed?.yahoo?.VIX3M;
-  const vxnMap = liveM7Feed?.yahoo?.VXN;
-  const dates = [...qqqMap.keys()].sort();
-  return dates.map(d => ({
-    date: d,
-    qqqOpen: qqqMap.get(d)?.open ?? qqqMap.get(d)?.close,
-    qqqClose: qqqMap.get(d)?.close,
-    vixClose: vixMap?.get(d)?.close ?? null,
-    vix3mClose: vix3mMap?.get(d)?.close ?? null,
-    vxnClose: vxnMap?.get(d)?.close ?? null,
-  }));
-}
-
-function parseM0EnabledParam(val, rawData) {
-  if (val === null || val === undefined || val === '') {
-    return Boolean(rawData.default_m0_enabled ?? true);
-  }
-  if (typeof val === 'boolean') return val;
-  const s = String(val).trim().toLowerCase();
-  if (['1', 'true', 'on', 'yes', 'm0on'].includes(s)) return true;
-  if (['0', 'false', 'off', 'no', 'm0off'].includes(s)) return false;
-  fail('invalid_crisis_observatory_m0_enabled', 400);
-}
-
-function maskSimpleOptionLedgerAtCutoff(ledger, asOfDate) {
-  const out = [];
-  for (const leg of ledger ?? []) {
-    if (leg.entry_date > asOfDate) continue;
-    if (leg.exit_date && leg.exit_date <= asOfDate && !leg.is_open_live) {
-      out.push(leg);
-    } else {
-      out.push({
-        ...leg,
-        exit_date: null,
-        exit_spot: null,
-        exit_cost_usd: null,
-        net_pnl_usd: null,
-        stock_gain_usd: null,
-        is_open_live: true,
-        exit_reason: 'open_as_of_cutoff',
-      });
+  if (liveFeed) {
+    const ext = extendV2LiveFromFeed(artifactObj, liveFeed, requestedAsOf);
+    if (ext && ext.extraPitRows.length > 0) {
+      pitRows = pitRows.concat(ext.extraPitRows);
+      pitByDate = new Map(pitByDate);
+      for (const r of ext.extraPitRows) pitByDate.set(r.date, r);
+      liveExtendedDays = ext.extraPitRows.length;
+      fredAsOf = ext.fredLatest;
+      effrAsOf = ext.effrLatest;
     }
   }
-  return out;
-}
-
-function buildCutoffSpState(
-  slicedSeries,
-  spMode,
-  wcMode,
-  maskedSpLedger,
-  baseSpState,
-  artifactAsOfDate = null,
-) {
-  const lastBar = slicedSeries[slicedSeries.length - 1];
-  const prevBar = slicedSeries.length >= 2 ? slicedSeries[slicedSeries.length - 2] : lastBar;
-  const effDate = lastBar.date;
-  const spotCl = Number(lastBar.qqq_close ?? 0);
-  const vix = Number(lastBar.vix ?? 0);
-  const prevVix = Number(prevBar.vix ?? vix);
-  const vixChg = vix - prevVix;
-  const vixFalling = slicedSeries.length >= 2 && vix < prevVix;
-  const vix3m = Number(lastBar.vix3m ?? 0);
-  const vr = Number(lastBar.vix_ratio ?? 0);
-  const invOn = vr >= 1.0;
-  const unfGate = invOn;
-  const vixfGate = Boolean(invOn && vixFalling);
-  const enabled = spMode !== 'sp_off';
-  const reqFall = spMode === 'sp_10d_vixf';
-  const modeGate = reqFall ? vixfGate : unfGate;
-  const dteLbl = spMode === 'sp_10d_vixf' ? '10D' : '14D';
-  const effWcMode = wcMode || 'wc_reclaim_30d_d35';
-  const isReclaim30d = effWcMode === 'wc_reclaim_30d_d35';
-  const wcDteLbl = isReclaim30d || effWcMode === 'wc_30d_c5s5' ? '30D' : dteLbl;
-  const wcFormulaZh = isReclaim30d
-    ? '涨回接货价后卖 30D 0.35Δ'
-    : effWcMode === 'wc_30d_c5s5'
-      ? 'max(1.05×成本, 1.05×现价)'
-      : 'max(成本, 1.02×现价)';
-  const wcFormulaEn = isReclaim30d
-    ? 'Reclaim K_assign -> 30D 0.35Δ'
-    : effWcMode === 'wc_30d_c5s5'
-      ? 'max(1.05x Cost, 1.05x Spot)'
-      : 'max(Cost, 1.02x Spot)';
-  const capPct = spMode === 'sp_14d_cap10' ? 10 : 20;
-  const estimate30dD35Strike = (spotPx, barVxn, floorK) => {
-    const sigma = Math.max(Number(barVxn ?? 25) / 100, 0.12);
-    // N^-1(0.65) = 0.38532 for 0.35-Delta 30-calendar-day call
-    const rawK = spotPx * Math.exp(0.38532 * sigma * Math.sqrt(30 / 365));
-    return Math.max(floorK, rawK);
-  };
-
-  const openSpLeg =
-    enabled
-      ? (maskedSpLedger ?? []).find(
-          x => x.leg_type === 'short_put' && x.exit_reason === 'open_as_of_cutoff',
-        ) ?? null
-      : null;
-  const openWcLeg =
-    enabled
-      ? (maskedSpLedger ?? []).find(
-          x => x.leg_type === 'wheel_call' && x.exit_reason === 'open_as_of_cutoff',
-        ) ?? null
-      : null;
-
-  let unclosedAssignLeg = null;
-  if (enabled && !openSpLeg && !openWcLeg) {
-    const calledAwayCycles = new Set(
-      (maskedSpLedger ?? [])
-        .filter(
-          x => x.leg_type === 'wheel_call' && x.exit_reason === 'called_away' && x.exit_date <= effDate,
-        )
-        .map(x => x.cycle_id),
-    );
-    const assigns = (maskedSpLedger ?? []).filter(
-      x =>
-        x.leg_type === 'short_put' &&
-        x.exit_reason === 'assigned_wheel' &&
-        x.exit_date <= effDate &&
-        !calledAwayCycles.has(x.cycle_id),
-    );
-    if (assigns.length > 0) {
-      unclosedAssignLeg = assigns[assigns.length - 1];
-    }
-  }
-
-  const chgStr = `${vixChg >= 0 ? '+' : ''}${vixChg.toFixed(2)}`;
-  let positionState = 'disabled';
-  let statusTone = 'neutral';
-  let minNextWcStrike = null;
-  let badgeEn;
-  let badgeZh;
-  let detailEn = baseSpState?.detail_en ?? '';
-  let detailZh = baseSpState?.detail_zh ?? '';
-  if (!enabled) {
-    const invZh = invOn ? '倒挂满足 >=1.00' : '未倒挂 <1.00';
-    const invEn = invOn ? 'Inverted >=1.00' : 'Contango <1.00';
-    const dirZh = vixFalling ? `回落 ${chgStr}` : `冲高 ${chgStr}`;
-    const dirEn = vixFalling ? `Falling ${chgStr}` : `Rising ${chgStr}`;
-    badgeZh = `第三引擎已关闭 · 0 杠杆（VIX/3M ${vr.toFixed(3)} ${invZh} · VIX ${vix.toFixed(2)} ${dirZh}）`;
-    badgeEn = `Engine 3 Off · 0 Leverage (VIX/3M ${vr.toFixed(3)} ${invEn} · VIX ${vix.toFixed(2)} ${dirEn})`;
-  } else if (openWcLeg) {
-    positionState = 'wheel_call_open';
-    statusTone = 'wheel';
-    badgeZh = `反向 Wheel 持仓中（${Math.round(Number(openWcLeg.shares))}股）· 已卖 ${wcDteLbl} Call K=$${Number(openWcLeg.strike).toFixed(2)}`;
-    badgeEn = `Wheel Call Active (${Math.round(Number(openWcLeg.shares))} sh) · Short ${wcDteLbl} Call K=$${Number(openWcLeg.strike).toFixed(2)}`;
-  } else if (unclosedAssignLeg) {
-    const asgnSh = Number(unclosedAssignLeg.shares ?? 0);
-    const asgnK = Number(unclosedAssignLeg.strike ?? 0);
-    const isPostLive = artifactAsOfDate && effDate > artifactAsOfDate && effDate > unclosedAssignLeg.exit_date;
-    if (isReclaim30d) {
-      const postBars = slicedSeries.filter(b => b.date > unclosedAssignLeg.exit_date);
-      const firstReclaimIdx = postBars.findIndex(b => Number(b.qqq_close ?? 0) >= asgnK);
-      if (firstReclaimIdx === -1) {
-        const gapPct = (asgnK / Math.max(spotCl, 1e-6) - 1) * 100;
-        positionState = 'wheel_assigned_wait_reclaim';
-        statusTone = 'wheel';
-        minNextWcStrike = r2(asgnK);
-        badgeZh = `已接货进 Wheel（${Math.round(asgnSh)}股 @ $${asgnK.toFixed(2)}）· 水下暂不卖 Call，等涨回 >= $${asgnK.toFixed(2)}（差 +${gapPct.toFixed(1)}%）再卖 30D 0.35Δ Call`;
-        badgeEn = `Assigned into Wheel (${Math.round(asgnSh)} sh @ $${asgnK.toFixed(2)}) · Holding Uncapped until QQQ >= $${asgnK.toFixed(2)} (+${gapPct.toFixed(1)}%), then Sell 30D 0.35Δ Call`;
-        detailZh = `水下阶段严禁封顶卖 Call 且禁止再卖新 Put；按 IBKR 基准利率 +1.50% 计息，100% 保留反弹斜率，待收盘涨回 >= $${asgnK.toFixed(2)} 后次日开盘卖 30D 0.35Δ Call 清债。`;
-        detailEn = `No capped calls or new puts while underwater (QQQ $${spotCl.toFixed(2)} < $${asgnK.toFixed(2)}); holds 100% uncapped recovery until EOD reclaim >= $${asgnK.toFixed(2)}, then sells 30D 0.35Δ Call.`;
-      } else if (firstReclaimIdx === postBars.length - 1) {
-        const estKc = estimate30dD35Strike(spotCl, lastBar.vxn ?? lastBar.vix ?? 25, asgnK);
-        positionState = 'wheel_assigned_wc_armed';
-        statusTone = 'wheel';
-        minNextWcStrike = r2(estKc);
-        badgeZh = `已涨回接货价 >= $${asgnK.toFixed(2)}（${Math.round(asgnSh)}股） -> 次日开盘卖 30D 0.35Δ Wheel Call（预估 K=$${estKc.toFixed(2)}，${wcFormulaZh}）`;
-        badgeEn = `Reclaimed K_assign >= $${asgnK.toFixed(2)} (${Math.round(asgnSh)} sh) -> Next Open Sell 30D 0.35Δ Wheel Call (Est. K=$${estKc.toFixed(2)}, ${wcFormulaEn})`;
-        detailZh = `QQQ 收盘 $${spotCl.toFixed(2)} 已涨回接货成本 $${asgnK.toFixed(2)}，次日开盘卖出 30D 0.35Δ Covered Call（行权价约 $${estKc.toFixed(2)}）启动清债去杠杆。`;
-        detailEn = `QQQ closed at $${spotCl.toFixed(2)} >= $${asgnK.toFixed(2)} cost basis; armed to sell 30D 0.35Δ Covered Call (est. K=$${estKc.toFixed(2)}) at next Open to clear margin debt.`;
-      } else {
-        const sellBar = postBars[firstReclaimIdx + 1] ?? lastBar;
-        const openPxEst = Number(sellBar.qqq_close ?? spotCl);
-        const estKc = estimate30dD35Strike(openPxEst, sellBar.vxn ?? sellBar.vix ?? 25, asgnK);
-        positionState = 'wheel_call_open';
-        statusTone = 'wheel';
-        minNextWcStrike = r2(estKc);
-        badgeZh = `反向 Wheel 持仓中（${Math.round(asgnSh)}股 @ $${asgnK.toFixed(2)}）· 已卖 30D 0.35Δ Call K=$${estKc.toFixed(2)}（${wcFormulaZh}）`;
-        badgeEn = `Wheel Call Active (${Math.round(asgnSh)} sh @ $${asgnK.toFixed(2)}) · Short 30D 0.35Δ Call K=$${estKc.toFixed(2)} (${wcFormulaEn})`;
-        detailZh = `已在涨回 $${asgnK.toFixed(2)} 后卖出 30D 0.35Δ Call（K=$${estKc.toFixed(2)}）；到期若 QQQ 高于行权价即自动被 Call 走清零融资负债。`;
-        detailEn = `Sold 30D 0.35Δ Call (K=$${estKc.toFixed(2)}) after reclaiming $${asgnK.toFixed(2)}; assigned stock clears margin debt if QQQ closes above strike at expiry.`;
-      }
-    } else if (isPostLive) {
-      const firstPostBar =
-        slicedSeries.find(b => b.date > unclosedAssignLeg.exit_date) ?? lastBar;
-      const openPxEst = Number(firstPostBar.qqq_close ?? spotCl);
-      const estKc =
-        effWcMode === 'wc_30d_c5s5'
-          ? Math.max(asgnK * 1.05, openPxEst * 1.05)
-          : Math.max(asgnK, openPxEst * 1.02);
-      positionState = 'wheel_call_open';
-      statusTone = 'wheel';
-      minNextWcStrike = r2(estKc);
-      badgeZh = `反向 Wheel 持仓中（${Math.round(asgnSh)}股 @ $${asgnK.toFixed(2)}）· 已卖 ${wcDteLbl} Call K=$${estKc.toFixed(2)}（${wcFormulaZh}）`;
-      badgeEn = `Wheel Call Active (${Math.round(asgnSh)} sh @ $${asgnK.toFixed(2)}) · Short ${wcDteLbl} Call K=$${estKc.toFixed(2)} (${wcFormulaEn})`;
-    } else {
-      const minKc =
-        effWcMode === 'wc_30d_c5s5'
-          ? Math.max(asgnK * 1.05, spotCl * 1.05)
-          : Math.max(asgnK, spotCl * 1.02);
-      positionState = 'wheel_assigned_wc_armed';
-      statusTone = 'wheel';
-      minNextWcStrike = r2(minKc);
-      badgeZh = `已接货进 Wheel（${Math.round(asgnSh)}股 @ $${asgnK.toFixed(2)}） -> 次日开盘卖 ${wcDteLbl} Wheel Call（K >= $${minKc.toFixed(2)}，${wcFormulaZh}）`;
-      badgeEn = `Assigned into Wheel (${Math.round(asgnSh)} sh @ $${asgnK.toFixed(2)}) -> Next Open Sell ${wcDteLbl} Wheel Call (K >= $${minKc.toFixed(2)}, ${wcFormulaEn})`;
-    }
-  } else if (openSpLeg) {
-    positionState = 'short_put_open';
-    statusTone = 'active';
-    badgeZh = `持仓 ${dteLbl} 恐慌卖 Put（K=$${Number(openSpLeg.strike).toFixed(2)} · ${Math.round(Number(openSpLeg.shares))}股）`;
-    badgeEn = `Live ${dteLbl} Short Put Open (K=$${Number(openSpLeg.strike).toFixed(2)} · ${Math.round(Number(openSpLeg.shares))} sh)`;
-  } else if (modeGate) {
-    positionState = 'entry_armed_next_open';
-    statusTone = 'armed';
-    badgeZh = `信号触发 -> 次日开盘卖 ${dteLbl} 5% OTM Put（名义帽 <= ${capPct}% · VIX/3M ${vr.toFixed(3)}）`;
-    badgeEn = `Signal Triggered -> Sell ${dteLbl} 5% OTM Put Next Open (<= ${capPct}% Cap · VIX/3M ${vr.toFixed(3)})`;
-  } else {
-    positionState = 'flat_standby';
-    statusTone = 'neutral';
-    badgeZh =
-      invOn && reqFall && !vixFalling
-        ? `空仓等待恐慌拐点 · VIX/3M ${vr.toFixed(3)} 已倒挂但 VIX ${chgStr} 未回落`
-        : `空仓待命 · 0 持仓 0 利息（VIX/3M ${vr.toFixed(3)} 未倒挂）`;
-    badgeEn =
-      invOn && reqFall && !vixFalling
-        ? `Flat · Waiting for VIX Crest (VIX/3M ${vr.toFixed(3)} >= 1.00, VIX ${chgStr} Rising)`
-        : `Flat Standby · 0 Margin Debt (VIX/3M ${vr.toFixed(3)} < 1.00)`;
-  }
-
-  return {
-    ...(baseSpState ?? {}),
-    as_of_date: lastBar.date,
-    sp_mode: spMode,
-    wc_mode: effWcMode,
-    enabled,
-    vix: r2(vix),
-    prev_vix: r2(prevVix),
-    vix_change: r2(vixChg),
-    vix_falling: vixFalling,
-    vix3m: r2(vix3m),
-    vix_vix3m_ratio: r3(vr),
-    backwardation_active: invOn,
-    unfiltered_signal_on: unfGate,
-    vix_falling_signal_on: vixfGate,
-    mode_entry_gate_met: modeGate,
-    position_state: positionState,
-    status_tone: statusTone,
-    min_next_wc_strike: minNextWcStrike,
-    badge_en: badgeEn,
-    badge_zh: badgeZh,
-    detail_en: detailEn,
-    detail_zh: detailZh,
-  };
+  return { pitRows, pitByDate, liveExtendedDays, fredAsOf, effrAsOf };
 }
 
 export function loadCrisisObservatoryDashboard({
   asOf = null,
-  profile = null,
-  strategy = null,
-  putOtm = null,
-  m7TpMode = null,
-  rollMode = null,
-  m0Enabled = null,
-  fillMode = null,
-  tpMode = null,
-  ccMode = null,
-  spMode = null,
-  wcMode = null,
-  overlayMode = null,
-  finMode = null,
-  kmlmWindow = null,
-  snapshotId: expectedSnapshotId = null,
+  window = DEFAULT_CRISIS_WINDOW,
+  snapshotId = null,
   file = defaultFile,
-  extraDailyBars = null,
-  liveM7Feed = null,
-  liveKmlmFeed = null,
+  liveFeed = null,
 } = {}) {
-  const { data: rawData, snapshotId } = readArtifact(file);
-  if (expectedSnapshotId && expectedSnapshotId !== snapshotId) {
-    fail('crisis_observatory_snapshot_changed', 409);
+  if (asOf !== null && asOf !== undefined && asOf !== '' && !isIsoDate(asOf)) {
+    fail('invalid_as_of', 400);
+  }
+  const winId = normalizeWindowId(window);
+  const artifactObj = readArtifact(file);
+  const requestedAsOf = asOf && isIsoDate(asOf) ? asOf : null;
+
+  const feedStamp = liveFeed?.stamp ?? 'static';
+  const cacheKey = `${artifactObj.snapshotId}|${winId}|${requestedAsOf ?? 'latest'}|${feedStamp}`;
+  if (liveResponseCache.has(cacheKey)) {
+    return liveResponseCache.get(cacheKey);
   }
 
-  let explicitProfile = null;
-  if (profile !== null && profile !== undefined && String(profile).trim() !== '') {
-    const trimmedProf = String(profile).trim();
-    const mappedProf = PROFILE_ALIASES[trimmedProf] ?? trimmedProf;
-    if (!CRISIS_OBSERVATORY_PROFILES.includes(mappedProf)) {
-      fail('invalid_crisis_observatory_profile', 400);
-    }
-    explicitProfile = mappedProf;
-  }
-
-  let explicitStrategy = null;
-  if (strategy !== null && strategy !== undefined && String(strategy).trim() !== '') {
-    const rawS = String(strategy).trim();
-    explicitStrategy = LEGACY_STRATEGY_ALIASES[rawS] ?? rawS;
-    if (!CRISIS_OBSERVATORY_STRATEGIES.includes(explicitStrategy)) {
-      fail('invalid_crisis_observatory_strategy', 400);
-    }
-  }
-
-  let effectiveProfile = explicitProfile ?? rawData.default_profile ?? 'full_m7_adaptive';
-  let selectedStrategy;
-  if (explicitProfile) {
-    if (explicitProfile === 'core3_adaptive') {
-      selectedStrategy =
-        !explicitStrategy || explicitStrategy === 'M7G_Graded'
-          ? 'Core3_Adaptive'
-          : explicitStrategy;
-    } else {
-      selectedStrategy =
-        !explicitStrategy || explicitStrategy === 'Core3_Adaptive'
-          ? 'M7G_Graded'
-          : explicitStrategy;
-    }
-    if (selectedStrategy === 'Core3_Adaptive') effectiveProfile = 'core3_adaptive';
-  } else if (explicitStrategy) {
-    selectedStrategy = explicitStrategy;
-    effectiveProfile =
-      explicitStrategy === 'Core3_Adaptive'
-        ? 'core3_adaptive'
-        : rawData.default_profile ?? 'full_m7_adaptive';
-  } else {
-    selectedStrategy =
-      effectiveProfile === 'core3_adaptive'
-        ? 'Core3_Adaptive'
-        : rawData.default_strategy_id ?? 'M7G_Graded';
-  }
-
-  const requestedPutOtm = putOtm ? String(putOtm).trim() : rawData.default_put_otm ?? 'otm15';
-  const rawPutOtm = PUT_OTM_ALIASES[requestedPutOtm] ?? requestedPutOtm;
-  if (!CRISIS_OBSERVATORY_PUT_OTMS.includes(rawPutOtm)) {
-    fail('invalid_crisis_observatory_put_otm', 400);
-  }
-
-  let rawTpMode = rawData.default_tp_mode ?? 'layered_itm';
-  let inferredM7TpFromTpMode = null;
-  if (tpMode) {
-    const trimmedTp = String(tpMode).trim();
-    const mappedM7Tp = M7_TP_ALIASES[trimmedTp] ?? trimmedTp;
-    if (CRISIS_OBSERVATORY_TP_MODES.includes(trimmedTp)) {
-      rawTpMode = trimmedTp;
-    } else if (!m7TpMode && CRISIS_OBSERVATORY_M7_TP_MODES.includes(mappedM7Tp)) {
-      inferredM7TpFromTpMode = mappedM7Tp;
-    } else {
-      fail('invalid_crisis_observatory_tp_mode', 400);
-    }
-  }
-
-  const requestedM7Tp = m7TpMode
-    ? String(m7TpMode).trim()
-    : inferredM7TpFromTpMode ?? rawData.default_m7_tp_mode ?? 'standard';
-  const rawM7TpMode = M7_TP_ALIASES[requestedM7Tp] ?? requestedM7Tp;
-  if (!CRISIS_OBSERVATORY_M7_TP_MODES.includes(rawM7TpMode)) {
-    fail('invalid_crisis_observatory_m7_tp_mode', 400);
-  }
-
-  const requestedRollMode = rollMode
-    ? String(rollMode).trim()
-    : rawData.default_roll_mode ?? 'adaptive_120_90';
-  let rawRollMode = ROLL_MODE_ALIASES[requestedRollMode] ?? requestedRollMode;
-  if (!CRISIS_OBSERVATORY_ROLL_MODES.includes(rawRollMode)) {
-    fail('invalid_crisis_observatory_roll_mode', 400);
-  }
-  const core3RollLocked =
-    effectiveProfile === 'core3_adaptive' || selectedStrategy === 'Core3_Adaptive';
-  if (core3RollLocked) {
-    // SAFETY GUARDRAIL: Never allow 90D Hold on Core-3; lock Core-3 cleanly to adaptive_120_90
-    rawRollMode = 'adaptive_120_90';
-  }
-
-  const rawM0Enabled = parseM0EnabledParam(m0Enabled, rawData);
-
-  const requestedFillMode = fillMode
-    ? String(fillMode).trim().toLowerCase()
-    : rawData.default_fill_mode ?? DEFAULT_M7_FILL_MODE;
-  const rawFillMode = FILL_MODE_ALIASES[requestedFillMode] ?? requestedFillMode;
-  if (!CRISIS_OBSERVATORY_FILL_MODES.includes(rawFillMode)) {
-    fail('invalid_crisis_observatory_fill_mode', 400);
-  }
-
-  const requestedCcMode = ccMode ? String(ccMode).trim() : rawData.default_cc_mode ?? 'cc_off';
-  const rawCcMode = LEGACY_CC_MODE_ALIASES[requestedCcMode] ?? requestedCcMode;
-  if (!CRISIS_OBSERVATORY_CC_MODES.includes(rawCcMode)) {
-    fail('invalid_crisis_observatory_cc_mode', 400);
-  }
-  const requestedSpMode = spMode ? String(spMode).trim() : rawData.default_sp_mode ?? 'sp_off';
-  const rawSpMode = LEGACY_SP_MODE_ALIASES[requestedSpMode] ?? requestedSpMode;
-  if (!CRISIS_OBSERVATORY_SP_MODES.includes(rawSpMode)) {
-    fail('invalid_crisis_observatory_sp_mode', 400);
-  }
-  const requestedWcMode = wcMode ? String(wcMode).trim() : rawData.default_wc_mode ?? 'wc_reclaim_30d_d35';
-  const rawWcMode = LEGACY_WC_MODE_ALIASES[requestedWcMode] ?? requestedWcMode;
-  if (!CRISIS_OBSERVATORY_WC_MODES.includes(rawWcMode)) {
-    fail('invalid_crisis_observatory_wc_mode', 400);
-  }
-
-  const rawOverlayMode = normalizeOverlayMode(overlayMode);
-  const rawFinMode = normalizeFinMode(finMode);
-  const rawKmlmWindow = normalizeKmlmWindow(kmlmWindow);
-
-  const data = projectArtifactForModes(
-    rawData,
-    snapshotId,
-    rawTpMode,
-    rawCcMode,
-    rawSpMode,
-    rawWcMode,
-    rawPutOtm,
-    rawM7TpMode,
-    rawRollMode,
-    rawM0Enabled,
-    rawFillMode,
-  );
-
-  const requestedAsOf = asOf ? String(asOf).trim() : data.as_of_date;
-  if (!isIsoDate(requestedAsOf)) fail('invalid_as_of_date', 400);
-
-  const effectiveFeed =
-    liveM7Feed ??
-    (Array.isArray(extraDailyBars) && extraDailyBars.length > 0
-      ? normalizeLegacyExtraBarsToFeed(extraDailyBars)
-      : null);
-  const effectiveExtraBars =
-    Array.isArray(extraDailyBars) && extraDailyBars.length > 0
-      ? extraDailyBars
-      : effectiveFeed
-        ? extractExtraBarsFromFeed(effectiveFeed)
-        : null;
-
-  const extendedSeries =
-    requestedAsOf > data.as_of_date && Array.isArray(effectiveExtraBars) && effectiveExtraBars.length > 0
-      ? extendLiveBars(data, effectiveExtraBars, requestedAsOf)
-      : null;
-
-  const extendedM7 =
-    requestedAsOf > data.as_of_date && effectiveFeed
-      ? extendM7LiveFromFeed(rawData, effectiveFeed, requestedAsOf)
-      : null;
-
-  const m7TargetStrat =
-    selectedStrategy === 'Core3_Adaptive'
-      ? 'Core3_Adaptive'
-      : selectedStrategy === 'M7_Ensemble'
-        ? 'M7_Ensemble'
-        : 'M7G_Graded';
-
-  const kmlmMetaFields = {
-    default_overlay_mode: 'core_100x',
-    overlay_mode: rawOverlayMode,
-    selected_overlay_mode: rawOverlayMode,
-    overlay_modes_meta: [
-      {
-        id: 'core_100x',
-        status: 'PRODUCTION',
-        label_en: '1.00x Production Core · B020_M125 (Unlevered)',
-        label_zh: '1.00x 生产基线 · B020_M125（无杠杆）',
-      },
-      {
-        id: 'kmlm20_120x',
-        status: 'HYPOTHESIS',
-        label_en: '1.20x Hypothesis · +20% KMLM Stack',
-        label_zh: '1.20x 版本假说 · +20% KMLM 杠杆叠仓',
-      },
-    ],
-    default_fin_mode: 'box_35bp',
-    fin_mode: rawFinMode,
-    selected_fin_mode: rawFinMode,
-    fin_modes_meta: [
-      {
-        id: 'box_35bp',
-        spread_pct: 0.35,
-        label_en: 'SPX Box / MNQ (NY Fed EFFR + 0.35%)',
-        label_zh: 'SPX Box / MNQ（EFFR + 0.35%）',
-      },
-      {
-        id: 'ibkr_150bp',
-        spread_pct: 1.5,
-        label_en: 'IBKR Tier-1 Margin (NY Fed EFFR + 1.50%)',
-        label_zh: 'IBKR 常规融资（EFFR + 1.50%）',
-      },
-    ],
-    default_kmlm_window: '5yr_live',
-    kmlm_window: rawKmlmWindow,
-    kmlm_windows_meta: [
-      {
-        id: '5yr_live',
-        label_en: '5Y Pure Live KMLM (2020-2025 · Zero Proxy)',
-        label_zh: '5年纯真盘（2020-2025 · 零代换）',
-      },
-      {
-        id: '11yr_stitched',
-        label_en: '11Y Full Cycle (2015-2025 · AQMIX Pre-2020 + KMLM)',
-        label_zh: '11年全周期（2015-2025 · 含2020前AQMIX拼接）',
-      },
-    ],
-  };
-
-  // Fast path: exact audited snapshot when requestedAsOf >= artifact.as_of_date and no live tail
-  if (!extendedSeries && !extendedM7 && requestedAsOf >= data.as_of_date) {
-    const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'M7G_Graded' : selectedStrategy;
-    const fastM7Dash =
-      data.m7_live_dashboards_by_strategy?.[m7TargetStrat] ?? data.m7_live_dashboard ?? null;
-    const kmlmFastAsOf = asOf && requestedAsOf > data.as_of_date ? requestedAsOf : null;
-    const hypothesisKmlm20 = buildHypothesisKmlm20Payload({
-      asOf: kmlmFastAsOf,
-      profile: effectiveProfile,
-      fillMode: rawFillMode,
-      overlayMode: rawOverlayMode,
-      finMode: rawFinMode,
-      kmlmWindow: rawKmlmWindow,
-      m7LiveDashboard: fastM7Dash,
-      liveMarketSnapshot: data.live_market_snapshot,
-      liveKmlmFeed,
-    });
-    return {
-      ...data,
-      version: CRISIS_OBSERVATORY_VERSION,
-      snapshotId,
-      requestedAsOf,
-      liveExtended: false,
-      profile: effectiveProfile,
-      selected_profile: effectiveProfile,
-      core3_roll_locked: core3RollLocked,
-      selected_strategy_id: selectedStrategy,
-      fill_mode: rawFillMode,
-      selected_fill_mode: rawFillMode,
-      ...kmlmMetaFields,
-      put_otm: rawPutOtm,
-      m7_tp_mode: rawM7TpMode,
-      roll_mode: rawRollMode,
-      m0_enabled: rawM0Enabled,
-      tp_mode: rawTpMode,
-      cc_mode: rawCcMode,
-      sp_mode: rawSpMode,
-      wc_mode: rawWcMode,
-      m7_live_dashboard: fastM7Dash,
-      hypothesis_kmlm20: hypothesisKmlm20,
-      live_signal_state:
-        data.live_signal_states_by_strategy?.[ledgerStrategy] ?? data.live_signal_state,
-      live_sp_state:
-        data.live_sp_states_by_strategy?.[ledgerStrategy] ?? data.live_sp_state ?? null,
-      events: data.events_by_strategy?.[ledgerStrategy] ?? data.events,
-      trade_ledger: data.trade_ledgers_by_strategy?.[ledgerStrategy] ?? data.trade_ledger,
-      sp_ledger: data.sp_ledgers_by_strategy?.[ledgerStrategy] ?? [],
-    };
-  }
-
-  let sourceSeries = extendedSeries ?? data.daily_series;
-  let liveM7SimOverrides = null;
-
-  if (extendedM7 && Array.isArray(sourceSeries) && sourceSeries.length > data.daily_series.length) {
-    const coeffs = rawData.opra_90dte_poly3_coeffs_desc ?? [];
-    const sigSeriesLive = rawM0Enabled ? extendedM7.sigM0On : extendedM7.sigM0Off;
-    const simM7g = simulateM7StrategyJS(extendedM7.evalBars, coeffs, 'M7G_Graded', sigSeriesLive, {
-      putOtm: rawPutOtm,
-      m7TpMode: rawM7TpMode,
-      rollMode: rawRollMode,
-      m0Enabled: rawM0Enabled,
-      fillMode: rawFillMode,
-      ccMode: rawCcMode,
-      spMode: rawSpMode,
-      wcMode: rawWcMode,
-    });
-    const simC3 = simulateM7StrategyJS(extendedM7.evalBars, coeffs, 'Core3_Adaptive', sigSeriesLive, {
-      putOtm: rawPutOtm,
-      m7TpMode: rawM7TpMode,
-      rollMode: 'adaptive_120_90',
-      m0Enabled: rawM0Enabled,
-      fillMode: rawFillMode,
-      ccMode: rawCcMode,
-      spMode: rawSpMode,
-      wcMode: rawWcMode,
-    });
-    const simM7 = simulateM7StrategyJS(extendedM7.evalBars, coeffs, 'M7_Ensemble', sigSeriesLive, {
-      putOtm: rawPutOtm,
-      m7TpMode: rawM7TpMode,
-      rollMode: rawRollMode,
-      m0Enabled: rawM0Enabled,
-      fillMode: rawFillMode,
-      ccMode: rawCcMode,
-      spMode: rawSpMode,
-      wcMode: rawWcMode,
-    });
-    const lastEvalLive = extendedM7.evalBars[extendedM7.evalBars.length - 1];
-    const lastSigLive = sigSeriesLive[sigSeriesLive.length - 1];
-    const lastFeatLive = extendedM7.featRows[extendedM7.featRows.length - 1] ?? {};
-    const dashM7g = buildM7LiveDashboardJS(lastEvalLive, lastSigLive, lastFeatLive, simM7g, coeffs, {
-      putOtm: rawPutOtm,
-      m7TpMode: rawM7TpMode,
-      rollMode: rawRollMode,
-      m0Enabled: rawM0Enabled,
-    });
-    const dashC3 = buildM7LiveDashboardJS(lastEvalLive, lastSigLive, lastFeatLive, simC3, coeffs, {
-      putOtm: rawPutOtm,
-      m7TpMode: rawM7TpMode,
-      rollMode: 'adaptive_120_90',
-      m0Enabled: rawM0Enabled,
-    });
-    const dashM7 = buildM7LiveDashboardJS(lastEvalLive, lastSigLive, lastFeatLive, simM7, coeffs, {
-      putOtm: rawPutOtm,
-      m7TpMode: rawM7TpMode,
-      rollMode: rawRollMode,
-      m0Enabled: rawM0Enabled,
-    });
-
-    const sigByDate = new Map(sigSeriesLive.map((s, idx) => [s.date, { s, idx }]));
-    sourceSeries = sourceSeries.map(row => {
-      const hit = sigByDate.get(row.date);
-      if (!hit || row.date <= data.as_of_date) return row;
-      const { s, idx } = hit;
-      const c3Sig = evalCore3Signal(s, rawM0Enabled);
-      const slObj = extendedM7.sixCrisisLightsByDate?.[row.date] ?? null;
-      return {
-        ...row,
-        ...(slObj
-          ? {
-              crisis_lights: Number(slObj.score ?? row.crisis_lights ?? 0),
-              smooth_lights: r2(Number(slObj.score_5d ?? row.smooth_lights ?? 0)),
-              lights_mask: Number(slObj.lights_mask ?? row.lights_mask ?? 0),
-            }
-          : {}),
-        nav_m7g: r2(simM7g.nav[idx]),
-        nav_c3: r2(simC3.nav[idx]),
-        nav_m7: r2(simM7.nav[idx]),
-        live_stress: Math.round(Number(s.live_stress ?? 0)),
-        m7_prob: Math.round(Number(s.crisis_prob ?? 0)),
-        m7_p1: Math.round(Number(s.p1 ?? 0)),
-        m7_p2: Math.round(Number(s.p2 ?? 0)),
-        m7_p3: Math.round(Number(s.p3 ?? 0)),
-        m7_target_slots: Number(s.target_slots_m7g ?? 0),
-        m7_active_slots: Number(simM7g.active_slots[idx] ?? 0),
-        m7_mask: Number(s.mask ?? 0),
-        c3_prob: Math.round(Number(c3Sig.crisis_prob ?? 0)),
-        c3_p1: Math.round(Number(c3Sig.p1 ?? 0)),
-        c3_p2: 0,
-        c3_p3: Math.round(Number(c3Sig.p3 ?? 0)),
-        c3_target_slots: Number(c3Sig.target_slots ?? 0),
-        c3_active_slots: Number(simC3.active_slots[idx] ?? 0),
-        c3_mask: Number(c3Sig.mask ?? 0),
-        hmm_p: r3(Number(s.hmm_p ?? 0)),
-      };
-    });
-
-    liveM7SimOverrides = {
-      sims: { M7G_Graded: simM7g, Core3_Adaptive: simC3, M7_Ensemble: simM7 },
-      dashboards: { M7G_Graded: dashM7g, Core3_Adaptive: dashC3, M7_Ensemble: dashM7 },
-    };
-  }
-
-  const slicedSeries = sourceSeries.filter(row => row.date <= requestedAsOf);
-  if (!slicedSeries.length) {
-    fail('as_of_before_evaluation_window', 400);
-  }
-
-  const effDate = slicedSeries[slicedSeries.length - 1].date;
-  const lastBar = slicedSeries[slicedSeries.length - 1];
-  const prevBar = slicedSeries.length >= 2 ? slicedSeries[slicedSeries.length - 2] : lastBar;
-  const bhEndNav = Number(lastBar.nav_bh);
-  const isPostArtifactLive = effDate > data.as_of_date;
-
-  const maskedLedgersByStrategy = {};
-  for (const [sid, led] of Object.entries(data.trade_ledgers_by_strategy ?? {})) {
-    if (liveM7SimOverrides?.sims?.[sid]) {
-      maskedLedgersByStrategy[sid] = liveM7SimOverrides.sims[sid].ledger;
-    } else {
-      maskedLedgersByStrategy[sid] = maskLedgerAtCutoff(led, effDate);
-    }
-  }
-
-  const maskedCcLedgersByStrategy = {};
-  for (const [sid, led] of Object.entries(data.cc_ledgers_by_strategy ?? {})) {
-    if (liveM7SimOverrides?.sims?.[sid]) {
-      maskedCcLedgersByStrategy[sid] = liveM7SimOverrides.sims[sid].cc_ledger;
-    } else {
-      maskedCcLedgersByStrategy[sid] = maskSimpleOptionLedgerAtCutoff(led, effDate);
-    }
-  }
-
-  const maskedSpLedgersByStrategy = {};
-  for (const [sid, led] of Object.entries(data.sp_ledgers_by_strategy ?? {})) {
-    if (liveM7SimOverrides?.sims?.[sid]) {
-      maskedSpLedgersByStrategy[sid] = maskSimpleOptionLedgerAtCutoff(
-        liveM7SimOverrides.sims[sid].sp_ledger,
-        effDate,
-      );
-    } else {
-      maskedSpLedgersByStrategy[sid] = maskSimpleOptionLedgerAtCutoff(led, effDate);
-    }
-  }
-
-  const slicedEventsByStrategy = {};
-  for (const [sid, evs] of Object.entries(data.events_by_strategy ?? {})) {
-    if (liveM7SimOverrides?.sims?.[sid]) {
-      slicedEventsByStrategy[sid] = synthesizeUnifiedEvents(sid, liveM7SimOverrides.sims[sid].ledger);
-    } else if (
-      effDate < data.as_of_date &&
-      (sid === 'M7G_Graded' || sid === 'Core3_Adaptive' || sid === 'M7_Ensemble')
-    ) {
-      slicedEventsByStrategy[sid] = synthesizeUnifiedEvents(sid, maskedLedgersByStrategy[sid]);
-    } else {
-      slicedEventsByStrategy[sid] = (evs ?? []).filter(e => e.date <= effDate);
-    }
-  }
-
-  // Leak-free historical cutoff M7 simulation & live dashboard reconstruction when effDate < artifact.as_of_date
-  let cutoffM7Dashboards = liveM7SimOverrides?.dashboards ?? data.m7_live_dashboards_by_strategy ?? {};
-  const cutoffM7Sims = {};
-  if (!isPostArtifactLive && effDate < data.as_of_date) {
-    const { evalBars, sigM0On, sigM0Off, featRows, dateToIdx, coeffs } = getUnpackedM7Tables(rawData);
-    const cutIdx = dateToIdx.get(effDate);
-    if (cutIdx !== undefined && cutIdx >= 0) {
-      const subEval = evalBars.slice(0, cutIdx + 1);
-      const subSig = (rawM0Enabled ? sigM0On : sigM0Off).slice(0, cutIdx + 1);
-      const featAtCut = featRows[cutIdx] ?? {};
-      const rebuilt = {};
-      for (const sid of ['M7G_Graded', 'Core3_Adaptive', 'M7_Ensemble']) {
-        const sidRoll = sid === 'Core3_Adaptive' ? 'adaptive_120_90' : rawRollMode;
-        const subSim = simulateM7StrategyJS(subEval, coeffs, sid, subSig, {
-          putOtm: rawPutOtm,
-          m7TpMode: rawM7TpMode,
-          rollMode: sidRoll,
-          m0Enabled: rawM0Enabled,
-          fillMode: rawFillMode,
-          ccMode: rawCcMode,
-          spMode: rawSpMode,
-          wcMode: rawWcMode,
-        });
-        cutoffM7Sims[sid] = subSim;
-        rebuilt[sid] = buildM7LiveDashboardJS(
-          subEval[cutIdx],
-          subSig[cutIdx],
-          featAtCut,
-          subSim,
-          coeffs,
-          {
-            putOtm: rawPutOtm,
-            m7TpMode: rawM7TpMode,
-            rollMode: sidRoll,
-            m0Enabled: rawM0Enabled,
-            isPitReplay: true,
-          },
-        );
-      }
-      cutoffM7Dashboards = rebuilt;
-    }
-  }
-
-  const strategiesSummary = data.strategies_summary.map(item => {
-    if (liveM7SimOverrides?.sims?.[item.id]) {
-      return {
-        ...item,
-        ...liveM7SimOverrides.sims[item.id].summary,
-      };
-    }
-    if (cutoffM7Sims[item.id]) {
-      const maskedLed = maskedLedgersByStrategy[item.id] ?? [];
-      return {
-        ...item,
-        ...cutoffM7Sims[item.id].summary,
-        tranche_count: maskedLed.length,
-      };
-    }
-    const navKey = STRATEGY_NAV_KEYS[item.id];
-    const metrics = computeSeriesMetrics(slicedSeries, navKey, bhEndNav);
-    const maskedLed = maskedLedgersByStrategy[item.id] ?? [];
-    return {
-      ...item,
-      ...(metrics ?? {}),
-      tranche_count: maskedLed.length,
-    };
-  });
-
-  const openTranchesForStrat = sid =>
-    liveM7SimOverrides?.sims?.[sid]
-      ? liveM7SimOverrides.sims[sid].active_tranches_eod ?? []
-      : (maskedLedgersByStrategy[sid] ?? []).filter(
-          t => t.exit_date === null && !(isPostArtifactLive && t.is_open_live && t.pending_tp),
-        );
-  const cutoffStatesByStrategy = {};
-  const cutoffSpStatesByStrategy = {};
-  for (const sid of Object.keys(maskedLedgersByStrategy)) {
-    const baseSt = data.live_signal_states_by_strategy?.[sid] ?? data.live_signal_state;
-    cutoffStatesByStrategy[sid] = buildCutoffSignalState(lastBar, openTranchesForStrat(sid), baseSt);
-    const baseSpSt = data.live_sp_states_by_strategy?.[sid] ?? data.live_sp_state;
-    cutoffSpStatesByStrategy[sid] = buildCutoffSpState(
-      slicedSeries,
-      rawSpMode,
-      rawWcMode,
-      maskedSpLedgersByStrategy[sid] ?? [],
-      baseSpSt,
-      data.as_of_date,
-    );
-  }
-  const openU1Tranches = openTranchesForStrat('U1_PureOptions');
-  const maskBits = Number(lastBar.lights_mask ?? 0);
-  const liveSixLightsAtEff =
-    isPostArtifactLive && Array.isArray(extendedM7?.sixCrisisLightsByDate?.[effDate]?.lights)
-      ? extendedM7.sixCrisisLightsByDate[effDate].lights
-      : null;
-  const lightsAtCutoff = liveSixLightsAtEff
-    ? liveSixLightsAtEff
-    : data.six_crisis_lights.map((light, idx) => ({
-        ...light,
-        lit: effDate === data.as_of_date ? light.lit : Boolean((maskBits >> idx) & 1),
-      }));
-
-  let streakBelow50 = 0;
-  for (let i = slicedSeries.length - 1; i >= 0; i -= 1) {
-    if (Number(slicedSeries[i].ad_line) < Number(slicedSeries[i].ad_sma50)) streakBelow50 += 1;
-    else break;
-  }
-
-  const adBelow = Number(lastBar.ad_line) < Number(lastBar.ad_sma50);
-  const athOk = Number(lastBar.dd_ath_pct) >= -5.0;
-  const adSignal =
-    effDate === data.as_of_date
-      ? data.ad_line_signal
-      : {
-          ...data.ad_line_signal,
-          ad_line: lastBar.ad_line,
-          ad_sma50: lastBar.ad_sma50,
-          spread_vs_50ma: lastBar.ad_vs_50ma,
-          below_50ma: adBelow,
-          days_below_50ma: streakBelow50,
-          pct_above_200d: lastBar.pct_200d,
-          top_divergence_active: Boolean(athOk && adBelow),
-          last_top_divergence_date:
-            data.ad_line_signal?.last_top_divergence_date &&
-            data.ad_line_signal.last_top_divergence_date <= effDate
-              ? data.ad_line_signal.last_top_divergence_date
-              : '',
-          status_en:
-            athOk && adBelow
-              ? 'TOP DIVERGENCE ACTIVE (ATH<=5% & AD<50DMA)'
-              : adBelow
-                ? 'BREADTH BREAKDOWN (AD < 50DMA)'
-                : 'HEALTHY BREADTH (AD >= 50DMA)',
-          status_zh:
-            athOk && adBelow
-              ? '高位顶背离亮灯（距ATH<=5% 且 AD<50DMA）'
-              : adBelow
-                ? '市场宽度破位（AD 位于 50DMA 下方）'
-                : '市场宽度健康（AD 站上 50DMA）',
-        };
-
-  const vixNow = Number(lastBar.vix ?? 0);
-  const vixPrev = Number(prevBar.vix ?? vixNow);
-  const liveSnap = {
-    ...data.live_market_snapshot,
-    as_of_date: effDate,
-    qqq_close: lastBar.qqq_close,
-    running_ath: lastBar.running_ath,
-    dd_from_ath_pct: lastBar.dd_ath_pct,
-    qqq_ma200: lastBar.qqq_ma200,
-    qqq_vs_200ma_pct:
-      Number(lastBar.qqq_ma200) > 0
-        ? r2((Number(lastBar.qqq_close) / Number(lastBar.qqq_ma200) - 1) * 100)
-        : 0,
-    vix: lastBar.vix,
-    prev_vix: r2(vixPrev),
-    vix_change: r2(vixNow - vixPrev),
-    vix_falling: slicedSeries.length >= 2 && vixNow < vixPrev,
-    vix3m: lastBar.vix3m,
-    vix_vix3m_ratio: lastBar.vix_ratio,
-    vxn: lastBar.vxn,
-    raw_crisis_score: lastBar.crisis_lights,
-    smooth_crisis_score_5d: lastBar.smooth_lights,
-    smooth_5d_score: lastBar.smooth_lights,
-  };
-
-  const ledgerStrategy = selectedStrategy === 'BH_Pure_QQQ' ? 'M7G_Graded' : selectedStrategy;
-  const visibleWindows = data.crisis_windows
-    .filter(w => w.start_date <= effDate)
-    .map(w => (isPostArtifactLive && w.is_live ? { ...w, end_date: effDate } : w));
-  const artifactLastBh = Number(rawData.daily_series?.[rawData.daily_series.length - 1]?.nav_bh ?? 0);
-  const liveScale =
-    isPostArtifactLive && artifactLastBh > 0 ? Number(lastBar.nav_bh) / artifactLastBh : 1.0;
-  const cutoffEngineAttribution = buildEngineAttributionByStrategy(
-    rawData,
-    snapshotId,
-    rawTpMode,
-    rawCcMode,
-    rawSpMode,
-    rawWcMode,
-    {
-      putOtm: rawPutOtm,
-      m7TpMode: rawM7TpMode,
-      rollMode: rawRollMode,
-      m0Enabled: rawM0Enabled,
-      fillMode: rawFillMode,
-      ...(isPostArtifactLive ? { liveScale } : { cutoffSeries: slicedSeries }),
-    },
-  );
-
-  const resolvedM7Dash =
-    cutoffM7Dashboards[m7TargetStrat] ?? cutoffM7Dashboards.M7G_Graded ?? data.m7_live_dashboard ?? null;
-  const hypothesisKmlm20 = buildHypothesisKmlm20Payload({
-    asOf: isPostArtifactLive ? requestedAsOf : effDate,
-    profile: effectiveProfile,
-    fillMode: rawFillMode,
-    overlayMode: rawOverlayMode,
-    finMode: rawFinMode,
-    kmlmWindow: rawKmlmWindow,
-    m7LiveDashboard: resolvedM7Dash,
-    liveMarketSnapshot: liveSnap,
-    liveKmlmFeed,
-  });
-
-  return {
-    ...data,
-    version: CRISIS_OBSERVATORY_VERSION,
-    snapshotId,
-    as_of_date: effDate,
-    asOfDate: effDate,
-    dataThrough: effDate,
+  const { pitRows, liveExtendedDays, fredAsOf, effrAsOf } = getCombinedPitIndex(
+    artifactObj,
+    liveFeed,
     requestedAsOf,
-    liveExtended: Boolean(extendedSeries || extendedM7),
-    profile: effectiveProfile,
-    selected_profile: effectiveProfile,
-    core3_roll_locked: core3RollLocked,
-    selected_strategy_id: selectedStrategy,
-    fill_mode: rawFillMode,
-    selected_fill_mode: rawFillMode,
-    ...kmlmMetaFields,
-    put_otm: rawPutOtm,
-    m7_tp_mode: rawM7TpMode,
-    roll_mode: rawRollMode,
-    m0_enabled: rawM0Enabled,
-    tp_mode: rawTpMode,
-    cc_mode: rawCcMode,
-    sp_mode: rawSpMode,
-    wc_mode: rawWcMode,
-    evaluation_window: {
-      ...data.evaluation_window,
-      end: effDate,
-      end_date: effDate,
-      trading_days: slicedSeries.length,
-    },
-    m7_live_dashboard: resolvedM7Dash,
-    m7_live_dashboards_by_strategy: cutoffM7Dashboards,
-    hypothesis_kmlm20: hypothesisKmlm20,
-    live_market_snapshot: liveSnap,
-    live_signal_state:
-      cutoffStatesByStrategy[ledgerStrategy] ??
-      buildCutoffSignalState(lastBar, openU1Tranches, data.live_signal_state),
-    live_signal_states_by_strategy: cutoffStatesByStrategy,
-    live_sp_state:
-      cutoffSpStatesByStrategy[ledgerStrategy] ??
-      buildCutoffSpState(
-        slicedSeries,
-        rawSpMode,
-        rawWcMode,
-        maskedSpLedgersByStrategy[ledgerStrategy] ?? [],
-        data.live_sp_state,
-        data.as_of_date,
-      ),
-    live_sp_states_by_strategy: cutoffSpStatesByStrategy,
-    six_crisis_lights: lightsAtCutoff,
-    ad_line_signal: adSignal,
-    strategies_summary: strategiesSummary,
-    engine_attribution_by_strategy: cutoffEngineAttribution,
-    daily_series: slicedSeries,
-    events: slicedEventsByStrategy[ledgerStrategy] ?? [],
-    events_by_strategy: slicedEventsByStrategy,
-    trade_ledger: maskedLedgersByStrategy[ledgerStrategy] ?? [],
-    trade_ledgers_by_strategy: maskedLedgersByStrategy,
-    cc_ledgers_by_strategy: maskedCcLedgersByStrategy,
-    sp_ledger: maskedSpLedgersByStrategy[ledgerStrategy] ?? [],
-    sp_ledgers_by_strategy: maskedSpLedgersByStrategy,
-    shield_events: [],
-    crisis_windows: visibleWindows,
-  };
-}
+  );
 
-const PIT_SNAPSHOT_CACHE_MAX = 256;
-const pitSnapshotCache = new Map();
-
-function readCachedPitSnapshot(cacheKey) {
-  const hit = pitSnapshotCache.get(cacheKey);
-  if (!hit) return null;
-  // Refresh LRU order
-  pitSnapshotCache.delete(cacheKey);
-  pitSnapshotCache.set(cacheKey, hit);
-  return hit;
-}
-
-function writeCachedPitSnapshot(cacheKey, value) {
-  if (pitSnapshotCache.has(cacheKey)) {
-    pitSnapshotCache.delete(cacheKey);
-  } else if (pitSnapshotCache.size >= PIT_SNAPSHOT_CACHE_MAX) {
-    const oldestKey = pitSnapshotCache.keys().next().value;
-    if (oldestKey !== undefined) pitSnapshotCache.delete(oldestKey);
+  // Select latest PIT row <= requestedAsOf
+  let selectedRow = pitRows[pitRows.length - 1];
+  if (requestedAsOf) {
+    let found = null;
+    for (let i = pitRows.length - 1; i >= 0; i -= 1) {
+      if (pitRows[i].date <= requestedAsOf) {
+        found = pitRows[i];
+        break;
+      }
+    }
+    if (!found) fail('as_of_before_history', 400);
+    selectedRow = found;
   }
-  pitSnapshotCache.set(cacheKey, value);
+
+  const effectiveAsOf = selectedRow.date;
+  const isPitReplay = Boolean(requestedAsOf && effectiveAsOf < pitRows[pitRows.length - 1].date);
+  const activeWin = artifactObj.unpackedWindows[winId];
+
+  const freshness = {
+    market_as_of: effectiveAsOf,
+    fred_as_of: fredAsOf,
+    effr_as_of: effrAsOf,
+    live_extended_days: liveExtendedDays,
+    fetched_at: liveFeed?.fetchedAt ?? artifactObj.data.generated_at,
+    source_summary_en: `Market closes through ${effectiveAsOf} · FRED macro & NY Fed EFFR (${effrAsOf ?? effectiveAsOf})`,
+    source_summary_zh: `美股/波动率收盘截至 ${effectiveAsOf} · FRED 宏观利差与纽约联储 EFFR（${effrAsOf ?? effectiveAsOf}）`,
+  };
+
+  const payload = Object.freeze({
+    version: CRISIS_OBSERVATORY_VERSION,
+    strategy_code: CRISIS_OBSERVATORY_STRATEGY_CODE,
+    snapshotId: snapshotId || artifactObj.snapshotId,
+    generated_at: artifactObj.data.generated_at,
+    as_of_date: effectiveAsOf,
+    asOfDate: effectiveAsOf,
+    dataThrough: effectiveAsOf,
+    selected_window: winId,
+    windows_meta: CRISIS_OBSERVATORY_WINDOWS.map(wid => {
+      const w = artifactObj.unpackedWindows[wid];
+      return {
+        id: w.id,
+        label_en: w.label_en,
+        label_zh: w.label_zh,
+        start_date: w.start_date,
+        end_date: w.end_date,
+        zero_splice: w.zero_splice,
+      };
+    }),
+    ruleset: artifactObj.data.ruleset,
+    data_freshness: freshness,
+    live_cockpit: buildLiveCockpit(selectedRow, { isPitReplay }),
+    backtest: {
+      initial_capital: artifactObj.data.backtest.initial_capital,
+      opra_provenance: artifactObj.data.backtest.opra_provenance,
+      active_window: activeWin,
+      window_kpis: {
+        '11y_opra': {
+          kpi_primary: artifactObj.unpackedWindows['11y_opra'].kpi_primary,
+          kpi_stress: artifactObj.unpackedWindows['11y_opra'].kpi_stress,
+          kpi_qqq: artifactObj.unpackedWindows['11y_opra'].kpi_qqq,
+        },
+        '5y_live': {
+          kpi_primary: artifactObj.unpackedWindows['5y_live'].kpi_primary,
+          kpi_stress: artifactObj.unpackedWindows['5y_live'].kpi_stress,
+          kpi_qqq: artifactObj.unpackedWindows['5y_live'].kpi_qqq,
+        },
+      },
+    },
+  });
+
+  if (liveResponseCache.size > 40) liveResponseCache.clear();
+  liveResponseCache.set(cacheKey, payload);
+  return payload;
+}
+
+export async function loadCrisisObservatoryDashboardLive(options = {}) {
+  const liveFeed = await getLiveV2MarketFeed().catch(() => null);
+  return loadCrisisObservatoryDashboard({ ...options, liveFeed });
 }
 
 export function loadCrisisObservatoryPitSnapshot({
   date = null,
-  asOf = null,
-  profile = null,
-  strategy = null,
-  putOtm = null,
-  m7TpMode = null,
-  rollMode = null,
-  m0Enabled = null,
-  fillMode = null,
-  tpMode = null,
-  ccMode = null,
-  spMode = null,
-  wcMode = null,
-  overlayMode = null,
-  finMode = null,
-  kmlmWindow = null,
   file = defaultFile,
-  extraDailyBars = null,
-  liveM7Feed = null,
-  liveKmlmFeed = null,
+  liveFeed = null,
 } = {}) {
-  const { data: rawData, snapshotId } = readArtifact(file);
-  const rawDate = date ?? asOf ?? rawData.as_of_date;
-  const targetDate = String(rawDate ?? '').trim();
-  if (!isIsoDate(targetDate)) fail('invalid_pit_date', 400);
+  if (!date || !isIsoDate(date)) fail('invalid_pit_date', 400);
+  const artifactObj = readArtifact(file);
+  const { pitRows } = getCombinedPitIndex(artifactObj, liveFeed, null);
 
-  const hasLiveTail =
-    Boolean(liveM7Feed) || Boolean(liveKmlmFeed) || (Array.isArray(extraDailyBars) && extraDailyBars.length > 0);
-  const cacheKey = hasLiveTail
-    ? null
-    : [
-        snapshotId,
-        targetDate,
-        profile ?? '',
-        strategy ?? '',
-        putOtm ?? '',
-        m7TpMode ?? '',
-        rollMode ?? '',
-        m0Enabled ?? '',
-        fillMode ?? '',
-        tpMode ?? '',
-        ccMode ?? '',
-        spMode ?? '',
-        wcMode ?? '',
-        overlayMode ?? '',
-        finMode ?? '',
-        kmlmWindow ?? '',
-      ].join('|');
-
-  if (cacheKey) {
-    const cached = readCachedPitSnapshot(cacheKey);
-    if (cached) return cached;
-  }
-
-  const slicedDoc = loadCrisisObservatoryDashboard({
-    asOf: targetDate,
-    profile,
-    strategy,
-    putOtm,
-    m7TpMode,
-    rollMode,
-    m0Enabled,
-    fillMode,
-    tpMode,
-    ccMode,
-    spMode,
-    wcMode,
-    overlayMode,
-    finMode,
-    kmlmWindow,
-    file,
-    extraDailyBars,
-    liveM7Feed,
-    liveKmlmFeed,
-  });
-
-  const baseDates = (rawData.daily_series ?? []).map(r => r.date);
-  let allDates = baseDates;
-  if (hasLiveTail) {
-    const extraDates = (
-      Array.isArray(extraDailyBars) && extraDailyBars.length > 0
-        ? extraDailyBars
-        : extractExtraBarsFromFeed(liveM7Feed)
-    )
-      .map(b => b?.date)
-      .filter(d => isIsoDate(d) && d > rawData.as_of_date);
-    if (extraDates.length > 0) {
-      allDates = [...baseDates, ...new Set(extraDates)].sort();
+  let matchIdx = -1;
+  for (let i = pitRows.length - 1; i >= 0; i -= 1) {
+    if (pitRows[i].date <= date) {
+      matchIdx = i;
+      break;
     }
   }
+  if (matchIdx < 0) fail('pit_date_before_history', 400);
+  const row = pitRows[matchIdx];
+  const prevDate = matchIdx > 0 ? pitRows[matchIdx - 1].date : null;
+  const nextDate = matchIdx + 1 < pitRows.length ? pitRows[matchIdx + 1].date : null;
+  const latestDate = pitRows[pitRows.length - 1].date;
 
-  const effDate = slicedDoc.as_of_date;
-  const latestDate = allDates.length > 0 ? allDates[allDates.length - 1] : rawData.as_of_date;
-  const effIdx = allDates.indexOf(effDate);
-  const prevDate = effIdx > 0 ? allDates[effIdx - 1] : null;
-  const nextDate = effIdx >= 0 && effIdx + 1 < allDates.length ? allDates[effIdx + 1] : null;
-  const isHistoricalPit = effDate < latestDate;
-  const lastBar =
-    Array.isArray(slicedDoc.daily_series) && slicedDoc.daily_series.length > 0
-      ? slicedDoc.daily_series[slicedDoc.daily_series.length - 1]
-      : null;
-
-  const lightsPit = (slicedDoc.six_crisis_lights ?? []).map(light => ({
-    ...light,
-    pit_historical: isHistoricalPit,
-    ...(isHistoricalPit
-      ? {
-          reading_value:
-            light.key === 'sig3_breadth' && lastBar && Number.isFinite(Number(lastBar.pct_200d))
-              ? `${Number(lastBar.pct_200d).toFixed(1)}%`
-              : light.lit
-                ? 'PIT ON'
-                : 'PIT OFF',
-        }
-      : {}),
-  }));
-
-  const stampPitFreshness = dash =>
-    dash && typeof dash === 'object'
-      ? {
-          ...dash,
-          data_freshness: {
-            ...(dash.data_freshness ?? {}),
-            is_pit_replay: isHistoricalPit,
-          },
-        }
-      : dash;
-  const pitM7ByStrategy = {};
-  for (const [k, v] of Object.entries(slicedDoc.m7_live_dashboards_by_strategy ?? {})) {
-    pitM7ByStrategy[k] = stampPitFreshness(v);
-  }
-
-  const payload = {
+  return {
     version: CRISIS_OBSERVATORY_VERSION,
-    snapshotId: slicedDoc.snapshotId,
-    pit_mode: true,
-    pit_date: effDate,
-    requested_date: targetDate,
-    latest_as_of_date: latestDate,
-    is_historical_pit: isHistoricalPit,
+    strategy_code: CRISIS_OBSERVATORY_STRATEGY_CODE,
+    requested_date: date,
+    date: row.date,
     prev_date: prevDate,
     next_date: nextDate,
-    as_of_date: effDate,
-    asOfDate: effDate,
-    profile: slicedDoc.profile,
-    selected_profile: slicedDoc.selected_profile,
-    core3_roll_locked: slicedDoc.core3_roll_locked,
-    selected_strategy_id: slicedDoc.selected_strategy_id,
-    fill_mode: slicedDoc.fill_mode,
-    selected_fill_mode: slicedDoc.selected_fill_mode,
-    overlay_mode: slicedDoc.overlay_mode,
-    selected_overlay_mode: slicedDoc.selected_overlay_mode,
-    fin_mode: slicedDoc.fin_mode,
-    selected_fin_mode: slicedDoc.selected_fin_mode,
-    kmlm_window: slicedDoc.kmlm_window,
-    available_fill_modes: slicedDoc.available_fill_modes,
-    hardcoded_ruleset: slicedDoc.hardcoded_ruleset,
-    put_otm: slicedDoc.put_otm,
-    m7_tp_mode: slicedDoc.m7_tp_mode,
-    roll_mode: slicedDoc.roll_mode,
-    m0_enabled: slicedDoc.m0_enabled,
-    tp_mode: slicedDoc.tp_mode,
-    cc_mode: slicedDoc.cc_mode,
-    sp_mode: slicedDoc.sp_mode,
-    wc_mode: slicedDoc.wc_mode,
-    liveExtended: Boolean(slicedDoc.liveExtended),
-    pit_bar: lastBar,
-    live_market_snapshot: slicedDoc.live_market_snapshot,
-    m7_live_dashboard: stampPitFreshness(slicedDoc.m7_live_dashboard),
-    m7_live_dashboards_by_strategy: pitM7ByStrategy,
-    hypothesis_kmlm20: slicedDoc.hypothesis_kmlm20
-      ? {
-          ...slicedDoc.hypothesis_kmlm20,
-          curves_5yr: undefined,
-          curves_11yr: undefined,
-        }
-      : null,
-    six_crisis_lights: lightsPit,
-    ad_line_signal: slicedDoc.ad_line_signal,
-    live_signal_state: slicedDoc.live_signal_state,
-    live_signal_states_by_strategy: slicedDoc.live_signal_states_by_strategy,
-    live_sp_state: slicedDoc.live_sp_state,
-    live_sp_states_by_strategy: slicedDoc.live_sp_states_by_strategy,
-    strategies_summary: slicedDoc.strategies_summary,
+    latest_date: latestDate,
+    live_cockpit: buildLiveCockpit(row, { isPitReplay: row.date < latestDate }),
   };
-
-  if (cacheKey) {
-    writeCachedPitSnapshot(cacheKey, payload);
-  }
-  return payload;
 }
 
-export async function loadCrisisObservatoryPitSnapshotLive({
-  date = null,
-  asOf = null,
-  profile = null,
-  strategy = null,
-  putOtm = null,
-  m7TpMode = null,
-  rollMode = null,
-  m0Enabled = null,
-  fillMode = null,
-  tpMode = null,
-  ccMode = null,
-  spMode = null,
-  wcMode = null,
-  overlayMode = null,
-  finMode = null,
-  kmlmWindow = null,
-  file = defaultFile,
-  fetchLiveBars = null,
-  fetchLiveM7Feed = null,
-  fetchLiveKmlmFeed = null,
-} = {}) {
-  const { data } = readArtifact(file);
-  const rawDate = date ?? asOf ?? data.as_of_date;
-  const targetDate = String(rawDate ?? '').trim();
-  if (!isIsoDate(targetDate)) fail('invalid_pit_date', 400);
-
-  let extraDailyBars = null;
-  let liveM7Feed = null;
-  let liveKmlmFeed = null;
-  const liveEnabled =
-    process.env.LIVE_MARKET_TAIL_ENABLED === 'true' ||
-    typeof fetchLiveBars === 'function' ||
-    typeof fetchLiveM7Feed === 'function' ||
-    typeof fetchLiveKmlmFeed === 'function';
-
-  if (liveEnabled && targetDate > data.as_of_date) {
-    try {
-      const m7Promise =
-        typeof fetchLiveM7Feed === 'function'
-          ? fetchLiveM7Feed()
-          : typeof fetchLiveBars === 'function'
-            ? fetchLiveBars().then(bars => {
-                extraDailyBars = bars;
-                return normalizeLegacyExtraBarsToFeed(bars);
-              })
-            : getLiveM7MarketFeed();
-      const kmlmPromise =
-        typeof fetchLiveKmlmFeed === 'function'
-          ? fetchLiveKmlmFeed()
-          : process.env.LIVE_MARKET_TAIL_ENABLED === 'true'
-            ? getLiveKmlmEffrFeed()
-            : Promise.resolve(null);
-      [liveM7Feed, liveKmlmFeed] = await Promise.all([
-        m7Promise.catch(() => null),
-        kmlmPromise.catch(() => null),
-      ]);
-    } catch {
-      extraDailyBars = null;
-      liveM7Feed = null;
-      liveKmlmFeed = null;
-    }
-  }
-
-  return loadCrisisObservatoryPitSnapshot({
-    date: targetDate,
-    profile,
-    strategy,
-    putOtm,
-    m7TpMode,
-    rollMode,
-    m0Enabled,
-    fillMode,
-    tpMode,
-    ccMode,
-    spMode,
-    wcMode,
-    overlayMode,
-    finMode,
-    kmlmWindow,
-    file,
-    extraDailyBars,
-    liveM7Feed,
-    liveKmlmFeed,
-  });
-}
-
-export async function loadCrisisObservatoryDashboardLive({
-  asOf = null,
-  profile = null,
-  strategy = null,
-  putOtm = null,
-  m7TpMode = null,
-  rollMode = null,
-  m0Enabled = null,
-  fillMode = null,
-  tpMode = null,
-  ccMode = null,
-  spMode = null,
-  wcMode = null,
-  overlayMode = null,
-  finMode = null,
-  kmlmWindow = null,
-  snapshotId = null,
-  file = defaultFile,
-  fetchLiveBars = null,
-  fetchLiveM7Feed = null,
-  fetchLiveKmlmFeed = null,
-} = {}) {
-  const { data } = readArtifact(file);
-  const requestedAsOf = asOf ? String(asOf).trim() : new Date().toISOString().slice(0, 10);
-  if (!isIsoDate(requestedAsOf)) fail('invalid_as_of_date', 400);
-
-  let extraDailyBars = null;
-  let liveM7Feed = null;
-  let liveKmlmFeed = null;
-  const liveEnabled =
-    process.env.LIVE_MARKET_TAIL_ENABLED === 'true' ||
-    typeof fetchLiveBars === 'function' ||
-    typeof fetchLiveM7Feed === 'function' ||
-    typeof fetchLiveKmlmFeed === 'function';
-
-  if (liveEnabled && requestedAsOf > data.as_of_date) {
-    try {
-      const m7Promise =
-        typeof fetchLiveM7Feed === 'function'
-          ? fetchLiveM7Feed()
-          : typeof fetchLiveBars === 'function'
-            ? fetchLiveBars().then(bars => {
-                extraDailyBars = bars;
-                return normalizeLegacyExtraBarsToFeed(bars);
-              })
-            : getLiveM7MarketFeed();
-      const kmlmPromise =
-        typeof fetchLiveKmlmFeed === 'function'
-          ? fetchLiveKmlmFeed()
-          : process.env.LIVE_MARKET_TAIL_ENABLED === 'true'
-            ? getLiveKmlmEffrFeed()
-            : Promise.resolve(null);
-      [liveM7Feed, liveKmlmFeed] = await Promise.all([
-        m7Promise.catch(() => null),
-        kmlmPromise.catch(() => null),
-      ]);
-    } catch {
-      extraDailyBars = null;
-      liveM7Feed = null;
-      liveKmlmFeed = null;
-    }
-  }
-  return loadCrisisObservatoryDashboard({
-    asOf: requestedAsOf,
-    profile,
-    strategy,
-    putOtm,
-    m7TpMode,
-    rollMode,
-    m0Enabled,
-    fillMode,
-    tpMode,
-    ccMode,
-    spMode,
-    wcMode,
-    overlayMode,
-    finMode,
-    kmlmWindow,
-    snapshotId,
-    file,
-    extraDailyBars,
-    liveM7Feed,
-    liveKmlmFeed,
-  });
+export async function loadCrisisObservatoryPitSnapshotLive(options = {}) {
+  const liveFeed = await getLiveV2MarketFeed().catch(() => null);
+  return loadCrisisObservatoryPitSnapshot({ ...options, liveFeed });
 }

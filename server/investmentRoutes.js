@@ -154,40 +154,13 @@ export function registerInvestmentRoutes(app,service) {
   }),{cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   const readCrisisObservatory=(_,r)=>loadCrisisObservatoryDashboardLive({
     asOf:service.date(r.query.asOf),
-    profile:r.query.profile??r.query.co_profile??null,
-    strategy:r.query.strategy??null,
-    putOtm:r.query.putOtm??r.query.put_otm??r.query.otm??null,
-    m7TpMode:r.query.m7TpMode??r.query.m7_tp_mode??null,
-    rollMode:r.query.rollMode??r.query.roll_mode??null,
-    m0Enabled:r.query.m0Enabled??r.query.m0_enabled??r.query.m0??null,
-    fillMode:r.query.fillMode??r.query.fill_mode??r.query.co_fillMode??null,
-    overlayMode:r.query.overlayMode??r.query.overlay_mode??r.query.co_overlay??null,
-    finMode:r.query.finMode??r.query.fin_mode??r.query.co_finMode??null,
-    kmlmWindow:r.query.kmlmWindow??r.query.kmlm_window??r.query.co_kmlmWin??null,
-    tpMode:r.query.tpMode??r.query.tp_mode??null,
-    ccMode:r.query.ccMode??r.query.cc_mode??null,
-    spMode:r.query.spMode??r.query.sp_mode??null,
-    wcMode:r.query.wcMode??r.query.wc_mode??null,
+    window:r.query.window??r.query.co_window??r.query.co_win??null,
     snapshotId:r.query.snapshotId??null,
   });
   route('get','/crisis-observatory',readCrisisObservatory,
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   const readCrisisObservatoryPit=(_,r)=>loadCrisisObservatoryPitSnapshotLive({
     date:r.query.date??r.query.pitDate??r.query.asOf??null,
-    profile:r.query.profile??r.query.co_profile??null,
-    strategy:r.query.strategy??null,
-    putOtm:r.query.putOtm??r.query.put_otm??r.query.otm??null,
-    m7TpMode:r.query.m7TpMode??r.query.m7_tp_mode??null,
-    rollMode:r.query.rollMode??r.query.roll_mode??null,
-    m0Enabled:r.query.m0Enabled??r.query.m0_enabled??r.query.m0??null,
-    fillMode:r.query.fillMode??r.query.fill_mode??r.query.co_fillMode??null,
-    overlayMode:r.query.overlayMode??r.query.overlay_mode??r.query.co_overlay??null,
-    finMode:r.query.finMode??r.query.fin_mode??r.query.co_finMode??null,
-    kmlmWindow:r.query.kmlmWindow??r.query.kmlm_window??r.query.co_kmlmWin??null,
-    tpMode:r.query.tpMode??r.query.tp_mode??null,
-    ccMode:r.query.ccMode??r.query.cc_mode??null,
-    spMode:r.query.spMode??r.query.sp_mode??null,
-    wcMode:r.query.wcMode??r.query.wc_mode??null,
   });
   route('get','/crisis-observatory/pit',readCrisisObservatoryPit,
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});

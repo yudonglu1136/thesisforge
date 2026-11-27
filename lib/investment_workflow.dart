@@ -360,32 +360,8 @@ class _InvestmentWorkspaceState extends State<InvestmentWorkspace> {
         if (query['cta_$key'] != null) key: query['cta_$key'],
     };
     crisisObservatorySelection = {
-      if ((query['co_profile'] ?? query['profile']) != null)
-        'profile': query['co_profile'] ?? query['profile'],
-      if ((query['co_strategy'] ?? query['co_strat']) != null)
-        'strategy': query['co_strategy'] ?? query['co_strat'],
-      if ((query['co_window'] ?? query['co_win']) != null)
-        'window': query['co_window'] ?? query['co_win'],
-      if ((query['co_putOtm'] ?? query['co_otm']) != null)
-        'putOtm': query['co_putOtm'] ?? query['co_otm'],
-      if ((query['co_m7TpMode'] ?? query['co_m7Tp']) != null)
-        'm7TpMode': query['co_m7TpMode'] ?? query['co_m7Tp'],
-      if ((query['co_rollMode'] ?? query['rollMode']) != null)
-        'rollMode': query['co_rollMode'] ?? query['rollMode'],
-      if ((query['co_m0Enabled'] ?? query['co_m0']) != null)
-        'm0Enabled': query['co_m0Enabled'] ?? query['co_m0'],
-      if ((query['co_fillMode'] ?? query['fillMode']) != null)
-        'fillMode': query['co_fillMode'] ?? query['fillMode'],
-      if ((query['co_overlayMode'] ?? query['co_overlay'] ?? query['overlayMode']) != null)
-        'overlayMode':
-            query['co_overlayMode'] ?? query['co_overlay'] ?? query['overlayMode'],
-      if ((query['co_finMode'] ?? query['finMode']) != null)
-        'finMode': query['co_finMode'] ?? query['finMode'],
-      if ((query['co_kmlmWindow'] ?? query['co_kmlmWin'] ?? query['kmlmWindow']) != null)
-        'kmlmWindow':
-            query['co_kmlmWindow'] ?? query['co_kmlmWin'] ?? query['kmlmWindow'],
-      for (final key in ['tpMode', 'ccMode', 'spMode', 'wcMode'])
-        if (query['co_$key'] != null) key: query['co_$key'],
+      if ((query['co_window'] ?? query['co_win'] ?? query['window']) != null)
+        'window': query['co_window'] ?? query['co_win'] ?? query['window'],
     };
     final legacyAutoPinnedAi =
         query['ai_snapshotId'] != null && query['ai_quarter_pinned'] != '1';
