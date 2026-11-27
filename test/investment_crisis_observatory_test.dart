@@ -138,12 +138,14 @@ void main() {
       expect(find.byKey(const ValueKey('crisis-v2-backtest')), findsOneWidget);
       expect(find.byKey(const ValueKey('crisis-v2-chart')), findsOneWidget);
 
-      // Verify live 2026-11-25 Dual-Track stress & CONT_2M & verified 11Y OPRA numbers appear
+      // Verify live 2026-11-25 Dual-Track stress & CONT_2M & verified 12Y Full (OPRA + 2026 Calibrated BSM) numbers appear
       expect(find.textContaining('87 / 100'), findsWidgets);
+      expect(find.textContaining('\$750,384'), findsWidgets);
+      expect(find.textContaining('18.46%'), findsWidgets);
       expect(find.textContaining('\$707,763'), findsWidgets);
-      expect(find.textContaining('19.57%'), findsWidgets);
       expect(find.textContaining('1.200x'), findsWidgets);
       expect(find.textContaining('9 / 60'), findsWidgets);
+      expect(find.byKey(const ValueKey('crisis-v2-bsm-calibration-note')), findsOneWidget);
 
       // Verify ZERO Wheel / Covered Call / Short Put / Collar / Multi-Profile remnants
       for (final banned in [
@@ -158,15 +160,15 @@ void main() {
         expect(find.textContaining(banned), findsNothing);
       }
 
-      // Switch to 5Y Zero-Splice window
+      // Switch to 6Y Zero-Splice window (2020.12-2026.11)
       final win5Btn = find.byKey(const ValueKey('crisis-v2-win-5y_live'));
       await tester.ensureVisible(win5Btn);
       await tester.tap(win5Btn);
       await tester.pumpAndSettle();
 
       expect(latestSel?['window'], '5y_live');
-      expect(find.textContaining('\$235,715'), findsWidgets);
-      expect(find.textContaining('18.57%'), findsWidgets);
+      expect(find.textContaining('\$249,909'), findsWidgets);
+      expect(find.textContaining('16.55%'), findsWidgets);
 
       // Expand real MIT OPRA forensic ledger
       final ledgerToggle = find.byKey(
@@ -223,6 +225,13 @@ void main() {
         findsOneWidget,
       );
 
+      // Verify 2026 Calibrated BSM Extension preset & 2026-11-06 Put TP jump
+      final preset2026 = find.byKey(const ValueKey('crisis-v2-range-preset-2026'));
+      await tester.ensureVisible(preset2026);
+      await tester.tap(preset2026);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('2025-12-16 -> 2026-11-25'), findsOneWidget);
+
       // Click 2025-04-07 Put TP quick-jump badge -> verifies PIT operations, Put TP, Skew Ratio & 1-Put/100-QQQ %
       final tpChip = find.textContaining('◆ 2025-04-07').first;
       await tester.ensureVisible(tpChip);
@@ -261,7 +270,8 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('LIVE STRESS 87 / 100'), findsWidgets);
-      expect(find.textContaining('\$707,763'), findsWidgets);
+      expect(find.textContaining('\$750,384'), findsWidgets);
+      expect(find.byKey(const ValueKey('crisis-v2-bsm-calibration-note')), findsOneWidget);
 
       // Zoom into 2025 Tariff via range brush preset on mobile EN -> verify zero overflow & zero CJK
       expect(find.byKey(const ValueKey('crisis-v2-range-brush')), findsOneWidget);

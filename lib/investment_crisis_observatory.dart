@@ -2024,6 +2024,15 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   }) {
     final prov = asMap(backtest['opra_provenance']);
     final win = asMap(backtest['active_window']);
+    final opraCutoff = text(win['opra_cutoff_date']).isNotEmpty
+        ? text(win['opra_cutoff_date'])
+        : '2025-12-15';
+    final winEnd = text(win['end_date']).isNotEmpty
+        ? text(win['end_date'])
+        : '2026-11-25';
+    final endYm = winEnd.length >= 7
+        ? winEnd.substring(0, 7).replaceAll('-', '.')
+        : winEnd;
     final kPri = asMap(win['kpi_primary']);
     final kStr = asMap(win['kpi_stress']);
     final kQqq = asMap(win['kpi_qqq']);
@@ -2077,8 +2086,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   const SizedBox(height: 3),
                   Text(
                     w(
-                      '6,382,288 real 16:00 ET US OPRA quotes · 0 execution fallbacks · Click any date on curve to replay PIT cockpit',
-                      '6,382,288 条美股 16:00 ET 真实 OPRA 盘口 · 0 次回退 · 点击净值曲线任意日期可一键回放当日实况',
+                      '6,382,288 real MIT OPRA quotes (2015-2025.12, 0 fallbacks) + real spot & OPRA-calibrated Skew-BSM extension (2025.12-$endYm) · Click curve to replay PIT',
+                      '6,382,288 条真实 OPRA 盘口（2015-2025.12，0 次回退）+ 真实现货与 OPRA 校准 BSM 模拟延展（2025.12-$endYm）· 点击净值曲线任意日期一键回放',
                     ),
                     style: const TextStyle(color: _fgMuted, fontSize: 11.5),
                   ),
@@ -2091,11 +2100,11 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 children: [
                   _windowToggleBtn(
                     '11y_opra',
-                    w('11Y OPRA (2015-2025.12)', '11年 OPRA（2015-2025.12）'),
+                    w('12Y Full (2015-$endYm)', '全周期（2015-$endYm）'),
                   ),
                   _windowToggleBtn(
                     '5y_live',
-                    w('5Y Zero-Splice (2020.12-2025.12)', '5年零拼接（2020.12-2025.12）'),
+                    w('6Y Zero-Splice (2020.12-$endYm)', '零拼接（2020.12-$endYm）'),
                   ),
                   _miniBtn(
                     useLogScale ? w('Log Scale', '对数坐标') : w('Linear', '线性坐标'),
@@ -2156,12 +2165,55 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             w(text(win['disclosure_en']), text(win['disclosure_zh'])),
             style: const TextStyle(color: _fgMuted, fontSize: 11),
           ),
+          if (asMap(prov['bsm_calibration']).isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Builder(
+              builder: (_) {
+                final cal = asMap(prov['bsm_calibration']);
+                return Container(
+                  key: const ValueKey('crisis-v2-bsm-calibration-note'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _sky.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(7),
+                    border: Border.all(color: _sky.withValues(alpha: 0.35)),
+                  ),
+                  child: Text(
+                    w(
+                      'OPRA-Residual Calibration (1.50M real OPRA puts + ${cal['oos_2026_real_n'] ?? 9937} OOS 2026 real trades): '
+                      '125D -15% MedAPE ${cal['d125_medape_before_pct']}% -> ${cal['d125_medape_after_pct']}% (entry sim/real ${cal['entry_104_med_sim_real']}x) · '
+                      'Crash TP MedAPE ${cal['crash_tp_medape_before_pct']}% -> ${cal['crash_tp_medape_after_pct']}% (eliminated +${cal['crash_tp_bias_before_pct']}% overpricing) · '
+                      '2026 OOS MedAPE ${cal['oos_2026_medape_before_pct']}% -> ${cal['oos_2026_medape_after_pct']}% · Half-Spread MedAE ${cal['hs_125d_medae_before_pp']}pp -> ${cal['hs_125d_medae_after_pp']}pp.',
+                      'OPRA 实盘残差校准（150 万条真实期权拟合 + ${cal['oos_2026_real_n'] ?? 9937} 条 2026 样本外实盘校验）：'
+                      '125D -15% 中位误差 ${cal['d125_medape_before_pct']}% -> ${cal['d125_medape_after_pct']}%（建仓比 ${cal['entry_104_med_sim_real']}x）· '
+                      '崩盘止盈误差 ${cal['crash_tp_medape_before_pct']}% -> ${cal['crash_tp_medape_after_pct']}%（消除 +${cal['crash_tp_bias_before_pct']}% 高估）· '
+                      '2026 样本外实盘误差 ${cal['oos_2026_medape_before_pct']}% -> ${cal['oos_2026_medape_after_pct']}% · 半价差误差 ${cal['hs_125d_medae_before_pp']}pp -> ${cal['hs_125d_medae_after_pp']}pp。',
+                    ),
+                    style: const TextStyle(
+                      color: _sky,
+                      fontSize: 10.6,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
 
           const SizedBox(height: 14),
 
           // Interactive Dual-Panel Equity + Drawdown + Leverage Chart + PIT Event Markers
           if (series.isNotEmpty)
-            _buildInteractiveChart(series, putLedger, isCompact),
+            _buildInteractiveChart(
+              series,
+              putLedger,
+              isCompact,
+              opraCutoffDate: opraCutoff,
+            ),
 
           const SizedBox(height: 12),
 
@@ -2350,8 +2402,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   Widget _buildInteractiveChart(
     List<dynamic> series,
     List<dynamic> putLedger,
-    bool isCompact,
-  ) {
+    bool isCompact, {
+    String opraCutoffDate = '2025-12-15',
+  }) {
     final totalN = series.length;
     final maxIdx = math.max(0, totalN - 1);
     final minSpan = math.min(15, maxIdx);
@@ -2555,6 +2608,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                         rebaseTo100: rebaseActive,
                         hoverIndex: hoverIndex,
                         pinnedDate: pinnedPitDate,
+                        opraCutoffDate: opraCutoffDate,
+                        simExtTag: w('2026 BSM Sim ->', '2026 BSM模拟 ->'),
                       ),
                     ),
                   ),
@@ -2574,6 +2629,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               sliceV2Mdd: sliceV2Mdd,
               sliceQMdd: sliceQMdd,
               isCompact: isCompact,
+              opraCutoffDate: opraCutoffDate,
             ),
           ],
           if (tpList.isNotEmpty) ...[
@@ -2641,6 +2697,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     required double sliceV2Mdd,
     required double sliceQMdd,
     required bool isCompact,
+    String opraCutoffDate = '2025-12-15',
   }) {
     final maxIdx = series.length - 1;
     final minSpan = math.min(15, maxIdx);
@@ -2660,6 +2717,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       {'id': '2022', 'en': '2022 Bear', 'zh': '2022 慢熊', 's': '2021-11-01', 'e': '2023-06-30'},
       {'id': '2024', 'en': '2024 Yen', 'zh': '2024 日元', 's': '2024-06-01', 'e': '2024-11-30'},
       {'id': '2025', 'en': '2025 Tariff', 'zh': '2025 关税', 's': '2024-12-15', 'e': '2025-07-31'},
+      {'id': '2026', 'en': '2026 Sim Ext', 'zh': '2026 模拟延展', 's': '2025-12-16', 'e': '2026-12-31'},
     ].where((p) {
       final s = p['s'] as String?;
       final e = p['e'] as String?;
@@ -2904,6 +2962,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                         padL: padL,
                         padR: padR,
                         hintLabel: w('ZOOM', '区间'),
+                        opraCutoffDate: opraCutoffDate,
                       ),
                     ),
                   ),
@@ -3291,6 +3350,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 children: [
                   _pillBadge(actionTag, accent),
                   _pillBadge(slLabel, _fgMuted),
+                  if (text(ev['quote_source']) == 'BSM_SIM_2026')
+                    _pillBadge(w('OPRA-CAL BSM', 'OPRA校准 BSM'), _sky),
                   Text(
                     'Strike \$${_fmtNum(_n(ev['strike']), dec: 0)} · Exp ${text(ev['exp'])}',
                     style: const TextStyle(
@@ -3740,11 +3801,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     final slCol = sl == 'crisis_m4'
                         ? _lilac
                         : (sl == 'crisis' ? _amber : _sky);
-                    final slName = sl == 'crisis_m4'
+                    final isSimBsm = text(r['quote_source']) == 'BSM_SIM_2026';
+                    final slNameBase = sl == 'crisis_m4'
                         ? w('M4 90D -10%', 'M4 90D -10%')
                         : (sl == 'crisis'
                               ? w('R1 125D -15%', 'R1 125D -15%')
                               : w('Base 0.2%', '常态 0.2%'));
+                    final slName = isSimBsm ? '$slNameBase [BSM]' : slNameBase;
                     final roi = _n(r['roi_mult']) ?? 0;
                     final isTpRow = text(r['exit_reason']).startsWith('tp_');
                     final clickDate = isTpRow
@@ -4280,6 +4343,8 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
     required this.rebaseTo100,
     required this.hoverIndex,
     required this.pinnedDate,
+    this.opraCutoffDate = '2025-12-15',
+    this.simExtTag = '2026 BSM Sim ->',
   });
 
   final List<dynamic> series;
@@ -4287,6 +4352,8 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
   final bool rebaseTo100;
   final int hoverIndex;
   final String? pinnedDate;
+  final String opraCutoffDate;
+  final String simExtTag;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -4367,6 +4434,39 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
     double yLev(double lev) {
       final frac = ((lev - 0.90) / 0.36).clamp(0.0, 1.0);
       return levTop + levH - frac * levH;
+    }
+
+    // Post-OPRA calibrated BSM simulation shading + vertical dashed boundary at opraCutoffDate (2025-12-15)
+    int firstSimIdx = -1;
+    for (var i = 0; i < series.length; i++) {
+      final dtStr = ((series[i] as Map)['date'] ?? '').toString();
+      if (dtStr.compareTo(opraCutoffDate) > 0) {
+        firstSimIdx = i;
+        break;
+      }
+    }
+    if (firstSimIdx >= 0) {
+      final simX = xAt(firstSimIdx);
+      canvas.drawRect(
+        Rect.fromLTRB(simX, padT, padL + plotW, levTop + levH),
+        Paint()..color = const Color(0xFF7DB8F0).withValues(alpha: 0.055),
+      );
+      if (firstSimIdx > 0) {
+        final dashPaint = Paint()
+          ..color = const Color(0xFF7DB8F0).withValues(alpha: 0.65)
+          ..strokeWidth = 1.1;
+        double yCur = padT;
+        while (yCur < levTop + levH) {
+          canvas.drawLine(
+            Offset(simX, yCur),
+            Offset(simX, math.min(levTop + levH, yCur + 4.0)),
+            dashPaint,
+          );
+          yCur += 7.5;
+        }
+      }
+      final tagX = math.min(padL + plotW - 92.0, math.max(padL + 4.0, simX + 4.0));
+      _drawText(canvas, simExtTag, Offset(tagX, padT + 2.0), const Color(0xFF7DB8F0), 9.0);
     }
 
     // Slow-Bear Latch shaded bands
@@ -4628,7 +4728,9 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
       oldDelegate.useLogScale != useLogScale ||
       oldDelegate.rebaseTo100 != rebaseTo100 ||
       oldDelegate.hoverIndex != hoverIndex ||
-      oldDelegate.pinnedDate != pinnedDate;
+      oldDelegate.pinnedDate != pinnedDate ||
+      oldDelegate.opraCutoffDate != opraCutoffDate ||
+      oldDelegate.simExtTag != simExtTag;
 }
 
 // -----------------------------------------------------------------------------
@@ -4642,6 +4744,7 @@ class _CrisisRangeBrushPainter extends CustomPainter {
     required this.padL,
     required this.padR,
     required this.hintLabel,
+    this.opraCutoffDate = '2025-12-15',
   });
 
   final List<dynamic> series;
@@ -4650,6 +4753,7 @@ class _CrisisRangeBrushPainter extends CustomPainter {
   final double padL;
   final double padR;
   final String hintLabel;
+  final String opraCutoffDate;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -4708,6 +4812,25 @@ class _CrisisRangeBrushPainter extends CustomPainter {
       final lv = math.log(math.max(1.0, nav));
       final frac = ((lv - minEq) / (maxEq - minEq)).clamp(0.0, 1.0);
       return padT + plotH - 3.0 - frac * (plotH - 6.0);
+    }
+
+    // Post-OPRA calibrated BSM extension tint & boundary in overview track
+    for (var i = 0; i < series.length; i++) {
+      if (((series[i] as Map)['date'] ?? '').toString().compareTo(opraCutoffDate) > 0) {
+        final sx = xAt(i);
+        canvas.drawRect(
+          Rect.fromLTRB(sx, padT, padL + plotW, padT + plotH),
+          Paint()..color = const Color(0xFF7DB8F0).withValues(alpha: 0.08),
+        );
+        canvas.drawLine(
+          Offset(sx, padT),
+          Offset(sx, padT + plotH),
+          Paint()
+            ..color = const Color(0xFF7DB8F0).withValues(alpha: 0.55)
+            ..strokeWidth = 1.0,
+        );
+        break;
+      }
     }
 
     // Latch bands in overview track

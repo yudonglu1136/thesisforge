@@ -185,27 +185,75 @@ function evalSkewIvJS(S, K, T, r, q, vxnPct, coeffs) {
   return Math.max(0.08, Math.min(1.6, base * mult));
 }
 
-function estimateBsmOptionMicroJS(cl, vxn, effrPct, coeffs) {
+const DEFAULT_OPRA_CAL_Z13 = [
+  -0.083434, -0.186627, 0.015502, -0.028041, -0.40721, 0.039988,
+  -0.587775, 0.03441, -0.011351, -0.130406, -0.045917, -0.008629, -0.11675,
+];
+const DEFAULT_OPRA_CAL_HS5 = [-5.243303, 0.02148, -0.342642, 0.024492, -3.358657];
+
+function evalCalibratedOpraIvJS(S, K, remD, r, q, vxnPct, vixRatio, skewSpot, z13) {
+  const beta = Array.isArray(z13) && z13.length === 13 ? z13 : DEFAULT_OPRA_CAL_Z13;
+  const tEff = Math.max(Number(remD) || 1, 1) / 365;
+  const fwd = Math.max(1e-6, S * Math.exp((r - q) * tEff));
+  const logM = Math.log(Math.max(K, 1e-6) / fwd);
+  const sig0 = Math.max(0.08, Math.min(1.0, vxnPct / 100));
+  const dteC = Math.max(15, Math.min(220, Number(remD) || 90));
+  const sqt = Math.sqrt(dteC / 365);
+  const z = Math.max(-2.8, Math.min(1.5, logM / Math.max(sig0 * sqt, 1e-4)));
+  const tau = Math.log(dteC / 90);
+  const nu = Math.log(Math.max(0.7, Math.min(1.5, Number(vixRatio) || 0.9)));
+  const nuPos = Math.max(0, nu);
+  const sc = (Math.max(105, Math.min(175, Number(skewSpot) || 135)) - 135) / 100;
+  const lv = Math.log(Math.max(10, Math.min(90, vxnPct)) / 22);
+  const feats = [1, z, z * z, tau, nu, nuPos, tau * nu, tau * nuPos, z * tau, z * nu, sc, z * sc, lv];
+  let logRat = 0;
+  for (let i = 0; i < 13; i += 1) logRat += beta[i] * feats[i];
+  return Math.max(0.06, Math.min(2.0, (vxnPct / 100) * Math.exp(logRat)));
+}
+
+function evalCalibratedOpraHsJS(mid, remD, vixPct, logM, hs5) {
+  const g = Array.isArray(hs5) && hs5.length === 5 ? hs5 : DEFAULT_OPRA_CAL_HS5;
+  const feats = [
+    1,
+    Math.log(Math.max(0.2, Math.min(200, mid))),
+    Math.log(Math.max(15, Math.min(220, Number(remD) || 90)) / 90),
+    Math.log(Math.max(10, Math.min(90, Number(vixPct) || 20)) / 20),
+    Math.max(-0.28, Math.min(0.12, logM)),
+  ];
+  let acc = 0;
+  for (let i = 0; i < 5; i += 1) acc += g[i] * feats[i];
+  return Math.max(0.002, Math.min(0.1, Math.exp(acc)));
+}
+
+function estimateBsmOptionMicroJS(cl, vxn, effrPct, coeffs, opts = {}) {
   const r = Math.max(0, Number(effrPct ?? 4.0) / 100);
   const q = 0.006;
   const t125 = 125 / 365;
   const t90 = 90 / 365;
+  const vixEff = Number.isFinite(Number(opts.vix)) && Number(opts.vix) > 0 ? Number(opts.vix) : Math.max(10, vxn * 0.85);
+  const vrEff = Number.isFinite(Number(opts.vr)) && Number(opts.vr) > 0 ? Number(opts.vr) : 0.9;
+  const skewEff = Number.isFinite(Number(opts.skewSpot)) && Number(opts.skewSpot) > 0 ? Number(opts.skewSpot) : 135;
+  const z13 = opts.opraCalZ13 ?? DEFAULT_OPRA_CAL_Z13;
+  const hs5 = opts.opraCalHs5 ?? DEFAULT_OPRA_CAL_HS5;
+
   const kAtm = Math.round(cl);
   const k10 = Math.round(cl * 0.9);
   const k15 = Math.round(cl * 0.85);
   const k20 = Math.round(cl * 0.8);
-  const ivAtm = evalSkewIvJS(cl, kAtm, t125, r, q, vxn, coeffs);
-  const iv10 = evalSkewIvJS(cl, k10, t125, r, q, vxn, coeffs);
-  const iv15 = evalSkewIvJS(cl, k15, t125, r, q, vxn, coeffs);
-  const iv20 = evalSkewIvJS(cl, k20, t125, r, q, vxn, coeffs);
-  const iv90 = evalSkewIvJS(cl, k10, t90, r, q, vxn, coeffs);
+  const ivAtm = evalCalibratedOpraIvJS(cl, kAtm, 125, r, q, vxn, vrEff, skewEff, z13);
+  const iv10 = evalCalibratedOpraIvJS(cl, k10, 125, r, q, vxn, vrEff, skewEff, z13);
+  const iv15 = evalCalibratedOpraIvJS(cl, k15, 125, r, q, vxn, vrEff, skewEff, z13);
+  const iv20 = evalCalibratedOpraIvJS(cl, k20, 125, r, q, vxn, vrEff, skewEff, z13);
+  const iv90 = evalCalibratedOpraIvJS(cl, k10, 90, r, q, vxn, vrEff, skewEff, z13);
   const mid15 = Math.max(0.05, bsmPutJS(cl, k15, t125, r, q, iv15));
   const mid90 = Math.max(0.05, bsmPutJS(cl, k10, t90, r, q, iv90));
-  const hs15 = 0.014;
-  const hs90 = 0.011;
-  const bid15 = mid15 * (1 - hs15);
+  const fwd125 = cl * Math.exp((r - q) * t125);
+  const fwd90 = cl * Math.exp((r - q) * t90);
+  const hs15 = evalCalibratedOpraHsJS(mid15, 125, vixEff, Math.log(Math.max(k15, 1) / Math.max(fwd125, 1)), hs5);
+  const hs90 = evalCalibratedOpraHsJS(mid90, 90, vixEff, Math.log(Math.max(k10, 1) / Math.max(fwd90, 1)), hs5);
+  const bid15 = Math.max(0.01, mid15 * (1 - hs15));
   const ask15 = mid15 * (1 + hs15);
-  const bid90 = mid90 * (1 - hs90);
+  const bid90 = Math.max(0.01, mid90 * (1 - hs90));
   const ask90 = mid90 * (1 + hs90);
   const lmt15 = mid15 + 0.35 * (ask15 - bid15) * 0.5 + 0.0065;
   const lmt90 = mid90 + 0.35 * (ask90 - bid90) * 0.5 + 0.0065;
@@ -962,8 +1010,14 @@ export function extendV2LiveFromFeed(artifactObj, liveFeed, requestedAsOf) {
       }
     }
 
-    const bsmMicro = estimateBsmOptionMicroJS(cl, vxn, effrPct, tail.opra_skew_coeffs);
     const skewSpotCur = Number(yf.SKEW[yf.SKEW.length - 1] ?? skew10Now);
+    const bsmMicro = estimateBsmOptionMicroJS(cl, vxn, effrPct, tail.opra_skew_coeffs, {
+      vix,
+      vr,
+      skewSpot: skewSpotCur,
+      opraCalZ13: tail.opra_cal_z13,
+      opraCalHs5: tail.opra_cal_hs5,
+    });
 
     extraPitRows.push({
       date: d,
@@ -1929,6 +1983,8 @@ export function loadCrisisObservatoryDashboard({
         label_zh: w.label_zh,
         start_date: w.start_date,
         end_date: w.end_date,
+        opra_cutoff_date: w.opra_cutoff_date ?? '2025-12-15',
+        sim_extension_days: w.sim_extension_days ?? 0,
         zero_splice: w.zero_splice,
       };
     }),
@@ -1944,11 +2000,15 @@ export function loadCrisisObservatoryDashboard({
           kpi_primary: artifactObj.unpackedWindows['11y_opra'].kpi_primary,
           kpi_stress: artifactObj.unpackedWindows['11y_opra'].kpi_stress,
           kpi_qqq: artifactObj.unpackedWindows['11y_opra'].kpi_qqq,
+          kpi_opra_verified_primary: artifactObj.unpackedWindows['11y_opra'].kpi_opra_verified_primary ?? null,
+          kpi_opra_verified_qqq: artifactObj.unpackedWindows['11y_opra'].kpi_opra_verified_qqq ?? null,
         },
         '5y_live': {
           kpi_primary: artifactObj.unpackedWindows['5y_live'].kpi_primary,
           kpi_stress: artifactObj.unpackedWindows['5y_live'].kpi_stress,
           kpi_qqq: artifactObj.unpackedWindows['5y_live'].kpi_qqq,
+          kpi_opra_verified_primary: artifactObj.unpackedWindows['5y_live'].kpi_opra_verified_primary ?? null,
+          kpi_opra_verified_qqq: artifactObj.unpackedWindows['5y_live'].kpi_opra_verified_qqq ?? null,
         },
       },
     },
@@ -2050,6 +2110,7 @@ function buildPitHistoryForWindow(activeWin, targetDate) {
         net_pnl_usd: t.net_pnl_usd,
         roi_mult: t.roi_mult,
         reason: t.exit_reason,
+        quote_source: t.quote_source ?? 'REAL_OPRA',
       });
     }
     if (t.entry_date === targetDate && !seenOpenKey.has(t.tranche_id)) {
@@ -2081,6 +2142,7 @@ function buildPitHistoryForWindow(activeWin, targetDate) {
         eventual_roi_mult: t.roi_mult,
         eventual_reason: t.exit_reason,
         reason: 'open_ibkr_limit_35pct',
+        quote_source: t.entry_date > (activeWin.opra_cutoff_date ?? '2025-12-15') ? 'BSM_SIM_2026' : 'REAL_OPRA',
       });
     }
   }
@@ -2112,6 +2174,7 @@ function buildPitHistoryForWindow(activeWin, targetDate) {
         contracts: op.contracts ?? null,
         cost_usd: op.cost_usd,
         reason: 'open_ibkr_limit_35pct',
+        quote_source: op.quote_source ?? (op.entry_date > (activeWin.opra_cutoff_date ?? '2025-12-15') ? 'BSM_SIM_2026' : 'REAL_OPRA'),
       });
     }
   }
@@ -2211,9 +2274,12 @@ function buildPitHistoryForWindow(activeWin, targetDate) {
     else if (tp.date > targetDate && !nextTpDate) nextTpDate = tp.date;
   }
 
+  const opraCutoff = activeWin.opra_cutoff_date ?? '2025-12-15';
   return {
     window_id: activeWin.id,
     in_opra_window: targetDate >= winStart && targetDate <= winEnd,
+    opra_cutoff_date: opraCutoff,
+    is_sim_extension: targetDate > opraCutoff,
     nav_snapshot: navSnapshot,
     events_on_date: eventsOnDate,
     active_puts_on_date: activePuts,

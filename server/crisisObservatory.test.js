@@ -46,31 +46,40 @@ test('loads clean v2.0 Single Master Strategy payload with real MIT OPRA 11Y & 5
     assert.equal(serialized.includes(banned), false, `Forbidden legacy term found: ${banned}`);
   }
 
-  // Verified 11Y MIT OPRA benchmarks
+  // Verified 11Y MIT OPRA (<=2025-12-15) + OPRA-Calibrated 2026 Extension (through 2026-11-25)
   const k11 = doc.backtest.window_kpis['11y_opra'].kpi_primary;
+  const k11Opra = doc.backtest.window_kpis['11y_opra'].kpi_opra_verified_primary;
   const k11Stress = doc.backtest.window_kpis['11y_opra'].kpi_stress;
   const k11Qqq = doc.backtest.window_kpis['11y_opra'].kpi_qqq;
   assert.equal(doc.backtest.opra_provenance.quotes_count, 6382288);
   assert.equal(doc.backtest.opra_provenance.execution_fallbacks, 0);
-  assert.equal(k11.end_nav, 707763.27);
-  assert.equal(k11.cagr_pct, 19.57);
+  assert.equal(doc.backtest.opra_provenance.bsm_calibration.fit_quotes_count, 1500755);
+  assert.equal(k11Opra.end_nav, 707763.27);
+  assert.equal(k11Opra.cagr_pct, 19.57);
+  assert.equal(k11Opra.max_dd_pct, -28.47);
+  assert.equal(k11Opra.calmar, 0.687);
+  assert.equal(k11.end_nav, 750383.65);
+  assert.equal(k11.cagr_pct, 18.46);
   assert.equal(k11.max_dd_pct, -28.47);
-  assert.equal(k11.calmar, 0.687);
+  assert.equal(k11.calmar, 0.648);
   assert.equal(k11.peak_gross_leverage, 1.2);
   assert.equal(k11.put_trades_m4, 3);
   assert.equal(k11.cta_rotation_slices, 10);
   assert.ok(k11Stress.end_nav > k11Qqq.end_nav, 'Even stress Ask/Bid + IBKR 150bp must beat QQQ');
-  assert.equal(doc.backtest.active_window.crisis_comparison.length, 8);
+  assert.equal(doc.backtest.active_window.crisis_comparison.length, 9);
 
-  // Verified 5Y Zero-Splice Live window
+  // Verified Zero-Splice Live window (2020.12-2026.11) + immutable real-OPRA sub-window (<=2025-12-15)
   const doc5 = loadCrisisObservatoryDashboard({ window: '5y_live' });
   assert.equal(doc5.selected_window, '5y_live');
   const k5 = doc5.backtest.active_window.kpi_primary;
+  const k5Opra = doc5.backtest.active_window.kpi_opra_verified_primary;
   assert.equal(doc5.backtest.active_window.zero_splice, true);
-  assert.equal(k5.end_nav, 235714.95);
-  assert.equal(k5.cagr_pct, 18.57);
+  assert.equal(k5Opra.end_nav, 235714.95);
+  assert.equal(k5Opra.cagr_pct, 18.57);
+  assert.equal(k5.end_nav, 249909.33);
+  assert.equal(k5.cagr_pct, 16.55);
   assert.equal(k5.max_dd_pct, -28.47);
-  assert.equal(k5.calmar, 0.652);
+  assert.equal(k5.calmar, 0.581);
   assert.equal(k5.peak_gross_leverage, 1.2);
   assert.equal(k5.put_trades_m4, 3);
 });
@@ -129,6 +138,13 @@ test('computes real-time Dual-Track Stress vs Vol-Gate, Slow-Bear +8% Latch, and
   const pitActive = loadCrisisObservatoryPitSnapshot({ date: '2025-02-20', window: '11y_opra' });
   assert.ok(pitActive.pit_history.active_puts_on_date.length >= 2);
   assert.ok(pitActive.pit_history.active_puts_on_date.some(p => p.eventual_exit_date === '2025-04-07'));
+
+  // Post-OPRA 2026 OPRA-Residual-Calibrated BSM Extension PIT replay (2026-11-06 Put TP!)
+  const pit2026Tp = loadCrisisObservatoryPitSnapshot({ date: '2026-11-06', window: '11y_opra' });
+  assert.equal(pit2026Tp.pit_history.in_opra_window, true);
+  assert.equal(pit2026Tp.pit_history.is_sim_extension, true);
+  assert.ok(pit2026Tp.pit_history.nav_snapshot && pit2026Tp.pit_history.nav_snapshot.nav_v2 > 700000);
+  assert.ok(pit2026Tp.pit_history.events_on_date.some(e => e.action === 'PUT_TP' && e.quote_source === 'BSM_SIM_2026'));
 });
 
 test('parseFredCsvText handles holiday dots and computeLiveStressIndexJS is bounded 0-100', () => {
