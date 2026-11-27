@@ -22,7 +22,8 @@ class CrisisObservatoryFixtureApi extends ApiClient {
         ? '''
 import { loadCrisisObservatoryPitSnapshot } from './server/crisisObservatory.js';
 const date = process.env.TF_PIT_DATE || '2022-03-18';
-process.stdout.write(JSON.stringify(loadCrisisObservatoryPitSnapshot({ date })));
+const win = process.env.TF_WIN || '11y_opra';
+process.stdout.write(JSON.stringify(loadCrisisObservatoryPitSnapshot({ date, window: win })));
 '''
         : '''
 import { loadCrisisObservatoryDashboard } from './server/crisisObservatory.js';
@@ -68,17 +69,21 @@ Widget _wrapPanel({
   Map<String, dynamic> initialSelection = const {},
   ValueChanged<Map<String, dynamic>>? onSelection,
 }) {
-  return MaterialApp(
-    locale: locale,
-    home: Scaffold(
-      body: SingleChildScrollView(
-        child: CrisisObservatoryPanel(
-          api: api,
-          palette: Palette(false),
-          asOf: asOf,
-          onCompany: (_) {},
-          initialSelection: initialSelection,
-          onSelection: onSelection,
+  final lang = locale.languageCode == 'zh' ? AppLanguage.zh : AppLanguage.en;
+  return LanguageScope(
+    language: lang,
+    child: MaterialApp(
+      locale: locale,
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: CrisisObservatoryPanel(
+            api: api,
+            palette: Palette(false),
+            asOf: asOf,
+            onCompany: (_) {},
+            initialSelection: initialSelection,
+            onSelection: onSelection,
+          ),
         ),
       ),
     ),
@@ -178,6 +183,20 @@ void main() {
       await tester.enterText(navInput, '250000');
       await tester.pumpAndSettle();
       expect(find.textContaining('\$250,000'), findsWidgets);
+
+      // Click 2025-04-07 Put TP quick-jump badge -> verifies PIT operations, Put TP, Skew Ratio & 1-Put/100-QQQ %
+      final tpChip = find.textContaining('◆ 2025-04-07').first;
+      await tester.ensureVisible(tpChip);
+      await tester.tap(tpChip);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('crisis-v2-pit-inspector')), findsOneWidget);
+      expect(find.textContaining('PIT · 2025-04-07'), findsOneWidget);
+      expect(find.textContaining('OPRA 偏度比 Skew Ratio'), findsOneWidget);
+      expect(find.textContaining('1张 Put / 1手 QQQ'), findsWidgets);
+      expect(find.textContaining('QQQ \$423.69'), findsWidgets);
+      expect(find.textContaining('◆ PUT 止盈兑现'), findsWidgets);
+      expect(find.textContaining('4.51x'), findsWidgets);
     },
   );
 
@@ -205,7 +224,19 @@ void main() {
       expect(find.textContaining('LIVE STRESS 87 / 100'), findsWidgets);
       expect(find.textContaining('\$707,763'), findsWidgets);
 
-      // Ensure zero CJK characters appear in English mode
+      // Click 2025-04-07 Put TP badge on mobile EN -> verify PIT inspector renders cleanly with zero overflow & zero CJK
+      final enTpChip = find.textContaining('◆ 2025-04-07').first;
+      await tester.ensureVisible(enTpChip);
+      await tester.tap(enTpChip);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('crisis-v2-pit-inspector')), findsOneWidget);
+      expect(find.textContaining('OPRA Skew Ratio (125D)'), findsOneWidget);
+      expect(find.textContaining('1 Put / 100 QQQ'), findsWidgets);
+      expect(find.textContaining('QQQ \$423.69'), findsWidgets);
+      expect(find.textContaining('◆ PUT TAKE-PROFIT'), findsWidgets);
+
+      // Ensure zero CJK characters appear in English mode (including expanded PIT inspector)
       final cjkRegex = RegExp(r'[\u4E00-\u9FFF]');
       for (final widget in tester.widgetList<Text>(find.byType(Text))) {
         final s = widget.data ?? '';

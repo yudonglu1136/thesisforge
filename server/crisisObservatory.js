@@ -157,6 +157,85 @@ function pearsonCorr(xs, ys) {
   return Math.max(-1, Math.min(1, num / denom));
 }
 
+function normCdfJS(x) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989422804014327 * Math.exp(-0.5 * x * x);
+  const p =
+    d *
+    t *
+    (0.31938153 +
+      t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + 1.330274429 * t))));
+  return x >= 0 ? 1 - p : p;
+}
+
+function bsmPutJS(S, K, T, r, q, sig) {
+  if (T <= 1e-6 || sig <= 1e-6 || S <= 0 || K <= 0) return Math.max(0, K - S);
+  const sq = Math.sqrt(T);
+  const d1 = (Math.log(S / K) + (r - q + 0.5 * sig * sig) * T) / (sig * sq);
+  const d2 = d1 - sig * sq;
+  return Math.max(0, K * Math.exp(-r * T) * normCdfJS(-d2) - S * Math.exp(-q * T) * normCdfJS(-d1));
+}
+
+function evalSkewIvJS(S, K, T, r, q, vxnPct, coeffs) {
+  const base = Math.max(0.08, Number(vxnPct) / 100);
+  const fwd = S * Math.exp((r - q) * T);
+  const lm = Math.max(-0.55, Math.min(0.35, Math.log(K / Math.max(fwd, 1e-6))));
+  const c = Array.isArray(coeffs) && coeffs.length >= 4 ? coeffs : [1.0, -0.58, 0.85, -0.15];
+  const mult = Math.max(0.65, Math.min(2.2, c[0] + c[1] * lm + c[2] * lm * lm + c[3] * Math.sqrt(Math.max(T, 0.01))));
+  return Math.max(0.08, Math.min(1.6, base * mult));
+}
+
+function estimateBsmOptionMicroJS(cl, vxn, effrPct, coeffs) {
+  const r = Math.max(0, Number(effrPct ?? 4.0) / 100);
+  const q = 0.006;
+  const t125 = 125 / 365;
+  const t90 = 90 / 365;
+  const kAtm = Math.round(cl);
+  const k10 = Math.round(cl * 0.9);
+  const k15 = Math.round(cl * 0.85);
+  const k20 = Math.round(cl * 0.8);
+  const ivAtm = evalSkewIvJS(cl, kAtm, t125, r, q, vxn, coeffs);
+  const iv10 = evalSkewIvJS(cl, k10, t125, r, q, vxn, coeffs);
+  const iv15 = evalSkewIvJS(cl, k15, t125, r, q, vxn, coeffs);
+  const iv20 = evalSkewIvJS(cl, k20, t125, r, q, vxn, coeffs);
+  const iv90 = evalSkewIvJS(cl, k10, t90, r, q, vxn, coeffs);
+  const mid15 = Math.max(0.05, bsmPutJS(cl, k15, t125, r, q, iv15));
+  const mid90 = Math.max(0.05, bsmPutJS(cl, k10, t90, r, q, iv90));
+  const hs15 = 0.014;
+  const hs90 = 0.011;
+  const bid15 = mid15 * (1 - hs15);
+  const ask15 = mid15 * (1 + hs15);
+  const bid90 = mid90 * (1 - hs90);
+  const ask90 = mid90 * (1 + hs90);
+  const lmt15 = mid15 + 0.35 * (ask15 - bid15) * 0.5 + 0.0065;
+  const lmt90 = mid90 + 0.35 * (ask90 - bid90) * 0.5 + 0.0065;
+  return {
+    opra_src: 'bsm_est',
+    opra_sk20_10: r3(iv20 / Math.max(iv10, 0.05)),
+    opra_sk15_atm: r3(iv15 / Math.max(ivAtm, 0.05)),
+    p125_k: k15,
+    p125_dte: 125,
+    p125_bid: r2(bid15),
+    p125_ask: r2(ask15),
+    p125_mid: r2(mid15),
+    p125_lmt: r3(lmt15),
+    p125_hs: r2(hs15 * 100),
+    p125_iv: r1(iv15 * 100),
+    p125_lot_pct: r3((lmt15 / Math.max(cl, 1)) * 100),
+    p125_mid_pct: r3((mid15 / Math.max(cl, 1)) * 100),
+    p90_k: k10,
+    p90_dte: 90,
+    p90_bid: r2(bid90),
+    p90_ask: r2(ask90),
+    p90_mid: r2(mid90),
+    p90_lmt: r3(lmt90),
+    p90_hs: r2(hs90 * 100),
+    p90_iv: r1(iv90 * 100),
+    p90_lot_pct: r3((lmt90 / Math.max(cl, 1)) * 100),
+    p90_mid_pct: r3((mid90 / Math.max(cl, 1)) * 100),
+  };
+}
+
 function hamiltonStepJS(stateP, zRow, A, means, vars) {
   const pred = [
     stateP[0] * A[0][0] + stateP[1] * A[1][0],
@@ -883,6 +962,9 @@ export function extendV2LiveFromFeed(artifactObj, liveFeed, requestedAsOf) {
       }
     }
 
+    const bsmMicro = estimateBsmOptionMicroJS(cl, vxn, effrPct, tail.opra_skew_coeffs);
+    const skewSpotCur = Number(yf.SKEW[yf.SKEW.length - 1] ?? skew10Now);
+
     extraPitRows.push({
       date: d,
       qqq: r2(cl),
@@ -914,6 +996,7 @@ export function extendV2LiveFromFeed(artifactObj, liveFeed, requestedAsOf) {
       vix3m: r2(vix3m),
       vr: r3(vr),
       vr_j5: r3(vrJ5),
+      skew_spot: r2(skewSpotCur),
       skew10: r2(skew10Now),
       skew_p75: r2(skewP75Now),
       vvix: r2(vvixNow),
@@ -942,6 +1025,7 @@ export function extendV2LiveFromFeed(artifactObj, liveFeed, requestedAsOf) {
         (m0Raw ? 1 : 0) | (m6Raw ? 2 : 0) | (m2Raw ? 4 : 0) | (m5Raw ? 8 : 0) | (m4Raw ? 16 : 0) | (m3Raw ? 32 : 0),
       ent_mask:
         (m0Entry ? 1 : 0) | (m6Entry ? 2 : 0) | (m2Entry ? 4 : 0) | (m5Entry ? 8 : 0) | (m4Entry ? 16 : 0) | (m3Entry ? 32 : 0),
+      ...bsmMicro,
     });
   }
 
@@ -1700,11 +1784,54 @@ export function buildLiveCockpit(row, { isPitReplay = false } = {}) {
         vix3m,
         vix_ratio: vr,
         vr_jump5: vrJ5,
+        skew_spot: row.skew_spot != null ? Number(row.skew_spot) : Number(row.skew10),
         skew10: Number(row.skew10),
         skew_p75: Number(row.skew_p75),
         vvix: Number(row.vvix),
         vvix_p75: Number(row.vvix_p75),
         qqq_ath_dd_pct: ddAthPct,
+        opra_sk20_10: row.opra_sk20_10 != null ? Number(row.opra_sk20_10) : null,
+        opra_sk15_atm: row.opra_sk15_atm != null ? Number(row.opra_sk15_atm) : null,
+      },
+      option_pricing: {
+        quote_source: row.opra_src ?? 'bsm_est',
+        skew_ratio: {
+          opra_iv_20_10: row.opra_sk20_10 != null ? Number(row.opra_sk20_10) : null,
+          opra_iv_15_atm: row.opra_sk15_atm != null ? Number(row.opra_sk15_atm) : null,
+          cboe_skew_spot: row.skew_spot != null ? Number(row.skew_spot) : Number(row.skew10),
+          cboe_skew10: Number(row.skew10),
+          cboe_skew_p75: Number(row.skew_p75),
+        },
+        put_125d_15otm: {
+          strike: row.p125_k != null ? Number(row.p125_k) : strike15Round,
+          dte: row.p125_dte != null ? Number(row.p125_dte) : 125,
+          bid: row.p125_bid != null ? Number(row.p125_bid) : null,
+          ask: row.p125_ask != null ? Number(row.p125_ask) : null,
+          mid: row.p125_mid != null ? Number(row.p125_mid) : null,
+          ibkr_limit_buy: row.p125_lmt != null ? Number(row.p125_lmt) : null,
+          half_spread_pct: row.p125_hs != null ? Number(row.p125_hs) : null,
+          iv_pct: row.p125_iv != null ? Number(row.p125_iv) : null,
+          one_put_usd: row.p125_lmt != null ? r2(Number(row.p125_lmt) * 100) : null,
+          one_put_mid_usd: row.p125_mid != null ? r2(Number(row.p125_mid) * 100) : null,
+          one_lot_qqq_usd: r2(qqq * 100),
+          put_to_lot_pct: row.p125_lot_pct != null ? Number(row.p125_lot_pct) : null,
+          mid_to_lot_pct: row.p125_mid_pct != null ? Number(row.p125_mid_pct) : null,
+        },
+        put_90d_10otm: {
+          strike: row.p90_k != null ? Number(row.p90_k) : strike10Round,
+          dte: row.p90_dte != null ? Number(row.p90_dte) : 90,
+          bid: row.p90_bid != null ? Number(row.p90_bid) : null,
+          ask: row.p90_ask != null ? Number(row.p90_ask) : null,
+          mid: row.p90_mid != null ? Number(row.p90_mid) : null,
+          ibkr_limit_buy: row.p90_lmt != null ? Number(row.p90_lmt) : null,
+          half_spread_pct: row.p90_hs != null ? Number(row.p90_hs) : null,
+          iv_pct: row.p90_iv != null ? Number(row.p90_iv) : null,
+          one_put_usd: row.p90_lmt != null ? r2(Number(row.p90_lmt) * 100) : null,
+          one_put_mid_usd: row.p90_mid != null ? r2(Number(row.p90_mid) * 100) : null,
+          one_lot_qqq_usd: r2(qqq * 100),
+          put_to_lot_pct: row.p90_lot_pct != null ? Number(row.p90_lot_pct) : null,
+          mid_to_lot_pct: row.p90_mid_pct != null ? Number(row.p90_mid_pct) : null,
+        },
       },
     },
   };
@@ -1837,12 +1964,280 @@ export async function loadCrisisObservatoryDashboardLive(options = {}) {
   return loadCrisisObservatoryDashboard({ ...options, liveFeed });
 }
 
+function buildPitHistoryForWindow(activeWin, targetDate) {
+  if (!activeWin) return null;
+  const series = Array.isArray(activeWin.daily_series) ? activeWin.daily_series : [];
+  const putLedger = Array.isArray(activeWin.put_ledger) ? activeWin.put_ledger : [];
+  const openEnd = Array.isArray(activeWin.open_puts_at_end) ? activeWin.open_puts_at_end : [];
+  const ctaRot = Array.isArray(activeWin.cta_rotation_ledger) ? activeWin.cta_rotation_ledger : [];
+  const ctaRes = Array.isArray(activeWin.cta_restore_ledger) ? activeWin.cta_restore_ledger : [];
+
+  let navSnapshot = null;
+  for (let i = series.length - 1; i >= 0; i -= 1) {
+    if (series[i].date <= targetDate) {
+      if (series[i].date === targetDate) navSnapshot = series[i];
+      break;
+    }
+  }
+
+  const eventsOnDate = [];
+  const seenOpenKey = new Set();
+  const eventDateSet = new Set();
+  const tpByDate = new Map();
+
+  let cumTpCount = 0;
+  let cumClosedCount = 0;
+  let cumRealizedPnl = 0;
+
+  for (const t of putLedger) {
+    eventDateSet.add(t.entry_date);
+    eventDateSet.add(t.exit_date);
+    const isTp = String(t.exit_reason ?? '').startsWith('tp_');
+    if (isTp) {
+      const prev = tpByDate.get(t.exit_date) ?? {
+        date: t.exit_date,
+        count: 0,
+        max_roi: 0,
+        net_pnl_usd: 0,
+        reason: t.exit_reason,
+      };
+      prev.count += 1;
+      prev.max_roi = Math.max(prev.max_roi, Number(t.roi_mult ?? 0));
+      prev.net_pnl_usd = r2(prev.net_pnl_usd + Number(t.net_pnl_usd ?? 0));
+      tpByDate.set(t.exit_date, prev);
+    }
+    if (t.exit_date <= targetDate) {
+      cumClosedCount += 1;
+      cumRealizedPnl += Number(t.net_pnl_usd ?? 0);
+      if (isTp) cumTpCount += 1;
+    }
+
+    if (t.exit_date === targetDate) {
+      const action = isTp
+        ? 'PUT_TP'
+        : String(t.exit_reason ?? '').startsWith('roll_')
+          ? 'PUT_ROLL'
+          : 'PUT_CLOSE';
+      eventsOnDate.push({
+        priority: isTp ? 0 : 2,
+        action,
+        sleeve: t.sleeve,
+        tranche_id: t.tranche_id,
+        date: t.exit_date,
+        entry_date: t.entry_date,
+        exit_date: t.exit_date,
+        exp: t.exp,
+        strike: t.strike,
+        entry_dte: t.entry_dte,
+        exit_dte: t.exit_dte,
+        entry_spot: t.entry_spot,
+        exit_spot: t.exit_spot,
+        entry_fill: t.entry_fill,
+        exit_fill: t.exit_fill,
+        exit_bid: t.exit_bid ?? null,
+        exit_ask: t.exit_ask ?? null,
+        exit_mid: t.exit_mid ?? null,
+        exit_vix: t.exit_vix ?? null,
+        exit_vr: t.exit_vr ?? null,
+        exit_dd_pct: t.exit_dd_pct ?? null,
+        entry_lot_pct: t.entry_lot_pct ?? null,
+        exit_lot_pct: t.exit_lot_pct ?? null,
+        entry_sk20_10: t.entry_sk20_10 ?? null,
+        contracts: t.contracts ?? null,
+        exit_frac: t.exit_frac ?? 1.0,
+        cost_usd: t.cost_usd,
+        exit_usd: t.exit_usd,
+        net_pnl_usd: t.net_pnl_usd,
+        roi_mult: t.roi_mult,
+        reason: t.exit_reason,
+      });
+    }
+    if (t.entry_date === targetDate && !seenOpenKey.has(t.tranche_id)) {
+      seenOpenKey.add(t.tranche_id);
+      eventsOnDate.push({
+        priority: 1,
+        action: 'PUT_OPEN',
+        sleeve: t.sleeve,
+        tranche_id: t.tranche_id,
+        date: t.entry_date,
+        entry_date: t.entry_date,
+        exit_date: t.exit_date,
+        exp: t.exp,
+        strike: t.strike,
+        entry_dte: t.entry_dte,
+        entry_spot: t.entry_spot,
+        entry_fill: t.entry_fill,
+        entry_bid: t.entry_bid ?? null,
+        entry_ask: t.entry_ask ?? null,
+        entry_mid: t.entry_mid ?? null,
+        entry_hs_pct: t.entry_hs_pct ?? null,
+        entry_lot_pct: t.entry_lot_pct ?? null,
+        entry_sk20_10: t.entry_sk20_10 ?? null,
+        entry_vix: t.entry_vix ?? null,
+        entry_vr: t.entry_vr ?? null,
+        contracts: t.contracts ?? null,
+        cost_usd: t.cost_usd,
+        eventual_exit_date: t.exit_date,
+        eventual_roi_mult: t.roi_mult,
+        eventual_reason: t.exit_reason,
+        reason: 'open_ibkr_limit_35pct',
+      });
+    }
+  }
+
+  for (const op of openEnd) {
+    eventDateSet.add(op.entry_date);
+    if (op.entry_date === targetDate && !seenOpenKey.has(op.tranche_id)) {
+      seenOpenKey.add(op.tranche_id);
+      eventsOnDate.push({
+        priority: 1,
+        action: 'PUT_OPEN',
+        sleeve: op.sleeve,
+        tranche_id: op.tranche_id,
+        date: op.entry_date,
+        entry_date: op.entry_date,
+        exp: op.exp,
+        strike: op.strike,
+        entry_dte: op.entry_dte,
+        entry_spot: op.entry_spot,
+        entry_fill: op.entry_fill,
+        entry_bid: op.entry_bid ?? null,
+        entry_ask: op.entry_ask ?? null,
+        entry_mid: op.entry_mid ?? null,
+        entry_hs_pct: op.entry_hs_pct ?? null,
+        entry_lot_pct: op.entry_lot_pct ?? null,
+        entry_sk20_10: op.entry_sk20_10 ?? null,
+        entry_vix: op.entry_vix ?? null,
+        entry_vr: op.entry_vr ?? null,
+        contracts: op.contracts ?? null,
+        cost_usd: op.cost_usd,
+        reason: 'open_ibkr_limit_35pct',
+      });
+    }
+  }
+
+  for (const cr of ctaRot) {
+    eventDateSet.add(cr.date);
+    if (cr.date === targetDate) {
+      eventsOnDate.push({
+        priority: 1,
+        action: 'CTA_ROTATE',
+        sleeve: cr.sleeve,
+        date: cr.date,
+        tranche: cr.tranche,
+        sold_usd: cr.sold_usd,
+        qqq_dd_pct: cr.qqq_dd_pct,
+        restore_due: cr.restore_due,
+        reason: 'cont_2m_cta_to_qqq',
+      });
+    }
+  }
+  for (const rs of ctaRes) {
+    eventDateSet.add(rs.date);
+    if (rs.date === targetDate) {
+      eventsOnDate.push({
+        priority: 2,
+        action: 'CTA_RESTORE',
+        sleeve: rs.sleeve,
+        date: rs.date,
+        restored_usd: rs.restored_usd,
+        lots_matured: rs.lots_matured,
+        reason: '1y_mechanical_restore',
+      });
+    }
+  }
+  eventsOnDate.sort((a, b) => a.priority - b.priority);
+
+  // Active open Put tranches held on targetDate (entry_date <= targetDate < exit_date)
+  const activePuts = [];
+  const seenActive = new Set();
+  const winEnd = activeWin.end_date ?? '2025-12-15';
+  const winStart = activeWin.start_date ?? '2015-01-02';
+  if (targetDate >= winStart && targetDate <= winEnd) {
+    for (const t of putLedger) {
+      if (t.entry_date <= targetDate && targetDate < t.exit_date && !seenActive.has(t.tranche_id)) {
+        seenActive.add(t.tranche_id);
+        activePuts.push({
+          tranche_id: t.tranche_id,
+          sleeve: t.sleeve,
+          entry_date: t.entry_date,
+          exp: t.exp,
+          strike: t.strike,
+          rem_dte: Math.max(0, diffCalendarDaysIso(t.exp, targetDate)),
+          entry_fill: t.entry_fill,
+          entry_lot_pct: t.entry_lot_pct ?? null,
+          cost_usd: t.cost_usd,
+          contracts: t.contracts ?? null,
+          eventual_exit_date: t.exit_date,
+          eventual_roi_mult: t.roi_mult,
+          eventual_reason: t.exit_reason,
+        });
+      }
+    }
+    for (const op of openEnd) {
+      if (op.entry_date <= targetDate && !seenActive.has(op.tranche_id)) {
+        seenActive.add(op.tranche_id);
+        activePuts.push({
+          tranche_id: op.tranche_id,
+          sleeve: op.sleeve,
+          entry_date: op.entry_date,
+          exp: op.exp,
+          strike: op.strike,
+          rem_dte: Math.max(0, diffCalendarDaysIso(op.exp, targetDate)),
+          entry_fill: op.entry_fill,
+          entry_lot_pct: op.entry_lot_pct ?? null,
+          cost_usd: op.cost_usd,
+          contracts: op.contracts ?? null,
+          eventual_exit_date: null,
+          eventual_roi_mult: null,
+          eventual_reason: 'open_at_window_end',
+        });
+      }
+    }
+  }
+
+  const sortedEvents = Array.from(eventDateSet).sort();
+  const tpDates = Array.from(tpByDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  let prevEventDate = null;
+  let nextEventDate = null;
+  for (const ed of sortedEvents) {
+    if (ed < targetDate) prevEventDate = ed;
+    else if (ed > targetDate && !nextEventDate) nextEventDate = ed;
+  }
+  let prevTpDate = null;
+  let nextTpDate = null;
+  for (const tp of tpDates) {
+    if (tp.date < targetDate) prevTpDate = tp.date;
+    else if (tp.date > targetDate && !nextTpDate) nextTpDate = tp.date;
+  }
+
+  return {
+    window_id: activeWin.id,
+    in_opra_window: targetDate >= winStart && targetDate <= winEnd,
+    nav_snapshot: navSnapshot,
+    events_on_date: eventsOnDate,
+    active_puts_on_date: activePuts,
+    tp_dates: tpDates,
+    prev_event_date: prevEventDate,
+    next_event_date: nextEventDate,
+    prev_tp_date: prevTpDate,
+    next_tp_date: nextTpDate,
+    cum_put_stats_to_date: {
+      tp_count: cumTpCount,
+      closed_count: cumClosedCount,
+      realized_net_pnl_usd: r2(cumRealizedPnl),
+    },
+  };
+}
+
 export function loadCrisisObservatoryPitSnapshot({
   date = null,
+  window = DEFAULT_CRISIS_WINDOW,
   file = defaultFile,
   liveFeed = null,
 } = {}) {
   if (!date || !isIsoDate(date)) fail('invalid_pit_date', 400);
+  const winId = normalizeWindowId(window);
   const artifactObj = readArtifact(file);
   const { pitRows } = getCombinedPitIndex(artifactObj, liveFeed, null);
 
@@ -1858,16 +2253,19 @@ export function loadCrisisObservatoryPitSnapshot({
   const prevDate = matchIdx > 0 ? pitRows[matchIdx - 1].date : null;
   const nextDate = matchIdx + 1 < pitRows.length ? pitRows[matchIdx + 1].date : null;
   const latestDate = pitRows[pitRows.length - 1].date;
+  const activeWin = artifactObj.unpackedWindows[winId];
 
   return {
     version: CRISIS_OBSERVATORY_VERSION,
     strategy_code: CRISIS_OBSERVATORY_STRATEGY_CODE,
     requested_date: date,
     date: row.date,
+    window: winId,
     prev_date: prevDate,
     next_date: nextDate,
     latest_date: latestDate,
     live_cockpit: buildLiveCockpit(row, { isPitReplay: row.date < latestDate }),
+    pit_history: buildPitHistoryForWindow(activeWin, row.date),
   };
 }
 

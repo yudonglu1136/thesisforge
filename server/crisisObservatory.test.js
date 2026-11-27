@@ -113,6 +113,22 @@ test('computes real-time Dual-Track Stress vs Vol-Gate, Slow-Bear +8% Latch, and
   const pitTp = loadCrisisObservatoryPitSnapshot({ date: '2026-11-20' });
   assert.equal(pitTp.live_cockpit.tp_and_microstructure.tier2_full.triggered_today, true);
   assert.equal(pitTp.live_cockpit.command_center.action_code, 'TRIGGER_FULL_TP');
+
+  // Historical PIT 2025-04-07: Real OPRA Put TP events, Skew Ratio, and 1-Put / 1-Lot QQQ ratio
+  const pitOpraTp = loadCrisisObservatoryPitSnapshot({ date: '2025-04-07', window: '5y_live' });
+  const op = pitOpraTp.live_cockpit.tp_and_microstructure.option_pricing;
+  assert.equal(op.quote_source, 'real_opra');
+  assert.ok(op.skew_ratio.opra_iv_20_10 > 1.0);
+  assert.ok(op.put_125d_15otm.put_to_lot_pct > 0.5 && op.put_125d_15otm.put_to_lot_pct < 10.0);
+  assert.ok(op.put_90d_10otm.put_to_lot_pct > 0.5 && op.put_90d_10otm.put_to_lot_pct < 10.0);
+  assert.equal(pitOpraTp.pit_history.window_id, '5y_live');
+  assert.ok(pitOpraTp.pit_history.events_on_date.some(e => e.action === 'PUT_TP' && e.roi_mult >= 4.0));
+  assert.ok(pitOpraTp.pit_history.tp_dates.some(t => t.date === '2025-04-07'));
+
+  // Historical PIT 2025-02-20: Active open puts held prior to 2025-04-07 TP
+  const pitActive = loadCrisisObservatoryPitSnapshot({ date: '2025-02-20', window: '11y_opra' });
+  assert.ok(pitActive.pit_history.active_puts_on_date.length >= 2);
+  assert.ok(pitActive.pit_history.active_puts_on_date.some(p => p.eventual_exit_date === '2025-04-07'));
 });
 
 test('parseFredCsvText handles holiday dots and computeLiveStressIndexJS is bounded 0-100', () => {

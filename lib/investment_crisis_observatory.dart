@@ -56,6 +56,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   String? pinnedPitDate;
   Map<String, dynamic>? pitSnapshot;
   bool loadingPit = false;
+  String? pitError;
   int pitSerial = 0;
   final Map<String, Map<String, dynamic>> _pitCache = {};
   final Map<String, Map<String, dynamic>> _windowCache = {};
@@ -160,47 +161,57 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   void _selectWindow(String winId) {
     final norm = _normalizeWindow(winId);
     if (norm == selectedWindow) return;
+    final prevPinned = pinnedPitDate;
     setState(() {
       selectedWindow = norm;
       hoverIndex = -1;
     });
     _emitSelection();
     unawaited(_loadDashboard(isWindowSwitch: true));
+    if (prevPinned != null && prevPinned.isNotEmpty) {
+      unawaited(_loadPitDate(prevPinned, windowOverride: norm));
+    }
   }
 
-  Future<void> _loadPitDate(String date) async {
+  Future<void> _loadPitDate(String date, {String? windowOverride}) async {
     if (date.isEmpty) return;
+    final win = windowOverride ?? selectedWindow;
     final serial = ++pitSerial;
-    final cached = _pitCache[date];
+    final cacheKey = '$win|$date';
+    final cached = _pitCache[cacheKey];
     if (cached != null) {
       setState(() {
         pinnedPitDate = date;
         pitSnapshot = cached;
         loadingPit = false;
+        pitError = null;
       });
       return;
     }
     setState(() {
       pinnedPitDate = date;
       loadingPit = true;
+      pitError = null;
     });
     try {
       final uri = Uri(
         path: '/api/investment/crisis-observatory/pit',
-        queryParameters: {'date': date},
+        queryParameters: {'date': date, 'window': win},
       );
       final resp = await widget.api.getJson(uri.toString());
       if (!mounted || serial != pitSerial) return;
       final map = asMap(resp);
-      _pitCache[date] = map;
+      _pitCache[cacheKey] = map;
       setState(() {
         pitSnapshot = map;
         loadingPit = false;
+        pitError = null;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted || serial != pitSerial) return;
       setState(() {
         loadingPit = false;
+        pitError = e.toString();
       });
     }
   }
@@ -210,6 +221,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       pinnedPitDate = null;
       pitSnapshot = null;
       loadingPit = false;
+      pitError = null;
     });
   }
 
@@ -1757,6 +1769,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 vvix >= vvixP75 ? _amber : _fgPrimary,
                 sub: 'P75 ${_fmtNum(vvixP75, dec: 1)}',
               ),
+              ..._buildOptionPricingTiles(asMap(tp['option_pricing'])),
             ],
           ),
           const SizedBox(height: 12),
@@ -2048,8 +2061,14 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
           const SizedBox(height: 14),
 
-          // Interactive Dual-Panel Equity + Drawdown + Leverage Chart
-          if (series.isNotEmpty) _buildInteractiveChart(series, isCompact),
+          // Interactive Dual-Panel Equity + Drawdown + Leverage Chart + PIT Event Markers
+          if (series.isNotEmpty)
+            _buildInteractiveChart(series, putLedger, isCompact),
+
+          const SizedBox(height: 12),
+
+          // Interactive PIT Historical Operation, Put TP, Skew Ratio & 1-Put/1-Lot-QQQ Inspector
+          _buildPitOperationsInspector(putLedger, isCompact),
 
           const SizedBox(height: 16),
 
@@ -2164,12 +2183,113 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     );
   }
 
-  Widget _buildInteractiveChart(List<dynamic> series, bool isCompact) {
+  List<Widget> _buildOptionPricingTiles(Map<String, dynamic> op) {
+    if (op.isEmpty) return const [];
+    final sk = asMap(op['skew_ratio']);
+    final p125 = asMap(op['put_125d_15otm']);
+    final p90 = asMap(op['put_90d_10otm']);
+    final isReal = text(op['quote_source']) == 'real_opra';
+    final srcTag = isReal ? w('OPRA', 'OPRA实盘') : w('BSM Est', 'BSM估算');
+    final sk20 = _n(sk['opra_iv_20_10']);
+    final sk15 = _n(sk['opra_iv_15_atm']);
+    final lot125 = _n(p125['put_to_lot_pct']);
+    final lot90 = _n(p90['put_to_lot_pct']);
+
+    return [
+      _metricBox(
+        w('Skew Ratio (-20/-10)', '偏度比 IV(-20/-10)'),
+        sk20 != null ? '${sk20.toStringAsFixed(3)}x' : '--',
+        (sk20 ?? 0) >= 1.22 ? _amber : _mint,
+        sub:
+            'IV(-15/ATM) ${sk15 != null ? '${sk15.toStringAsFixed(2)}x' : '--'} · $srcTag',
+      ),
+      _metricBox(
+        w('1 Put / 100 QQQ (125D -15%)', '1张 Put / 1手 QQQ（125D）'),
+        lot125 != null ? '${lot125.toStringAsFixed(2)}%' : '--',
+        (lot125 ?? 99) <= 1.25 ? _mint : ((lot125 ?? 0) >= 2.2 ? _coral : _sky),
+        sub:
+            '${_fmtUsd(_n(p125['one_put_usd']))} / ${_fmtUsd(_n(p125['one_lot_qqq_usd']))} · K \$${_fmtNum(_n(p125['strike']), dec: 0)}',
+      ),
+      _metricBox(
+        w('1 Put / 100 QQQ (90D -10%)', '1张 Put / 1手 QQQ（M4 90D）'),
+        lot90 != null ? '${lot90.toStringAsFixed(2)}%' : '--',
+        _lilac,
+        sub:
+            '${_fmtUsd(_n(p90['one_put_usd']))} / ${_fmtUsd(_n(p90['one_lot_qqq_usd']))} · IV ${_fmtNum(_n(p90['iv_pct']), dec: 1)}%',
+      ),
+    ];
+  }
+
+  String _pitReasonLabel(String r) {
+    return switch (r) {
+      'tp_vr110_dd10_full' => w(
+        'Tier 2 Full TP (VIX/3M>=1.10 & DD<=-10%)',
+        '二档 100% 止盈（倒挂>=1.10 且回撤<=-10%）',
+      ),
+      'tp_5x_partial' => w(
+        'Tier 1 5x Partial TP (50% Harvest)',
+        '一档 5x 半仓止盈（落袋 50%）',
+      ),
+      'roll_75d' => w('75D Mechanical Roll', '75D 正常早滚仓'),
+      'close_75d_signal_off' => w(
+        '75D Signal-Off Recycle',
+        '75D 信号熄灭回收残值',
+      ),
+      'recycle_30d_m4' => w('M4 30D Salvage Recycle', 'M4 30D 残值回收'),
+      'expiry' => w('Contract Expiry Settlement', '合约到期结算'),
+      'cont_2m_cta_to_qqq' => w(
+        'CONT_2M Dual-CTA -> QQQ Rotation',
+        '持续2月跌超-12% · 卖CTA买QQQ',
+      ),
+      '1y_mechanical_restore' => w(
+        '1-Year Mechanical CTA Restore',
+        '满1年机械恢复 DBMF/KMLM',
+      ),
+      _ => r,
+    };
+  }
+
+  Widget _buildInteractiveChart(
+    List<dynamic> series,
+    List<dynamic> putLedger,
+    bool isCompact,
+  ) {
+    int pinnedSeriesIdx = -1;
+    if (pinnedPitDate != null) {
+      for (var i = 0; i < series.length; i++) {
+        if (text(asMap(series[i])['date']) == pinnedPitDate) {
+          pinnedSeriesIdx = i;
+          break;
+        }
+      }
+    }
     final activeIdx = hoverIndex >= 0 && hoverIndex < series.length
         ? hoverIndex
-        : series.length - 1;
+        : (pinnedSeriesIdx >= 0 ? pinnedSeriesIdx : series.length - 1);
     final activeRow = asMap(series[activeIdx]);
-    final chartH = isCompact ? 260.0 : 320.0;
+    final activeEvt = (_n(activeRow['evt'])?.toInt()) ?? 0;
+    final chartH = isCompact ? 268.0 : 330.0;
+
+    // Aggregate distinct Put TP dates for 1-click quick-jump badges
+    final tpMap = <String, Map<String, dynamic>>{};
+    for (final raw in putLedger) {
+      final t = asMap(raw);
+      if (!text(t['exit_reason']).startsWith('tp_')) continue;
+      final d = text(t['exit_date']);
+      if (d.isEmpty) continue;
+      final roi = _n(t['roi_mult'])?.toDouble() ?? 0.0;
+      final pnl = _n(t['net_pnl_usd'])?.toDouble() ?? 0.0;
+      final cur = tpMap[d];
+      if (cur == null) {
+        tpMap[d] = {'date': d, 'max_roi': roi, 'net_pnl': pnl, 'count': 1};
+      } else {
+        cur['max_roi'] = math.max((cur['max_roi'] as double), roi);
+        cur['net_pnl'] = (cur['net_pnl'] as double) + pnl;
+        cur['count'] = (cur['count'] as int) + 1;
+      }
+    }
+    final tpList = tpMap.values.toList()
+      ..sort((a, b) => (a['date'] as String).compareTo(b['date'] as String));
 
     return Container(
       key: const ValueKey('crisis-v2-chart'),
@@ -2190,22 +2310,43 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Wrap(
-                spacing: 12,
+                spacing: 11,
                 runSpacing: 4,
                 children: [
                   _legendDot(w('v2.0 Master NAV', 'v2.0 主策略净值'), _mint),
                   _legendDot(w('100% QQQ B&H', '100% QQQ 基准'), _sky),
-                  _legendDot(w('Daily Lev (<=1.20x)', '每日杠杆 (<=1.20x)'), _amber),
-                  _legendDot(w('Slow-Bear Latch ON', '慢熊滞回锁存期'), _lilac),
+                  _legendDot(w('Daily Lev (<=1.20x)', '每日杠杆'), _amber),
+                  _legendDot(w('Slow-Bear Latch', '慢熊锁存期'), _lilac),
+                  _legendMarker('◆', w('Put TP', 'Put 止盈'), _amber),
+                  _legendMarker('▲', w('Crisis Put Open', '危机Put建仓'), _coral),
+                  _legendMarker('●', w('0.2% Base Put', '0.2%常态盾'), _sky),
+                  _legendMarker('■', w('CTA Rotate', '双CTA轮动'), _mint),
                 ],
               ),
-              Text(
-                '${text(activeRow['date'])}  ·  v2.0 ${_fmtUsd(_n(activeRow['nav_v2']))} (${_fmtPct(_n(activeRow['dd_v2']), signed: false)})  ·  QQQ ${_fmtUsd(_n(activeRow['nav_qqq']))}  ·  Lev ${_fmtNum(_n(activeRow['lev']), dec: 3)}x',
-                style: const TextStyle(
-                  color: _fgPrimary,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    '${text(activeRow['date'])}  ·  v2.0 ${_fmtUsd(_n(activeRow['nav_v2']))} (${_fmtPct(_n(activeRow['dd_v2']), signed: false)})  ·  QQQ ${_fmtUsd(_n(activeRow['nav_qqq']))}  ·  Lev ${_fmtNum(_n(activeRow['lev']), dec: 3)}x',
+                    style: const TextStyle(
+                      color: _fgPrimary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if ((activeEvt & 4) != 0)
+                    _pillBadge(w('◆ Put TP', '◆ Put 止盈'), _amber),
+                  if ((activeEvt & 2) != 0)
+                    _pillBadge(w('▲ Crisis Put Open', '▲ 危机 Put 建仓'), _coral),
+                  if ((activeEvt & 1) != 0)
+                    _pillBadge(w('● 0.2% Base Open', '● 常态 0.2% 建仓'), _sky),
+                  if ((activeEvt & 8) != 0)
+                    _pillBadge(w('↻ Roll / Recycle', '↻ 滚仓 / 回收'), _fgMuted),
+                  if ((activeEvt & 16) != 0)
+                    _pillBadge(w('■ Dual-CTA Rotate', '■ 双CTA 轮动'), _mint),
+                ],
               ),
             ],
           ),
@@ -2222,6 +2363,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               }
 
               return MouseRegion(
+                cursor: SystemMouseCursors.click,
                 onHover: (ev) {
                   final nextIdx = idxFromDx(ev.localPosition.dx);
                   if (nextIdx != hoverIndex) {
@@ -2253,8 +2395,553 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               );
             },
           ),
+          if (tpList.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  w('Jump to Put TP:', '一键直达 Put 止盈日：'),
+                  style: const TextStyle(
+                    color: _fgMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                for (final tp in tpList)
+                  InkWell(
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => unawaited(_loadPitDate(tp['date'] as String)),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: pinnedPitDate == tp['date']
+                            ? _amber.withValues(alpha: 0.22)
+                            : _bgInset,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: pinnedPitDate == tp['date']
+                              ? _amber
+                              : _amber.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      child: Text(
+                        '◆ ${tp['date']} (${(tp['max_roi'] as double).toStringAsFixed(1)}x · ${_fmtUsd(tp['net_pnl'] as double, signed: true)})',
+                        style: TextStyle(
+                          color: pinnedPitDate == tp['date']
+                              ? _fgPrimary
+                              : _amber,
+                          fontSize: 10.6,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildPitOperationsInspector(List<dynamic> putLedger, bool isCompact) {
+    if (pinnedPitDate == null) {
+      return Container(
+        key: const ValueKey('crisis-v2-pit-prompt'),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: _bgInset,
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: _borderLine),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.touch_app_outlined, color: _sky, size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                w(
+                  'Click any date on the curve above or any "◆ Put TP" badge to inspect exact PIT operations, Put take-profit fills (IBKR Mid ± 35% HS), real OPRA Skew Ratio, and 1-Contract Put / 1-Lot (100sh) QQQ price ratio.',
+                  '点击上方曲线任意日期或任意「◆ Put 止盈」徽章，即可原地展开当日 PIT 历史操作、Put 止盈（IBKR Mid ± 35% 半价差限价成交）、真实 OPRA Skew Ratio 与「一张 Put 占比一手 QQQ 价格比例」。',
+                ),
+                style: const TextStyle(color: _fgMuted, fontSize: 11.5),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final snap = asMap(pitSnapshot);
+    final cockpit = asMap(snap['live_cockpit']);
+    final market = asMap(cockpit['market']);
+    final qqqClose = _n(market['qqq_close']);
+    final hist = asMap(snap['pit_history']);
+    final tpMic = asMap(cockpit['tp_and_microstructure']);
+    final op = asMap(tpMic['option_pricing']);
+    final sk = asMap(op['skew_ratio']);
+    final p125 = asMap(op['put_125d_15otm']);
+    final p90 = asMap(op['put_90d_10otm']);
+    final navSnap = asMap(hist['nav_snapshot']);
+    final events = asList(hist['events_on_date']);
+    final activePuts = asList(hist['active_puts_on_date']);
+    final cumStats = asMap(hist['cum_put_stats_to_date']);
+    final metrics = asMap(tpMic['metrics']);
+    final isReal = text(op['quote_source']) == 'real_opra';
+
+    final prevDay = text(snap['prev_date']);
+    final nextDay = text(snap['next_date']);
+    final prevEvt = text(hist['prev_event_date']);
+    final nextEvt = text(hist['next_event_date']);
+    final prevTp = text(hist['prev_tp_date']);
+    final nextTp = text(hist['next_tp_date']);
+
+    return Container(
+      key: const ValueKey('crisis-v2-pit-inspector'),
+      padding: EdgeInsets.all(isCompact ? 11 : 14),
+      decoration: BoxDecoration(
+        color: _bgObsidian,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _amber.withValues(alpha: 0.65), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header + Quick Navigation Controls
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _pillBadge('PIT · $pinnedPitDate', _amber),
+                  _pillBadge(
+                    isReal
+                        ? w('REAL MIT OPRA 16:00 ET', '真实 OPRA 盘口')
+                        : w('BSM LIVE EST', 'BSM 盘口估算'),
+                    isReal ? _mint : _sky,
+                  ),
+                  if (loadingPit)
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _amber,
+                      ),
+                    ),
+                ],
+              ),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  if (prevDay.isNotEmpty)
+                    _miniBtn(
+                      w('<- Prev Day', '← 上一日'),
+                      () => unawaited(_loadPitDate(prevDay)),
+                    ),
+                  if (nextDay.isNotEmpty)
+                    _miniBtn(
+                      w('Next Day ->', '下一日 →'),
+                      () => unawaited(_loadPitDate(nextDay)),
+                    ),
+                  if (prevEvt.isNotEmpty)
+                    _miniBtn(
+                      w('Prev Trade', '上一操作'),
+                      () => unawaited(_loadPitDate(prevEvt)),
+                      accent: _sky,
+                    ),
+                  if (nextEvt.isNotEmpty)
+                    _miniBtn(
+                      w('Next Trade', '下一操作'),
+                      () => unawaited(_loadPitDate(nextEvt)),
+                      accent: _sky,
+                    ),
+                  if (prevTp.isNotEmpty)
+                    _miniBtn(
+                      w('◆ Prev TP', '◆ 上一止盈'),
+                      () => unawaited(_loadPitDate(prevTp)),
+                      accent: _amber,
+                    ),
+                  if (nextTp.isNotEmpty)
+                    _miniBtn(
+                      w('◆ Next TP', '◆ 下一止盈'),
+                      () => unawaited(_loadPitDate(nextTp)),
+                      accent: _amber,
+                    ),
+                  _miniBtn(
+                    w('Back to Live', '回今日实盘'),
+                    _clearPitReplay,
+                    accent: _coral,
+                  ),
+                ],
+              ),
+            ],
+          ),
+
+          if (pitError != null && snap.isEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${w('Failed to load PIT snapshot', 'PIT 数据加载失败')}: $pitError',
+              style: const TextStyle(color: _coral, fontSize: 11.2),
+            ),
+          ],
+          if (snap.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            // 4-Card Real OPRA Microstructure & 1-Put/1-Lot-QQQ Ratio Strip
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                _metricBox(
+                  w('OPRA Skew Ratio (125D)', 'OPRA 偏度比 Skew Ratio'),
+                  _n(sk['opra_iv_20_10']) != null
+                      ? '${_n(sk['opra_iv_20_10'])!.toStringAsFixed(3)}x'
+                      : '--',
+                  (_n(sk['opra_iv_20_10']) ?? 0) >= 1.22 ? _amber : _mint,
+                  sub:
+                      'IV(-15/ATM) ${_n(sk['opra_iv_15_atm']) != null ? '${_n(sk['opra_iv_15_atm'])!.toStringAsFixed(3)}x' : '--'} · CBOE SKEW ${_fmtNum(_n(sk['cboe_skew_spot']), dec: 1)}',
+                ),
+                _metricBox(
+                  w(
+                    '1 Put / 100 QQQ · 125D -15% (IBKR Limit)',
+                    '1张 Put / 1手 QQQ · 125D -15%（限价）',
+                  ),
+                  _n(p125['put_to_lot_pct']) != null
+                      ? '${_n(p125['put_to_lot_pct'])!.toStringAsFixed(2)}%'
+                      : '--',
+                  (_n(p125['put_to_lot_pct']) ?? 99) <= 1.25
+                      ? _mint
+                      : ((_n(p125['put_to_lot_pct']) ?? 0) >= 2.2
+                            ? _coral
+                            : _sky),
+                  sub:
+                      '${w('1 ct', '1张')} ${_fmtUsd(_n(p125['one_put_usd']))} / ${w('100 QQQ', '1手QQQ')} ${_fmtUsd(_n(p125['one_lot_qqq_usd']))} · Bid ${_fmtNum(_n(p125['bid']))}/Ask ${_fmtNum(_n(p125['ask']))} · HS ${_fmtNum(_n(p125['half_spread_pct']), dec: 1)}%',
+                ),
+                _metricBox(
+                  w(
+                    '1 Put / 100 QQQ · M4 90D -10% (IBKR Limit)',
+                    '1张 Put / 1手 QQQ · M4 90D -10%（限价）',
+                  ),
+                  _n(p90['put_to_lot_pct']) != null
+                      ? '${_n(p90['put_to_lot_pct'])!.toStringAsFixed(2)}%'
+                      : '--',
+                  _lilac,
+                  sub:
+                      '${w('1 ct', '1张')} ${_fmtUsd(_n(p90['one_put_usd']))} / ${w('100 QQQ', '1手QQQ')} ${_fmtUsd(_n(p90['one_lot_qqq_usd']))} · K \$${_fmtNum(_n(p90['strike']), dec: 0)} · IV ${_fmtNum(_n(p90['iv_pct']), dec: 1)}%',
+                ),
+                _metricBox(
+                  w('PIT Portfolio & Vol State', 'PIT 组合净值与波动率'),
+                  navSnap.isNotEmpty
+                      ? '${_fmtUsd(_n(navSnap['nav_v2']))} (${_fmtPct(_n(navSnap['dd_v2']), signed: false)})'
+                      : 'QQQ ${_fmtUsd(qqqClose, dec: 2)}',
+                  _fgPrimary,
+                  sub:
+                      'QQQ \$${_fmtNum(qqqClose, dec: 2)} · VIX ${_fmtNum(_n(metrics['vix']), dec: 1)} · VIX/3M ${_fmtNum(_n(metrics['vix_ratio']), dec: 3)} · Lev ${_fmtNum(_n(navSnap['lev']), dec: 3)}x',
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+            // Events Executed ON This PIT Date
+            Text(
+              w(
+                'PIT Operations Executed on $pinnedPitDate (${events.length}) · Cumulative Realized Put PnL: ${_fmtUsd(_n(cumStats['realized_net_pnl_usd']), signed: true)} (${cumStats['tp_count'] ?? 0} TPs)',
+                '$pinnedPitDate 当日 PIT 实盘操作明细（${events.length} 笔）· 截至当日累计 Put 已实现净盈亏 ${_fmtUsd(_n(cumStats['realized_net_pnl_usd']), signed: true)}（已止盈 ${cumStats['tp_count'] ?? 0} 次）',
+              ),
+              style: const TextStyle(
+                color: _fgPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            if (events.isEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: _bgInset,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: _borderLine),
+                ),
+                child: Text(
+                  w(
+                    'No Put or Dual-CTA execution occurred on $pinnedPitDate (quiet holding day). Use "Prev Trade" / "Next Trade" or "◆ Put TP" pills above to inspect execution days.',
+                    '$pinnedPitDate 当日无开平仓或轮动成交（静默持仓日）。可点右上角「上一操作 / 下一操作」或「◆ Put 止盈」快速跳转。',
+                  ),
+                  style: const TextStyle(color: _fgMuted, fontSize: 11.2),
+                ),
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final rawEv in events)
+                    _buildPitEventCard(asMap(rawEv)),
+                ],
+              ),
+
+            // Active Open Put Shields Held on This PIT Date
+            if (activePuts.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                w(
+                  'Active Open Put Shields Held on $pinnedPitDate (${activePuts.length})',
+                  '$pinnedPitDate 当日在手活跃 Put 防御仓位（${activePuts.length} 笔）',
+                ),
+                style: const TextStyle(
+                  color: _fgPrimary,
+                  fontSize: 11.8,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  for (final rawAp in activePuts)
+                    _buildActivePutChip(asMap(rawAp)),
+                ],
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPitEventCard(Map<String, dynamic> ev) {
+    final action = text(ev['action']);
+    final sl = text(ev['sleeve']);
+    final isTp = action == 'PUT_TP';
+    final isOpen = action == 'PUT_OPEN';
+    final isCta = action == 'CTA_ROTATE' || action == 'CTA_RESTORE';
+
+    final accent = isTp
+        ? _amber
+        : (isCta
+              ? _mint
+              : (isOpen
+                    ? (sl == 'crisis_m4'
+                          ? _lilac
+                          : (sl == 'crisis' ? _coral : _sky))
+                    : _fgMuted));
+
+    final slLabel = sl == 'crisis_m4'
+        ? w('M4 Slow-Bear 90D -10%', 'M4 慢熊 90D -10%')
+        : (sl == 'crisis'
+              ? w('Route 1 Crisis 125D -15%', '三支柱危机盾 125D -15%')
+              : (sl == 'base'
+                    ? w('Sleeve A 0.2% Base 125D', '常态 0.2% 基底盾')
+                    : sl));
+
+    final actionTag = switch (action) {
+      'PUT_TP' => w('◆ PUT TAKE-PROFIT', '◆ PUT 止盈兑现'),
+      'PUT_OPEN' => w('▲ PUT ENTRY (IBKR LMT)', '▲ PUT 建仓（IBKR 限价）'),
+      'PUT_ROLL' => w('↻ 75D ROLL EXIT', '↻ 75D 滚仓平旧'),
+      'PUT_CLOSE' => w('× PUT RECYCLE / CLOSE', '× Put 回收 / 平仓'),
+      'CTA_ROTATE' => w('■ CTA -> QQQ ROTATION', '■ 卖盈利 CTA 抄底 QQQ'),
+      'CTA_RESTORE' => w('■ 1Y CTA RESTORE', '■ 满1年恢复双CTA'),
+      _ => action,
+    };
+
+    if (isCta) {
+      final isRot = action == 'CTA_ROTATE';
+      return Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: _bgInset,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: accent.withValues(alpha: 0.55)),
+        ),
+        child: Wrap(
+          spacing: 10,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _pillBadge(actionTag, accent),
+            Text(
+              isRot
+                  ? '$sl #${ev['tranche']}/5 · ${_fmtUsd(_n(ev['sold_usd']))} -> QQQ · DD ${_fmtPct(_n(ev['qqq_dd_pct']))} · ${w('1Y Restore', '恢复日')} ${text(ev['restore_due'])}'
+                  : '$sl · ${_fmtUsd(_n(ev['restored_usd']))} (${ev['lots_matured']} ${w('lots matured', '批满1年恢复')})',
+              style: const TextStyle(
+                color: _fgPrimary,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final roi = _n(ev['roi_mult']);
+    final netPnl = _n(ev['net_pnl_usd']);
+    final entryLot = _n(ev['entry_lot_pct']);
+    final exitLot = _n(ev['exit_lot_pct']);
+    final jumpDate = isOpen ? text(ev['eventual_exit_date']) : text(ev['entry_date']);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: isTp ? _amber.withValues(alpha: 0.08) : _bgInset,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: accent.withValues(alpha: isTp ? 0.85 : 0.45),
+          width: isTp ? 1.2 : 0.9,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Wrap(
+                spacing: 7,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _pillBadge(actionTag, accent),
+                  _pillBadge(slLabel, _fgMuted),
+                  Text(
+                    'Strike \$${_fmtNum(_n(ev['strike']), dec: 0)} · Exp ${text(ev['exp'])}',
+                    style: const TextStyle(
+                      color: _fgPrimary,
+                      fontSize: 11.8,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              if (!isOpen && roi != null)
+                Text(
+                  '${_fmtUsd(netPnl, signed: true)}  (${roi.toStringAsFixed(2)}x)',
+                  style: TextStyle(
+                    color: (netPnl ?? 0) >= 0 ? _mint : _coral,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          if (isOpen)
+            Text(
+              '${w('IBKR Limit Buy', 'IBKR 限价买入')}: \$${_fmtNum(_n(ev['entry_fill']), dec: 3)} '
+              '(Bid ${_fmtNum(_n(ev['entry_bid']))} / Ask ${_fmtNum(_n(ev['entry_ask']))} / Mid ${_fmtNum(_n(ev['entry_mid']))} · HS ${_fmtNum(_n(ev['entry_hs_pct']), dec: 1)}%)  ·  '
+              '${w('Cost', '投入')} ${_fmtUsd(_n(ev['cost_usd']))} (${_fmtNum(_n(ev['contracts']), dec: 2)} ${w('cts', '张')})  ·  '
+              '${w('1 Put / 100 QQQ', '1张占1手QQQ')}: ${entryLot != null ? '${entryLot.toStringAsFixed(2)}%' : '--'}  ·  '
+              'Skew(-20/-10): ${_n(ev['entry_sk20_10']) != null ? '${_n(ev['entry_sk20_10'])!.toStringAsFixed(3)}x' : '--'}',
+              style: const TextStyle(
+                color: _fgMuted,
+                fontSize: 11,
+                height: 1.4,
+              ),
+            )
+          else
+            Text(
+              '${w('Fill', 'IBKR 限价')}: \$${_fmtNum(_n(ev['entry_fill']), dec: 3)} -> \$${_fmtNum(_n(ev['exit_fill']), dec: 3)} '
+              '(Exit Bid ${_fmtNum(_n(ev['exit_bid']))} / Ask ${_fmtNum(_n(ev['exit_ask']))} · DTE ${ev['entry_dte']}->${ev['exit_dte']}D)  ·  '
+              '${_fmtUsd(_n(ev['cost_usd']))} -> ${_fmtUsd(_n(ev['exit_usd']))}  ·  '
+              '${w('1 Put / 100 QQQ', '1张占1手QQQ')}: ${entryLot != null ? '${entryLot.toStringAsFixed(2)}%' : '--'} -> ${exitLot != null ? '${exitLot.toStringAsFixed(2)}%' : '--'}  ·  '
+              '${_pitReasonLabel(text(ev['reason']))}',
+              style: const TextStyle(
+                color: _fgMuted,
+                fontSize: 11,
+                height: 1.4,
+              ),
+            ),
+          if (jumpDate.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            InkWell(
+              onTap: () => unawaited(_loadPitDate(jumpDate)),
+              child: Text(
+                isOpen
+                    ? '→ ${w('Jump to exit/TP date', '点击跳转平仓/止盈日')}: $jumpDate (${_n(ev['eventual_roi_mult'])?.toStringAsFixed(2) ?? '--'}x · ${_pitReasonLabel(text(ev['eventual_reason']))})'
+                    : '← ${w('Jump to entry date', '点击回看建仓日')}: $jumpDate (QQQ \$${_fmtNum(_n(ev['entry_spot']), dec: 2)})',
+                style: const TextStyle(
+                  color: _sky,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActivePutChip(Map<String, dynamic> ap) {
+    final sl = text(ap['sleeve']);
+    final col = sl == 'crisis_m4'
+        ? _lilac
+        : (sl == 'crisis' ? _amber : _sky);
+    final slName = sl == 'crisis_m4'
+        ? 'M4 90D'
+        : (sl == 'crisis' ? 'R1 125D' : 'Base 0.2%');
+    final exitD = text(ap['eventual_exit_date']);
+    final isTpExit = text(ap['eventual_reason']).startsWith('tp_');
+    final lot = _n(ap['entry_lot_pct']);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: exitD.isNotEmpty ? () => unawaited(_loadPitDate(exitD)) : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: _bgInset,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: col.withValues(alpha: 0.5)),
+        ),
+        child: Text(
+          '$slName · K \$${_fmtNum(_n(ap['strike']), dec: 0)} · ${w('Rem', '余')} ${ap['rem_dte']}D · '
+          '${w('Entry', '建仓')} ${text(ap['entry_date'])} (${lot != null ? '${lot.toStringAsFixed(2)}% /100QQQ' : '--'}) · '
+          '${_fmtUsd(_n(ap['cost_usd']))}'
+          '${exitD.isNotEmpty ? '  →  ${isTpExit ? '◆ TP ' : ''}$exitD (${_n(ap['eventual_roi_mult'])?.toStringAsFixed(2) ?? '--'}x)' : ''}',
+          style: TextStyle(
+            color: isTpExit ? _amber : _fgPrimary,
+            fontSize: 10.8,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _legendMarker(String glyph, String label, Color col) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          glyph,
+          style: TextStyle(color: col, fontSize: 10.5, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(color: _fgMuted, fontSize: 11)),
+      ],
     );
   }
 
@@ -2576,13 +3263,26 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                               ? w('R1 125D -15%', 'R1 125D -15%')
                               : w('Base 0.2%', '常态 0.2%'));
                     final roi = _n(r['roi_mult']) ?? 0;
-                    return Container(
+                    final isTpRow = text(r['exit_reason']).startsWith('tp_');
+                    final clickDate = isTpRow
+                        ? text(r['exit_date'])
+                        : text(r['entry_date']);
+                    return InkWell(
+                      onTap: clickDate.isNotEmpty
+                          ? () => unawaited(_loadPitDate(clickDate))
+                          : null,
+                      child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 10,
                         vertical: 6,
                       ),
-                      decoration: const BoxDecoration(
-                        border: Border(
+                      decoration: BoxDecoration(
+                        color: pinnedPitDate != null &&
+                                (pinnedPitDate == text(r['exit_date']) ||
+                                    pinnedPitDate == text(r['entry_date']))
+                            ? _amber.withValues(alpha: 0.12)
+                            : null,
+                        border: const Border(
                           bottom: BorderSide(color: _borderLine, width: 0.4),
                         ),
                       ),
@@ -2613,9 +3313,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                             flex: 2,
                             child: Text(
                               text(r['exit_date']),
-                              style: const TextStyle(
-                                color: _fgMuted,
+                              style: TextStyle(
+                                color: isTpRow ? _amber : _fgMuted,
                                 fontSize: 11,
+                                fontWeight: isTpRow
+                                    ? FontWeight.w700
+                                    : FontWeight.w400,
                               ),
                             ),
                           ),
@@ -2653,15 +3356,16 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                           Expanded(
                             flex: 2,
                             child: Text(
-                              text(r['exit_reason']),
-                              style: const TextStyle(
-                                color: _fgMuted,
+                              _pitReasonLabel(text(r['exit_reason'])),
+                              style: TextStyle(
+                                color: isTpRow ? _amber : _fgMuted,
                                 fontSize: 10.5,
                               ),
                             ),
                           ),
                         ],
                       ),
+                    ),
                     );
                   },
                 ),
@@ -2711,13 +3415,21 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 Builder(
                   builder: (_) {
                     final r = asMap(raw);
-                    return Container(
+                    final ctaD = text(r['date']);
+                    return InkWell(
+                      onTap: ctaD.isNotEmpty
+                          ? () => unawaited(_loadPitDate(ctaD))
+                          : null,
+                      child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 10,
                         vertical: 6,
                       ),
-                      decoration: const BoxDecoration(
-                        border: Border(
+                      decoration: BoxDecoration(
+                        color: pinnedPitDate == ctaD
+                            ? _mint.withValues(alpha: 0.12)
+                            : null,
+                        border: const Border(
                           bottom: BorderSide(color: _borderLine, width: 0.4),
                         ),
                       ),
@@ -2726,7 +3438,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                           Expanded(
                             flex: 2,
                             child: Text(
-                              text(r['date']),
+                              ctaD,
                               style: const TextStyle(
                                 color: _fgPrimary,
                                 fontSize: 11,
@@ -2787,6 +3499,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                           ),
                         ],
                       ),
+                    ),
                     );
                   },
                 ),
@@ -3286,6 +3999,61 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.3,
     );
+
+    // Draw PIT operation markers along v2.0 equity curve from compact evt bitmask:
+    //   1 = Base 0.2% Put Open | 2 = Crisis R1/M4 Put Open | 4 = Put TP (Diamond) | 16 = CTA Rotate/Restore (Square)
+    final outlinePaint = Paint()
+      ..color = const Color(0xFF080B0F)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    for (var i = 0; i < series.length; i++) {
+      final m = series[i] as Map;
+      final evt = (m['evt'] as num?)?.toInt() ?? 0;
+      if (evt == 0) continue;
+      final x = xAt(i);
+      final v2 = (m['nav_v2'] as num?)?.toDouble() ?? 100000.0;
+      final y = yEq(v2);
+
+      // Base 0.2% Put Open: subtle small sky dot
+      if ((evt & 1) != 0 && (evt & 6) == 0) {
+        canvas.drawCircle(
+          Offset(x, y),
+          2.2,
+          Paint()..color = const Color(0xFF7DB8F0).withValues(alpha: 0.85),
+        );
+      }
+      // CTA Rotation / Restore: crisp mint square slightly below curve
+      if ((evt & 16) != 0) {
+        final rect = Rect.fromCenter(
+          center: Offset(x, y + 6.5),
+          width: 5.8,
+          height: 5.8,
+        );
+        canvas.drawRect(rect, Paint()..color = const Color(0xFF80C6A8));
+        canvas.drawRect(rect, outlinePaint);
+      }
+      // Crisis Put Entry (R1 / M4): coral up-triangle
+      if ((evt & 2) != 0 && (evt & 4) == 0) {
+        final tri = Path()
+          ..moveTo(x, y - 4.8)
+          ..lineTo(x - 3.8, y + 3.0)
+          ..lineTo(x + 3.8, y + 3.0)
+          ..close();
+        canvas.drawPath(tri, Paint()..color = const Color(0xFFEC8C98));
+        canvas.drawPath(tri, outlinePaint);
+      }
+      // Put Take-Profit (TP): prominent bright amber gold diamond ◆
+      if ((evt & 4) != 0) {
+        final dia = Path()
+          ..moveTo(x, y - 5.8)
+          ..lineTo(x + 5.0, y)
+          ..lineTo(x, y + 5.8)
+          ..lineTo(x - 5.0, y)
+          ..close();
+        canvas.drawPath(dia, Paint()..color = const Color(0xFFF2BC60));
+        canvas.drawPath(dia, outlinePaint);
+      }
+    }
 
     // Date ticks along bottom
     final step = math.max(1, (series.length / 5).floor());

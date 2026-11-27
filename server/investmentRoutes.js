@@ -161,6 +161,7 @@ export function registerInvestmentRoutes(app,service) {
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});
   const readCrisisObservatoryPit=(_,r)=>loadCrisisObservatoryPitSnapshotLive({
     date:r.query.date??r.query.pitDate??r.query.asOf??null,
+    window:r.query.window??r.query.co_window??r.query.co_win??null,
   });
   route('get','/crisis-observatory/pit',readCrisisObservatoryPit,
     {cacheControl:'private, max-age=300, stale-while-revalidate=3600'});

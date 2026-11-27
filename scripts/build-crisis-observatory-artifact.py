@@ -725,6 +725,137 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = True) -> dict[str,
 
     full_idx_map = {d: i for i, d in enumerate(full_dates)}
 
+    # Load exact daily CBOE SKEW spot map from m7-inputs + existing tail
+    skew_spot_map: dict[str, float] = {}
+    m7_in_gz = Path(__file__).resolve().parent.parent / "server/config/crisis-observatory-m7-inputs.json.gz"
+    if m7_in_gz.exists():
+        import gzip
+        m7in = json.loads(gzip.open(m7_in_gz, "rt", encoding="utf-8").read())
+        for dt_k, sv in zip(m7in.get("yf_dates") or [], (m7in.get("yf_series") or {}).get("SKEW") or []):
+            if sv is not None and math.isfinite(float(sv)):
+                skew_spot_map[str(dt_k)] = float(sv)
+    if old_tail.get("tail_dates") and (old_tail.get("yf_tail") or {}).get("SKEW"):
+        for dt_k, sv in zip(old_tail["tail_dates"], old_tail["yf_tail"]["SKEW"]):
+            if sv is not None and math.isfinite(float(sv)):
+                skew_spot_map[str(dt_k)] = float(sv)
+
+    # Precompute daily Real MIT OPRA microstructure (2015-01-02 -> 2025-12-15):
+    #   - OPRA Skew Ratio: IV(125D,-20%)/IV(125D,-10%) and IV(125D,-15%)/IV(125D,ATM)
+    #   - Exact 125D -15% OTM Put & 90D -10% OTM Put: Strike, DTE, Bid/Ask/Mid, IBKR Mid+35% HS Limit,
+    #     Half-Spread %, IV %, and 1-Contract Put / 1-Lot (100sh) QQQ Price Ratio (%)!
+    opra_micro_by_date: dict[str, dict[str, Any]] = {}
+    lo125, hi125 = fs.dte_bounds(125)
+    lo90, hi90 = fs.dte_bounds(90)
+    last_sk20 = None
+    last_sk15 = None
+    for row_a in all_rows:
+        d_a = str(row_a["date"])
+        cl_a = float(row_a["close"])
+        if cl_a <= 0:
+            continue
+        c_atm = store.select_put_contract(d_a, cl_a, 125, 1.00, lo125, hi125)
+        c10 = store.select_put_contract(d_a, cl_a, 125, 0.90, lo125, hi125)
+        c15 = store.select_put_contract(d_a, cl_a, 125, 0.85, lo125, hi125)
+        c20 = store.select_put_contract(d_a, cl_a, 125, 0.80, lo125, hi125)
+        c90 = store.select_put_contract(d_a, cl_a, 90, 0.90, lo90, hi90)
+
+        sk20 = None
+        if c10 and c20 and np.isfinite(c10["iv"]) and np.isfinite(c20["iv"]) and float(c10["iv"]) > 0.05:
+            sk20 = round(float(c20["iv"]) / float(c10["iv"]), 3)
+            last_sk20 = sk20
+        elif last_sk20 is not None:
+            sk20 = last_sk20
+
+        sk15 = None
+        if c_atm and c15 and np.isfinite(c_atm["iv"]) and np.isfinite(c15["iv"]) and float(c_atm["iv"]) > 0.05:
+            sk15 = round(float(c15["iv"]) / float(c_atm["iv"]), 3)
+            last_sk15 = sk15
+        elif last_sk15 is not None:
+            sk15 = last_sk15
+
+        rec_m: dict[str, Any] = {
+            "opra_src": "real_opra",
+            "opra_sk20_10": sk20,
+            "opra_sk15_atm": sk15,
+        }
+        if c15 and float(c15["mid"]) > 0:
+            lmt15 = rb.exec_buy_price(c15["bid"], c15["ask"], c15["mid"], "real_ibkr_limit")
+            hs15 = (c15["ask"] - c15["bid"]) / (2.0 * c15["mid"]) * 100.0
+            rec_m.update({
+                "p125_k": round(float(c15["strike"]), 2),
+                "p125_dte": int(c15["dte"]),
+                "p125_bid": round(float(c15["bid"]), 2),
+                "p125_ask": round(float(c15["ask"]), 2),
+                "p125_mid": round(float(c15["mid"]), 2),
+                "p125_lmt": round(float(lmt15), 3),
+                "p125_hs": round(float(hs15), 2),
+                "p125_iv": round(float(c15["iv"]) * 100.0, 1) if np.isfinite(c15["iv"]) else None,
+                "p125_lot_pct": round(float(lmt15) / cl_a * 100.0, 3),
+                "p125_mid_pct": round(float(c15["mid"]) / cl_a * 100.0, 3),
+            })
+        if c90 and float(c90["mid"]) > 0:
+            lmt90 = rb.exec_buy_price(c90["bid"], c90["ask"], c90["mid"], "real_ibkr_limit")
+            hs90 = (c90["ask"] - c90["bid"]) / (2.0 * c90["mid"]) * 100.0
+            rec_m.update({
+                "p90_k": round(float(c90["strike"]), 2),
+                "p90_dte": int(c90["dte"]),
+                "p90_bid": round(float(c90["bid"]), 2),
+                "p90_ask": round(float(c90["ask"]), 2),
+                "p90_mid": round(float(c90["mid"]), 2),
+                "p90_lmt": round(float(lmt90), 3),
+                "p90_hs": round(float(hs90), 2),
+                "p90_iv": round(float(c90["iv"]) * 100.0, 1) if np.isfinite(c90["iv"]) else None,
+                "p90_lot_pct": round(float(lmt90) / cl_a * 100.0, 3),
+                "p90_mid_pct": round(float(c90["mid"]) / cl_a * 100.0, 3),
+            })
+        opra_micro_by_date[d_a] = rec_m
+
+    def compute_bsm_micro_est(cl_v: float, vxn_v: float, r_v: float = 0.04, q_v: float = 0.006) -> dict[str, Any]:
+        """OPRA-calibrated skew-BSM theoretical estimate for post-OPRA live sessions (> 2025-12-15)."""
+        t125 = 125.0 / 365.0
+        t90 = 90.0 / 365.0
+        k_atm = round(cl_v)
+        k10 = round(cl_v * 0.90)
+        k15 = round(cl_v * 0.85)
+        k20 = round(cl_v * 0.80)
+        iv_atm = eval_skew_iv(cl_v, k_atm, t125, r_v, q_v, vxn_v, coeffs)
+        iv10 = eval_skew_iv(cl_v, k10, t125, r_v, q_v, vxn_v, coeffs)
+        iv15 = eval_skew_iv(cl_v, k15, t125, r_v, q_v, vxn_v, coeffs)
+        iv20 = eval_skew_iv(cl_v, k20, t125, r_v, q_v, vxn_v, coeffs)
+        iv90 = eval_skew_iv(cl_v, k10, t90, r_v, q_v, vxn_v, coeffs)
+        mid15 = max(0.05, bsm_price(cl_v, k15, t125, r_v, q_v, iv15, "put"))
+        mid90 = max(0.05, bsm_price(cl_v, k10, t90, r_v, q_v, iv90, "put"))
+        hs15_f, hs90_f = 0.014, 0.011
+        bid15, ask15 = mid15 * (1.0 - hs15_f), mid15 * (1.0 + hs15_f)
+        bid90, ask90 = mid90 * (1.0 - hs90_f), mid90 * (1.0 + hs90_f)
+        lmt15 = mid15 + 0.35 * (ask15 - bid15) * 0.5 + 0.0065
+        lmt90 = mid90 + 0.35 * (ask90 - bid90) * 0.5 + 0.0065
+        return {
+            "opra_src": "bsm_est",
+            "opra_sk20_10": round(iv20 / max(iv10, 0.05), 3),
+            "opra_sk15_atm": round(iv15 / max(iv_atm, 0.05), 3),
+            "p125_k": float(k15),
+            "p125_dte": 125,
+            "p125_bid": round(bid15, 2),
+            "p125_ask": round(ask15, 2),
+            "p125_mid": round(mid15, 2),
+            "p125_lmt": round(lmt15, 3),
+            "p125_hs": round(hs15_f * 100.0, 2),
+            "p125_iv": round(iv15 * 100.0, 1),
+            "p125_lot_pct": round(lmt15 / max(cl_v, 1.0) * 100.0, 3),
+            "p125_mid_pct": round(mid15 / max(cl_v, 1.0) * 100.0, 3),
+            "p90_k": float(k10),
+            "p90_dte": 90,
+            "p90_bid": round(bid90, 2),
+            "p90_ask": round(ask90, 2),
+            "p90_mid": round(mid90, 2),
+            "p90_lmt": round(lmt90, 3),
+            "p90_hs": round(hs90_f * 100.0, 2),
+            "p90_iv": round(iv90 * 100.0, 1),
+            "p90_lot_pct": round(lmt90 / max(cl_v, 1.0) * 100.0, 3),
+            "p90_mid_pct": round(mid90 / max(cl_v, 1.0) * 100.0, 3),
+        }
+
     # Helper to simulate exact v2.0 Single Master Strategy for a given MIT OPRA window
     def run_v2_window(
         win_id: str,
@@ -877,6 +1008,8 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = True) -> dict[str,
             elif nn < -1e-8:
                 _park(-nn)
             tid += 1
+            om_en = opra_micro_by_date.get(d, {})
+            hs_en = ((tgt["ask"] - tgt["bid"]) / (2.0 * tgt["mid"]) * 100.0) if float(tgt["mid"]) > 0 else 0.0
             return {
                 "tranche_id": tid,
                 "sleeve": sleeve,
@@ -893,6 +1026,14 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = True) -> dict[str,
                 "k_cents": tgt["k_cents"],
                 "entry_spot": cl,
                 "entry_fill": bpx,
+                "entry_bid": float(tgt["bid"]),
+                "entry_ask": float(tgt["ask"]),
+                "entry_mid": float(tgt["mid"]),
+                "entry_hs_pct": round(float(hs_en), 2),
+                "entry_lot_pct": round(float(bpx) / max(cl, 1.0) * 100.0, 3),
+                "entry_sk20_10": om_en.get("opra_sk20_10"),
+                "entry_vix": round(float(vix[i]), 2),
+                "entry_vr": round(float(vr[i]), 3),
                 "last_iv": tgt["iv"] if np.isfinite(tgt["iv"]) else None,
                 "shares": sh,
                 "entry_cost": cost,
@@ -978,7 +1119,23 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = True) -> dict[str,
                         "entry_spot": round(float(tr["entry_spot"]), 2),
                         "exit_spot": round(cl, 2),
                         "entry_fill": round(float(tr["entry_fill"]), 3),
+                        "entry_bid": round(float(tr.get("entry_bid", 0.0)), 2),
+                        "entry_ask": round(float(tr.get("entry_ask", 0.0)), 2),
+                        "entry_mid": round(float(tr.get("entry_mid", 0.0)), 2),
+                        "entry_hs_pct": tr.get("entry_hs_pct"),
+                        "entry_lot_pct": tr.get("entry_lot_pct"),
+                        "entry_sk20_10": tr.get("entry_sk20_10"),
+                        "entry_vix": tr.get("entry_vix"),
+                        "entry_vr": tr.get("entry_vr"),
                         "exit_fill": round(float(spx), 3),
+                        "exit_bid": round(float(bid), 2),
+                        "exit_ask": round(float(ask), 2),
+                        "exit_mid": round(float(mid), 2),
+                        "exit_vix": round(float(vix_cl), 2),
+                        "exit_vr": round(float(vix_r), 3),
+                        "exit_dd_pct": round(float(qqq_dd_w[i]) * 100.0, 2),
+                        "exit_lot_pct": round(float(spx) / max(cl, 1.0) * 100.0, 3),
+                        "contracts": round(float(tr["shares"] * frac) / 100.0, 2),
                         "exit_frac": round(frac, 2),
                         "cost_usd": round(cp, 2),
                         "exit_usd": round(ex, 2),
@@ -1135,7 +1292,23 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = True) -> dict[str,
                             "entry_spot": round(float(tr["entry_spot"]), 2),
                             "exit_spot": round(cl, 2),
                             "entry_fill": round(float(tr["entry_fill"]), 3),
+                            "entry_bid": round(float(tr.get("entry_bid", 0.0)), 2),
+                            "entry_ask": round(float(tr.get("entry_ask", 0.0)), 2),
+                            "entry_mid": round(float(tr.get("entry_mid", 0.0)), 2),
+                            "entry_hs_pct": tr.get("entry_hs_pct"),
+                            "entry_lot_pct": tr.get("entry_lot_pct"),
+                            "entry_sk20_10": tr.get("entry_sk20_10"),
+                            "entry_vix": tr.get("entry_vix"),
+                            "entry_vr": tr.get("entry_vr"),
                             "exit_fill": round(max(0.0, tr["strike"] - cl), 3),
+                            "exit_bid": round(max(0.0, tr["strike"] - cl), 2),
+                            "exit_ask": round(max(0.0, tr["strike"] - cl), 2),
+                            "exit_mid": round(max(0.0, tr["strike"] - cl), 2),
+                            "exit_vix": round(float(vix_cl), 2),
+                            "exit_vr": round(float(vix_r), 3),
+                            "exit_dd_pct": round(float(qqq_dd_w[i]) * 100.0, 2),
+                            "exit_lot_pct": round(max(0.0, tr["strike"] - cl) / max(cl, 1.0) * 100.0, 3),
+                            "contracts": round(float(tr["shares"]) / 100.0, 2),
                             "exit_frac": 1.0,
                             "cost_usd": round(tr["entry_cost"], 2),
                             "exit_usd": round(su, 2),
@@ -1353,6 +1526,53 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = True) -> dict[str,
                 "peak_lev": round(float(lev_arr[i0 : i1 + 1].max()), 3),
             })
 
+        # Capture any Put tranche still held open at window end so PIT replay near end_d is exact
+        open_puts_at_end: list[dict[str, Any]] = []
+        for tr in _allp():
+            open_puts_at_end.append({
+                "tranche_id": tr["tranche_id"],
+                "sleeve": tr["sleeve"],
+                "entry_date": tr["entry_date"],
+                "exp": tr["exp"],
+                "strike": round(float(tr["strike"]), 2),
+                "entry_dte": int(tr["entry_dte"]),
+                "rem_dte": int(tr["last_rem_days"]),
+                "entry_spot": round(float(tr["entry_spot"]), 2),
+                "entry_fill": round(float(tr["entry_fill"]), 3),
+                "entry_bid": round(float(tr.get("entry_bid", 0.0)), 2),
+                "entry_ask": round(float(tr.get("entry_ask", 0.0)), 2),
+                "entry_mid": round(float(tr.get("entry_mid", 0.0)), 2),
+                "entry_hs_pct": tr.get("entry_hs_pct"),
+                "entry_lot_pct": tr.get("entry_lot_pct"),
+                "entry_sk20_10": tr.get("entry_sk20_10"),
+                "entry_vix": tr.get("entry_vix"),
+                "entry_vr": tr.get("entry_vr"),
+                "cost_usd": round(float(tr["entry_cost"]), 2),
+                "last_mtm_usd": round(float(tr["last_mtm_usd"]), 2),
+                "contracts": round(float(tr["shares"]) / 100.0, 2),
+            })
+
+        # Compact daily event bitmask for zero-lag chart markers:
+        #   1 = Base 0.2% Put Open | 2 = Crisis R1/M4 Put Open | 4 = Put TP (5x/VR1.10) | 8 = Roll/Recycle | 16 = CTA Rotate/Restore
+        evt_by_d: dict[str, int] = {}
+        for tr in put_ledger:
+            ed = tr["entry_date"]
+            xd = tr["exit_date"]
+            evt_by_d[ed] = evt_by_d.get(ed, 0) | (1 if tr["sleeve"] == "base" else 2)
+            if tr["exit_reason"].startswith("tp_"):
+                evt_by_d[xd] = evt_by_d.get(xd, 0) | 4
+            else:
+                evt_by_d[xd] = evt_by_d.get(xd, 0) | 8
+        for tr in open_puts_at_end:
+            ed = tr["entry_date"]
+            evt_by_d[ed] = evt_by_d.get(ed, 0) | (1 if tr["sleeve"] == "base" else 2)
+        for cr in cta_rot_ledger:
+            cd = cr["date"]
+            evt_by_d[cd] = evt_by_d.get(cd, 0) | 16
+        for rs in cta_restore_ledger:
+            rd = rs["date"]
+            evt_by_d[rd] = evt_by_d.get(rd, 0) | 16
+
         dd_s_arr = (nav_arr / np.maximum.accumulate(nav_arr) - 1.0) * 100.0
         dd_q_arr = (qqq_nav / np.maximum.accumulate(qqq_nav) - 1.0) * 100.0
 
@@ -1368,14 +1588,16 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = True) -> dict[str,
                 "qqq": round(float(spot[k]), 2),
                 "vr": round(float(vr[k]), 3),
                 "latch": 1 if bool(latch_sel[k]) else 0,
+                "evt": int(evt_by_d.get(dates[k], 0)),
             })
 
         return {
             "kpi": kpi_s,
             "kpi_qqq": kpi_q,
             "crisis_comparison": crisis_rows,
-            "daily_series": pack_table(series_rows, ["date", "nav_v2", "nav_qqq", "dd_v2", "dd_qqq", "lev", "qqq", "vr", "latch"]),
+            "daily_series": pack_table(series_rows, ["date", "nav_v2", "nav_qqq", "dd_v2", "dd_qqq", "lev", "qqq", "vr", "latch", "evt"]),
             "put_ledger": put_ledger,
+            "open_puts_at_end": open_puts_at_end,
             "cta_rotation_ledger": cta_rot_ledger,
             "cta_restore_ledger": cta_restore_ledger,
         }
@@ -1403,6 +1625,120 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = True) -> dict[str,
     eval_by_d = {r["date"]: r for r in old_eval_bars}
     sig_by_d = {r["date"]: r for r in old_sig_on}
     feat_by_d = {r["date"]: r for r in old_feats}
+
+    def attach_opra_micro_to_pit_rows(rows_in: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Attach daily Real MIT OPRA microstructure (or post-OPRA BSM estimate) + CBOE SKEW spot."""
+        last_sk_spot = 132.0
+        out_rows = []
+        for r0 in rows_in:
+            r = dict(r0)
+            d_k = str(r["date"])
+            if d_k in skew_spot_map:
+                last_sk_spot = skew_spot_map[d_k]
+            elif r.get("skew10") is not None:
+                last_sk_spot = float(r["skew10"])
+            r["skew_spot"] = round(float(last_sk_spot), 2)
+            om = opra_micro_by_date.get(d_k)
+            if om is None:
+                effr_dec = float(r.get("effr") or 4.0) / 100.0
+                om = compute_bsm_micro_est(float(r["qqq"]), float(r["vxn"]), r_v=effr_dec, q_v=0.006)
+            for mk in (
+                "opra_src", "opra_sk20_10", "opra_sk15_atm",
+                "p125_k", "p125_dte", "p125_bid", "p125_ask", "p125_mid", "p125_lmt", "p125_hs", "p125_iv", "p125_lot_pct", "p125_mid_pct",
+                "p90_k", "p90_dte", "p90_bid", "p90_ask", "p90_mid", "p90_lmt", "p90_hs", "p90_iv", "p90_lot_pct", "p90_mid_pct",
+            ):
+                r[mk] = om.get(mk)
+            out_rows.append(r)
+        return out_rows
+
+    # Fast idempotent v2->v2 refresh path when existing_doc is already v2-master (no legacy v1 m7_eval_bars)
+    if existing_doc.get("version") == ARTIFACT_VERSION and not old_eval_bars and existing_doc.get("pit_daily_index"):
+        pit_rows_v2 = attach_opra_micro_to_pit_rows(unpack_tbl(existing_doc["pit_daily_index"]))
+        pit_cols_v2 = list(pit_rows_v2[0].keys())
+        latest_pit = pit_rows_v2[-1]
+        latest_date = str(latest_pit["date"])
+        live_tail_v2 = dict(existing_doc.get("live_tail_state") or {})
+        live_tail_v2["opra_skew_coeffs"] = [round(float(c), 6) for c in coeffs]
+
+        artifact = {
+            "version": ARTIFACT_VERSION,
+            "strategy_code": STRATEGY_CODE,
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "as_of_date": latest_date,
+            "asOfDate": latest_date,
+            "dataThrough": latest_date,
+            "ruleset": build_ruleset_spec(),
+            "data_freshness": existing_doc.get("data_freshness") or {},
+            "backtest": {
+                "initial_capital": INITIAL_CAPITAL,
+                "opra_provenance": {
+                    "quotes_count": 6382288,
+                    "trading_days": 2749,
+                    "opra_start": "2015-01-02",
+                    "opra_end": "2025-12-15",
+                    "execution_fallbacks": 0,
+                    "primary_fill_en": "IBKR 35% Limit + SPX Short Box (EFFR + 35 bps)",
+                    "primary_fill_zh": "IBKR 35% 限价成交 + SPX Short Box 融资（EFFR + 35 bps）",
+                    "stress_fill_en": "Full Ask/Bid + IBKR Pro Margin (EFFR + 150 bps)",
+                    "stress_fill_zh": "保守对手盘 Ask/Bid + IBKR Pro 融资（EFFR + 150 bps）",
+                },
+                "windows": {
+                    "11y_opra": {
+                        "id": "11y_opra",
+                        "label_en": "11Y Real MIT OPRA (2015-2025.12)",
+                        "label_zh": "11年真实 OPRA（2015-2025.12）",
+                        "start_date": "2015-01-02",
+                        "end_date": "2025-12-15",
+                        "zero_splice": False,
+                        "disclosure_en": "100% real 16:00 ET US OPRA QQQ put quotes (0 fallbacks). Pre-inception DBMF (<2019-05-09) and KMLM (<2020-12-03) splice real AQMIX live mutual fund returns.",
+                        "disclosure_zh": "100% 真实美股 16:00 ET OPRA 期权盘口（0 次回退）。DBMF（2019-05-09 前）与 KMLM（2020-12-03 前）使用真实 AQMIX 共同基金净值拼接。",
+                        "kpi_primary": w11_pri["kpi"],
+                        "kpi_stress": w11_str["kpi"],
+                        "kpi_qqq": w11_pri["kpi_qqq"],
+                        "crisis_comparison": w11_pri["crisis_comparison"],
+                        "daily_series": w11_pri["daily_series"],
+                        "put_ledger": w11_pri["put_ledger"],
+                        "open_puts_at_end": w11_pri["open_puts_at_end"],
+                        "cta_rotation_ledger": w11_pri["cta_rotation_ledger"],
+                        "cta_restore_ledger": w11_pri["cta_restore_ledger"],
+                        "latch_episodes": [e for e in latch_episodes_full if e["arm_date"] <= "2025-12-15"],
+                    },
+                    "5y_live": {
+                        "id": "5y_live",
+                        "label_en": "5Y Zero-Splice Live (2020.12-2025.12)",
+                        "label_zh": "5年零拼接纯真盘（2020.12-2025.12）",
+                        "start_date": "2020-12-02",
+                        "end_date": "2025-12-15",
+                        "zero_splice": True,
+                        "disclosure_en": "Zero-splice pure live window: 100% live DBMF + 100% live KMLM + 100% real MIT OPRA QQQ puts + official NY Fed EFFR.",
+                        "disclosure_zh": "零拼接纯实盘窗口：100% 实盘 DBMF + 100% 实盘 KMLM + 100% 真实 MIT OPRA 期权盘口 + 纽约联储官方 EFFR。",
+                        "kpi_primary": w5_pri["kpi"],
+                        "kpi_stress": w5_str["kpi"],
+                        "kpi_qqq": w5_pri["kpi_qqq"],
+                        "crisis_comparison": w5_pri["crisis_comparison"],
+                        "daily_series": w5_pri["daily_series"],
+                        "put_ledger": w5_pri["put_ledger"],
+                        "open_puts_at_end": w5_pri["open_puts_at_end"],
+                        "cta_rotation_ledger": w5_pri["cta_rotation_ledger"],
+                        "cta_restore_ledger": w5_pri["cta_restore_ledger"],
+                        "latch_episodes": [e for e in latch_episodes_full if "2020-12-02" <= e["arm_date"] <= "2025-12-15"],
+                    },
+                },
+            },
+            "pit_daily_index": pack_table(pit_rows_v2, pit_cols_v2),
+            "live_tail_state": live_tail_v2,
+        }
+        raw_json = json.dumps(artifact, ensure_ascii=False, separators=(",", ":"))
+        assert chr(126) not in raw_json, "ASCII tilde found in generated JSON!"
+        for banned in ("FactOS", "FACT OS", "fact_os", "DuckDB", "Sharadar", "SQLite", "Wheel", "wheel", "Covered Call", "Short Put", "卖Call", "领口"):
+            assert banned not in raw_json, f"Banned term '{banned}' found in generated JSON!"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(raw_json, encoding="utf-8")
+        print(f"Wrote enriched v2 artifact {output_path} ({len(raw_json) / 1024:.1f} KB)")
+        print(f"  Latest Date: {latest_date} | OPRA micro rows: {sum(1 for r in pit_rows_v2 if r.get('opra_src') == 'real_opra')} real + {sum(1 for r in pit_rows_v2 if r.get('opra_src') == 'bsm_est')} bsm_est")
+        print(f"  11Y OPRA Primary: ${w11_pri['kpi']['end_nav']:,.2f} ({w11_pri['kpi']['cagr_pct']}% CAGR, {w11_pri['kpi']['max_dd_pct']}% MDD, {w11_pri['kpi']['calmar']} Calmar)")
+        print(f"  5Y Live Primary:  ${w5_pri['kpi']['end_nav']:,.2f} ({w5_pri['kpi']['cagr_pct']}% CAGR, {w5_pri['kpi']['max_dd_pct']}% MDD, {w5_pri['kpi']['calmar']} Calmar)")
+        return artifact
 
     # Build enriched live tail state starting from old_tail (which ends 2026-11-20) and extend through latest live trading close!
     tail_dates: list[str] = list(old_tail["tail_dates"])
