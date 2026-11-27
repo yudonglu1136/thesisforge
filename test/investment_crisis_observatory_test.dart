@@ -276,6 +276,16 @@ void main() {
       expect(find.textContaining('卖出 DBMF -> 买入 QQQ'), findsOneWidget);
       expect(find.textContaining('卖出金额 \$2,869'), findsOneWidget);
 
+      await mouse.moveTo(chartPointAtFrac(244 / 417));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('crisis-v2-hover-tooltip')), findsOneWidget);
+      expect(find.textContaining('▼ 30D 残值收回'), findsWidgets);
+      expect(find.textContaining('QQQ 22-11-18 \$275 Put'), findsOneWidget);
+      expect(find.textContaining('数量 3.08 张'), findsOneWidget);
+      expect(find.textContaining('卖出金额 \$4,041'), findsOneWidget);
+      expect(find.textContaining('2.77x'), findsWidgets);
+
       await mouse.moveTo(chartPointAtFrac(269 / 417));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);

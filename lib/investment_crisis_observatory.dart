@@ -2812,6 +2812,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   _legendDot(w('Slow-Bear Latch', '慢熊锁存期'), _lilac),
                   _legendMarker('◆', w('Put TP', 'Put 止盈'), _amber),
                   _legendMarker('▲', w('M7G Crisis Open', 'M7G 危机盾建仓'), _coral),
+                  _legendMarker('▼', w('75D/30D Salvage', '75D/30D 残值收回'), _lilac),
                   _legendMarker('●', w('B020 Base Put', 'B020 常态盾'), _sky),
                   _legendMarker('■', w('CTA Rotate', '双CTA轮动'), _mint),
                 ],
@@ -2838,7 +2839,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   if ((activeEvt & 1) != 0)
                     _pillBadge(w('● 0.2% Base Open', '● 常态 0.2% 建仓'), _sky),
                   if ((activeEvt & 8) != 0)
-                    _pillBadge(w('↻ Roll / Recycle', '↻ 滚仓 / 回收'), _fgMuted),
+                    _pillBadge(
+                      w('▼ 75D/30D Salvage', '▼ 75D/30D 残值收回'),
+                      _lilac,
+                    ),
                   if ((activeEvt & 16) != 0)
                     _pillBadge(w('■ Dual-CTA Rotate', '■ 双CTA 轮动'), _mint),
                 ],
@@ -2866,9 +2870,10 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   return exactIdx;
                 }
                 int prioOf(int evt) {
-                  if ((evt & 4) != 0) return 4;
-                  if ((evt & 2) != 0) return 3;
-                  if ((evt & 16) != 0) return 2;
+                  if ((evt & 4) != 0) return 5;
+                  if ((evt & 2) != 0) return 4;
+                  if ((evt & 16) != 0) return 3;
+                  if ((evt & 8) != 0) return 2;
                   if ((evt & 1) != 0) return 1;
                   return 0;
                 }
@@ -3081,7 +3086,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   ? _lilac
                   : (topSl == 'crisis' ? _coral : _sky))
               .withValues(alpha: 0.80),
-        'PUT_ROLL' => _sky.withValues(alpha: 0.70),
+        'PUT_ROLL' || 'PUT_CLOSE' => _lilac.withValues(alpha: 0.80),
         _ => _fgMuted.withValues(alpha: 0.65),
       };
     }
@@ -3393,7 +3398,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   }) {
     final act = text(ev['action']);
     final sl = text(ev['sleeve']);
+    final reason = text(ev['reason']);
     final amt = _n(ev['amount_usd'])?.toDouble();
+    final netPnlVal = _n(ev['net_pnl_usd'])?.toDouble();
 
     final Color accent;
     final String dirTag;
@@ -3406,11 +3413,13 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           ? w('● BUY PUT', '● 买入开仓')
           : w('▲ BUY PUT', '▲ 买入开仓');
     } else if (act == 'PUT_ROLL') {
-      accent = _sky;
-      dirTag = w('↻ SELL ROLL', '↻ 滚仓卖出');
+      accent = _lilac;
+      dirTag = reason == 'roll_30d'
+          ? w('▼ 30D SALVAGE', '▼ 30D 残值收回')
+          : w('▼ 75D ROLL/SALV', '▼ 75D 滚仓收回');
     } else if (act == 'PUT_CLOSE') {
-      accent = _fgMuted;
-      dirTag = w('× SELL CLOSE', '× 平仓卖出');
+      accent = _lilac;
+      dirTag = w('▼ SALVAGE SELL', '▼ 残值收回卖出');
     } else if (act == 'CTA_ROTATE') {
       accent = _mint;
       dirTag = w('■ SELL CTA', '■ 卖CTA买QQQ');
@@ -3546,7 +3555,12 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: act == 'PUT_TP' ? _amber : _fgPrimary,
+              color: act == 'PUT_TP'
+                  ? _amber
+                  : ((act == 'PUT_ROLL' || act == 'PUT_CLOSE') &&
+                            (netPnlVal ?? 0) > 0
+                        ? _mint
+                        : _fgPrimary),
               fontSize: 10.0,
               fontWeight: FontWeight.w700,
               height: 1.25,
@@ -5802,7 +5816,7 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
     );
 
     // Draw PIT operation markers along v2.0 equity curve from compact evt bitmask:
-    //   1 = Base 0.2% Put Open | 2 = Crisis R1/M4 Put Open | 4 = Put TP (Diamond) | 16 = CTA Rotate/Restore (Square)
+    //   1 = Base 0.2% Put Open | 2 = Crisis R1/M4 Put Open | 4 = Put TP (Diamond) | 8 = 75D/30D Roll/Salvage Exit (Down-Tri) | 16 = CTA Rotate/Restore (Square)
     final outlinePaint = Paint()
       ..color = const Color(0xFF080B0F)
       ..style = PaintingStyle.stroke
@@ -5821,6 +5835,16 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
           2.2,
           Paint()..color = const Color(0xFF7DB8F0).withValues(alpha: 0.85),
         );
+      }
+      // Standalone 75D / 30D Roll & Salvage Exit (e.g., 2022 M4 30DTE & 75D salvage): crisp lilac down-triangle ▼
+      if ((evt & 8) != 0 && (evt & 7) == 0) {
+        final downTri = Path()
+          ..moveTo(x, y + 4.8)
+          ..lineTo(x - 3.8, y - 3.0)
+          ..lineTo(x + 3.8, y - 3.0)
+          ..close();
+        canvas.drawPath(downTri, Paint()..color = const Color(0xFFB8A1EA));
+        canvas.drawPath(downTri, outlinePaint);
       }
       // CTA Rotation / Restore: crisp mint square slightly below curve
       if ((evt & 16) != 0) {
@@ -5885,7 +5909,7 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
           ..color = const Color(0xFFEDF1F5).withValues(alpha: 0.48)
           ..strokeWidth = 1.0,
       );
-      if ((mEvt & 23) != 0) {
+      if ((mEvt & 31) != 0) {
         // Luminous selection ring around painted trade marker so the icon stays visible
         canvas.drawCircle(
           Offset(mx, my),
