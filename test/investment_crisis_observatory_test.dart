@@ -184,6 +184,45 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('\$250,000'), findsWidgets);
 
+      // Verify time-range brush bar + preset zoom + drag + rebase toggle
+      expect(find.byKey(const ValueKey('crisis-v2-range-brush')), findsOneWidget);
+      final preset2025 = find.byKey(const ValueKey('crisis-v2-range-preset-2025'));
+      await tester.ensureVisible(preset2025);
+      await tester.tap(preset2025);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('2024-12-16 -> 2025-07-31'), findsOneWidget);
+      expect(find.textContaining('起点归一=100'), findsOneWidget);
+
+      // Toggle Base=100 <-> Abs NAV ($)
+      final rebaseBtn = find.byKey(
+        const ValueKey('crisis-v2-range-preset-rebase_toggle'),
+      );
+      await tester.tap(rebaseBtn);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('绝对净值(\$)'), findsOneWidget);
+
+      // Reset to full window via '全部' preset
+      final presetAll = find.byKey(const ValueKey('crisis-v2-range-preset-all'));
+      await tester.tap(presetAll);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('起点归一=100'), findsNothing);
+
+      // Drag across the brush track -> creates custom sub-range via brush/handle drag
+      final brushTrack = find.byKey(const ValueKey('crisis-v2-range-track'));
+      await tester.ensureVisible(brushTrack);
+      await tester.pumpAndSettle();
+      final trackRect = tester.getRect(brushTrack);
+      await tester.dragFrom(
+        Offset(trackRect.left + 48, trackRect.center.dy),
+        const Offset(220, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(
+        find.byKey(const ValueKey('crisis-v2-range-preset-rebase_toggle')),
+        findsOneWidget,
+      );
+
       // Click 2025-04-07 Put TP quick-jump badge -> verifies PIT operations, Put TP, Skew Ratio & 1-Put/100-QQQ %
       final tpChip = find.textContaining('◆ 2025-04-07').first;
       await tester.ensureVisible(tpChip);
@@ -223,6 +262,15 @@ void main() {
       );
       expect(find.textContaining('LIVE STRESS 87 / 100'), findsWidgets);
       expect(find.textContaining('\$707,763'), findsWidgets);
+
+      // Zoom into 2025 Tariff via range brush preset on mobile EN -> verify zero overflow & zero CJK
+      expect(find.byKey(const ValueKey('crisis-v2-range-brush')), findsOneWidget);
+      final enPreset2025 = find.byKey(const ValueKey('crisis-v2-range-preset-2025'));
+      await tester.ensureVisible(enPreset2025);
+      await tester.tap(enPreset2025);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('Base = 100'), findsOneWidget);
 
       // Click 2025-04-07 Put TP badge on mobile EN -> verify PIT inspector renders cleanly with zero overflow & zero CJK
       final enTpChip = find.textContaining('◆ 2025-04-07').first;

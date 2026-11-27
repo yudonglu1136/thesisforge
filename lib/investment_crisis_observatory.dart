@@ -52,6 +52,17 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   int hoverIndex = -1;
   int loadSerial = 0;
 
+  // Interactive time-range brush / zoom state for the equity chart
+  int? rangeStartIdx;
+  int? rangeEndIdx;
+  String activeQuickRange = 'all';
+  bool rebaseZoomedSlice = true;
+  String _brushDragMode = '';
+  double _brushDragStartDx = 0.0;
+  int _brushDragOrigStart = 0;
+  int _brushDragOrigEnd = 0;
+  MouseCursor _brushCursor = SystemMouseCursors.click;
+
   // Point-in-Time (PIT) historical replay state (click any point on curve)
   String? pinnedPitDate;
   Map<String, dynamic>? pitSnapshot;
@@ -118,6 +129,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         switchingWindow = false;
         error = null;
         hoverIndex = -1;
+        rangeStartIdx = null;
+        rangeEndIdx = null;
+        activeQuickRange = 'all';
       });
       return;
     }
@@ -147,6 +161,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         loading = false;
         switchingWindow = false;
         hoverIndex = -1;
+        rangeStartIdx = null;
+        rangeEndIdx = null;
+        activeQuickRange = 'all';
       });
     } catch (e) {
       if (!mounted || serial != loadSerial) return;
@@ -165,12 +182,91 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     setState(() {
       selectedWindow = norm;
       hoverIndex = -1;
+      rangeStartIdx = null;
+      rangeEndIdx = null;
+      activeQuickRange = 'all';
     });
     _emitSelection();
     unawaited(_loadDashboard(isWindowSwitch: true));
     if (prevPinned != null && prevPinned.isNotEmpty) {
       unawaited(_loadPitDate(prevPinned, windowOverride: norm));
     }
+  }
+
+  void _ensureDateInRange(String date) {
+    final backtest = asMap(data?['backtest']);
+    final win = asMap(backtest['active_window']);
+    final series = asList(win['daily_series']);
+    if (series.length < 2) return;
+    final maxIdx = series.length - 1;
+    final sIdx = (rangeStartIdx ?? 0).clamp(0, maxIdx - 1).toInt();
+    final eIdx = (rangeEndIdx ?? maxIdx).clamp(sIdx + 1, maxIdx).toInt();
+    if (sIdx == 0 && eIdx == maxIdx) return;
+
+    int targetIdx = -1;
+    for (var i = 0; i < series.length; i++) {
+      if (text(asMap(series[i])['date']) == date) {
+        targetIdx = i;
+        break;
+      }
+    }
+    if (targetIdx < 0) return;
+    if (targetIdx >= sIdx && targetIdx <= eIdx) return;
+
+    final span = math.max(20, eIdx - sIdx);
+    final halfSpan = (span / 2).floor();
+    final nextStart = (targetIdx - halfSpan).clamp(0, math.max(0, maxIdx - span)).toInt();
+    final nextEnd = (nextStart + span).clamp(math.min(maxIdx, nextStart + 1), maxIdx).toInt();
+    rangeStartIdx = nextStart;
+    rangeEndIdx = nextEnd;
+    activeQuickRange = 'custom';
+    hoverIndex = -1;
+  }
+
+  void _applyQuickRange(
+    List<dynamic> series,
+    String id, {
+    String? startDate,
+    String? endDate,
+    int? trailingDays,
+  }) {
+    if (series.length < 2) return;
+    final maxIdx = series.length - 1;
+    const minSpan = 15;
+    int s = 0;
+    int e = maxIdx;
+    if (id == 'all') {
+      s = 0;
+      e = maxIdx;
+    } else if (trailingDays != null) {
+      s = math.max(0, maxIdx - trailingDays);
+      e = maxIdx;
+    } else if (startDate != null && endDate != null) {
+      s = 0;
+      for (var i = 0; i <= maxIdx; i++) {
+        if (text(asMap(series[i])['date']).compareTo(startDate) >= 0) {
+          s = i;
+          break;
+        }
+      }
+      e = maxIdx;
+      for (var i = maxIdx; i >= 0; i--) {
+        if (text(asMap(series[i])['date']).compareTo(endDate) <= 0) {
+          e = i;
+          break;
+        }
+      }
+      if (e - s < minSpan) {
+        e = math.min(maxIdx, s + minSpan);
+        s = math.max(0, e - minSpan);
+      }
+    }
+    setState(() {
+      rangeStartIdx = s;
+      rangeEndIdx = e;
+      activeQuickRange = (s == 0 && e == maxIdx) ? 'all' : id;
+      hoverIndex = -1;
+    });
   }
 
   Future<void> _loadPitDate(String date, {String? windowOverride}) async {
@@ -185,6 +281,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         pitSnapshot = cached;
         loadingPit = false;
         pitError = null;
+        if (windowOverride == null) _ensureDateInRange(date);
       });
       return;
     }
@@ -192,6 +289,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
       pinnedPitDate = date;
       loadingPit = true;
       pitError = null;
+      if (windowOverride == null) _ensureDateInRange(date);
     });
     try {
       final uri = Uri(
@@ -2254,21 +2352,76 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     List<dynamic> putLedger,
     bool isCompact,
   ) {
-    int pinnedSeriesIdx = -1;
+    final totalN = series.length;
+    final maxIdx = math.max(0, totalN - 1);
+    final minSpan = math.min(15, maxIdx);
+    final sIdx = totalN < 2
+        ? 0
+        : (rangeStartIdx ?? 0).clamp(0, math.max(0, maxIdx - minSpan)).toInt();
+    final eIdx = totalN < 2
+        ? 0
+        : (rangeEndIdx ?? maxIdx).clamp(math.min(maxIdx, sIdx + minSpan), maxIdx).toInt();
+    final isZoomed = totalN >= 2 && (sIdx > 0 || eIdx < maxIdx);
+    final visibleSeries = totalN < 2
+        ? series
+        : series.sublist(sIdx, eIdx + 1);
+    final rebaseActive = isZoomed && rebaseZoomedSlice;
+
+    int pinnedVisIdx = -1;
     if (pinnedPitDate != null) {
-      for (var i = 0; i < series.length; i++) {
-        if (text(asMap(series[i])['date']) == pinnedPitDate) {
-          pinnedSeriesIdx = i;
+      for (var i = 0; i < visibleSeries.length; i++) {
+        if (text(asMap(visibleSeries[i])['date']) == pinnedPitDate) {
+          pinnedVisIdx = i;
           break;
         }
       }
     }
-    final activeIdx = hoverIndex >= 0 && hoverIndex < series.length
+    final activeIdx = hoverIndex >= 0 && hoverIndex < visibleSeries.length
         ? hoverIndex
-        : (pinnedSeriesIdx >= 0 ? pinnedSeriesIdx : series.length - 1);
-    final activeRow = asMap(series[activeIdx]);
+        : (pinnedVisIdx >= 0
+              ? pinnedVisIdx
+              : math.max(0, visibleSeries.length - 1));
+    final activeRow = visibleSeries.isNotEmpty
+        ? asMap(visibleSeries[activeIdx])
+        : const <String, dynamic>{};
     final activeEvt = (_n(activeRow['evt'])?.toInt()) ?? 0;
     final chartH = isCompact ? 268.0 : 330.0;
+
+    // Real-time slice return & within-slice MDD
+    double sliceV2Ret = 0.0;
+    double sliceQRet = 0.0;
+    double sliceV2Mdd = 0.0;
+    double sliceQMdd = 0.0;
+    double activeSliceV2Ret = 0.0;
+    double activeSliceQRet = 0.0;
+    if (visibleSeries.length >= 2) {
+      final firstM = asMap(visibleSeries.first);
+      final lastM = asMap(visibleSeries.last);
+      final bV2 = math.max(1e-6, (_n(firstM['nav_v2']) ?? 100000.0).toDouble());
+      final bQ = math.max(1e-6, (_n(firstM['nav_qqq']) ?? 100000.0).toDouble());
+      final eV2 = (_n(lastM['nav_v2']) ?? bV2).toDouble();
+      final eQ = (_n(lastM['nav_qqq']) ?? bQ).toDouble();
+      sliceV2Ret = (eV2 / bV2 - 1.0) * 100.0;
+      sliceQRet = (eQ / bQ - 1.0) * 100.0;
+      final aV2 = (_n(activeRow['nav_v2']) ?? bV2).toDouble();
+      final aQ = (_n(activeRow['nav_qqq']) ?? bQ).toDouble();
+      activeSliceV2Ret = (aV2 / bV2 - 1.0) * 100.0;
+      activeSliceQRet = (aQ / bQ - 1.0) * 100.0;
+
+      double pkV2 = bV2;
+      double pkQ = bQ;
+      for (final raw in visibleSeries) {
+        final m = raw as Map;
+        final v2 = (m['nav_v2'] as num?)?.toDouble() ?? bV2;
+        final q = (m['nav_qqq'] as num?)?.toDouble() ?? bQ;
+        if (v2 > pkV2) pkV2 = v2;
+        if (q > pkQ) pkQ = q;
+        final d2 = (v2 / pkV2 - 1.0) * 100.0;
+        final dq = (q / pkQ - 1.0) * 100.0;
+        if (d2 < sliceV2Mdd) sliceV2Mdd = d2;
+        if (dq < sliceQMdd) sliceQMdd = dq;
+      }
+    }
 
     // Aggregate distinct Put TP dates for 1-click quick-jump badges
     final tpMap = <String, Map<String, dynamic>>{};
@@ -2313,8 +2466,18 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 spacing: 11,
                 runSpacing: 4,
                 children: [
-                  _legendDot(w('v2.0 Master NAV', 'v2.0 主策略净值'), _mint),
-                  _legendDot(w('100% QQQ B&H', '100% QQQ 基准'), _sky),
+                  _legendDot(
+                    rebaseActive
+                        ? w('v2.0 (Base 100)', 'v2.0 归一净值')
+                        : w('v2.0 Master NAV', 'v2.0 主策略净值'),
+                    _mint,
+                  ),
+                  _legendDot(
+                    rebaseActive
+                        ? w('QQQ (Base 100)', 'QQQ 归一基准')
+                        : w('100% QQQ B&H', '100% QQQ 基准'),
+                    _sky,
+                  ),
                   _legendDot(w('Daily Lev (<=1.20x)', '每日杠杆'), _amber),
                   _legendDot(w('Slow-Bear Latch', '慢熊锁存期'), _lilac),
                   _legendMarker('◆', w('Put TP', 'Put 止盈'), _amber),
@@ -2329,7 +2492,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Text(
-                    '${text(activeRow['date'])}  ·  v2.0 ${_fmtUsd(_n(activeRow['nav_v2']))} (${_fmtPct(_n(activeRow['dd_v2']), signed: false)})  ·  QQQ ${_fmtUsd(_n(activeRow['nav_qqq']))}  ·  Lev ${_fmtNum(_n(activeRow['lev']), dec: 3)}x',
+                    isZoomed
+                        ? '${text(activeRow['date'])}  ·  v2.0 ${_fmtPct(activeSliceV2Ret)} (${_fmtUsd(_n(activeRow['nav_v2']))})  ·  QQQ ${_fmtPct(activeSliceQRet)}  ·  Lev ${_fmtNum(_n(activeRow['lev']), dec: 3)}x'
+                        : '${text(activeRow['date'])}  ·  v2.0 ${_fmtUsd(_n(activeRow['nav_v2']))} (${_fmtPct(_n(activeRow['dd_v2']), signed: false)})  ·  QQQ ${_fmtUsd(_n(activeRow['nav_qqq']))}  ·  Lev ${_fmtNum(_n(activeRow['lev']), dec: 3)}x',
                     style: const TextStyle(
                       color: _fgPrimary,
                       fontSize: 11.5,
@@ -2359,7 +2524,7 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 const padR = 14.0;
                 final plotW = math.max(1.0, width - padL - padR);
                 final frac = ((dx - padL) / plotW).clamp(0.0, 1.0);
-                return (frac * (series.length - 1)).round();
+                return (frac * math.max(0, visibleSeries.length - 1)).round();
               }
 
               return MouseRegion(
@@ -2375,8 +2540,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 },
                 child: GestureDetector(
                   onTapUp: (details) {
+                    if (visibleSeries.isEmpty) return;
                     final idx = idxFromDx(details.localPosition.dx);
-                    final d = text(asMap(series[idx])['date']);
+                    final d = text(asMap(visibleSeries[idx])['date']);
                     if (d.isNotEmpty) unawaited(_loadPitDate(d));
                   },
                   child: SizedBox(
@@ -2384,8 +2550,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     width: width,
                     child: CustomPaint(
                       painter: _CrisisV2EquityChartPainter(
-                        series: series,
+                        series: visibleSeries,
                         useLogScale: useLogScale,
+                        rebaseTo100: rebaseActive,
                         hoverIndex: hoverIndex,
                         pinnedDate: pinnedPitDate,
                       ),
@@ -2395,6 +2562,20 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               );
             },
           ),
+          if (totalN >= 2) ...[
+            const SizedBox(height: 10),
+            _buildRangeBrushBar(
+              series: series,
+              sIdx: sIdx,
+              eIdx: eIdx,
+              isZoomed: isZoomed,
+              sliceV2Ret: sliceV2Ret,
+              sliceQRet: sliceQRet,
+              sliceV2Mdd: sliceV2Mdd,
+              sliceQMdd: sliceQMdd,
+              isCompact: isCompact,
+            ),
+          ],
           if (tpList.isNotEmpty) ...[
             const SizedBox(height: 10),
             Wrap(
@@ -2445,6 +2626,291 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               ],
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRangeBrushBar({
+    required List<dynamic> series,
+    required int sIdx,
+    required int eIdx,
+    required bool isZoomed,
+    required double sliceV2Ret,
+    required double sliceQRet,
+    required double sliceV2Mdd,
+    required double sliceQMdd,
+    required bool isCompact,
+  }) {
+    final maxIdx = series.length - 1;
+    final minSpan = math.min(15, maxIdx);
+    final firstDate = text(asMap(series.first)['date']);
+    final lastDate = text(asMap(series.last)['date']);
+    final selStartDate = text(asMap(series[sIdx])['date']);
+    final selEndDate = text(asMap(series[eIdx])['date']);
+    final selDays = eIdx - sIdx + 1;
+
+    final presets = <Map<String, dynamic>>[
+      {'id': 'all', 'en': 'All', 'zh': '全部'},
+      if (series.length > 260) {'id': '1y', 'en': '1Y', 'zh': '近1年', 'days': 252},
+      if (series.length > 760) {'id': '3y', 'en': '3Y', 'zh': '近3年', 'days': 756},
+      {'id': '2015', 'en': '2015 FX', 'zh': '2015 汇改', 's': '2015-07-01', 'e': '2016-05-31'},
+      {'id': '2018', 'en': '2018 QT', 'zh': '2018 缩表', 's': '2018-01-02', 'e': '2019-05-31'},
+      {'id': '2020', 'en': '2020 COVID', 'zh': '2020 熔断', 's': '2020-01-02', 'e': '2020-09-30'},
+      {'id': '2022', 'en': '2022 Bear', 'zh': '2022 慢熊', 's': '2021-11-01', 'e': '2023-06-30'},
+      {'id': '2024', 'en': '2024 Yen', 'zh': '2024 日元', 's': '2024-06-01', 'e': '2024-11-30'},
+      {'id': '2025', 'en': '2025 Tariff', 'zh': '2025 关税', 's': '2024-12-15', 'e': '2025-07-31'},
+    ].where((p) {
+      final s = p['s'] as String?;
+      final e = p['e'] as String?;
+      if (s == null || e == null) return true;
+      return e.compareTo(firstDate) > 0 && s.compareTo(lastDate) < 0;
+    }).toList();
+
+    Widget rangeChip(String id, String label, VoidCallback onTap, {bool active = false, Color? accent}) {
+      final col = accent ?? _mint;
+      return InkWell(
+        key: ValueKey('crisis-v2-range-preset-$id'),
+        borderRadius: BorderRadius.circular(6),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+          decoration: BoxDecoration(
+            color: active ? col.withValues(alpha: 0.18) : _bgInset,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: active ? col : _borderLine,
+              width: active ? 1.1 : 0.8,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: active ? col : _fgMuted,
+              fontSize: 10.6,
+              fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      key: const ValueKey('crisis-v2-range-brush'),
+      padding: EdgeInsets.fromLTRB(isCompact ? 8 : 10, 8, isCompact ? 8 : 10, 8),
+      decoration: BoxDecoration(
+        color: _bgCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _borderLine),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Wrap(
+                spacing: 5,
+                runSpacing: 5,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    w('Time Range:', '时间区间：'),
+                    style: const TextStyle(
+                      color: _fgMuted,
+                      fontSize: 10.8,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  for (final p in presets)
+                    rangeChip(
+                      p['id'] as String,
+                      w(p['en'] as String, p['zh'] as String),
+                      () => _applyQuickRange(
+                        series,
+                        p['id'] as String,
+                        startDate: p['s'] as String?,
+                        endDate: p['e'] as String?,
+                        trailingDays: p['days'] as int?,
+                      ),
+                      active: activeQuickRange == p['id'],
+                    ),
+                  if (isZoomed)
+                    rangeChip(
+                      'rebase_toggle',
+                      rebaseZoomedSlice
+                          ? w('Base = 100', '起点归一=100')
+                          : w('Abs NAV (\$)', '绝对净值(\$)'),
+                      () => setState(() => rebaseZoomedSlice = !rebaseZoomedSlice),
+                      active: true,
+                      accent: _sky,
+                    ),
+                ],
+              ),
+              Text(
+                '$selStartDate -> $selEndDate ($selDays${w('D', '交易日')})  ·  v2.0 ${_fmtPct(sliceV2Ret)} (MDD ${_fmtPct(sliceV2Mdd, signed: false)})  vs  QQQ ${_fmtPct(sliceQRet)} (MDD ${_fmtPct(sliceQMdd, signed: false)})',
+                style: TextStyle(
+                  color: isZoomed ? _mint : _fgMuted,
+                  fontSize: 10.8,
+                  fontWeight: isZoomed ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          LayoutBuilder(
+            builder: (_, c) {
+              final width = c.maxWidth;
+              const padL = 44.0;
+              const padR = 4.0;
+              final plotW = math.max(1.0, width - padL - padR);
+              final startX = padL + (sIdx / maxIdx) * plotW;
+              final endX = padL + (eIdx / maxIdx) * plotW;
+
+              int idxFromX(double dx) {
+                final frac = ((dx - padL) / plotW).clamp(0.0, 1.0);
+                return (frac * maxIdx).round();
+              }
+
+              String hitMode(double dx) {
+                const grabTol = 20.0;
+                final dL = (dx - startX).abs();
+                final dR = (dx - endX).abs();
+                if (dL <= grabTol && dL <= dR) return 'left';
+                if (dR <= grabTol) return 'right';
+                if (dx > startX && dx < endX) {
+                  return isZoomed ? 'move' : 'brush';
+                }
+                return 'jump';
+              }
+
+              return MouseRegion(
+                cursor: _brushCursor,
+                onHover: (ev) {
+                  final mode = hitMode(ev.localPosition.dx);
+                  final nextCur = (mode == 'left' || mode == 'right')
+                      ? SystemMouseCursors.resizeLeftRight
+                      : (mode == 'move'
+                            ? SystemMouseCursors.grab
+                            : (mode == 'brush'
+                                  ? SystemMouseCursors.precise
+                                  : SystemMouseCursors.click));
+                  if (nextCur != _brushCursor) {
+                    setState(() => _brushCursor = nextCur);
+                  }
+                },
+                child: GestureDetector(
+                  key: const ValueKey('crisis-v2-range-track'),
+                  behavior: HitTestBehavior.opaque,
+                  onDoubleTap: () => _applyQuickRange(series, 'all'),
+                  onTapUp: (details) {
+                    final dx = details.localPosition.dx;
+                    final mode = hitMode(dx);
+                    if (mode == 'jump' && isZoomed) {
+                      final clicked = idxFromX(dx);
+                      final span = eIdx - sIdx;
+                      final halfSpan = (span / 2).floor();
+                      final ns = (clicked - halfSpan).clamp(
+                        0,
+                        math.max(0, maxIdx - span),
+                      ).toInt();
+                      final ne = (ns + span).clamp(
+                        math.min(maxIdx, ns + minSpan),
+                        maxIdx,
+                      ).toInt();
+                      setState(() {
+                        rangeStartIdx = ns;
+                        rangeEndIdx = ne;
+                        activeQuickRange = 'custom';
+                        hoverIndex = -1;
+                      });
+                    }
+                  },
+                  onHorizontalDragStart: (details) {
+                    final dx = details.localPosition.dx;
+                    final mode = hitMode(dx);
+                    _brushDragMode = mode == 'jump'
+                        ? ((dx < startX) ? 'left' : 'right')
+                        : mode;
+                    _brushDragStartDx = dx;
+                    _brushDragOrigStart = _brushDragMode == 'brush'
+                        ? idxFromX(dx)
+                        : sIdx;
+                    _brushDragOrigEnd = eIdx;
+                  },
+                  onHorizontalDragUpdate: (details) {
+                    final dx = details.localPosition.dx;
+                    final deltaIdx =
+                        (((dx - _brushDragStartDx) / plotW) * maxIdx).round();
+                    int ns = sIdx;
+                    int ne = eIdx;
+                    if (_brushDragMode == 'left') {
+                      ns = (_brushDragOrigStart + deltaIdx).clamp(
+                        0,
+                        math.max(0, _brushDragOrigEnd - minSpan),
+                      ).toInt();
+                      ne = _brushDragOrigEnd;
+                    } else if (_brushDragMode == 'right') {
+                      ns = _brushDragOrigStart;
+                      ne = (_brushDragOrigEnd + deltaIdx).clamp(
+                        math.min(maxIdx, _brushDragOrigStart + minSpan),
+                        maxIdx,
+                      ).toInt();
+                    } else if (_brushDragMode == 'move') {
+                      final span = _brushDragOrigEnd - _brushDragOrigStart;
+                      ns = (_brushDragOrigStart + deltaIdx).clamp(
+                        0,
+                        math.max(0, maxIdx - span),
+                      ).toInt();
+                      ne = ns + span;
+                    } else if (_brushDragMode == 'brush') {
+                      final anchor = _brushDragOrigStart;
+                      final cur = idxFromX(dx);
+                      ns = math.min(anchor, cur);
+                      ne = math.max(anchor, cur);
+                      if (ne - ns < minSpan) {
+                        if (cur >= anchor) {
+                          ne = math.min(maxIdx, ns + minSpan);
+                        } else {
+                          ns = math.max(0, ne - minSpan);
+                        }
+                      }
+                    }
+                    if (ns != sIdx || ne != eIdx) {
+                      setState(() {
+                        rangeStartIdx = ns;
+                        rangeEndIdx = ne;
+                        activeQuickRange = (ns == 0 && ne == maxIdx)
+                            ? 'all'
+                            : 'custom';
+                        hoverIndex = -1;
+                      });
+                    }
+                  },
+                  onHorizontalDragEnd: (_) {
+                    _brushDragMode = '';
+                  },
+                  child: SizedBox(
+                    height: 46,
+                    width: width,
+                    child: CustomPaint(
+                      painter: _CrisisRangeBrushPainter(
+                        series: series,
+                        startIdx: sIdx,
+                        endIdx: eIdx,
+                        padL: padL,
+                        padR: padR,
+                        hintLabel: w('ZOOM', '区间'),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
         ],
       ),
     );
@@ -3132,68 +3598,85 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
 
   Widget _crisisDataRow(Map<String, dynamic> c) {
     final cushion = _n(c['mdd_cushion_pp']) ?? 0;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: _borderLine, width: 0.5)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 3,
-            child: Text(
-              w(text(c['name_en']), text(c['name_zh'])),
-              style: const TextStyle(
-                color: _fgPrimary,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+    final epStart = text(c['start_date']);
+    final epEnd = text(c['end_date']);
+    return InkWell(
+      onTap: (epStart.isNotEmpty && epEnd.isNotEmpty)
+          ? () {
+              final series = asList(
+                asMap(asMap(data?['backtest'])['active_window'])['daily_series'],
+              );
+              _applyQuickRange(
+                series,
+                'ep_$epStart',
+                startDate: epStart,
+                endDate: epEnd,
+              );
+            }
+          : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: _borderLine, width: 0.5)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 3,
+              child: Text(
+                w(text(c['name_en']), text(c['name_zh'])),
+                style: const TextStyle(
+                  color: _fgPrimary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              '${text(c['start_date'])} .. ${text(c['end_date']).substring(5)}',
-              style: const TextStyle(color: _fgMuted, fontSize: 11),
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              _fmtPct(_n(c['v2_mdd_pct']), signed: false),
-              style: const TextStyle(
-                color: _mint,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
+            Expanded(
+              flex: 2,
+              child: Text(
+                '$epStart .. ${epEnd.length >= 5 ? epEnd.substring(5) : epEnd}',
+                style: const TextStyle(color: _sky, fontSize: 11),
               ),
             ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              _fmtPct(_n(c['qqq_mdd_pct']), signed: false),
-              style: const TextStyle(color: _coral, fontSize: 12),
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              '${cushion >= 0 ? '+' : ''}${cushion.toStringAsFixed(2)}pp',
-              style: TextStyle(
-                color: cushion >= 0 ? _mint : _amber,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
+            Expanded(
+              flex: 2,
+              child: Text(
+                _fmtPct(_n(c['v2_mdd_pct']), signed: false),
+                style: const TextStyle(
+                  color: _mint,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(
-              'TP ${c['put_tp_count']} · M4 ${c['m4_trades']} · CTA ${c['cta_rot_slices']}',
-              style: const TextStyle(color: _fgMuted, fontSize: 11),
+            Expanded(
+              flex: 2,
+              child: Text(
+                _fmtPct(_n(c['qqq_mdd_pct']), signed: false),
+                style: const TextStyle(color: _coral, fontSize: 12),
+              ),
             ),
-          ),
-        ],
+            Expanded(
+              flex: 2,
+              child: Text(
+                '${cushion >= 0 ? '+' : ''}${cushion.toStringAsFixed(2)}pp',
+                style: TextStyle(
+                  color: cushion >= 0 ? _mint : _amber,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Expanded(
+              flex: 2,
+              child: Text(
+                'TP ${c['put_tp_count']} · M4 ${c['m4_trades']} · CTA ${c['cta_rot_slices']}',
+                style: const TextStyle(color: _fgMuted, fontSize: 11),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3794,12 +4277,14 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
   const _CrisisV2EquityChartPainter({
     required this.series,
     required this.useLogScale,
+    required this.rebaseTo100,
     required this.hoverIndex,
     required this.pinnedDate,
   });
 
   final List<dynamic> series;
   final bool useLogScale;
+  final bool rebaseTo100;
   final int hoverIndex;
   final String? pinnedDate;
 
@@ -3820,15 +4305,43 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
 
     double xAt(int i) => padL + (i / (series.length - 1)) * plotW;
 
+    final firstM = series.first as Map;
+    final baseV2 = math.max(1e-6, (firstM['nav_v2'] as num?)?.toDouble() ?? 100000.0);
+    final baseQ = math.max(1e-6, (firstM['nav_qqq'] as num?)?.toDouble() ?? 100000.0);
+
+    final v2Vals = List<double>.filled(series.length, 100.0);
+    final qVals = List<double>.filled(series.length, 100.0);
+    final ddV2Vals = List<double>.filled(series.length, 0.0);
+    final ddQVals = List<double>.filled(series.length, 0.0);
+
     double minEq = double.infinity;
     double maxEq = -double.infinity;
     double minDd = -5.0;
-    for (final raw in series) {
-      final m = raw as Map;
-      final v2 = (m['nav_v2'] as num?)?.toDouble() ?? 100000.0;
-      final q = (m['nav_qqq'] as num?)?.toDouble() ?? 100000.0;
-      final d2 = (m['dd_v2'] as num?)?.toDouble() ?? 0.0;
-      final dq = (m['dd_qqq'] as num?)?.toDouble() ?? 0.0;
+    double pkV2 = rebaseTo100 ? 100.0 : baseV2;
+    double pkQ = rebaseTo100 ? 100.0 : baseQ;
+
+    for (var i = 0; i < series.length; i++) {
+      final m = series[i] as Map;
+      final rawV2 = (m['nav_v2'] as num?)?.toDouble() ?? 100000.0;
+      final rawQ = (m['nav_qqq'] as num?)?.toDouble() ?? 100000.0;
+      final v2 = rebaseTo100 ? (rawV2 / baseV2) * 100.0 : rawV2;
+      final q = rebaseTo100 ? (rawQ / baseQ) * 100.0 : rawQ;
+      v2Vals[i] = v2;
+      qVals[i] = q;
+      double d2;
+      double dq;
+      if (rebaseTo100) {
+        if (v2 > pkV2) pkV2 = v2;
+        if (q > pkQ) pkQ = q;
+        d2 = (v2 / pkV2 - 1.0) * 100.0;
+        dq = (q / pkQ - 1.0) * 100.0;
+      } else {
+        d2 = (m['dd_v2'] as num?)?.toDouble() ?? 0.0;
+        dq = (m['dd_qqq'] as num?)?.toDouble() ?? 0.0;
+      }
+      ddV2Vals[i] = d2;
+      ddQVals[i] = dq;
+
       final tV2 = useLogScale ? math.log(math.max(1.0, v2)) : v2;
       final tQ = useLogScale ? math.log(math.max(1.0, q)) : q;
       if (tV2 < minEq) minEq = tV2;
@@ -3893,9 +4406,11 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
       canvas.drawLine(Offset(padL, y), Offset(padL + plotW, y), gridPaint);
       final tv = maxEq - (maxEq - minEq) * (k / 3.0);
       final v = useLogScale ? math.exp(tv) : tv;
-      final lbl = v >= 1000000
-          ? '\$${(v / 1000000).toStringAsFixed(1)}M'
-          : '\$${(v / 1000).toStringAsFixed(0)}k';
+      final lbl = rebaseTo100
+          ? v.toStringAsFixed(v >= 200 ? 0 : 1)
+          : (v >= 1000000
+                ? '\$${(v / 1000000).toStringAsFixed(1)}M'
+                : '\$${(v / 1000).toStringAsFixed(0)}k');
       _drawText(canvas, lbl, Offset(4, y - 6), const Color(0xFF9CABB9), 9.5);
     }
 
@@ -3943,10 +4458,10 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
     for (var i = 0; i < series.length; i++) {
       final m = series[i] as Map;
       final x = xAt(i);
-      final v2 = (m['nav_v2'] as num?)?.toDouble() ?? 100000.0;
-      final q = (m['nav_qqq'] as num?)?.toDouble() ?? 100000.0;
-      final d2 = (m['dd_v2'] as num?)?.toDouble() ?? 0.0;
-      final dq = (m['dd_qqq'] as num?)?.toDouble() ?? 0.0;
+      final v2 = v2Vals[i];
+      final q = qVals[i];
+      final d2 = ddV2Vals[i];
+      final dq = ddQVals[i];
       final lv = (m['lev'] as num?)?.toDouble() ?? 1.2;
       if (pinnedDate != null && m['date'] == pinnedDate) pinnedIdx = i;
       if (i == 0) {
@@ -4011,8 +4526,7 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
       final evt = (m['evt'] as num?)?.toInt() ?? 0;
       if (evt == 0) continue;
       final x = xAt(i);
-      final v2 = (m['nav_v2'] as num?)?.toDouble() ?? 100000.0;
-      final y = yEq(v2);
+      final y = yEq(v2Vals[i]);
 
       // Base 0.2% Put Open: subtle small sky dot
       if ((evt & 1) != 0 && (evt & 6) == 0) {
@@ -4055,15 +4569,17 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
       }
     }
 
-    // Date ticks along bottom
+    // Date ticks along bottom (adaptive YY-MM-DD when zoomed tight vs YYYY-MM on wide view)
+    final shortSpan = series.length < 180;
     final step = math.max(1, (series.length / 5).floor());
     for (var i = 0; i < series.length; i += step) {
       final dt = ((series[i] as Map)['date'] ?? '').toString();
-      if (dt.length >= 7) {
+      if (dt.length >= 10) {
+        final tickLbl = shortSpan ? dt.substring(2, 10) : dt.substring(0, 7);
         _drawText(
           canvas,
-          dt.substring(0, 7),
-          Offset(math.min(padL + plotW - 42, xAt(i) - 18), levTop + levH + 5),
+          tickLbl,
+          Offset(math.min(padL + plotW - 48, xAt(i) - 18), levTop + levH + 5),
           const Color(0xFF9CABB9),
           9.5,
         );
@@ -4081,10 +4597,8 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
           ..color = const Color(0xFFEDF1F5).withValues(alpha: 0.45)
           ..strokeWidth = 1.0,
       );
-      final m = series[markerIdx] as Map;
-      final v2 = (m['nav_v2'] as num?)?.toDouble() ?? 100000.0;
       canvas.drawCircle(
-        Offset(mx, yEq(v2)),
+        Offset(mx, yEq(v2Vals[markerIdx])),
         4.0,
         Paint()..color = const Color(0xFF80C6A8),
       );
@@ -4112,6 +4626,244 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
   bool shouldRepaint(covariant _CrisisV2EquityChartPainter oldDelegate) =>
       oldDelegate.series != series ||
       oldDelegate.useLogScale != useLogScale ||
+      oldDelegate.rebaseTo100 != rebaseTo100 ||
       oldDelegate.hoverIndex != hoverIndex ||
       oldDelegate.pinnedDate != pinnedDate;
+}
+
+// -----------------------------------------------------------------------------
+// INTERACTIVE TIME-RANGE OVERVIEW BRUSH / SCRUBBER BAR PAINTER
+// -----------------------------------------------------------------------------
+class _CrisisRangeBrushPainter extends CustomPainter {
+  const _CrisisRangeBrushPainter({
+    required this.series,
+    required this.startIdx,
+    required this.endIdx,
+    required this.padL,
+    required this.padR,
+    required this.hintLabel,
+  });
+
+  final List<dynamic> series;
+  final int startIdx;
+  final int endIdx;
+  final double padL;
+  final double padR;
+  final String hintLabel;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (series.length < 2) return;
+    final plotW = math.max(1.0, size.width - padL - padR);
+    const padT = 5.0;
+    const padB = 5.0;
+    final plotH = math.max(12.0, size.height - padT - padB);
+    final maxIdx = series.length - 1;
+
+    double xAt(int i) => padL + (i / maxIdx) * plotW;
+
+    // Left gutter label
+    final lblPainter = TextPainter(
+      text: TextSpan(
+        text: hintLabel,
+        style: const TextStyle(
+          color: Color(0xFF9CABB9),
+          fontSize: 9.5,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    lblPainter.paint(
+      canvas,
+      Offset(4, (size.height - lblPainter.height) / 2),
+    );
+
+    // Track background
+    final trackRect = Rect.fromLTWH(padL, padT, plotW, plotH);
+    final trackRRect = RRect.fromRectAndRadius(
+      trackRect,
+      const Radius.circular(6),
+    );
+    canvas.drawRRect(trackRRect, Paint()..color = const Color(0xFF080B0F));
+
+    canvas.save();
+    canvas.clipRRect(trackRRect);
+
+    // Compute log-NAV range for miniature preview sparkline
+    double minEq = double.infinity;
+    double maxEq = -double.infinity;
+    for (final raw in series) {
+      final m = raw as Map;
+      final v2 = math.log(math.max(1.0, (m['nav_v2'] as num?)?.toDouble() ?? 100000.0));
+      final q = math.log(math.max(1.0, (m['nav_qqq'] as num?)?.toDouble() ?? 100000.0));
+      if (v2 < minEq) minEq = v2;
+      if (q < minEq) minEq = q;
+      if (v2 > maxEq) maxEq = v2;
+      if (q > maxEq) maxEq = q;
+    }
+    if ((maxEq - minEq).abs() < 1e-6) maxEq = minEq + 1.0;
+
+    double yMini(double nav) {
+      final lv = math.log(math.max(1.0, nav));
+      final frac = ((lv - minEq) / (maxEq - minEq)).clamp(0.0, 1.0);
+      return padT + plotH - 3.0 - frac * (plotH - 6.0);
+    }
+
+    // Latch bands in overview track
+    final latchPaint = Paint()
+      ..color = const Color(0xFFB8A1EA).withValues(alpha: 0.14);
+    int? bandStart;
+    for (var i = 0; i < series.length; i++) {
+      final on = ((series[i] as Map)['latch'] as num? ?? 0) > 0;
+      if (on && bandStart == null) {
+        bandStart = i;
+      } else if (!on && bandStart != null) {
+        canvas.drawRect(
+          Rect.fromLTRB(xAt(bandStart), padT, xAt(i - 1), padT + plotH),
+          latchPaint,
+        );
+        bandStart = null;
+      }
+    }
+    if (bandStart != null) {
+      canvas.drawRect(
+        Rect.fromLTRB(xAt(bandStart), padT, xAt(maxIdx), padT + plotH),
+        latchPaint,
+      );
+    }
+
+    // Mini sparklines (QQQ muted sky + v2.0 mint + TP gold bottom ticks)
+    final pQ = Path();
+    final pV2 = Path();
+    final tpPaint = Paint()
+      ..color = const Color(0xFFF2BC60).withValues(alpha: 0.85)
+      ..strokeWidth = 1.6;
+    for (var i = 0; i < series.length; i++) {
+      final m = series[i] as Map;
+      final x = xAt(i);
+      final v2 = (m['nav_v2'] as num?)?.toDouble() ?? 100000.0;
+      final q = (m['nav_qqq'] as num?)?.toDouble() ?? 100000.0;
+      if (i == 0) {
+        pV2.moveTo(x, yMini(v2));
+        pQ.moveTo(x, yMini(q));
+      } else {
+        pV2.lineTo(x, yMini(v2));
+        pQ.lineTo(x, yMini(q));
+      }
+      final evt = (m['evt'] as num?)?.toInt() ?? 0;
+      if ((evt & 4) != 0) {
+        canvas.drawLine(
+          Offset(x, padT + plotH - 5.5),
+          Offset(x, padT + plotH),
+          tpPaint,
+        );
+      }
+    }
+
+    canvas.drawPath(
+      pQ,
+      Paint()
+        ..color = const Color(0xFF7DB8F0).withValues(alpha: 0.45)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0,
+    );
+    canvas.drawPath(
+      pV2,
+      Paint()
+        ..color = const Color(0xFF80C6A8).withValues(alpha: 0.85)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.3,
+    );
+
+    // Dimmed unselected overlays
+    final xStart = xAt(startIdx);
+    final xEnd = xAt(endIdx);
+    final maskPaint = Paint()
+      ..color = const Color(0xFF080B0F).withValues(alpha: 0.72);
+    if (xStart > padL) {
+      canvas.drawRect(
+        Rect.fromLTRB(padL, padT, xStart, padT + plotH),
+        maskPaint,
+      );
+    }
+    if (xEnd < padL + plotW) {
+      canvas.drawRect(
+        Rect.fromLTRB(xEnd, padT, padL + plotW, padT + plotH),
+        maskPaint,
+      );
+    }
+
+    // Selected active window tint & mint top/bottom rails
+    canvas.drawRect(
+      Rect.fromLTRB(xStart, padT, xEnd, padT + plotH),
+      Paint()..color = const Color(0xFF80C6A8).withValues(alpha: 0.11),
+    );
+    final railPaint = Paint()
+      ..color = const Color(0xFF80C6A8)
+      ..strokeWidth = 1.6;
+    canvas.drawLine(Offset(xStart, padT + 0.8), Offset(xEnd, padT + 0.8), railPaint);
+    canvas.drawLine(
+      Offset(xStart, padT + plotH - 0.8),
+      Offset(xEnd, padT + plotH - 0.8),
+      railPaint,
+    );
+
+    canvas.restore();
+
+    // Outer track border
+    canvas.drawRRect(
+      trackRRect,
+      Paint()
+        ..color = const Color(0xFF25313B)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0,
+    );
+
+    // Left & right draggable handle capsules with grip lines
+    void drawHandle(double hx) {
+      final clampedX = hx.clamp(padL + 5.0, padL + plotW - 5.0);
+      final hRect = RRect.fromRectAndRadius(
+        Rect.fromCenter(
+          center: Offset(clampedX, padT + plotH / 2),
+          width: 10.0,
+          height: 24.0,
+        ),
+        const Radius.circular(4),
+      );
+      canvas.drawRRect(hRect, Paint()..color = const Color(0xFF15212C));
+      canvas.drawRRect(
+        hRect,
+        Paint()
+          ..color = const Color(0xFF80C6A8)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.3,
+      );
+      final grip = Paint()
+        ..color = const Color(0xFFEDF1F5).withValues(alpha: 0.85)
+        ..strokeWidth = 1.0;
+      canvas.drawLine(
+        Offset(clampedX - 1.5, padT + plotH / 2 - 5),
+        Offset(clampedX - 1.5, padT + plotH / 2 + 5),
+        grip,
+      );
+      canvas.drawLine(
+        Offset(clampedX + 1.5, padT + plotH / 2 - 5),
+        Offset(clampedX + 1.5, padT + plotH / 2 + 5),
+        grip,
+      );
+    }
+
+    drawHandle(xStart);
+    drawHandle(xEnd);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CrisisRangeBrushPainter oldDelegate) =>
+      oldDelegate.series != series ||
+      oldDelegate.startIdx != startIdx ||
+      oldDelegate.endIdx != endIdx ||
+      oldDelegate.padL != padL ||
+      oldDelegate.padR != padR ||
+      oldDelegate.hintLabel != hintLabel;
 }
