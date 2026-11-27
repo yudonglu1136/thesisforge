@@ -141,12 +141,12 @@ void main() {
 
       // Verify live 2026-11-25 Dual-Track stress, CONT_2M, M7G Roll Audit & verified Plan D (OPRA + 2026 Calibrated BSM) numbers appear
       expect(find.textContaining('87 / 100'), findsWidgets);
-      expect(find.textContaining('\$987,611'), findsWidgets);
-      expect(find.textContaining('21.23%'), findsWidgets);
-      expect(find.textContaining('\$926,278'), findsWidgets);
-      expect(find.textContaining('22.54%'), findsWidgets);
+      expect(find.textContaining('\$994,681'), findsWidgets);
+      expect(find.textContaining('21.30%'), findsWidgets);
+      expect(find.textContaining('\$932,908'), findsWidgets);
+      expect(find.textContaining('22.62%'), findsWidgets);
       expect(find.textContaining('1.258x'), findsWidgets);
-      expect(find.textContaining('2.03%'), findsWidgets);
+      expect(find.textContaining('2.04%'), findsWidgets);
       expect(find.textContaining('9 / 60'), findsWidgets);
       expect(find.byKey(const ValueKey('crisis-v2-bsm-calibration-note')), findsOneWidget);
 
@@ -170,9 +170,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(latestSel?['window'], '5y_live');
-      expect(find.textContaining('\$315,394'), findsWidgets);
-      expect(find.textContaining('21.19%'), findsWidgets);
-      expect(find.textContaining('24.05%'), findsWidgets);
+      expect(find.textContaining('\$317,652'), findsWidgets);
+      expect(find.textContaining('21.33%'), findsWidgets);
+      expect(find.textContaining('24.23%'), findsWidgets);
 
       // Expand real MIT OPRA forensic ledger
       final ledgerToggle = find.byKey(
@@ -258,9 +258,9 @@ void main() {
       expect(find.textContaining('◆ 止盈卖出'), findsWidgets);
       expect(find.textContaining('QQQ 27-02-19 \$646 Put'), findsOneWidget);
       expect(find.textContaining('数量 0.71 张'), findsOneWidget);
-      expect(find.textContaining('卖出金额 \$2,352'), findsOneWidget);
+      expect(find.textContaining('卖出金额 \$2,370'), findsOneWidget);
 
-      // Zoom into 2022 Slow-Bear -> hover Dual-CTA rotation (2022-06-07) & Put Open (2022-11-25)
+      // Zoom into 2022 Slow-Bear -> hover Dual-CTA rotation (2022-06-07), Slow-Bear 30DTE Salvage (2022-10-20), & Put Open (2022-11-25)
       final preset2022 = find.byKey(const ValueKey('crisis-v2-range-preset-2022'));
       await tester.ensureVisible(preset2022);
       await tester.tap(preset2022);
@@ -281,9 +281,9 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.byKey(const ValueKey('crisis-v2-hover-tooltip')), findsOneWidget);
       expect(find.textContaining('▼ 30D 残值收回'), findsWidgets);
-      expect(find.textContaining('QQQ 22-11-18 \$275 Put'), findsOneWidget);
-      expect(find.textContaining('数量 3.08 张'), findsOneWidget);
-      expect(find.textContaining('卖出金额 \$4,041'), findsOneWidget);
+      expect(find.textContaining('QQQ 22-11-18 \$275 Put'), findsWidgets);
+      expect(find.textContaining('数量 3.10 张'), findsOneWidget);
+      expect(find.textContaining('卖出金额 \$4,062'), findsOneWidget);
       expect(find.textContaining('2.77x'), findsWidgets);
 
       await mouse.moveTo(chartPointAtFrac(269 / 417));
@@ -292,8 +292,8 @@ void main() {
       expect(find.byKey(const ValueKey('crisis-v2-hover-tooltip')), findsOneWidget);
       expect(find.textContaining('▲ 买入开仓'), findsWidgets);
       expect(find.textContaining('QQQ 23-02-17 \$245 Put'), findsOneWidget);
-      expect(find.textContaining('数量 4.19 张'), findsOneWidget);
-      expect(find.textContaining('买入金额 \$1,337'), findsOneWidget);
+      expect(find.textContaining('数量 4.22 张'), findsOneWidget);
+      expect(find.textContaining('买入金额 \$1,346'), findsOneWidget);
 
       // Move pointer off chart so hover cleanly dismisses
       await mouse.moveTo(Offset.zero);
@@ -349,8 +349,8 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('LIVE STRESS 87 / 100'), findsWidgets);
-      expect(find.textContaining('\$987,611'), findsWidgets);
-      expect(find.textContaining('22.54%'), findsWidgets);
+      expect(find.textContaining('\$994,681'), findsWidgets);
+      expect(find.textContaining('22.62%'), findsWidgets);
       expect(find.byKey(const ValueKey('crisis-v2-bsm-calibration-note')), findsOneWidget);
 
       // Zoom into 2025 Tariff via range brush preset on mobile EN -> verify hover tooltip zero overflow & zero CJK
@@ -378,8 +378,8 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.byKey(const ValueKey('crisis-v2-hover-tooltip')), findsOneWidget);
       expect(find.textContaining('◆ SELL TP'), findsWidgets);
-      expect(find.textContaining('Qty 13.57 cts'), findsOneWidget);
-      expect(find.textContaining('Sell \$39,534'), findsOneWidget);
+      expect(find.textContaining('Qty 13.68 cts'), findsOneWidget);
+      expect(find.textContaining('Sell \$39,837'), findsOneWidget);
       expect(find.textContaining('+1 more trade'), findsOneWidget);
 
       // Click 2025-04-07 Put TP badge on mobile EN -> verify PIT inspector renders cleanly with zero overflow & zero CJK

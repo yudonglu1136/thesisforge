@@ -1229,13 +1229,22 @@ export function buildLiveCockpit(
     volGateReasonZh = `高波禁追保护生效（VXN ${vxn.toFixed(1)}，VIX/VIX3M ${vr.toFixed(3)}）：轨道 A 原始预警（${rawCrisisProb} / ${rawTargetSlots} 槽）如实反映实时压力，轨道 B 禁止高波追买昂贵新 Put。`;
   }
 
-  // Sleeve A status (B020 Baseline Floor: 0.20% NAV, VIX <= 20.0 & VIX/VIX3M < 1.02 & not in 5D Lockout, Hard 75D roll)
+  // Sleeve A status (B020 Baseline Floor: 0.20% NAV, VIX <= 20.0 & VIX/VIX3M < 1.02 & not in 5D Lockout)
+  // Slow-Bear Latch invariant: NEVER open 125D while latchArmed — strictly open 90D -15% OTM and hold to Hard 30D salvage/roll.
+  const activeTargetDte = latchArmed ? 90 : 125;
+  const activeRollDte = latchArmed ? 30 : 75;
   let sleeveAStatus = 'OPEN_READY';
   let sleeveATone = 'mint';
-  let sleeveAValEn = 'READY · 0.20% (125D -15%)';
-  let sleeveAValZh = '允许建仓/75D强滚';
-  let sleeveADetEn = `VIX ${vix.toFixed(1)} <= 20.0 & VR ${vr.toFixed(3)} < 1.02 & unlocked. Maintain 0.20% NAV 125D -15% OTM Put with Hard 75D roll.`;
-  let sleeveADetZh = `VIX ${vix.toFixed(1)} <= 20.0 且 VIX/3M ${vr.toFixed(3)} < 1.02 且未锁仓，正常维护 0.20% NAV 125D -15% OTM 常态盾（75D 强制滚仓）。`;
+  let sleeveAValEn = latchArmed
+    ? 'READY · 0.20% (90D -> 30D · Slow-Bear)'
+    : 'READY · 0.20% (125D -15%)';
+  let sleeveAValZh = latchArmed ? '慢熊90D建仓/30D收回' : '允许建仓/75D强滚';
+  let sleeveADetEn = latchArmed
+    ? `VIX ${vix.toFixed(1)} <= 20.0 & VR ${vr.toFixed(3)} < 1.02 & Slow-Bear Latch ON: NEVER open 125D — strictly open 0.20% NAV 90D -15% OTM Put and hold to Hard 30D salvage/roll.`
+    : `VIX ${vix.toFixed(1)} <= 20.0 & VR ${vr.toFixed(3)} < 1.02 & unlocked. Maintain 0.20% NAV 125D -15% OTM Put with Hard 75D roll.`;
+  let sleeveADetZh = latchArmed
+    ? `VIX ${vix.toFixed(1)} <= 20.0 且 VIX/3M ${vr.toFixed(3)} < 1.02，但处于慢熊锁存期：严禁开 125D，只能开 0.20% NAV 90D -15% OTM 且强行拿到 30DTE 收回残值/滚仓。`
+    : `VIX ${vix.toFixed(1)} <= 20.0 且 VIX/3M ${vr.toFixed(3)} < 1.02 且未锁仓，正常维护 0.20% NAV 125D -15% OTM 常态盾（75D 强制滚仓）。`;
   if (postTpLock) {
     sleeveAStatus = 'POST_TP_LOCKOUT';
     sleeveATone = 'coral';
@@ -1248,15 +1257,19 @@ export function buildLiveCockpit(
     sleeveATone = 'coral';
     sleeveAValEn = `INVERTED (${vr.toFixed(2)}) · WATCH TP`;
     sleeveAValZh = `倒挂 (${vr.toFixed(2)}) · 盯止盈`;
-    sleeveADetEn = 'VIX/VIX3M >= 1.02 inverted: no new 0.20% buys; existing put watches Near-ITM / VIX>=45 TP or Hard 75D salvage.';
-    sleeveADetZh = '期限结构倒挂 >= 1.02：暂停新开 0.20% 常态盾；已有仓位盯紧近实值/VIX>=45 止盈或 75D 回收。';
+    sleeveADetEn = `VIX/VIX3M >= 1.02 inverted: no new 0.20% buys; existing put watches Near-ITM / VIX>=45 TP or Hard ${activeRollDte}D salvage.`;
+    sleeveADetZh = `期限结构倒挂 >= 1.02：暂停新开 0.20% 常态盾；已有仓位盯紧近实值/VIX>=45 止盈或 ${activeRollDte}D 回收。`;
   } else if (vix > 20.0) {
     sleeveAStatus = 'PAUSED_VIX_GT_20';
     sleeveATone = 'amber';
     sleeveAValEn = `PAUSED (VIX ${vix.toFixed(1)} > 20)`;
     sleeveAValZh = `暂停新开 (VIX ${vix.toFixed(1)} > 20)`;
-    sleeveADetEn = 'VIX > 20.0 pauses new 0.20% baseline buys; existing put salvages at <= 75 DTE if VIX stays > 20.';
-    sleeveADetZh = 'VIX > 20.0 暂停新开 0.20% 常态盾；已有仓位到 <= 75 DTE 时回收残值落袋。';
+    sleeveADetEn = latchArmed
+      ? 'VIX > 20.0 pauses new 0.20% baseline buys; existing Slow-Bear 90D put holds to <= 30 DTE salvage if VIX stays > 20.'
+      : 'VIX > 20.0 pauses new 0.20% baseline buys; existing put salvages at <= 75 DTE if VIX stays > 20.';
+    sleeveADetZh = latchArmed
+      ? 'VIX > 20.0 暂停新开 0.20% 常态盾；已有慢熊 90D 仓位强行拿到 <= 30 DTE 回收残值落袋。'
+      : 'VIX > 20.0 暂停新开 0.20% 常态盾；已有仓位到 <= 75 DTE 时回收残值落袋。';
   }
 
   // Sleeve B status (M7G_tier_45_65 Graded Ladder: 1-3 Slots x 1.25% NAV = up to 3.75% NAV, UNIFORM -15% OTM!)
@@ -1276,12 +1289,16 @@ export function buildLiveCockpit(
     sleeveBDetEn = `Slow-Bear +8% Latch ON + Dead-Cat Bounce + VXN <= 28 & VR <= 0.90 -> ${actionableSlots} slot(s) x 1.25% NAV in UNIFORM 90D -15% OTM Put (Hard 30D roll).`;
     sleeveBDetZh = `慢熊 +8% 磁滞锁存开启 + 死猫反抽 + VXN<=28 & VR<=0.90 -> 激活 ${actionableSlots} 槽 x 1.25% NAV，统一买 90D -15% OTM（30D 强制滚仓）。`;
   } else if (sleeveBR1Ready) {
-    sleeveBStatus = 'OPEN_ROUTE1_125D';
-    sleeveBTone = 'amber';
-    sleeveBValEn = `FIRE ${actionableSlots}/3 (${actionableBudgetPct.toFixed(2)}%) · 125D -15%`;
-    sleeveBValZh = `触发 ${actionableSlots}/3 槽 (${actionableBudgetPct.toFixed(2)}%) · 125D -15%`;
-    sleeveBDetEn = `Crisis score ${entryCrisisProb} (>=35: 1s, >=45: 2s, >=65: 3s) in low-vol window -> ${actionableSlots} slot(s) x 1.25% NAV in 125D -15% OTM Put (Hard 75D roll).`;
-    sleeveBDetZh = `危机得分 ${entryCrisisProb}（>=35开1槽 / >=45开2槽 / >=65开3槽）且处低波窗口 -> 激活 ${actionableSlots} 槽 x 1.25% NAV，买 125D -15% OTM（75D 强滚）。`;
+    sleeveBStatus = latchArmed ? 'OPEN_ROUTE1_90D_SLOWBEAR' : 'OPEN_ROUTE1_125D';
+    sleeveBTone = latchArmed ? 'lilac' : 'amber';
+    sleeveBValEn = `FIRE ${actionableSlots}/3 (${actionableBudgetPct.toFixed(2)}%) · ${activeTargetDte}D -15%`;
+    sleeveBValZh = `触发 ${actionableSlots}/3 槽 (${actionableBudgetPct.toFixed(2)}%) · ${activeTargetDte}D -15%`;
+    sleeveBDetEn = latchArmed
+      ? `Crisis score ${entryCrisisProb} with Slow-Bear Latch ON -> NEVER open 125D; strictly open ${actionableSlots} slot(s) x 1.25% NAV in 90D -15% OTM Put (Hard 30D salvage/roll).`
+      : `Crisis score ${entryCrisisProb} (>=35: 1s, >=45: 2s, >=65: 3s) in low-vol window -> ${actionableSlots} slot(s) x 1.25% NAV in 125D -15% OTM Put (Hard 75D roll).`;
+    sleeveBDetZh = latchArmed
+      ? `危机得分 ${entryCrisisProb} 且处于慢熊锁存期 -> 严禁开 125D，强制激活 ${actionableSlots} 槽 x 1.25% NAV 买入 90D -15% OTM（30DTE 强行收回/滚仓）。`
+      : `危机得分 ${entryCrisisProb}（>=35开1槽 / >=45开2槽 / >=65开3槽）且处低波窗口 -> 激活 ${actionableSlots} 槽 x 1.25% NAV，买 125D -15% OTM（75D 强滚）。`;
   } else if (postTpLock) {
     sleeveBStatus = 'POST_TP_LOCKOUT';
     sleeveBTone = 'coral';
@@ -1322,11 +1339,11 @@ export function buildLiveCockpit(
   const boxAnnualDragPct = r2(0.2 * boxRatePct);
 
   const rollStats = {
-    gross_turnover_pct_nav_yr: Number(rollEcon?.put_gross_turnover_pct_nav_yr ?? 6.13),
-    roll_salvage_pct: Number(rollEcon?.put_roll_salvage_pct ?? 67.8),
-    true_net_bleed_pct_nav_yr: Number(rollEcon?.put_true_net_bleed_pct_nav_yr ?? 2.03),
-    put_net_pnl_usd: Number(rollEcon?.put_net_pnl_usd ?? 121171.24),
-    put_payoff_mult: Number(rollEcon?.put_payoff_mult ?? 1.58),
+    gross_turnover_pct_nav_yr: Number(rollEcon?.put_gross_turnover_pct_nav_yr ?? 6.11),
+    roll_salvage_pct: Number(rollEcon?.put_roll_salvage_pct ?? 67.1),
+    true_net_bleed_pct_nav_yr: Number(rollEcon?.put_true_net_bleed_pct_nav_yr ?? 2.04),
+    put_net_pnl_usd: Number(rollEcon?.put_net_pnl_usd ?? 113321.13),
+    put_payoff_mult: Number(rollEcon?.put_payoff_mult ?? 1.57),
   };
 
   // Master Command Center Action Directive (Plan D Double-Champion)
@@ -1365,10 +1382,18 @@ export function buildLiveCockpit(
   } else if (sleeveBR1Ready) {
     actionCode = 'OPEN_SLEEVE_B_ROUTE1';
     severity = 'action';
-    headlineEn = `M7G GRADED LADDER FIRED (${entryCrisisProb} -> ${actionableSlots}/3 Slots) · Buy ${actionableBudgetPct.toFixed(2)}% NAV 125D -15% OTM Put`;
-    headlineZh = `M7G 阶梯危机盾触发（得分 ${entryCrisisProb} -> ${actionableSlots}/3 槽）· T+1 买入 ${actionableBudgetPct.toFixed(2)}% NAV 125D -15% OTM Put`;
-    summaryEn = `Low-vol structural warning lit (Score ${entryCrisisProb}: >=35 1s, >=45 2s, >=65 3s). Open/scale up to ${actionableSlots} x 1.25% NAV in 125D -15% OTM ($${strike15Round} strike) with Hard 75D roll (recovers ${rollStats.roll_salvage_pct}% salvage).`;
-    summaryZh = `低波结构预警达标（得分 ${entryCrisisProb}：>=35 开1槽、>=45 开2槽、>=65 开3槽）。建仓/加码至 ${actionableSlots} x 1.25% NAV 的 125D -15% OTM（$${strike15Round}），75D 强制早滚回收 ${rollStats.roll_salvage_pct}% 残值。`;
+    headlineEn = latchArmed
+      ? `M7G GRADED LADDER (${entryCrisisProb} -> ${actionableSlots}/3 Slots · Slow-Bear Latch) · Buy ${actionableBudgetPct.toFixed(2)}% NAV 90D -15% OTM Put`
+      : `M7G GRADED LADDER FIRED (${entryCrisisProb} -> ${actionableSlots}/3 Slots) · Buy ${actionableBudgetPct.toFixed(2)}% NAV 125D -15% OTM Put`;
+    headlineZh = latchArmed
+      ? `M7G 阶梯危机盾（得分 ${entryCrisisProb} -> ${actionableSlots}/3 槽 · 慢熊锁存）· 强制买 ${actionableBudgetPct.toFixed(2)}% NAV 90D -15% OTM Put`
+      : `M7G 阶梯危机盾触发（得分 ${entryCrisisProb} -> ${actionableSlots}/3 槽）· T+1 买入 ${actionableBudgetPct.toFixed(2)}% NAV 125D -15% OTM Put`;
+    summaryEn = latchArmed
+      ? `Slow-Bear Latch ON: NEVER open 125D. Open/scale up to ${actionableSlots} x 1.25% NAV in 90D -15% OTM ($${strike15Round} strike) and hold to Hard 30D salvage/roll.`
+      : `Low-vol structural warning lit (Score ${entryCrisisProb}: >=35 1s, >=45 2s, >=65 3s). Open/scale up to ${actionableSlots} x 1.25% NAV in 125D -15% OTM ($${strike15Round} strike) with Hard 75D roll (recovers ${rollStats.roll_salvage_pct}% salvage).`;
+    summaryZh = latchArmed
+      ? `慢熊锁存期严禁开 125D：建仓/加码至 ${actionableSlots} x 1.25% NAV 的 90D -15% OTM（$${strike15Round}），并强行拿到 30DTE 收回残值/滚仓。`
+      : `低波结构预警达标（得分 ${entryCrisisProb}：>=35 开1槽、>=45 开2槽、>=65 开3槽）。建仓/加码至 ${actionableSlots} x 1.25% NAV 的 125D -15% OTM（$${strike15Round}），75D 强制早滚回收 ${rollStats.roll_salvage_pct}% 残值。`;
   } else if (stressPack.live_stress_index >= 50 || rawCrisisProb >= 35 || postTpLock) {
     actionCode = 'HOLD_HIGH_VOL_WATCH_TP';
     severity = stressPack.live_stress_index >= 75 ? 'crisis' : 'elevated';
@@ -1383,10 +1408,18 @@ export function buildLiveCockpit(
   } else if (sleeveAStatus === 'OPEN_READY') {
     actionCode = 'OPEN_SLEEVE_A';
     severity = 'calm';
-    headlineEn = `Calm Low-Vol · Core ${liveLev.toFixed(2)}x Active + B020 Baseline (0.20% NAV 125D -15% OTM) Ready`;
-    headlineZh = `低波顺风期 · 核心 ${liveLev.toFixed(2)}x 运行 + B020 常态盾（0.20% NAV 125D -15% OTM）可建仓/75D强滚`;
-    summaryEn = `VIX ${vix.toFixed(2)} <= 20.0 & VIX/VIX3M ${vr.toFixed(3)} < 1.02. Maintain 0.20% NAV 125D -15% OTM baseline Put (Hard 75D roll -> ${rollStats.true_net_bleed_pct_nav_yr}% NAV/yr true net bleed) + 20% Dual-CTA Box stack.`;
-    summaryZh = `VIX ${vix.toFixed(2)} <= 20.0 且 VIX/VIX3M ${vr.toFixed(3)} < 1.02。维持 0.20% NAV 125D -15% OTM 常态尾盾（75D 强滚真实净耗仅 ${rollStats.true_net_bleed_pct_nav_yr}% NAV/yr）与 20% 双CTA Box 叠加。`;
+    headlineEn = latchArmed
+      ? `Slow-Bear Latch ON · Core ${liveLev.toFixed(2)}x + B020 Baseline (0.20% NAV 90D -15% ONLY · Hard 30D Salvage)`
+      : `Calm Low-Vol · Core ${liveLev.toFixed(2)}x Active + B020 Baseline (0.20% NAV 125D -15% OTM) Ready`;
+    headlineZh = latchArmed
+      ? `慢熊锁存期低波反抽 · 核心 ${liveLev.toFixed(2)}x + B020 常态盾强制切 90D -15%（禁开125D · 30DTE 收回）`
+      : `低波顺风期 · 核心 ${liveLev.toFixed(2)}x 运行 + B020 常态盾（0.20% NAV 125D -15% OTM）可建仓/75D强滚`;
+    summaryEn = latchArmed
+      ? `VIX ${vix.toFixed(2)} <= 20.0 & VIX/VIX3M ${vr.toFixed(3)} < 1.02 during Slow-Bear Latch: NEVER open 125D — strictly open 0.20% NAV 90D -15% OTM Put and hold to 30 DTE salvage/roll.`
+      : `VIX ${vix.toFixed(2)} <= 20.0 & VIX/VIX3M ${vr.toFixed(3)} < 1.02. Maintain 0.20% NAV 125D -15% OTM baseline Put (Hard 75D roll -> ${rollStats.true_net_bleed_pct_nav_yr}% NAV/yr true net bleed) + 20% Dual-CTA Box stack.`;
+    summaryZh = latchArmed
+      ? `慢熊锁存期内出现 VIX ${vix.toFixed(2)} <= 20.0 与 VIX/VIX3M ${vr.toFixed(3)} < 1.02：严禁开 125D，只能开 0.20% NAV 90D -15% OTM 并强行拿到 30DTE 收回残值/滚仓。`
+      : `VIX ${vix.toFixed(2)} <= 20.0 且 VIX/VIX3M ${vr.toFixed(3)} < 1.02。维持 0.20% NAV 125D -15% OTM 常态尾盾（75D 强滚真实净耗仅 ${rollStats.true_net_bleed_pct_nav_yr}% NAV/yr）与 20% 双CTA Box 叠加。`;
   }
 
   // Build 3 Pillars with Dual-Track Raw vs Vol-Gate badges on every single sensor!
@@ -1747,8 +1780,9 @@ export function buildLiveCockpit(
       sub_engines: subEngines,
       target_strikes: {
         route1_125d_15otm: {
-          target_dte: 125,
-          roll_dte: 75,
+          target_dte: activeTargetDte,
+          roll_dte: activeRollDte,
+          slow_bear_override: latchArmed,
           otm_pct: -15,
           exact_strike: strike15Exact,
           suggested_strike: strike15Round,
@@ -2231,6 +2265,8 @@ function buildPitHistoryForWindow(activeWin, targetDate) {
         exit_date: t.exit_date,
         exp: t.exp,
         strike: t.strike,
+        target_dte: t.target_dte ?? (t.sleeve === 'crisis_m4' ? 90 : 125),
+        roll_dte: t.roll_dte ?? (t.sleeve === 'crisis_m4' ? 30 : 75),
         entry_dte: t.entry_dte,
         exit_dte: t.exit_dte,
         entry_spot: t.entry_spot,
@@ -2268,6 +2304,8 @@ function buildPitHistoryForWindow(activeWin, targetDate) {
         exit_date: t.exit_date,
         exp: t.exp,
         strike: t.strike,
+        target_dte: t.target_dte ?? (t.sleeve === 'crisis_m4' ? 90 : 125),
+        roll_dte: t.roll_dte ?? (t.sleeve === 'crisis_m4' ? 30 : 75),
         entry_dte: t.entry_dte,
         entry_spot: t.entry_spot,
         entry_fill: t.entry_fill,
@@ -2303,6 +2341,8 @@ function buildPitHistoryForWindow(activeWin, targetDate) {
         entry_date: op.entry_date,
         exp: op.exp,
         strike: op.strike,
+        target_dte: op.target_dte ?? (op.sleeve === 'crisis_m4' ? 90 : 125),
+        roll_dte: op.roll_dte ?? (op.sleeve === 'crisis_m4' ? 30 : 75),
         entry_dte: op.entry_dte,
         entry_spot: op.entry_spot,
         entry_fill: op.entry_fill,

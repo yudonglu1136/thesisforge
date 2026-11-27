@@ -952,26 +952,43 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                       ),
                       _amber,
                     ),
-                    _sizerChip(
-                      w('B020 Base (0.20% · 125D -15%)', 'B020 常态盾 0.20% · 125D -15%'),
-                      'K = \$${_n(r1Strike['suggested_strike'])?.round() ?? 0} (${_fmtUsd(accountNav * 0.002)})',
-                      w(
-                        'Exact ${_fmtUsd(_n(r1Strike['exact_strike']), dec: 2)} · VIX<=20 · Hard 75D Roll',
-                        '精确 ${_fmtUsd(_n(r1Strike['exact_strike']), dec: 2)} · VIX<=20 · 75D 强滚',
-                      ),
-                      _sky,
+                    Builder(
+                      builder: (_) {
+                        final sbOv = r1Strike['slow_bear_override'] == true;
+                        final tgtD = (_n(r1Strike['target_dte']) ?? 125).toInt();
+                        final rlD = (_n(r1Strike['roll_dte']) ?? 75).toInt();
+                        return _sizerChip(
+                          w(
+                            'B020 Base (0.20% · ${tgtD}D -15%${sbOv ? ' · Slow-Bear' : ''})',
+                            'B020 常态盾 0.20% · ${tgtD}D -15%${sbOv ? ' · 慢熊禁125D' : ''}',
+                          ),
+                          'K = \$${_n(r1Strike['suggested_strike'])?.round() ?? 0} (${_fmtUsd(accountNav * 0.002)})',
+                          w(
+                            'Exact ${_fmtUsd(_n(r1Strike['exact_strike']), dec: 2)} · VIX<=20 · Hard ${rlD}D ${sbOv ? 'Salvage' : 'Roll'}',
+                            '精确 ${_fmtUsd(_n(r1Strike['exact_strike']), dec: 2)} · VIX<=20 · ${rlD}D ${sbOv ? '强行收回' : '强滚'}',
+                          ),
+                          sbOv ? _lilac : _sky,
+                        );
+                      },
                     ),
-                    _sizerChip(
-                      w(
-                        'M7G Ladder (1-3 x 1.25% · 125D -15%)',
-                        'M7G 阶梯盾 1-3x1.25% · 125D -15%',
-                      ),
-                      'K = \$${_n(r1Strike['suggested_strike'])?.round() ?? 0} (${_fmtUsd(accountNav * 0.0125)}/s · Max ${_fmtUsd(accountNav * 0.0375)})',
-                      w(
-                        'Score >=35/45/65 -> 1/2/3 Slots · Hard 75D Roll',
-                        '得分 >=35/45/65 -> 开 1/2/3 槽 · 75D 强滚',
-                      ),
-                      _amber,
+                    Builder(
+                      builder: (_) {
+                        final sbOv = r1Strike['slow_bear_override'] == true;
+                        final tgtD = (_n(r1Strike['target_dte']) ?? 125).toInt();
+                        final rlD = (_n(r1Strike['roll_dte']) ?? 75).toInt();
+                        return _sizerChip(
+                          w(
+                            'M7G Ladder (1-3 x 1.25% · ${tgtD}D -15%)',
+                            'M7G 阶梯盾 1-3x1.25% · ${tgtD}D -15%',
+                          ),
+                          'K = \$${_n(r1Strike['suggested_strike'])?.round() ?? 0} (${_fmtUsd(accountNav * 0.0125)}/s · Max ${_fmtUsd(accountNav * 0.0375)})',
+                          w(
+                            'Score >=35/45/65 -> 1/2/3 Slots · Hard ${rlD}D ${sbOv ? 'Salvage' : 'Roll'}',
+                            '得分 >=35/45/65 -> 开 1/2/3 槽 · ${rlD}D ${sbOv ? '强行收回' : '强滚'}',
+                          ),
+                          sbOv ? _lilac : _amber,
+                        );
+                      },
                     ),
                     _sizerChip(
                       w(
@@ -1487,9 +1504,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final actSlots = _n(tp['actionable_m7g_slots'])?.round() ?? 0;
     final actBud = _n(tp['actionable_m7g_budget_pct']) ?? (actSlots * 1.25);
     final m7Info = asMap(tp['m7g_ladder_and_bleed']);
-    final grossTurn = _n(m7Info['gross_turnover_pct_nav_yr']) ?? 6.13;
-    final salvPct = _n(m7Info['roll_salvage_pct']) ?? 67.8;
-    final netBleed = _n(m7Info['true_net_bleed_pct_nav_yr']) ?? 2.03;
+    final grossTurn = _n(m7Info['gross_turnover_pct_nav_yr']) ?? 6.11;
+    final salvPct = _n(m7Info['roll_salvage_pct']) ?? 67.1;
+    final netBleed = _n(m7Info['true_net_bleed_pct_nav_yr']) ?? 2.04;
     final vgStatus = text(tp['vol_gate_status']);
     final vgColor = vgStatus == 'ENTRY_ALLOWED'
         ? _mint
@@ -2237,9 +2254,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             Builder(
               builder: (_) {
                 final kOp = asMap(win['kpi_opra_verified_primary']);
-                final gTurn = _n(kOp['put_gross_turnover_pct_nav_yr']) ?? 6.13;
-                final rSalv = _n(kOp['put_roll_salvage_pct']) ?? 67.8;
-                final nBld = _n(kOp['put_true_net_bleed_pct_nav_yr']) ?? 2.03;
+                final gTurn = _n(kOp['put_gross_turnover_pct_nav_yr']) ?? 6.11;
+                final rSalv = _n(kOp['put_roll_salvage_pct']) ?? 67.1;
+                final nBld = _n(kOp['put_true_net_bleed_pct_nav_yr']) ?? 2.04;
                 return Wrap(
                   spacing: 8,
                   runSpacing: 6,
@@ -2492,8 +2509,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         '危机盾晚段 5x 全额止盈（<=45D）',
       ),
       'base_tp_5x_late' => w(
-        'Base Late 5x Full TP (<=60D & >=5.0x)',
-        '常态盾晚段 5x 全额止盈（<=60D）',
+        'Base Late 5x Full TP (<=60D/45D & >=5.0x)',
+        '常态盾晚段 5x 全额止盈',
       ),
       'tp_vr110_dd10_full' => w(
         'Full Right-Tail TP',
@@ -2504,7 +2521,11 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         '5x 止盈落袋',
       ),
       'roll_75d' => w('Hard 75D Roll / Salvage', '75D 强制早滚 / 回收残值'),
-      'roll_30d' => w('M4 Hard 30D Roll / Salvage', 'M4 30D 强制早滚 / 回收'),
+      'roll_30d' => w('Hard 30D Roll / Salvage', '30D 强制收回 / 滚仓'),
+      'salvage_30d_slowbear' => w(
+        'Slow-Bear 30D Salvage (VIX > 20 Pause)',
+        '慢熊 30DTE 残值收回（VIX > 20 暂停）',
+      ),
       'salvage_vix_expensive' => w(
         '75D Salvage (VIX > 20 Pause)',
         '75D 残值回收（VIX > 20 暂停）',
@@ -2584,6 +2605,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
         'sleeve': text(t['sleeve']),
         'exp': text(t['exp']),
         'strike': _n(t['strike']),
+        'target_dte': _n(t['target_dte']),
+        'roll_dte': _n(t['roll_dte']),
         'contracts': _n(t['contracts']),
         'fill': _n(t['entry_fill']),
         'amount_usd': _n(t['cost_usd']),
@@ -3419,7 +3442,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           : w('▼ 75D ROLL/SALV', '▼ 75D 滚仓收回');
     } else if (act == 'PUT_CLOSE') {
       accent = _lilac;
-      dirTag = w('▼ SALVAGE SELL', '▼ 残值收回卖出');
+      dirTag = reason == 'salvage_30d_slowbear'
+          ? w('▼ 30D SALVAGE', '▼ 30D 残值收回')
+          : w('▼ SALVAGE SELL', '▼ 残值收回卖出');
     } else if (act == 'CTA_ROTATE') {
       accent = _mint;
       dirTag = w('■ SELL CTA', '■ 卖CTA买QQQ');
@@ -4165,12 +4190,19 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                           : (sl == 'crisis' ? _coral : _sky))
                     : _fgMuted));
 
+    final isSlowBear90 =
+        (_n(ev['target_dte'])?.toInt() == 90) ||
+        (_n(ev['roll_dte'])?.toInt() == 30);
     final slLabel = sl == 'crisis_m4'
         ? w('M4 Slow-Bear 90D -15%', 'M4 慢熊 90D -15%')
         : (sl == 'crisis'
-              ? w('M7G Crisis 125D -15%', 'M7G 危机盾 125D -15%')
+              ? (isSlowBear90
+                    ? w('M7G Slow-Bear 90D->30D', 'M7G 慢熊 90D->30D')
+                    : w('M7G Crisis 125D -15%', 'M7G 危机盾 125D -15%'))
               : (sl == 'base'
-                    ? w('B020 Base 0.20% 125D', 'B020 常态 0.20% 基底盾')
+                    ? (isSlowBear90
+                          ? w('B020 Slow-Bear 0.20% 90D->30D', 'B020 慢熊 0.20% 90D->30D')
+                          : w('B020 Base 0.20% 125D', 'B020 常态 0.20% 基底盾'))
                     : sl));
 
     final actionTag = switch (action) {
@@ -4699,11 +4731,18 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                         ? _lilac
                         : (sl == 'crisis' ? _amber : _sky);
                     final isSimBsm = text(r['quote_source']) == 'BSM_SIM_2026';
+                    final isSb90Row =
+                        (_n(r['target_dte'])?.toInt() == 90) ||
+                        (_n(r['roll_dte'])?.toInt() == 30);
                     final slNameBase = sl == 'crisis_m4'
                         ? w('M4 90D -15%', 'M4 90D -15%')
                         : (sl == 'crisis'
-                              ? w('M7G 125D -15%', 'M7G 125D -15%')
-                              : w('B020 0.20%', '常态 0.20%'));
+                              ? (isSb90Row
+                                    ? w('M7G 90D->30D', 'M7G 慢熊 90D')
+                                    : w('M7G 125D -15%', 'M7G 125D -15%'))
+                              : (isSb90Row
+                                    ? w('B020 90D->30D', '常态慢熊 90D')
+                                    : w('B020 0.20%', '常态 0.20%')));
                     final slName = isSimBsm ? '$slNameBase [BSM]' : slNameBase;
                     final roi = _n(r['roi_mult']) ?? 0;
                     final isTpRow = text(r['exit_reason']).contains('tp_');
@@ -5032,8 +5071,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
             const SizedBox(height: 12),
             Text(
               w(
-                'Single locked production ruleset verified on 11Y MIT Real OPRA (2015-01-02 to 2025-12-15: 22.54% CAGR / -24.31% MDD / 0.927 Calmar), 5Y Zero-Splice OPRA (2020-12-03 to 2025-12-15: 24.05% CAGR / -23.67% MDD / 1.016 Calmar), and extended through 2026-11-25 (\$987,611 / 21.23% CAGR).',
-                '全站唯一锁定实盘规则集：11年纯真实 MIT OPRA（2015-01-02 至 2025-12-15）实证 22.54% 年化 / -24.31% 最大回撤 / 0.927 Calmar；5年零拼接纯实盘窗口（2020-12-03 至 2025-12-15）24.05% 年化 / -23.67% 最大回撤 / 1.016 Calmar；平滑延伸至 2026-11-25 净值达 \$987,611（21.23% 年化）。',
+                'Single locked production ruleset verified on 11Y MIT Real OPRA (2015-01-02 to 2025-12-15: 22.62% CAGR / -24.31% MDD / 0.930 Calmar), 5Y Zero-Splice OPRA (2020-12-03 to 2025-12-15: 24.23% CAGR / -23.11% MDD / 1.048 Calmar), and extended through 2026-11-25 (\$994,681 / 21.30% CAGR).',
+                '全站唯一锁定实盘规则集：11年纯真实 MIT OPRA（2015-01-02 至 2025-12-15）实证 22.62% 年化 / -24.31% 最大回撤 / 0.930 Calmar；5年零拼接纯实盘窗口（2020-12-03 至 2025-12-15）24.23% 年化 / -23.11% 最大回撤 / 1.048 Calmar；平滑延伸至 2026-11-25 净值达 \$994,681（21.30% 年化）。',
               ),
               style: const TextStyle(
                 color: _fgMuted,
@@ -5074,16 +5113,16 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               ),
               bullets: [
                 w(
-                  'Sleeve A — B020 Baseline Floor (0.20% NAV): Active entry when VIX <= 20.0 AND VIX/VIX3M < 1.02 AND not in 5D Post-TP Lockout. Buy 125 DTE, -15% OTM QQQ Put (K = 0.85 x Spot). Hard roll/salvage at 75 DTE.',
-                  'A 轨 · B020 常态基底盾（0.20% NAV）：当 VIX <= 20.0 且 VIX/VIX3M < 1.02 且未处 5日止盈冷冻期时建仓。买入 125 DTE、-15% OTM 的 QQQ Put（行权价 K = 0.85 x 现价），剩 75 DTE 强制早滚回收残值。',
+                  'Sleeve A — B020 Baseline Floor (0.20% NAV): Active entry when VIX <= 20.0 AND VIX/VIX3M < 1.02 AND not in 5D Post-TP Lockout. Normal regime: buy 125 DTE -15% OTM QQQ Put (Hard 75D roll). Slow-Bear Latch override: NEVER open 125D — strictly open 90 DTE -15% OTM and hold to Hard 30 DTE salvage/roll.',
+                  'A 轨 · B020 常态基底盾（0.20% NAV）：当 VIX <= 20.0 且 VIX/VIX3M < 1.02 且未处 5日止盈冷冻期时建仓。常态买入 125 DTE、-15% OTM Put（剩 75 DTE 强滚）；一旦进入 +8% 慢熊锁存期严禁开 125D，只能开 90 DTE -15% OTM 并强行拿到 30 DTE 收回残值/滚仓。',
                 ),
                 w(
                   'Sleeve B — M7G Graded Crisis Ladder (1-3 Slots x 1.25% NAV = up to 3.75% NAV): Composite Score = min(100, Pillar1_Top + Pillar2_Shock + 10 if M3 + 35 if M4_Latch_v2). Score >= 35 opens 1 slot (1.25%), >= 45 opens 2 slots (2.50%), >= 65 opens 3 slots (3.75%).',
                   'B 轨 · M7G 阶梯危机加码（1-3 槽 x 1.25% NAV，最高 3.75% NAV）：综合得分 = min(100, 支柱一顶部 + 支柱二冲击 + M3加10分 + M4磁滞锁存加35分)。>= 35 开 1 槽（1.25%），>= 45 开 2 槽（2.50%），>= 65 开 3 槽（3.75%）。',
                 ),
                 w(
-                  'Standard P1/P2/M3 Low-Vol Entry Gate & Cooldown: Enter only when VXN <= 27.0 AND VIX/VIX3M < 1.02 AND not in 5D Lockout. Minimum spacing between slot escalations: 30 calendar days (Slot 1 -> 2) and 21 calendar days (Slot 2 -> 3). Contract: 125 DTE -> Hard 75D Roll, -15% OTM.',
-                  '常规 P1/P2/M3 低波入场门控与冷却期：仅当 VXN <= 27.0 且 VIX/VIX3M < 1.02 且非冷冻期才允许入场；槽位递增冷却为 30 自然日（1->2 槽）与 21 自然日（2->3 槽）。合约统一买 125 DTE -> 75D 强滚、-15% OTM。',
+                  'Standard P1/P2/M3 Low-Vol Entry Gate & Cooldown: Enter only when VXN <= 27.0 AND VIX/VIX3M < 1.02 AND not in 5D Lockout. Minimum spacing between slot escalations: 30 calendar days (Slot 1 -> 2) and 21 calendar days (Slot 2 -> 3). Normal contract: 125 DTE -> Hard 75D Roll (-15% OTM); during +8% Slow-Bear Latch, ALL new puts strictly route to 90 DTE -> Hard 30D salvage/roll.',
+                  '常规 P1/P2/M3 低波入场门控与冷却期：仅当 VXN <= 27.0 且 VIX/VIX3M < 1.02 且非冷冻期才允许入场；槽位递增冷却为 30 自然日（1->2 槽）与 21 自然日（2->3 槽）。常态买 125 DTE -> 75D 强滚、-15% OTM；慢熊锁存期内一律禁开 125D，强制开 90 DTE -> 30D 收回。',
                 ),
               ],
             ),
@@ -5120,8 +5159,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               ),
               bullets: [
                 w(
-                  'True Roll Cost vs Gross Turnover: Gross annual put turnover is 6.13% NAV/yr (11Y OPRA), NOT net bleed! Hard rolling at 75D (Base/Crisis) and 30D (M4) exits before steep final-month Theta collapse, recovering 67.8% salvage on non-TP rolls so True Net Roll Bleed is ONLY 2.03% NAV/yr — while net put PnL is +\$110,222 (1.56x payout ratio across 110 trades).',
-                  '真实净磨损审计（勿把总换手误读为亏损）：11年总期权名义换手 6.13% NAV/yr，但凭借 75D（常规/底盾）与 30D（M4）硬滚仓提前避开末月陡峭 Theta 衰减，非止盈滚仓平均回收 67.8% 残值，真实年化净滚仓成本仅 2.03% NAV/yr；全期权账本净赚 +\$110,222（110 笔总赔付比 1.56x）。',
+                  'True Roll Cost vs Gross Turnover: Gross annual put turnover is 6.11% NAV/yr (11Y OPRA), NOT net bleed! Hard rolling at 75D (normal) and holding to 30D (Slow-Bear Latch 90D->30D) recovers 67.1% salvage on non-TP rolls so True Net Roll Bleed is ONLY 2.04% NAV/yr — while net put PnL is +\$113,321 (1.57x payout ratio across 109 trades).',
+                  '真实净磨损审计（勿把总换手误读为亏损）：11年总期权名义换手 6.11% NAV/yr，凭借常态 75D 硬滚与慢熊锁存期统一 90D->30D 强行收回，非止盈滚仓平均回收 67.1% 残值，真实年化净滚仓成本仅 2.04% NAV/yr；全期权账本净赚 +\$113,321（109 笔总赔付比 1.57x）。',
                 ),
                 w(
                   'Full Take-Profit (100% Liquidate): Triggered when (VIX/VIX3M >= 1.10 AND QQQ <= 1.05 x Strike [Near-ITM]) OR VIX >= 45.0. Late 5x Take-Profit: Remaining DTE <= 60D (Base) or <= 45D (Crisis) AND option ROI >= 5.0x -> 100% liquidate.',

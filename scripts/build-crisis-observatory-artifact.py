@@ -9,24 +9,25 @@ Exact Locked Plan D Strategy ("Double-Champion · Full-Blooded Taleb Core + User
        during crashes so QQQ is NEVER liquidated at crash bottoms. Quarterly calm calibration restores 1.200x.
   2. Put Engine (`B020_M125` + User's `+8%` Slow-Bear Hysteresis Latch `M4_latch_v2` — UNIFORM -15% OTM):
      - Baseline Floor (Book B, 0.20% NAV): Entry when VIX <= 20.0 AND VIX/VIX3M < 1.02 AND not in 5D Lockout.
-       Contract: 125 DTE (95-160D), -15% OTM (K = 0.85 * S). Hard 75D roll/salvage.
+       Normal contract: 125 DTE (95-160D), -15% OTM (K = 0.85 * S), Hard 75D roll/salvage.
+       Slow-Bear Latch override: NEVER open 125D during +8% Slow-Bear Latch — strictly open 90D -15% OTM and hold to Hard 30D salvage/roll.
      - Crisis Graded Ladder (Book M, `M7G_tier_45_65`, 1-3 Slots x 1.25% NAV = up to 3.75% NAV):
        * Score = min(100, pillar1_top + pillar2_shock + (10 if M3 else 0) + (35 if M4_latch_v2 else 0)).
        * Tier mapping: Crisis Score >= 35 -> 1 slot (1.25%), >= 45 -> 2 slots (2.50%), >= 65 -> 3 slots (3.75%).
        * Entry Vol Gate: VXN <= 27.0 AND VIX/VIX3M < 1.02 AND not in 5D Lockout.
        * Cooldown: >= 30 cal days (slots 1->2), >= 21 cal days (slot 3).
        * Contract Routing (UNIFORM -15% OTM):
-         - Standard Pillars (P1/P2/M3) -> 125D -> Hard 75D roll, -15% OTM (K = 0.85 * S).
+         - Standard Pillars (P1/P2/M3) -> 125D -> Hard 75D roll (-15% OTM) outside Slow-Bear Latch; 90D -> Hard 30D roll during Slow-Bear Latch.
          - User's +8% Slow-Bear Hysteresis Latch (`M4_latch_v2`):
            ARM (ON) when QQQ < 200DMA & DD_252 <= -10.0% & Corr60(DualCTA, QQQ) < 0 & DualCTA_since_252hi >= +8.0%.
            RESET (OFF) when QQQ > 200DMA for 10 consecutive trading days.
            M4 Trigger: Latch ON & QQQ < 200DMA & 3-Speed EWMAC < 0 & QQQ > EMA20 & VXN <= 28.0 & VIX/VIX3M <= 0.90
            -> 90D -> Hard 30D roll, UNIFORM -15% OTM (K = 0.85 * S) at 1.25% NAV per slot!
      - Hard 75D / 30D Roll recovers approx 67% weighted salvage on non-TP rolls, keeping TRUE Net Roll Bleed
-       at only approx 2.1% NAV/yr (vs approx 6.7% NAV/yr gross premium turnover).
+       at only approx 2.04% NAV/yr (vs approx 6.11% NAV/yr gross premium turnover).
   3. Right-Tail Take-Profit (`tp_near_itm_late5x`) + 5D Post-TP Contango Lockout:
      - Full TP: (VIX/VIX3M >= 1.10 AND QQQ <= 1.05 * Strike [Near-ITM]) OR VIX >= 45.0 -> 100% liquidate.
-     - Late 5x TP: Remaining DTE <= 60D (Base) / <= 45D (Crisis) AND option ROI >= 5.0x -> 100% liquidate.
+     - Late 5x TP: Remaining DTE <= 60D (Base 125D) / <= 45D (Crisis or 90D->30D) AND option ROI >= 5.0x -> 100% liquidate.
      - Proceeds: T+1 lump-sum 100% reinvestment into QQQ.
      - 5D Contango Lockout: Lock BOTH books post-TP until VIX/VIX3M < 1.00 for 5 consecutive trading days.
   4. User's Improved Dual-CTA Slow-Bear Rotation (`CONT_2M` + 5-Tranche + 1-Year Mechanical LTCG Lock):
@@ -37,8 +38,8 @@ Exact Locked Plan D Strategy ("Double-Champion · Full-Blooded Taleb Core + User
 
 Windows Verified on Real MIT OPRA Quotes (6,382,288 real 16:00 ET QQQ put quotes across 2,749 OPRA days)
 + OPRA-Residual-Calibrated Z-Surface BSM Extension through 2026-11-25:
-  - 11Y Real MIT OPRA (2015-01-02 -> 2025-12-15): 22.54% CAGR / -24.31% MDD / 0.927 Calmar
-  - 5Y Zero-Splice Live (2020-12-03 -> 2025-12-15): 24.05% CAGR / -23.67% MDD / 1.016 Calmar
+  - 11Y Real MIT OPRA (2015-01-02 -> 2025-12-15): 22.62% CAGR / -24.31% MDD / 0.930 Calmar
+  - 5Y Zero-Splice Live (2020-12-03 -> 2025-12-15): 24.23% CAGR / -23.11% MDD / 1.048 Calmar
   - Extended continuously through 2026-11-25 via OPRA-residual-calibrated Z-surface BSM + half-spread model.
 """
 from __future__ import annotations
@@ -326,9 +327,9 @@ def pearson_corr(xs: list[float], ys: list[float]) -> float:
 
 def build_ruleset_spec(roll_econ: dict[str, Any] | None = None) -> dict[str, Any]:
     re = roll_econ or {
-        "gross_turnover_pct_nav_yr": 6.67,
-        "roll_salvage_pct": 67.3,
-        "true_net_bleed_pct_nav_yr": 2.13,
+        "gross_turnover_pct_nav_yr": 6.11,
+        "roll_salvage_pct": 67.1,
+        "true_net_bleed_pct_nav_yr": 2.04,
     }
     gt = re["gross_turnover_pct_nav_yr"]
     sv = re["roll_salvage_pct"]
@@ -363,12 +364,14 @@ def build_ruleset_spec(roll_econ: dict[str, Any] | None = None) -> dict[str, Any
             "budget_pct_nav": 0.20,
             "target_dte": 125,
             "roll_dte": 75,
+            "slow_bear_target_dte": 90,
+            "slow_bear_roll_dte": 30,
             "otm_pct": -15,
             "vix_max": 20.0,
             "vr_max": 1.02,
             "hard_roll": True,
-            "rule_en": "Baseline Floor (0.20% NAV): Enter 125D -15% OTM Put when VIX <= 20.0 AND VIX/VIX3M < 1.02 AND not in 5D Lockout. Hard 75D roll/salvage preserves convexity and recovers salvage value.",
-            "rule_zh": "常态底仓盾（0.20% NAV）：VIX <= 20.0 且 VIX/VIX3M < 1.02 且非 5 日锁仓期时买入 125D -15% OTM Put；75D 强制早滚仓/回收残值，绝不扛到深度时间衰减区。",
+            "rule_en": "Baseline Floor (0.20% NAV): Enter -15% OTM Put when VIX <= 20.0 AND VIX/VIX3M < 1.02 AND not in 5D Lockout. Normal regime: 125D -> Hard 75D roll/salvage. During +8% Slow-Bear Latch: NEVER open 125D — strictly open 90D -15% OTM and hold to Hard 30D salvage/roll.",
+            "rule_zh": "常态底仓盾（0.20% NAV）：VIX <= 20.0 且 VIX/VIX3M < 1.02 且非 5 日锁仓期时买入 -15% OTM Put；常态买 125D -> 75D 强滚/回收残值；慢熊 +8% 锁存期内严禁开 125D，只能开 90D -15% OTM 且强行拿到 30DTE 收回残值/滚仓。",
         },
         "sleeve_b": {
             "code": "M125",
@@ -387,9 +390,11 @@ def build_ruleset_spec(roll_econ: dict[str, Any] | None = None) -> dict[str, Any
                 "pillars": ["P1", "P2", "M3"],
                 "target_dte": 125,
                 "roll_dte": 75,
+                "slow_bear_target_dte": 90,
+                "slow_bear_roll_dte": 30,
                 "otm_pct": -15,
-                "rule_en": "Standard Pillars (P1/P2/M3): Score = min(100, P1 + P2 + 10*M3 + 35*M4_latch). >= 35 -> 1 slot (1.25%), >= 45 -> 2 slots (2.50%), >= 65 -> 3 slots (3.75% NAV) in 125D -> Hard 75D roll, -15% OTM Put when VXN <= 27.0 & VIX/VIX3M < 1.02.",
-                "rule_zh": "标准危机三支柱（P1/P2/M3）：得分 = min(100, P1 + P2 + 10*M3 + 35*M4锁存)；>= 35 开 1 槽（1.25%）、>= 45 开 2 槽（2.50%）、>= 65 开满 3 槽（3.75% NAV）；门控 VXN <= 27.0 且 VIX/3M < 1.02，统一买 125D -15% OTM、75D 强滚。",
+                "rule_en": "Standard Pillars (P1/P2/M3): Score = min(100, P1 + P2 + 10*M3 + 35*M4_latch). >= 35 -> 1 slot (1.25%), >= 45 -> 2 slots (2.50%), >= 65 -> 3 slots (3.75% NAV) in 125D -> Hard 75D roll (-15% OTM) outside Slow-Bear Latch; during +8% Slow-Bear Latch, ALL new puts strictly route to 90D -> Hard 30D roll.",
+                "rule_zh": "标准危机三支柱（P1/P2/M3）：得分 = min(100, P1 + P2 + 10*M3 + 35*M4锁存)；>= 35 开 1 槽（1.25%）、>= 45 开 2 槽（2.50%）、>= 65 开满 3 槽（3.75% NAV）；门控 VXN <= 27.0 且 VIX/3M < 1.02；常态买 125D -> 75D 强滚，慢熊锁存期内一律切换为 90D -> 30D 强行收回（严禁开 125D）。",
             },
             "route2_m4": {
                 "mode": "M4_latch_v2_90d_m15",
@@ -448,7 +453,7 @@ def check_tp_near_itm_late5x(
 ) -> tuple[bool, str]:
     mult = mid / max(float(tr["entry_fill"]), 1e-6)
     near_itm = cl <= float(tr["strike"]) * 1.05
-    dte_lim = 60 if is_base else 45
+    dte_lim = 45 if (not is_base or int(tr.get("roll_dte", 75)) == 30) else 60
     if (vix_r >= 1.10 and near_itm) or vix >= 45.0:
         return True, "base_tp_near_itm" if is_base else "tp_near_itm"
     if rem_days <= dte_lim and mult >= 5.0:
@@ -662,11 +667,14 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
     ext_rows: list[dict[str, Any]] = [dict(r) for r in all_rows]
     ext_m7g: list[int] = []
     ext_m4: list[bool] = []
+    ext_latch: list[bool] = []
     for r_o in ext_rows:
         ds_o = str(r_o["date"])
-        sl_o, m4_o = _plan_d_slots_and_m4(ds_o, existing_pit_by_d.get(ds_o))
+        pr_o = existing_pit_by_d.get(ds_o)
+        sl_o, m4_o = _plan_d_slots_and_m4(ds_o, pr_o)
         ext_m7g.append(sl_o)
         ext_m4.append(m4_o)
+        ext_latch.append(bool(pr_o.get("latch")) if pr_o is not None else False)
 
     last_opra_d = str(ext_rows[-1]["date"])
     last_cl = float(ext_rows[-1]["close"])
@@ -703,6 +711,7 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
         sl_e, m4_e = _plan_d_slots_and_m4(ds, pr)
         ext_m7g.append(sl_e)
         ext_m4.append(m4_e)
+        ext_latch.append(bool(pr.get("latch")))
 
     # Extract +8% Slow-Bear Hysteresis Latch episodes across ext_dates from existing_pit_rows
     all_latch_episodes: list[dict[str, Any]] = []
@@ -765,6 +774,7 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
         dt_objs = [datetime.date.fromisoformat(d) for d in dates]
         m7g_w = ext_m7g[s_idx:]
         m4_w = ext_m4[s_idx:]
+        latch_w = ext_latch[s_idx:]
 
         effr_w = effr_ext[s_idx:]
         px_qqq_w = px_q_ext[s_idx:]
@@ -962,6 +972,8 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
                 "exit_date": d,
                 "exp": tr["exp"],
                 "strike": round(float(tr["strike"]), 2),
+                "target_dte": int(tr["target_dte"]),
+                "roll_dte": int(tr["roll_dte"]),
                 "entry_dte": int(tr["entry_dte"]),
                 "exit_dte": int(rem_d),
                 "entry_spot": round(float(tr["entry_spot"]), 2),
@@ -1034,11 +1046,15 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
                         if ex_usd > 1e-10:
                             core_shares += ex_usd / (cl * (1.0 + STOCK_REBAL_FEE))
                 m7_active = still_m7
+                in_sb_prev_m7 = bool(latch_w[i - 1])
                 for salv_u, cap_sl, is_cta_r in m7_roll_reps:
+                    # Slow-Bear Latch invariant: NEVER open 125D during Slow-Bear Latch;
+                    # strictly open 90D -15% OTM and hold to Hard 30D salvage/roll.
+                    use_90_30 = bool(is_cta_r) or in_sb_prev_m7
                     nt = _open_tranche(
                         i, "m7", is_cta_r, 0.0125,
-                        90 if is_cta_r else 125,
-                        30 if is_cta_r else 75,
+                        90 if use_90_30 else 125,
+                        30 if use_90_30 else 75,
                         cap_sl, salv=salv_u,
                     )
                     if nt is not None:
@@ -1058,7 +1074,7 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
                         exec_fallbacks_opra += 1
                     sell_px = rb.exec_sell_price(bid, ask, mid, exec_mode)
                     ex_usd = _record_exit(tr, i, rem_d, bid, ask, mid, sell_px, trade_qsrc)
-                    if tr["exit_reason"] == "roll_75d":
+                    if tr["exit_reason"].startswith("roll_"):
                         if bool(base_gate_w[i - 1]) and len(still_base) == 0 and (not want_base_reopen) and (not base_locked_prev_eod):
                             want_base_reopen = True
                             base_roll_cash += ex_usd
@@ -1069,17 +1085,24 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
                             core_shares += ex_usd / (cl * (1.0 + STOCK_REBAL_FEE))
                 base_active = still_base
                 if want_base_reopen:
-                    nt = _open_tranche(i, "base", False, 0.0020, 125, 75, 1, salv=base_roll_cash)
+                    in_sb_prev_b = bool(latch_w[i - 1])
+                    nt = _open_tranche(
+                        i, "base", False, 0.0020,
+                        90 if in_sb_prev_b else 125,
+                        30 if in_sb_prev_b else 75,
+                        1, salv=base_roll_cash,
+                    )
                     if nt is not None:
                         base_active.append(nt)
 
             # 2A. Pending New M7 Entry at T+1 Close
             if i > 0 and pending_m7_sig is not None and len(m7_active) < pending_m7_sig["cap_slots"]:
                 is_cta_n = bool(pending_m7_sig["is_cta"])
+                use_90_30 = is_cta_n or bool(latch_w[i - 1])
                 nt = _open_tranche(
                     i, "m7", is_cta_n, 0.0125,
-                    90 if is_cta_n else 125,
-                    30 if is_cta_n else 75,
+                    90 if use_90_30 else 125,
+                    30 if use_90_30 else 75,
                     pending_m7_sig["cap_slots"], salv=0.0,
                 )
                 if nt is not None:
@@ -1088,7 +1111,13 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
 
             # 2B. Pending New Base Entry at T+1 Close
             if i > 0 and pending_base_open and len(base_active) == 0:
-                nt = _open_tranche(i, "base", False, 0.0020, 125, 75, 1, salv=0.0)
+                in_sb_prev_b = bool(latch_w[i - 1])
+                nt = _open_tranche(
+                    i, "base", False, 0.0020,
+                    90 if in_sb_prev_b else 125,
+                    30 if in_sb_prev_b else 75,
+                    1, salv=0.0,
+                )
                 if nt is not None:
                     base_active.append(nt)
             pending_base_open = False
@@ -1159,9 +1188,14 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
                         tr["exit_reason"] = rsn
                         any_tp_today = True
                         tp_triggers_today.append(f"base:{rsn}")
-                    elif rem_d <= 75:
+                    elif rem_d <= tr["roll_dte"]:
                         tr["pending_exit"] = True
-                        tr["exit_reason"] = "roll_75d" if gate_ok_today else "salvage_vix_expensive"
+                        if gate_ok_today:
+                            tr["exit_reason"] = f"roll_{tr['roll_dte']}d"
+                        else:
+                            tr["exit_reason"] = (
+                                "salvage_30d_slowbear" if int(tr["roll_dte"]) == 30 else "salvage_vix_expensive"
+                            )
 
             core_nav_list.append(core_shares * cl + m7_mtm_tot + base_mtm_tot)
             active_puts_cnt_by_day[i] = len(m7_active) + len(base_active)
@@ -1243,6 +1277,8 @@ def run_full_opra_build(output_path: Path, fetch_live: bool = False) -> dict[str
                 "entry_date": tr["entry_date"],
                 "exp": tr["exp"],
                 "strike": round(float(tr["strike"]), 2),
+                "target_dte": int(tr["target_dte"]),
+                "roll_dte": int(tr["roll_dte"]),
                 "entry_dte": int(tr["entry_dte"]),
                 "rem_dte": int(tr["last_rem_days"]),
                 "entry_spot": round(float(tr["entry_spot"]), 2),

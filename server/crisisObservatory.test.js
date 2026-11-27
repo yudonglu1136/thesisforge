@@ -53,17 +53,17 @@ test('loads clean v3.0 Double-Champion (Plan D) payload with real MIT OPRA 11Y &
   const k11Qqq = doc.backtest.window_kpis['11y_opra'].kpi_qqq;
   assert.equal(doc.backtest.opra_provenance.quotes_count, 6382288);
   assert.equal(doc.backtest.opra_provenance.bsm_calibration.fit_quotes_count, 1500755);
-  assert.equal(k11Opra.end_nav, 926278.08);
-  assert.equal(k11Opra.cagr_pct, 22.54);
+  assert.equal(k11Opra.end_nav, 932908.42);
+  assert.equal(k11Opra.cagr_pct, 22.62);
   assert.equal(k11Opra.max_dd_pct, -24.31);
-  assert.equal(k11Opra.calmar, 0.927);
-  assert.equal(k11Opra.put_gross_turnover_pct_nav_yr, 6.13);
-  assert.equal(k11Opra.put_roll_salvage_pct, 67.8);
-  assert.equal(k11Opra.put_true_net_bleed_pct_nav_yr, 2.03);
-  assert.equal(k11.end_nav, 987611.4);
-  assert.equal(k11.cagr_pct, 21.23);
+  assert.equal(k11Opra.calmar, 0.93);
+  assert.equal(k11Opra.put_gross_turnover_pct_nav_yr, 6.11);
+  assert.equal(k11Opra.put_roll_salvage_pct, 67.1);
+  assert.equal(k11Opra.put_true_net_bleed_pct_nav_yr, 2.04);
+  assert.equal(k11.end_nav, 994680.76);
+  assert.equal(k11.cagr_pct, 21.3);
   assert.equal(k11.max_dd_pct, -24.31);
-  assert.equal(k11.calmar, 0.873);
+  assert.equal(k11.calmar, 0.876);
   assert.equal(k11.peak_gross_leverage, 1.2582);
   assert.equal(k11.put_trades_m4, 3);
   assert.equal(k11.cta_rotation_count, 10);
@@ -76,15 +76,15 @@ test('loads clean v3.0 Double-Champion (Plan D) payload with real MIT OPRA 11Y &
   const k5 = doc5.backtest.active_window.kpi_primary;
   const k5Opra = doc5.backtest.active_window.kpi_opra_verified_primary;
   assert.equal(doc5.backtest.active_window.zero_splice, true);
-  assert.equal(k5Opra.end_nav, 295807.52);
-  assert.equal(k5Opra.cagr_pct, 24.05);
-  assert.equal(k5Opra.max_dd_pct, -23.67);
-  assert.equal(k5Opra.calmar, 1.016);
-  assert.equal(k5.end_nav, 315394.35);
-  assert.equal(k5.cagr_pct, 21.19);
-  assert.equal(k5.max_dd_pct, -23.67);
-  assert.equal(k5.calmar, 0.895);
-  assert.equal(k5.peak_gross_leverage, 1.2493);
+  assert.equal(k5Opra.end_nav, 297924.92);
+  assert.equal(k5Opra.cagr_pct, 24.23);
+  assert.equal(k5Opra.max_dd_pct, -23.11);
+  assert.equal(k5Opra.calmar, 1.048);
+  assert.equal(k5.end_nav, 317651.96);
+  assert.equal(k5.cagr_pct, 21.33);
+  assert.equal(k5.max_dd_pct, -23.11);
+  assert.equal(k5.calmar, 0.923);
+  assert.equal(k5.peak_gross_leverage, 1.2475);
   assert.equal(k5.put_trades_m4, 3);
 });
 
@@ -122,6 +122,26 @@ test('computes real-time Dual-Track Stress vs M7G Slots, Natural-Drift Box Guard
   assert.equal(pitM4.live_cockpit.three_pillars.m4_entry_triggered, true);
   assert.equal(pitM4.live_cockpit.three_pillars.actionable_m7g_slots, 1);
   assert.equal(pitM4.live_cockpit.command_center.action_code, 'OPEN_SLEEVE_B_M4');
+  // Slow-Bear Latch 90D->30D mandate: NO 125D allowed even on Sleeve A / Route 1 target_strikes!
+  assert.equal(pitM4.live_cockpit.command_center.target_strikes.route1_125d_15otm.target_dte, 90);
+  assert.equal(pitM4.live_cockpit.command_center.target_strikes.route1_125d_15otm.roll_dte, 30);
+  assert.equal(pitM4.live_cockpit.command_center.target_strikes.route1_125d_15otm.slow_bear_override, true);
+
+  // Historical PIT 2022-04-04: Slow-Bear Latch ARMED + VIX <= 20 -> Sleeve A B020 MUST strictly route 90D -> 30D (NEVER 125D)!
+  const pitSbBase = loadCrisisObservatoryPitSnapshot({ date: '2022-04-04' });
+  assert.equal(pitSbBase.live_cockpit.dual_cta_radar.slow_bear_latch.armed, true);
+  const sleeveASb = pitSbBase.live_cockpit.command_center.sub_engines.find(e => e.id === 'sleeve_a');
+  assert.equal(sleeveASb.status_code, 'OPEN_READY');
+  assert.match(sleeveASb.value_en, /90D -> 30D/);
+  assert.match(sleeveASb.value_zh, /90D.*30D/);
+  assert.equal(pitSbBase.live_cockpit.command_center.target_strikes.route1_125d_15otm.target_dte, 90);
+  assert.equal(pitSbBase.live_cockpit.command_center.target_strikes.route1_125d_15otm.roll_dte, 30);
+
+  // Historical PIT 2022-10-20: Both M4 (roll_30d) and Slow-Bear Base (salvage_30d_slowbear) salvage together at 29 DTE (2.77x)!
+  const pitSbExit = loadCrisisObservatoryPitSnapshot({ date: '2022-10-20', window: '11y_opra' });
+  const exits1020 = pitSbExit.pit_history.events_on_date.filter(e => e.action === 'PUT_ROLL' || e.action === 'PUT_CLOSE');
+  assert.equal(exits1020.length, 2);
+  assert.ok(exits1020.every(e => e.target_dte === 90 && e.roll_dte === 30 && e.exit_dte <= 35));
 
   // Historical PIT 2022-06-06: CONT_2M >= 60d confirmed & DBMF/KMLM positive since ATH!
   const pitCta = loadCrisisObservatoryPitSnapshot({ date: '2022-06-06' });
