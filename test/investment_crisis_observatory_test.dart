@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -228,12 +229,66 @@ void main() {
         findsOneWidget,
       );
 
-      // Verify 2026 Calibrated BSM Extension preset & 2026-11-06 Put TP jump
+      // Verify 2026 Calibrated BSM Extension preset & hover trade-detail tooltip on 2026-11-06 Put TP
       final preset2026 = find.byKey(const ValueKey('crisis-v2-range-preset-2026'));
       await tester.ensureVisible(preset2026);
       await tester.tap(preset2026);
       await tester.pumpAndSettle();
       expect(find.textContaining('2025-12-16 -> 2026-11-25'), findsOneWidget);
+
+      final chartCanvas = find.byKey(const ValueKey('crisis-v2-chart-canvas'));
+      await tester.ensureVisible(chartCanvas);
+      await tester.pumpAndSettle();
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      addTearDown(mouse.removePointer);
+      await mouse.addPointer(location: Offset.zero);
+      await tester.pump();
+
+      Offset chartPointAtFrac(double frac) {
+        final rect = tester.getRect(chartCanvas);
+        final plotW = rect.width - 54.0 - 14.0;
+        return Offset(rect.left + 54.0 + frac * plotW, rect.top + 80.0);
+      }
+
+      // Hover over 2026-11-06 (Put TP day in 5y_live 2026 slice: 224/237)
+      await mouse.moveTo(chartPointAtFrac(224 / 237));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('crisis-v2-hover-tooltip')), findsOneWidget);
+      expect(find.textContaining('◆ 止盈卖出'), findsWidgets);
+      expect(find.textContaining('QQQ 27-02-19 \$646 Put'), findsOneWidget);
+      expect(find.textContaining('数量 0.72 张'), findsOneWidget);
+      expect(find.textContaining('卖出金额 \$2,401'), findsOneWidget);
+
+      // Zoom into 2022 Slow-Bear -> hover Dual-CTA rotation (2022-06-07) & Put Open (2022-11-25)
+      final preset2022 = find.byKey(const ValueKey('crisis-v2-range-preset-2022'));
+      await tester.ensureVisible(preset2022);
+      await tester.tap(preset2022);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(chartCanvas);
+      await tester.pumpAndSettle();
+
+      await mouse.moveTo(chartPointAtFrac(150 / 417));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('crisis-v2-hover-tooltip')), findsOneWidget);
+      expect(find.textContaining('■ 卖CTA买QQQ'), findsWidgets);
+      expect(find.textContaining('卖出 DBMF -> 买入 QQQ'), findsOneWidget);
+      expect(find.textContaining('卖出金额 \$2,869'), findsOneWidget);
+
+      await mouse.moveTo(chartPointAtFrac(269 / 417));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('crisis-v2-hover-tooltip')), findsOneWidget);
+      expect(find.textContaining('▲ 买入开仓'), findsWidgets);
+      expect(find.textContaining('QQQ 23-02-17 \$245 Put'), findsOneWidget);
+      expect(find.textContaining('数量 4.19 张'), findsOneWidget);
+      expect(find.textContaining('买入金额 \$1,337'), findsOneWidget);
+
+      // Move pointer off chart so hover cleanly dismisses
+      await mouse.moveTo(Offset.zero);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('crisis-v2-hover-tooltip')), findsNothing);
 
       // Click 2025-04-07 Put TP quick-jump badge -> verifies PIT operations, Put TP, Skew Ratio & 1-Put/100-QQQ %
       final tpChip = find.textContaining('◆ 2025-04-07').first;
@@ -288,7 +343,7 @@ void main() {
       expect(find.textContaining('22.76%'), findsWidgets);
       expect(find.byKey(const ValueKey('crisis-v2-bsm-calibration-note')), findsOneWidget);
 
-      // Zoom into 2025 Tariff via range brush preset on mobile EN -> verify zero overflow & zero CJK
+      // Zoom into 2025 Tariff via range brush preset on mobile EN -> verify hover tooltip zero overflow & zero CJK
       expect(find.byKey(const ValueKey('crisis-v2-range-brush')), findsOneWidget);
       final enPreset2025 = find.byKey(const ValueKey('crisis-v2-range-preset-2025'));
       await tester.ensureVisible(enPreset2025);
@@ -296,6 +351,26 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       expect(find.textContaining('Base = 100'), findsOneWidget);
+
+      final enCanvas = find.byKey(const ValueKey('crisis-v2-chart-canvas'));
+      await tester.ensureVisible(enCanvas);
+      await tester.pumpAndSettle();
+      final enMouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      addTearDown(enMouse.removePointer);
+      await enMouse.addPointer(location: Offset.zero);
+      await tester.pump();
+      final enRect = tester.getRect(enCanvas);
+      final enPlotW = enRect.width - 54.0 - 14.0;
+      await enMouse.moveTo(
+        Offset(enRect.left + 54.0 + (75 / 154) * enPlotW, enRect.top + 80.0),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('crisis-v2-hover-tooltip')), findsOneWidget);
+      expect(find.textContaining('◆ SELL TP'), findsWidgets);
+      expect(find.textContaining('Qty 11.49 cts'), findsOneWidget);
+      expect(find.textContaining('Sell \$36,173'), findsOneWidget);
+      expect(find.textContaining('+2 more trades'), findsOneWidget);
 
       // Click 2025-04-07 Put TP badge on mobile EN -> verify PIT inspector renders cleanly with zero overflow & zero CJK
       final enTpChip = find.textContaining('◆ 2025-04-07').first;

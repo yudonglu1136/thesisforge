@@ -72,6 +72,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
   int pitSerial = 0;
   final Map<String, Map<String, dynamic>> _pitCache = {};
   final Map<String, Map<String, dynamic>> _windowCache = {};
+  String _hoverEventsCacheKey = '';
+  Map<String, List<Map<String, dynamic>>> _hoverEventsByDate = const {};
 
   Palette get p => widget.palette;
   String w(String en, String zh) => context.tr(zh, en);
@@ -2107,7 +2109,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     final series = asList(win['daily_series']);
     final crises = asList(win['crisis_comparison']);
     final putLedger = asList(win['put_ledger']);
+    final openPutsAtEnd = asList(win['open_puts_at_end']);
     final ctaLedger = asList(win['cta_rotation_ledger']);
+    final ctaRestoreLedger = asList(win['cta_restore_ledger']);
 
     // Filter combined ledger
     final filteredPuts = putLedger.where((raw) {
@@ -2154,8 +2158,8 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                   const SizedBox(height: 3),
                   Text(
                     w(
-                      '6,382,288 real MIT OPRA quotes (2015-2025.12) + real spot & OPRA-calibrated Z-surface BSM extension (2025.12-$endYm) · Click curve to replay PIT',
-                      '6,382,288 条真实 OPRA 盘口（2015-2025.12）+ 真实现货与 OPRA 残差校准 BSM 延展（2025.12-$endYm）· 点击净值曲线任意日期一键回放',
+                      '6,382,288 real MIT OPRA quotes (2015-2025.12) + real spot & OPRA-calibrated Z-surface BSM extension (2025.12-$endYm) · Hover for trades · Click to pin PIT',
+                      '6,382,288 条真实 OPRA 盘口（2015-2025.12）+ 真实现货与 OPRA 残差校准 BSM 延展（2025.12-$endYm）· 悬停即看逐笔买卖明细 · 点击锁定 PIT 回放',
                     ),
                     style: const TextStyle(color: _fgMuted, fontSize: 11.5),
                   ),
@@ -2313,6 +2317,9 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
               putLedger,
               isCompact,
               opraCutoffDate: opraCutoff,
+              openPutsAtEnd: openPutsAtEnd,
+              ctaLedger: ctaLedger,
+              ctaRestoreLedger: ctaRestoreLedger,
             ),
 
           const SizedBox(height: 12),
@@ -2520,12 +2527,161 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
     };
   }
 
+  String _fmtStrike(num? k) {
+    if (k == null || !k.isFinite) return '--';
+    final d = k.toDouble();
+    if ((d - d.round()).abs() < 0.01) return d.round().toString();
+    return d.toStringAsFixed(2);
+  }
+
+  String _shortExp(String exp) {
+    if (exp.length == 10 && exp.startsWith('20')) return exp.substring(2);
+    return exp;
+  }
+
+  String _sleeveShortTag(String sl) {
+    return switch (sl) {
+      'base' => w('B020 Base', 'B020 常态盾'),
+      'crisis' => w('M7G Crisis', 'M7G 危机盾'),
+      'crisis_m4' => w('M4 Slow-Bear', 'M4 慢熊盾'),
+      _ => sl,
+    };
+  }
+
+  Map<String, List<Map<String, dynamic>>> _getHoverEventsByDate(
+    List<dynamic> putLedger,
+    List<dynamic> openPutsAtEnd,
+    List<dynamic> ctaLedger,
+    List<dynamic> ctaRestoreLedger,
+  ) {
+    final firstPutId = putLedger.isNotEmpty
+        ? text(asMap(putLedger.first)['tranche_id'])
+        : '';
+    final lastPutDate = putLedger.isNotEmpty
+        ? text(asMap(putLedger.last)['exit_date'])
+        : '';
+    final key =
+        '${widget.asOf}|$selectedWindow|${putLedger.length}|${openPutsAtEnd.length}|${ctaLedger.length}|${ctaRestoreLedger.length}|$firstPutId|$lastPutDate';
+    if (key == _hoverEventsCacheKey && _hoverEventsByDate.isNotEmpty) {
+      return _hoverEventsByDate;
+    }
+
+    final map = <String, List<Map<String, dynamic>>>{};
+    void addEvent(String d, Map<String, dynamic> ev) {
+      if (d.isEmpty) return;
+      (map[d] ??= <Map<String, dynamic>>[]).add(ev);
+    }
+
+    final seenEntryKeys = <String>{};
+    void indexPutEntry(Map<String, dynamic> t) {
+      final ed = text(t['entry_date']);
+      if (ed.isEmpty) return;
+      final dk =
+          '${text(t['tranche_id'])}|$ed|${text(t['strike'])}|${text(t['exp'])}';
+      if (!seenEntryKeys.add(dk)) return;
+      addEvent(ed, {
+        'action': 'PUT_OPEN',
+        'sleeve': text(t['sleeve']),
+        'exp': text(t['exp']),
+        'strike': _n(t['strike']),
+        'contracts': _n(t['contracts']),
+        'fill': _n(t['entry_fill']),
+        'amount_usd': _n(t['cost_usd']),
+        'dte': _n(t['entry_dte']),
+        'lot_pct': _n(t['entry_lot_pct']),
+        'quote_source': text(t['quote_source']),
+        'priority': text(t['sleeve']) == 'base' ? 2 : 1,
+      });
+    }
+
+    for (final raw in putLedger) {
+      final t = asMap(raw);
+      indexPutEntry(t);
+      final xd = text(t['exit_date']);
+      if (xd.isEmpty) continue;
+      final reason = text(t['exit_reason']);
+      final isTp = reason.contains('tp_');
+      final isRoll = reason.startsWith('roll_');
+      addEvent(xd, {
+        'action': isTp ? 'PUT_TP' : (isRoll ? 'PUT_ROLL' : 'PUT_CLOSE'),
+        'sleeve': text(t['sleeve']),
+        'exp': text(t['exp']),
+        'strike': _n(t['strike']),
+        'contracts': _n(t['contracts']),
+        'fill': _n(t['exit_fill']),
+        'entry_fill': _n(t['entry_fill']),
+        'amount_usd': _n(t['exit_usd']),
+        'cost_usd': _n(t['cost_usd']),
+        'net_pnl_usd': _n(t['net_pnl_usd']),
+        'roi_mult': _n(t['roi_mult']),
+        'dte': _n(t['exit_dte']),
+        'lot_pct': _n(t['exit_lot_pct']),
+        'reason': reason,
+        'quote_source': text(t['quote_source']),
+        'priority': isTp ? 0 : 3,
+      });
+    }
+
+    for (final raw in openPutsAtEnd) {
+      indexPutEntry(asMap(raw));
+    }
+
+    for (final raw in ctaLedger) {
+      final c = asMap(raw);
+      final d = text(c['date']).isNotEmpty
+          ? text(c['date'])
+          : text(c['exec_date']);
+      addEvent(d, {
+        'action': 'CTA_ROTATE',
+        'sleeve': text(c['sleeve']),
+        'tranche': _n(c['tranche'])?.toInt(),
+        'amount_usd': _n(c['sold_usd']),
+        'qqq_dd_pct': _n(c['qqq_dd_pct']),
+        'restore_due': text(c['restore_due']),
+        'priority': 1,
+      });
+    }
+
+    for (final raw in ctaRestoreLedger) {
+      final c = asMap(raw);
+      final d = text(c['date']);
+      addEvent(d, {
+        'action': 'CTA_RESTORE',
+        'sleeve': text(c['sleeve']),
+        'lots_matured': _n(c['lots_matured'])?.toInt() ?? 1,
+        'amount_usd': _n(c['restored_usd']),
+        'hold_days': _n(c['hold_days'])?.toInt() ?? 365,
+        'priority': 1,
+      });
+    }
+
+    for (final list in map.values) {
+      list.sort(
+        (a, b) =>
+            ((a['priority'] as int?) ?? 9).compareTo((b['priority'] as int?) ?? 9),
+      );
+    }
+
+    _hoverEventsCacheKey = key;
+    _hoverEventsByDate = map;
+    return map;
+  }
+
   Widget _buildInteractiveChart(
     List<dynamic> series,
     List<dynamic> putLedger,
     bool isCompact, {
     String opraCutoffDate = '2025-12-15',
+    List<dynamic> openPutsAtEnd = const [],
+    List<dynamic> ctaLedger = const [],
+    List<dynamic> ctaRestoreLedger = const [],
   }) {
+    final eventsByDate = _getHoverEventsByDate(
+      putLedger,
+      openPutsAtEnd,
+      ctaLedger,
+      ctaRestoreLedger,
+    );
     final totalN = series.length;
     final maxIdx = math.max(0, totalN - 1);
     final minSpan = math.min(15, maxIdx);
@@ -2693,18 +2849,60 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
           LayoutBuilder(
             builder: (_, c) {
               final width = c.maxWidth;
-              int idxFromDx(double dx) {
+              int snapIdxFromDx(double dx) {
+                if (visibleSeries.isEmpty) return 0;
                 const padL = 54.0;
                 const padR = 14.0;
                 final plotW = math.max(1.0, width - padL - padR);
+                final maxVIdx = math.max(0, visibleSeries.length - 1);
                 final frac = ((dx - padL) / plotW).clamp(0.0, 1.0);
-                return (frac * math.max(0, visibleSeries.length - 1)).round();
+                final exactIdx = (frac * maxVIdx).round();
+                final exactRow = asMap(visibleSeries[exactIdx]);
+                final exactEvt = (_n(exactRow['evt'])?.toInt()) ?? 0;
+                final exactDate = text(exactRow['date']);
+                if (exactEvt != 0 ||
+                    (eventsByDate[exactDate]?.isNotEmpty ?? false) ||
+                    maxVIdx == 0) {
+                  return exactIdx;
+                }
+                int prioOf(int evt) {
+                  if ((evt & 4) != 0) return 4;
+                  if ((evt & 2) != 0) return 3;
+                  if ((evt & 16) != 0) return 2;
+                  if ((evt & 1) != 0) return 1;
+                  return 0;
+                }
+
+                const snapPx = 5.5;
+                final stepRadius = math.max(
+                  1,
+                  ((snapPx / plotW) * maxVIdx).ceil(),
+                );
+                final lo = math.max(0, exactIdx - stepRadius);
+                final hi = math.min(maxVIdx, exactIdx + stepRadius);
+                int bestIdx = exactIdx;
+                int bestPrio = 0;
+                double bestDist = double.infinity;
+                for (var i = lo; i <= hi; i++) {
+                  final ev = (_n(asMap(visibleSeries[i])['evt'])?.toInt()) ?? 0;
+                  final pr = prioOf(ev);
+                  if (pr == 0) continue;
+                  final px = padL + (i / maxVIdx) * plotW;
+                  final dist = (px - dx).abs();
+                  if (dist <= snapPx &&
+                      (pr > bestPrio || (pr == bestPrio && dist < bestDist))) {
+                    bestPrio = pr;
+                    bestDist = dist;
+                    bestIdx = i;
+                  }
+                }
+                return bestIdx;
               }
 
               return MouseRegion(
                 cursor: SystemMouseCursors.click,
                 onHover: (ev) {
-                  final nextIdx = idxFromDx(ev.localPosition.dx);
+                  final nextIdx = snapIdxFromDx(ev.localPosition.dx);
                   if (nextIdx != hoverIndex) {
                     setState(() => hoverIndex = nextIdx);
                   }
@@ -2715,23 +2913,50 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                 child: GestureDetector(
                   onTapUp: (details) {
                     if (visibleSeries.isEmpty) return;
-                    final idx = idxFromDx(details.localPosition.dx);
+                    final idx = snapIdxFromDx(details.localPosition.dx);
                     final d = text(asMap(visibleSeries[idx])['date']);
                     if (d.isNotEmpty) unawaited(_loadPitDate(d));
                   },
                   child: SizedBox(
+                    key: const ValueKey('crisis-v2-chart-canvas'),
                     height: chartH,
                     width: width,
-                    child: CustomPaint(
-                      painter: _CrisisV2EquityChartPainter(
-                        series: visibleSeries,
-                        useLogScale: useLogScale,
-                        rebaseTo100: rebaseActive,
-                        hoverIndex: hoverIndex,
-                        pinnedDate: pinnedPitDate,
-                        opraCutoffDate: opraCutoffDate,
-                        simExtTag: w('2026 BSM Sim ->', '2026 BSM模拟 ->'),
-                      ),
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Positioned.fill(
+                          child: CustomPaint(
+                            painter: _CrisisV2EquityChartPainter(
+                              series: visibleSeries,
+                              useLogScale: useLogScale,
+                              rebaseTo100: rebaseActive,
+                              hoverIndex: hoverIndex,
+                              pinnedDate: pinnedPitDate,
+                              opraCutoffDate: opraCutoffDate,
+                              simExtTag: w(
+                                '2026 BSM Sim ->',
+                                '2026 BSM模拟 ->',
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (hoverIndex >= 0 &&
+                            hoverIndex < visibleSeries.length)
+                          _buildChartHoverTooltip(
+                            width: width,
+                            chartH: chartH,
+                            visibleSeries: visibleSeries,
+                            hoverIdx: hoverIndex,
+                            isZoomed: isZoomed,
+                            activeSliceV2Ret: activeSliceV2Ret,
+                            activeSliceQRet: activeSliceQRet,
+                            opraCutoffDate: opraCutoffDate,
+                            eventsByDate: eventsByDate,
+                            putLedger: putLedger,
+                            openPutsAtEnd: openPutsAtEnd,
+                            isCompact: isCompact,
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -2801,6 +3026,543 @@ class _CrisisObservatoryPanelState extends State<CrisisObservatoryPanel> {
                     ),
                   ),
               ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChartHoverTooltip({
+    required double width,
+    required double chartH,
+    required List<dynamic> visibleSeries,
+    required int hoverIdx,
+    required bool isZoomed,
+    required double activeSliceV2Ret,
+    required double activeSliceQRet,
+    required String opraCutoffDate,
+    required Map<String, List<Map<String, dynamic>>> eventsByDate,
+    required List<dynamic> putLedger,
+    required List<dynamic> openPutsAtEnd,
+    required bool isCompact,
+  }) {
+    const padL = 54.0;
+    const padR = 14.0;
+    final plotW = math.max(1.0, width - padL - padR);
+    final maxVIdx = math.max(1, visibleSeries.length - 1);
+    final mx = visibleSeries.length < 2
+        ? padL
+        : padL + (hoverIdx / maxVIdx) * plotW;
+
+    final row = asMap(visibleSeries[hoverIdx]);
+    final hoverDate = text(row['date']);
+    final qqqPx = _n(row['qqq'])?.toDouble();
+    final vr = _n(row['vr'])?.toDouble();
+    final navV2 = _n(row['nav_v2'])?.toDouble();
+    final navQqq = _n(row['nav_qqq'])?.toDouble();
+    final ddV2 = _n(row['dd_v2'])?.toDouble();
+    final lev = _n(row['lev'])?.toDouble();
+    final isRealOpra =
+        hoverDate.isNotEmpty && hoverDate.compareTo(opraCutoffDate) <= 0;
+
+    final dayEvents = eventsByDate[hoverDate] ?? const <Map<String, dynamic>>[];
+
+    // Accent border reflects highest-priority trade on this date
+    Color borderAccent = _borderLine;
+    if (dayEvents.isNotEmpty) {
+      final topAct = text(dayEvents.first['action']);
+      final topSl = text(dayEvents.first['sleeve']);
+      borderAccent = switch (topAct) {
+        'PUT_TP' => _amber.withValues(alpha: 0.85),
+        'CTA_ROTATE' || 'CTA_RESTORE' => _mint.withValues(alpha: 0.80),
+        'PUT_OPEN' =>
+          (topSl == 'crisis_m4'
+                  ? _lilac
+                  : (topSl == 'crisis' ? _coral : _sky))
+              .withValues(alpha: 0.80),
+        'PUT_ROLL' => _sky.withValues(alpha: 0.70),
+        _ => _fgMuted.withValues(alpha: 0.65),
+      };
+    }
+
+    // Scan active open Put shields on quiet days (zero trades executed on hoverDate)
+    final activeOpenPuts = <Map<String, dynamic>>[];
+    if (dayEvents.isEmpty && hoverDate.isNotEmpty) {
+      for (final raw in putLedger) {
+        final t = asMap(raw);
+        final ed = text(t['entry_date']);
+        final xd = text(t['exit_date']);
+        if (ed.isNotEmpty &&
+            ed.compareTo(hoverDate) <= 0 &&
+            (xd.isEmpty || hoverDate.compareTo(xd) < 0)) {
+          activeOpenPuts.add(t);
+        }
+      }
+      for (final raw in openPutsAtEnd) {
+        final t = asMap(raw);
+        final ed = text(t['entry_date']);
+        if (ed.isNotEmpty && ed.compareTo(hoverDate) <= 0) {
+          activeOpenPuts.add(t);
+        }
+      }
+    }
+
+    // Aggregate daily execution totals for instant headline scan
+    double sumPutBuyUsd = 0.0;
+    double sumPutSellUsd = 0.0;
+    double sumPutNetPnl = 0.0;
+    double sumCtaRotUsd = 0.0;
+    double sumCtaResUsd = 0.0;
+    bool hasPutSell = false;
+    for (final ev in dayEvents) {
+      final act = text(ev['action']);
+      final amt = (_n(ev['amount_usd']) ?? 0).toDouble();
+      if (act == 'PUT_OPEN') {
+        sumPutBuyUsd += amt;
+      } else if (act == 'PUT_TP' || act == 'PUT_ROLL' || act == 'PUT_CLOSE') {
+        sumPutSellUsd += amt;
+        sumPutNetPnl += (_n(ev['net_pnl_usd']) ?? 0).toDouble();
+        hasPutSell = true;
+      } else if (act == 'CTA_ROTATE') {
+        sumCtaRotUsd += amt;
+      } else if (act == 'CTA_RESTORE') {
+        sumCtaResUsd += amt;
+      }
+    }
+
+    final summaryParts = <String>[];
+    if (sumPutBuyUsd > 0) {
+      summaryParts.add(
+        w('Buy ${_fmtUsd(sumPutBuyUsd)}', '买入 ${_fmtUsd(sumPutBuyUsd)}'),
+      );
+    }
+    if (hasPutSell) {
+      summaryParts.add(
+        w(
+          'Sell ${_fmtUsd(sumPutSellUsd)} (${_fmtUsd(sumPutNetPnl, signed: true)})',
+          '卖出 ${_fmtUsd(sumPutSellUsd)}（净 ${_fmtUsd(sumPutNetPnl, signed: true)}）',
+        ),
+      );
+    }
+    if (sumCtaRotUsd > 0) {
+      summaryParts.add(
+        w(
+          'CTA->QQQ ${_fmtUsd(sumCtaRotUsd)}',
+          '卖CTA买QQQ ${_fmtUsd(sumCtaRotUsd)}',
+        ),
+      );
+    }
+    if (sumCtaResUsd > 0) {
+      summaryParts.add(
+        w(
+          'QQQ->CTA ${_fmtUsd(sumCtaResUsd)}',
+          '卖QQQ买CTA ${_fmtUsd(sumCtaResUsd)}',
+        ),
+      );
+    }
+
+    final cardW = math.min(
+      isCompact ? 268.0 : 386.0,
+      math.max(204.0, width - 16.0),
+    );
+    final preferLeft = mx > width * 0.52;
+    final rawLeft = preferLeft ? mx - cardW - 14.0 : mx + 14.0;
+    final maxLeft = math.max(4.0, width - cardW - 4.0);
+    final minLeft = math.min(padL + 4.0, maxLeft);
+    final cardLeft = rawLeft.clamp(minLeft, maxLeft).toDouble();
+
+    final maxShownTrades = isCompact ? 2 : 4;
+    final shownTrades = dayEvents.take(maxShownTrades).toList();
+    final hiddenTrades = math.max(0, dayEvents.length - shownTrades.length);
+    final denseRows = isCompact || dayEvents.length >= 3;
+
+    return Positioned(
+      left: cardLeft,
+      top: 8.0,
+      width: cardW,
+      child: IgnorePointer(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: math.max(120.0, chartH - 14.0)),
+          child: Container(
+            key: const ValueKey('crisis-v2-hover-tooltip'),
+            padding: EdgeInsets.symmetric(
+              horizontal: isCompact ? 8 : 10,
+              vertical: isCompact ? 7 : 8,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xF20B1117),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: borderAccent, width: 1.15),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x99000000),
+                  blurRadius: 14,
+                  offset: Offset(0, 6),
+                ),
+              ],
+            ),
+            child: SingleChildScrollView(
+              physics: const NeverScrollableScrollPhysics(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Top header: Date · QQQ · VIX/3M · OPRA/BSM source tag
+                  Row(
+                    children: [
+                      Text(
+                        hoverDate,
+                        style: const TextStyle(
+                          color: _fgPrimary,
+                          fontSize: 11.8,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      if (qqqPx != null)
+                        Expanded(
+                          child: Text(
+                            'QQQ \$${qqqPx.toStringAsFixed(2)}${vr != null ? ' · V/3M ${vr.toStringAsFixed(2)}' : ''}',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: _sky,
+                              fontSize: 10.3,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        )
+                      else
+                        const Spacer(),
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1.5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: (isRealOpra ? _mint : _sky)
+                              .withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: (isRealOpra ? _mint : _sky)
+                                .withValues(alpha: 0.55),
+                          ),
+                        ),
+                        child: Text(
+                          isRealOpra
+                              ? w('OPRA', 'OPRA实盘')
+                              : w('BSM Cal', 'BSM校准'),
+                          style: TextStyle(
+                            color: isRealOpra ? _mint : _sky,
+                            fontSize: 9.2,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  // Portfolio state readout
+                  Text(
+                    isZoomed
+                        ? 'v3.0 ${_fmtUsd(navV2)} (${_fmtPct(activeSliceV2Ret)}) · QQQ ${_fmtPct(activeSliceQRet)} · Lev ${_fmtNum(lev, dec: 2)}x'
+                        : 'v3.0 ${_fmtUsd(navV2)} (DD ${_fmtPct(ddV2, signed: false)}) · QQQ ${_fmtUsd(navQqq)} · Lev ${_fmtNum(lev, dec: 2)}x',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _fgMuted,
+                      fontSize: 10.0,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 5),
+                    child: Divider(height: 1, color: _borderLine),
+                  ),
+                  if (dayEvents.isNotEmpty) ...[
+                    Text(
+                      '${w('${dayEvents.length} Trade${dayEvents.length > 1 ? 's' : ''}', '当日成交 ${dayEvents.length} 笔')}${summaryParts.isNotEmpty ? ' · ${summaryParts.join(' · ')}' : ''}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _fgPrimary,
+                        fontSize: 10.3,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    for (final ev in shownTrades)
+                      _buildHoverTradeRow(
+                        ev,
+                        qqqPx: qqqPx,
+                        compact: denseRows,
+                      ),
+                    if (hiddenTrades > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 1, bottom: 2),
+                        child: Text(
+                          w(
+                            '+$hiddenTrades more trade${hiddenTrades > 1 ? 's' : ''} (click curve to inspect all)',
+                            '+$hiddenTrades 笔成交未展开（点击曲线查看全部）',
+                          ),
+                          style: const TextStyle(
+                            color: _amber,
+                            fontSize: 9.6,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                  ] else if (activeOpenPuts.isNotEmpty) ...[
+                    Text(
+                      w(
+                        'No execution · Active Put Shields (${activeOpenPuts.length})',
+                        '当日无买卖成交 · 在手活跃 Put（${activeOpenPuts.length} 笔）',
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: _fgMuted,
+                        fontSize: 10.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    for (final ap in activeOpenPuts.take(isCompact ? 2 : 3))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 3),
+                        child: Text(
+                          '• [${_sleeveShortTag(text(ap['sleeve']))}] QQQ ${_shortExp(text(ap['exp']))} \$${_fmtStrike(_n(ap['strike']))}P · ${_fmtNum(_n(ap['contracts']), dec: 2)} ${w('cts', '张')} · ${w('Cost', '成本')} ${_fmtUsd(_n(ap['cost_usd']))}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _fgPrimary,
+                            fontSize: 9.8,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    if (activeOpenPuts.length > (isCompact ? 2 : 3))
+                      Text(
+                        w(
+                          '+${activeOpenPuts.length - (isCompact ? 2 : 3)} more active puts',
+                          '+${activeOpenPuts.length - (isCompact ? 2 : 3)} 笔在手 Put',
+                        ),
+                        style: const TextStyle(color: _fgMuted, fontSize: 9.4),
+                      ),
+                  ] else ...[
+                    Text(
+                      w(
+                        'No execution · Quiet holding day (no active Puts)',
+                        '当日无买卖成交 · 静默持仓（无在手 Put）',
+                      ),
+                      style: const TextStyle(
+                        color: _fgMuted,
+                        fontSize: 10.0,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 3),
+                  Text(
+                    w(
+                      'Click curve to pin full PIT orderbook & skew replay',
+                      '点击曲线锁定当日完整 PIT 盘口与偏度明细',
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _slate,
+                      fontSize: 9.2,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHoverTradeRow(
+    Map<String, dynamic> ev, {
+    required double? qqqPx,
+    required bool compact,
+  }) {
+    final act = text(ev['action']);
+    final sl = text(ev['sleeve']);
+    final amt = _n(ev['amount_usd'])?.toDouble();
+
+    final Color accent;
+    final String dirTag;
+    if (act == 'PUT_TP') {
+      accent = _amber;
+      dirTag = w('◆ SELL TP', '◆ 止盈卖出');
+    } else if (act == 'PUT_OPEN') {
+      accent = sl == 'crisis_m4' ? _lilac : (sl == 'crisis' ? _coral : _sky);
+      dirTag = sl == 'base'
+          ? w('● BUY PUT', '● 买入开仓')
+          : w('▲ BUY PUT', '▲ 买入开仓');
+    } else if (act == 'PUT_ROLL') {
+      accent = _sky;
+      dirTag = w('↻ SELL ROLL', '↻ 滚仓卖出');
+    } else if (act == 'PUT_CLOSE') {
+      accent = _fgMuted;
+      dirTag = w('× SELL CLOSE', '× 平仓卖出');
+    } else if (act == 'CTA_ROTATE') {
+      accent = _mint;
+      dirTag = w('■ SELL CTA', '■ 卖CTA买QQQ');
+    } else {
+      accent = _mint;
+      dirTag = w('■ BUY CTA', '■ 卖QQQ买CTA');
+    }
+
+    String instrument;
+    String qtyAmtLine;
+    String? subLine;
+
+    if (act == 'CTA_ROTATE') {
+      final tr = _n(ev['tranche'])?.toInt() ?? 1;
+      final estSh = (qqqPx != null && qqqPx > 0 && amt != null)
+          ? amt / qqqPx
+          : null;
+      instrument = w(
+        'Sell $sl -> Buy QQQ (#$tr/5)',
+        '卖出 $sl -> 买入 QQQ（第 $tr/5 批）',
+      );
+      qtyAmtLine = w(
+        'Sell ${_fmtUsd(amt)}${estSh != null ? ' · Buy ≈${estSh.toStringAsFixed(1)} sh QQQ @ \$${qqqPx!.toStringAsFixed(2)}' : ''}',
+        '卖出金额 ${_fmtUsd(amt)}${estSh != null ? ' · 买入 QQQ ≈${estSh.toStringAsFixed(1)} 股 @ \$${qqqPx!.toStringAsFixed(2)}' : ''}',
+      );
+      final due = text(ev['restore_due']);
+      if (!compact && due.isNotEmpty) {
+        subLine = w(
+          'QQQ DD ${_fmtPct(_n(ev['qqq_dd_pct']))} · 1Y Restore $due',
+          'QQQ 回撤 ${_fmtPct(_n(ev['qqq_dd_pct']))} · 满1年恢复日 $due',
+        );
+      }
+    } else if (act == 'CTA_RESTORE') {
+      final lots = _n(ev['lots_matured'])?.toInt() ?? 1;
+      final estSh = (qqqPx != null && qqqPx > 0 && amt != null)
+          ? amt / qqqPx
+          : null;
+      instrument = w(
+        'Sell QQQ -> Restore $sl',
+        '卖出 QQQ -> 恢复买入 $sl',
+      );
+      qtyAmtLine = w(
+        'Buy ${_fmtUsd(amt)}${estSh != null ? ' · Sell ≈${estSh.toStringAsFixed(1)} sh QQQ @ \$${qqqPx!.toStringAsFixed(2)}' : ''} ($lots lot)',
+        '买回金额 ${_fmtUsd(amt)}${estSh != null ? ' · 卖出 QQQ ≈${estSh.toStringAsFixed(1)} 股 @ \$${qqqPx!.toStringAsFixed(2)}' : ''}（$lots 批到期）',
+      );
+    } else {
+      final exp = _shortExp(text(ev['exp']));
+      final strike = _fmtStrike(_n(ev['strike']));
+      final dte = _n(ev['dte'])?.round();
+      final cts = _n(ev['contracts'])?.toDouble();
+      final fill = _n(ev['fill'])?.toDouble();
+      final lotPct = _n(ev['lot_pct'])?.toDouble();
+      final ctsStr = cts != null ? cts.toStringAsFixed(2) : '--';
+      final fillStr = fill != null ? '\$${fill.toStringAsFixed(2)}' : '--';
+      final putSuffix = compact ? 'P' : ' Put';
+      instrument =
+          'QQQ $exp \$$strike$putSuffix${dte != null ? ' (${dte}D)' : ''} · ${_sleeveShortTag(sl)}';
+      if (act == 'PUT_OPEN') {
+        qtyAmtLine = w(
+          'Qty $ctsStr cts @ $fillStr · Buy ${_fmtUsd(amt)}${lotPct != null ? ' (${lotPct.toStringAsFixed(2)}%/lot)' : ''}',
+          '数量 $ctsStr 张 @ $fillStr · 买入金额 ${_fmtUsd(amt)}${lotPct != null ? '（占1手 ${lotPct.toStringAsFixed(2)}%）' : ''}',
+        );
+      } else {
+        final netPnl = _n(ev['net_pnl_usd'])?.toDouble();
+        final roi = _n(ev['roi_mult'])?.toDouble();
+        final costUsd = _n(ev['cost_usd'])?.toDouble();
+        final entryFill = _n(ev['entry_fill'])?.toDouble();
+        final reason = text(ev['reason']);
+        final pnlTag = netPnl != null
+            ? '${_fmtUsd(netPnl, signed: true)}${roi != null ? ' / ${roi.toStringAsFixed(2)}x' : ''}'
+            : '';
+        qtyAmtLine = w(
+          'Qty $ctsStr cts @ $fillStr · Sell ${_fmtUsd(amt)}${pnlTag.isNotEmpty ? ' ($pnlTag)' : ''}',
+          '数量 $ctsStr 张 @ $fillStr · 卖出金额 ${_fmtUsd(amt)}${pnlTag.isNotEmpty ? '（$pnlTag）' : ''}',
+        );
+        if (!compact) {
+          subLine = w(
+            'Cost ${_fmtUsd(costUsd)}${entryFill != null ? ' (@ \$${entryFill.toStringAsFixed(2)})' : ''} · ${_pitReasonLabel(reason)}',
+            '原买成本 ${_fmtUsd(costUsd)}${entryFill != null ? '（@ \$${entryFill.toStringAsFixed(2)}）' : ''} · ${_pitReasonLabel(reason)}',
+          );
+        }
+      }
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4.5),
+      decoration: BoxDecoration(
+        color: _bgInset.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: accent.withValues(alpha: 0.45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4.5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: accent.withValues(alpha: 0.55)),
+                ),
+                child: Text(
+                  dirTag,
+                  style: TextStyle(
+                    color: accent,
+                    fontSize: 9.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  instrument,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _fgPrimary,
+                    fontSize: 10.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2.5),
+          Text(
+            qtyAmtLine,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: act == 'PUT_TP' ? _amber : _fgPrimary,
+              fontSize: 10.0,
+              fontWeight: FontWeight.w700,
+              height: 1.25,
+            ),
+          ),
+          if (subLine != null && subLine.isNotEmpty) ...[
+            const SizedBox(height: 1.5),
+            Text(
+              subLine,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _fgMuted,
+                fontSize: 9.3,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ],
@@ -5114,18 +5876,40 @@ class _CrisisV2EquityChartPainter extends CustomPainter {
     final markerIdx = hoverIndex >= 0 ? hoverIndex : pinnedIdx;
     if (markerIdx >= 0 && markerIdx < series.length) {
       final mx = xAt(markerIdx);
+      final my = yEq(v2Vals[markerIdx]);
+      final mEvt = ((series[markerIdx] as Map)['evt'] as num?)?.toInt() ?? 0;
       canvas.drawLine(
         Offset(mx, padT),
         Offset(mx, levTop + levH),
         Paint()
-          ..color = const Color(0xFFEDF1F5).withValues(alpha: 0.45)
+          ..color = const Color(0xFFEDF1F5).withValues(alpha: 0.48)
           ..strokeWidth = 1.0,
       );
-      canvas.drawCircle(
-        Offset(mx, yEq(v2Vals[markerIdx])),
-        4.0,
-        Paint()..color = const Color(0xFF80C6A8),
-      );
+      if ((mEvt & 23) != 0) {
+        // Luminous selection ring around painted trade marker so the icon stays visible
+        canvas.drawCircle(
+          Offset(mx, my),
+          7.2,
+          Paint()
+            ..color = const Color(0xFFEDF1F5).withValues(alpha: 0.90)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.6,
+        );
+      } else {
+        canvas.drawCircle(
+          Offset(mx, my),
+          4.0,
+          Paint()..color = const Color(0xFF80C6A8),
+        );
+        canvas.drawCircle(
+          Offset(mx, my),
+          4.0,
+          Paint()
+            ..color = const Color(0xFFEDF1F5).withValues(alpha: 0.85)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.1,
+        );
+      }
     }
   }
 
